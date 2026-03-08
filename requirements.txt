@@ -1,0 +1,3 @@
+# SecOps Autoresearch
+# No external dependencies — pure Python stdlib
+# Python 3.10+
