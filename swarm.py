@@ -275,8 +275,21 @@ def show_leaderboard():
     print(f"\n{'═' * 65}\n")
 
 
-def adopt_branch(branch: str):
-    """Copy detect.py from the specified branch to main."""
+def adopt_branch(branch: str, confirm: bool = False):
+    """Copy detect.py from the specified branch to main.
+
+    Security note: Only branches matching 'experiment/*' with safe name
+    characters are accepted, to prevent path traversal or shell injection
+    via crafted branch names.
+    """
+    import re as _re
+
+    # Validate branch name to prevent path traversal, shell injection
+    if not _re.match(r'^experiment/[a-zA-Z0-9_\-]+$', branch):
+        print(f"  ❌ Branch name '{branch}' is invalid. "
+              "Only 'experiment/<alphanumeric-and-dashes>' branches are accepted.")
+        return
+
     if not branch_exists(branch):
         print(f"  ❌ Branch '{branch}' does not exist.")
         return
@@ -289,6 +302,12 @@ def adopt_branch(branch: str):
 
     score = get_branch_score(branch)
     score_str = f"F1={score:.4f}" if score else "unknown score"
+
+    if not confirm:
+        print(f"  ⚠️  This will overwrite detect.py on main with code from {branch} ({score_str}).")
+        print(f"      Review the code first: git show {branch}:detect.py")
+        print(f"      To proceed, run with --confirm flag.")
+        return
 
     # Switch to main and apply
     original = get_current_branch()
@@ -336,6 +355,10 @@ def main():
         help="Copy detect.py from a branch to main"
     )
     parser.add_argument(
+        "--confirm", action="store_true",
+        help="Required to confirm --adopt (prevents accidental code overwrite)"
+    )
+    parser.add_argument(
         "--directions", action="store_true",
         help="List available research directions"
     )
@@ -356,7 +379,7 @@ def main():
         show_leaderboard()
 
     elif args.adopt:
-        adopt_branch(args.adopt)
+        adopt_branch(args.adopt, confirm=args.confirm)
 
     elif args.directions:
         print(f"\n{'═' * 55}")
