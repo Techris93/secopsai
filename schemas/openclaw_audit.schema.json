@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.secops-autoresearch/schemas/openclaw_audit.schema.json",
+  "title": "OpenClaw SOC Adapter Event",
+  "description": "Adapter-facing raw event envelope collected from verified OpenClaw native surfaces. This is not an assertion that upstream OpenClaw emits one unified SOC audit bus natively.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "ts",
+    "source",
+    "surface",
+    "action",
+    "status",
+    "openclaw",
+    "collector"
+  ],
+  "properties": {
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source": {
+      "const": "openclaw"
+    },
+    "surface": {
+      "type": "string",
+      "enum": [
+        "tool",
+        "session",
+        "subagent",
+        "pairing",
+        "skills",
+        "config",
+        "exec",
+        "restart"
+      ]
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "start",
+        "update",
+        "end",
+        "spawn",
+        "approve",
+        "deny",
+        "install",
+        "enable",
+        "disable",
+        "patch",
+        "apply",
+        "restart",
+        "resolve",
+        "status"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "running",
+        "completed",
+        "failed",
+        "error",
+        "blocked",
+        "approval-pending",
+        "approval-unavailable",
+        "accepted",
+        "skipped"
+      ]
+    },
+    "openclaw": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "native_type"],
+      "properties": {
+        "origin": {
+          "type": "string",
+          "enum": [
+            "agent_event",
+            "session_hook",
+            "subagent_hook",
+            "pairing_store",
+            "skills_rpc",
+            "config_rpc",
+            "config_audit_jsonl",
+            "restart_sentinel",
+            "process_registry"
+          ]
+        },
+        "native_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "account_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "thread_id": {
+          "type": ["string", "integer"]
+        },
+        "tool_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool_call_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "child_session_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requester_session_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "skill_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "changed_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "details": {
+          "type": "object"
+        }
+      }
+    },
+    "collector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "privacy_profile", "collected_from"],
+      "properties": {
+        "schema_version": {
+          "const": "openclaw-audit-v1"
+        },
+        "privacy_profile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "collected_from": {
+          "type": "string",
+          "minLength": 1
+        },
+        "record_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "host": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "surface": {
+            "const": "tool"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "openclaw": {
+            "required": ["run_id", "tool_name", "tool_call_id"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "surface": {
+            "const": "session"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "openclaw": {
+            "required": ["session_key", "session_id", "agent_id"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "surface": {
+            "const": "subagent"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "openclaw": {
+            "required": ["child_session_key"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "surface": {
+            "const": "skills"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "openclaw": {
+            "required": ["skill_key"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "surface": {
+            "const": "config"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "openclaw": {
+            "required": ["changed_paths"]
+          }
+        }
+      }
+    }
+  ]
+}

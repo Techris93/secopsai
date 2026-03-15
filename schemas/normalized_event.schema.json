@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.secops-autoresearch/schemas/normalized_event.schema.json",
+  "title": "Normalized Detection Event",
+  "description": "Canonical detector-facing event schema derived from OpenClaw adapter events and other benchmark sources.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "timestamp",
+    "dataset",
+    "product",
+    "family",
+    "action",
+    "status",
+    "entity",
+    "context",
+    "features",
+    "raw_ref"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "dataset": {
+      "type": "string",
+      "enum": ["openclaw", "synthetic", "botsv3", "other"]
+    },
+    "product": {
+      "type": "string",
+      "enum": ["openclaw", "generic"]
+    },
+    "family": {
+      "type": "string",
+      "enum": [
+        "tool",
+        "session",
+        "subagent",
+        "pairing",
+        "skills",
+        "config",
+        "exec",
+        "restart"
+      ]
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1
+    },
+    "severity_hint": {
+      "type": "string",
+      "enum": ["info", "low", "medium", "high", "critical"]
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session_key"],
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "session_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "channel": {
+          "type": "string"
+        },
+        "account_id": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": ["string", "integer"]
+        },
+        "tool_name": {
+          "type": "string"
+        },
+        "skill_key": {
+          "type": "string"
+        },
+        "child_session_key": {
+          "type": "string"
+        },
+        "requester_session_key": {
+          "type": "string"
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "type": "string"
+        },
+        "native_type": {
+          "type": "string"
+        },
+        "changed_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "policy_decision": {
+          "type": "string"
+        },
+        "approval_state": {
+          "type": "string"
+        },
+        "delivery_target": {
+          "type": "string"
+        }
+      }
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "duration_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "has_error": {
+          "type": "boolean"
+        },
+        "mutating": {
+          "type": "boolean"
+        },
+        "background": {
+          "type": "boolean"
+        },
+        "changed_path_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sensitive_path_touched": {
+          "type": "boolean"
+        },
+        "burst_index": {
+          "type": "number",
+          "minimum": 0
+        },
+        "denied": {
+          "type": "boolean"
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "type": "string"
+        },
+        "transform_mode": {
+          "type": "string"
+        }
+      }
+    },
+    "raw_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "record_id"],
+      "properties": {
+        "schema": {
+          "const": "openclaw-audit-v1"
+        },
+        "record_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "label": {
+      "type": "string",
+      "enum": ["malicious", "benign", "expected_admin", "misconfiguration"]
+    }
+  }
+}

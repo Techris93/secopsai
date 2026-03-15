@@ -55,6 +55,144 @@ Recall: 1.000000
 False Positive Rate: 0.000000
 ```
 
+## BOTSv3 Integration
+
+If you added the BOTSv3 content CSVs (`ctf_questions.csv`, `ctf_answers.csv`, `ctf_hints.csv`), run:
+
+```bash
+python botsv3_ingest.py
+```
+
+This generates `data/botsv3_qa.json`, a normalized metadata bundle (questions, answers, hints).
+
+Important: this metadata is not the raw telemetry. To evaluate `detect.py` with BOTSv3, you still need to:
+
+1. Export BOTSv3 event logs from Splunk (for example as JSON/CSV per sourcetype)
+2. Map exported events into this project's `data/events.json` schema (`timestamp`, `event_id`, `label`, `attack_type`, and event fields)
+3. Run `python evaluate.py` against the converted labeled data
+
+Safe local workflow with exported BOTSv3 CSVs:
+
+```bash
+# 1) Convert Splunk CSV exports into normalized BOTSv3 events
+python botsv3_convert.py
+
+# 2) Evaluate detection rules against BOTSv3 without modifying baseline events.json
+python evaluate_botsv3.py
+
+# 3) Run default benchmark as usual (synthetic baseline)
+python evaluate.py
+```
+
+The `evaluate_botsv3.py` helper temporarily swaps in BOTSv3 data for both
+`data/events.json` and `data/events_unlabeled.json`, then always restores both
+baseline files afterward.
+
+## OpenClaw Sample Workflow
+
+This repository now includes a small OpenClaw adapter-event sample corpus and a
+normalizer that converts it into the flat event shape consumed by `detect.py`.
+
+Sample raw corpus:
+
+- `data/openclaw/raw/sample_audit.jsonl`
+
+Schemas:
+
+- `schemas/openclaw_audit.schema.json`
+- `schemas/normalized_event.schema.json`
+
+Convert the sample corpus into labeled and unlabeled replay files:
+
+```bash
+python openclaw_prepare.py --stats
+```
+
+This writes:
+
+- `data/openclaw/replay/labeled/sample_events.json`
+- `data/openclaw/replay/unlabeled/sample_events.json`
+
+Score the generated OpenClaw replay bundle directly:
+
+```bash
+python evaluate_openclaw.py --verbose
+```
+
+Generate grouped local findings from the replay bundle:
+
+```bash
+python openclaw_findings.py
+```
+
+This writes a timestamped findings bundle and updates a local SQLite store under:
+
+- `data/openclaw/findings/`
+
+Default local database:
+
+- `data/openclaw/findings/openclaw_soc.db`
+
+The findings generator now deduplicates overlapping rule hits into ranked incidents
+and preserves analyst `status`, `disposition`, and `notes` in the local store
+across regeneration runs.
+
+Operator helpers for the local store:
+
+```bash
+# List findings
+python soc_store.py list
+
+# Show one finding with notes and dedup metadata
+python soc_store.py show OCF-EXAMPLE
+
+# Update analyst state
+python soc_store.py set-disposition OCF-EXAMPLE true_positive
+python soc_store.py set-status OCF-EXAMPLE triaged
+python soc_store.py add-note OCF-EXAMPLE analyst "validated in replay"
+```
+
+Incident bundles now expose dedup metadata directly in the JSON payload:
+
+- `merged_from_rule_ids`
+- `dedup_reason`
+
+The OpenClaw path is additive: it does not replace the synthetic benchmark or
+the BOTSv3 benchmark. The new OpenClaw-specific rules in `detect.py` only act on
+events whose `sourcetype` starts with `openclaw_`.
+
+## Real OpenClaw Ingestion
+
+To start using this against real OpenClaw surface exports, write native JSONL
+files for these surfaces under a directory such as `data/openclaw/native/`:
+
+- `agent-events.jsonl`
+- `session-hooks.jsonl`
+- `subagent-hooks.jsonl`
+- `config-audit.jsonl`
+- `restart-sentinels.jsonl`
+
+Then ingest them into a detector-ready audit bundle:
+
+```bash
+python ingest_openclaw.py --input-root data/openclaw/native --output data/openclaw/raw/audit.jsonl --stats
+```
+
+The ingester maps those native surface exports into the adapter contract in:
+
+- `schemas/openclaw_audit.schema.json`
+
+From there, run the existing normalization and findings flow:
+
+```bash
+python openclaw_prepare.py --input data/openclaw/raw/audit.jsonl \
+  --output data/openclaw/replay/labeled/current.json \
+  --unlabeled-output data/openclaw/replay/unlabeled/current.json
+
+python openclaw_findings.py --input data/openclaw/replay/labeled/current.json
+python soc_store.py list
+```
+
 ## Project Structure
 
 ```

@@ -53,7 +53,15 @@ def parse_timestamp(timestamp: str) -> datetime:
 
 
 def is_internal_ip(ip: str) -> bool:
-    return ip.startswith("10.")
+    if not ip:
+        return False
+    if ip.startswith("10.") or ip.startswith("192.168."):
+        return True
+    if ip.startswith("172."):
+        octets = ip.split(".")
+        if len(octets) > 1 and octets[1].isdigit():
+            return 16 <= int(octets[1]) <= 31
+    return False
 
 
 def is_external_ip(ip: str) -> bool:
@@ -113,6 +121,32 @@ def coefficient_of_variation(values: List[float]) -> float:
     variance = sum((value - avg) ** 2 for value in values) / len(values)
     return math.sqrt(variance) / avg
 
+
+def is_openclaw_event(event: Dict[str, Any], surface: Optional[str] = None) -> bool:
+    sourcetype = str(event.get("sourcetype", ""))
+    if not sourcetype.startswith("openclaw_"):
+        return False
+    if surface is None:
+        return True
+    return sourcetype == f"openclaw_{surface}"
+
+
+def openclaw_session_key(event: Dict[str, Any]) -> str:
+    return (
+        event.get("session_key")
+        or event.get("requester_session_key")
+        or event.get("child_session_key")
+        or ""
+    )
+
+
+def extract_command_text(event: Dict[str, Any]) -> str:
+    for key in ("command", "message"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
 # ═══ Detection Rules ═════════════════════════════════════════════════════════
 # Each rule has:
 #   - id, name, mitre: metadata
@@ -130,6 +164,7 @@ def detect_brute_force(events: List[Dict]) -> List[str]:
     SLOW_THRESHOLD = 3
     SLOW_MIN_SPAN_MINUTES = 30
     COMPROMISE_WINDOW_MINUTES = 20
+    SOURCELESS_THRESHOLD = 8
 
     failures_by_actor: Dict[tuple[str, str], List[Dict]] = defaultdict(list)
     successes_by_actor: Dict[tuple[str, str], List[Dict]] = defaultdict(list)
@@ -147,7 +182,8 @@ def detect_brute_force(events: List[Dict]) -> List[str]:
     detected = set()
     for actor, failures in failures_by_actor.items():
         src_ip, _user = actor
-        if not is_external_ip(src_ip):
+        sourceless_actor = not src_ip
+        if not sourceless_actor and not is_external_ip(src_ip):
             continue
 
         ordered_failures = sorted(failures, key=lambda event: event["timestamp"])
@@ -170,6 +206,11 @@ def detect_brute_force(events: List[Dict]) -> List[str]:
                 for flagged in ordered_failures:
                     detected.add(flagged["event_id"])
 
+        # BOTSv3 and similar logs can omit src_ip for host-local brute-force bursts.
+        if sourceless_actor and len(ordered_failures) >= SOURCELESS_THRESHOLD and not ordered_successes:
+            for flagged in ordered_failures:
+                detected.add(flagged["event_id"])
+
         if compromise_after_failure:
             last_failure = ordered_failures[-1]
             for success in ordered_successes:
@@ -188,6 +229,8 @@ def detect_dns_exfiltration(events: List[Dict]) -> List[str]:
     MIN_LABEL_LENGTH = 15
     MIN_ENTROPY = 3.0
     MIN_UNIQUE_LABEL_RATIO = 0.8
+    FALLBACK_LABEL_LENGTH = 20
+    FALLBACK_UNIQUE_RATIO = 0.7
 
     queries_by_src_and_domain: Dict[tuple[str, str], List[Dict]] = defaultdict(list)
     for event in events:
@@ -207,6 +250,7 @@ def detect_dns_exfiltration(events: List[Dict]) -> List[str]:
                 shannon_entropy(label) >= MIN_ENTROPY or digit_ratio(label) >= 0.2
             )
         ]
+        average_label_len = average(len(label) for label in labels)
         unique_ratio = len(set(labels)) / len(labels)
         has_txt_queries = any(event.get("query_type") == "TXT" for event in queries)
         has_long_queries = any(event.get("query_length", len(event.get("query", ""))) >= 40 for event in queries)
@@ -215,6 +259,12 @@ def detect_dns_exfiltration(events: List[Dict]) -> List[str]:
             if has_txt_queries or has_long_queries or len(queries) >= 8:
                 for event in queries:
                     detected.add(event["event_id"])
+            continue
+
+        # Fallback for high-volume randomized subdomain patterns common in DNS exfil.
+        if average_label_len >= FALLBACK_LABEL_LENGTH and unique_ratio >= FALLBACK_UNIQUE_RATIO and has_long_queries:
+            for event in queries:
+                detected.add(event["event_id"])
 
     return list(detected)
 
@@ -227,6 +277,7 @@ def detect_c2_beaconing(events: List[Dict]) -> List[str]:
     MIN_CONNECTIONS = 5
     MAX_BYTES_OUT = 600
     MAX_BYTES_IN = 250
+    SUSPICIOUS_PORTS = {11211, 4444, 1080, 9001, 9030, 6667, 6697}
 
     connections: Dict[str, List[Dict]] = defaultdict(list)
     for event in events:
@@ -247,11 +298,15 @@ def detect_c2_beaconing(events: List[Dict]) -> List[str]:
         ports = {event.get("dest_port") for event in ordered}
         low_volume = max_bytes_out <= MAX_BYTES_OUT and max_bytes_in <= MAX_BYTES_IN
         stealth_low_volume = max_bytes_out <= 350 and max_bytes_in <= 170
+        has_suspicious_port = any(port in SUSPICIOUS_PORTS for port in ports)
 
         if len(ordered) >= 15 and low_volume:
             for event in ordered:
                 detected.add(event["event_id"])
         elif len(ordered) >= 5 and low_volume and stealth_low_volume and ports == {443}:
+            for event in ordered:
+                detected.add(event["event_id"])
+        elif len(ordered) >= 8 and has_suspicious_port and low_volume:
             for event in ordered:
                 detected.add(event["event_id"])
 
@@ -269,6 +324,7 @@ def detect_lateral_movement(events: List[Dict]) -> List[str]:
     MAX_TRANSFER_BYTES = 100000
 
     smb_by_src: Dict[str, Dict[str, List[Dict]]] = defaultdict(lambda: defaultdict(list))
+    detected = set()
     for event in events:
         if (event.get("sourcetype") == "firewall" and
             event.get("dest_port") == 445):
@@ -276,7 +332,10 @@ def detect_lateral_movement(events: List[Dict]) -> List[str]:
             dest = event.get("dest_ip", "")
             smb_by_src[src][dest].append(event)
 
-    detected = set()
+            # External SMB attempts to internal assets are high-confidence lateral probes.
+            if is_external_ip(src) and is_internal_ip(dest):
+                detected.add(event["event_id"])
+
     for _src, destinations in smb_by_src.items():
         flat_events = sorted(
             [event for dest_events in destinations.values() for event in dest_events],
@@ -379,6 +438,255 @@ def detect_fileless_lolbins(events: List[Dict]) -> List[str]:
     return detected
 
 
+def detect_openclaw_dangerous_exec(events: List[Dict]) -> List[str]:
+    """
+    OpenClaw-specific dangerous exec detection.
+    Flags obviously risky command execution patterns in OpenClaw exec tool usage.
+    """
+    suspicious_patterns = [
+        r"(?i)curl\s+.*https?://.*\|\s*(bash|sh)",
+        r"(?i)wget\s+.*https?://.*\|\s*(bash|sh)",
+        r"(?i)\bnc\b.*\s-e\s",
+        r"(?i)\bssh\s+root@",
+        r"(?i)authorization:\s*bearer",
+    ]
+
+    detected = []
+    for event in events:
+        if not is_openclaw_event(event, "tool"):
+            continue
+        if event.get("tool_name") != "exec":
+            continue
+
+        command = extract_command_text(event)
+        if not command:
+            continue
+
+        if any(re.search(pattern, command) for pattern in suspicious_patterns):
+            detected.append(event["event_id"])
+
+    return detected
+
+
+def detect_openclaw_sensitive_config_change(events: List[Dict]) -> List[str]:
+    """
+    OpenClaw-specific sensitive config mutation detection.
+    """
+    sensitive_prefixes = (
+        "gateway.auth",
+        "tools.exec",
+        "commands",
+        "channels.",
+        "skills.entries.",
+    )
+
+    detected = []
+    for event in events:
+        if not is_openclaw_event(event, "config"):
+            continue
+        changed_paths = event.get("changed_paths", [])
+        if not isinstance(changed_paths, list):
+            continue
+        if any(str(path).startswith(sensitive_prefixes) for path in changed_paths):
+            detected.append(event["event_id"])
+
+    return detected
+
+
+def detect_openclaw_skill_source_drift(events: List[Dict]) -> List[str]:
+    """
+    OpenClaw-specific untrusted skill source detection.
+    """
+    trusted_sources = {"bundled", "clawhub", "local", "managed", "workspace"}
+
+    detected = []
+    for event in events:
+        if not is_openclaw_event(event, "skills"):
+            continue
+        if event.get("action") not in {"install", "enable", "update"}:
+            continue
+
+        source = str(event.get("skill_source") or "").strip().lower()
+        if source and source not in trusted_sources:
+            detected.append(event["event_id"])
+
+    return detected
+
+
+def detect_openclaw_repeated_policy_denials(events: List[Dict]) -> List[str]:
+    """
+    OpenClaw-specific repeated blocked action detection.
+    """
+    DENIAL_THRESHOLD = 3
+    WINDOW_MINUTES = 15
+
+    denied_by_session: Dict[str, List[Dict]] = defaultdict(list)
+    for event in events:
+        if not is_openclaw_event(event):
+            continue
+        if not event.get("denied") and event.get("status") not in {"blocked", "approval-unavailable"}:
+            continue
+
+        session_key = openclaw_session_key(event)
+        if session_key:
+            denied_by_session[session_key].append(event)
+
+    detected = set()
+    for session_key, denied_events in denied_by_session.items():
+        _ = session_key
+        ordered = sorted(denied_events, key=lambda event: event["timestamp"])
+        window_start = 0
+        for window_end, event in enumerate(ordered):
+            while minutes_between(ordered[window_start], event) > WINDOW_MINUTES:
+                window_start += 1
+            if window_end - window_start + 1 >= DENIAL_THRESHOLD:
+                for flagged in ordered[window_start:window_end + 1]:
+                    detected.add(flagged["event_id"])
+
+    return list(detected)
+
+
+def detect_openclaw_tool_burst(events: List[Dict]) -> List[str]:
+    """
+    OpenClaw-specific bursty tool activity detection.
+    Detects concentrated tool starts in a single session with enough breadth or mutation.
+    """
+    BURST_THRESHOLD = 5
+    WINDOW_MINUTES = 2
+    MIN_UNIQUE_TOOLS = 4
+    MIN_MUTATING_EVENTS = 3
+
+    tool_starts_by_session: Dict[str, List[Dict]] = defaultdict(list)
+    for event in events:
+        if not is_openclaw_event(event, "tool"):
+            continue
+        if event.get("action") != "start":
+            continue
+        session_key = openclaw_session_key(event)
+        if session_key:
+            tool_starts_by_session[session_key].append(event)
+
+    detected = set()
+    for session_key, tool_events in tool_starts_by_session.items():
+        _ = session_key
+        ordered = sorted(tool_events, key=lambda event: event["timestamp"])
+        window_start = 0
+        for window_end, event in enumerate(ordered):
+            while minutes_between(ordered[window_start], event) > WINDOW_MINUTES:
+                window_start += 1
+
+            candidate_events = ordered[window_start:window_end + 1]
+            if len(candidate_events) < BURST_THRESHOLD:
+                continue
+
+            unique_tools = {candidate.get("tool_name") for candidate in candidate_events}
+            mutating_count = sum(bool(candidate.get("mutating")) for candidate in candidate_events)
+            if len(unique_tools) >= MIN_UNIQUE_TOOLS or mutating_count >= MIN_MUTATING_EVENTS:
+                for candidate in candidate_events:
+                    detected.add(candidate["event_id"])
+
+    return list(detected)
+
+
+def detect_openclaw_pairing_churn(events: List[Dict]) -> List[str]:
+    """
+    OpenClaw-specific suspicious pairing churn detection.
+    Flags repeated pairing transitions in a short window for one session.
+    """
+    CHURN_THRESHOLD = 3
+    WINDOW_MINUTES = 10
+
+    pairing_by_session: Dict[str, List[Dict]] = defaultdict(list)
+    for event in events:
+        if not is_openclaw_event(event, "pairing"):
+            continue
+        session_key = openclaw_session_key(event)
+        if session_key:
+            pairing_by_session[session_key].append(event)
+
+    detected = set()
+    for pairing_events in pairing_by_session.values():
+        ordered = sorted(pairing_events, key=lambda event: event["timestamp"])
+        window_start = 0
+        for window_end, event in enumerate(ordered):
+            while minutes_between(ordered[window_start], event) > WINDOW_MINUTES:
+                window_start += 1
+
+            candidate_events = ordered[window_start:window_end + 1]
+            statuses = {candidate.get("status") for candidate in candidate_events}
+            actions = {candidate.get("action") for candidate in candidate_events}
+            if len(candidate_events) >= CHURN_THRESHOLD and len(actions) >= 2 and len(statuses) >= 2:
+                for candidate in candidate_events:
+                    detected.add(candidate["event_id"])
+
+    return list(detected)
+
+
+def detect_openclaw_subagent_fanout(events: List[Dict]) -> List[str]:
+    """
+    OpenClaw-specific suspicious subagent fanout detection.
+    Flags rapid spawning of multiple child sessions from one requester session.
+    """
+    FANOUT_THRESHOLD = 3
+    WINDOW_MINUTES = 5
+
+    subagents_by_requester: Dict[str, List[Dict]] = defaultdict(list)
+    for event in events:
+        if not is_openclaw_event(event, "subagent"):
+            continue
+        if event.get("action") != "spawn":
+            continue
+        requester_session_key = event.get("requester_session_key") or openclaw_session_key(event)
+        if requester_session_key:
+            subagents_by_requester[str(requester_session_key)].append(event)
+
+    detected = set()
+    for spawn_events in subagents_by_requester.values():
+        ordered = sorted(spawn_events, key=lambda event: event["timestamp"])
+        window_start = 0
+        for window_end, event in enumerate(ordered):
+            while minutes_between(ordered[window_start], event) > WINDOW_MINUTES:
+                window_start += 1
+
+            candidate_events = ordered[window_start:window_end + 1]
+            unique_children = {candidate.get("child_session_key") for candidate in candidate_events}
+            if len(candidate_events) >= FANOUT_THRESHOLD and len(unique_children) >= FANOUT_THRESHOLD:
+                for candidate in candidate_events:
+                    detected.add(candidate["event_id"])
+
+    return list(detected)
+
+
+def detect_openclaw_restart_loop(events: List[Dict]) -> List[str]:
+    """
+    OpenClaw-specific suspicious restart loop detection.
+    Flags repeated restart scheduling in one session over a short interval.
+    """
+    RESTART_THRESHOLD = 2
+    WINDOW_MINUTES = 5
+
+    restarts_by_session: Dict[str, List[Dict]] = defaultdict(list)
+    for event in events:
+        if not is_openclaw_event(event, "restart"):
+            continue
+        session_key = openclaw_session_key(event)
+        if session_key:
+            restarts_by_session[session_key].append(event)
+
+    detected = set()
+    for restart_events in restarts_by_session.values():
+        ordered = sorted(restart_events, key=lambda event: event["timestamp"])
+        window_start = 0
+        for window_end, event in enumerate(ordered):
+            while minutes_between(ordered[window_start], event) > WINDOW_MINUTES:
+                window_start += 1
+            if window_end - window_start + 1 >= RESTART_THRESHOLD:
+                for candidate in ordered[window_start:window_end + 1]:
+                    detected.add(candidate["event_id"])
+
+    return list(detected)
+
+
 # ═══ Anomaly Detection ═══════════════════════════════════════════════════════
 
 class AnomalyDetector:
@@ -420,6 +728,14 @@ DETECTION_RULES = [
     {"id": "RULE-005", "name": "PowerShell Abuse",       "mitre": "T1059.001", "fn": detect_powershell_abuse},
     {"id": "RULE-006", "name": "Privilege Escalation",   "mitre": "T1068",     "fn": detect_privilege_escalation},
     {"id": "RULE-007", "name": "Fileless LOLBins",       "mitre": "T1218",     "fn": detect_fileless_lolbins},
+    {"id": "RULE-101", "name": "OpenClaw Dangerous Exec",      "mitre": "T1059", "fn": detect_openclaw_dangerous_exec},
+    {"id": "RULE-102", "name": "OpenClaw Sensitive Config",    "mitre": "T1098", "fn": detect_openclaw_sensitive_config_change},
+    {"id": "RULE-103", "name": "OpenClaw Skill Source Drift",  "mitre": "T1587", "fn": detect_openclaw_skill_source_drift},
+    {"id": "RULE-104", "name": "OpenClaw Policy Denials",      "mitre": "T1622", "fn": detect_openclaw_repeated_policy_denials},
+    {"id": "RULE-105", "name": "OpenClaw Tool Burst",          "mitre": "T1082", "fn": detect_openclaw_tool_burst},
+    {"id": "RULE-106", "name": "OpenClaw Pairing Churn",       "mitre": "T1078", "fn": detect_openclaw_pairing_churn},
+    {"id": "RULE-107", "name": "OpenClaw Subagent Fanout",     "mitre": "T1098", "fn": detect_openclaw_subagent_fanout},
+    {"id": "RULE-108", "name": "OpenClaw Restart Loop",        "mitre": "T1529", "fn": detect_openclaw_restart_loop},
 ]
 
 
