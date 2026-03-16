@@ -19,10 +19,11 @@ from collections import defaultdict
 from typing import Dict, List, Any
 
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 DEFAULT_OUTPUT = os.path.join(PROJECT_ROOT, "data", "botsv3_qa.json")
 DEFAULT_INPUT_CANDIDATES = [
-    os.path.join(PROJECT_ROOT, "botsv3content"),
+    os.path.join(SCRIPT_DIR, "botsv3content"),
     os.path.join(os.path.expanduser("~"), "Downloads", "botsv3content"),
 ]
 

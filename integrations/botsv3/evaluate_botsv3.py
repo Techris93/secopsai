@@ -17,7 +17,8 @@ import subprocess
 import sys
 
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 EVENTS_FILE = os.path.join(DATA_DIR, "events.json")
 BOTS_FILE = os.path.join(DATA_DIR, "botsv3_events.json")
@@ -27,7 +28,7 @@ UNLABELED_BACKUP = os.path.join(DATA_DIR, "events_unlabeled_eval_temp_backup.jso
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run evaluate.py on BOTSv3 safely")
+    parser = argparse.ArgumentParser(description="Run evaluate.py on optional BOTSv3 data safely")
     parser.add_argument("--verbose", action="store_true", help="Pass --verbose to evaluate.py")
     return parser.parse_args()
 

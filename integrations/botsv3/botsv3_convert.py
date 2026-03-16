@@ -19,7 +19,8 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 DEFAULT_OUTPUT = os.path.join(DATA_DIR, "botsv3_events.json")
 EVENTS_FILE = os.path.join(DATA_DIR, "events.json")
