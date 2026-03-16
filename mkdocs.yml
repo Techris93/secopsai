@@ -1,0 +1,59 @@
+site_name: secopsai
+site_url: https://docs.secopsai.dev
+site_description: Intelligent attack detection for OpenClaw audit logs.
+site_author: secopsai
+docs_dir: docs
+site_dir: site
+strict: false
+exclude_docs: |
+  BLOG-TEMPLATES.md
+  BRAND-DESIGN-SYSTEM.md
+  WEBSITE-PLAN.md
+
+theme:
+  name: material
+  favicon: favicon.svg
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: black
+      accent: pink
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Benchmark Data: benchmark-data.md
+  - Rules Registry: rules-registry.md
+  - API Reference: api-reference.md
+  - Deployment Guide: deployment-guide.md
+  - Example Attack Scenarios: example-attack-scenarios.md
+  - Upgrade Notes: upgrade.md
+  - Quick Reference: quick-reference.md
+  - Launch Checklist: launch-checklist.md
+  - Launch Master Guide: launch-master-guide.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Techris93/secops-autoresearch

@@ -1,6 +1,7 @@
 data/
 __pycache__/
 *.pyc
+site/
 
 # Local OpenClaw findings artifacts
 data/openclaw/findings/*.json

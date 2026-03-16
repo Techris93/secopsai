@@ -68,6 +68,25 @@ Recall: 1.000000
 False Positive Rate: 0.000000
 ```
 
+## Docs Site
+
+This repo now supports a MkDocs documentation site.
+
+Local preview:
+
+```bash
+python -m pip install -r requirements-docs.txt
+mkdocs serve
+```
+
+Static build:
+
+```bash
+mkdocs build
+```
+
+The GitHub Pages deployment workflow is defined in `.github/workflows/docs-pages.yml`.
+
 ## Optional BOTSv3 Integration
 
 BOTSv3 has been separated from the core loop and moved under:

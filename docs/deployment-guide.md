@@ -566,7 +566,7 @@ for i in range(0, len(events), batch_size):
 ## Support & Updates
 
 - **Release Notes**: https://github.com/Techris93/secopsai/releases
-- **Upgrade Guide**: See [UPGRADE.md](../UPGRADE.md)
+- **Upgrade Guide**: See [Upgrade Notes](upgrade.md)
 - **Issue Tracking**: [GitHub Issues](https://github.com/Techris93/secopsai/issues)
 
 ---
