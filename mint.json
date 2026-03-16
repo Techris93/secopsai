@@ -10,7 +10,7 @@
   "navigation": [
     {
       "group": "Overview",
-      "pages": ["index", "docs/getting-started"]
+      "pages": ["introduction", "docs/getting-started"]
     },
     {
       "group": "Product",
