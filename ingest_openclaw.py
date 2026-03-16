@@ -13,7 +13,7 @@ from collections import Counter
 from typing import Callable, Dict, Iterable, List
 
 import openclaw_prepare
-from openclaw_adapters import common, config_events, restart_events, session_hooks, subagent_hooks, tool_events
+from openclaw_adapters import common, config_events, exec_events, pairing_events, restart_events, session_hooks, skills_events, subagent_hooks, tool_events
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -24,7 +24,10 @@ ADAPTERS: Dict[str, tuple[str, Callable[..., List[dict[str, object]]]]] = {
     "agent_events": ("agent-events.jsonl", tool_events.adapt),
     "session_hooks": ("session-hooks.jsonl", session_hooks.adapt),
     "subagent_hooks": ("subagent-hooks.jsonl", subagent_hooks.adapt),
+    "pairing_events": ("pairing-events.jsonl", pairing_events.adapt),
+    "skills_events": ("skills-events.jsonl", skills_events.adapt),
     "config_audit": ("config-audit.jsonl", config_events.adapt),
+    "exec_events": ("exec-events.jsonl", exec_events.adapt),
     "restart_sentinels": ("restart-sentinels.jsonl", restart_events.adapt),
 }
 
@@ -35,7 +38,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--agent-events", action="append", default=[], help="Path to agent event JSONL (repeatable)")
     parser.add_argument("--session-hooks", action="append", default=[], help="Path to session hook JSONL (repeatable)")
     parser.add_argument("--subagent-hooks", action="append", default=[], help="Path to subagent hook JSONL (repeatable)")
+    parser.add_argument("--pairing-events", action="append", default=[], help="Path to pairing event JSONL (repeatable)")
+    parser.add_argument("--skills-events", action="append", default=[], help="Path to skill event JSONL (repeatable)")
     parser.add_argument("--config-audit", action="append", default=[], help="Path to config audit JSONL (repeatable)")
+    parser.add_argument("--exec-events", action="append", default=[], help="Path to exec event JSONL (repeatable)")
     parser.add_argument("--restart-sentinels", action="append", default=[], help="Path to restart sentinel JSONL (repeatable)")
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help="Output audit JSONL path")
     parser.add_argument("--append", action="store_true", help="Append to the output file instead of replacing it")
@@ -51,7 +57,10 @@ def _resolve_surface_paths(args: argparse.Namespace) -> Dict[str, List[str]]:
         "agent_events": list(args.agent_events),
         "session_hooks": list(args.session_hooks),
         "subagent_hooks": list(args.subagent_hooks),
+        "pairing_events": list(args.pairing_events),
+        "skills_events": list(args.skills_events),
         "config_audit": list(args.config_audit),
+        "exec_events": list(args.exec_events),
         "restart_sentinels": list(args.restart_sentinels),
     }
 

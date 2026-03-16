@@ -154,6 +154,13 @@ Generate grouped local findings from the replay bundle:
 python openclaw_findings.py
 ```
 
+Build a labeled attack-mix benchmark from benign OpenClaw telemetry plus simulated attacks:
+
+```bash
+python generate_openclaw_attack_mix.py --stats
+python evaluate_openclaw.py --labeled data/openclaw/replay/labeled/attack_mix.json --unlabeled data/openclaw/replay/unlabeled/attack_mix.json --mode benchmark --verbose
+```
+
 This writes a timestamped findings bundle and updates a local SQLite store under:
 
 - `data/openclaw/findings/`
@@ -200,6 +207,12 @@ files for these surfaces under a directory such as `data/openclaw/native/`:
 - `subagent-hooks.jsonl`
 - `config-audit.jsonl`
 - `restart-sentinels.jsonl`
+
+Optional richer native surfaces supported by the ingester:
+
+- `exec-events.jsonl`
+- `pairing-events.jsonl`
+- `skills-events.jsonl`
 
 Then ingest them into a detector-ready audit bundle:
 

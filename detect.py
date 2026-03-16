@@ -147,6 +147,10 @@ def extract_command_text(event: Dict[str, Any]) -> str:
             return value
     return ""
 
+
+def is_openclaw_exec_like(event: Dict[str, Any]) -> bool:
+    return is_openclaw_event(event, "tool") or is_openclaw_event(event, "exec")
+
 # ═══ Detection Rules ═════════════════════════════════════════════════════════
 # Each rule has:
 #   - id, name, mitre: metadata
@@ -446,8 +450,12 @@ def detect_openclaw_dangerous_exec(events: List[Dict]) -> List[str]:
     suspicious_patterns = [
         r"(?i)curl\s+.*https?://.*\|\s*(bash|sh)",
         r"(?i)wget\s+.*https?://.*\|\s*(bash|sh)",
+        r"(?i)bash\s+-c\s+.*curl",
+        r"(?i)chmod\s+\+x\s+.*&&\s*(bash|sh)",
         r"(?i)\bnc\b.*\s-e\s",
         r"(?i)\bssh\s+root@",
+        r"(?i)\bscp\b.*root@",
+        r"(?i)\brm\s+-rf\s+/(?!Users|tmp)",
         r"(?i)authorization:\s*bearer",
     ]
 
@@ -455,9 +463,10 @@ def detect_openclaw_dangerous_exec(events: List[Dict]) -> List[str]:
 
     detected = []
     for event in events:
-        if not is_openclaw_event(event, "tool"):
+        if not is_openclaw_exec_like(event):
             continue
-        if event.get("tool_name") not in DANGEROUS_TOOL_NAMES:
+        tool_name = event.get("tool_name")
+        if is_openclaw_event(event, "tool") and tool_name not in DANGEROUS_TOOL_NAMES:
             continue
 
         command = extract_command_text(event)
@@ -567,12 +576,13 @@ def detect_openclaw_tool_burst(events: List[Dict]) -> List[str]:
     WINDOW_MINUTES = 2
     MIN_UNIQUE_TOOLS = 4
     MIN_MUTATING_EVENTS = 3
+    RISKY_SEVERITY_HINTS = {"medium", "high", "critical"}
 
     tool_starts_by_session: Dict[str, List[Dict]] = defaultdict(list)
     for event in events:
         if not is_openclaw_event(event, "tool"):
             continue
-        if event.get("action") not in {"start", "end"}:
+        if event.get("action") != "start":
             continue
         session_key = openclaw_session_key(event)
         if session_key:
@@ -593,6 +603,15 @@ def detect_openclaw_tool_burst(events: List[Dict]) -> List[str]:
 
             unique_tools = {candidate.get("tool_name") for candidate in candidate_events}
             mutating_count = sum(bool(candidate.get("mutating")) for candidate in candidate_events)
+            has_risky_context = any(
+                str(candidate.get("severity_hint") or "").lower() in RISKY_SEVERITY_HINTS
+                or bool(candidate.get("denied"))
+                or str(candidate.get("status") or "").lower() in {"blocked", "failed", "error"}
+                for candidate in candidate_events
+            )
+            if not has_risky_context:
+                continue
+
             if len(unique_tools) >= MIN_UNIQUE_TOOLS or mutating_count >= MIN_MUTATING_EVENTS:
                 for candidate in candidate_events:
                     detected.add(candidate["event_id"])
@@ -704,6 +723,7 @@ def detect_openclaw_restart_loop(events: List[Dict]) -> List[str]:
     """
     RESTART_THRESHOLD = 2
     WINDOW_MINUTES = 5
+    SUSPICIOUS_POLICY_DECISIONS = {"forced", "deny", "denied", "block", "blocked"}
 
     restarts_by_session: Dict[str, List[Dict]] = defaultdict(list)
     for event in events:
@@ -720,11 +740,88 @@ def detect_openclaw_restart_loop(events: List[Dict]) -> List[str]:
         for window_end, event in enumerate(ordered):
             while minutes_between(ordered[window_start], event) > WINDOW_MINUTES:
                 window_start += 1
-            if window_end - window_start + 1 >= RESTART_THRESHOLD:
+            candidate_events = ordered[window_start:window_end + 1]
+            if len(candidate_events) < RESTART_THRESHOLD:
+                continue
+
+            has_suspicious_context = any(
+                str(candidate.get("policy_decision") or "").lower() in SUSPICIOUS_POLICY_DECISIONS
+                or str(candidate.get("status") or "").lower() in {"failed", "error", "blocked"}
+                or str(candidate.get("severity_hint") or "").lower() in {"medium", "high", "critical"}
+                for candidate in candidate_events
+            )
+            if not has_suspicious_context:
+                continue
+
+            if len(candidate_events) >= RESTART_THRESHOLD:
                 for candidate in ordered[window_start:window_end + 1]:
                     detected.add(candidate["event_id"])
 
     return list(detected)
+
+
+def detect_openclaw_data_exfiltration(events: List[Dict]) -> List[str]:
+    """
+    OpenClaw-specific data exfiltration detection.
+    Flags high-confidence command patterns that indicate staging and outbound transfer.
+    """
+    exfil_patterns = [
+        r"(?i)curl\s+.*\s-F\s+.*@",
+        r"(?i)wget\s+--post-file",
+        r"(?i)rclone\s+(copy|sync)\s+.*(remote:|s3:|gdrive:)",
+        r"(?i)rsync\s+.*\s+\w+@[^\s:]+:",
+        r"(?i)nc\s+[^\s]+\s+\d+\s*<\s*[^\s]+",
+        r"(?i)(tar|zip)\s+.*&&\s*(curl|wget)\s+",
+        r"(?i)python\s+-c\s+.*(requests|httpx).*post",
+        r"(?i)exfil(trat(e|ion))?",
+    ]
+
+    detected = []
+    for event in events:
+        if not is_openclaw_exec_like(event):
+            continue
+
+        command = extract_command_text(event)
+        if not command:
+            continue
+
+        if any(re.search(pattern, command) for pattern in exfil_patterns):
+            detected.append(event["event_id"])
+
+    return detected
+
+
+def detect_openclaw_malware_presence(events: List[Dict]) -> List[str]:
+    """
+    OpenClaw-specific malware presence detection.
+    Flags command-line or skill indicators tied to known malware tooling/families.
+    """
+    malware_patterns = [
+        r"(?i)\bmimikatz\b",
+        r"(?i)\bcobalt\s*strike\b|\bbeacon\b",
+        r"(?i)\bmeterpreter\b|\bmsfvenom\b|\bmetasploit\b",
+        r"(?i)\bxmrig\b|\bminerd\b|\bcoinhive\b",
+        r"(?i)\bransom(ware)?\b|\bencrypt(or|ion)\b",
+        r"(?i)\bnjrat\b|\bquasar\b|\bdarkcomet\b|\bremcos\b",
+        r"(?i)invoke-mimikatz|sekurlsa::logonpasswords",
+    ]
+
+    detected = []
+    for event in events:
+        if is_openclaw_exec_like(event):
+            command = extract_command_text(event)
+            if command and any(re.search(pattern, command) for pattern in malware_patterns):
+                detected.append(event["event_id"])
+                continue
+
+        if is_openclaw_event(event, "skills"):
+            skill_key = str(event.get("skill_key") or "")
+            skill_source = str(event.get("skill_source") or "")
+            combined = f"{skill_key} {skill_source}"
+            if any(re.search(pattern, combined) for pattern in malware_patterns):
+                detected.append(event["event_id"])
+
+    return detected
 
 
 # ═══ Anomaly Detection ═══════════════════════════════════════════════════════
@@ -776,6 +873,8 @@ DETECTION_RULES = [
     {"id": "RULE-106", "name": "OpenClaw Pairing Churn",       "mitre": "T1078", "fn": detect_openclaw_pairing_churn},
     {"id": "RULE-107", "name": "OpenClaw Subagent Fanout",     "mitre": "T1098", "fn": detect_openclaw_subagent_fanout},
     {"id": "RULE-108", "name": "OpenClaw Restart Loop",        "mitre": "T1529", "fn": detect_openclaw_restart_loop},
+    {"id": "RULE-109", "name": "OpenClaw Data Exfiltration",   "mitre": "T1048", "fn": detect_openclaw_data_exfiltration},
+    {"id": "RULE-110", "name": "OpenClaw Malware Presence",    "mitre": "T1204", "fn": detect_openclaw_malware_presence},
 ]
 
 
