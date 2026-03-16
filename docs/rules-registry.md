@@ -173,7 +173,7 @@ These rules detect attacks specific to the OpenClaw agent framework.
 **Pattern Matches:**
 
 - `curl | bash` — shell injection
-- `ssh root@<host>` — root access
+- `ssh root@[host]` — root access
 - `scp` to production — artifact theft
 - `rm -rf /` — destructive commands
 - Bearer tokens in plaintext — credential exposure
@@ -267,7 +267,7 @@ python generate_openclaw_attack_mix.py --stats  # Generates 2 dangerous_exec eve
 
 **Attack:** Rapid policy denials suggesting permission brute-forcing
 
-**Pattern:** 3+ denials of same denial type in <10 min window
+**Pattern:** 3+ denials of same denial type in under 10 minutes
 
 **Examples:**
 
@@ -296,7 +296,7 @@ python generate_openclaw_attack_mix.py --stats  # Generates 2 dangerous_exec eve
 
 **Pattern:**
 
-- 5+ tool starts in <5 min window
+- 5+ tool starts in under 5 minutes
 - Plus: 4+ unique tool types OR 3+ mutating operations
 
 **Requires Context (to avoid false positives):**
@@ -329,7 +329,7 @@ python generate_openclaw_attack_mix.py --stats  # Generates 2 dangerous_exec eve
 
 **Attack:** Rapid pairing approval/denial cycles (authentication bypass attempts)
 
-**Pattern:** start → deny → approve cycle in <10 min
+**Pattern:** start → deny → approve cycle in under 10 minutes
 
 **Why it matters:** Attacker cycles approval states to test boundaries
 
@@ -351,7 +351,7 @@ python generate_openclaw_attack_mix.py --stats  # Generates 2 dangerous_exec eve
 
 **Attack:** Excessive subagent spawning (lateral movement/escalation)
 
-**Pattern:** 3+ child subagents spawned from same requester in <5 min
+**Pattern:** 3+ child subagents spawned from same requester in under 5 minutes
 
 **Why it matters:** Creates execution parallelism, hard to audit
 
@@ -373,7 +373,7 @@ python generate_openclaw_attack_mix.py --stats  # Generates 2 dangerous_exec eve
 
 **Attack:** Rapid restart cycles causing denial of service
 
-**Pattern:** 2+ restarts in <5 min window
+**Pattern:** 2+ restarts in under 5 minutes
 
 **Requires Context (to avoid false positives):**
 
@@ -410,7 +410,7 @@ python generate_openclaw_attack_mix.py --stats  # Generates 2 restart_loop event
 
 **Pattern Matches:**
 
-- `curl -F @<file>` — HTTP form upload
+- `curl -F @[file]` — HTTP form upload
 - `wget --post-file` — HTTP post
 - `rclone copy|sync` to remote storage
 - `rsync` to remote host

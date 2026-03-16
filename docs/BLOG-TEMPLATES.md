@@ -386,9 +386,9 @@ docker-compose up -d
 
 **Performance:**
 
-- Processing time: <50ms per event
+- Processing time: &lt;50ms per event
 - Memory usage: ~200MB baseline
-- CPU: <5% utilization
+- CPU: &lt;5% utilization
 - Uptime: 99.97% (11 months)
 
 ## What's Next
@@ -398,7 +398,7 @@ We're planning:
 - [ ] Extend with custom rules for our specific applications
 - [ ] Integrate into incident response playbooks
 - [ ] Train security team on findings interpretation
-- [ ] Establish SLA: "Critical findings < 5 minute response"
+- [ ] Establish SLA: "Critical findings &lt; 5 minute response"
 
 ## Final Thoughts
 

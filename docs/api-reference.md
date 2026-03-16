@@ -474,7 +474,7 @@ def example(
 
 | Operation                 | Time (80 events) | Memory |
 | ------------------------- | ---------------- | ------ |
-| `run_detection()`         | <1ms             | <10MB  |
+| `run_detection()`         | &lt;1ms          | &lt;10MB |
 | `evaluate_benchmark()`    | ~100ms           | ~50MB  |
 | `build_attack_records()`  | ~50ms            | ~30MB  |
 | `build_findings_report()` | ~20ms            | ~15MB  |
