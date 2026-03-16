@@ -10,7 +10,7 @@
   "navigation": [
     {
       "group": "Overview",
-      "pages": ["README", "docs/getting-started"]
+      "pages": ["index", "docs/getting-started"]
     },
     {
       "group": "Product",
@@ -29,15 +29,15 @@
   "topbarLinks": [
     {
       "name": "GitHub",
-      "url": "https://github.com/Techris93/secopsai"
+      "url": "https://github.com/Techris93/secops-autoresearch"
     },
     {
       "name": "Discussions",
-      "url": "https://github.com/Techris93/secopsai/discussions"
+      "url": "https://github.com/Techris93/secops-autoresearch/discussions"
     }
   ],
   "footerSocials": {
-    "github": "https://github.com/Techris93/secopsai",
+    "github": "https://github.com/Techris93/secops-autoresearch",
     "x": "https://twitter.com/search?q=secopsai",
     "linkedin": "https://www.linkedin.com/search/results/all/?keywords=secopsai"
   },
