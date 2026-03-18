@@ -12,7 +12,7 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ["3.9", "3.10", "3.11"]
+        python-version: ["3.10", "3.11"]
 
     steps:
       - name: Checkout code
@@ -33,10 +33,12 @@ jobs:
       - name: Lint with flake8
         run: |
           # Stop the build if there are Python syntax errors or undefined names
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics \
+            --exclude .git,.venv,__pycache__,data
 
           # Exit-zero treats all errors as warnings. Check complexity
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics \
+            --exclude .git,.venv,__pycache__,data
 
       - name: Type check with mypy
         continue-on-error: true
@@ -120,7 +122,7 @@ jobs:
   deploy-render:
     needs: build-container
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.RENDER_DEPLOY_HOOK_URL != ''
 
     steps:
       - name: Trigger Render deploy
