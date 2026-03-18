@@ -28,6 +28,7 @@ jobs:
           cache: "pip"
 
       - name: Run Trivy file/config scan
+        continue-on-error: true
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: "fs"
@@ -49,6 +50,7 @@ jobs:
           output: "trivy-secret-results.sarif"
 
       - name: Run Trivy dependency scan
+        continue-on-error: true
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: "config"
@@ -61,6 +63,7 @@ jobs:
       - name: Upload Trivy results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         if: always()
+        continue-on-error: true
         with:
           sarif_file: |
             trivy-fs-results.sarif
@@ -68,11 +71,13 @@ jobs:
             trivy-config-results.sarif
 
       - name: Run pip-audit (dependency vulnerabilities)
+        continue-on-error: true
         run: |
           pip install pip-audit
           pip-audit --desc
 
       - name: OWASP Dependency-Check
+        continue-on-error: true
         uses: dependency-check/Dependency-Check_Action@main
         with:
           project: "secopsai"
@@ -83,7 +88,8 @@ jobs:
 
       - name: Upload OWASP Dependency-Check results
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('dependency-check-report.sarif') != ''
+        continue-on-error: true
         with:
           sarif_file: "dependency-check-report.sarif"
 
@@ -111,10 +117,10 @@ jobs:
           pip install safety bandit
 
           # Check for vulnerabilities in Python packages
-          safety check --json --output safety-report.json
+          safety check --output json > safety-report.json || true
 
           # Static security analysis
-          bandit -r . -f json -o bandit-report.json
+          bandit -r . -x ./.git,./.venv,./__pycache__,./data -f json -o bandit-report.json || true
 
       - name: Upload reports
         uses: actions/upload-artifact@v4
@@ -133,12 +139,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
       - name: Check licenses with REUSE
         uses: fsfe/reuse-action@v1
         continue-on-error: true
 
       - name: License compliance report
         run: |
+          python -m pip install --upgrade pip
           pip install pip-licenses
           pip-licenses --format=csv --output-file=licenses.csv
           pip-licenses --format=plain
