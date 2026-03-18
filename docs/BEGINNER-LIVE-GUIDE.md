@@ -1,4 +1,4 @@
-# Beginner Guide: Run SecOps Autoresearch Live Locally
+# Beginner Guide: Run SecOpsAI Live Locally
 
 This guide shows exactly how to run the product every day, review findings, and triage them.
 
@@ -11,7 +11,7 @@ This guide shows exactly how to run the product every day, review findings, and 
 ## Step 1: Activate your environment
 
 ```bash
-cd /Users/chrixchange/Desktop/antigravity/secops-autoresearch
+cd ~/secopsai
 source .venv/bin/activate
 ```
 

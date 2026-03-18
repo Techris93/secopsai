@@ -189,7 +189,7 @@ Read [Rules Registry](rules-registry.md) to understand what each rule detects an
 
 ### Understand Performance Metrics
 
-See [Benchmark Data](benchmark-data.md) for detailed per-rule breakdown and attack scenarios.
+See [Rules Registry](rules-registry.md) for per-rule detection behavior and tuning guidance.
 
 ### Integrate Into Your Environment
 
@@ -216,7 +216,7 @@ python evaluate.py --labeled data/openclaw/replay/labeled/attack_mix.json --mode
 
 ### Tests fail
 
-Ensure Python 3.8+ and run:
+Ensure Python 3.10+ and run:
 
 ```bash
 pip install --upgrade -r requirements.txt

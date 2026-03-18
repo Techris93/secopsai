@@ -33,8 +33,7 @@ python evaluate.py --labeled data/openclaw/replay/labeled/attack_mix.json --mode
 - Findings export with severity and incident grouping
 - Containerized continuous polling workflow
 
-## Launch Guides
+## Operator Guides
 
-- [Quick Reference](quick-reference.md)
-- [Launch Checklist](launch-checklist.md)
-- [Launch Master Guide](launch-master-guide.md)
+- [Beginner Live Guide](BEGINNER-LIVE-GUIDE.md)
+- [OpenClaw Integration](OpenClaw-Integration.md)

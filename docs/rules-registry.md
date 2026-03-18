@@ -559,4 +559,4 @@ python evaluate.py --labeled data/openclaw/replay/labeled/attack_mix.json --mode
 
 ---
 
-**Next:** Understand [Benchmark Data](benchmark-data.md) or [Deploy to Production](deployment-guide.md)
+**Next:** Review [Getting Started](getting-started.md) or [Deploy to Production](deployment-guide.md)

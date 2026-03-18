@@ -454,16 +454,14 @@ Common exceptions:
 
 ## Type Hints Reference
 
-All functions use Python 3.8+ type hints:
+All functions use Python 3.10+ type hints:
 
 ```python
-from typing import List, Dict, Optional, Tuple
-
 def example(
-    events: List[Dict],
+    events: list[dict],
     threshold: int = 5,
-    verbose: Optional[bool] = None,
-) -> Tuple[List[str], Dict]:
+    verbose: bool | None = None,
+) -> tuple[list[str], dict]:
     """Type-hinted example function"""
     pass
 ```
@@ -472,12 +470,12 @@ def example(
 
 ## Performance Characteristics
 
-| Operation                 | Time (80 events) | Memory |
-| ------------------------- | ---------------- | ------ |
+| Operation                 | Time (80 events) | Memory   |
+| ------------------------- | ---------------- | -------- |
 | `run_detection()`         | &lt;1ms          | &lt;10MB |
-| `evaluate_benchmark()`    | ~100ms           | ~50MB  |
-| `build_attack_records()`  | ~50ms            | ~30MB  |
-| `build_findings_report()` | ~20ms            | ~15MB  |
+| `evaluate_benchmark()`    | ~100ms           | ~50MB    |
+| `build_attack_records()`  | ~50ms            | ~30MB    |
+| `build_findings_report()` | ~20ms            | ~15MB    |
 
 ---
 
