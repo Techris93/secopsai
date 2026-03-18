@@ -1,0 +1,1105 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Intelligent attack detection for OpenClaw audit logs">
+      
+      
+      
+        <link rel="canonical" href="https://docs.secopsai.dev/BEGINNER-LIVE-GUIDE/">
+      
+      
+        <link rel="prev" href="../api-reference/">
+      
+      
+        <link rel="next" href="../OpenClaw-Integration/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+    
+    
+      
+        <title>Beginner Live Guide - secopsai</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="pink" data-md-color-accent="pink">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#beginner-guide-run-secopsai-live-locally" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="secopsai" class="md-header__button md-logo" aria-label="secopsai" data-md-component="logo">
+      
+  <img src="../assets/favicon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            secopsai
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Beginner Live Guide
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="pink" data-md-color-accent="pink"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/Techris93/secopsai" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Techris93/secopsai
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="secopsai" class="md-nav__button md-logo" aria-label="secopsai" data-md-component="logo">
+      
+  <img src="../assets/favicon.svg" alt="logo">
+
+    </a>
+    secopsai
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/Techris93/secopsai" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Techris93/secopsai
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rules-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rules Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Beginner Live Guide
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Beginner Live Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-you-already-have-now" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What you already have now
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-1-activate-your-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Activate your environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-2-run-one-full-live-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Run one full live pipeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-3-review-detections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Review detections
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-4-inspect-one-finding-deeply" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Inspect one finding deeply
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-5-triage-and-document-your-decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 5: Triage and document your decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-6-use-one-daily-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 6: Use one daily command
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-7-automate-daily-run-on-macos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 7: Automate daily run on macOS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-8-simulate-attacks-and-run-auto-research-training" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 8: Simulate attacks and run auto-research training
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-9-use-openclaw-as-a-plugin-now" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 9: Use OpenClaw as a plugin now
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-10-ask-from-whatsapp-style-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 10: Ask from WhatsApp-style commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-11-connect-real-twilio-whatsapp-webhook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 11: Connect real Twilio WhatsApp webhook
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#common-daily-operator-flow-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common daily operator flow (recommended)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#if-something-fails" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        If something fails
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../OpenClaw-Integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenClaw Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-you-already-have-now" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What you already have now
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-1-activate-your-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Activate your environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-2-run-one-full-live-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Run one full live pipeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-3-review-detections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Review detections
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-4-inspect-one-finding-deeply" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Inspect one finding deeply
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-5-triage-and-document-your-decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 5: Triage and document your decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-6-use-one-daily-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 6: Use one daily command
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-7-automate-daily-run-on-macos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 7: Automate daily run on macOS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-8-simulate-attacks-and-run-auto-research-training" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 8: Simulate attacks and run auto-research training
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-9-use-openclaw-as-a-plugin-now" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 9: Use OpenClaw as a plugin now
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-10-ask-from-whatsapp-style-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 10: Ask from WhatsApp-style commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-11-connect-real-twilio-whatsapp-webhook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 11: Connect real Twilio WhatsApp webhook
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#common-daily-operator-flow-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common daily operator flow (recommended)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#if-something-fails" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        If something fails
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="beginner-guide-run-secopsai-live-locally">Beginner Guide: Run SecOpsAI Live Locally</h1>
+<p>This guide shows exactly how to run the product every day, review findings, and triage them.</p>
+<h2 id="what-you-already-have-now">What you already have now</h2>
+<ul>
+<li>Daily runner script: <code>scripts/openclaw_daily.sh</code></li>
+<li>Scheduler installer: <code>scripts/install_openclaw_launchd.sh</code></li>
+<li>Working live pipeline command: <code>python run_openclaw_live.py</code></li>
+</ul>
+<h2 id="step-1-activate-your-environment">Step 1: Activate your environment</h2>
+<pre><code class="language-bash">cd ~/secopsai
+source .venv/bin/activate
+</code></pre>
+<p>Why:</p>
+<ul>
+<li>Uses the project Python environment so all scripts run with the correct dependencies.</li>
+</ul>
+<h2 id="step-2-run-one-full-live-pipeline">Step 2: Run one full live pipeline</h2>
+<pre><code class="language-bash">python run_openclaw_live.py
+</code></pre>
+<p>What this does:</p>
+<ol>
+<li>Exports native OpenClaw telemetry into local files.</li>
+<li>Ingests telemetry into a normalized audit stream.</li>
+<li>Prepares replay files used by detectors.</li>
+<li>Runs live-mode evaluation (<code>evaluate_openclaw.py --mode live</code>).</li>
+<li>Generates findings and updates the local SOC SQLite store.</li>
+</ol>
+<p>Why:</p>
+<ul>
+<li>This is the fastest way to verify end-to-end data flow and detection output.</li>
+</ul>
+<h2 id="step-3-review-detections">Step 3: Review detections</h2>
+<pre><code class="language-bash">python soc_store.py list
+</code></pre>
+<p>What this does:</p>
+<ul>
+<li>Lists finding IDs, severity, current status, and analyst disposition.</li>
+</ul>
+<p>Why:</p>
+<ul>
+<li>Gives you the queue of incidents to triage.</li>
+</ul>
+<h2 id="step-4-inspect-one-finding-deeply">Step 4: Inspect one finding deeply</h2>
+<pre><code class="language-bash">python soc_store.py show FINDING_ID
+</code></pre>
+<p>Example:</p>
+<pre><code class="language-bash">python soc_store.py show OCF-41B2A43C8D2C24EA
+</code></pre>
+<p>What this does:</p>
+<ul>
+<li>Shows event evidence, attack types, matched rules, MITRE mapping, and notes.</li>
+</ul>
+<p>Why:</p>
+<ul>
+<li>Lets you decide whether a finding is a true positive, false positive, or needs more review.</li>
+</ul>
+<h2 id="step-5-triage-and-document-your-decision">Step 5: Triage and document your decision</h2>
+<pre><code class="language-bash">python soc_store.py set-disposition FINDING_ID true_positive
+python soc_store.py set-status FINDING_ID triaged
+python soc_store.py add-note FINDING_ID analyst &quot;validated&quot;
+</code></pre>
+<p>Why:</p>
+<ul>
+<li>Creates an audit trail of analyst decisions.</li>
+<li>Makes future tuning and model calibration better.</li>
+</ul>
+<h2 id="step-6-use-one-daily-command">Step 6: Use one daily command</h2>
+<pre><code class="language-bash">scripts/openclaw_daily.sh --skip-export
+</code></pre>
+<p>What this does:</p>
+<ul>
+<li>Runs the full live pipeline.</li>
+<li>Writes a timestamped log in <code>data/openclaw/logs/</code>.</li>
+<li>Prints the latest findings at the end.</li>
+</ul>
+<p>Why <code>--skip-export</code>:</p>
+<ul>
+<li>Faster daily runs when your native input files are already present.</li>
+</ul>
+<h2 id="step-7-automate-daily-run-on-macos">Step 7: Automate daily run on macOS</h2>
+<p>Install scheduler:</p>
+<pre><code class="language-bash">scripts/install_openclaw_launchd.sh
+</code></pre>
+<p>Check scheduler:</p>
+<pre><code class="language-bash">launchctl list | grep secops.autoresearch.openclaw.daily
+</code></pre>
+<p>Tail logs:</p>
+<pre><code class="language-bash">tail -f data/openclaw/logs/launchd.out.log
+</code></pre>
+<p>Why:</p>
+<ul>
+<li>You get a reliable daily run without manually starting commands.</li>
+</ul>
+<h2 id="step-8-simulate-attacks-and-run-auto-research-training">Step 8: Simulate attacks and run auto-research training</h2>
+<pre><code class="language-bash">scripts/simulate_attacks_and_train.sh
+</code></pre>
+<p>What this does:</p>
+<ol>
+<li>Regenerates deterministic synthetic attacks and benign traffic.</li>
+<li>Runs baseline benchmark with verbose per-rule output.</li>
+<li>Optionally builds OpenClaw attack-mix data.</li>
+<li>Runs quick threshold tuning (<code>tune.py --quick</code>).</li>
+<li>Re-runs benchmark to compare current quality.</li>
+</ol>
+<p>Why:</p>
+<ul>
+<li>This is the fastest safe loop to improve smart detection rules.</li>
+<li>You can iterate using measured F1, precision, and recall instead of guessing.</li>
+</ul>
+<h2 id="step-9-use-openclaw-as-a-plugin-now">Step 9: Use OpenClaw as a plugin now</h2>
+<p>Check malware presence:</p>
+<pre><code class="language-bash">python openclaw_plugin.py check --type malware
+</code></pre>
+<p>Check data exfiltration presence:</p>
+<pre><code class="language-bash">python openclaw_plugin.py check --type exfil
+</code></pre>
+<p>Check both:</p>
+<pre><code class="language-bash">python openclaw_plugin.py check --type both
+</code></pre>
+<p>What this does:</p>
+<ul>
+<li>Reads the local SOC findings store.</li>
+<li>Filters findings for malware/exfil indicators.</li>
+<li>Returns a compact machine-friendly JSON response (good for integrations).</li>
+</ul>
+<p>Why:</p>
+<ul>
+<li>Gives you a stable plugin interface for OpenClaw now.</li>
+<li>Future integrations can call this interface without changing core detection logic.</li>
+</ul>
+<h2 id="step-10-ask-from-whatsapp-style-commands">Step 10: Ask from WhatsApp-style commands</h2>
+<p>Local simulation (no external setup needed):</p>
+<pre><code class="language-bash">python whatsapp_openclaw_router.py --message &quot;check malware&quot;
+python whatsapp_openclaw_router.py --message &quot;check exfil&quot;
+python whatsapp_openclaw_router.py --message &quot;show OCF-41B2A43C8D2C24EA&quot;
+</code></pre>
+<p>Run webhook server for external provider integration later:</p>
+<pre><code class="language-bash">python whatsapp_openclaw_router.py --serve --host 127.0.0.1 --port 8090
+</code></pre>
+<p>What this does:</p>
+<ul>
+<li>Parses simple chat commands.</li>
+<li>Calls the plugin interface.</li>
+<li>Returns a concise response string (ready for WhatsApp reply messages).</li>
+</ul>
+<p>Why:</p>
+<ul>
+<li>Lets you keep your WhatsApp workflow while the backend remains local and secure.</li>
+<li>Makes provider integration (Twilio/Meta/API gateway) a thin transport layer.</li>
+</ul>
+<h2 id="step-11-connect-real-twilio-whatsapp-webhook">Step 11: Connect real Twilio WhatsApp webhook</h2>
+<p>Run bridge locally:</p>
+<pre><code class="language-bash">scripts/run_twilio_whatsapp_bridge.sh
+</code></pre>
+<p>Expose local port with ngrok in a second terminal:</p>
+<pre><code class="language-bash">ngrok http 8091
+</code></pre>
+<p>Set your public URL for signature verification (replace with your ngrok URL):</p>
+<pre><code class="language-bash">export SECOPS_PUBLIC_WEBHOOK_URL=&quot;https://YOUR-NGROK-ID.ngrok-free.app/twilio/whatsapp&quot;
+</code></pre>
+<p>Set Twilio auth token (from Twilio console):</p>
+<pre><code class="language-bash">export SECOPS_TWILIO_AUTH_TOKEN=&quot;YOUR_TWILIO_AUTH_TOKEN&quot;
+</code></pre>
+<p>In Twilio WhatsApp Sandbox configuration:</p>
+<ul>
+<li>Set "When a message comes in" webhook to:
+  <code>https://YOUR-NGROK-ID.ngrok-free.app/twilio/whatsapp</code></li>
+<li>Method: <code>HTTP POST</code></li>
+</ul>
+<p>What this does:</p>
+<ul>
+<li>Twilio sends WhatsApp messages to your local bridge endpoint.</li>
+<li>Bridge verifies Twilio signature.</li>
+<li>Bridge routes text to your command handler (<code>check malware</code>, <code>check exfil</code>, etc.).</li>
+<li>Bridge returns TwiML reply that Twilio delivers back to WhatsApp.</li>
+</ul>
+<p>Why:</p>
+<ul>
+<li>You can ask OpenClaw security questions directly in WhatsApp.</li>
+<li>Security checks remain local in your SecOps runtime.</li>
+</ul>
+<p>Local testing without Twilio (development only):</p>
+<pre><code class="language-bash">export SECOPS_ALLOW_UNSIGNED=1
+curl -X POST http://127.0.0.1:8091/twilio/whatsapp \
+    -H &quot;Content-Type: application/x-www-form-urlencoded&quot; \
+    --data &quot;Body=check+malware&quot;
+</code></pre>
+<p>Important:</p>
+<ul>
+<li>Keep <code>SECOPS_ALLOW_UNSIGNED=0</code> in production.</li>
+</ul>
+<h2 id="common-daily-operator-flow-recommended">Common daily operator flow (recommended)</h2>
+<pre><code class="language-bash"># 1) Run pipeline (or let schedule run it)
+scripts/openclaw_daily.sh --skip-export
+
+# 2) List findings
+python soc_store.py list
+
+# 3) Triage top 1-3 HIGH findings
+python soc_store.py show FINDING_ID
+python soc_store.py set-disposition FINDING_ID true_positive
+python soc_store.py set-status FINDING_ID triaged
+python soc_store.py add-note FINDING_ID analyst &quot;validated&quot;
+</code></pre>
+<h2 id="if-something-fails">If something fails</h2>
+<ul>
+<li>Missing venv: run <code>source .venv/bin/activate</code></li>
+<li>No findings generated: run <code>python run_openclaw_live.py --verbose</code> and inspect output</li>
+<li>Scheduler not firing: unload/load plist again:</li>
+</ul>
+<pre><code class="language-bash">launchctl unload ~/Library/LaunchAgents/com.secops.autoresearch.openclaw.daily.plist
+launchctl load ~/Library/LaunchAgents/com.secops.autoresearch.openclaw.daily.plist
+</code></pre>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.top", "navigation.instant", "search.highlight"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="secopsai shield">
+  <defs>
+    <linearGradient id="shield-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#D81B60" />
+      <stop offset="100%" stop-color="#7A143D" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#111111" />
+  <path d="M32 10 48 16v13c0 11.2-6.8 18.9-16 24-9.2-5.1-16-12.8-16-24V16l16-6Z" fill="url(#shield-gradient)" />
+  <path d="M32 19c4.8 0 8.7 3.9 8.7 8.7 0 5.9-4.4 10.4-8.7 14.6-4.3-4.2-8.7-8.7-8.7-14.6C23.3 22.9 27.2 19 32 19Z" fill="#FFFFFF" opacity="0.96" />
+  <path d="M32 23.4 34 27.5l4.5.6-3.2 3.1.8 4.4-4.1-2.2-4.1 2.2.8-4.4-3.2-3.1 4.5-.6 2-4.1Z" fill="#D81B60" />
+</svg>

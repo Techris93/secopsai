@@ -1,0 +1,1248 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Intelligent attack detection for OpenClaw audit logs">
+      
+      
+      
+        <link rel="canonical" href="https://docs.secopsai.dev/getting-started/">
+      
+      
+        <link rel="prev" href="..">
+      
+      
+        <link rel="next" href="../rules-registry/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+    
+    
+      
+        <title>Getting Started - secopsai</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="pink" data-md-color-accent="pink">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#getting-started-with-secopsai" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="secopsai" class="md-header__button md-logo" aria-label="secopsai" data-md-component="logo">
+      
+  <img src="../assets/favicon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            secopsai
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Getting Started
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="pink" data-md-color-accent="pink"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/Techris93/secopsai" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Techris93/secopsai
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="secopsai" class="md-nav__button md-logo" aria-label="secopsai" data-md-component="logo">
+      
+  <img src="../assets/favicon.svg" alt="logo">
+
+    </a>
+    secopsai
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/Techris93/secopsai" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Techris93/secopsai
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-youll-learn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What You'll Learn
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#30-second-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        30-Second Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#install-2-minutes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install (2 minutes)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Install (2 minutes)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-1-one-command-setup-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 1: One-Command Setup (Recommended)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-2-manual-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 2: Manual Setup
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-your-first-detection-1-minute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run Your First Detection (1 minute)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Run Your First Detection (1 minute)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#generate-a-benchmark-corpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generate a Benchmark Corpus
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#evaluate-detection-accuracy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evaluate Detection Accuracy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#run-on-live-telemetry-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run on Live Telemetry (Optional)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#understand-your-first-findings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Understand Your First Findings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next Steps
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Next Steps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#learn-more-about-the-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Learn More About the Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#understand-performance-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Understand Performance Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#integrate-into-your-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integrate Into Your Environment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#customize-detection-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Customize Detection Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#openclaw-cli-not-found" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "OpenClaw CLI not found"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#no-findings-detected-in-live-telemetry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "No findings detected in live telemetry"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests-fail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tests fail
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getting-help" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Getting Help
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rules-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rules Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../BEGINNER-LIVE-GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Beginner Live Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../OpenClaw-Integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenClaw Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-youll-learn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What You'll Learn
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#30-second-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        30-Second Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#install-2-minutes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install (2 minutes)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Install (2 minutes)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-1-one-command-setup-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 1: One-Command Setup (Recommended)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-2-manual-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 2: Manual Setup
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-your-first-detection-1-minute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run Your First Detection (1 minute)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Run Your First Detection (1 minute)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#generate-a-benchmark-corpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generate a Benchmark Corpus
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#evaluate-detection-accuracy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evaluate Detection Accuracy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#run-on-live-telemetry-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run on Live Telemetry (Optional)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#understand-your-first-findings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Understand Your First Findings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next Steps
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Next Steps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#learn-more-about-the-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Learn More About the Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#understand-performance-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Understand Performance Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#integrate-into-your-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integrate Into Your Environment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#customize-detection-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Customize Detection Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#openclaw-cli-not-found" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "OpenClaw CLI not found"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#no-findings-detected-in-live-telemetry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "No findings detected in live telemetry"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests-fail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tests fail
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getting-help" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Getting Help
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="getting-started-with-secopsai">Getting Started with secopsai</h1>
+<p>Welcome! This guide will get you detecting security attacks in OpenClaw audit logs in under 5 minutes.</p>
+<h2 id="what-youll-learn">What You'll Learn</h2>
+<ul>
+<li>How to install secopsai</li>
+<li>How to run your first detection</li>
+<li>How to understand findings</li>
+<li>Where to go next</li>
+</ul>
+<h2 id="30-second-overview">30-Second Overview</h2>
+<p><strong>secopsai</strong> is a detection pipeline that identifies security attacks in <a href="https://docs.openclaw.ai">OpenClaw</a> audit logs. It comes with:</p>
+<ul>
+<li><strong>12 battle-tested detection rules</strong> covering dangerous execution, policy abuse, data exfiltration, and malware</li>
+<li><strong>Reproducible benchmark corpus</strong> with 80 labeled events for validation</li>
+<li><strong>Live telemetry support</strong> for detecting attacks in your OpenClaw workspace</li>
+<li><strong>Production-ready findings reports</strong> with severity and incident deduplication</li>
+</ul>
+<h2 id="install-2-minutes">Install (2 minutes)</h2>
+<h3 id="option-1-one-command-setup-recommended">Option 1: One-Command Setup (Recommended)</h3>
+<p>macOS/Linux:</p>
+<pre><code class="language-bash">curl -fsSL https://secopsai.dev/setup.sh | sh
+</code></pre>
+<p>Or clone the repo:</p>
+<pre><code class="language-bash">git clone https://github.com/Techris93/secopsai.git
+cd secopsai
+bash setup.sh
+</code></pre>
+<p>The setup script will:</p>
+<ul>
+<li>✓ Check prerequisites (Python 3, pip, Git, OpenClaw CLI)</li>
+<li>✓ Create isolated Python environment</li>
+<li>✓ Ask which features to enable</li>
+<li>✓ Generate benchmark corpus</li>
+<li>✓ Run validation tests</li>
+</ul>
+<h3 id="option-2-manual-setup">Option 2: Manual Setup</h3>
+<pre><code class="language-bash">git clone https://github.com/Techris93/secopsai.git
+cd secopsai
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install -r requirements.txt
+
+python -m pytest tests/ -v  # Verify installation
+</code></pre>
+<h2 id="run-your-first-detection-1-minute">Run Your First Detection (1 minute)</h2>
+<h3 id="generate-a-benchmark-corpus">Generate a Benchmark Corpus</h3>
+<p>Create a reproducible labeled attack dataset:</p>
+<pre><code class="language-bash">python generate_openclaw_attack_mix.py --stats
+</code></pre>
+<p>Output:</p>
+<pre><code>┌──────────────────────────────────────────┐
+│ Attack-Mix Benchmark Generator           │
+├──────────────────────────────────────────┤
+│ Base benign events:    58                │
+│ Simulated attacks:     22                │
+│ Total events:          80                │
+│ Timestamp range:       2 hours           │
+└──────────────────────────────────────────┘
+
+Attack Types:
+  ✓ Dangerous Exec (2 events)
+  ✓ Sensitive Config (1 event)
+  ✓ Skill Source Drift (1 event)
+  ✓ Policy Denial Churn (1 event)
+  ✓ Tool Burst (2 events)
+  ✓ Pairing Churn (1 event)
+  ✓ Subagent Fanout (2 events)
+  ✓ Restart Loop (2 events)
+  ✓ Data Exfiltration (3 events)
+  ✓ Malware Presence (2 events)
+
+Files written:
+  ✓ data/openclaw/replay/labeled/attack_mix.json
+  ✓ data/openclaw/replay/unlabeled/attack_mix.json
+</code></pre>
+<h3 id="evaluate-detection-accuracy">Evaluate Detection Accuracy</h3>
+<pre><code class="language-bash">python evaluate.py \
+  --labeled data/openclaw/replay/labeled/attack_mix.json \
+  --unlabeled data/openclaw/replay/unlabeled/attack_mix.json \
+  --mode benchmark --verbose
+</code></pre>
+<p>Expected result:</p>
+<pre><code>┌─────────────────────────────────────────────┐
+│ OpenClaw Attack Detection                   │
+├─────────────────────────────────────────────┤
+│ F1 Score:       1.000000  ✓                │
+│ Precision:      1.000000  ✓                │
+│ Recall:         1.000000  ✓                │
+│ False Positive Rate:  0.000000             │
+│                                             │
+│ True Positives:       22  (attacks caught) │
+│ False Positives:       0  (zero noise)     │
+│ False Negatives:       0  (nothing missed) │
+│ True Negatives:       58  (benign OK)      │
+└─────────────────────────────────────────────┘
+</code></pre>
+<p>Perfect score! Your detection pipeline is ready.</p>
+<h3 id="run-on-live-telemetry-optional">Run on Live Telemetry (Optional)</h3>
+<p>If you have OpenClaw installed with audit logs in <code>~/.openclaw/</code>:</p>
+<pre><code class="language-bash">python detect.py
+</code></pre>
+<p>This will:</p>
+<ol>
+<li>Export your local OpenClaw audit logs</li>
+<li>Run detection rules</li>
+<li>Output findings in <code>findings.json</code></li>
+</ol>
+<h2 id="understand-your-first-findings">Understand Your First Findings</h2>
+<p>The <code>findings.json</code> file contains detected attacks with context:</p>
+<pre><code class="language-json">{
+  &quot;total_findings&quot;: 22,
+  &quot;findings&quot;: [
+    {
+      &quot;finding_id&quot;: &quot;OCF-001&quot;,
+      &quot;title&quot;: &quot;Dangerous Exec: curl | bash injection&quot;,
+      &quot;rule_id&quot;: &quot;RULE-101&quot;,
+      &quot;attack_type&quot;: &quot;T1059 - Command and Scripting Interpreter&quot;,
+      &quot;severity&quot;: &quot;CRITICAL&quot;,
+      &quot;confidence&quot;: 1.0,
+      &quot;event_ids&quot;: [&quot;evt-042&quot;],
+      &quot;description&quot;: &quot;Detected dangerous pipe execution pattern&quot;,
+      &quot;pattern&quot;: &quot;curl ... | bash&quot;,
+      &quot;remediation&quot;: &quot;Review command source; disable if unauthorized&quot;
+    },
+    {
+      &quot;finding_id&quot;: &quot;OCF-002&quot;,
+      &quot;title&quot;: &quot;Data Exfiltration: curl -F upload&quot;,
+      &quot;rule_id&quot;: &quot;RULE-109&quot;,
+      &quot;attack_type&quot;: &quot;T1048 - Exfiltration Over Alternative Protocol&quot;,
+      &quot;severity&quot;: &quot;HIGH&quot;,
+      &quot;timestamp&quot;: &quot;2026-03-15T14:23:45Z&quot;,
+      ...
+    }
+  ]
+}
+</code></pre>
+<p>Each finding shows:</p>
+<ul>
+<li><strong>What was detected</strong> — the attack pattern</li>
+<li><strong>Which rule caught it</strong> — RULE-101, RULE-109, etc.</li>
+<li><strong>How severe</strong> — CRITICAL, HIGH, MEDIUM, LOW</li>
+<li><strong>Confidence</strong> — 0.0-1.0 likelihood of being a real attack</li>
+<li><strong>What action to take</strong> — remediation guidance</li>
+</ul>
+<h2 id="next-steps">Next Steps</h2>
+<h3 id="learn-more-about-the-rules">Learn More About the Rules</h3>
+<p>Read <a href="../rules-registry/">Rules Registry</a> to understand what each rule detects and how to tune it.</p>
+<h3 id="understand-performance-metrics">Understand Performance Metrics</h3>
+<p>See <a href="../rules-registry/">Rules Registry</a> for per-rule detection behavior and tuning guidance.</p>
+<h3 id="integrate-into-your-environment">Integrate Into Your Environment</h3>
+<p>Check <a href="../deployment-guide/">Deployment Guide</a> for production deployment patterns.</p>
+<h3 id="customize-detection-rules">Customize Detection Rules</h3>
+<p>Visit <a href="../api-reference/">API Reference</a> to write custom rules or integrate with your tools.</p>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3 id="openclaw-cli-not-found">"OpenClaw CLI not found"</h3>
+<p>Install OpenClaw from <a href="https://docs.openclaw.ai/install">docs.openclaw.ai/install</a></p>
+<h3 id="no-findings-detected-in-live-telemetry">"No findings detected in live telemetry"</h3>
+<p>This is expected! Live telemetry is usually benign. Try the benchmark instead:</p>
+<pre><code class="language-bash">python generate_openclaw_attack_mix.py --stats
+python evaluate.py --labeled data/openclaw/replay/labeled/attack_mix.json --mode benchmark
+</code></pre>
+<h3 id="tests-fail">Tests fail</h3>
+<p>Ensure Python 3.10+ and run:</p>
+<pre><code class="language-bash">pip install --upgrade -r requirements.txt
+python -m pytest tests/ -v
+</code></pre>
+<h2 id="getting-help">Getting Help</h2>
+<ul>
+<li><strong>Documentation:</strong> <a href="https://secopsai.dev">secopsai.dev</a></li>
+<li><strong>GitHub Issues:</strong> <a href="https://github.com/Techris93/secopsai/issues">Report a bug</a></li>
+<li><strong>Discussions:</strong> <a href="https://github.com/Techris93/secopsai/discussions">Ask a question</a></li>
+</ul>
+<hr />
+<p><strong>Ready for more?</strong> → Read <a href="../rules-registry/">Rules Registry</a> to understand each detection rule.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.top", "navigation.instant", "search.highlight"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

