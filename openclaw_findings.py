@@ -100,7 +100,7 @@ def build_candidate_finding(rule: Dict[str, Any], events: List[Dict[str, Any]]) 
     severities = Counter(str(event.get("severity_hint", "info")) for event in events)
 
     score = severity_score_from_events(events)
-    return {
+    candidate = {
         "finding_id": stable_finding_id([event["event_id"] for event in events], [rule["id"]]),
         "rule_id": rule["id"],
         "rule_ids": [rule["id"]],
@@ -166,7 +166,7 @@ def merge_findings(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
     if len(rule_ids) > 1:
         dedup_reason = "shared session and attack type overlap"
 
-    return {
+    merged = {
         "finding_id": stable_finding_id([event["event_id"] for event in event_list], rule_ids),
         "rule_id": rule_ids[0],
         "rule_ids": rule_ids,
