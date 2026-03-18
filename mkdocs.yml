@@ -1,0 +1,27 @@
+site_name: secopsai
+site_url: https://docs.secopsai.dev/
+site_description: Intelligent attack detection for OpenClaw audit logs
+repo_url: https://github.com/Techris93/secopsai
+repo_name: Techris93/secopsai
+
+theme:
+  name: material
+  favicon: assets/favicon.svg
+  logo: assets/favicon.svg
+  palette:
+    - scheme: slate
+      primary: pink
+      accent: pink
+  features:
+    - navigation.top
+    - navigation.instant
+    - search.highlight
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Rules Registry: rules-registry.md
+  - Deployment Guide: deployment-guide.md
+  - API Reference: api-reference.md
+  - Beginner Live Guide: BEGINNER-LIVE-GUIDE.md
+  - OpenClaw Integration: OpenClaw-Integration.md
