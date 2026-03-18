@@ -17,6 +17,7 @@ from typing import Any, Dict, List
 
 from detect import DETECTION_RULES, minutes_between, run_detection
 import soc_store
+from openclaw_plugin import _mitigations_for_finding
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -126,6 +127,8 @@ def build_candidate_finding(rule: Dict[str, Any], events: List[Dict[str, Any]]) 
         "summary": f"{rule['name']} matched {len(events)} events across {len(session_keys) or 1} session scopes.",
         "events": events,
     }
+    candidate["recommended_actions"] = _mitigations_for_finding(candidate)
+    return candidate
 
 
 def findings_should_merge(left: Dict[str, Any], right: Dict[str, Any]) -> bool:
@@ -190,6 +193,8 @@ def merge_findings(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
         "summary": f"Merged OpenClaw incident across {len(rule_ids)} rules and {len(event_list)} events.",
         "events": event_list,
     }
+    merged["recommended_actions"] = _mitigations_for_finding(merged)
+    return merged
 
 
 def deduplicate_findings(candidate_findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
