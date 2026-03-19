@@ -25,6 +25,12 @@ Welcome! This guide will get you detecting security attacks in OpenClaw audit lo
 macOS/Linux:
 
 ```bash
+curl -fsSL https://secopsai.dev/install.sh | bash
+```
+
+Fallback:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/Techris93/secopsai/main/setup.sh | bash
 ```
 

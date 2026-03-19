@@ -4,14 +4,14 @@
 # Installs and configures the OpenClaw security detection pipeline with optional features.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Techris93/secopsai/main/setup.sh | bash
+#   curl -fsSL https://secopsai.dev/install.sh | bash
 #   OR
 #   bash setup.sh
 #
 
 if [ -z "${BASH_VERSION:-}" ]; then
   echo "This installer requires bash."
-  echo "Run: curl -fsSL https://raw.githubusercontent.com/Techris93/secopsai/main/setup.sh | bash"
+  echo "Run: curl -fsSL https://secopsai.dev/install.sh | bash"
   exit 1
 fi
 

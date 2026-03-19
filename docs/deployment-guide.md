@@ -16,6 +16,112 @@ Choose based on your infrastructure and workflow.
 
 ---
 
+## Make Installer Commands Live On secopsai.dev (Beginner Guide)
+
+Use this section if you want these commands to work for everyone:
+
+```bash
+curl -fsSL https://secopsai.dev/install.sh | bash
+curl -fsSL https://secopsai.dev/setup.sh | sh
+```
+
+### Step 1: Make sure installer files are in docs/
+
+These files must exist in your repo so your docs host publishes them at the site root:
+
+- `docs/install.sh`
+- `docs/setup.sh`
+
+When MkDocs builds, they become:
+
+- `https://<your-docs-host>/install.sh`
+- `https://<your-docs-host>/setup.sh`
+
+### Step 2: Deploy docs so the files are publicly reachable
+
+If you use Cloudflare Pages:
+
+1. Open Cloudflare Dashboard -> Workers & Pages -> your Pages project.
+2. Confirm the production branch is your default branch (usually `main`).
+3. Confirm build command is `mkdocs build`.
+4. Confirm output directory is `site`.
+5. Trigger a production deploy.
+
+After deploy, test your docs domain directly (example `docs.secopsai.dev`):
+
+```bash
+curl -fsSLI https://docs.secopsai.dev/install.sh
+curl -fsSLI https://docs.secopsai.dev/setup.sh
+```
+
+You should see HTTP 200.
+
+### Step 3: Point secopsai.dev to the deployment
+
+You have two simple options.
+
+Option A (recommended): make `secopsai.dev` itself serve this Pages project.
+
+1. In Pages project settings, add custom domain `secopsai.dev`.
+2. Let Cloudflare create/update DNS records automatically.
+3. Wait for SSL status to become Active.
+
+Now these should work directly:
+
+```bash
+curl -fsSLI https://secopsai.dev/install.sh
+curl -fsSLI https://secopsai.dev/setup.sh
+```
+
+Option B: keep docs on `docs.secopsai.dev` and route only installer paths from apex domain.
+
+Use either Redirect Rules or a Worker.
+
+#### Option B1: Cloudflare Redirect Rules
+
+Create two dynamic redirects:
+
+1. If URL matches `https://secopsai.dev/install.sh`
+2. Forward to `https://docs.secopsai.dev/install.sh` (Status 302 or 301)
+
+and
+
+1. If URL matches `https://secopsai.dev/setup.sh`
+2. Forward to `https://docs.secopsai.dev/setup.sh` (Status 302 or 301)
+
+#### Option B2: Cloudflare Worker (proxy, no URL change)
+
+If you prefer users to stay on `secopsai.dev` without redirect, use the Worker script in:
+
+- `scripts/cloudflare-installer-worker.js`
+
+Quick setup:
+
+1. Cloudflare Dashboard -> Workers & Pages -> Create Worker.
+2. Paste script from `scripts/cloudflare-installer-worker.js`.
+3. Deploy Worker.
+4. Add route: `secopsai.dev/install.sh*`
+5. Add route: `secopsai.dev/setup.sh*`
+
+### Step 4: Validate from terminal
+
+Run all checks below:
+
+```bash
+curl -fsSLI https://secopsai.dev/install.sh
+curl -fsSLI https://secopsai.dev/setup.sh
+curl -fsSL https://secopsai.dev/install.sh | head -n 5
+curl -fsSL https://secopsai.dev/setup.sh | head -n 5
+```
+
+Expected results:
+
+- HTTP status is 200
+- Output starts with `#!/bin/sh`
+- Output is shell script text, not HTML
+
+---
+
 ## 1. Standalone Service Deployment
 
 ### Installation (Production)
