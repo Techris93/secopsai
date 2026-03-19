@@ -1,482 +1,255 @@
-# API Reference
+# CLI Reference
 
-Python API documentation for integrating secopsai into your security tools.
+This page documents the `secopsai` command-line interface.
 
-## Design Philosophy
+## Global usage
 
-All functions are designed for:
+```bash
+secopsai [--json] <command> [options]
+secopsai <command> [options] [--json]
+```
 
-- **Composability**: Use individually or chain together
-- **Type Safety**: Full Python type hints
-- **Reproducibility**: Deterministic outputs with optional seeding
-- **Error Handling**: Clear exceptions with actionable messages
+`--json` is a global flag and is accepted either **before or after** the subcommand.
+
+Examples:
+
+```bash
+secopsai --json list --severity high
+secopsai list --severity high --json
+```
+
+## Command overview
+
+### `secopsai refresh`
+
+Run the full OpenClaw live pipeline and persist findings into the local SOC store.
+
+```bash
+secopsai refresh
+secopsai refresh --json
+secopsai refresh --skip-export
+```
+
+Options:
+
+- `--skip-export` — reuse existing exported OpenClaw native telemetry
+- `--openclaw-home <path>` — override `OPENCLAW_HOME`
+- `--verbose` — verbose refresh output
+- `--json` — machine-friendly output
+
+Returns:
+
+- whether export ran
+- output paths for audit/replay/findings
+- total findings
+- total detections
 
 ---
 
-## Core Functions
+### `secopsai list`
 
-### Detection Pipeline
+List findings from the local SOC store.
 
-```python
-from detect import run_detection, DETECTION_RULES
-
-# Run all rules on events
-findings: List[str] = run_detection(events)
-
-# Run specific rule
-if "RULE-101" in DETECTION_RULES:
-    dangerous_findings = DETECTION_RULES["RULE-101"](events)
-
-# List available rules
-print(list(DETECTION_RULES.keys()))
-# Output: ['RULE-001', ..., 'RULE-110']
+```bash
+secopsai list
+secopsai list --severity high
+secopsai list --limit 20 --json
 ```
 
-#### `run_detection(events: List[Dict]) -> List[str]`
+Options:
 
-Runs all registered detection rules against event list.
+- `--severity info|low|medium|high|critical`
+- `--limit <n>` — default `50`
+- `--no-refresh` — do not auto-refresh before listing
+- `--cache-ttl <seconds>` — default `60`; minimum time between auto-refresh runs
+- `--openclaw-home <path>`
+- `--json`
 
-**Parameters:**
+Notes:
 
-- `events` (List[Dict]): Event batch, each with at minimum:
-  - `event_id` (str): unique identifier
-  - `timestamp` (str): ISO 8601 format
-
-**Returns:**
-
-- List of detected `event_id` strings that triggered rules
-
-**Raises:**
-
-- `ValueError`: If events schema invalid
-- `KeyError`: If required field missing
-
-**Example:**
-
-```python
-events = [
-    {
-        "event_id": "evt-001",
-        "timestamp": "2026-03-15T14:23:45Z",
-        "surface": "exec",
-        "command": "curl | bash",
-        "label": "malicious"
-    }
-]
-
-findings = run_detection(events)
-# Output: ['evt-001']
-```
+- By default, `list` may auto-refresh the pipeline first.
+- Use `--no-refresh` to work only from what is already stored locally.
 
 ---
 
-### Benchmark Evaluation
+### `secopsai show <finding_id>`
 
-```python
-from evaluate import evaluate_benchmark
+Show one finding in detail.
 
-report = evaluate_benchmark(
-    labeled_events=labeled,
-    unlabeled_events=unlabeled,
-    verbose=True
-)
-
-print(f"F1: {report['f1_score']}")
-print(f"Precision: {report['precision']}")
-print(f"Recall: {report['recall']}")
+```bash
+secopsai show OCF-XXXX
+secopsai show OCF-XXXX --json
 ```
 
-#### `evaluate_benchmark(labeled_events, unlabeled_events, verbose=False) -> Dict`
+Options:
 
-Evaluates detection rules against labeled corpus.
-
-**Parameters:**
-
-- `labeled_events` (List[Dict]): Attack events with `label="malicious"`
-- `unlabeled_events` (List[Dict]): Benign events with `label="benign"`
-- `verbose` (bool): Print detailed per-rule breakdown
-
-**Returns:**
-Dict with keys:
-
-```python
-{
-    "f1_score": float,           # Harmonic mean of precision & recall
-    "precision": float,          # TP / (TP + FP)
-    "recall": float,             # TP / (TP + FN)
-    "false_positive_rate": float,# FP / (FP + TN)
-    "accuracy": float,           # (TP + TN) / (TN + FP + FN + TP)
-
-    "true_positives": int,       # Correctly detected attacks
-    "false_positives": int,      # Benign flagged as attacks
-    "false_negatives": int,      # Attacks not detected
-    "true_negatives": int,       # Correctly cleared benign
-
-    "per_rule_breakdown": {      # Per-rule metrics
-        "RULE-101": {
-            "fires": int,
-            "true_positives": int,
-            "false_positives": int
-        },
-        ...
-    }
-}
-```
-
-**Example:**
-
-```python
-import json
-
-with open('labeled.json') as f:
-    labeled = json.load(f)
-
-with open('unlabeled.json') as f:
-    unlabeled = json.load(f)
-
-report = evaluate_benchmark(labeled, unlabeled, verbose=True)
-
-if report['f1_score'] >= 0.9:
-    print("✓ Detection quality acceptable")
-else:
-    print("✗ Detection needs tuning")
-```
+- `--no-refresh`
+- `--cache-ttl <seconds>`
+- `--openclaw-home <path>`
+- `--json`
 
 ---
 
-### Data Generation
+### `secopsai mitigate <finding_id>`
 
-```python
-from generate_openclaw_attack_mix import build_attack_records, build_outputs
+Show recommended mitigation actions for a finding.
 
-# Generate attack events
-attack_records = build_attack_records(
-    base_events=benign_events,
-    benign_count=58,
-    attack_count=22,
-    seed=42
-)
-
-# Write to disk
-build_outputs(
-    attack_records=attack_records,
-    output_labeled="labeled.json",
-    output_unlabeled="unlabeled.json",
-    output_audit="audit.jsonl"
-)
+```bash
+secopsai mitigate OCF-XXXX
+secopsai mitigate OCF-XXXX --json
 ```
 
-#### `build_attack_records(base_events, benign_count, attack_count, seed=None) -> List[Dict]`
+Options:
 
-Generates deterministic attack scenarios on top of benign base events.
-
-**Parameters:**
-
-- `base_events` (List[Dict]): Benign baseline events to augment
-- `benign_count` (int): How many benign events to keep
-- `attack_count` (int): How many attack scenarios to generate
-- `seed` (int, optional): Random seed for reproducibility
-
-**Returns:**
-
-- List of labeled events:
-  ```python
-  {
-      "event_id": "evt-atk-001",
-      "label": "malicious",      # or "benign"
-      "attack_type": "T1059",    # MITRE ATT&CK code
-      ...
-  }
-  ```
-
-**Attack Types Generated:**
-
-- T1059: Dangerous execution
-- T1528: Sensitive config change
-- T1195: Skill source drift
-- T1078: Policy denial churn
-- T1087: Tool burst
-- T1104: Subagent fanout
-- T1529: Restart loop
-- T1048: Data exfiltration
-- T1204: Malware presence
-
-**Example:**
-
-```python
-import json
-
-# Load benign baseline
-with open('benign.json') as f:
-    benign = json.load(f)
-
-# Generate reproducible 80-event corpus
-attacks = build_attack_records(benign, benign_count=58, attack_count=22, seed=42)
-
-# Save for later
-with open('attack_mix.json', 'w') as f:
-    json.dump(attacks, f)
-```
+- `--no-refresh`
+- `--cache-ttl <seconds>`
+- `--openclaw-home <path>`
+- `--json`
 
 ---
 
-### Findings Report
+### `secopsai check --type malware|exfil|both`
 
-```python
-from findings import build_findings_report, dedup_findings
+Run a quick presence check against existing findings.
 
-report = build_findings_report(
-    detected_event_ids=['evt-001', 'evt-042'],
-    all_events=events,
-    rules=DETECTION_RULES
-)
-
-# Deduplicate overlapping findings
-deduped = dedup_findings(report['findings'])
-
-print(f"Found {len(deduped)} incidents")
+```bash
+secopsai check --type malware
+secopsai check --type exfil --severity medium --json
+secopsai check --type both --no-refresh
 ```
 
-#### `build_findings_report(detected_event_ids, all_events, rules) -> Dict`
+Options:
 
-Generates structured findings report with deduplication and severity ranking.
-
-**Parameters:**
-
-- `detected_event_ids` (List[str]): IDs returned by `run_detection()`
-- `all_events` (List[Dict]): Full event list with metadata
-- `rules` (Dict): DETECTION_RULES registry
-
-**Returns:**
-
-```python
-{
-    "total_findings": int,
-    "findings": [
-        {
-            "finding_id": "OCF-001",
-            "title": str,
-            "rule_id": str,
-            "attack_type": str,
-            "severity": str,        # CRITICAL, HIGH, MEDIUM, LOW
-            "confidence": float,    # 0.0-1.0
-            "event_ids": [str],
-            "description": str,
-            "pattern": str,
-            "remediation": str,
-            "timestamp": str
-        },
-        ...
-    ],
-    "severity_breakdown": {
-        "CRITICAL": int,
-        "HIGH": int,
-        "MEDIUM": int,
-        "LOW": int
-    }
-}
-```
-
-**Example:**
-
-```python
-from detect import run_detection, DETECTION_RULES
-from findings import build_findings_report
-import json
-
-# Run detection
-findings_ids = run_detection(events)
-
-# Build report
-report = build_findings_report(findings_ids, events, DETECTION_RULES)
-
-# Save findings
-with open('findings.json', 'w') as f:
-    json.dump(report, f, indent=2)
-
-# Print summary
-print(f"Critical: {report['severity_breakdown']['CRITICAL']}")
-print(f"High: {report['severity_breakdown']['HIGH']}")
-```
+- `--type malware|exfil|both` — required
+- `--severity info|low|medium|high|critical` — default `low`
+- `--no-refresh`
+- `--cache-ttl <seconds>`
+- `--openclaw-home <path>`
+- `--json`
 
 ---
 
-### Data Normalization
+## Threat intelligence commands
 
-```python
-from prepare import normalize_events
+### `secopsai intel refresh`
 
-normalized = normalize_events(raw_events)
+Download and normalize open-source IOC feeds into local storage.
+
+```bash
+secopsai intel refresh
+secopsai intel refresh --json
+secopsai intel refresh --enrich
 ```
 
-#### `normalize_events(events: List[Dict]) -> List[Dict]`
+Options:
 
-Normalizes raw event logs into detector-ready schema.
-
-**Schema (output):**
-
-```python
-{
-    "event_id": str,
-    "timestamp": str,           # ISO 8601
-    "sourcetype": str,          # openclaw_*, botsv3_*, etc
-    "surface": str,             # tool, exec, session, config, etc
-    "action": str,              # write, read, start, stop
-    "label": str,               # "benign" or "malicious"
-    "attack_type": str,         # MITRE code: T1059, T1048, etc
-    "severity_hint": str,       # LOW, MEDIUM, HIGH, CRITICAL
-
-    # Surface-specific fields
-    "tool_name": str,           # if surface=tool
-    "command": str,             # if surface=exec
-    "username": str,            # if available
-    "status": str,              # success, denied, failed, etc
-    ...
-}
-```
-
-**Example:**
-
-```python
-raw = [
-    {
-        "raw_timestamp": 1710518625000,
-        "event": "tool_started",
-        "args": ["curl", "|", "bash"]
-    }
-]
-
-clean = normalize_events(raw)
-# Output: [{ "timestamp": "2026-03-15T14:23:45Z", "command": "curl | bash", ... }]
-```
+- `--timeout <seconds>` — default `20`
+- `--enrich` — perform lightweight local enrichment (DNS)
+- `--json`
 
 ---
 
-## Custom Rule Development
+### `secopsai intel list`
 
-### Template
+List locally stored IOCs.
 
-```python
-from typing import List, Dict
-
-def detect_custom_pattern(events: List[Dict]) -> List[str]:
-    """
-    Detects custom attack pattern.
-
-    Returns:
-        List of event_ids that match the pattern
-    """
-    findings = []
-
-    for event in events:
-        # Check event properties
-        if event.get("sourcetype", "").startswith("openclaw_"):
-            if "dangerous" in event.get("command", "").lower():
-                findings.append(event["event_id"])
-
-    return findings
-
-# Register in DETECTION_RULES
-DETECTION_RULES["RULE-201"] = detect_custom_pattern
+```bash
+secopsai intel list
+secopsai intel list --limit 20 --json
 ```
 
-### Testing Custom Rule
+Options:
 
-```python
-from detect import DETECTION_RULES
-
-# Define test events
-test_events = [
-    {
-        "event_id": "evt-test-1",
-        "timestamp": "2026-03-15T14:00:00Z",
-        "sourcetype": "openclaw_tool",
-        "command": "dangerous command here"
-    }
-]
-
-# Run custom rule
-matches = DETECTION_RULES["RULE-201"](test_events)
-assert "evt-test-1" in matches, "Custom rule should detect test event"
-```
+- `--limit <n>` — default `50`
+- `--json`
 
 ---
 
-## OpenClaw Integration
+### `secopsai intel match`
 
-### Export Native Telemetry
+Match stored IOCs against the latest OpenClaw replay and persist matches as findings.
 
-```python
-from export_real_openclaw_native import export_openclaw_surfaces
-
-export_openclaw_surfaces(
-    openclaw_root="~/.openclaw",
-    output_dir="data/openclaw/native"
-)
+```bash
+secopsai intel match
+secopsai intel match --limit-iocs 500 --json
+secopsai intel match --replay data/openclaw/replay/labeled/current.json
 ```
 
-### Ingest Native Surfaces
+Options:
 
-```python
-from ingest_openclaw import ingest_surfaces
-
-ingest_surfaces(
-    input_root="data/openclaw/native",
-    output="data/openclaw/raw/audit.jsonl",
-    surfaces=["agent-events.jsonl", "exec-events.jsonl"]
-)
-```
+- `--limit-iocs <n>` — default `2000`
+- `--replay <path>` — override replay file
+- `--json`
 
 ---
 
-## Error Handling
+## Auto-refresh behavior
 
-All functions raise typed exceptions:
+These commands can auto-refresh the pipeline before reading findings:
 
-```python
-from detect import InvalidEventSchema
+- `list`
+- `show`
+- `mitigate`
+- `check`
 
-try:
-    findings = run_detection(events)
-except InvalidEventSchema as e:
-    print(f"Event schema error: {e}")
-    # Handle gracefully
+Behavior:
+
+- If a recent refresh exists inside the TTL window, secopsai reuses cached results.
+- Default TTL is `60` seconds.
+- Use `--cache-ttl <seconds>` to change the window.
+- Use `--no-refresh` to disable auto-refresh entirely.
+
+Example:
+
+```bash
+secopsai list --severity high --cache-ttl 300
+secopsai show OCF-XXXX --no-refresh
 ```
 
-Common exceptions:
+## Common command patterns
 
-- `ValueError`: Invalid parameter
-- `KeyError`: Missing required field
-- `FileNotFoundError`: Data file not found
-- `json.JSONDecodeError`: Malformed JSON input
+### Run the pipeline and inspect findings
 
----
-
-## Type Hints Reference
-
-All functions use Python 3.10+ type hints:
-
-```python
-def example(
-    events: list[dict],
-    threshold: int = 5,
-    verbose: bool | None = None,
-) -> tuple[list[str], dict]:
-    """Type-hinted example function"""
-    pass
+```bash
+secopsai refresh --json
+secopsai list --severity high --json
 ```
 
----
+### Reuse recent results for 5 minutes
 
-## Performance Characteristics
+```bash
+secopsai list --severity high --cache-ttl 300
+```
 
-| Operation                 | Time (80 events) | Memory   |
-| ------------------------- | ---------------- | -------- |
-| `run_detection()`         | &lt;1ms          | &lt;10MB |
-| `evaluate_benchmark()`    | ~100ms           | ~50MB    |
-| `build_attack_records()`  | ~50ms            | ~30MB    |
-| `build_findings_report()` | ~20ms            | ~15MB    |
+### Inspect and mitigate a finding
 
----
+```bash
+secopsai show OCF-XXXX --json
+secopsai mitigate OCF-XXXX --json
+```
 
-**Next:** [Deployment Guide](deployment-guide.md) for production setup.
+### Threat intel workflow
+
+```bash
+secopsai intel refresh --json
+secopsai intel match --limit-iocs 500 --json
+secopsai list --severity medium --json --no-refresh
+```
+
+## Installer/runtime notes
+
+- Recommended installation path:
+
+```bash
+curl -fsSL https://secopsai.dev/install.sh | bash
+```
+
+- The installer creates a virtualenv and installs the `secopsai` CLI into it.
+- The packaged install includes the runtime helper modules required by the CLI entrypoint.
+
+## Related docs
+
+- [Getting Started](getting-started.md)
+- [Threat Intel (IOCs)](threat-intel.md)
+- [OpenClaw Integration](OpenClaw-Integration.md)
+- [Threat Model](threat-model.md)
