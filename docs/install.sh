@@ -3,9 +3,9 @@ set -eu
 
 # Bootstrap installer for secopsai.dev.
 # Optional hardening controls:
-#   SECOPSAI_INSTALL_REF=<git ref/commit>        (default: main)
+#   SECOPSAI_INSTALL_REF=<git ref/commit>         (default: pinned immutable commit)
 #   SECOPSAI_INSTALL_SHA256=<expected sha256 sum> (optional)
-INSTALL_REF="${SECOPSAI_INSTALL_REF:-main}"
+INSTALL_REF="${SECOPSAI_INSTALL_REF:-3f82360ccca20f1f453aa7e744edc752a4ae85f3}"
 INSTALL_URL="https://raw.githubusercontent.com/Techris93/secopsai/${INSTALL_REF}/setup.sh"
 
 if command -v curl >/dev/null 2>&1; then

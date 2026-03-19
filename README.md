@@ -40,6 +40,13 @@ Optional hardening controls for installer bootstrap:
 - `SECOPSAI_INSTALL_REF=<git ref or commit>` to pin setup script source
 - `SECOPSAI_INSTALL_SHA256=<sha256>` to enforce checksum verification
 
+By default, `install.sh` uses a pinned immutable commit for secure installs.
+If you explicitly want latest `main`, use:
+
+```bash
+SECOPSAI_INSTALL_REF=main curl -fsSL https://secopsai.dev/install.sh | bash
+```
+
 Optional runtime temp log directory:
 
 - `SECOPSAI_TMP_DIR=/path` to override default temp log location (`$TMPDIR` or `/tmp`)
