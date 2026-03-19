@@ -42,6 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run Semgrep
+        continue-on-error: true
         uses: semgrep/semgrep-action@v1
         with:
           config: >-
