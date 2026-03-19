@@ -1,3 +1,5 @@
 # SecOps Autoresearch
 # No external dependencies — pure Python stdlib
 # Python 3.10+
+# Test runner used by setup validation and CI smoke checks.
+pytest>=8,<9

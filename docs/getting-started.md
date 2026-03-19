@@ -60,6 +60,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
+python prepare.py  # Generate data/events.json and data/events_unlabeled.json
 
 python -m pytest tests/ -v  # Verify installation
 ```

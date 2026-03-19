@@ -27,8 +27,12 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 FINDINGS_DIR = os.path.join(DATA_DIR, "findings")
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 GIT_EXECUTABLE = shutil.which("git")
-GH_EXECUTABLE = shutil.which("gh")
 REPO_SLUG_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+def resolve_gh_executable() -> str:
+    """Return GH CLI path if available, else default command name for graceful handling."""
+    return shutil.which("gh") or "gh"
 
 
 # ═══ Data Structure ══════════════════════════════════════════════════════════
@@ -248,12 +252,11 @@ def publish_to_github_issue(finding: Dict[str, Any], repo: str = "") -> bool:
     if not repo:
         print("  ⚠️  Could not detect GitHub repo. Skipping GitHub publish.")
         return False
-    if not GH_EXECUTABLE:
-        print("  ⚠️  GitHub CLI not found. Skipping GitHub publish.")
-        return False
     if not REPO_SLUG_PATTERN.match(repo):
         print("  ⚠️  Invalid repo format. Expected owner/repo.")
         return False
+
+    gh_executable = resolve_gh_executable()
 
     title = (
         f"🔬 Finding: F1={finding['f1_score']:.4f} "
@@ -264,7 +267,7 @@ def publish_to_github_issue(finding: Dict[str, Any], repo: str = "") -> bool:
 
     try:
         result = subprocess.run(
-            [GH_EXECUTABLE, "issue", "create",
+            [gh_executable, "issue", "create",
              "--repo", repo,
              "--title", title,
              "--body", body],
@@ -278,6 +281,8 @@ def publish_to_github_issue(finding: Dict[str, Any], repo: str = "") -> bool:
             print(f"  🌐 Published to GitHub Issues: {result.stdout.strip()}")
             return True
         print(f"  ⚠️  GitHub issue publish failed: {result.stderr[:200]}")
+    except FileNotFoundError:
+        print("  ⚠️  GitHub CLI not found. Skipping GitHub publish.")
     except (OSError, subprocess.SubprocessError) as e:
         print(f"  ⚠️  GitHub post error: {e}")
 

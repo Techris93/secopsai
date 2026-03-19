@@ -314,6 +314,19 @@ phase_initialization() {
   mkdir -p "$SCRIPT_DIR/data/openclaw/replay/labeled"
   mkdir -p "$SCRIPT_DIR/data/openclaw/replay/unlabeled"
   log_success "Data directories created"
+
+  # Ensure baseline regression dataset exists for evaluate.py/tests on fresh clones.
+  if [[ ! -f "$SCRIPT_DIR/data/events.json" || ! -f "$SCRIPT_DIR/data/events_unlabeled.json" ]]; then
+    log_info "Generating baseline dataset (data/events*.json)..."
+    if python3 "$SCRIPT_DIR/prepare.py" > /tmp/secopsai_prepare.log 2>&1; then
+      log_success "Baseline dataset generated"
+    else
+      log_warn "Failed to generate baseline dataset (install may continue)"
+      log_warn "See /tmp/secopsai_prepare.log for details"
+    fi
+  else
+    log_success "Baseline dataset already present"
+  fi
   
   # Run validation tests
   log_info "Running validation tests..."
