@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -69,7 +70,16 @@ def _maybe_skip_refresh(ttl: int, json_mode: bool) -> Optional[Dict[str, Any]]:
     return meta
 
 
+def _normalize_global_flags(argv: Optional[List[str]] = None) -> List[str]:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--json" in args and (not args or args[0] != "--json"):
+        args = [a for a in args if a != "--json"]
+        args.insert(0, "--json")
+    return args
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    argv = _normalize_global_flags(argv)
     p = argparse.ArgumentParser(
         prog="secopsai", description="secopsai CLI (OpenClaw SecOps pipeline)"
     )
