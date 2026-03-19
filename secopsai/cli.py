@@ -15,6 +15,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
+
+import soc_store
+import openclaw_plugin
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -64,34 +68,119 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     return rc
 
 
+def _severity_at_least_local(sev: str, thresh: str) -> bool:
+    try:
+        return openclaw_plugin._severity_at_least(sev, thresh)
+    except Exception:
+        return True
+
+
+def _ensure_refresh(no_refresh: bool) -> int:
+    if no_refresh:
+        return 0
+    refresh_args = SimpleNamespace(skip_export=False, force=False, cache_ttl=60, json=False)
+    return cmd_refresh(refresh_args)
+
+
 def cmd_list(args: argparse.Namespace) -> int:
-    call = []
+    rc = _ensure_refresh(getattr(args, "no_refresh", False))
+    if rc != 0:
+        return rc
+
+    findings = soc_store.list_findings()
     if args.severity:
-        call += ["--severity", args.severity]
+        findings = [f for f in findings if _severity_at_least_local(str(f.get("severity", "info")), args.severity)]
+
     if args.json:
-        call.append("--json")
-    return run_script("soc_store.py", ["list"] + call)
+        print(to_json({"total_findings": len(findings), "findings": findings}))
+        return 0
+
+    for finding in findings:
+        print(soc_store.format_finding_row(finding))
+    print(f"total_findings={len(findings)}")
+    return 0
 
 
 def cmd_show(args: argparse.Namespace) -> int:
-    call = ["show", args.finding_id]
+    rc = _ensure_refresh(getattr(args, "no_refresh", False))
+    if rc != 0:
+        return rc
+
+    finding = soc_store.get_finding(args.finding_id)
+    if finding is None:
+        if args.json:
+            print(to_json({"error": "finding not found", "finding_id": args.finding_id}))
+        else:
+            print(f"error: finding not found: {args.finding_id}")
+        return 1
+
     if args.json:
-        call.append("--json")
-    return run_script("soc_store.py", call)
+        print(to_json({"finding": finding}))
+    else:
+        print(json.dumps(finding, indent=2))
+    return 0
 
 
 def cmd_mitigate(args: argparse.Namespace) -> int:
-    call = ["mitigate", args.finding_id]
+    rc = _ensure_refresh(getattr(args, "no_refresh", False))
+    if rc != 0:
+        return rc
+
+    finding = soc_store.get_finding(args.finding_id)
+    if not finding:
+        if args.json:
+            print(to_json({"error": "finding not found", "finding_id": args.finding_id}))
+        else:
+            print(f"error: finding not found: {args.finding_id}")
+        return 1
+
+    mitigations = openclaw_plugin._mitigations_for_finding(finding)
+    payload = {
+        "finding_id": finding.get("finding_id", args.finding_id),
+        "title": finding.get("title"),
+        "severity": finding.get("severity"),
+        "status": finding.get("status"),
+        "disposition": finding.get("disposition"),
+        "rule_ids": finding.get("rule_ids"),
+        "recommended_actions": mitigations,
+    }
+
     if args.json:
-        call.append("--json")
-    return run_script("openclaw_plugin.py", call)
+        print(to_json({"mitigation": payload}))
+    else:
+        print(f"{payload['finding_id']} | {str(payload['severity']).upper()} | {payload['title']}")
+        print("RECOMMENDED_ACTIONS:")
+        for a in payload["recommended_actions"]:
+            print(f"- {a}")
+    return 0
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    call = ["check", "--type", args.type or "malware", "--severity", args.severity or "high"]
+    rc = _ensure_refresh(getattr(args, "no_refresh", False))
+    if rc != 0:
+        return rc
+
+    check_type = args.type or "malware"
+    min_sev = args.severity or "low"
+    result = openclaw_plugin.check_presence(check_type, min_sev)
+    payload = {
+        "check_type": result.check_type,
+        "findings_total": result.findings_total,
+        "matched_count": result.matched_count,
+        "high_or_above": result.high_or_above,
+        "top_matches": result.top_matches,
+    }
+
     if args.json:
-        call.append("--json")
-    return run_script("openclaw_plugin.py", call)
+        print(to_json({"check": payload}))
+    else:
+        print(f"CHECK: {payload['check_type']} (min_severity={min_sev})")
+        print(f"findings_total={payload['findings_total']} matched={payload['matched_count']} high_or_above={payload['high_or_above']}")
+        if payload["top_matches"]:
+            print("\nTOP_MATCHES:")
+            for row in payload["top_matches"]:
+                print(f"- {row['finding_id']} | {str(row['severity']).upper()} | {row['title']}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -109,19 +198,23 @@ def main(argv: list[str] | None = None) -> int:
 
     s_list = sub.add_parser("list", help="list findings from store")
     s_list.add_argument("--severity", help="minimum severity to show")
+    s_list.add_argument("--no-refresh", action="store_true", help="do not auto-refresh before listing")
     s_list.set_defaults(func=cmd_list)
 
     s_show = sub.add_parser("show", help="show a finding by id")
     s_show.add_argument("finding_id", help="finding id (OCF-XXXX)")
+    s_show.add_argument("--no-refresh", action="store_true", help="do not auto-refresh before showing")
     s_show.set_defaults(func=cmd_show)
 
     s_mit = sub.add_parser("mitigate", help="recommend mitigations for finding")
     s_mit.add_argument("finding_id", help="finding id (OCF-XXXX)")
+    s_mit.add_argument("--no-refresh", action="store_true", help="do not auto-refresh before mitigating")
     s_mit.set_defaults(func=cmd_mitigate)
 
     s_check = sub.add_parser("check", help="check for malware/exfil presence")
-    s_check.add_argument("--type", choices=["malware", "exfil"], help="check type")
+    s_check.add_argument("--type", choices=["malware", "exfil", "both"], help="check type")
     s_check.add_argument("--severity", help="minimum severity")
+    s_check.add_argument("--no-refresh", action="store_true", help="do not auto-refresh before check")
     s_check.set_defaults(func=cmd_check)
 
     args = p.parse_args(argv)
