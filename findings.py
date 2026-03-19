@@ -264,7 +264,7 @@ def publish_to_github_issue(finding: Dict[str, Any], repo: str = "") -> bool:
 
     try:
         result = subprocess.run(
-            ["gh", "issue", "create",
+            [GH_EXECUTABLE, "issue", "create",
              "--repo", repo,
              "--title", title,
              "--body", body],

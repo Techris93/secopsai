@@ -31,14 +31,14 @@ jobs:
 
     permissions:
       contents: read
-      pull-requests: write   # for PR comment step
+      pull-requests: write # for PR comment step
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.11"
           cache: "pip"
@@ -105,7 +105,7 @@ jobs:
       # ── Upload artifacts ─────────────────────────────────────────────────────
       - name: Upload benchmark artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: benchmark-results-${{ github.sha }}
           path: |
@@ -118,7 +118,7 @@ jobs:
       # ── Post results as PR comment ────────────────────────────────────────────
       - name: Comment benchmark results on PR
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
           script: |
             const fs = require('fs');
@@ -141,7 +141,7 @@ jobs:
       # ── Slack notification on failure ─────────────────────────────────────────
       - name: Notify Slack on benchmark failure
         if: failure()
-        uses: slackapi/slack-github-action@v1.24.0
+        uses: slackapi/slack-github-action@e28cf165c92ffef168d23c5c9000cffc8a25e117
         with:
           payload: |
             {

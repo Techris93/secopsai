@@ -24,11 +24,14 @@ import hmac
 import html
 import os
 from hashlib import sha1
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict
 from urllib.parse import parse_qs
 
 from whatsapp_openclaw_router import handle_message
+
+
+MAX_REQUEST_BODY_BYTES = 32 * 1024
 
 
 def _is_loopback_host(host: str) -> bool:
@@ -88,8 +91,26 @@ class _TwilioHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        content_length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(content_length).decode("utf-8")
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self.send_response(400)
+            self.end_headers()
+            return
+
+        if content_length < 0 or content_length > MAX_REQUEST_BODY_BYTES:
+            self.send_response(413)
+            self.end_headers()
+            return
+
+        self.connection.settimeout(5)
+        try:
+            body = self.rfile.read(content_length).decode("utf-8")
+        except (OSError, TimeoutError, UnicodeDecodeError):
+            self.send_response(400)
+            self.end_headers()
+            return
+
         parsed = parse_qs(body)
 
         params = {k: (v[0] if v else "") for k, v in parsed.items()}
@@ -129,7 +150,7 @@ def main() -> int:
     if allow_unsigned and not _is_loopback_host(args.host):
         print("SECOPS_ALLOW_UNSIGNED=1 is only permitted when binding to localhost.")
         return 2
-    server = HTTPServer((args.host, args.port), _TwilioHandler)
+    server = ThreadingHTTPServer((args.host, args.port), _TwilioHandler)
     print(f"Twilio bridge listening on http://{args.host}:{args.port}/twilio/whatsapp")
     print("Configure Twilio Sandbox webhook to POST to /twilio/whatsapp")
     server.serve_forever()

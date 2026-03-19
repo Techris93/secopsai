@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Sequence
 
@@ -18,6 +20,21 @@ ALLOWED_STATUSES = {
     "accepted",
     "skipped",
 }
+
+SENSITIVE_FIELD_MARKERS = (
+    "auth",
+    "cookie",
+    "key",
+    "pass",
+    "secret",
+    "token",
+)
+
+REDACTION_PATTERNS = (
+    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+"),
+    re.compile(r"(?i)(\b(?:api[_-]?key|token|secret|password|passwd|pwd|access[_-]?token|refresh[_-]?token)\b\s*[:=]\s*)([^\s,;]+)"),
+    re.compile(r"(?i)(\b(?:authorization|x-api-key|x-auth-token)\b\s*[:=]\s*)([^\s,;]+)"),
+)
 
 
 def load_jsonl(path: str) -> List[Dict[str, Any]]:
@@ -96,13 +113,77 @@ def stable_record_id(surface: str, source_path: str, index: int, record: Dict[st
             },
             sort_keys=True,
             separators=(",", ":"),
-        ).encode("utf-8")
+        ).encode("utf-8"),
+        usedforsecurity=False,
     ).hexdigest()[:16]
     return f"OCI-{digest.upper()}"
 
 
 def compact_dict(mapping: Dict[str, Any]) -> Dict[str, Any]:
     return {key: value for key, value in mapping.items() if value is not None}
+
+
+def redact_text(value: str, max_length: int = 256) -> str:
+    sanitized = value.strip()
+    for pattern in REDACTION_PATTERNS:
+        sanitized = pattern.sub(r"\1[REDACTED]", sanitized)
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length] + "...[TRUNCATED]"
+    return sanitized
+
+
+def summarize_value(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        keys = sorted(str(key) for key in value.keys())
+        return {
+            "type": "object",
+            "field_count": len(keys),
+            "keys": keys[:12],
+        }
+    if isinstance(value, list):
+        return {
+            "type": "list",
+            "item_count": len(value),
+        }
+    if isinstance(value, str):
+        return {
+            "type": "string",
+            "char_count": len(value),
+        }
+    return {
+        "type": type(value).__name__,
+    }
+
+
+def sanitize_payload_value(key: str, value: Any) -> Any:
+    lowered = key.lower()
+    if any(marker in lowered for marker in SENSITIVE_FIELD_MARKERS):
+        return "[REDACTED]"
+    if isinstance(value, str):
+        return redact_text(value)
+    return value
+
+
+def ensure_private_path(path: str) -> None:
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+        try:
+            os.chmod(directory, 0o700)
+        except OSError:
+            pass
+
+
+def secure_write_json(path: str, payload: Any, *, indent: int | None = None, append_newline: bool = True) -> None:
+    ensure_private_path(path)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=indent)
+        if append_newline:
+            handle.write("\n")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 def make_envelope(
@@ -149,8 +230,13 @@ def make_envelope(
 
 
 def write_jsonl(path: str, records: Iterable[Dict[str, Any]], append: bool = False) -> None:
+    ensure_private_path(path)
     mode = "a" if append else "w"
     with open(path, mode, encoding="utf-8") as handle:
         for record in records:
             handle.write(json.dumps(record))
             handle.write("\n")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass

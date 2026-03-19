@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from .common import make_envelope, pick
+from .common import make_envelope, pick, redact_text, summarize_value
 
 
 def _action_for_stream(stream: str, phase: str | None) -> str:
@@ -57,9 +57,9 @@ def adapt(records: List[Dict[str, Any]], source_path: str, collected_from: str, 
                     "tool_call_id": tool_call_id,
                 },
                 payload={
-                    "args": args if isinstance(args, dict) else {"raw_args": args},
-                    "result": result if isinstance(result, dict) else {"raw_result": result},
-                    "command": pick(record, ("data", "command"), ("command",), ("data", "args", "command")),
+                    "args_summary": summarize_value(args),
+                    "result_summary": summarize_value(result),
+                    "command": redact_text(str(pick(record, ("data", "command"), ("command",), ("data", "args", "command")) or ""), max_length=512) or None,
                     "duration_ms": pick(record, ("data", "durationMs"), ("durationMs",), ("data", "result", "durationMs")),
                     "exit_code": pick(record, ("data", "exitCode"), ("exitCode",), ("data", "result", "exitCode")),
                     "mutating": pick(record, ("data", "mutating"), ("mutating",)),

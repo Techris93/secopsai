@@ -36,10 +36,15 @@ def iso(value: Any) -> str:
         return value if value.endswith("Z") else value
     try:
         n = float(value)
-        if n > 1e12:
-            n /= 1000.0
+    except (TypeError, ValueError):
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    if n > 1e12:
+        n /= 1000.0
+
+    try:
         return datetime.fromtimestamp(n, tz=timezone.utc).isoformat().replace("+00:00", "Z")
-    except Exception:
+    except (OSError, OverflowError, ValueError):
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -326,14 +331,27 @@ def export_restart_sentinels() -> list[dict[str, Any]]:
 
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:
+        pass
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=True))
             handle.write("\n")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
 
 
 def main() -> None:
     NATIVE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        NATIVE_DIR.chmod(0o700)
+    except OSError:
+        pass
 
     agent_events, session_hooks, subagent_hooks, exec_events, pairing_events, skills_events = export_agent_and_session_hooks()
     config_audit = export_config_audit()

@@ -17,6 +17,8 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Tuple
 
+from openclaw_adapters.common import ensure_private_path, redact_text, secure_write_json
+
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(ROOT_DIR, "data", "openclaw")
@@ -219,7 +221,7 @@ def flatten_command(payload: Dict[str, Any], details: Dict[str, Any]) -> str | N
         details.get("command"),
     ):
         if isinstance(candidate, str) and candidate.strip():
-            return candidate.strip()
+            return redact_text(candidate.strip(), max_length=512)
     return None
 
 
@@ -359,10 +361,8 @@ def normalize_record(record: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, 
 
 
 def write_json(path: str, payload: List[Dict[str, Any]]) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
-        handle.write("\n")
+    ensure_private_path(path)
+    secure_write_json(path, payload, indent=2)
 
 
 def strip_labels(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

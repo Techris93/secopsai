@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from detect import DETECTION_RULES, minutes_between, run_detection
+from openclaw_adapters.common import redact_text, secure_write_json
 import soc_store
 from openclaw_plugin import _mitigations_for_finding
 
@@ -93,6 +94,36 @@ def stable_finding_id(event_ids: List[str], rule_ids: List[str]) -> str:
     return f"OCF-{digest.upper()}"
 
 
+def sanitize_event_for_storage(event: Dict[str, Any]) -> Dict[str, Any]:
+    sanitized = {
+        "event_id": event.get("event_id"),
+        "timestamp": event.get("timestamp"),
+        "sourcetype": event.get("sourcetype"),
+        "event_type": event.get("event_type"),
+        "message": event.get("message"),
+        "attack_type": event.get("attack_type"),
+        "mitre": event.get("mitre"),
+        "session_key": event.get("session_key"),
+        "tool_name": event.get("tool_name"),
+        "skill_key": event.get("skill_key"),
+        "action": event.get("action"),
+        "status": event.get("status"),
+        "severity_hint": event.get("severity_hint"),
+        "changed_path_count": event.get("changed_path_count"),
+        "sensitive_path_touched": event.get("sensitive_path_touched"),
+        "approval_state": event.get("approval_state"),
+        "delivery_target": event.get("delivery_target"),
+        "background": event.get("background"),
+        "mutating": event.get("mutating"),
+        "exit_code": event.get("exit_code"),
+        "duration_ms": event.get("duration_ms"),
+    }
+    command = event.get("command")
+    if isinstance(command, str) and command.strip():
+        sanitized["command"] = redact_text(command, max_length=256)
+    return {key: value for key, value in sanitized.items() if value is not None}
+
+
 def build_candidate_finding(rule: Dict[str, Any], events: List[Dict[str, Any]]) -> Dict[str, Any]:
     attack_counts = Counter(str(event.get("attack_type", "none")) for event in events)
     session_keys = sorted({str(event.get("session_key", "")) for event in events if event.get("session_key")})
@@ -125,7 +156,7 @@ def build_candidate_finding(rule: Dict[str, Any], events: List[Dict[str, Any]]) 
         "first_seen": min(event["timestamp"] for event in events),
         "last_seen": max(event["timestamp"] for event in events),
         "summary": f"{rule['name']} matched {len(events)} events across {len(session_keys) or 1} session scopes.",
-        "events": events,
+        "events": [sanitize_event_for_storage(event) for event in events],
     }
     candidate["recommended_actions"] = _mitigations_for_finding(candidate)
     return candidate
@@ -243,11 +274,13 @@ def build_bundle(source_path: str, events: List[Dict[str, Any]]) -> Dict[str, An
 
 def write_bundle(output_dir: str, bundle: Dict[str, Any]) -> str:
     os.makedirs(output_dir, exist_ok=True)
+    try:
+        os.chmod(output_dir, 0o700)
+    except OSError:
+        pass
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     path = os.path.join(output_dir, f"openclaw-findings-{ts}.json")
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(bundle, handle, indent=2)
-        handle.write("\n")
+    secure_write_json(path, bundle, indent=2)
     return path
 
 

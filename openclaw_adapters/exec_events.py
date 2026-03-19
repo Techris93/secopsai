@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from .common import make_envelope, pick
+from .common import make_envelope, pick, redact_text
 
 
 EXEC_TOOL_NAMES = {"exec", "run_in_terminal", "execute_command", "shell", "bash", "sh"}
@@ -44,7 +44,7 @@ def adapt(records: List[Dict[str, Any]], source_path: str, collected_from: str, 
                     "details": {"cwd": pick(record, ("cwd",))},
                 },
                 payload={
-                    "command": pick(record, ("command",)),
+                    "command": redact_text(str(pick(record, ("command",)) or ""), max_length=512) or None,
                     "duration_ms": pick(record, ("durationMs",), ("duration_ms",)),
                     "exit_code": pick(record, ("exitCode",), ("exit_code",)),
                     "background": pick(record, ("background",)),
