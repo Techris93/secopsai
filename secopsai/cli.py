@@ -3,7 +3,6 @@
 
 SPDX-FileCopyrightText: 2026 Techris93
 SPDX-License-Identifier: MIT
-"""
 
 This CLI provides safe thin wrappers around existing top-level scripts
 to avoid risky refactors. It calls the underlying scripts using the
@@ -38,29 +37,16 @@ def to_json(obj: dict) -> str:
 
 
 def cmd_refresh(args: argparse.Namespace) -> int:
-    # simple file-backed cache to avoid frequent re-exports
     cache_file = ROOT / "data" / ".last_refresh"
-    ttl = int(getattr(args, "cache_ttl", 60) or 0)
-    now = int(time.time())
 
-    if not getattr(args, "force", False) and cache_file.exists():
-        try:
-            last = int(cache_file.read_text().strip())
-            if now - last < ttl:
-                if args.json:
-                    print(to_json({"skipped": True, "last_refresh": last, "ttl": ttl}))
-                else:
-                    print(f"Skipped refresh: last run {now-last}s ago (<{ttl}s)")
-                return 0
-        except Exception:
-            # ignore malformed cache file and continue
-            pass
+    # If cache indicates a recent successful run and the caller did not force,
+    # skip running the exporter.
+    if _should_skip_refresh(args, cache_file):
+        return 0
 
     call = ["--verbose"]
     if args.skip_export:
         call.append("--skip-export")
-    if args.json:
-        call.append("--json")
 
     rc = run_script("run_openclaw_live.py", call)
     if rc == 0:
@@ -70,6 +56,27 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         except Exception:
             pass
     return rc
+
+
+def _should_skip_refresh(args: argparse.Namespace, cache_file: Path) -> bool:
+    ttl = int(getattr(args, "cache_ttl", 60) or 0)
+    now = int(time.time())
+    if getattr(args, "force", False):
+        return False
+    if not cache_file.exists():
+        return False
+    try:
+        last = int(cache_file.read_text().strip())
+    except Exception:
+        return False
+
+    if now - last < ttl:
+        if getattr(args, "json", False):
+            print(to_json({"skipped": True, "last_refresh": last, "ttl": ttl}))
+        else:
+            print(f"Skipped refresh: last run {now-last}s ago (<{ttl}s)")
+        return True
+    return False
 
 
 def _severity_at_least_local(sev: str, thresh: str) -> bool:
@@ -179,11 +186,19 @@ def cmd_check(args: argparse.Namespace) -> int:
         print(to_json({"check": payload}))
     else:
         print(f"CHECK: {payload['check_type']} (min_severity={min_sev})")
-        print(f"findings_total={payload['findings_total']} matched={payload['matched_count']} high_or_above={payload['high_or_above']}")
+        print(
+            "findings_total={total} matched={matched} high_or_above={high}".format(
+                total=payload["findings_total"], matched=payload["matched_count"], high=payload["high_or_above"]
+            )
+        )
         if payload["top_matches"]:
             print("\nTOP_MATCHES:")
             for row in payload["top_matches"]:
-                print(f"- {row['finding_id']} | {str(row['severity']).upper()} | {row['title']}")
+                print(
+                    "- {id} | {sev} | {title}".format(
+                        id=row["finding_id"], sev=str(row["severity"]).upper(), title=row["title"]
+                    )
+                )
     return 0
 
 
