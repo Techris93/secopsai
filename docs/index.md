@@ -23,7 +23,7 @@ secopsai turns OpenClaw audit activity into repeatable, explainable security fin
 ```bash
 curl -fsSL https://secopsai.dev/install.sh | bash
 python generate_openclaw_attack_mix.py --stats
-python evaluate.py --labeled data/openclaw/replay/labeled/attack_mix.json --mode benchmark
+python evaluate_openclaw.py --labeled data/openclaw/replay/labeled/attack_mix.json --unlabeled data/openclaw/replay/unlabeled/attack_mix.json --mode benchmark
 ```
 
 ## What You Get

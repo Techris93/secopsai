@@ -528,7 +528,7 @@ DETECTION_RULES = {
 
 ```bash
 python generate_openclaw_attack_mix.py --stats
-python evaluate.py --labeled data/openclaw/replay/labeled/attack_mix.json --mode benchmark
+python evaluate_openclaw.py --labeled data/openclaw/replay/labeled/attack_mix.json --unlabeled data/openclaw/replay/unlabeled/attack_mix.json --mode benchmark
 ```
 
 ---

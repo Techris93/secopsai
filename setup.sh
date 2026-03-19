@@ -398,7 +398,7 @@ summary() {
   echo ""
   
   echo "3. Evaluate benchmark performance:"
-  echo "   ${BLUE}python evaluate.py --labeled data/openclaw/replay/labeled/attack_mix.json --mode benchmark${NC}"
+  echo "   ${BLUE}python evaluate_openclaw.py --labeled data/openclaw/replay/labeled/attack_mix.json --unlabeled data/openclaw/replay/unlabeled/attack_mix.json --mode benchmark --verbose${NC}"
   echo ""
   
   echo "4. Build and view findings:"

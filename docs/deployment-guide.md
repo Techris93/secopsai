@@ -360,7 +360,7 @@ jobs:
         run: python generate_openclaw_attack_mix.py --stats
 
       - name: Run detection
-        run: python evaluate.py --labeled data/openclaw/replay/labeled/attack_mix.json --mode benchmark
+        run: python evaluate_openclaw.py --labeled data/openclaw/replay/labeled/attack_mix.json --unlabeled data/openclaw/replay/unlabeled/attack_mix.json --mode benchmark
 
       - name: Upload findings
         if: always()
@@ -397,7 +397,7 @@ detect:
   script:
     - pip install -r requirements.txt
     - python generate_openclaw_attack_mix.py --stats
-    - python evaluate.py --labeled data/openclaw/replay/labeled/attack_mix.json --mode benchmark
+    - python evaluate_openclaw.py --labeled data/openclaw/replay/labeled/attack_mix.json --unlabeled data/openclaw/replay/unlabeled/attack_mix.json --mode benchmark
   artifacts:
     paths:
       - findings/
@@ -609,7 +609,7 @@ ls -la ~/.openclaw/
 
 # Test with benchmark
 python generate_openclaw_attack_mix.py --stats
-python evaluate.py --labeled data/openclaw/replay/labeled/attack_mix.json --mode benchmark
+python evaluate_openclaw.py --labeled data/openclaw/replay/labeled/attack_mix.json --unlabeled data/openclaw/replay/unlabeled/attack_mix.json --mode benchmark
 ```
 
 ### OpenClaw CLI missing
