@@ -28,49 +28,62 @@ macOS/Linux:
 curl -fsSL https://secopsai.dev/install.sh | bash
 ```
 
-Note: `curl | bash` runs setup in non-interactive mode (no prompts). Defaults are:
+This will:
 
-- optional native surfaces: disabled
-- benchmark generation: enabled
-- live export: disabled
+- Clone `https://github.com/Techris93/secopsai.git` into `~/secopsai` (or `$SECOPSAI_HOME` if set)
+- Create a virtualenv at `~/secopsai/.venv`
+- Install Python dependencies and the `secopsai` CLI (editable install)
+- Run basic validation + benchmark setup
 
-Optional hardening controls:
+Default behaviour (non-interactive):
 
-- `SECOPSAI_INSTALL_REF=<git ref or commit>` to pin setup script source
-- `SECOPSAI_INSTALL_SHA256=<sha256>` to verify downloaded setup script
+- Optional native surfaces: **disabled**
+- Benchmark generation: **enabled**
+- Live export: **disabled**
 
-Default behavior: `install.sh` points to a pinned immutable commit.
-To explicitly track latest `main` instead:
+Optional controls:
+
+- `SECOPSAI_INSTALL_REF=<git ref or commit>` – pin to a specific version (by default, a fixed known-good commit is used)
+- `SECOPSAI_HOME=/path/to/dir` – change the checkout location (default: `$HOME/secopsai`)
+
+Example to explicitly track latest `main` instead of the pinned commit:
 
 ```bash
 SECOPSAI_INSTALL_REF=main curl -fsSL https://secopsai.dev/install.sh | bash
 ```
 
-Optional temp log location:
-
-- `SECOPSAI_TMP_DIR=/path` (defaults to `$TMPDIR` or `/tmp`)
-
-Fallback:
+After install, activate the environment:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Techris93/secopsai/main/setup.sh | bash
+cd ~/secopsai
+source .venv/bin/activate
 ```
 
-Or clone the repo:
+You now have the `secopsai` CLI available:
+
+```bash
+secopsai refresh                 # run the live pipeline
+secopsai list --severity high    # list high-severity findings
+secopsai show OCF-XXXX           # inspect a finding
+
+# Add --json to any command for machine-friendly output
+secopsai list --severity high --json
+```
+
+### Option 2: Manual Setup
 
 ```bash
 git clone https://github.com/Techris93/secopsai.git
 cd secopsai
-bash setup.sh
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install -r requirements.txt
+python prepare.py  # Generate data/events.json and data/events_unlabeled.json
+
+python -m pytest tests/ -v  # Optional: verify installation
 ```
-
-The setup script will:
-
-- ✓ Check prerequisites (Python 3, pip, Git, OpenClaw CLI)
-- ✓ Create isolated Python environment
-- ✓ Ask which features to enable
-- ✓ Generate benchmark corpus
-- ✓ Run validation tests
 
 ### Option 2: Manual Setup
 
