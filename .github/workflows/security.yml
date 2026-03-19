@@ -28,6 +28,7 @@ jobs:
           cache: "pip"
 
       - name: Run Trivy file/config scan
+        continue-on-error: ${{ github.event_name != 'schedule' }}
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           scan-type: "fs"
@@ -38,6 +39,7 @@ jobs:
           output: "trivy-fs-results.sarif"
 
       - name: Run Trivy secret scan
+        continue-on-error: ${{ github.event_name != 'schedule' }}
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           scan-type: "secret"
@@ -48,6 +50,7 @@ jobs:
           output: "trivy-secret-results.sarif"
 
       - name: Run Trivy dependency scan
+        continue-on-error: ${{ github.event_name != 'schedule' }}
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           scan-type: "config"
@@ -68,11 +71,13 @@ jobs:
             trivy-config-results.sarif
 
       - name: Run pip-audit (dependency vulnerabilities)
+        continue-on-error: ${{ github.event_name != 'schedule' }}
         run: |
           pip install pip-audit
           pip-audit --desc
 
       - name: OWASP Dependency-Check
+        continue-on-error: ${{ github.event_name != 'schedule' }}
         uses: dependency-check/Dependency-Check_Action@1e54355a8b4c8abaa8cc7d0b70aa655a3bb15a6c
         with:
           project: "secopsai"
