@@ -21,9 +21,28 @@ secopsai turns OpenClaw audit activity into repeatable, explainable security fin
 ## Quick Start
 
 ```bash
+# 1) Install secopsai on the same host as your OpenClaw gateway
 curl -fsSL https://secopsai.dev/install.sh | bash
+
+# 2) Activate the virtualenv
+cd secopsai
+source .venv/bin/activate
+
+# 3) Run the live OpenClaw pipeline via the CLI
+secopsai refresh
+
+# 4) List high-severity findings
+secopsai list --severity high
+```
+
+For benchmark-style evaluation instead of live telemetry:
+
+```bash
 python generate_openclaw_attack_mix.py --stats
-python evaluate_openclaw.py --labeled data/openclaw/replay/labeled/attack_mix.json --unlabeled data/openclaw/replay/unlabeled/attack_mix.json --mode benchmark
+python evaluate_openclaw.py \
+  --labeled data/openclaw/replay/labeled/attack_mix.json \
+  --unlabeled data/openclaw/replay/unlabeled/attack_mix.json \
+  --mode benchmark
 ```
 
 ## What You Get

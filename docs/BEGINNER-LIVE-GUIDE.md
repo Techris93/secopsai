@@ -25,25 +25,36 @@ Why:
 python run_openclaw_live.py
 ```
 
-### Or use the new `secopsai` CLI
+### Or use the `secopsai` CLI (recommended)
 
-If you installed with `bash setup.sh` the `secopsai` console command is available
-in the virtualenv. The CLI is a thin wrapper around the same scripts and provides
-convenient defaults and a small cache to avoid repeated exports.
+If you installed with `install.sh` the `secopsai` console command is available
+in the virtualenv. The CLI calls the same core modules in-process and provides a
+small cache to avoid repeated exports.
 
 ```bash
-secopsai refresh            # runs full pipeline; default cache TTL is 60s
-secopsai refresh --skip-export --force
-secopsai refresh --cache-ttl 300
+# Run the full pipeline once
+secopsai refresh
+secopsai refresh --skip-export
 
+# Then use cached-aware listing/inspection
 secopsai list --severity high
-secopsai show OCF-... 
+secopsai list --severity high --cache-ttl 300   # reuse refresh from last 5 minutes
+secopsai show OCF-...
+secopsai mitigate OCF-...
+secopsai check --type malware --severity high
+
+# Add --json to any command for machine-friendly output
+secopsai list --severity high --json
 ```
 
 Notes:
+
 - Cache file: `data/.last_refresh` is written after successful `refresh` runs.
-- Use `--force` to ignore cache and always refresh.
-- Add `--json` to commands for machine-friendly output.
+- `list`, `show`, `mitigate`, and `check` auto-refresh when the last refresh is
+  older than the configured `--cache-ttl` (default 60s), and skip the pipeline
+  when a recent refresh exists.
+- Add `--no-refresh` to those commands if you want to **only** use the currently
+  persisted findings in `soc_store`.
 
 What this does:
 

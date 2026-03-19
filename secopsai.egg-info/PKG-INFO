@@ -1,3 +1,14 @@
+Metadata-Version: 2.4
+Name: secopsai
+Version: 0.1.0
+Summary: Intelligent attack detection for OpenClaw audit logs
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Provides-Extra: dev
+Requires-Dist: pytest<9,>=8; extra == "dev"
+Dynamic: license-file
+
 # SecOpsAI
 
 Intelligent attack detection for OpenClaw audit logs.
@@ -51,12 +62,18 @@ Optional runtime temp log directory:
 
 - `SECOPSAI_TMP_DIR=/path` to override default temp log location (`$TMPDIR` or `/tmp`)
 
-Fallback (manual clone + install.sh):
+Fallback:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Techris93/secopsai/main/setup.sh | bash
+```
+
+or
 
 ```bash
 git clone https://github.com/Techris93/secopsai.git
 cd secopsai
-curl -fsSL https://secopsai.dev/install.sh | bash
+bash setup.sh
 ```
 
 2. Activate environment:
@@ -73,44 +90,34 @@ python run_openclaw_live.py
 
 ## CLI: `secopsai`
 
-This project exposes a first-class CLI, `secopsai`, that runs the OpenClaw
-pipeline in-process (no `subprocess` shells) and provides both pretty and JSON
-output. The CLI is installed into the project's virtualenv by `install.sh`.
+This project now provides a lightweight CLI wrapper `secopsai` that calls the same
+top-level scripts in a safe way. The CLI is installed into the project's virtualenv
+when you run `bash setup.sh` (editable install).
 
 Usage examples (after activating venv):
 
 ```bash
-# 1) Run the full live pipeline and persist findings
-secopsai refresh
-secopsai refresh --skip-export       # reuse existing native export
+secopsai refresh            # run pipeline (default cache TTL: 60s)
+secopsai refresh --force    # force a refresh ignoring cache
+secopsai refresh --cache-ttl 300  # set cache TTL to 5 minutes
 
-# 2) List and inspect findings (auto-refresh with cache)
 secopsai list --severity high
-secopsai list --severity high --json
-secopsai list --severity high --cache-ttl 300   # reuse refresh from last 5 minutes
-
 secopsai show OCF-XXXX
 secopsai mitigate OCF-XXXX
 secopsai check --type malware --severity high
 
-# All subcommands accept --json for machine-friendly output
-secopsai show OCF-XXXX --json
-secopsai check --type malware --severity high --json
+# For machine output, add --json to any command
+secopsai list --severity high --json
 ```
 
 Behavior notes:
 
-- `secopsai refresh` runs the full OpenClaw live pipeline by calling
-  `export_real_openclaw_native`, `ingest_openclaw`, `openclaw_prepare`,
-  `evaluate_openclaw`, and `openclaw_findings` directly in Python, then
-  writes findings into the local SOC store (`soc_store`).
-- After a successful `refresh`, a timestamp is written to `data/.last_refresh`.
-- `list`, `show`, `mitigate`, and `check` will, by default, auto-refresh via the
-  pipeline **unless** a recent refresh exists; the freshness window is controlled
-  by `--cache-ttl` (default 60 seconds). Use `--no-refresh` on those commands to
-  skip the pipeline entirely and operate on whatever is already in `soc_store`.
-- The CLI is designed to be idempotent and automation-friendly: pretty output for
-  humans, `--json` for integrations.
+- The `refresh` subcommand writes a timestamp file at `data/.last_refresh` after a
+  successful run and will skip running the exporter if the last refresh is younger
+  than the configured TTL (default 60s).
+- `--force` ignores the cache and always runs the pipeline.
+- The CLI is a safe wrapper that preserves existing script behavior; it can be
+  extended later to call importable functions directly.
 
 4. Review findings:
 

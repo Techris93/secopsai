@@ -16,21 +16,15 @@ Run the one-line install on the **same machine** as your OpenClaw gateway:
 curl -fsSL https://secopsai.dev/install.sh | bash
 ```
 
-Fallback:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Techris93/secopsai/main/setup.sh | bash
-```
-
-Or install manually:
+Fallback (manual clone + install.sh):
 
 ```bash
 git clone https://github.com/Techris93/secopsai.git
 cd secopsai
-bash setup.sh
+curl -fsSL https://secopsai.dev/install.sh | bash
 ```
 
-From now on, activate the virtualenv (created by `setup.sh`) before running any commands:
+From now on, activate the virtualenv (created by `install.sh`) before running any commands:
 
 ```bash
 cd secopsai
@@ -39,27 +33,44 @@ source .venv/bin/activate
 
 ---
 
-## 2. Run the OpenClaw live pipeline
+## 2. Run the OpenClaw live pipeline (CLI-first)
+
+Recommended entrypoint is the `secopsai` CLI, which runs the same five steps
+in-process and writes structured metadata about the refresh.
 
 ```bash
-python run_openclaw_live.py
-# If export from ~/.openclaw was already done this session:
-python run_openclaw_live.py --skip-export
+# Full live run (export + ingest + prepare + detect + findings)
+secopsai refresh
+
+# If you have already exported from ~/.openclaw and just want to re-run
+# ingest/prepare/detect/findings, skip the export step:
+secopsai refresh --skip-export
+
+# For automation/integrations, use JSON output:
+secopsai refresh --json
 ```
 
-This runs five steps in sequence:
+Under the hood this runs the same sequence as before:
 
 1. `export_real_openclaw_native.py` — pulls telemetry from `~/.openclaw`
 2. `ingest_openclaw.py` — normalises into an audit stream
 3. `openclaw_prepare.py` — builds replay bundles
-4. `evaluate_openclaw.py --mode live` — runs detectors
+4. `evaluate_openclaw.py` — runs detectors in live mode
 5. `openclaw_findings.py` — writes findings (with mitigations) into the local SOC store
 
-At the end you'll see:
+You can still call the script directly if needed:
 
-```text
-Live OpenClaw pipeline completed.
-Use 'python soc_store.py list' to inspect the findings store.
+```bash
+python run_openclaw_live.py
+python run_openclaw_live.py --skip-export
+```
+
+At the end, inspect the findings store:
+
+```bash
+secopsai list --severity high
+# or, for raw store listing
+python soc_store.py list
 ```
 
 ---

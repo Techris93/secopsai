@@ -1,0 +1,17 @@
+LICENSE
+README.md
+pyproject.toml
+setup.py
+secopsai/__init__.py
+secopsai/cli.py
+secopsai/formatters.py
+secopsai/pipeline.py
+secopsai.egg-info/PKG-INFO
+secopsai.egg-info/SOURCES.txt
+secopsai.egg-info/dependency_links.txt
+secopsai.egg-info/entry_points.txt
+secopsai.egg-info/requires.txt
+secopsai.egg-info/top_level.txt
+tests/test_openclaw_ingest.py
+tests/test_openclaw_pipeline.py
+tests/test_regression.py

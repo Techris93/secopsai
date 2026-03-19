@@ -1,9 +1,8 @@
-"""secopsai package - lightweight CLI adapters for existing scripts.
+"""secopsai package - OpenClaw SecOps pipeline helpers and CLI.
 
-SPDX-FileCopyrightText: 2026 Techris93
-SPDX-License-Identifier: MIT
-
-This package intentionally keeps wrappers simple to avoid refactoring risks.
+This package keeps wrappers thin but now calls core modules directly
+instead of shelling out to top-level scripts.
 """
 
-__version__ = "0.0.0"
+__all__ = ["__version__"]
+__version__ = "0.1.0"

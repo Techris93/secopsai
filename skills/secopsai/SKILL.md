@@ -14,9 +14,10 @@ This skill lets an OpenClaw agent:
 
 ## Assumptions
 
-- `secopsai` is installed at `~/secopsai` (via `curl -fsSL https://secopsai.dev/setup.sh | sh`).
-- OpenClaw audit logs are present at `~/.openclaw/logs/`.
+- `secopsai` is installed at `~/secopsai` (via `curl -fsSL https://secopsai.dev/install.sh | bash`).
+- OpenClaw audit logs are present at `~/.openclaw/logs/` on the same host.
 - The agent has access to an `exec` tool to run shell commands.
+- The virtualenv at `~/secopsai/.venv` is used for all commands.
 
 ---
 
@@ -34,16 +35,18 @@ This skill lets an OpenClaw agent:
 **Exec command:**
 
 ```bash
-cd "$HOME/secopsai" && source .venv/bin/activate && python soc_store.py list
+cd "$HOME/secopsai" && source .venv/bin/activate && \
+  secopsai list --severity info --json --cache-ttl 60
 ```
 
 **Agent behaviour:**
 
-Parse each `OCF-...` line into ID, severity, status, disposition, title. Reply with:
-
-- Total count
-- Count by severity (HIGH / MEDIUM / LOW / INFO)
-- List of HIGH (and MEDIUM) findings with ID and title
+- Parse the JSON payload from `secopsai list` (field: `findings`).
+- For each finding, extract: `finding_id`, `severity`, `status`, `disposition`, `title`.
+- Reply with:
+  - Total count
+  - Count by severity (HIGH / MEDIUM / LOW / INFO)
+  - List of HIGH (and MEDIUM) findings with ID and title
 
 ---
 
@@ -59,21 +62,25 @@ Parse each `OCF-...` line into ID, severity, status, disposition, title. Reply w
 **Exec command:**
 
 ```bash
-cd "$HOME/secopsai" && source .venv/bin/activate && python run_openclaw_live.py --skip-export && python soc_store.py list
+cd "$HOME/secopsai" && source .venv/bin/activate && \
+  secopsai refresh --json && \
+  secopsai list --severity high --json --cache-ttl 300
 ```
 
 **Agent behaviour:**
 
-- Run pipeline, then re-list findings.
-- Highlight new or HIGH findings.
+- Run the pipeline once (`refresh`) and then list current high-severity findings.
+- From the `list` JSON output, highlight NEW or HIGH/CRITICAL findings (based on
+  `first_seen`/`last_seen` fields when available).
 
 Example reply:
 
-> Daily SecOps summary: 3 findings (2 HIGH, 1 MEDIUM).
+> Daily SecOps summary: 3 high-severity findings.
 >
-> - HIGH: OCF-C9D2523C770B6731 — OpenClaw Dangerous Exec / Tool Burst
-> - HIGH: OCF-62FA8D1D3578BF6E — OpenClaw Sensitive Config
->   Reply `triage OCF-...` to mark as reviewed, or `mitigate OCF-...` for remediation steps.
+> - HIGH: OCF-C9D2523C770B6731 — OpenClaw Dangerous Exec / Tool Burst (status=open)
+> - HIGH: OCF-62FA8D1D3578BF6E — OpenClaw Sensitive Config (status=open)
+>
+> Reply `triage OCF-...` to mark as reviewed, or `mitigate OCF-...` for remediation steps.
 
 ---
 
@@ -111,12 +118,15 @@ Run all three commands in sequence. Confirm back:
 **Exec command:**
 
 ```bash
-cd "$HOME/secopsai" && source .venv/bin/activate && python openclaw_plugin.py show OCF-<ID>
+cd "$HOME/secopsai" && source .venv/bin/activate && \
+  secopsai show OCF-<ID> --json
 ```
 
 **Agent behaviour:**
 
-Parse and summarise the JSON: title, severity, status, disposition, rule IDs, event count, first/last seen.
+Parse and summarise the JSON: title, severity, status, disposition, rule IDs,
+number of events, first/last seen. Prefer the structured fields from
+`secopsai show` and avoid re-parsing raw text.
 
 ---
 
@@ -132,12 +142,14 @@ Parse and summarise the JSON: title, severity, status, disposition, rule IDs, ev
 **Exec command pattern:**
 
 ```bash
-cd "$HOME/secopsai" && source .venv/bin/activate && python openclaw_plugin.py check --type <malware|exfil|both> --severity medium
+cd "$HOME/secopsai" && source .venv/bin/activate && \
+  secopsai check --type <malware|exfil|both> --severity medium --json --cache-ttl 60
 ```
 
 **Agent behaviour:**
 
-Parse the JSON (`matched_count`, `high_or_above`, `top_matches`) and reply with a compact summary:
+Parse the JSON (`check` payload: `findings_total`, `matched_count`,
+`high_or_above`, `top_matches`) and reply with a compact summary:
 
 > Malware check: 2 matching findings (1 HIGH).
 > Top: OCF-C9D2523C770B6731, HIGH — OpenClaw Dangerous Exec / Policy Denials.
@@ -155,10 +167,12 @@ Parse the JSON (`matched_count`, `high_or_above`, `top_matches`) and reply with 
 **Exec command:**
 
 ```bash
-cd "$HOME/secopsai" && source .venv/bin/activate && python openclaw_plugin.py mitigate OCF-<ID>
+cd "$HOME/secopsai" && source .venv/bin/activate && \
+  secopsai mitigate OCF-<ID> --json --cache-ttl 60
 ```
 
-**Expected JSON fields:** `finding_id`, `title`, `severity`, `recommended_actions` (list of strings).
+**Expected JSON fields:** `finding_id`, `title`, `severity`, `status`,
+`disposition`, `rule_ids`, `recommended_actions` (list of strings).
 
 **Agent behaviour:**
 
@@ -180,18 +194,28 @@ If `recommended_actions` is empty or missing:
 
 ## Daily Summary (OpenClaw cron)
 
-Configure an OpenClaw cron job:
+Configure an OpenClaw cron job to drive the `secopsai` CLI and produce a
+concise chat summary.
 
 - **Schedule:** `30 7 * * *` (07:30 local)
 - **Action (systemEvent text):**
 
 ```text
-[SECOPSAI_DAILY_SUMMARY] Run: cd "$HOME/secopsai" && source .venv/bin/activate && python run_openclaw_live.py --skip-export && python soc_store.py list. Then summarise new/HIGH findings and send here.
+[SECOPS_DAILY_SUMMARY_TRIGGER] Run the SecOpsAI pipeline and summarise new/high
+findings for this chat.
+
+Suggested steps for the agent:
+1) cd "$HOME/secopsai" && source .venv/bin/activate
+2) secopsai refresh --json
+3) secopsai list --severity high --json --cache-ttl 300
+4) Focus on high/critical findings first_seen in the last 24h.
+5) Post a compact summary back into this conversation.
 ```
 
 When this fires the agent should:
 
-1. Execute the command via `exec`.
-2. Parse `soc_store.py list` output.
-3. Post a summary: total count, HIGH/MEDIUM breakdown, top finding IDs with titles.
+1. Execute the `secopsai` commands via `exec`.
+2. Parse the JSON findings payload from `secopsai list --severity high --json`.
+3. Post a summary: total count, HIGH/CRITICAL breakdown, and top finding IDs with
+   titles and status.
 4. Invite the user to `triage OCF-...` or `mitigate OCF-...` any flagged item.

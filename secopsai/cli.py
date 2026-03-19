@@ -1,243 +1,333 @@
-#!/usr/bin/env python3
-"""Command-line entrypoint for secopsai.
-
-SPDX-FileCopyrightText: 2026 Techris93
-SPDX-License-Identifier: MIT
-
-This CLI provides safe thin wrappers around existing top-level scripts
-to avoid risky refactors. It calls the underlying scripts using the
-current Python executable so behavior remains identical for users.
-
-Subcommands: refresh, list, show, mitigate, check
-"""
 from __future__ import annotations
 
 import argparse
-import json
-import subprocess
-import sys
 import time
 from pathlib import Path
-from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
 
 import soc_store
 import openclaw_plugin
 
+from secopsai.pipeline import refresh as refresh_pipeline
+from secopsai.formatters import fmt_list, fmt_finding, to_json
+
+
 ROOT = Path(__file__).resolve().parents[1]
+CACHE_FILE = ROOT / "data" / ".last_refresh"
+DEFAULT_TTL_SECONDS = 60
 
 
-def run_script(script: str, args: list[str]) -> int:
-    cmd = [sys.executable, str(ROOT / script)] + args
-    proc = subprocess.run(cmd)
-    return proc.returncode
+def _severity_at_least(sev: str, threshold: str) -> bool:
+    order = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+    return order.get(sev.lower(), 0) >= order.get(threshold.lower(), 0)
 
 
-def to_json(obj: dict) -> str:
-    return json.dumps(obj, indent=2)
+def _read_last_refresh() -> Optional[int]:
+    if not CACHE_FILE.exists():
+        return None
+    try:
+        return int(CACHE_FILE.read_text().strip())
+    except Exception:
+        return None
 
 
-def cmd_refresh(args: argparse.Namespace) -> int:
-    cache_file = ROOT / "data" / ".last_refresh"
-
-    # If cache indicates a recent successful run and the caller did not force,
-    # skip running the exporter.
-    if _should_skip_refresh(args, cache_file):
-        return 0
-
-    call = ["--verbose"]
-    if args.skip_export:
-        call.append("--skip-export")
-
-    rc = run_script("run_openclaw_live.py", call)
-    if rc == 0:
-        try:
-            (ROOT / "data").mkdir(parents=True, exist_ok=True)
-            cache_file.write_text(str(int(time.time())))
-        except Exception:
-            pass
-    return rc
+def _write_last_refresh(ts: Optional[int] = None) -> None:
+    ts = ts or int(time.time())
+    CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        CACHE_FILE.write_text(str(ts))
+    except Exception:
+        # Cache failure should never break the CLI
+        pass
 
 
-def _should_skip_refresh(args: argparse.Namespace, cache_file: Path) -> bool:
-    ttl = int(getattr(args, "cache_ttl", 60) or 0)
+def _maybe_skip_refresh(ttl: int, json_mode: bool) -> Optional[Dict[str, Any]]:
+    """Return metadata if refresh should be skipped, otherwise None."""
     now = int(time.time())
-    if getattr(args, "force", False):
-        return False
-    if not cache_file.exists():
-        return False
-    try:
-        last = int(cache_file.read_text().strip())
-    except Exception:
-        return False
+    last = _read_last_refresh()
+    if last is None:
+        return None
+    if now - last >= ttl:
+        return None
 
-    if now - last < ttl:
-        if getattr(args, "json", False):
-            print(to_json({"skipped": True, "last_refresh": last, "ttl": ttl}))
-        else:
-            print(f"Skipped refresh: last run {now-last}s ago (<{ttl}s)")
-        return True
-    return False
-
-
-def _severity_at_least_local(sev: str, thresh: str) -> bool:
-    try:
-        return openclaw_plugin._severity_at_least(sev, thresh)
-    except Exception:
-        return True
-
-
-def _ensure_refresh(no_refresh: bool) -> int:
-    if no_refresh:
-        return 0
-    refresh_args = SimpleNamespace(skip_export=False, force=False, cache_ttl=60, json=False)
-    return cmd_refresh(refresh_args)
-
-
-def cmd_list(args: argparse.Namespace) -> int:
-    rc = _ensure_refresh(getattr(args, "no_refresh", False))
-    if rc != 0:
-        return rc
-
-    findings = soc_store.list_findings()
-    if args.severity:
-        findings = [f for f in findings if _severity_at_least_local(str(f.get("severity", "info")), args.severity)]
-
-    if args.json:
-        print(to_json({"total_findings": len(findings), "findings": findings}))
-        return 0
-
-    for finding in findings:
-        print(soc_store.format_finding_row(finding))
-    print(f"total_findings={len(findings)}")
-    return 0
-
-
-def cmd_show(args: argparse.Namespace) -> int:
-    rc = _ensure_refresh(getattr(args, "no_refresh", False))
-    if rc != 0:
-        return rc
-
-    finding = soc_store.get_finding(args.finding_id)
-    if finding is None:
-        if args.json:
-            print(to_json({"error": "finding not found", "finding_id": args.finding_id}))
-        else:
-            print(f"error: finding not found: {args.finding_id}")
-        return 1
-
-    if args.json:
-        print(to_json({"finding": finding}))
-    else:
-        print(json.dumps(finding, indent=2))
-    return 0
-
-
-def cmd_mitigate(args: argparse.Namespace) -> int:
-    rc = _ensure_refresh(getattr(args, "no_refresh", False))
-    if rc != 0:
-        return rc
-
-    finding = soc_store.get_finding(args.finding_id)
-    if not finding:
-        if args.json:
-            print(to_json({"error": "finding not found", "finding_id": args.finding_id}))
-        else:
-            print(f"error: finding not found: {args.finding_id}")
-        return 1
-
-    mitigations = openclaw_plugin._mitigations_for_finding(finding)
-    payload = {
-        "finding_id": finding.get("finding_id", args.finding_id),
-        "title": finding.get("title"),
-        "severity": finding.get("severity"),
-        "status": finding.get("status"),
-        "disposition": finding.get("disposition"),
-        "rule_ids": finding.get("rule_ids"),
-        "recommended_actions": mitigations,
+    meta: Dict[str, Any] = {
+        "skipped": True,
+        "last_refresh": last,
+        "ttl": ttl,
+        "age_seconds": now - last,
     }
 
-    if args.json:
-        print(to_json({"mitigation": payload}))
+    if json_mode:
+        print(to_json(meta))
     else:
-        print(f"{payload['finding_id']} | {str(payload['severity']).upper()} | {payload['title']}")
-        print("RECOMMENDED_ACTIONS:")
-        for a in payload["recommended_actions"]:
-            print(f"- {a}")
-    return 0
-
-
-def cmd_check(args: argparse.Namespace) -> int:
-    rc = _ensure_refresh(getattr(args, "no_refresh", False))
-    if rc != 0:
-        return rc
-
-    check_type = args.type or "malware"
-    min_sev = args.severity or "low"
-    result = openclaw_plugin.check_presence(check_type, min_sev)
-    payload = {
-        "check_type": result.check_type,
-        "findings_total": result.findings_total,
-        "matched_count": result.matched_count,
-        "high_or_above": result.high_or_above,
-        "top_matches": result.top_matches,
-    }
-
-    if args.json:
-        print(to_json({"check": payload}))
-    else:
-        print(f"CHECK: {payload['check_type']} (min_severity={min_sev})")
         print(
-            "findings_total={total} matched={matched} high_or_above={high}".format(
-                total=payload["findings_total"], matched=payload["matched_count"], high=payload["high_or_above"]
-            )
+            f"Skipped auto-refresh: last run {now - last}s ago (< {ttl}s); "
+            "using existing findings from soc_store."
         )
-        if payload["top_matches"]:
-            print("\nTOP_MATCHES:")
-            for row in payload["top_matches"]:
-                print(
-                    "- {id} | {sev} | {title}".format(
-                        id=row["finding_id"], sev=str(row["severity"]).upper(), title=row["title"]
-                    )
-                )
-    return 0
+
+    return meta
 
 
-def main(argv: list[str] | None = None) -> int:
-    argv = list(argv or sys.argv[1:])
-    p = argparse.ArgumentParser(prog="secopsai")
-    p.add_argument("--json", action="store_true", help="output JSON")
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        prog="secopsai", description="secopsai CLI (OpenClaw SecOps pipeline)"
+    )
+    p.add_argument("--json", action="store_true", help="Output JSON instead of pretty text")
 
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s_refresh = sub.add_parser("refresh", help="run live pipeline and export findings")
-    s_refresh.add_argument("--skip-export", action="store_true", help="skip re-exporting native files")
-    s_refresh.add_argument("--force", action="store_true", help="force refresh ignoring cache")
-    s_refresh.add_argument("--cache-ttl", type=int, default=60, help="cache TTL in seconds (default: 60)")
-    s_refresh.set_defaults(func=cmd_refresh)
+    r = sub.add_parser("refresh", help="Run the full OpenClaw live pipeline and persist findings")
+    r.add_argument("--skip-export", action="store_true", help="Skip export from ~/.openclaw")
+    r.add_argument("--openclaw-home", help="Override OPENCLAW_HOME")
+    r.add_argument("--verbose", action="store_true", help="Verbose refresh output (future use)")
 
-    s_list = sub.add_parser("list", help="list findings from store")
-    s_list.add_argument("--severity", help="minimum severity to show")
-    s_list.add_argument("--no-refresh", action="store_true", help="do not auto-refresh before listing")
-    s_list.set_defaults(func=cmd_list)
+    l = sub.add_parser("list", help="List findings")
+    l.add_argument("--severity", default=None, choices=["info", "low", "medium", "high", "critical"])
+    l.add_argument("--limit", type=int, default=50)
+    l.add_argument("--no-refresh", action="store_true", help="Do not auto-refresh before listing")
+    l.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=DEFAULT_TTL_SECONDS,
+        help=f"Minimum seconds between auto-refresh runs (default: {DEFAULT_TTL_SECONDS})",
+    )
+    l.add_argument("--openclaw-home", help="Override OPENCLAW_HOME")
 
-    s_show = sub.add_parser("show", help="show a finding by id")
-    s_show.add_argument("finding_id", help="finding id (OCF-XXXX)")
-    s_show.add_argument("--no-refresh", action="store_true", help="do not auto-refresh before showing")
-    s_show.set_defaults(func=cmd_show)
+    s = sub.add_parser("show", help="Show a finding")
+    s.add_argument("finding_id")
+    s.add_argument("--no-refresh", action="store_true")
+    s.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=DEFAULT_TTL_SECONDS,
+        help=f"Minimum seconds between auto-refresh runs (default: {DEFAULT_TTL_SECONDS})",
+    )
+    s.add_argument("--openclaw-home", help="Override OPENCLAW_HOME")
 
-    s_mit = sub.add_parser("mitigate", help="recommend mitigations for finding")
-    s_mit.add_argument("finding_id", help="finding id (OCF-XXXX)")
-    s_mit.add_argument("--no-refresh", action="store_true", help="do not auto-refresh before mitigating")
-    s_mit.set_defaults(func=cmd_mitigate)
+    m = sub.add_parser("mitigate", help="Show mitigation recommendations for a finding")
+    m.add_argument("finding_id")
+    m.add_argument("--no-refresh", action="store_true")
+    m.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=DEFAULT_TTL_SECONDS,
+        help=f"Minimum seconds between auto-refresh runs (default: {DEFAULT_TTL_SECONDS})",
+    )
+    m.add_argument("--openclaw-home", help="Override OPENCLAW_HOME")
 
-    s_check = sub.add_parser("check", help="check for malware/exfil presence")
-    s_check.add_argument("--type", choices=["malware", "exfil", "both"], help="check type")
-    s_check.add_argument("--severity", help="minimum severity")
-    s_check.add_argument("--no-refresh", action="store_true", help="do not auto-refresh before check")
-    s_check.set_defaults(func=cmd_check)
+    c = sub.add_parser("check", help="Presence checks (malware/exfil/both)")
+    c.add_argument("--type", required=True, choices=["malware", "exfil", "both"])
+    c.add_argument("--severity", default="low", choices=["info", "low", "medium", "high", "critical"])
+    c.add_argument("--no-refresh", action="store_true")
+    c.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=DEFAULT_TTL_SECONDS,
+        help=f"Minimum seconds between auto-refresh runs (default: {DEFAULT_TTL_SECONDS})",
+    )
+    c.add_argument("--openclaw-home", help="Override OPENCLAW_HOME")
 
-    args = p.parse_args(argv)
-    return args.func(args)
+    return p.parse_args(argv)
+
+
+def maybe_refresh(args: argparse.Namespace) -> Optional[Dict[str, Any]]:
+    if getattr(args, "no_refresh", False):
+        return None
+
+    # Only list/show/mitigate/check auto-refresh; refresh command is explicit.
+    if getattr(args, "cmd", None) not in {"list", "show", "mitigate", "check"}:
+        return None
+
+    # Cache-aware auto-refresh: if a recent refresh was done, re-use it.
+    ttl = int(getattr(args, "cache_ttl", DEFAULT_TTL_SECONDS) or 0)
+    if ttl > 0:
+        skipped_meta = _maybe_skip_refresh(ttl, json_mode=getattr(args, "json", False))
+        if skipped_meta is not None:
+            # Indicate that we did not re-run the pipeline.
+            return {"skipped": True, **skipped_meta}
+
+    # No recent refresh (or ttl <= 0): run the full pipeline.
+    result = refresh_pipeline(
+        skip_export=False,
+        openclaw_home=getattr(args, "openclaw_home", None),
+        verbose=False,
+    )
+    _write_last_refresh()
+    return result.__dict__
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = parse_args(argv)
+
+    if args.cmd == "refresh":
+        res = refresh_pipeline(
+            skip_export=args.skip_export,
+            openclaw_home=args.openclaw_home,
+            verbose=args.verbose,
+        )
+        _write_last_refresh()
+        if args.json:
+            print(to_json(res.__dict__))
+        else:
+            print("secopsai refresh complete")
+            print(f"exported={res.exported}")
+            print(f"findings_db={res.findings_db}")
+            print(f"findings_file={res.findings_file}")
+            print(f"total_findings={res.total_findings}")
+            print(f"total_detections={res.total_detections}")
+        return 0
+
+    # auto refresh for the rest
+    refresh_meta = maybe_refresh(args)
+
+    if args.cmd == "list":
+        rows = soc_store.list_findings()
+        if args.severity:
+            rows = [
+                r
+                for r in rows
+                if _severity_at_least(str(r.get("severity", "info")), args.severity)
+            ]
+        rows = rows[: args.limit]
+
+        if args.json:
+            out: Dict[str, Any] = {
+                "refreshed": bool(refresh_meta and not refresh_meta.get("skipped")),
+                "refresh": refresh_meta,
+                "findings": rows,
+            }
+            print(to_json(out))
+        else:
+            if refresh_meta and not refresh_meta.get("skipped"):
+                print(
+                    "refreshed: total_findings={tf} total_detections={td}".format(
+                        tf=refresh_meta.get("total_findings"),
+                        td=refresh_meta.get("total_detections"),
+                    )
+                )
+                print("")
+            print(fmt_list(rows))
+        return 0
+
+    if args.cmd == "show":
+        finding = soc_store.get_finding(args.finding_id)
+        if not finding:
+            if args.json:
+                print(
+                    to_json(
+                        {
+                            "error": "finding not found",
+                            "finding_id": args.finding_id,
+                        }
+                    )
+                )
+            else:
+                print(f"error: finding not found: {args.finding_id}")
+            return 1
+
+        if args.json:
+            print(
+                to_json(
+                    {
+                        "refreshed": bool(refresh_meta and not refresh_meta.get("skipped")),
+                        "refresh": refresh_meta,
+                        "finding": finding,
+                    }
+                )
+            )
+        else:
+            if refresh_meta and not refresh_meta.get("skipped"):
+                print("refreshed before show\n")
+            print(fmt_finding(finding))
+        return 0
+
+    if args.cmd == "mitigate":
+        finding = soc_store.get_finding(args.finding_id)
+        if not finding:
+            if args.json:
+                print(
+                    to_json(
+                        {
+                            "error": "finding not found",
+                            "finding_id": args.finding_id,
+                        }
+                    )
+                )
+            else:
+                print(f"error: finding not found: {args.finding_id}")
+            return 1
+
+        mitigations = openclaw_plugin._mitigations_for_finding(finding)
+        payload: Dict[str, Any] = {
+            "finding_id": finding.get("finding_id", args.finding_id),
+            "title": finding.get("title"),
+            "severity": finding.get("severity"),
+            "status": finding.get("status"),
+            "disposition": finding.get("disposition"),
+            "rule_ids": finding.get("rule_ids"),
+            "recommended_actions": mitigations,
+        }
+
+        if args.json:
+            print(
+                to_json(
+                    {
+                        "refreshed": bool(refresh_meta and not refresh_meta.get("skipped")),
+                        "refresh": refresh_meta,
+                        "mitigation": payload,
+                    }
+                )
+            )
+        else:
+            if refresh_meta and not refresh_meta.get("skipped"):
+                print("refreshed before mitigate\n")
+            print(
+                f"{payload['finding_id']} | {str(payload['severity']).upper()} | {payload['title']}"
+            )
+            print("RECOMMENDED_ACTIONS:")
+            for a in payload["recommended_actions"]:
+                print(f"- {a}")
+        return 0
+
+    if args.cmd == "check":
+        result = openclaw_plugin.check_presence(args.type, args.severity)
+        payload = {
+            "check_type": result.check_type,
+            "findings_total": result.findings_total,
+            "matched_count": result.matched_count,
+            "high_or_above": result.high_or_above,
+            "top_matches": result.top_matches,
+        }
+        if args.json:
+            print(
+                to_json(
+                    {
+                        "refreshed": bool(refresh_meta and not refresh_meta.get("skipped")),
+                        "refresh": refresh_meta,
+                        "check": payload,
+                    }
+                )
+            )
+        else:
+            if refresh_meta and not refresh_meta.get("skipped"):
+                print("refreshed before check\n")
+            print(f"CHECK: {payload['check_type']} (min_severity={args.severity})")
+            print(
+                "findings_total={total} matched={matched} high_or_above={high}".format(
+                    total=payload["findings_total"],
+                    matched=payload["matched_count"],
+                    high=payload["high_or_above"],
+                )
+            )
+            if payload["top_matches"]:
+                print("\nTOP_MATCHES:")
+                for row in payload["top_matches"]:
+                    print(
+                        f"- {row['finding_id']} | {str(row['severity']).upper()} | {row['title']}"
+                    )
+        return 0
+
+    return 2
 
 
 if __name__ == "__main__":

@@ -1,0 +1,2 @@
+[console_scripts]
+secopsai = secopsai.cli:main
