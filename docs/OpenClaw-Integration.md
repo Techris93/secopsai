@@ -13,7 +13,7 @@ This guide shows how to wire **secopsai** into an existing **OpenClaw** deployme
 Run the one-line install on the **same machine** as your OpenClaw gateway:
 
 ```bash
-curl -fsSL https://secopsai.dev/setup.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Techris93/secopsai/main/setup.sh | bash
 ```
 
 Or install manually:

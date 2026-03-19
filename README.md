@@ -26,7 +26,7 @@ SecOpsAI is a local-first security pipeline that turns OpenClaw telemetry into a
 1. Install:
 
 ```bash
-curl -fsSL https://secopsai.dev/setup.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Techris93/secopsai/main/setup.sh | bash
 ```
 
 or

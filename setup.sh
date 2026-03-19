@@ -4,41 +4,79 @@
 # Installs and configures the OpenClaw security detection pipeline with optional features.
 #
 # Usage:
-#   curl -fsSL https://your-domain.dev/setup.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/Techris93/secopsai/main/setup.sh | bash
 #   OR
 #   bash setup.sh
 #
 
-set -e
+if [ -z "${BASH_VERSION:-}" ]; then
+  echo "This installer requires bash."
+  echo "Run: curl -fsSL https://raw.githubusercontent.com/Techris93/secopsai/main/setup.sh | bash"
+  exit 1
+fi
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  cat <<'EOF'
+set -euo pipefail
+
+AUTO_YES=0
+NON_INTERACTIVE=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help|-h)
+      cat <<'EOF'
 secopsai setup
 
 Usage:
   bash setup.sh
+  bash setup.sh --yes
+  bash setup.sh --non-interactive
   bash setup.sh --help
 
 What it does:
   1. Validates local prerequisites
   2. Creates .venv and installs dependencies
-  3. Prompts for optional benchmark and live-export features
+  3. Enables optional benchmark and live-export features
   4. Runs validation and initial setup tasks
 
 Notes:
-  - Interactive by default
-  - Designed for local workspace installation
-  - Does not require network services beyond dependency installation
+  - If run via curl pipe, defaults are used automatically
+  - OpenClaw CLI is optional for base install
 EOF
-  exit 0
+      exit 0
+      ;;
+    --yes)
+      AUTO_YES=1
+      ;;
+    --non-interactive)
+      NON_INTERACTIVE=1
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Run 'bash setup.sh --help' for usage."
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if [[ ! -t 0 ]]; then
+  NON_INTERACTIVE=1
 fi
 
 # Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+if [[ -t 1 ]]; then
+  RED='\033[0;31m'
+  GREEN='\033[0;32m'
+  YELLOW='\033[1;33m'
+  BLUE='\033[0;34m'
+  NC='\033[0m'
+else
+  RED=''
+  GREEN=''
+  YELLOW=''
+  BLUE=''
+  NC=''
+fi
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -65,6 +103,20 @@ log_warn() {
 prompt_yes_no() {
   local prompt="$1"
   local default="${2:-N}"
+
+  if [[ "$AUTO_YES" == "1" ]]; then
+    [[ "$default" == "Y" ]]
+    return
+  fi
+
+  if [[ "$NON_INTERACTIVE" == "1" ]]; then
+    if [[ "$default" == "Y" ]]; then
+      log_info "$prompt -> defaulting to Yes (non-interactive mode)"
+      return 0
+    fi
+    log_info "$prompt -> defaulting to No (non-interactive mode)"
+    return 1
+  fi
   
   if [[ "$default" == "Y" ]]; then
     echo -ne "${prompt} (Y/n) "
@@ -72,7 +124,12 @@ prompt_yes_no() {
     echo -ne "${prompt} (y/N) "
   fi
   
-  read -r response
+  local response=""
+  if [[ -r /dev/tty ]]; then
+    read -r response </dev/tty || response=""
+  else
+    response=""
+  fi
   
   if [[ "$default" == "Y" ]]; then
     [[ -z "$response" || "$response" == "y" || "$response" == "Y" ]]
@@ -114,14 +171,13 @@ phase_preflight_checks() {
     log_success "OpenClaw CLI found"
   else
     log_warn "OpenClaw CLI not found. Install from: https://docs.openclaw.ai/install"
-    all_passed=false
   fi
   
   # Check git
-  if command -v git &> /dev/null; then
-    log_success "Git found"
+  if python3 -m pip --version &> /dev/null; then
+    log_success "Python pip module found"
   else
-    log_error "Git is required but not installed"
+    log_error "python3 -m pip is required but not installed"
     all_passed=false
   fi
   
@@ -158,13 +214,14 @@ phase_setup_environment() {
   
   # Upgrade pip
   log_info "Upgrading pip..."
-  pip install --quiet --upgrade pip setuptools wheel
+  python3 -m pip install --quiet --upgrade pip setuptools wheel
   log_success "pip upgraded"
   
   # Install requirements
   if [[ -f "$SCRIPT_DIR/requirements.txt" ]]; then
     log_info "Installing dependencies from requirements.txt..."
-    pip install --quiet -r "$SCRIPT_DIR/requirements.txt"
+    python3 -m pip install --quiet -r "$SCRIPT_DIR/requirements.txt"
+    python3 -m pip install --quiet pytest
     log_success "Dependencies installed"
   else
     log_warn "requirements.txt not found, skipping dependency installation"
@@ -336,7 +393,7 @@ summary() {
   echo ""
   
   echo "Documentation:"
-  echo "   ${BLUE}https://secopsai.dev${NC}"
+  echo "   ${BLUE}https://docs.secopsai.dev${NC}"
   echo ""
   
   echo "Git repository:"
