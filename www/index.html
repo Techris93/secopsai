@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>SecOpsAI | Local-first SecOps for OpenClaw</title>
+    <meta
+      name="description"
+      content="SecOpsAI is a local-first SecOps sidecar for OpenClaw. Detect malware, exfiltration, risky exec/policy abuse from audit logs and triage findings via chat/WhatsApp. All data stays local."
+    />
+
+    <link rel="icon" href="/assets/logo-icon.jpg" />
+    <meta property="og:image" content="https://www.secopsai.dev/assets/logo-full.jpg" />
+    <meta name="twitter:image" content="https://www.secopsai.dev/assets/logo-full.jpg" />
+
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+      rel="stylesheet"
+    />
+
+    <script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "primary-fixed-dim": "#57df91",
+              "on-background": "#e5e2e1",
+              "tertiary-fixed": "#dde3ee",
+              "on-tertiary-fixed-variant": "#414750",
+              "tertiary-fixed-dim": "#c1c7d2",
+              error: "#ffb4ab",
+              "inverse-surface": "#e5e2e1",
+              "on-error-container": "#ffdad6",
+              "on-primary-fixed": "#00210f",
+              "on-secondary": "#303030",
+              secondary: "#c8c6c6",
+              "on-secondary-fixed-variant": "#474747",
+              "on-secondary-fixed": "#1b1c1c",
+              primary: "#57df91",
+              "surface-container-lowest": "#0e0e0e",
+              "inverse-on-surface": "#313030",
+              "on-primary": "#00391e",
+              "secondary-fixed-dim": "#c8c6c6",
+              "on-tertiary-container": "#2d343c",
+              "surface-dim": "#131313",
+              "surface-container-highest": "#353534",
+              "on-primary-fixed-variant": "#00522d",
+              "error-container": "#93000a",
+              "on-secondary-container": "#b6b5b4",
+              "surface-variant": "#353534",
+              "outline-variant": "#3d4a40",
+              "surface-bright": "#3a3939",
+              "surface-container-high": "#2a2a2a",
+              "on-surface": "#e5e2e1",
+              "surface-container": "#201f1f",
+              "inverse-primary": "#006d3e",
+              "on-surface-variant": "#bccabd",
+              "secondary-container": "#474747",
+              "secondary-fixed": "#e4e2e1",
+              "surface-container-low": "#1c1b1b",
+              "primary-fixed": "#75fcac",
+              "tertiary-container": "#969ca6",
+              "primary-container": "#17b26a",
+              "on-primary-container": "#003c20",
+              tertiary: "#c1c7d2",
+              "on-tertiary-fixed": "#161c24",
+              background: "#131313",
+              "on-tertiary": "#2b3139",
+              "surface-tint": "#57df91",
+              "on-error": "#690005",
+              surface: "#131313",
+              outline: "#869488",
+            },
+            fontFamily: {
+              headline: ["Inter"],
+              body: ["Inter"],
+              label: ["Space Grotesk"],
+            },
+            borderRadius: {
+              DEFAULT: "0.125rem",
+              lg: "0.25rem",
+              xl: "0.5rem",
+              full: "0.75rem",
+            },
+          },
+        },
+      };
+    </script>
+
+    <style>
+      .material-symbols-outlined {
+        font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+      }
+      .terminal-glow {
+        box-shadow: 0px 0px 12px rgba(87, 223, 145, 0.08);
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+    </style>
+  </head>
+
+  <body class="bg-background text-on-surface font-body selection:bg-primary/30 selection:text-primary">
+    <header class="fixed top-0 w-full z-50 bg-surface/60 backdrop-blur-xl shadow-[0px_24px_48px_rgba(0,0,0,0.4)]">
+      <nav class="flex justify-between items-center px-8 h-16 w-full max-w-[1440px] mx-auto">
+        <div class="flex items-center gap-8">
+          <a class="flex items-center gap-3" href="#top">
+            <img src="/assets/logo-icon.jpg" alt="SecOpsAI" class="h-8 w-8 rounded-md" />
+            <span class="text-xl font-bold tracking-tighter text-[#57df91]">SecOpsAI</span>
+          </a>
+
+          <div class="hidden md:flex items-center gap-6">
+            <a class="text-on-surface-variant hover:text-[#57df91] transition-colors text-sm tracking-tight" href="#features">Product</a>
+            <a class="text-on-surface-variant hover:text-[#57df91] transition-colors text-sm tracking-tight" href="#quickstart">Quick Start</a>
+            <a class="text-on-surface-variant hover:text-[#57df91] transition-colors text-sm tracking-tight" href="https://docs.secopsai.dev" target="_blank" rel="noopener">Docs</a>
+            <a class="text-on-surface-variant hover:text-[#57df91] transition-colors text-sm tracking-tight" href="https://github.com/Techris93/secopsai" target="_blank" rel="noopener">GitHub</a>
+            <a class="text-on-surface-variant hover:text-[#57df91] transition-colors text-sm tracking-tight" href="https://clawhub.ai/Techris93/secopsai" target="_blank" rel="noopener">ClawHub</a>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-4">
+          <a
+            class="hidden sm:inline-block text-on-surface-variant hover:text-[#57df91] transition-all duration-300 text-sm tracking-tight px-4 py-2 scale-95 active:scale-90"
+            href="https://x.com/SecOpsAILab?s=20"
+            target="_blank"
+            rel="noopener"
+            >Follow on X</a
+          >
+
+          <a
+            class="bg-gradient-to-br from-primary to-primary-container text-on-primary font-semibold text-sm tracking-tight px-5 py-2.5 rounded-md hover:opacity-90 scale-95 active:scale-90 transition-all"
+            href="#quickstart"
+            >Install & Run</a
+          >
+        </div>
+      </nav>
+    </header>
+
+    <main id="top" class="pt-16">
+      <section class="relative min-h-[900px] flex flex-col items-center justify-center px-6 overflow-hidden">
+        <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-primary/5 via-transparent to-transparent pointer-events-none"></div>
+
+        <div class="max-w-[1440px] w-full grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+          <div class="space-y-8 z-10">
+            <img src="/assets/logo-full.jpg" alt="SecOpsAI Lab" class="h-16 w-auto opacity-90" />
+
+            <div class="inline-flex items-center gap-2 px-3 py-1 bg-surface-container-low border border-outline-variant/15 rounded-full">
+              <span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+              <span class="font-label text-xs uppercase tracking-widest text-primary">Local-first • Sidecar for OpenClaw</span>
+            </div>
+
+            <h1 class="text-5xl lg:text-7xl font-headline font-extrabold tracking-tighter leading-tight text-on-surface">
+              Local-first SecOps, <br />
+              <span class="text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary-container">inside OpenClaw.</span>
+            </h1>
+
+            <p class="text-lg text-on-surface-variant max-w-xl leading-relaxed">
+              SecOpsAI turns OpenClaw audit telemetry into actionable findings (malware, exfil, risky exec/policy abuse) and lets you triage from chat/WhatsApp.
+              <span class="text-on-surface">All data stays on your machine.</span>
+            </p>
+
+            <div class="flex flex-wrap gap-4 pt-4">
+              <a class="bg-primary text-on-primary font-bold px-8 py-4 rounded-md flex items-center gap-2 scale-95 active:scale-90 transition-transform" href="#quickstart">
+                Quick Start
+                <span class="material-symbols-outlined" data-icon="arrow_forward">arrow_forward</span>
+              </a>
+              <a class="border border-outline-variant/20 hover:border-outline-variant/40 text-on-surface font-medium px-8 py-4 rounded-md transition-all" href="https://docs.secopsai.dev" target="_blank" rel="noopener">
+                View Documentation
+              </a>
+            </div>
+
+            <div class="flex flex-wrap gap-3 text-xs text-on-surface-variant pt-2">
+              <span class="px-3 py-1 rounded-full border border-outline-variant/15 bg-surface-container-low">No log shipping by default</span>
+              <span class="px-3 py-1 rounded-full border border-outline-variant/15 bg-surface-container-low">SQLite SOC store</span>
+              <span class="px-3 py-1 rounded-full border border-outline-variant/15 bg-surface-container-low">CLI + WhatsApp workflows</span>
+            </div>
+          </div>
+
+          <div class="relative z-10">
+            <div class="surface-container-lowest p-1 rounded-xl bg-gradient-to-br from-outline-variant/20 to-transparent">
+              <div class="bg-surface-container-lowest rounded-lg overflow-hidden terminal-glow border border-outline-variant/10">
+                <div class="flex items-center justify-between px-4 py-3 bg-surface-container-low">
+                  <div class="flex gap-1.5">
+                    <div class="w-3 h-3 rounded-full bg-error/40"></div>
+                    <div class="w-3 h-3 rounded-full bg-secondary-container"></div>
+                    <div class="w-3 h-3 rounded-full bg-primary/40"></div>
+                  </div>
+                  <div class="font-label text-[10px] uppercase tracking-widest text-on-surface-variant/60">secopsai — local pipeline</div>
+                </div>
+
+                <div class="p-6 font-mono text-sm space-y-2 text-on-surface-variant">
+                  <div class="flex gap-3"><span class="text-primary">$</span><span>secopsai refresh</span></div>
+                  <div class="text-primary-fixed-dim/70">Exporting OpenClaw telemetry… ingesting… detecting…</div>
+                  <div class="text-primary-fixed-dim/70">[OK] Findings persisted to local SOC store (SQLite)</div>
+
+                  <div class="flex gap-3 pt-3"><span class="text-primary">$</span><span>secopsai list --severity high</span></div>
+                  <div class="py-2">
+                    <div class="text-error flex items-center gap-2">
+                      <span class="material-symbols-outlined text-xs" data-icon="warning">warning</span>
+                      <span>HIGH: Suspicious execution / policy abuse detected</span>
+                    </div>
+                    <div class="text-on-surface-variant/60 ml-5">OCF-… | status=open | disposition=unreviewed</div>
+                  </div>
+
+                  <div class="flex gap-3"><span class="text-primary">$</span><span>secopsai intel refresh</span></div>
+                  <div class="text-primary-fixed-dim/70">Pulled 10k+ IOCs (URLhaus + ThreatFox) → stored locally</div>
+
+                  <div class="flex gap-3 animate-pulse pt-2"><span class="text-primary">$</span><span class="w-2 h-5 bg-primary/50"></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="features" class="py-24 px-8 max-w-[1440px] mx-auto">
+        <div class="mb-16">
+          <span class="font-label text-xs uppercase tracking-[0.2em] text-primary">Capabilities</span>
+          <h2 class="text-4xl font-headline font-bold mt-4">Detect, triage, and act — locally</h2>
+          <p class="text-on-surface-variant mt-4 max-w-3xl">
+            SecOpsAI is a sidecar detection engine for OpenClaw. It reads local audit telemetry, produces findings with severity + evidence, and supports fast chat-driven triage workflows.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-6 gap-6">
+          <div class="md:col-span-3 bg-surface-container p-8 rounded-xl border border-outline-variant/5 hover:border-primary/20 transition-all">
+            <div class="flex items-center gap-4 mb-6">
+              <div class="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                <span class="material-symbols-outlined" data-icon="chat">chat</span>
+              </div>
+              <h3 class="text-xl font-bold">WhatsApp workflows</h3>
+            </div>
+            <p class="text-on-surface-variant">
+              Use OpenClaw to interact with SecOpsAI from WhatsApp: “check malware”, “check exfil”, “show OCF-…”, “mitigate OCF-…”.
+            </p>
+          </div>
+
+          <div class="md:col-span-3 bg-surface-container p-8 rounded-xl border border-outline-variant/5 hover:border-primary/20 transition-all">
+            <div class="flex items-center gap-4 mb-6">
+              <div class="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                <span class="material-symbols-outlined" data-icon="hub">hub</span>
+              </div>
+              <h3 class="text-xl font-bold">Threat Intel (IOCs)</h3>
+            </div>
+            <p class="text-on-surface-variant">
+              Pull open-source IOCs, normalize + score them, optional local enrichment (DNS), then match against replay events to generate TI findings.
+            </p>
+          </div>
+        </div>
+
+        <div class="mt-16 bg-surface-container-low rounded-xl border border-outline-variant/10 p-8">
+          <div class="flex items-center gap-3 mb-4">
+            <span class="material-symbols-outlined text-primary" data-icon="rocket_launch">rocket_launch</span>
+            <h3 class="text-xl font-bold">Coming soon integrations</h3>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="bg-surface-container-lowest rounded-lg border border-outline-variant/10 p-6">
+              <h4 class="font-semibold mb-2">OpenClaw variants</h4>
+              <p class="text-sm text-on-surface-variant">
+                Native integrations with other OpenClaw variants/telemetry sources are coming soon:
+                <span class="text-on-surface">Hermes</span>, <span class="text-on-surface">ManusAI</span>, <span class="text-on-surface">Zu-computers</span>.
+              </p>
+            </div>
+
+            <div class="bg-surface-container-lowest rounded-lg border border-outline-variant/10 p-6">
+              <h4 class="font-semibold mb-2">SIEM platforms (optional)</h4>
+              <p class="text-sm text-on-surface-variant">
+                Optional SIEM output integrations are coming soon:
+                <span class="text-on-surface">Splunk</span> and <span class="text-on-surface">Elastic</span> (Elasticsearch).
+              </p>
+              <p class="text-xs text-on-surface-variant mt-2">(Still local-first by default — exporting is opt-in.)</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="quickstart" class="py-24 bg-surface-container-low/50">
+        <div class="max-w-[1440px] mx-auto px-8">
+          <div class="text-center mb-16">
+            <span class="font-label text-xs uppercase tracking-widest text-primary">Get Started</span>
+            <h2 class="text-4xl font-headline font-bold mt-4">Zero to findings in minutes</h2>
+            <p class="text-on-surface-variant mt-4 max-w-3xl mx-auto">
+              Install locally, run the pipeline, list findings. All data stays on your device unless you explicitly export it.
+            </p>
+          </div>
+
+          <div class="bg-surface-container-lowest rounded-xl border border-outline-variant/10 p-1 max-w-4xl mx-auto">
+            <div class="bg-surface p-6 rounded-lg font-mono text-sm leading-relaxed">
+              <div class="mb-6">
+                <div class="text-on-surface-variant/40 mb-2"># Install</div>
+                <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
+                  <code id="cmd-install" class="text-primary-fixed-dim">curl -fsSL https://secopsai.dev/install.sh | bash</code>
+                  <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-install" aria-label="Copy install command">content_copy</button>
+                </div>
+              </div>
+
+              <div class="mb-6">
+                <div class="text-on-surface-variant/40 mb-2"># Activate</div>
+                <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
+                  <code id="cmd-activate" class="text-primary-fixed-dim">cd ~/secopsai && source .venv/bin/activate</code>
+                  <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-activate" aria-label="Copy activate command">content_copy</button>
+                </div>
+              </div>
+
+              <div class="mb-6">
+                <div class="text-on-surface-variant/40 mb-2"># Refresh + list high</div>
+                <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
+                  <code id="cmd-refresh" class="text-primary-fixed-dim">secopsai refresh && secopsai list --severity high</code>
+                  <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-refresh" aria-label="Copy refresh command">content_copy</button>
+                </div>
+              </div>
+
+              <div>
+                <div class="text-on-surface-variant/40 mb-2"># Threat intel (optional)</div>
+                <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
+                  <code id="cmd-intel" class="text-primary-fixed-dim">secopsai intel refresh && secopsai intel match --limit-iocs 500</code>
+                  <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-intel" aria-label="Copy intel command">content_copy</button>
+                </div>
+              </div>
+
+              <p id="copy-toast" class="mt-4 text-xs text-on-surface-variant/70 hidden">Copied to clipboard.</p>
+
+              <div class="mt-6 text-xs text-on-surface-variant/70">
+                Links:
+                <a class="text-primary hover:underline" href="https://docs.secopsai.dev" target="_blank" rel="noopener">docs</a> ·
+                <a class="text-primary hover:underline" href="https://github.com/Techris93/secopsai" target="_blank" rel="noopener">github</a> ·
+                <a class="text-primary hover:underline" href="https://clawhub.ai/Techris93/secopsai" target="_blank" rel="noopener">clawhub</a> ·
+                <a class="text-primary hover:underline" href="https://x.com/SecOpsAILab?s=20" target="_blank" rel="noopener">x</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="w-full border-t border-[#3d4a40]/15 bg-[#131313]">
+      <div class="max-w-[1440px] mx-auto px-8 py-8 border-t border-outline-variant/10 flex flex-col md:flex-row justify-between items-center gap-4">
+        <p class="text-xs text-on-surface-variant opacity-60">© <span id="year"></span> SecOpsAI Lab.</p>
+        <a class="text-on-surface-variant hover:text-[#57df91] transition-all text-sm" href="https://x.com/SecOpsAILab?s=20" target="_blank" rel="noopener">X @SecOpsAILab</a>
+      </div>
+    </footer>
+
+    <script>
+      document.getElementById("year").textContent = String(new Date().getFullYear());
+
+      const toast = document.getElementById("copy-toast");
+      function showToast() {
+        if (!toast) return;
+        toast.classList.remove("hidden");
+        clearTimeout(window.__toastTimer);
+        window.__toastTimer = setTimeout(() => toast.classList.add("hidden"), 1200);
+      }
+
+      async function copyText(text) {
+        try {
+          await navigator.clipboard.writeText(text);
+          showToast();
+          return;
+        } catch (_) {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+          showToast();
+        }
+      }
+
+      document.querySelectorAll("[data-copy]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.getAttribute("data-copy");
+          const el = document.getElementById(id);
+          if (!el) return;
+          await copyText(el.textContent.trim());
+        });
+      });
+    </script>
+  </body>
+</html>
