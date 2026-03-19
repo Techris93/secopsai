@@ -19,7 +19,7 @@ import argparse
 import os
 import subprocess  # nosec B404
 import sys
-from typing import List
+from typing import List, Optional
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -33,21 +33,34 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run local OpenClaw live pipeline")
     parser.add_argument("--skip-export", action="store_true", help="Skip native export from ~/.openclaw")
     parser.add_argument("--verbose", action="store_true", help="Pass --verbose to evaluate_openclaw.py")
+    parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=int(os.environ.get("SECOPS_PIPELINE_TIMEOUT_SECONDS", "120")),
+        help="Per-step timeout in seconds (0 disables timeout)",
+    )
     return parser.parse_args()
 
 
-def run_step(args: List[str]) -> None:
+def run_step(args: List[str], timeout_seconds: int) -> None:
     if not args or args[0] != sys.executable:
         raise ValueError("run_step only allows invoking the current Python interpreter")
     print("\n$ " + " ".join(args))
-    subprocess.run(args, cwd=ROOT_DIR, check=True, timeout=120)  # nosec B603
+    timeout: Optional[int] = None if timeout_seconds <= 0 else timeout_seconds
+    try:
+        subprocess.run(args, cwd=ROOT_DIR, check=True, timeout=timeout)  # nosec B603
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"step timed out after {timeout_seconds} seconds: {' '.join(args)}\n"
+            "Rerun with --timeout-seconds <larger value> or --timeout-seconds 0 to disable timeouts."
+        ) from exc
 
 
 def main() -> int:
     args = parse_args()
 
     if not args.skip_export:
-        run_step([sys.executable, "export_real_openclaw_native.py"])
+        run_step([sys.executable, "export_real_openclaw_native.py"], args.timeout_seconds)
 
     run_step(
         [
@@ -59,6 +72,8 @@ def main() -> int:
             RAW_AUDIT,
             "--stats",
         ]
+        ,
+        args.timeout_seconds,
     )
 
     run_step(
@@ -73,6 +88,8 @@ def main() -> int:
             UNLABELED_OUT,
             "--stats",
         ]
+        ,
+        args.timeout_seconds,
     )
 
     eval_cmd = [
@@ -87,9 +104,9 @@ def main() -> int:
     ]
     if args.verbose:
         eval_cmd.append("--verbose")
-    run_step(eval_cmd)
+    run_step(eval_cmd, args.timeout_seconds)
 
-    run_step([sys.executable, "openclaw_findings.py", "--input", LABELED_OUT])
+    run_step([sys.executable, "openclaw_findings.py", "--input", LABELED_OUT], args.timeout_seconds)
 
     print("\nLive OpenClaw pipeline completed.")
     print(f"Replay input: {LABELED_OUT}")

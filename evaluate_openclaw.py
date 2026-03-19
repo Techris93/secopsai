@@ -19,7 +19,7 @@ import json
 import os
 import sys
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 
@@ -32,6 +32,10 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(ROOT_DIR, "data", "openclaw", "replay")
 DEFAULT_LABELED = os.path.join(DATA_DIR, "labeled", "sample_events.json")
 DEFAULT_UNLABELED = os.path.join(DATA_DIR, "unlabeled", "sample_events.json")
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def parse_args() -> argparse.Namespace:
@@ -125,7 +129,7 @@ def print_benchmark_results(
 ) -> None:
     print(f"\n{'═' * 60}")
     print("  OpenClaw Replay Evaluation")
-    print(f"  {datetime.now(tz=None).isoformat()}Z")
+    print(f"  {utc_now()}")
     print(f"{'═' * 60}")
     print()
     print(f"  F1 Score:            {metrics['f1_score']:.6f}")
@@ -192,7 +196,7 @@ def print_live_results(
 
     print(f"\n{'═' * 60}")
     print("  OpenClaw Live Evaluation")
-    print(f"  {datetime.now(tz=None).isoformat()}Z")
+    print(f"  {utc_now()}")
     print(f"{'═' * 60}")
     print()
     print("  Mode: live (ground-truth labels unavailable or not trusted)")

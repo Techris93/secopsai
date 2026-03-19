@@ -27,32 +27,30 @@ def default_db_path() -> str:
     return os.path.join(ROOT_DIR, "data", "openclaw", "findings", "openclaw_soc.db")
 
 
-DEFAULT_DB_PATH = default_db_path()
-
-
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def connect(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
-    directory = os.path.dirname(db_path)
+def connect(db_path: str | None = None) -> sqlite3.Connection:
+    resolved_path = db_path or default_db_path()
+    directory = os.path.dirname(resolved_path)
     os.makedirs(directory, exist_ok=True)
     try:
         os.chmod(directory, 0o700)
     except OSError:
         pass
 
-    connection = sqlite3.connect(db_path)
+    connection = sqlite3.connect(resolved_path)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     try:
-        os.chmod(db_path, 0o600)
+        os.chmod(resolved_path, 0o600)
     except OSError:
         pass
     return connection
 
 
-def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
+def init_db(db_path: str | None = None) -> None:
     with closing(connect(db_path)) as connection:
         connection.executescript(
             """
@@ -158,11 +156,12 @@ def upsert_finding(connection: sqlite3.Connection, finding: Dict[str, Any], sour
     )
 
 
-def persist_findings(findings: Iterable[Dict[str, Any]], source: str, db_path: str = DEFAULT_DB_PATH) -> str:
-    init_db(db_path)
+def persist_findings(findings: Iterable[Dict[str, Any]], source: str, db_path: str | None = None) -> str:
+    resolved_path = db_path or default_db_path()
+    init_db(resolved_path)
     findings = list(findings)
     current_ids = {finding["finding_id"] for finding in findings}
-    with closing(connect(db_path)) as connection:
+    with closing(connect(resolved_path)) as connection:
         for finding in findings:
             upsert_finding(connection, finding, source)
 
@@ -175,10 +174,10 @@ def persist_findings(findings: Iterable[Dict[str, Any]], source: str, db_path: s
             connection.execute("DELETE FROM findings WHERE finding_id = ?", (finding_id,))
 
         connection.commit()
-    return db_path
+    return resolved_path
 
 
-def set_finding_status(finding_id: str, status: str, db_path: str = DEFAULT_DB_PATH) -> None:
+def set_finding_status(finding_id: str, status: str, db_path: str | None = None) -> None:
     init_db(db_path)
     with closing(connect(db_path)) as connection:
         connection.execute(
@@ -188,7 +187,7 @@ def set_finding_status(finding_id: str, status: str, db_path: str = DEFAULT_DB_P
         connection.commit()
 
 
-def set_finding_disposition(finding_id: str, disposition: str, db_path: str = DEFAULT_DB_PATH) -> None:
+def set_finding_disposition(finding_id: str, disposition: str, db_path: str | None = None) -> None:
     init_db(db_path)
     with closing(connect(db_path)) as connection:
         connection.execute(
@@ -198,7 +197,7 @@ def set_finding_disposition(finding_id: str, disposition: str, db_path: str = DE
         connection.commit()
 
 
-def add_note(finding_id: str, author: str, note: str, db_path: str = DEFAULT_DB_PATH) -> None:
+def add_note(finding_id: str, author: str, note: str, db_path: str | None = None) -> None:
     init_db(db_path)
     with closing(connect(db_path)) as connection:
         connection.execute(
@@ -208,7 +207,7 @@ def add_note(finding_id: str, author: str, note: str, db_path: str = DEFAULT_DB_
         connection.commit()
 
 
-def list_findings(db_path: str = DEFAULT_DB_PATH) -> List[Dict[str, Any]]:
+def list_findings(db_path: str | None = None) -> List[Dict[str, Any]]:
     init_db(db_path)
     with closing(connect(db_path)) as connection:
         rows = connection.execute(
@@ -217,7 +216,7 @@ def list_findings(db_path: str = DEFAULT_DB_PATH) -> List[Dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def get_finding(finding_id: str, db_path: str = DEFAULT_DB_PATH) -> Dict[str, Any] | None:
+def get_finding(finding_id: str, db_path: str | None = None) -> Dict[str, Any] | None:
     init_db(db_path)
     with closing(connect(db_path)) as connection:
         row = connection.execute(
@@ -240,7 +239,7 @@ def get_finding(finding_id: str, db_path: str = DEFAULT_DB_PATH) -> Dict[str, An
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Local SOC findings store CLI")
-    parser.add_argument("--db-path", default=DEFAULT_DB_PATH, help="SQLite database path")
+    parser.add_argument("--db-path", default=default_db_path(), help="SQLite database path")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 

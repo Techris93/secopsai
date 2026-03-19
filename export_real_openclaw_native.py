@@ -1,19 +1,29 @@
 from __future__ import annotations
 
-import glob
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent
 NATIVE_DIR = REPO_ROOT / "data" / "openclaw" / "native"
-SESSION_GLOB = os.path.expanduser("~/.openclaw/agents/main/sessions/*.jsonl")
-CONFIG_AUDIT_FILE = Path(os.path.expanduser("~/.openclaw/logs/config-audit.jsonl"))
-GATEWAY_LOG_FILES = [
-    Path(os.path.expanduser("~/.openclaw/logs/gateway.log")),
+OPENCLAW_HOME = Path(os.path.expanduser(os.environ.get("OPENCLAW_HOME", "~/.openclaw")))
+SESSION_PATTERNS = [
+    "agents/*/sessions/*.jsonl",
+    "sessions/*.jsonl",
 ]
+CONFIG_AUDIT_PATTERNS = [
+    "logs/config-audit.jsonl",
+    "logs/config-audit*.jsonl",
+]
+GATEWAY_LOG_PATTERNS = [
+    "logs/gateway.log",
+    "logs/gateway.log.*",
+]
+GATEWAY_SIGNAL_TERMS = ("handshake timeout", "closed before connect")
+TIMESTAMP_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)")
 EXEC_TOOL_NAMES = {"exec", "run_in_terminal", "execute_command", "shell", "bash", "sh"}
 MUTATING_TOOL_NAMES = {
     "apply_patch",
@@ -66,6 +76,60 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def discover_paths(base_dir: Path, patterns: list[str]) -> list[Path]:
+    discovered: list[Path] = []
+    seen: set[str] = set()
+    for pattern in patterns:
+        matches = sorted(base_dir.glob(pattern))
+        for match in matches:
+            if not match.is_file():
+                continue
+            key = str(match.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            discovered.append(match)
+    return discovered
+
+
+def iter_gateway_rows(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.exists():
+        return rows
+
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                lowered = line.lower()
+                if not any(term in lowered for term in GATEWAY_SIGNAL_TERMS):
+                    continue
+                ts_match = TIMESTAMP_PATTERN.search(line)
+                rows.append(
+                    {
+                        "ts": ts_match.group(1) if ts_match else None,
+                        "message": line,
+                    }
+                )
+                continue
+
+            if not isinstance(value, dict):
+                continue
+
+            line_text = json.dumps(value)
+            lowered = line_text.lower()
+            if not any(term in lowered for term in GATEWAY_SIGNAL_TERMS):
+                continue
+            rows.append(value)
+
+    return rows
+
+
 def dedupe(rows: list[dict[str, Any]], key_fields: tuple[str, ...]) -> list[dict[str, Any]]:
     seen: set[tuple[Any, ...]] = set()
     out: list[dict[str, Any]] = []
@@ -107,7 +171,7 @@ def config_changed_paths(row: dict[str, Any]) -> list[str]:
     return inferred or ["openclaw.json"]
 
 
-def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     agent_events: list[dict[str, Any]] = []
     session_hooks: list[dict[str, Any]] = []
     subagent_hooks: list[dict[str, Any]] = []
@@ -116,8 +180,8 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
     pairing_events: list[dict[str, Any]] = []
     skills_events: list[dict[str, Any]] = []
 
-    for file_path in sorted(glob.glob(SESSION_GLOB)):
-        path = Path(file_path)
+    session_files = discover_paths(OPENCLAW_HOME, SESSION_PATTERNS)
+    for path in session_files:
         sid = path.stem
         rows = load_jsonl(path)
         if not rows:
@@ -174,6 +238,56 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                     }
                     if content.get("id"):
                         tool_context_by_id[str(content.get("id"))] = tool_context
+
+                    if tool_name == "runSubagent":
+                        subagent_hooks.append(
+                            {
+                                "hook": "subagent_spawned",
+                                "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                                "runId": f"session-{sid}",
+                                "sessionKey": session_key,
+                                "sessionId": sid,
+                                "agentId": "main",
+                                "channel": "openclaw.session",
+                                "childSessionKey": arguments.get("sessionKey") or arguments.get("childSessionKey"),
+                                "requesterSessionKey": session_key,
+                                "status": "ok",
+                            }
+                        )
+
+                    if isinstance(tool_name, str) and any(token in tool_name.lower() for token in ("pair", "approval")):
+                        pairing_events.append(
+                            {
+                                "kind": "pairing.request",
+                                "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                                "action": "request",
+                                "status": "ok",
+                                "sessionKey": session_key,
+                                "sessionId": sid,
+                                "agentId": "main",
+                                "channel": "openclaw.session",
+                                "approvalState": "pending",
+                                "threadId": arguments.get("threadId"),
+                                "deliveryTarget": arguments.get("deliveryTarget") or arguments.get("channel"),
+                            }
+                        )
+
+                    if isinstance(tool_name, str) and "skill" in tool_name.lower():
+                        skills_events.append(
+                            {
+                                "kind": "skills.install",
+                                "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                                "action": "install",
+                                "status": "ok",
+                                "sessionKey": session_key,
+                                "sessionId": sid,
+                                "agentId": "main",
+                                "channel": "openclaw.session",
+                                "skillKey": arguments.get("skillKey") or arguments.get("name"),
+                                "skillSource": arguments.get("skillSource") or arguments.get("source"),
+                            }
+                        )
+
                     agent_events.append(
                         {
                             "stream": "toolExecution",
@@ -273,57 +387,151 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                         }
                     )
 
+                tool_name = message.get("toolName")
+                if tool_name == "runSubagent":
+                    subagent_hooks.append(
+                        {
+                            "hook": "subagent_completed",
+                            "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                            "runId": f"session-{sid}",
+                            "sessionKey": session_key,
+                            "sessionId": sid,
+                            "agentId": "main",
+                            "channel": "openclaw.session",
+                            "requesterSessionKey": session_key,
+                            "status": str(details.get("status") or ("failed" if message.get("isError") else "completed")),
+                        }
+                    )
+
+                if isinstance(tool_name, str) and any(token in tool_name.lower() for token in ("pair", "approval")):
+                    pairing_events.append(
+                        {
+                            "kind": "pairing.result",
+                            "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                            "action": "approve" if not message.get("isError") else "deny",
+                            "status": str(details.get("status") or ("blocked" if message.get("isError") else "accepted")),
+                            "sessionKey": session_key,
+                            "sessionId": sid,
+                            "agentId": "main",
+                            "channel": "openclaw.session",
+                            "approvalState": "denied" if message.get("isError") else "approved",
+                        }
+                    )
+
+                if isinstance(tool_name, str) and "skill" in tool_name.lower():
+                    skills_events.append(
+                        {
+                            "kind": "skills.result",
+                            "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                            "action": "enable" if not message.get("isError") else "disable",
+                            "status": str(details.get("status") or ("failed" if message.get("isError") else "ok")),
+                            "sessionKey": session_key,
+                            "sessionId": sid,
+                            "agentId": "main",
+                            "channel": "openclaw.session",
+                        }
+                    )
+
+            row_kind = " ".join(str(row.get(key, "")) for key in ("hook", "event", "kind", "type")).lower()
+            if "subagent" in row_kind:
+                subagent_hooks.append(
+                    {
+                        "hook": str(row.get("hook") or row.get("event") or row.get("type") or "subagent_event"),
+                        "ts": iso(row.get("timestamp") or row.get("ts")),
+                        "runId": row.get("runId") or f"session-{sid}",
+                        "sessionKey": row.get("sessionKey") or session_key,
+                        "sessionId": row.get("sessionId") or sid,
+                        "agentId": row.get("agentId") or "main",
+                        "channel": row.get("channel") or "openclaw.session",
+                        "childSessionKey": row.get("childSessionKey"),
+                        "requesterSessionKey": row.get("requesterSessionKey") or session_key,
+                        "status": row.get("status") or "ok",
+                    }
+                )
+            if "pair" in row_kind:
+                pairing_events.append(
+                    {
+                        "kind": str(row.get("kind") or row.get("event") or row.get("type") or "pairing_event"),
+                        "ts": iso(row.get("timestamp") or row.get("ts")),
+                        "action": str(row.get("action") or "start"),
+                        "status": str(row.get("status") or "ok"),
+                        "sessionKey": row.get("sessionKey") or session_key,
+                        "sessionId": row.get("sessionId") or sid,
+                        "agentId": row.get("agentId") or "main",
+                        "channel": row.get("channel") or "openclaw.session",
+                        "approvalState": row.get("approvalState") or row.get("status"),
+                    }
+                )
+            if "skill" in row_kind:
+                skills_events.append(
+                    {
+                        "kind": str(row.get("kind") or row.get("event") or row.get("type") or "skills_event"),
+                        "ts": iso(row.get("timestamp") or row.get("ts")),
+                        "action": str(row.get("action") or row.get("operation") or "install"),
+                        "status": str(row.get("status") or "ok"),
+                        "sessionKey": row.get("sessionKey") or session_key,
+                        "sessionId": row.get("sessionId") or sid,
+                        "agentId": row.get("agentId") or "main",
+                        "channel": row.get("channel") or "openclaw.session",
+                        "skillKey": row.get("skillKey"),
+                        "skillSource": row.get("skillSource") or row.get("source"),
+                    }
+                )
+
     return (
         dedupe(agent_events, ("ts", "toolCallId", "phase", "toolName")),
         dedupe(session_hooks, ("hook", "sessionId", "ts")),
-        subagent_hooks,
+        dedupe(subagent_hooks, ("hook", "sessionId", "ts", "childSessionKey")),
         dedupe(exec_events, ("ts", "toolCallId", "phase", "toolName")),
-        pairing_events,
-        skills_events,
+        dedupe(pairing_events, ("kind", "sessionId", "ts", "action")),
+        dedupe(skills_events, ("kind", "sessionId", "ts", "action", "skillKey")),
     )
 
 
 def export_config_audit() -> list[dict[str, Any]]:
     config_events: list[dict[str, Any]] = []
-    for row in load_jsonl(CONFIG_AUDIT_FILE):
-        config_events.append(
-            {
-                "kind": "config.patch",
-                "ts": iso(row.get("ts")),
-                "sessionKey": row.get("watchSession") or "openclaw-config",
-                "sessionId": "config-audit",
-                "agentId": "main",
-                "threadId": "config",
-                "action": "patch",
-                "status": "ok" if row.get("result") == "rename" else "failed",
-                "actor": "openclaw",
-                "changedPaths": config_changed_paths(row),
-                "note": row.get("event"),
-                "policyDecision": "allow",
-                "mutating": True,
-            }
-        )
+    config_paths = discover_paths(OPENCLAW_HOME, CONFIG_AUDIT_PATTERNS)
+    for config_path in config_paths:
+        for row in load_jsonl(config_path):
+            result = str(row.get("result") or row.get("status") or "").strip().lower()
+            status = "ok" if result in {"", "rename", "patched", "updated", "ok", "success", "applied", "apply", "completed", "allowed"} else "failed"
+            config_events.append(
+                {
+                    "kind": "config.patch",
+                    "ts": iso(row.get("ts")),
+                    "sessionKey": row.get("watchSession") or "openclaw-config",
+                    "sessionId": "config-audit",
+                    "agentId": "main",
+                    "threadId": "config",
+                    "action": "patch",
+                    "status": status,
+                    "actor": "openclaw",
+                    "changedPaths": config_changed_paths(row),
+                    "note": row.get("event"),
+                    "policyDecision": "allow",
+                    "mutating": True,
+                }
+            )
     return dedupe(config_events, ("ts", "note", "status"))
 
 
 def export_restart_sentinels() -> list[dict[str, Any]]:
     sentinels: list[dict[str, Any]] = []
-    for log_file in GATEWAY_LOG_FILES:
-        for row in load_jsonl(log_file):
-            line_text = json.dumps(row)
-            if "handshake timeout" not in line_text and "closed before connect" not in line_text:
-                continue
+    gateway_paths = discover_paths(OPENCLAW_HOME, GATEWAY_LOG_PATTERNS)
+    for log_file in gateway_paths:
+        for row in iter_gateway_rows(log_file):
+            message = str(row.get("message") or row.get("1") or row.get("0") or "gateway reconnect event")
             sentinels.append(
                 {
                     "kind": "restart_sentinel",
-                    "ts": iso(row.get("time") or (row.get("_meta") or {}).get("date")),
+                    "ts": iso(row.get("time") or row.get("ts") or (row.get("_meta") or {}).get("date")),
                     "sessionKey": "gateway-runtime",
                     "sessionId": "gateway-runtime",
                     "agentId": "main",
                     "channel": "gateway",
                     "threadId": "gateway",
                     "status": "ok",
-                    "message": str(row.get("1") or row.get("0") or "gateway reconnect event"),
+                    "message": message[:2000],
                     "doctorHint": "check_gateway_connectivity",
                 }
             )
