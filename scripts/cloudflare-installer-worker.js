@@ -4,7 +4,6 @@ export default {
 
     const targets = {
       "/install.sh": "https://docs.secopsai.dev/install.sh",
-      "/setup.sh": "https://docs.secopsai.dev/setup.sh",
     };
 
     const target = targets[url.pathname];
