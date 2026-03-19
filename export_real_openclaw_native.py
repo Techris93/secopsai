@@ -24,6 +24,22 @@ GATEWAY_LOG_PATTERNS = [
 ]
 GATEWAY_SIGNAL_TERMS = ("handshake timeout", "closed before connect")
 TIMESTAMP_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)")
+KNOWN_PAIRING_TOOL_NAMES = {
+    "pairing_request",
+    "pairing_approve",
+    "pairing_decide",
+    "pairing_accept",
+    "pairing_reject",
+}
+KNOWN_SKILL_TOOL_NAMES = {
+    "install_skill",
+    "enable_skill",
+    "disable_skill",
+    "update_skill",
+    "skills_install",
+    "skills_enable",
+    "skills_disable",
+}
 EXEC_TOOL_NAMES = {"exec", "run_in_terminal", "execute_command", "shell", "bash", "sh"}
 MUTATING_TOOL_NAMES = {
     "apply_patch",
@@ -158,6 +174,60 @@ def infer_background(arguments: dict[str, Any]) -> bool:
     return bool(value) if isinstance(value, bool) else False
 
 
+def infer_agent_id(path: Path, row: dict[str, Any] | None = None, message: dict[str, Any] | None = None) -> str:
+    if isinstance(message, dict):
+        msg_agent = message.get("agentId") or message.get("agent_id")
+        if isinstance(msg_agent, str) and msg_agent.strip():
+            return msg_agent.strip()
+
+    if isinstance(row, dict):
+        row_agent = row.get("agentId") or row.get("agent_id")
+        if isinstance(row_agent, str) and row_agent.strip():
+            return row_agent.strip()
+
+    parts = list(path.parts)
+    if "agents" in parts:
+        idx = parts.index("agents")
+        if idx + 1 < len(parts):
+            candidate = parts[idx + 1].strip()
+            if candidate:
+                return candidate
+    return "main"
+
+
+def is_pairing_event_signal(tool_name: Any, arguments: dict[str, Any], row: dict[str, Any] | None = None) -> bool:
+    if isinstance(tool_name, str) and tool_name in KNOWN_PAIRING_TOOL_NAMES:
+        return True
+    if any(key in arguments for key in ("approvalState", "approval_state", "pairingId", "pairing_id")):
+        return True
+    if isinstance(row, dict) and any(key in row for key in ("approvalState", "approval_state", "pairingId", "pairing_id")):
+        return True
+    return False
+
+
+def is_skills_event_signal(tool_name: Any, arguments: dict[str, Any], row: dict[str, Any] | None = None) -> bool:
+    if isinstance(tool_name, str) and tool_name in KNOWN_SKILL_TOOL_NAMES:
+        return True
+    if any(key in arguments for key in ("skillKey", "skill_key", "skillSource", "skill_source")):
+        return True
+    if isinstance(row, dict) and any(key in row for key in ("skillKey", "skill_key", "skillSource", "skill_source")):
+        return True
+    return False
+
+
+def is_subagent_event_signal(tool_name: Any, arguments: dict[str, Any], row: dict[str, Any] | None = None) -> bool:
+    if tool_name == "runSubagent":
+        return True
+    if any(key in arguments for key in ("childSessionKey", "child_session_key", "requesterSessionKey", "requester_session_key")):
+        return True
+    if isinstance(row, dict) and any(key in row for key in ("childSessionKey", "child_session_key", "requesterSessionKey", "requester_session_key")):
+        return True
+    hook = ""
+    if isinstance(row, dict):
+        hook = str(row.get("hook") or row.get("event") or row.get("kind") or row.get("type") or "")
+    return "subagent" in hook.lower()
+
+
 def config_changed_paths(row: dict[str, Any]) -> list[str]:
     suspicious = row.get("suspicious")
     if isinstance(suspicious, list) and suspicious:
@@ -187,17 +257,19 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
         if not rows:
             continue
 
+        file_agent_id = infer_agent_id(path)
+
         first_ts = rows[0].get("timestamp")
         last_ts = rows[-1].get("timestamp")
 
-        session_key = f"agent:main:{sid}"
+        session_key = f"agent:{file_agent_id}:{sid}"
         session_hooks.append(
             {
                 "hook": "session_start",
                 "ts": iso(first_ts),
                 "sessionKey": session_key,
                 "sessionId": sid,
-                "agentId": "main",
+                "agentId": file_agent_id,
                 "channel": "openclaw.session",
                 "status": "ok",
             }
@@ -208,7 +280,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                 "ts": iso(last_ts),
                 "sessionKey": session_key,
                 "sessionId": sid,
-                "agentId": "main",
+                "agentId": file_agent_id,
                 "channel": "openclaw.session",
                 "status": "completed",
             }
@@ -231,6 +303,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                         arguments = {"raw": arguments}
 
                     tool_name = content.get("name")
+                    event_agent_id = infer_agent_id(path, row=row, message=message)
                     tool_context = {
                         "command": arguments.get("command"),
                         "background": infer_background(arguments),
@@ -239,15 +312,15 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                     if content.get("id"):
                         tool_context_by_id[str(content.get("id"))] = tool_context
 
-                    if tool_name == "runSubagent":
+                    if is_subagent_event_signal(tool_name, arguments, row=row):
                         subagent_hooks.append(
                             {
                                 "hook": "subagent_spawned",
                                 "ts": iso(message.get("timestamp") or row.get("timestamp")),
-                                "runId": f"session-{sid}",
+                                "runId": f"session-{event_agent_id}-{sid}",
                                 "sessionKey": session_key,
                                 "sessionId": sid,
-                                "agentId": "main",
+                                "agentId": event_agent_id,
                                 "channel": "openclaw.session",
                                 "childSessionKey": arguments.get("sessionKey") or arguments.get("childSessionKey"),
                                 "requesterSessionKey": session_key,
@@ -255,7 +328,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                             }
                         )
 
-                    if isinstance(tool_name, str) and any(token in tool_name.lower() for token in ("pair", "approval")):
+                    if is_pairing_event_signal(tool_name, arguments, row=row):
                         pairing_events.append(
                             {
                                 "kind": "pairing.request",
@@ -264,15 +337,15 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                                 "status": "ok",
                                 "sessionKey": session_key,
                                 "sessionId": sid,
-                                "agentId": "main",
+                                "agentId": event_agent_id,
                                 "channel": "openclaw.session",
-                                "approvalState": "pending",
+                                "approvalState": arguments.get("approvalState") or arguments.get("approval_state") or "pending",
                                 "threadId": arguments.get("threadId"),
                                 "deliveryTarget": arguments.get("deliveryTarget") or arguments.get("channel"),
                             }
                         )
 
-                    if isinstance(tool_name, str) and "skill" in tool_name.lower():
+                    if is_skills_event_signal(tool_name, arguments, row=row):
                         skills_events.append(
                             {
                                 "kind": "skills.install",
@@ -281,7 +354,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                                 "status": "ok",
                                 "sessionKey": session_key,
                                 "sessionId": sid,
-                                "agentId": "main",
+                                "agentId": event_agent_id,
                                 "channel": "openclaw.session",
                                 "skillKey": arguments.get("skillKey") or arguments.get("name"),
                                 "skillSource": arguments.get("skillSource") or arguments.get("source"),
@@ -292,10 +365,10 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                         {
                             "stream": "toolExecution",
                             "ts": iso(message.get("timestamp") or row.get("timestamp")),
-                            "runId": f"session-{sid}",
+                            "runId": f"session-{event_agent_id}-{sid}",
                             "sessionKey": session_key,
                             "sessionId": sid,
-                            "agentId": "main",
+                            "agentId": event_agent_id,
                             "channel": "openclaw.session",
                             "toolName": tool_name,
                             "toolCallId": content.get("id"),
@@ -388,22 +461,29 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                     )
 
                 tool_name = message.get("toolName")
-                if tool_name == "runSubagent":
+                tool_result_args: dict[str, Any] = {}
+                if isinstance(message.get("details"), dict):
+                    details_args = message["details"].get("args")
+                    if isinstance(details_args, dict):
+                        tool_result_args = details_args
+                if is_subagent_event_signal(tool_name, tool_result_args, row=row):
+                    event_agent_id = infer_agent_id(path, row=row, message=message)
                     subagent_hooks.append(
                         {
                             "hook": "subagent_completed",
                             "ts": iso(message.get("timestamp") or row.get("timestamp")),
-                            "runId": f"session-{sid}",
+                            "runId": f"session-{event_agent_id}-{sid}",
                             "sessionKey": session_key,
                             "sessionId": sid,
-                            "agentId": "main",
+                            "agentId": event_agent_id,
                             "channel": "openclaw.session",
                             "requesterSessionKey": session_key,
                             "status": str(details.get("status") or ("failed" if message.get("isError") else "completed")),
                         }
                     )
 
-                if isinstance(tool_name, str) and any(token in tool_name.lower() for token in ("pair", "approval")):
+                if is_pairing_event_signal(tool_name, tool_result_args, row=row):
+                    event_agent_id = infer_agent_id(path, row=row, message=message)
                     pairing_events.append(
                         {
                             "kind": "pairing.result",
@@ -412,13 +492,14 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                             "status": str(details.get("status") or ("blocked" if message.get("isError") else "accepted")),
                             "sessionKey": session_key,
                             "sessionId": sid,
-                            "agentId": "main",
+                            "agentId": event_agent_id,
                             "channel": "openclaw.session",
                             "approvalState": "denied" if message.get("isError") else "approved",
                         }
                     )
 
-                if isinstance(tool_name, str) and "skill" in tool_name.lower():
+                if is_skills_event_signal(tool_name, tool_result_args, row=row):
+                    event_agent_id = infer_agent_id(path, row=row, message=message)
                     skills_events.append(
                         {
                             "kind": "skills.result",
@@ -427,28 +508,28 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                             "status": str(details.get("status") or ("failed" if message.get("isError") else "ok")),
                             "sessionKey": session_key,
                             "sessionId": sid,
-                            "agentId": "main",
+                            "agentId": event_agent_id,
                             "channel": "openclaw.session",
                         }
                     )
 
-            row_kind = " ".join(str(row.get(key, "")) for key in ("hook", "event", "kind", "type")).lower()
-            if "subagent" in row_kind:
+            row_agent_id = infer_agent_id(path, row=row)
+            if is_subagent_event_signal(None, {}, row=row):
                 subagent_hooks.append(
                     {
                         "hook": str(row.get("hook") or row.get("event") or row.get("type") or "subagent_event"),
                         "ts": iso(row.get("timestamp") or row.get("ts")),
-                        "runId": row.get("runId") or f"session-{sid}",
+                        "runId": row.get("runId") or f"session-{row_agent_id}-{sid}",
                         "sessionKey": row.get("sessionKey") or session_key,
                         "sessionId": row.get("sessionId") or sid,
-                        "agentId": row.get("agentId") or "main",
+                        "agentId": row.get("agentId") or row_agent_id,
                         "channel": row.get("channel") or "openclaw.session",
                         "childSessionKey": row.get("childSessionKey"),
                         "requesterSessionKey": row.get("requesterSessionKey") or session_key,
                         "status": row.get("status") or "ok",
                     }
                 )
-            if "pair" in row_kind:
+            if is_pairing_event_signal(None, {}, row=row):
                 pairing_events.append(
                     {
                         "kind": str(row.get("kind") or row.get("event") or row.get("type") or "pairing_event"),
@@ -457,12 +538,12 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                         "status": str(row.get("status") or "ok"),
                         "sessionKey": row.get("sessionKey") or session_key,
                         "sessionId": row.get("sessionId") or sid,
-                        "agentId": row.get("agentId") or "main",
+                        "agentId": row.get("agentId") or row_agent_id,
                         "channel": row.get("channel") or "openclaw.session",
                         "approvalState": row.get("approvalState") or row.get("status"),
                     }
                 )
-            if "skill" in row_kind:
+            if is_skills_event_signal(None, {}, row=row):
                 skills_events.append(
                     {
                         "kind": str(row.get("kind") or row.get("event") or row.get("type") or "skills_event"),
@@ -471,7 +552,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                         "status": str(row.get("status") or "ok"),
                         "sessionKey": row.get("sessionKey") or session_key,
                         "sessionId": row.get("sessionId") or sid,
-                        "agentId": row.get("agentId") or "main",
+                        "agentId": row.get("agentId") or row_agent_id,
                         "channel": row.get("channel") or "openclaw.session",
                         "skillKey": row.get("skillKey"),
                         "skillSource": row.get("skillSource") or row.get("source"),
