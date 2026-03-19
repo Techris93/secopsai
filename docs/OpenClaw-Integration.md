@@ -77,6 +77,8 @@ python soc_store.py list
 
 ## 3. Inspect and triage findings (`soc_store` CLI)
 
+Security note: triage operations modify the local SOC store (SQLite). If you are running secopsai via an agent, prefer read-only operations by default and require explicit user confirmation before any triage/write action.
+
 **List all findings:**
 
 ```bash
@@ -183,6 +185,8 @@ If no curated steps exist for the detected rule, the output will include generic
 ---
 
 ## 5. Daily summary via OpenClaw cron
+
+Security note: if you enable a scheduled job, ensure it runs under a controlled account and that automated writes/triage are intended. Backup your SOC store (`data/openclaw/findings/openclaw_soc.db`) before enabling unattended automation.
 
 Configure an OpenClaw cron job to run the pipeline and post a summary every morning:
 

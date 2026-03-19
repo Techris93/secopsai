@@ -23,5 +23,6 @@ nav:
   - Rules Registry: rules-registry.md
   - Deployment Guide: deployment-guide.md
   - API Reference: api-reference.md
+  - Threat Intel (IOCs): threat-intel.md
   - Beginner Live Guide: BEGINNER-LIVE-GUIDE.md
   - OpenClaw Integration: OpenClaw-Integration.md

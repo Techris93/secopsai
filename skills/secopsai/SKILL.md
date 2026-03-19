@@ -11,6 +11,7 @@ This skill lets an OpenClaw agent:
 - List and summarise findings from the local SOC store
 - Triage findings by ID (disposition + status + note)
 - Get structured mitigation steps for any finding
+- Run a local-first threat intelligence (IOC) pipeline and match IOCs against OpenClaw replay
 
 ## Assumptions
 
@@ -20,6 +21,15 @@ This skill lets an OpenClaw agent:
 - The virtualenv at `~/secopsai/.venv` is used for all commands.
 
 ---
+
+## Safety defaults (read this)
+
+This skill can run shell commands and can modify the local SOC store when performing triage.
+
+- Prefer **read-only** operations by default (`list/show/check`).
+- Before any write/triage action (`set-status`, `set-disposition`, `add-note`), require explicit user confirmation.
+- If you enable scheduled jobs, ensure they run under a controlled account and that automated writes are intended.
+- Backup the SOC DB (`data/openclaw/findings/openclaw_soc.db`) before enabling unattended automation.
 
 ## Command Mappings
 
@@ -84,7 +94,9 @@ Example reply:
 
 ---
 
-### 3. Triage a finding
+### 3. Triage a finding (WRITE)
+
+Important: this modifies the local SOC store. Confirm with the user before running.
 
 **User phrases:**
 
@@ -191,6 +203,48 @@ If `recommended_actions` is empty or missing:
 > Recommended next steps: review the associated events, confirm if the behaviour is expected, and restrict any over-permissive skills or credentials used.
 
 ---
+
+## Threat Intel (IOCs)
+
+### 7. Refresh IOC feeds
+
+**User phrases:**
+
+- "refresh intel"
+- "update iocs"
+- "pull threat intel"
+
+**Exec command:**
+
+```bash
+cd "$HOME/secopsai" && source .venv/bin/activate && \
+  secopsai intel refresh --json
+```
+
+**Agent behaviour:**
+
+- Parse JSON and report total IOCs and any feed errors.
+- Do not call external paid enrichment APIs by default.
+
+### 8. Match IOCs against OpenClaw replay
+
+**User phrases:**
+
+- "match intel"
+- "check iocs"
+- "any intel matches"
+
+**Exec command:**
+
+```bash
+cd "$HOME/secopsai" && source .venv/bin/activate && \
+  secopsai intel match --limit-iocs 500 --json
+```
+
+**Agent behaviour:**
+
+- Parse `matched_findings`.
+- If matches exist, list the top 3 `TI-...` finding IDs and titles and offer `show TI-...`.
 
 ## Daily Summary (OpenClaw cron)
 

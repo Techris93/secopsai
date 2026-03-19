@@ -29,6 +29,8 @@ SecOpsAI is a local-first security pipeline that turns OpenClaw telemetry into a
 curl -fsSL https://secopsai.dev/install.sh | bash
 ```
 
+Security note: only run a `curl | bash` installer if you trust the publisher and the source code. If you prefer a safer path, clone the repo and inspect `docs/install.sh` + `setup.sh` before running.
+
 When piped from `curl`, setup runs in non-interactive mode with safe defaults:
 
 - optional native surfaces: disabled
@@ -99,6 +101,8 @@ secopsai check --type malware --severity high --json
 ```
 
 ## Threat Intelligence (IOC) pipeline
+
+Security note: the intel pipeline downloads public IOC feeds and stores them locally under `data/intel/`. It does not call paid enrichment APIs by default.
 
 secopsai also includes a local-first threat intel pipeline:
 

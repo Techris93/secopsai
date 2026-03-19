@@ -28,6 +28,8 @@ macOS/Linux:
 curl -fsSL https://secopsai.dev/install.sh | bash
 ```
 
+Security note: only run a `curl | bash` installer if you trust the publisher and the source code. If you prefer a safer path, clone the repo and inspect `docs/install.sh` + `setup.sh` before running.
+
 This will:
 
 - Clone `https://github.com/Techris93/secopsai.git` into `~/secopsai` (or `$SECOPSAI_HOME` if set)

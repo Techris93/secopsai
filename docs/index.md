@@ -17,6 +17,7 @@ secopsai turns OpenClaw audit activity into repeatable, explainable security fin
 - [Rules Registry](rules-registry.md)
 - [Deployment Guide](deployment-guide.md)
 - [API Reference](api-reference.md)
+- [Threat Intel (IOCs)](threat-intel.md)
 
 ## Quick Start
 
