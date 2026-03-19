@@ -7,6 +7,7 @@ PLIST_PATH="$PLIST_DIR/com.secops.autoresearch.openclaw.daily.plist"
 
 mkdir -p "$PLIST_DIR"
 mkdir -p "$ROOT_DIR/data/openclaw/logs"
+chmod 700 "$ROOT_DIR/data/openclaw/logs"
 
 cat > "$PLIST_PATH" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -16,12 +17,18 @@ cat > "$PLIST_PATH" <<EOF
   <key>Label</key>
   <string>com.secops.autoresearch.openclaw.daily</string>
 
+  <key>WorkingDirectory</key>
+  <string>$ROOT_DIR</string>
+
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>-lc</string>
-    <string>cd $ROOT_DIR && $ROOT_DIR/scripts/openclaw_daily.sh --skip-export</string>
+    <string>$ROOT_DIR/scripts/openclaw_daily.sh</string>
+    <string>--skip-export</string>
   </array>
+
+  <key>Umask</key>
+  <integer>63</integer>
 
   <key>StartCalendarInterval</key>
   <dict>

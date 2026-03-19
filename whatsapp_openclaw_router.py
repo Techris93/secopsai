@@ -19,12 +19,23 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import os
+import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 
 import openclaw_plugin
+
+
+SEVERITY_ORDER = {
+    "info": 0,
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+    "critical": 4,
+}
 
 
 def _render_help() -> str:
@@ -57,6 +68,21 @@ def _summarize_check(payload: dict) -> str:
     return "\n".join(lines)
 
 
+def _severity_at_least(severity: str, threshold: str) -> bool:
+    return SEVERITY_ORDER.get(severity.lower(), 0) >= SEVERITY_ORDER.get(threshold.lower(), 0)
+
+
+def _top_rows(findings: list[dict], max_rows: int = 10) -> list[dict]:
+    rows = sorted(
+        findings,
+        key=lambda row: (
+            -SEVERITY_ORDER.get(str(row.get("severity", "info")).lower(), 0),
+            str(row.get("first_seen", "")),
+        ),
+    )
+    return rows[:max_rows]
+
+
 def handle_message(message: str) -> str:
     normalized = " ".join(message.strip().lower().split())
     if not normalized or normalized == "help":
@@ -78,11 +104,11 @@ def handle_message(message: str) -> str:
         return _summarize_check(payload)
 
     if normalized == "list high":
-        rows = openclaw_plugin._top_rows(
+        rows = _top_rows(
             [
                 row
                 for row in openclaw_plugin.soc_store.list_findings()
-                if openclaw_plugin._severity_at_least(str(row.get("severity", "info")), "high")
+                if _severity_at_least(str(row.get("severity", "info")), "high")
             ],
             max_rows=10,
         )
@@ -112,9 +138,9 @@ def handle_message(message: str) -> str:
 
 class _WebhookHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
-        token = os.environ.get("SECOPS_WHATSAPP_TOKEN", "")
-        received_token = self.headers.get("X-Webhook-Token", "")
-        if token and received_token != token:
+        token = os.environ.get("SECOPS_WHATSAPP_TOKEN", "").strip()
+        received_token = self.headers.get("X-Webhook-Token", "").strip()
+        if not token or not hmac.compare_digest(received_token, token):
             self.send_response(403)
             self.end_headers()
             self.wfile.write(b"forbidden")
@@ -141,10 +167,6 @@ class _WebhookHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
-    def log_message(self, _format: str, *_args: object) -> None:
-        return
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="WhatsApp command router for OpenClaw")
     parser.add_argument("--message", help="One-shot local message simulation")
@@ -162,6 +184,9 @@ def main() -> int:
         return 0
 
     if args.serve:
+        if not os.environ.get("SECOPS_WHATSAPP_TOKEN", "").strip():
+            print("SECOPS_WHATSAPP_TOKEN must be set before starting webhook mode.", file=sys.stderr)
+            return 2
         server = HTTPServer((args.host, args.port), _WebhookHandler)
         print(f"Listening on http://{args.host}:{args.port}")
         print("POST message as JSON {'message': 'check malware'}")

@@ -31,6 +31,11 @@ from urllib.parse import parse_qs
 from whatsapp_openclaw_router import handle_message
 
 
+def _is_loopback_host(host: str) -> bool:
+    normalized = host.strip().lower()
+    return normalized in {"127.0.0.1", "localhost", "::1"}
+
+
 def _build_signature_base(url: str, params: Dict[str, str]) -> str:
     # Twilio signature base string: URL + concatenated sorted key/value pairs.
     chunks = [url]
@@ -58,7 +63,8 @@ def _request_url(handler: BaseHTTPRequestHandler) -> str:
 def _validate_twilio_signature(handler: BaseHTTPRequestHandler, params: Dict[str, str]) -> bool:
     allow_unsigned = os.environ.get("SECOPS_ALLOW_UNSIGNED", "0") == "1"
     if allow_unsigned:
-        return True
+        server_host = str(handler.server.server_address[0])
+        return _is_loopback_host(server_host)
 
     auth_token = os.environ.get("SECOPS_TWILIO_AUTH_TOKEN", "").strip()
     received = handler.headers.get("X-Twilio-Signature", "").strip()
@@ -119,6 +125,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    allow_unsigned = os.environ.get("SECOPS_ALLOW_UNSIGNED", "0") == "1"
+    if allow_unsigned and not _is_loopback_host(args.host):
+        print("SECOPS_ALLOW_UNSIGNED=1 is only permitted when binding to localhost.")
+        return 2
     server = HTTPServer((args.host, args.port), _TwilioHandler)
     print(f"Twilio bridge listening on http://{args.host}:{args.port}/twilio/whatsapp")
     print("Configure Twilio Sandbox webhook to POST to /twilio/whatsapp")

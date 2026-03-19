@@ -35,10 +35,20 @@ def utc_now() -> str:
 
 
 def connect(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    directory = os.path.dirname(db_path)
+    os.makedirs(directory, exist_ok=True)
+    try:
+        os.chmod(directory, 0o700)
+    except OSError:
+        pass
+
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
+    try:
+        os.chmod(db_path, 0o600)
+    except OSError:
+        pass
     return connection
 
 
