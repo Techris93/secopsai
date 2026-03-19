@@ -19,5 +19,28 @@ dev = [
 secopsai = "secopsai.cli:main"
 
 [tool.setuptools]
-# Package only the secopsai/ directory (your existing top-level scripts remain runnable)
-packages = ["secopsai"]
+# Install the package plus the top-level helper modules/scripts that the CLI imports.
+packages = ["secopsai", "openclaw_adapters"]
+py-modules = [
+  "confidence",
+  "detect",
+  "evaluate",
+  "evaluate_openclaw",
+  "explain",
+  "export_real_openclaw_native",
+  "feedback",
+  "findings",
+  "generate_openclaw_attack_mix",
+  "ingest_openclaw",
+  "openclaw_findings",
+  "openclaw_plugin",
+  "openclaw_prepare",
+  "prepare",
+  "run_openclaw_live",
+  "shadow",
+  "soc_store",
+  "swarm",
+  "tune",
+  "twilio_whatsapp_webhook",
+  "whatsapp_openclaw_router",
+]
