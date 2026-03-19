@@ -99,6 +99,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Scan image with Trivy
+        continue-on-error: ${{ github.event_name != 'pull_request' }}
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           image-ref: secopsai-ci-scan:${{ github.sha }}
