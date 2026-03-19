@@ -29,6 +29,12 @@ SecOpsAI is a local-first security pipeline that turns OpenClaw telemetry into a
 curl -fsSL https://secopsai.dev/install.sh | bash
 ```
 
+When piped from `curl`, setup runs in non-interactive mode with safe defaults:
+
+- optional native surfaces: disabled
+- benchmark generation: enabled
+- live export: disabled
+
 Fallback:
 
 ```bash

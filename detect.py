@@ -495,7 +495,7 @@ def detect_openclaw_dangerous_exec(events: List[Dict]) -> List[str]:
         r"(?i)\bnc\b.*\s-e\s",
         r"(?i)\bssh\s+root@",
         r"(?i)\bscp\b.*root@",
-        r"(?i)\brm\s+-rf\s+/(?!Users|tmp)",
+        r"(?i)\brm\s+-rf\s+/(?!Users(?:/|$)|tmp(?:/|$))",
         r"(?i)authorization:\s*bearer",
     ]
 

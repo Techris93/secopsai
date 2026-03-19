@@ -28,6 +28,12 @@ macOS/Linux:
 curl -fsSL https://secopsai.dev/install.sh | bash
 ```
 
+Note: `curl | bash` runs setup in non-interactive mode (no prompts). Defaults are:
+
+- optional native surfaces: disabled
+- benchmark generation: enabled
+- live export: disabled
+
 Fallback:
 
 ```bash

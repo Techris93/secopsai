@@ -174,6 +174,14 @@ phase_preflight_checks() {
   fi
   
   # Check git
+  if command -v git &> /dev/null; then
+    log_success "git found"
+  else
+    log_error "git is required but not installed"
+    all_passed=false
+  fi
+
+  # Check python pip module
   if python3 -m pip --version &> /dev/null; then
     log_success "Python pip module found"
   else
