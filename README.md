@@ -96,7 +96,9 @@ secopsai mitigate OCF-XXXX
 secopsai check --type malware --severity high
 
 # All subcommands accept --json for machine-friendly output
+# (works either before or after the subcommand)
 secopsai show OCF-XXXX --json
+secopsai --json show OCF-XXXX
 secopsai check --type malware --severity high --json
 ```
 
@@ -148,6 +150,10 @@ Behavior notes:
   skip the pipeline entirely and operate on whatever is already in `soc_store`.
 - The CLI is designed to be idempotent and automation-friendly: pretty output for
   humans, `--json` for integrations.
+- `--json` is accepted either before or after subcommands, so both
+  `secopsai --json list` and `secopsai list --json` work.
+- The installer/editable package includes the runtime helper modules used by the
+  CLI entrypoint, so `secopsai` works correctly from the installed virtualenv.
 
 4. Review findings:
 

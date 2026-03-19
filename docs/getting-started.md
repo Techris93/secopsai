@@ -69,7 +69,9 @@ secopsai list --severity high    # list high-severity findings
 secopsai show OCF-XXXX           # inspect a finding
 
 # Add --json to any command for machine-friendly output
+# (either before or after the subcommand)
 secopsai list --severity high --json
+secopsai --json list --severity high
 ```
 
 ### Option 2: Manual Setup

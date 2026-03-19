@@ -49,6 +49,8 @@ cd "$HOME/secopsai" && source .venv/bin/activate && \
   secopsai list --severity info --json --cache-ttl 60
 ```
 
+(`--json` also works before the subcommand, e.g. `secopsai --json list ...`.)
+
 **Agent behaviour:**
 
 - Parse the JSON payload from `secopsai list` (field: `findings`).
