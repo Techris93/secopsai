@@ -10,6 +10,7 @@ import openclaw_plugin
 
 from secopsai.pipeline import refresh as refresh_pipeline
 from secopsai.formatters import fmt_list, fmt_finding, to_json
+from secopsai.intel import refresh_iocs, load_iocs, enrich_iocs, match_iocs_against_replay
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -126,6 +127,20 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help=f"Minimum seconds between auto-refresh runs (default: {DEFAULT_TTL_SECONDS})",
     )
     c.add_argument("--openclaw-home", help="Override OPENCLAW_HOME")
+
+    intel = sub.add_parser("intel", help="Threat intelligence (IOC) pipeline")
+    intel_sub = intel.add_subparsers(dest="intel_cmd", required=True)
+
+    intel_refresh = intel_sub.add_parser("refresh", help="Download + normalize open-source IOC feeds")
+    intel_refresh.add_argument("--timeout", type=int, default=20, help="HTTP timeout seconds")
+    intel_refresh.add_argument("--enrich", action="store_true", help="Perform lightweight local enrichment (DNS)")
+
+    intel_list = intel_sub.add_parser("list", help="List locally stored IOCs")
+    intel_list.add_argument("--limit", type=int, default=50)
+
+    intel_match = intel_sub.add_parser("match", help="Match IOCs against latest OpenClaw replay and persist matches")
+    intel_match.add_argument("--limit-iocs", type=int, default=2000)
+    intel_match.add_argument("--replay", help="Override replay path (default: data/openclaw/replay/labeled/current.json)")
 
     return p.parse_args(argv)
 
@@ -326,6 +341,52 @@ def main(argv: Optional[List[str]] = None) -> int:
                         f"- {row['finding_id']} | {str(row['severity']).upper()} | {row['title']}"
                     )
         return 0
+
+    if args.cmd == "intel":
+        if args.intel_cmd == "refresh":
+            res = refresh_iocs(timeout=args.timeout)
+            enrich_meta = None
+            if args.enrich:
+                enrich_meta = enrich_iocs(load_iocs())
+            if args.json:
+                print(to_json({"refresh": res, "enrich": enrich_meta}))
+            else:
+                print(f"intel refresh: total_iocs={res['total']} path={res['path']}")
+                if res.get("errors"):
+                    print(f"errors={res['errors']}")
+                if enrich_meta:
+                    print(f"intel enrich: enriched={enrich_meta['enriched']} path={enrich_meta['path']}")
+            return 0
+
+        if args.intel_cmd == "list":
+            iocs = load_iocs()
+            rows = [ioc.__dict__ for ioc in iocs[: args.limit]]
+            if args.json:
+                print(to_json({"total": len(iocs), "iocs": rows}))
+            else:
+                for r in rows:
+                    print(f"{r['ioc_type']} {r['value']} score={r['score']} source={r['source']}")
+                print(f"total_iocs={len(iocs)}")
+            return 0
+
+        if args.intel_cmd == "match":
+            iocs = load_iocs()
+            from pathlib import Path
+
+            replay_path = Path(args.replay) if args.replay else None
+            meta = match_iocs_against_replay(iocs, replay_path=replay_path, max_iocs=args.limit_iocs)
+            if args.json:
+                print(to_json(meta))
+            else:
+                print(
+                    "intel match: events_total={e} iocs_considered={i} matched_findings={m} db={db}".format(
+                        e=meta["events_total"],
+                        i=meta["iocs_considered"],
+                        m=meta["matched_findings"],
+                        db=meta["db_path"],
+                    )
+                )
+            return 0
 
     return 2
 

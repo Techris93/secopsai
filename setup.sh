@@ -349,6 +349,13 @@ phase_initialization() {
   # Run validation tests
   log_info "Running validation tests..."
   source "$VENV_DIR/bin/activate"
+
+  # Generate OpenClaw sample fixtures expected by tests (best-effort).
+  if python3 "$SCRIPT_DIR/scripts/generate_openclaw_samples.py" >/dev/null 2>&1; then
+    log_success "OpenClaw sample fixtures ready"
+  else
+    log_warn "Failed to generate OpenClaw sample fixtures (tests may fail)"
+  fi
   
   if python3 -m pytest tests/ -q 2>/dev/null; then
     log_success "All validation tests passed"

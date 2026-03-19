@@ -11,13 +11,17 @@ and will not overwrite files that already exist.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import generate_openclaw_attack_mix
 import openclaw_prepare
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = REPO_ROOT / "data" / "openclaw" / "raw"
 LABELED_DIR = REPO_ROOT / "data" / "openclaw" / "replay" / "labeled"
 

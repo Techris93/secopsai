@@ -5,6 +5,7 @@ setup.py
 secopsai/__init__.py
 secopsai/cli.py
 secopsai/formatters.py
+secopsai/intel.py
 secopsai/pipeline.py
 secopsai.egg-info/PKG-INFO
 secopsai.egg-info/SOURCES.txt

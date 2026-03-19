@@ -98,6 +98,32 @@ secopsai show OCF-XXXX --json
 secopsai check --type malware --severity high --json
 ```
 
+## Threat Intelligence (IOC) pipeline
+
+secopsai also includes a local-first threat intel pipeline:
+
+- Downloads open-source IOC feeds (URLhaus + ThreatFox)
+- Normalizes + de-duplicates indicators
+- Optional lightweight enrichment (DNS resolution)
+- Matches IOCs against your latest OpenClaw replay events
+- Persists matches into the same local SOC store (so `secopsai list/show` can be used)
+
+Examples:
+
+```bash
+# Download feeds and store them locally under data/intel/
+secopsai intel refresh --json
+
+# (Optional) add local enrichment
+secopsai intel refresh --enrich
+
+# List a few stored IOCs
+secopsai intel list --limit 20
+
+# Match IOCs against latest replay and persist matches as findings
+secopsai intel match --limit-iocs 500 --json
+```
+
 Behavior notes:
 
 - `secopsai refresh` runs the full OpenClaw live pipeline by calling
