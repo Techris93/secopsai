@@ -2,18 +2,21 @@
 set -eu
 
 # Bootstrap installer for secopsai.dev.
-# Optional hardening controls:
-#   SECOPSAI_INSTALL_REF=<git ref/commit>         (default: pinned immutable commit)
-#   SECOPSAI_INSTALL_SHA256=<expected sha256 sum> (optional)
-INSTALL_REF="${SECOPSAI_INSTALL_REF:-3f82360ccca20f1f453aa7e744edc752a4ae85f3}"
-INSTALL_URL="https://raw.githubusercontent.com/Techris93/secopsai/${INSTALL_REF}/setup.sh"
+# Optional controls:
+#   SECOPSAI_INSTALL_REF=<git ref/commit>   (default: pinned immutable commit)
+#   SECOPSAI_HOME=<install dir>            (default: $HOME/secopsai)
+#
+# This script:
+#   1. Clones or updates the secopsai repo at SECOPSAI_HOME
+#   2. Checks out the requested ref
+#   3. Runs setup.sh from the repo root (non-interactive-safe by default)
 
-if command -v curl >/dev/null 2>&1; then
-  FETCH_CMD="curl -fsSL"
-elif command -v wget >/dev/null 2>&1; then
-  FETCH_CMD="wget -qO-"
-else
-  echo "Error: curl or wget is required to install secopsai." >&2
+INSTALL_REF="${SECOPSAI_INSTALL_REF:-a93a042df0cbe593ea64d9002b9556fe0533d537}"
+REPO_URL="https://github.com/Techris93/secopsai.git"
+REPO_DIR="${SECOPSAI_HOME:-"$HOME/secopsai"}"
+
+if ! command -v git >/dev/null 2>&1; then
+  echo "Error: git is required to install secopsai." >&2
   exit 1
 fi
 
@@ -22,32 +25,19 @@ if ! command -v bash >/dev/null 2>&1; then
   exit 1
 fi
 
-tmp_file="$(mktemp)"
-cleanup() {
-  rm -f "$tmp_file"
-}
-trap cleanup EXIT INT TERM
-
-# shellcheck disable=SC2086
-if ! sh -c "$FETCH_CMD \"$INSTALL_URL\"" > "$tmp_file"; then
-  echo "Error: failed to download setup script from $INSTALL_URL" >&2
-  exit 1
+# Clone or update repo
+if [ ! -d "$REPO_DIR/.git" ]; then
+  echo "Cloning secopsai into $REPO_DIR..."
+  git clone "$REPO_URL" "$REPO_DIR"
+else
+  echo "Using existing secopsai checkout at $REPO_DIR..."
 fi
 
-if [ -n "${SECOPSAI_INSTALL_SHA256:-}" ]; then
-  if command -v sha256sum >/dev/null 2>&1; then
-    actual_sum="$(sha256sum "$tmp_file" | awk '{print $1}')"
-  elif command -v shasum >/dev/null 2>&1; then
-    actual_sum="$(shasum -a 256 "$tmp_file" | awk '{print $1}')"
-  else
-    echo "Error: SECOPSAI_INSTALL_SHA256 is set but no sha256 tool is available." >&2
-    exit 1
-  fi
+cd "$REPO_DIR"
 
-  if [ "$actual_sum" != "$SECOPSAI_INSTALL_SHA256" ]; then
-    echo "Error: setup.sh checksum mismatch." >&2
-    exit 1
-  fi
-fi
+echo "Checking out $INSTALL_REF..."
+git fetch --tags origin >/dev/null 2>&1 || true
+git checkout "$INSTALL_REF" >/dev/null 2>&1 || git checkout -B main "$INSTALL_REF"
 
-exec bash "$tmp_file"
+echo "Running setup.sh..."
+exec bash setup.sh --non-interactive
