@@ -1,4 +1,12 @@
+"""
+SPDX-FileCopyrightText: 2026 Techris93
+SPDX-License-Identifier: MIT
+
+Installer metadata for secopsai (editable install for development).
+"""
+
 from setuptools import setup, find_packages
+
 
 setup(
     name="secopsai",

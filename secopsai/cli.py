@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Command-line entrypoint for secopsai.
 
+SPDX-FileCopyrightText: 2026 Techris93
+SPDX-License-Identifier: MIT
+"""
+
 This CLI provides safe thin wrappers around existing top-level scripts
 to avoid risky refactors. It calls the underlying scripts using the
 current Python executable so behavior remains identical for users.
