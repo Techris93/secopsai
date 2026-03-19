@@ -82,6 +82,10 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="${SCRIPT_DIR}/.venv"
 BACKUP_DIR="${SCRIPT_DIR}/.backups"
+TEMP_DIR="${SECOPSAI_TMP_DIR:-${TMPDIR:-/tmp}}"
+PREPARE_LOG="${TEMP_DIR%/}/secopsai_prepare.log"
+BENCHMARK_LOG="${TEMP_DIR%/}/benchmark.log"
+EXPORT_LOG="${TEMP_DIR%/}/export.log"
 
 # Logging functions
 log_info() {
@@ -229,7 +233,6 @@ phase_setup_environment() {
   if [[ -f "$SCRIPT_DIR/requirements.txt" ]]; then
     log_info "Installing dependencies from requirements.txt..."
     python3 -m pip install --quiet -r "$SCRIPT_DIR/requirements.txt"
-    python3 -m pip install --quiet pytest
     log_success "Dependencies installed"
   else
     log_warn "requirements.txt not found, skipping dependency installation"
@@ -326,11 +329,11 @@ phase_initialization() {
   # Ensure baseline regression dataset exists for evaluate.py/tests on fresh clones.
   if [[ ! -f "$SCRIPT_DIR/data/events.json" || ! -f "$SCRIPT_DIR/data/events_unlabeled.json" ]]; then
     log_info "Generating baseline dataset (data/events*.json)..."
-    if python3 "$SCRIPT_DIR/prepare.py" > /tmp/secopsai_prepare.log 2>&1; then
+    if python3 "$SCRIPT_DIR/prepare.py" > "$PREPARE_LOG" 2>&1; then
       log_success "Baseline dataset generated"
     else
       log_warn "Failed to generate baseline dataset (install may continue)"
-      log_warn "See /tmp/secopsai_prepare.log for details"
+      log_warn "See $PREPARE_LOG for details"
     fi
   else
     log_success "Baseline dataset already present"
@@ -362,7 +365,7 @@ phase_feature_execution() {
   # Benchmark validation
   if [[ "$SECOPS_ENABLE_BENCHMARK" == "1" ]]; then
     log_info "Generating attack-mix benchmark..."
-    if python3 generate_openclaw_attack_mix.py --stats > /tmp/benchmark.log 2>&1; then
+    if python3 generate_openclaw_attack_mix.py --stats > "$BENCHMARK_LOG" 2>&1; then
       log_success "Attack-mix benchmark generated"
       echo ""
       python3 generate_openclaw_attack_mix.py --stats
@@ -375,7 +378,7 @@ phase_feature_execution() {
   # Live telemetry export
   if [[ "$SECOPS_ENABLE_LIVE_EXPORT" == "1" ]]; then
     log_info "Exporting live OpenClaw telemetry..."
-    if python3 export_real_openclaw_native.py > /tmp/export.log 2>&1; then
+    if python3 export_real_openclaw_native.py > "$EXPORT_LOG" 2>&1; then
       log_success "Live telemetry exported"
     else
       log_warn "Failed to export live telemetry"

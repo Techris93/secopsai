@@ -1,9 +1,12 @@
 #!/bin/sh
 set -eu
 
-# Bootstrap installer for secopsai.dev. Keeps the public one-liner stable
-# while delegating to the latest maintained installer in the main branch.
-INSTALL_URL="https://raw.githubusercontent.com/Techris93/secopsai/main/setup.sh"
+# Bootstrap installer for secopsai.dev.
+# Optional hardening controls:
+#   SECOPSAI_INSTALL_REF=<git ref/commit>        (default: main)
+#   SECOPSAI_INSTALL_SHA256=<expected sha256 sum> (optional)
+INSTALL_REF="${SECOPSAI_INSTALL_REF:-main}"
+INSTALL_URL="https://raw.githubusercontent.com/Techris93/secopsai/${INSTALL_REF}/setup.sh"
 
 if command -v curl >/dev/null 2>&1; then
   FETCH_CMD="curl -fsSL"
@@ -19,5 +22,32 @@ if ! command -v bash >/dev/null 2>&1; then
   exit 1
 fi
 
+tmp_file="$(mktemp)"
+cleanup() {
+  rm -f "$tmp_file"
+}
+trap cleanup EXIT INT TERM
+
 # shellcheck disable=SC2086
-exec sh -c "$FETCH_CMD \"$INSTALL_URL\" | bash"
+if ! sh -c "$FETCH_CMD \"$INSTALL_URL\"" > "$tmp_file"; then
+  echo "Error: failed to download setup script from $INSTALL_URL" >&2
+  exit 1
+fi
+
+if [ -n "${SECOPSAI_INSTALL_SHA256:-}" ]; then
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual_sum="$(sha256sum "$tmp_file" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual_sum="$(shasum -a 256 "$tmp_file" | awk '{print $1}')"
+  else
+    echo "Error: SECOPSAI_INSTALL_SHA256 is set but no sha256 tool is available." >&2
+    exit 1
+  fi
+
+  if [ "$actual_sum" != "$SECOPSAI_INSTALL_SHA256" ]; then
+    echo "Error: setup.sh checksum mismatch." >&2
+    exit 1
+  fi
+fi
+
+exec bash "$tmp_file"

@@ -34,6 +34,15 @@ Note: `curl | bash` runs setup in non-interactive mode (no prompts). Defaults ar
 - benchmark generation: enabled
 - live export: disabled
 
+Optional hardening controls:
+
+- `SECOPSAI_INSTALL_REF=<git ref or commit>` to pin setup script source
+- `SECOPSAI_INSTALL_SHA256=<sha256>` to verify downloaded setup script
+
+Optional temp log location:
+
+- `SECOPSAI_TMP_DIR=/path` (defaults to `$TMPDIR` or `/tmp`)
+
 Fallback:
 
 ```bash

@@ -35,6 +35,15 @@ When piped from `curl`, setup runs in non-interactive mode with safe defaults:
 - benchmark generation: enabled
 - live export: disabled
 
+Optional hardening controls for installer bootstrap:
+
+- `SECOPSAI_INSTALL_REF=<git ref or commit>` to pin setup script source
+- `SECOPSAI_INSTALL_SHA256=<sha256>` to enforce checksum verification
+
+Optional runtime temp log directory:
+
+- `SECOPSAI_TMP_DIR=/path` to override default temp log location (`$TMPDIR` or `/tmp`)
+
 Fallback:
 
 ```bash
