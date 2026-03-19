@@ -100,6 +100,13 @@ secopsai show OCF-XXXX --json
 secopsai check --type malware --severity high --json
 ```
 
+## Security
+
+This repo includes security guardrails and continuous scanning:
+
+- Threat model: `docs/threat-model.md`
+- CI security scans (on PRs): Semgrep (SAST), Trivy (dependency scan), and Gitleaks (secrets)
+
 ## Threat Intelligence (IOC) pipeline
 
 Security note: the intel pipeline downloads public IOC feeds and stores them locally under `data/intel/`. It does not call paid enrichment APIs by default.
