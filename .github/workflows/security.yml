@@ -31,46 +31,46 @@ jobs:
           cache: "pip"
 
       - name: Run Trivy file/config scan
-          continue-on-error: ${{ github.event_name != 'schedule' }}
-          uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
-          with:
-            scan-type: "fs"
-            scan-ref: "."
-            severity: "HIGH,CRITICAL"
-            exit-code: "0"
-            format: "sarif"
-            output: "trivy-fs-results.sarif"
-        - name: Ensure trivy-fs-results.sarif exists
-          run: |
-            if [ ! -f trivy-fs-results.sarif ]; then echo '{"version":"2.1.0","runs":[]}' > trivy-fs-results.sarif; fi
+        continue-on-error: ${{ github.event_name != 'schedule' }}
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          severity: "HIGH,CRITICAL"
+          exit-code: "0"
+          format: "sarif"
+          output: "trivy-fs-results.sarif"
+      - name: Ensure trivy-fs-results.sarif exists
+        run: |
+          if [ ! -f trivy-fs-results.sarif ]; then echo '{"version":"2.1.0","runs":[]}' > trivy-fs-results.sarif; fi
 
       - name: Run Trivy secret scan
-          continue-on-error: ${{ github.event_name != 'schedule' }}
-          uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
-          with:
-            scan-type: "secret"
-            scan-ref: "."
-            severity: "HIGH,CRITICAL"
-            exit-code: "0"
-            format: "sarif"
-            output: "trivy-secret-results.sarif"
-        - name: Ensure trivy-secret-results.sarif exists
-          run: |
-            if [ ! -f trivy-secret-results.sarif ]; then echo '{"version":"2.1.0","runs":[]}' > trivy-secret-results.sarif; fi
+        continue-on-error: ${{ github.event_name != 'schedule' }}
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          scan-type: "secret"
+          scan-ref: "."
+          severity: "HIGH,CRITICAL"
+          exit-code: "0"
+          format: "sarif"
+          output: "trivy-secret-results.sarif"
+      - name: Ensure trivy-secret-results.sarif exists
+        run: |
+          if [ ! -f trivy-secret-results.sarif ]; then echo '{"version":"2.1.0","runs":[]}' > trivy-secret-results.sarif; fi
 
       - name: Run Trivy dependency scan
-          continue-on-error: ${{ github.event_name != 'schedule' }}
-          uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
-          with:
-            scan-type: "config"
-            scan-ref: "."
-            severity: "HIGH,CRITICAL"
-            exit-code: "0"
-            format: "sarif"
-            output: "trivy-config-results.sarif"
-        - name: Ensure trivy-config-results.sarif exists
-          run: |
-            if [ ! -f trivy-config-results.sarif ]; then echo '{"version":"2.1.0","runs":[]}' > trivy-config-results.sarif; fi
+        continue-on-error: ${{ github.event_name != 'schedule' }}
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          scan-type: "config"
+          scan-ref: "."
+          severity: "HIGH,CRITICAL"
+          exit-code: "0"
+          format: "sarif"
+          output: "trivy-config-results.sarif"
+      - name: Ensure trivy-config-results.sarif exists
+        run: |
+          if [ ! -f trivy-config-results.sarif ]; then echo '{"version":"2.1.0","runs":[]}' > trivy-config-results.sarif; fi
 
       - name: Upload Trivy results to GitHub Security tab
           uses: github/codeql-action/upload-sarif@a60c4df7a135c7317c1e9ddf9b5a9b07a910dda9
