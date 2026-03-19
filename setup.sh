@@ -233,7 +233,14 @@ phase_setup_environment() {
   if [[ -f "$SCRIPT_DIR/requirements.txt" ]]; then
     log_info "Installing dependencies from requirements.txt..."
     python3 -m pip install --quiet -r "$SCRIPT_DIR/requirements.txt"
-    log_success "Dependencies installed"
+    python3 -m pip install --quiet pytest
+
+    # Install secopsai CLI into the venv so `secopsai` is available
+    if python3 -m pip install --quiet -e "$SCRIPT_DIR"; then
+      log_success "Dependencies installed (and secopsai CLI installed)"
+    else
+      log_warn "Dependencies installed but failed to install secopsai CLI (editable install)"
+    fi
   else
     log_warn "requirements.txt not found, skipping dependency installation"
   fi
@@ -406,6 +413,11 @@ summary() {
   
   echo "2. Run detection on your OpenClaw logs:"
   echo "   ${BLUE}python detect.py${NC}"
+  echo ""
+  echo "Or use the new CLI (after activating venv):"
+  echo " ${BLUE}secopsai refresh${NC}"
+  echo " ${BLUE}secopsai list --severity high${NC}"
+  echo " ${BLUE}secopsai show OCF-...${NC}"
   echo ""
   
   echo "3. Evaluate benchmark performance:"

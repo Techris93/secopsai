@@ -77,6 +77,36 @@ source .venv/bin/activate
 python run_openclaw_live.py
 ```
 
+## CLI: `secopsai`
+
+This project now provides a lightweight CLI wrapper `secopsai` that calls the same
+top-level scripts in a safe way. The CLI is installed into the project's virtualenv
+when you run `bash setup.sh` (editable install).
+
+Usage examples (after activating venv):
+
+```bash
+secopsai refresh            # run pipeline (default cache TTL: 60s)
+secopsai refresh --force    # force a refresh ignoring cache
+secopsai refresh --cache-ttl 300  # set cache TTL to 5 minutes
+
+secopsai list --severity high
+secopsai show OCF-XXXX
+secopsai mitigate OCF-XXXX
+secopsai check --type malware --severity high
+
+# For machine output, add --json to any command
+secopsai list --severity high --json
+```
+
+Behavior notes:
+- The `refresh` subcommand writes a timestamp file at `data/.last_refresh` after a
+	successful run and will skip running the exporter if the last refresh is younger
+	than the configured TTL (default 60s).
+- `--force` ignores the cache and always runs the pipeline.
+- The CLI is a safe wrapper that preserves existing script behavior; it can be
+	extended later to call importable functions directly.
+
 4. Review findings:
 
 ```bash

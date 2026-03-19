@@ -25,6 +25,26 @@ Why:
 python run_openclaw_live.py
 ```
 
+### Or use the new `secopsai` CLI
+
+If you installed with `bash setup.sh` the `secopsai` console command is available
+in the virtualenv. The CLI is a thin wrapper around the same scripts and provides
+convenient defaults and a small cache to avoid repeated exports.
+
+```bash
+secopsai refresh            # runs full pipeline; default cache TTL is 60s
+secopsai refresh --skip-export --force
+secopsai refresh --cache-ttl 300
+
+secopsai list --severity high
+secopsai show OCF-... 
+```
+
+Notes:
+- Cache file: `data/.last_refresh` is written after successful `refresh` runs.
+- Use `--force` to ignore cache and always refresh.
+- Add `--json` to commands for machine-friendly output.
+
 What this does:
 
 1. Exports native OpenClaw telemetry into local files.
