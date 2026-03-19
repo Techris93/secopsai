@@ -62,23 +62,23 @@ RULE_THRESHOLDS: dict = {
         "SOURCELESS_THRESHOLD": 8,
     },
     "dns_exfiltration": {
-        "MIN_QUERIES_PER_DOMAIN": 5,
-        "MIN_LABEL_LENGTH": 15,
-        "MIN_ENTROPY": 3.0,
-        "MIN_UNIQUE_LABEL_RATIO": 0.8,
+        "MIN_QUERIES_PER_DOMAIN": 3,
+        "MIN_LABEL_LENGTH": 10,
+        "MIN_ENTROPY": 2.5,
+        "MIN_UNIQUE_LABEL_RATIO": 0.6,
         "FALLBACK_LABEL_LENGTH": 20,
         "FALLBACK_UNIQUE_RATIO": 0.7,
     },
     "c2_beaconing": {
-        "MIN_CONNECTIONS": 5,
-        "MAX_BYTES_OUT": 600,
+        "MIN_CONNECTIONS": 3,
+        "MAX_BYTES_OUT": 500,
         "MAX_BYTES_IN": 250,
     },
     "lateral_movement": {
-        "UNIQUE_DEST_THRESHOLD": 4,
+        "UNIQUE_DEST_THRESHOLD": 3,
         "WINDOW_MINUTES": 20,
         "MAX_AVERAGE_GAP_SECONDS": 240,
-        "MAX_TRANSFER_BYTES": 100000,
+        "MAX_TRANSFER_BYTES": 50000,
     },
 }
 
