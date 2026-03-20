@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+  {{ super() }}
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="SecOpsAI Docs" />
+  <meta property="og:title" content="{{ config.site_name }}" />
+  <meta property="og:description" content="{{ config.site_description }}" />
+  <meta property="og:url" content="{{ page.canonical_url or config.site_url }}" />
+  <meta property="og:image" content="https://secopsai.dev/assets/logo-full.jpg" />
+  <meta property="og:image:secure_url" content="https://secopsai.dev/assets/logo-full.jpg" />
+  <meta property="og:image:alt" content="SecOpsAI Docs" />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="{{ config.site_name }}" />
+  <meta name="twitter:description" content="{{ config.site_description }}" />
+  <meta name="twitter:url" content="{{ page.canonical_url or config.site_url }}" />
+  <meta name="twitter:image" content="https://secopsai.dev/assets/logo-full.jpg" />
+  <meta name="twitter:image:alt" content="SecOpsAI Docs" />
+{% endblock %}
