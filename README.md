@@ -53,12 +53,18 @@ Optional runtime temp log directory:
 
 - `SECOPSAI_TMP_DIR=/path` to override default temp log location (`$TMPDIR` or `/tmp`)
 
-Fallback (manual clone + install.sh):
+Fallback (manual setup):
 
 ```bash
 git clone https://github.com/Techris93/secopsai.git
 cd secopsai
-curl -fsSL https://secopsai.dev/install.sh | bash
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install -r requirements.txt
+python prepare.py  # Generate data/events.json and data/events_unlabeled.json
+python -m pytest tests/ -v  # Optional: verify installation
 ```
 
 2. Activate environment:

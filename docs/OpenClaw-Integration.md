@@ -16,15 +16,21 @@ Run the one-line install on the **same machine** as your OpenClaw gateway:
 curl -fsSL https://secopsai.dev/install.sh | bash
 ```
 
-Fallback (manual clone + install.sh):
+Fallback (manual setup):
 
 ```bash
 git clone https://github.com/Techris93/secopsai.git
 cd secopsai
-curl -fsSL https://secopsai.dev/install.sh | bash
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install -r requirements.txt
+python prepare.py  # Generate data/events.json and data/events_unlabeled.json
+python -m pytest tests/ -v  # Optional: verify installation
 ```
 
-From now on, activate the virtualenv (created by `install.sh`) before running any commands:
+From now on, activate the virtualenv before running any commands:
 
 ```bash
 cd secopsai
