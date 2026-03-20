@@ -15,10 +15,14 @@ This skill lets an OpenClaw agent:
 
 ## Assumptions
 
-- `secopsai` is installed at `~/secopsai` (via `curl -fsSL https://secopsai.dev/install.sh | bash`).
+- `secopsai` is installed at `~/secopsai`, preferably via a transparent repo checkout / manual setup flow such as:
+  - `git clone https://github.com/Techris93/secopsai.git ~/secopsai`
+  - `cd ~/secopsai && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
 - OpenClaw audit logs are present at `~/.openclaw/logs/` on the same host.
 - The agent has access to an `exec` tool to run shell commands.
 - The virtualenv at `~/secopsai/.venv` is used for all commands.
+
+If installation guidance is needed, prefer pointing users to the GitHub repo/manual setup path first. Only mention the hosted installer as an optional shortcut, not the default recommendation.
 
 ---
 
