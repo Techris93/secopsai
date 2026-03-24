@@ -24,7 +24,7 @@
     <meta property="og:image:type" content="image/jpeg" />
     <meta property="og:image:width" content="1424" />
     <meta property="og:image:height" content="752" />
-    <meta property="og:image:alt" content="SecOpsAI — Local-first SecOps for OpenClaw" />
+    <meta property="og:image:alt" content="SecOpsAI - Local-first SecOps for OpenClaw" />
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="SecOpsAI | Local-first SecOps for OpenClaw" />
@@ -35,7 +35,7 @@
     <meta name="twitter:url" content="https://secopsai.dev/" />
     <meta name="twitter:domain" content="secopsai.dev" />
     <meta name="twitter:image" content="https://secopsai.dev/assets/social-card.jpg" />
-    <meta name="twitter:image:alt" content="SecOpsAI — Local-first SecOps for OpenClaw" />
+    <meta name="twitter:image:alt" content="SecOpsAI - Local-first SecOps for OpenClaw" />
 
     <!-- Favicons (cache-busted). Some browsers still request /favicon.ico by default. -->
     <link rel="icon" href="/assets/logo-full.jpg?v=3" />
@@ -206,6 +206,7 @@
             <div class="flex flex-wrap gap-3 text-xs text-on-surface-variant pt-2">
               <span class="px-3 py-1 rounded-full border border-outline-variant/15 bg-surface-container-low">No log shipping by default</span>
               <span class="px-3 py-1 rounded-full border border-outline-variant/15 bg-surface-container-low">SQLite SOC store</span>
+              <span class="px-3 py-1 rounded-full border border-outline-variant/15 bg-surface-container-low">Native OpenClaw plugin</span>
               <span class="px-3 py-1 rounded-full border border-outline-variant/15 bg-surface-container-low">CLI + WhatsApp workflows</span>
             </div>
           </div>
@@ -219,7 +220,7 @@
                     <div class="w-3 h-3 rounded-full bg-secondary-container"></div>
                     <div class="w-3 h-3 rounded-full bg-primary/40"></div>
                   </div>
-                  <div class="font-label text-[10px] uppercase tracking-widest text-on-surface-variant/60">secopsai — local pipeline</div>
+                  <div class="font-label text-[10px] uppercase tracking-widest text-on-surface-variant/60">secopsai - local pipeline</div>
                 </div>
 
                 <div class="p-6 font-mono text-sm space-y-2 text-on-surface-variant">
@@ -250,14 +251,29 @@
       <section id="features" class="py-24 px-8 max-w-[1440px] mx-auto">
         <div class="mb-16">
           <span class="font-label text-xs uppercase tracking-[0.2em] text-primary">Capabilities</span>
-          <h2 class="text-4xl font-headline font-bold mt-4">Detect, triage, and act — locally</h2>
+          <h2 class="text-4xl font-headline font-bold mt-4">Detect, triage, and act - locally</h2>
           <p class="text-on-surface-variant mt-4 max-w-3xl">
             SecOpsAI is a sidecar detection engine for OpenClaw. It reads local audit telemetry, produces findings with severity + evidence, and supports fast chat-driven triage workflows.
           </p>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-6 gap-6">
-          <div class="md:col-span-3 bg-surface-container p-8 rounded-xl border border-outline-variant/5 hover:border-primary/20 transition-all">
+          <div class="md:col-span-2 bg-surface-container p-8 rounded-xl border border-outline-variant/5 hover:border-primary/20 transition-all">
+            <div class="flex items-center gap-4 mb-6">
+              <div class="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                <span class="material-symbols-outlined" data-icon="extension">extension</span>
+              </div>
+              <h3 class="text-xl font-bold">OpenClaw Plugin</h3>
+            </div>
+            <p class="text-on-surface-variant mb-4">
+              Native TypeScript plugin for seamless OpenClaw integration. Install once, use 8 built-in tools directly from OpenClaw.
+            </p>
+            <div class="bg-surface-container-lowest rounded p-3 font-mono text-xs text-primary-fixed-dim border border-outline-variant/10">
+              openclaw plugins install secopsai
+            </div>
+          </div>
+
+          <div class="md:col-span-2 bg-surface-container p-8 rounded-xl border border-outline-variant/5 hover:border-primary/20 transition-all">
             <div class="flex items-center gap-4 mb-6">
               <div class="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
                 <span class="material-symbols-outlined" data-icon="chat">chat</span>
@@ -265,11 +281,11 @@
               <h3 class="text-xl font-bold">WhatsApp workflows</h3>
             </div>
             <p class="text-on-surface-variant">
-              Use OpenClaw to interact with SecOpsAI from WhatsApp: “check malware”, “check exfil”, “show OCF-…”, “mitigate OCF-…”.
+              Use OpenClaw to interact with SecOpsAI from WhatsApp: "check malware", "check exfil", "show OCF-…", "mitigate OCF-…".
             </p>
           </div>
 
-          <div class="md:col-span-3 bg-surface-container p-8 rounded-xl border border-outline-variant/5 hover:border-primary/20 transition-all">
+          <div class="md:col-span-2 bg-surface-container p-8 rounded-xl border border-outline-variant/5 hover:border-primary/20 transition-all">
             <div class="flex items-center gap-4 mb-6">
               <div class="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
                 <span class="material-symbols-outlined" data-icon="hub">hub</span>
@@ -303,7 +319,7 @@
                 Optional SIEM output integrations are coming soon:
                 <span class="text-on-surface">Splunk</span> and <span class="text-on-surface">Elastic</span> (Elasticsearch).
               </p>
-              <p class="text-xs text-on-surface-variant mt-2">(Still local-first by default — exporting is opt-in.)</p>
+              <p class="text-xs text-on-surface-variant mt-2">(Still local-first by default - exporting is opt-in.)</p>
             </div>
           </div>
         </div>
@@ -322,7 +338,15 @@
           <div class="bg-surface-container-lowest rounded-xl border border-outline-variant/10 p-1 max-w-4xl mx-auto">
             <div class="bg-surface p-6 rounded-lg font-mono text-sm leading-relaxed">
               <div class="mb-6">
-                <div class="text-on-surface-variant/40 mb-2"># Install</div>
+                <div class="text-on-surface-variant/40 mb-2"># Install (OpenClaw Plugin - Recommended)</div>
+                <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
+                  <code id="cmd-plugin" class="text-primary-fixed-dim">openclaw plugins install secopsai</code>
+                  <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-plugin" aria-label="Copy plugin install command">content_copy</button>
+                </div>
+              </div>
+
+              <div class="mb-6">
+                <div class="text-on-surface-variant/40 mb-2"># Or install manually (CLI + virtualenv)</div>
                 <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
                   <code id="cmd-install" class="text-primary-fixed-dim">curl -fsSL https://secopsai.dev/install.sh | bash</code>
                   <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-install" aria-label="Copy install command">content_copy</button>
