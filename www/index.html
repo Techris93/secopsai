@@ -363,125 +363,241 @@
           </div>
 
           <!-- Installation Content -->
-          <div class="max-w-3xl mx-auto">
-            <!-- One-liner Panel -->
-            <div id="panel-oneliner" class="method-panel">
+          <div class="max-w-3xl mx-auto" id="install-content">
+            
+            <!-- macOS Content -->
+            <div id="content-mac" class="os-content">
+              <div class="method-content" data-method="oneliner">
+                <div class="bg-surface-container-lowest rounded-xl border border-primary/20 p-1">
+                  <div class="bg-surface p-8 rounded-lg">
+                    <div class="text-center mb-6">
+                      <h3 class="text-xl font-semibold text-on-surface mb-2">One-liner install for macOS</h3>
+                    </div>
+                    <div class="bg-surface-container-high p-4 rounded-lg border border-outline-variant/10 mb-4">
+                      <div class="flex items-center justify-between">
+                        <code class="text-primary-fixed-dim font-mono text-sm">curl -fsSL https://secopsai.dev/install.sh | bash</code>
+                        <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors ml-4 copy-btn" data-cmd="curl -fsSL https://secopsai.dev/install.sh | bash">content_copy</button>
+                      </div>
+                    </div>
+                    <p class="text-sm text-on-surface-variant/70 text-center">The one-liner installs Python, dependencies, and everything else for you.</p>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="method-content hidden" data-method="npm">
+                <div class="bg-surface-container-lowest rounded-xl border border-outline-variant/10 p-1">
+                  <div class="bg-surface p-8 rounded-lg">
+                    <div class="mb-6">
+                      <h3 class="text-lg font-semibold text-on-surface mb-2">Install via npm</h3>
+                      <p class="text-sm text-on-surface-variant">For Node.js users who prefer package managers.</p>
+                    </div>
+                    <div class="bg-surface-container-high p-4 rounded-lg border border-outline-variant/10 mb-4">
+                      <div class="flex items-center justify-between">
+                        <code class="text-primary-fixed-dim font-mono text-sm">npm install -g secopsai</code>
+                        <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors ml-4 copy-btn" data-cmd="npm install -g secopsai">content_copy</button>
+                      </div>
+                    </div>
+                    <p class="text-sm text-on-surface-variant/70">Requires: Node.js 18+</p>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="method-content hidden" data-method="plugin">
+                <div class="bg-surface-container-lowest rounded-xl border border-primary/30 p-1">
+                  <div class="bg-surface p-8 rounded-lg">
+                    <div class="flex items-center gap-3 mb-6">
+                      <span class="material-symbols-outlined text-primary">extension</span>
+                      <h3 class="text-lg font-semibold text-on-surface">OpenClaw Plugin</h3>
+                      <span class="px-2 py-1 rounded text-xs bg-primary/20 text-primary font-medium">Recommended</span>
+                    </div>
+                    <div class="bg-surface-container-high p-4 rounded-lg border border-outline-variant/10 mb-4">
+                      <div class="flex items-center justify-between">
+                        <code class="text-primary-fixed-dim font-mono text-sm">openclaw plugins install secopsai</code>
+                        <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors ml-4 copy-btn" data-cmd="openclaw plugins install secopsai">content_copy</button>
+                      </div>
+                    </div>
+                    <p class="text-sm text-on-surface-variant/70">Native TypeScript plugin with 8 built-in tools. Requires: OpenClaw 0.9+</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Linux Content -->
+            <div id="content-linux" class="os-content hidden">
+              <div class="method-content" data-method="oneliner">
+                <div class="bg-surface-container-lowest rounded-xl border border-primary/20 p-1">
+                  <div class="bg-surface p-8 rounded-lg">
+                    <div class="text-center mb-6">
+                      <h3 class="text-xl font-semibold text-on-surface mb-2">One-liner install for Linux</h3>
+                    </div>
+                    <div class="bg-surface-container-high p-4 rounded-lg border border-outline-variant/10 mb-4">
+                      <div class="flex items-center justify-between">
+                        <code class="text-primary-fixed-dim font-mono text-sm">curl -fsSL https://secopsai.dev/install.sh | bash</code>
+                        <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors ml-4 copy-btn" data-cmd="curl -fsSL https://secopsai.dev/install.sh | bash">content_copy</button>
+                      </div>
+                    </div>
+                    <p class="text-sm text-on-surface-variant/70 text-center">The one-liner installs Python, dependencies, and everything else for you.</p>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="method-content hidden" data-method="npm">
+                <div class="bg-surface-container-lowest rounded-xl border border-outline-variant/10 p-1">
+                  <div class="bg-surface p-8 rounded-lg">
+                    <div class="mb-6">
+                      <h3 class="text-lg font-semibold text-on-surface mb-2">Install via npm</h3>
+                      <p class="text-sm text-on-surface-variant">For Node.js users who prefer package managers.</p>
+                    </div>
+                    <div class="bg-surface-container-high p-4 rounded-lg border border-outline-variant/10 mb-4">
+                      <div class="flex items-center justify-between">
+                        <code class="text-primary-fixed-dim font-mono text-sm">npm install -g secopsai</code>
+                        <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors ml-4 copy-btn" data-cmd="npm install -g secopsai">content_copy</button>
+                      </div>
+                    </div>
+                    <p class="text-sm text-on-surface-variant/70">Requires: Node.js 18+</p>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="method-content hidden" data-method="plugin">
+                <div class="bg-surface-container-lowest rounded-xl border border-primary/30 p-1">
+                  <div class="bg-surface p-8 rounded-lg">
+                    <div class="flex items-center gap-3 mb-6">
+                      <span class="material-symbols-outlined text-primary">extension</span>
+                      <h3 class="text-lg font-semibold text-on-surface">OpenClaw Plugin</h3>
+                      <span class="px-2 py-1 rounded text-xs bg-primary/20 text-primary font-medium">Recommended</span>
+                    </div>
+                    <div class="bg-surface-container-high p-4 rounded-lg border border-outline-variant/10 mb-4">
+                      <div class="flex items-center justify-between">
+                        <code class="text-primary-fixed-dim font-mono text-sm">openclaw plugins install secopsai</code>
+                        <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors ml-4 copy-btn" data-cmd="openclaw plugins install secopsai">content_copy</button>
+                      </div>
+                    </div>
+                    <p class="text-sm text-on-surface-variant/70">Native TypeScript plugin with 8 built-in tools. Requires: OpenClaw 0.9+</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Windows Content (WSL2) -->
+            <div id="content-windows" class="os-content hidden">
               <div class="bg-surface-container-lowest rounded-xl border border-primary/20 p-1">
                 <div class="bg-surface p-8 rounded-lg">
-                  <div class="text-center mb-6">
-                    <h3 class="text-xl font-semibold text-on-surface mb-2">Works everywhere. Installs everything.</h3>
-                  </div>
-                  
-                  <div class="bg-surface-container-high p-4 rounded-lg border border-outline-variant/10 mb-4">
-                    <div class="flex items-center justify-between">
-                      <code id="cmd-oneliner" class="text-primary-fixed-dim font-mono text-sm">curl -fsSL https://secopsai.dev/install.sh | bash</code>
-                      <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors ml-4" data-copy="cmd-oneliner">content_copy</button>
-                    </div>
-                  </div>
-                  
-                  <p class="text-sm text-on-surface-variant/70 text-center">
-                    Works on macOS, Windows & Linux. The one-liner installs Python, dependencies, and everything else for you.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <!-- npm Panel -->
-            <div id="panel-npm" class="method-panel hidden">
-              <div class="bg-surface-container-lowest rounded-xl border border-outline-variant/10 p-1">
-                <div class="bg-surface p-8 rounded-lg">
-                  <div class="mb-6">
-                    <h3 class="text-lg font-semibold text-on-surface mb-2">Install via npm</h3>
-                    <p class="text-sm text-on-surface-variant">For Node.js users who prefer package managers.</p>
-                  </div>
-                  
-                  <div class="bg-surface-container-high p-4 rounded-lg border border-outline-variant/10 mb-4">
-                    <div class="flex items-center justify-between">
-                      <code id="cmd-npm" class="text-primary-fixed-dim font-mono text-sm">npm install -g secopsai</code>
-                      <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors ml-4" data-copy="cmd-npm">content_copy</button>
-                    </div>
-                  </div>
-                  
-                  <p class="text-sm text-on-surface-variant/70">
-                    Requires: Node.js 18+ · Works on macOS, Linux, WSL2
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <!-- OpenClaw Plugin Panel -->
-            <div id="panel-plugin" class="method-panel hidden">
-              <div class="bg-surface-container-lowest rounded-xl border border-primary/30 p-1">
-                <div class="bg-surface p-8 rounded-lg">
                   <div class="flex items-center gap-3 mb-6">
-                    <span class="material-symbols-outlined text-primary">extension</span>
-                    <h3 class="text-lg font-semibold text-on-surface">OpenClaw Plugin</h3>
-                    <span class="px-2 py-1 rounded text-xs bg-primary/20 text-primary font-medium">Recommended</span>
+                    <span class="material-symbols-outlined text-primary">desktop_windows</span>
+                    <h3 class="text-lg font-semibold text-on-surface">Windows via WSL2</h3>
+                    <span class="px-2 py-1 rounded text-xs bg-secondary/20 text-secondary font-medium">Required</span>
                   </div>
                   
-                  <div class="bg-surface-container-high p-4 rounded-lg border border-outline-variant/10 mb-4">
-                    <div class="flex items-center justify-between">
-                      <code id="cmd-plugin" class="text-primary-fixed-dim font-mono text-sm">openclaw plugins install secopsai</code>
-                      <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors ml-4" data-copy="cmd-plugin">content_copy</button>
+                  <p class="text-sm text-on-surface-variant mb-6">
+                    SecOpsAI requires a Linux environment. Windows users must use <strong>WSL2</strong> (Windows Subsystem for Linux).
+                  </p>
+                  
+                  <div class="space-y-4">
+                    <div class="bg-surface-container-high p-4 rounded-lg border border-outline-variant/10">
+                      <div class="text-on-surface-variant/40 text-sm mb-2">Step 1: Install WSL2 + Ubuntu</div>
+                      <div class="flex items-center justify-between">
+                        <code class="text-primary-fixed-dim font-mono text-sm">wsl --install -d Ubuntu</code>
+                        <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors ml-4 copy-btn" data-cmd="wsl --install -d Ubuntu">content_copy</button>
+                      </div>
+                    </div>
+                    
+                    <div class="bg-surface-container-high p-4 rounded-lg border border-outline-variant/10">
+                      <div class="text-on-surface-variant/40 text-sm mb-2">Step 2: Install SecOpsAI in WSL</div>
+                      <div class="flex items-center justify-between">
+                        <code class="text-primary-fixed-dim font-mono text-sm">curl -fsSL https://secopsai.dev/install.sh | bash</code>
+                        <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors ml-4 copy-btn" data-cmd="curl -fsSL https://secopsai.dev/install.sh | bash">content_copy</button>
+                      </div>
                     </div>
                   </div>
                   
-                  <p class="text-sm text-on-surface-variant/70">
-                    Native TypeScript plugin with 8 built-in tools. Requires: OpenClaw 0.9+
-                  </p>
+                  <p class="text-sm text-on-surface-variant/70 mt-6">Requires: Windows 10/11 · WSL2 · Ubuntu 22.04+</p>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- Scripts -->
           <script>
             (function() {
-              // Method tabs
               const methodTabs = document.querySelectorAll('.method-tab');
-              const methodPanels = document.querySelectorAll('.method-panel');
+              const osTabs = document.querySelectorAll('.os-tab');
+              let currentOS = 'mac';
+              let currentMethod = 'oneliner';
+              
+              function updateContent() {
+                document.querySelectorAll('.os-content').forEach(el => el.classList.add('hidden'));
+                const osEl = document.getElementById('content-' + currentOS);
+                if (osEl) {
+                  osEl.classList.remove('hidden');
+                  if (currentOS !== 'windows') {
+                    osEl.querySelectorAll('.method-content').forEach(el => el.classList.add('hidden'));
+                    const methodEl = osEl.querySelector('[data-method="' + currentMethod + '"]');
+                    if (methodEl) methodEl.classList.remove('hidden');
+                  }
+                }
+              }
               
               methodTabs.forEach(tab => {
                 tab.addEventListener('click', () => {
-                  const method = tab.dataset.method;
-                  
-                  methodPanels.forEach(p => p.classList.add('hidden'));
-                  document.getElementById('panel-' + method).classList.remove('hidden');
-                  
+                  currentMethod = tab.dataset.method;
                   methodTabs.forEach(t => {
                     t.classList.remove('active', 'bg-primary/10', 'text-primary', 'border-primary/40');
                     t.classList.add('bg-surface-container-low', 'border-outline-variant/20');
                   });
                   tab.classList.add('active', 'bg-primary/10', 'text-primary', 'border-primary/40');
                   tab.classList.remove('bg-surface-container-low', 'border-outline-variant/20');
+                  updateContent();
                 });
               });
               
-              // OS tabs (visual only - all methods work on all OS)
-              const osTabs = document.querySelectorAll('.os-tab');
               osTabs.forEach(tab => {
                 tab.addEventListener('click', () => {
+                  currentOS = tab.dataset.os;
                   osTabs.forEach(t => {
                     t.classList.remove('active', 'bg-surface-container');
                     t.classList.add('bg-surface-container-low');
                   });
                   tab.classList.add('active', 'bg-surface-container');
                   tab.classList.remove('bg-surface-container-low');
+                  
+                  const methodContainer = document.getElementById('method-tabs');
+                  if (currentOS === 'windows') {
+                    methodContainer.style.opacity = '0.5';
+                    methodContainer.style.pointerEvents = 'none';
+                  } else {
+                    methodContainer.style.opacity = '1';
+                    methodContainer.style.pointerEvents = 'auto';
+                  }
+                  
+                  updateContent();
                 });
               });
               
-              // Auto-select OS based on user agent
+              document.querySelectorAll('.copy-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                  const cmd = btn.dataset.cmd;
+                  navigator.clipboard.writeText(cmd).then(() => {
+                    const original = btn.textContent;
+                    btn.textContent = 'check';
+                    setTimeout(() => btn.textContent = original, 1500);
+                  });
+                });
+              });
+              
               const ua = navigator.userAgent.toLowerCase();
               if (ua.includes('win')) {
+                currentOS = 'windows';
                 osTabs.forEach(t => t.classList.remove('active', 'bg-surface-container'));
                 document.querySelector('[data-os="windows"]').classList.add('active', 'bg-surface-container');
-              } else if (ua.includes('mac')) {
-                osTabs.forEach(t => t.classList.remove('active', 'bg-surface-container'));
-                document.querySelector('[data-os="mac"]').classList.add('active', 'bg-surface-container');
+                document.getElementById('method-tabs').style.opacity = '0.5';
+                document.getElementById('method-tabs').style.pointerEvents = 'none';
               } else if (ua.includes('linux')) {
+                currentOS = 'linux';
                 osTabs.forEach(t => t.classList.remove('active', 'bg-surface-container'));
                 document.querySelector('[data-os="linux"]').classList.add('active', 'bg-surface-container');
               }
+              
+              updateContent();
             })();
           </script>
         </div>
