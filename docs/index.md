@@ -18,6 +18,7 @@ secopsai turns OpenClaw audit activity into repeatable, explainable security fin
 - [Deployment Guide](deployment-guide.md)
 - [API Reference](api-reference.md)
 - [Threat Intel (IOCs)](threat-intel.md)
+- [OpenClaw Native Plugin](OpenClaw-Plugin.md) — First-class plugin for OpenClaw
 
 ## Quick Start
 
@@ -56,4 +57,5 @@ python evaluate_openclaw.py \
 ## Operator Guides
 
 - [Beginner Live Guide](BEGINNER-LIVE-GUIDE.md)
-- [OpenClaw Integration](OpenClaw-Integration.md)
+- [OpenClaw Integration](OpenClaw-Integration.md) — Python CLI approach
+- [OpenClaw Native Plugin](OpenClaw-Plugin.md) — TypeScript plugin for OpenClaw

@@ -1,5 +1,7 @@
 # OpenClaw Integration (Conversational SecOps)
 
+> **New:** SecOpsAI is now available as a [native OpenClaw plugin](OpenClaw-Plugin.md) with TypeScript-based tools. This guide covers the Python CLI approach; for the plugin approach, see [OpenClaw Native Plugin](OpenClaw-Plugin.md).
+
 This guide shows how to wire **secopsai** into an existing **OpenClaw** deployment using the real Python CLIs:
 
 - `run_openclaw_live.py` — live detection pipeline

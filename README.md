@@ -79,6 +79,54 @@ source .venv/bin/activate
 python run_openclaw_live.py
 ```
 
+## OpenClaw Native Plugin
+
+Install SecOpsAI directly as an OpenClaw plugin for seamless integration without manual virtualenv management:
+
+```bash
+openclaw plugins install secopsai
+```
+
+### Available Plugin Tools
+
+Once installed, these tools are available directly in OpenClaw:
+
+| Tool | Description |
+|------|-------------|
+| `secopsai_list_findings` | List findings with optional severity filter |
+| `secopsai_refresh` | Run the detection pipeline to refresh findings |
+| `secopsai_show_finding` | Get detailed information about a specific finding |
+| `secopsai_triage` | Set disposition, status, and add analyst notes |
+| `secopsai_check_threats` | Check for malware or exfiltration indicators |
+| `secopsai_mitigate` | Get recommended mitigation steps for a finding |
+| `secopsai_search` | Search findings by keyword or pattern |
+| `secopsai_stats` | Get statistics about the SOC database |
+
+### Configuration
+
+Add to your `openclaw.json`:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "secopsai": {
+        "enabled": true,
+        "config": {
+          "secopsaiPath": "~/secopsai",
+          "socDbPath": "~/secopsai/data/openclaw/findings/openclaw_soc.db"
+        }
+      }
+    }
+  },
+  "tools": {
+    "allow": ["secopsai_triage"]
+  }
+}
+```
+
+See [docs/OpenClaw-Plugin.md](docs/OpenClaw-Plugin.md) for detailed usage.
+
 ## CLI: `secopsai`
 
 This project exposes a first-class CLI, `secopsai`, that runs the OpenClaw
