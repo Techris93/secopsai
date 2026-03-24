@@ -146,6 +146,7 @@
 
           <div class="hidden md:flex items-center gap-6">
             <a class="text-on-surface-variant hover:text-[#57df91] transition-colors text-sm tracking-tight" href="#features">Product</a>
+            <a class="text-on-surface-variant hover:text-[#57df91] transition-colors text-sm tracking-tight" href="#install">Install</a>
             <a class="text-on-surface-variant hover:text-[#57df91] transition-colors text-sm tracking-tight" href="#quickstart">Quick Start</a>
             <a class="text-on-surface-variant hover:text-[#57df91] transition-colors text-sm tracking-tight" href="https://docs.secopsai.dev" target="_blank" rel="noopener">Docs</a>
             <a class="text-on-surface-variant hover:text-[#57df91] transition-colors text-sm tracking-tight" href="https://github.com/Techris93/secopsai" target="_blank" rel="noopener">GitHub</a>
@@ -164,7 +165,7 @@
 
           <a
             class="bg-gradient-to-br from-primary to-primary-container text-on-primary font-semibold text-sm tracking-tight px-5 py-2.5 rounded-md hover:opacity-90 scale-95 active:scale-90 transition-all"
-            href="#quickstart"
+            href="#install"
             >Install & Run</a
           >
         </div>
@@ -194,8 +195,8 @@
             </p>
 
             <div class="flex flex-wrap gap-4 pt-4">
-              <a class="bg-primary text-on-primary font-bold px-8 py-4 rounded-md flex items-center gap-2 scale-95 active:scale-90 transition-transform" href="#quickstart">
-                Quick Start
+              <a class="bg-primary text-on-primary font-bold px-8 py-4 rounded-md flex items-center gap-2 scale-95 active:scale-90 transition-transform" href="#install">
+                Install Now
                 <span class="material-symbols-outlined" data-icon="arrow_forward">arrow_forward</span>
               </a>
               <a class="border border-outline-variant/20 hover:border-outline-variant/40 text-on-surface font-medium px-8 py-4 rounded-md transition-all" href="https://docs.secopsai.dev" target="_blank" rel="noopener">
@@ -325,28 +326,202 @@
         </div>
       </section>
 
-      <section id="quickstart" class="py-24 bg-surface-container-low/50">
+      <section id="install" class="py-24 bg-surface-container-low/50 border-t border-outline-variant/10">
         <div class="max-w-[1440px] mx-auto px-8">
           <div class="text-center mb-16">
-            <span class="font-label text-xs uppercase tracking-widest text-primary">Get Started</span>
+            <span class="font-label text-xs uppercase tracking-widest text-primary">Install</span>
+            <h2 class="text-4xl font-headline font-bold mt-4">Choose your installation method</h2>
+            <p class="text-on-surface-variant mt-4 max-w-3xl mx-auto">
+              SecOpsAI works on macOS, Linux, and as a native OpenClaw plugin. We detected your device—select the best option below.
+            </p>
+          </div>
+
+          <!-- Device Tabs -->
+          <div class="flex flex-wrap justify-center gap-2 mb-8" id="device-tabs">
+            <button class="device-tab active px-6 py-3 rounded-lg font-medium transition-all border border-outline-variant/20 hover:border-primary/40 bg-surface-container" data-device="mac">
+              <span class="material-symbols-outlined inline-block mr-2 align-text-bottom">laptop_mac</span>macOS
+            </button>
+            <button class="device-tab px-6 py-3 rounded-lg font-medium transition-all border border-outline-variant/20 hover:border-primary/40 bg-surface-container-low" data-device="linux">
+              <span class="material-symbols-outlined inline-block mr-2 align-text-bottom">terminal</span>Linux
+            </button>
+            <button class="device-tab px-6 py-3 rounded-lg font-medium transition-all border border-outline-variant/20 hover:border-primary/40 bg-surface-container-low" data-device="wsl">
+              <span class="material-symbols-outlined inline-block mr-2 align-text-bottom">desktop_windows</span>Windows (WSL)
+            </button>
+            <button class="device-tab px-6 py-3 rounded-lg font-medium transition-all border border-primary/40 bg-primary/10 text-primary border-primary" data-device="plugin">
+              <span class="material-symbols-outlined inline-block mr-2 align-text-bottom">extension</span>OpenClaw Plugin ⭐
+            </button>
+          </div>
+
+          <!-- Installation Panels -->
+          <div class="max-w-4xl mx-auto">
+            <!-- macOS Panel -->
+            <div id="panel-mac" class="install-panel hidden">
+              <div class="bg-surface-container-lowest rounded-xl border border-outline-variant/10 p-1">
+                <div class="bg-surface p-6 rounded-lg font-mono text-sm leading-relaxed">
+                  <div class="flex items-center gap-3 mb-4">
+                    <span class="material-symbols-outlined text-primary">apple</span>
+                    <span class="font-semibold text-on-surface">macOS Installation</span>
+                  </div>
+                  <div class="mb-4">
+                    <div class="text-on-surface-variant/40 mb-2"># Quick install (Universal - works on Intel & Apple Silicon)</div>
+                    <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
+                      <code id="cmd-mac" class="text-primary-fixed-dim">curl -fsSL https://secopsai.dev/install.sh | bash</code>
+                      <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-mac">content_copy</button>
+                    </div>
+                  </div>
+                  <div class="text-xs text-on-surface-variant/70">
+                    Requires: macOS 12+ · Python 3.10+ · Git
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Linux Panel -->
+            <div id="panel-linux" class="install-panel hidden">
+              <div class="bg-surface-container-lowest rounded-xl border border-outline-variant/10 p-1">
+                <div class="bg-surface p-6 rounded-lg font-mono text-sm leading-relaxed">
+                  <div class="flex items-center gap-3 mb-4">
+                    <span class="material-symbols-outlined text-primary">terminal</span>
+                    <span class="font-semibold text-on-surface">Linux Installation</span>
+                  </div>
+                  <div class="mb-4">
+                    <div class="text-on-surface-variant/40 mb-2"># Ubuntu/Debian</div>
+                    <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5 mb-3">
+                      <code id="cmd-linux-deb" class="text-primary-fixed-dim">curl -fsSL https://secopsai.dev/install.sh | bash</code>
+                      <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-linux-deb">content_copy</button>
+                    </div>
+                    <div class="text-on-surface-variant/40 mb-2"># RHEL/CentOS/Fedora</div>
+                    <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
+                      <code id="cmd-linux-rpm" class="text-primary-fixed-dim">curl -fsSL https://secopsai.dev/install.sh | bash</code>
+                      <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-linux-rpm">content_copy</button>
+                    </div>
+                  </div>
+                  <div class="text-xs text-on-surface-variant/70">
+                    Requires: Linux kernel 5.0+ · Python 3.10+ · Git
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- WSL Panel -->
+            <div id="panel-wsl" class="install-panel hidden">
+              <div class="bg-surface-container-lowest rounded-xl border border-outline-variant/10 p-1">
+                <div class="bg-surface p-6 rounded-lg font-mono text-sm leading-relaxed">
+                  <div class="flex items-center gap-3 mb-4">
+                    <span class="material-symbols-outlined text-primary">desktop_windows</span>
+                    <span class="font-semibold text-on-surface">Windows (WSL2) Installation</span>
+                  </div>
+                  <div class="mb-4 space-y-3">
+                    <div class="text-on-surface-variant/40 mb-2"># 1. Install WSL2 (if not already installed)</div>
+                    <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
+                      <code id="cmd-wsl-install" class="text-primary-fixed-dim">wsl --install -d Ubuntu</code>
+                      <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-wsl-install">content_copy</button>
+                    </div>
+                    <div class="text-on-surface-variant/40 mb-2"># 2. Inside WSL, install SecOpsAI</div>
+                    <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
+                      <code id="cmd-wsl-secopsai" class="text-primary-fixed-dim">curl -fsSL https://secopsai.dev/install.sh | bash</code>
+                      <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-wsl-secopsai">content_copy</button>
+                    </div>
+                  </div>
+                  <div class="text-xs text-on-surface-variant/70">
+                    Requires: Windows 10/11 · WSL2 · Ubuntu 22.04+
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- OpenClaw Plugin Panel (Default) -->
+            <div id="panel-plugin" class="install-panel">
+              <div class="bg-surface-container-lowest rounded-xl border border-primary/30 p-1">
+                <div class="bg-surface p-6 rounded-lg font-mono text-sm leading-relaxed">
+                  <div class="flex items-center gap-3 mb-4">
+                    <span class="material-symbols-outlined text-primary">extension</span>
+                    <span class="font-semibold text-on-surface">OpenClaw Plugin (Recommended)</span>
+                    <span class="px-2 py-1 rounded text-xs bg-primary/20 text-primary font-medium">Native</span>
+                  </div>
+                  <div class="mb-4">
+                    <div class="text-on-surface-variant/40 mb-2"># Install via OpenClaw</div>
+                    <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
+                      <code id="cmd-plugin-install" class="text-primary-fixed-dim">openclaw plugins install secopsai</code>
+                      <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-plugin-install">content_copy</button>
+                    </div>
+                  </div>
+                  <div class="mb-4">
+                    <div class="text-on-surface-variant/40 mb-2"># Or install from npm</div>
+                    <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
+                      <code id="cmd-plugin-npm" class="text-primary-fixed-dim">npm install -g secopsai</code>
+                      <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-plugin-npm">content_copy</button>
+                    </div>
+                  </div>
+                  <div class="text-xs text-on-surface-variant/70">
+                    Works on: macOS · Linux · WSL2 · Requires: OpenClaw 0.9+ · Node.js 18+
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Device Detection Script -->
+          <script>
+            (function() {
+              const tabs = document.querySelectorAll('.device-tab');
+              const panels = document.querySelectorAll('.install-panel');
+              
+              function showPanel(device) {
+                panels.forEach(p => p.classList.add('hidden'));
+                document.getElementById('panel-' + device).classList.remove('hidden');
+                
+                tabs.forEach(t => {
+                  t.classList.remove('active', 'bg-primary/10', 'text-primary', 'border-primary');
+                  t.classList.add('bg-surface-container-low');
+                });
+                const activeTab = document.querySelector('[data-device="' + device + '"]');
+                activeTab.classList.add('active', 'bg-primary/10', 'text-primary', 'border-primary');
+                activeTab.classList.remove('bg-surface-container-low');
+              }
+              
+              tabs.forEach(tab => {
+                tab.addEventListener('click', () => showPanel(tab.dataset.device));
+              });
+              
+              // Auto-detect device
+              const ua = navigator.userAgent.toLowerCase();
+              const platform = navigator.platform.toLowerCase();
+              
+              if (ua.includes('win')) {
+                showPanel('wsl');
+              } else if (ua.includes('mac') || platform.includes('mac')) {
+                showPanel('mac');
+              } else if (ua.includes('linux')) {
+                showPanel('linux');
+              }
+            })();
+          </script>
+        </div>
+      </section>
+
+      <section id="quickstart" class="py-24">
+        <div class="max-w-[1440px] mx-auto px-8">
+          <div class="text-center mb-16">
+            <span class="font-label text-xs uppercase tracking-widest text-primary">Quick Start</span>
             <h2 class="text-4xl font-headline font-bold mt-4">Zero to findings in minutes</h2>
             <p class="text-on-surface-variant mt-4 max-w-3xl mx-auto">
-              Install locally, run the pipeline, list findings. All data stays on your device unless you explicitly export it.
+              After installation, run the pipeline and list findings. All data stays on your device unless you explicitly export it.
             </p>
           </div>
 
           <div class="bg-surface-container-lowest rounded-xl border border-outline-variant/10 p-1 max-w-4xl mx-auto">
             <div class="bg-surface p-6 rounded-lg font-mono text-sm leading-relaxed">
               <div class="mb-6">
-                <div class="text-on-surface-variant/40 mb-2"># Install (OpenClaw Plugin - Recommended)</div>
+                <div class="text-on-surface-variant/40 mb-2"># Using OpenClaw Plugin</div>
                 <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
-                  <code id="cmd-plugin" class="text-primary-fixed-dim">openclaw plugins install secopsai</code>
-                  <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-plugin" aria-label="Copy plugin install command">content_copy</button>
+                  <code id="cmd-plugin" class="text-primary-fixed-dim">secopsai_list_findings severity=high</code>
+                  <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-plugin" aria-label="Copy plugin command">content_copy</button>
                 </div>
               </div>
 
               <div class="mb-6">
-                <div class="text-on-surface-variant/40 mb-2"># Or install manually (CLI + virtualenv)</div>
+                <div class="text-on-surface-variant/40 mb-2"># Using CLI</div>
                 <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
                   <code id="cmd-install" class="text-primary-fixed-dim">curl -fsSL https://secopsai.dev/install.sh | bash</code>
                   <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-install" aria-label="Copy install command">content_copy</button>
