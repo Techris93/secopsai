@@ -34,8 +34,8 @@ A repeated file hash or related artifact across platforms may suggest malware pr
 ## CLI usage
 
 ```bash
-python3 cli.py correlate
-python3 cli.py correlate --window 60
+secopsai correlate
+secopsai correlate --window 60
 ```
 
 ## Alerting

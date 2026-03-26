@@ -138,10 +138,10 @@
                   <div class="font-label text-[10px] uppercase tracking-widest text-on-surface-variant/60">secopsai — universal detection</div>
                 </div>
                 <div class="p-6 font-mono text-sm space-y-2 text-on-surface-variant">
-                  <div><span class="text-primary">$</span> python3 cli.py refresh --platform macos,openclaw</div>
+                  <div><span class="text-primary">$</span> secopsai refresh --platform macos,openclaw</div>
                   <div class="text-primary/80">[OK] Collected host + OpenClaw telemetry</div>
                   <div class="text-primary/80">[OK] Findings persisted to local SOC store</div>
-                  <div class="pt-3"><span class="text-primary">$</span> python3 cli.py correlate</div>
+                  <div class="pt-3"><span class="text-primary">$</span> secopsai correlate</div>
                   <div class="text-primary/80">[OK] Cross-platform correlation complete</div>
                   <div class="pt-3"><span class="text-primary">$</span> secopsai list --severity high</div>
                   <div class="text-error">HIGH: Suspicious execution / policy abuse detected</div>
@@ -215,8 +215,8 @@
           <div>curl -fsSL https://secopsai.dev/install.sh | bash</div>
           <div>cd ~/secopsai &amp;&amp; source .venv/bin/activate</div>
           <div>secopsai refresh</div>
-          <div>python3 cli.py refresh --platform macos,openclaw</div>
-          <div>python3 cli.py correlate</div>
+          <div>secopsai refresh --platform macos,openclaw</div>
+          <div>secopsai correlate</div>
           <div>secopsai list --severity high</div>
         </div>
       </section>

@@ -57,14 +57,14 @@ source .venv/bin/activate
 # OpenClaw-first refresh path
 secopsai refresh
 
-# Universal adapter CLI (local repo workflow)
-python3 cli.py refresh --platform macos,openclaw
+# Cross-platform adapter refresh
+secopsai refresh --platform macos,openclaw
 
 # Live streaming from a platform adapter
-python3 cli.py live --platform macos --duration 60
+secopsai live --platform macos --duration 60
 
 # Cross-platform correlation
-python3 cli.py correlate
+secopsai correlate
 ```
 
 ### Review findings
@@ -79,28 +79,28 @@ secopsai mitigate OCF-XXXX
 
 ### 1. CLI
 
-The packaged `secopsai` CLI currently remains the main operator surface for the OpenClaw pipeline:
+The packaged `secopsai` CLI is now the single operator surface for both the OpenClaw pipeline and the cross-platform adapter workflow:
 
 ```bash
+# OpenClaw pipeline
 secopsai refresh
 secopsai list --severity high
 secopsai show OCF-XXXX
 secopsai mitigate OCF-XXXX
 secopsai intel refresh
+
+# Cross-platform adapter workflow
+secopsai refresh --platform macos
+secopsai refresh --platform macos,openclaw
+secopsai live --platform macos
+secopsai correlate
 ```
 
-The repository also includes a universal adapter CLI flow for platform-specific collection, live streaming, and correlation. You can use either the top-level repo CLI or the packaged bridge command:
+For repo-local development you can still run the wrapper directly:
 
 ```bash
-# repo-local workflow
-python3 cli.py refresh --platform macos
 python3 cli.py refresh --platform macos,openclaw
-python3 cli.py live --platform macos
 python3 cli.py correlate
-
-# packaged bridge command
-secopsai-universal refresh --platform macos,openclaw
-secopsai-universal correlate
 ```
 
 ### 2. OpenClaw Native Plugin

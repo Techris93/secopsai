@@ -44,29 +44,28 @@ This allows shared detection and correlation logic across telemetry sources.
 
 ## CLI Usage
 
-The repository currently includes a universal adapter CLI flow via the top-level `cli.py`, and the package now exposes a bridge command as `secopsai-universal`.
+The packaged `secopsai` command is the canonical CLI for both the OpenClaw pipeline and the universal adapter workflow.
 
 Examples:
 
 ```bash
 # refresh specific platforms
-python3 cli.py refresh --platform macos
-python3 cli.py refresh --platform openclaw
-python3 cli.py refresh --platform macos,openclaw
-secopsai-universal refresh --platform macos,openclaw
+secopsai refresh --platform macos
+secopsai refresh --platform openclaw
+secopsai refresh --platform macos,openclaw
 
 # live stream from an adapter
-python3 cli.py live --platform macos --duration 60
-secopsai-universal live --platform macos --duration 60
+secopsai live --platform macos --duration 60
 
 # list findings
-python3 cli.py list
-python3 cli.py list --platform macos
+secopsai list
+secopsai list --platform macos
 
 # run cross-platform correlation
-python3 cli.py correlate
-secopsai-universal correlate
+secopsai correlate
 ```
+
+For repo-local development, `python3 cli.py ...` remains a thin wrapper around the same packaged command surface.
 
 ## Platform Notes
 

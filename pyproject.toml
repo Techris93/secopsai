@@ -17,7 +17,6 @@ dev = [
 
 [project.scripts]
 secopsai = "secopsai.cli:main"
-secopsai-universal = "secopsai.universal:main"
 
 [tool.setuptools]
 packages = ["secopsai", "openclaw_adapters", "adapters"]
