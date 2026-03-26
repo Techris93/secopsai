@@ -1,12 +1,13 @@
 # SecOpsAI
 
-Intelligent attack detection for OpenClaw audit logs.
+Local-first security operations for OpenClaw, macOS, Linux, and Windows.
 
-SecOpsAI is a local-first security pipeline that turns OpenClaw telemetry into actionable findings you can review, triage, and mitigate quickly.
+SecOpsAI is a local-first security operations toolkit that collects telemetry, generates findings, correlates activity across platforms, and supports operator review and response workflows.
 
 ## What it does
 
-- Detects attack behavior in OpenClaw audit logs
+- Collects telemetry from OpenClaw, macOS, Linux, and Windows
+- Normalizes events into a shared model for multi-platform analysis
 - Groups and deduplicates detections into incident findings
 - Stores findings in local SQLite
 - Supports triage workflow: list, show, status, disposition, notes
@@ -22,6 +23,10 @@ SecOpsAI is a local-first security pipeline that turns OpenClaw telemetry into a
 - Open source and easy to extend
 
 ## Quick Start
+
+For a short first-run guide, see [docs/quickstart-beginner.md](docs/quickstart-beginner.md).
+For a platform-by-platform operations guide, see [docs/operator-runbook.md](docs/operator-runbook.md).
+
 
 1. Install:
 
