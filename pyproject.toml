@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "secopsai"
 version = "0.1.0"
-description = "Intelligent attack detection for OpenClaw audit logs"
+description = "Local-first cross-platform SecOps for OpenClaw, macOS, Linux, and Windows"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
@@ -17,12 +17,15 @@ dev = [
 
 [project.scripts]
 secopsai = "secopsai.cli:main"
+secopsai-universal = "secopsai.universal:main"
 
 [tool.setuptools]
-# Install the package plus the top-level helper modules/scripts that the CLI imports.
-packages = ["secopsai", "openclaw_adapters"]
+packages = ["secopsai", "openclaw_adapters", "adapters"]
 py-modules = [
+  "cli",
   "confidence",
+  "config",
+  "correlation",
   "detect",
   "evaluate",
   "evaluate_openclaw",

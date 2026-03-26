@@ -89,13 +89,18 @@ secopsai mitigate OCF-XXXX
 secopsai intel refresh
 ```
 
-The repository also includes a universal adapter CLI flow via the top-level `cli.py` for platform-specific collection, live streaming, and correlation:
+The repository also includes a universal adapter CLI flow for platform-specific collection, live streaming, and correlation. You can use either the top-level repo CLI or the packaged bridge command:
 
 ```bash
+# repo-local workflow
 python3 cli.py refresh --platform macos
 python3 cli.py refresh --platform macos,openclaw
 python3 cli.py live --platform macos
 python3 cli.py correlate
+
+# packaged bridge command
+secopsai-universal refresh --platform macos,openclaw
+secopsai-universal correlate
 ```
 
 ### 2. OpenClaw Native Plugin

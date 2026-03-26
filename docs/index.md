@@ -36,9 +36,11 @@ source .venv/bin/activate
 # 3) Run the packaged OpenClaw pipeline
 secopsai refresh
 
-# 4) Try the universal adapter CLI flow locally
+# 4) Try the universal adapter workflow
 python3 cli.py refresh --platform macos,openclaw
 python3 cli.py correlate
+# or, after package install:
+secopsai-universal refresh --platform macos,openclaw
 
 # 5) List high-severity findings
 secopsai list --severity high
