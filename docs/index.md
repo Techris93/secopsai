@@ -33,7 +33,11 @@ source .venv/bin/activate
 # 3) Run the live OpenClaw pipeline via the CLI
 secopsai refresh
 
-# 4) List high-severity findings
+# 4) Try the cross-platform adapter workflow
+secopsai refresh --platform macos,openclaw
+secopsai correlate
+
+# 5) List high-severity findings
 secopsai list --severity high
 ```
 

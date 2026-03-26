@@ -1,0 +1,168 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SecOpsAI Unified Event Schema",
+  "description": "Normalized security event format for cross-platform detection",
+  "type": "object",
+  "required": ["timestamp", "event_type", "platform", "source"],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the event"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "process_exec",
+        "process_fork",
+        "process_exit",
+        "auth_attempt",
+        "auth_success",
+        "auth_failure",
+        "network_connection",
+        "network_listen",
+        "file_create",
+        "file_modify",
+        "file_delete",
+        "file_access",
+        "registry_mod",
+        "privilege_escalation",
+        "tool_invocation",
+        "config_change",
+        "pairing_event",
+        "session_start",
+        "session_end",
+        "anomaly_detected",
+        "threat_match"
+      ],
+      "description": "Type of security event"
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["openclaw", "macos", "linux", "windows"],
+      "description": "Source platform"
+    },
+    "source": {
+      "type": "string",
+      "description": "Specific log source (e.g., 'eslogger', 'journalctl', 'sysmon')"
+    },
+    "host": {
+      "type": "string",
+      "description": "Hostname where event occurred"
+    },
+    "event_id": {
+      "type": "string",
+      "description": "Unique event identifier"
+    },
+    "actor": {
+      "type": "object",
+      "description": "Entity performing the action",
+      "properties": {
+        "user": {
+          "type": ["string", "null"],
+          "description": "Username or UID"
+        },
+        "user_domain": {
+          "type": ["string", "null"],
+          "description": "Domain/namespace for user"
+        },
+        "process": {
+          "type": ["string", "null"],
+          "description": "Process name or path"
+        },
+        "process_id": {
+          "type": ["integer", "null"],
+          "description": "Process ID (PID)"
+        },
+        "parent_process": {
+          "type": ["string", "null"],
+          "description": "Parent process name or path"
+        },
+        "parent_process_id": {
+          "type": ["integer", "null"],
+          "description": "Parent process ID (PPID)"
+        },
+        "command_line": {
+          "type": ["string", "null"],
+          "description": "Full command line"
+        },
+        "ip": {
+          "type": ["string", "null"],
+          "description": "Source IP address"
+        },
+        "port": {
+          "type": ["integer", "null"],
+          "description": "Source port"
+        },
+        "session_id": {
+          "type": ["string", "null"],
+          "description": "Session identifier"
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "description": "Target of the action",
+      "properties": {
+        "file": {
+          "type": ["string", "null"],
+          "description": "File path"
+        },
+        "file_hash": {
+          "type": ["string", "null"],
+          "description": "File hash (SHA256)"
+        },
+        "registry_key": {
+          "type": ["string", "null"],
+          "description": "Windows registry key"
+        },
+        "registry_value": {
+          "type": ["string", "null"],
+          "description": "Windows registry value"
+        },
+        "ip": {
+          "type": ["string", "null"],
+          "description": "Destination IP address"
+        },
+        "port": {
+          "type": ["integer", "null"],
+          "description": "Destination port"
+        },
+        "domain": {
+          "type": ["string", "null"],
+          "description": "Domain name"
+        },
+        "url": {
+          "type": ["string", "null"],
+          "description": "URL"
+        },
+        "user": {
+          "type": ["string", "null"],
+          "description": "Target user"
+        }
+      }
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["success", "failure", "blocked", "unknown"],
+      "description": "Result of the action"
+    },
+    "severity": {
+      "type": ["string", "null"],
+      "enum": ["info", "low", "medium", "high", "critical"],
+      "description": "Event severity"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Tags or labels for the event"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Platform-specific metadata",
+      "additionalProperties": true
+    }
+  }
+}
