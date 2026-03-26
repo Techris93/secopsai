@@ -64,9 +64,12 @@ source .venv/bin/activate
 You now have the `secopsai` CLI available:
 
 ```bash
-secopsai refresh                 # run the live pipeline
-secopsai list --severity high    # list high-severity findings
-secopsai show OCF-XXXX           # inspect a finding
+secopsai refresh                         # run the OpenClaw live pipeline
+secopsai refresh --platform macos        # run adapter collection for a specific platform
+secopsai live --platform macos           # stream adapter events live
+secopsai correlate                       # run cross-platform correlation
+secopsai list --severity high            # list high-severity findings
+secopsai show OCF-XXXX                   # inspect a finding
 
 # Add --json to any command for machine-friendly output
 # (either before or after the subcommand)

@@ -76,7 +76,17 @@ source .venv/bin/activate
 3. Run live pipeline:
 
 ```bash
-python run_openclaw_live.py
+# OpenClaw-first refresh path
+secopsai refresh
+
+# Cross-platform adapter refresh
+secopsai refresh --platform macos,openclaw
+
+# Live streaming from a platform adapter
+secopsai live --platform macos --duration 60
+
+# Cross-platform correlation
+secopsai correlate
 ```
 
 ## CLI: `secopsai`
@@ -114,6 +124,83 @@ This repo includes security guardrails and continuous scanning:
 
 - Threat model: `docs/threat-model.md`
 - CI security scans (on PRs): Semgrep (SAST), Trivy (dependency scan), and Gitleaks (secrets)
+
+## Cross-platform CLI
+
+The packaged `secopsai` CLI is the single operator surface for both the OpenClaw pipeline and the cross-platform adapter workflow:
+
+```bash
+# OpenClaw pipeline
+secopsai refresh
+secopsai list --severity high
+secopsai show OCF-XXXX
+secopsai mitigate OCF-XXXX
+secopsai intel refresh
+
+# Cross-platform adapter workflow
+secopsai refresh --platform macos
+secopsai refresh --platform macos,openclaw
+secopsai live --platform macos
+secopsai correlate
+```
+
+For repo-local development you can still run the wrapper directly:
+
+```bash
+python3 cli.py refresh --platform macos,openclaw
+python3 cli.py correlate
+```
+
+## Operator Surfaces
+
+### 1. OpenClaw Native Plugin
+
+Install SecOpsAI directly as an OpenClaw plugin for seamless integration:
+
+```bash
+openclaw plugins install secopsai
+```
+
+Available plugin tools:
+
+| Tool | Description |
+|------|-------------|
+| `secopsai_list_findings` | List findings with optional severity filter |
+| `secopsai_refresh` | Run the detection pipeline to refresh findings |
+| `secopsai_show_finding` | Get detailed information about a specific finding |
+| `secopsai_triage` | Set disposition, status, and add analyst notes |
+| `secopsai_check_threats` | Check for malware or exfiltration indicators |
+| `secopsai_mitigate` | Get recommended mitigation steps for a finding |
+| `secopsai_search` | Search findings by keyword or pattern |
+| `secopsai_stats` | Get statistics about the SOC database |
+
+See [docs/OpenClaw-Plugin.md](docs/OpenClaw-Plugin.md) for detailed usage.
+
+### 2. WhatsApp Workflows
+
+When correlations are detected, SecOpsAI can send WhatsApp alerts and support chat-driven triage workflows.
+
+Examples:
+- `check malware`
+- `check exfil`
+- `list high`
+- `show OCF-...`
+- `mitigate OCF-...`
+
+## Architecture
+
+```text
+OpenClaw + Host Adapters -> Unified Schema -> Detection Engine -> Correlation Engine -> SQLite SOC Store
+                                                           -> CLI / Plugin / WhatsApp
+```
+
+Core layers:
+
+- **Data adapters**: OpenClaw, macOS, Linux, Windows
+- **Normalization**: unified event schema for shared logic
+- **Detection**: rules and findings generation
+- **Correlation**: IP/user/time/hash correlation across platforms
+- **Operator surfaces**: CLI, plugin, WhatsApp
 
 ## Threat Intelligence (IOC) pipeline
 

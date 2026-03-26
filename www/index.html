@@ -223,9 +223,12 @@
                 </div>
 
                 <div class="p-6 font-mono text-sm space-y-2 text-on-surface-variant">
-                  <div class="flex gap-3"><span class="text-primary">$</span><span>secopsai refresh</span></div>
-                  <div class="text-primary-fixed-dim/70">Exporting OpenClaw telemetry… ingesting… detecting…</div>
+                  <div class="flex gap-3"><span class="text-primary">$</span><span>secopsai refresh --platform macos,openclaw</span></div>
+                  <div class="text-primary-fixed-dim/70">[OK] Collected host + OpenClaw telemetry</div>
                   <div class="text-primary-fixed-dim/70">[OK] Findings persisted to local SOC store (SQLite)</div>
+
+                  <div class="flex gap-3 pt-3"><span class="text-primary">$</span><span>secopsai correlate</span></div>
+                  <div class="text-primary-fixed-dim/70">[OK] Cross-platform correlation complete</div>
 
                   <div class="flex gap-3 pt-3"><span class="text-primary">$</span><span>secopsai list --severity high</span></div>
                   <div class="py-2">
@@ -342,6 +345,14 @@
                 <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
                   <code id="cmd-refresh" class="text-primary-fixed-dim">secopsai refresh && secopsai list --severity high</code>
                   <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-refresh" aria-label="Copy refresh command">content_copy</button>
+                </div>
+              </div>
+
+              <div class="mb-6">
+                <div class="text-on-surface-variant/40 mb-2"># Cross-platform correlation</div>
+                <div class="flex items-center justify-between bg-surface-container-high p-3 rounded border border-outline-variant/5">
+                  <code id="cmd-correlate" class="text-primary-fixed-dim">secopsai refresh --platform macos,openclaw && secopsai correlate</code>
+                  <button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-copy="cmd-correlate" aria-label="Copy correlation command">content_copy</button>
                 </div>
               </div>
 
