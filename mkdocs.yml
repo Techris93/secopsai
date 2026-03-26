@@ -1,6 +1,6 @@
 site_name: secopsai
 site_url: https://docs.secopsai.dev/
-site_description: Intelligent attack detection for OpenClaw audit logs
+site_description: Local-first cross-platform SecOps for OpenClaw, macOS, Linux, and Windows
 repo_url: https://github.com/Techris93/secopsai
 repo_name: Techris93/secopsai
 
@@ -21,6 +21,8 @@ theme:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Universal Adapters: universal-adapters.md
+  - Correlation Engine: correlation-engine.md
   - Rules Registry: rules-registry.md
   - Deployment Guide: deployment-guide.md
   - API Reference: api-reference.md

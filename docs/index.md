@@ -1,59 +1,69 @@
 # secopsai
 
-Intelligent attack detection for OpenClaw audit logs.
+Local-first cross-platform SecOps for OpenClaw, macOS, Linux, and Windows.
 
 ## Why secopsai
 
-secopsai turns OpenClaw audit activity into repeatable, explainable security findings.
+secopsai turns OpenClaw and host OS telemetry into repeatable, explainable security findings.
 
-- 12 detection rules for dangerous execution, policy abuse, exfiltration, and malware
-- F1 1.0 on the labeled OpenClaw benchmark corpus
-- Local-first pipeline with live telemetry support
-- Docker, daemon, and CI/CD deployment paths
+- Unified collection across **OpenClaw**, **macOS**, **Linux**, and **Windows**
+- Local-first pipeline with SQLite-backed findings storage
+- Cross-platform correlation by IP, user, time, and file hash
+- Operator workflows through CLI, plugin, and WhatsApp surfaces
+- Threat intel pipeline and deployment paths for ongoing monitoring
 
 ## Start Here
 
 - [Getting Started](getting-started.md)
+- [Universal Adapters](universal-adapters.md)
+- [Correlation Engine](correlation-engine.md)
 - [Rules Registry](rules-registry.md)
 - [Deployment Guide](deployment-guide.md)
 - [API Reference](api-reference.md)
 - [Threat Intel (IOCs)](threat-intel.md)
+- [OpenClaw Native Plugin](OpenClaw-Plugin.md)
 
 ## Quick Start
 
 ```bash
-# 1) Install secopsai on the same host as your OpenClaw gateway
+# 1) Install secopsai
 curl -fsSL https://secopsai.dev/install.sh | bash
 
 # 2) Activate the virtualenv
-cd secopsai
+cd ~/secopsai
 source .venv/bin/activate
 
-# 3) Run the live OpenClaw pipeline via the CLI
+# 3) Run the packaged OpenClaw pipeline
 secopsai refresh
 
-# 4) List high-severity findings
+# 4) Try the universal adapter CLI flow locally
+python3 cli.py refresh --platform macos,openclaw
+python3 cli.py correlate
+
+# 5) List high-severity findings
 secopsai list --severity high
 ```
 
-For benchmark-style evaluation instead of live telemetry:
+## Platform Support
 
-```bash
-python generate_openclaw_attack_mix.py --stats
-python evaluate_openclaw.py \
-  --labeled data/openclaw/replay/labeled/attack_mix.json \
-  --unlabeled data/openclaw/replay/unlabeled/attack_mix.json \
-  --mode benchmark
-```
+| Platform | Source | Status | Notes |
+|---|---|---:|---|
+| OpenClaw | Audit logs | ✅ Production | Primary native telemetry integration |
+| macOS | Unified logs | ✅ Production | Host telemetry collection |
+| Linux | journalctl / auditd | ✅ Beta | Ready for Linux deployment |
+| Windows | Event Logs / Sysmon | ✅ Beta | Ready for Windows deployment |
 
 ## What You Get
 
-- Reproducible benchmark generation
-- Rule-by-rule evaluation output
-- Findings export with severity and incident grouping
-- Containerized continuous polling workflow
+- Unified security event schema
+- Local findings store with triage workflow
+- Cross-platform correlation engine
+- CLI and OpenClaw plugin workflows
+- Optional WhatsApp alerting for notable correlations
 
 ## Operator Guides
 
 - [Beginner Live Guide](BEGINNER-LIVE-GUIDE.md)
 - [OpenClaw Integration](OpenClaw-Integration.md)
+- [Universal Adapters](universal-adapters.md)
+- [Correlation Engine](correlation-engine.md)

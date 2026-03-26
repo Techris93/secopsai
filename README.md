@@ -1,29 +1,42 @@
-# SecOpsAI
+# SecOpsAI v2.0 - Universal Security Platform
 
-Intelligent attack detection for OpenClaw audit logs.
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/Techris93/secopsai)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-SecOpsAI is a local-first security pipeline that turns OpenClaw telemetry into actionable findings you can review, triage, and mitigate quickly.
+> **Local-first cross-platform SecOps for OpenClaw, macOS, Linux, and Windows.**
 
-## What it does
+SecOpsAI is a local-first security monitoring and correlation platform that ingests OpenClaw audit telemetry and host OS security events, normalizes them into a unified schema, and produces actionable findings you can review, triage, and mitigate quickly.
 
-- Detects attack behavior in OpenClaw audit logs
-- Groups and deduplicates detections into incident findings
-- Stores findings in local SQLite
-- Supports triage workflow: list, show, status, disposition, notes
-- Provides mitigation guidance per finding
-- Supports conversational workflows through plugin and WhatsApp bridge
+## What SecOpsAI does
 
-## Why use it
+- Collects telemetry from **OpenClaw**, **macOS**, **Linux**, and **Windows**
+- Normalizes events into a **unified schema** for shared detection logic
+- Detects suspicious behavior and stores findings in a local **SQLite SOC store**
+- Correlates findings across platforms by **IP**, **user**, **time window**, and **file hash**
+- Supports operator workflows through the **CLI**, **OpenClaw plugin**, and **WhatsApp alerts/workflows**
+- Keeps data **local-first by default**
 
-- Local-first: no external APIs required
-- Fast setup: one script and one environment
-- Practical SOC flow: detect -> list -> show -> triage -> mitigate
-- Automation-ready: daily runs and webhook bridge included
-- Open source and easy to extend
+## Platform Support
+
+| Platform | Source | Status | Notes |
+|---|---|---:|---|
+| OpenClaw | Audit logs | ✅ Production | Native telemetry source |
+| macOS | Unified logging | ✅ Production | Auth, process, and host activity |
+| Linux | journalctl / auditd | ✅ Beta | Ready for Linux deployment |
+| Windows | Event Logs / Sysmon | ✅ Beta | Ready for Windows deployment |
+
+## Cross-Platform Correlation
+
+SecOpsAI can detect multi-system patterns that are hard to catch from a single log source alone:
+
+- Same IP seen across multiple platforms → possible lateral movement
+- Same user active across systems → possible credential abuse
+- Time-clustered findings → coordinated attacker activity
+- Same file hash across hosts → possible malware propagation
 
 ## Quick Start
 
-1. Install:
+### Install
 
 ```bash
 curl -fsSL https://secopsai.dev/install.sh | bash
@@ -31,215 +44,171 @@ curl -fsSL https://secopsai.dev/install.sh | bash
 
 Security note: only run a `curl | bash` installer if you trust the publisher and the source code. If you prefer a safer path, clone the repo and inspect `docs/install.sh` + `setup.sh` before running.
 
-When piped from `curl`, setup runs in non-interactive mode with safe defaults:
-
-- optional native surfaces: disabled
-- benchmark generation: enabled
-- live export: disabled
-
-Optional hardening controls for installer bootstrap:
-
-- `SECOPSAI_INSTALL_REF=<git ref or commit>` to pin setup script source
-- `SECOPSAI_INSTALL_SHA256=<sha256>` to enforce checksum verification
-
-By default, `install.sh` uses a pinned immutable commit for secure installs.
-If you explicitly want latest `main`, use:
+### Activate
 
 ```bash
-SECOPSAI_INSTALL_REF=main curl -fsSL https://secopsai.dev/install.sh | bash
-```
-
-Optional runtime temp log directory:
-
-- `SECOPSAI_TMP_DIR=/path` to override default temp log location (`$TMPDIR` or `/tmp`)
-
-Fallback (manual setup):
-
-```bash
-git clone https://github.com/Techris93/secopsai.git
-cd secopsai
-
-python3 -m venv .venv
-source .venv/bin/activate
-
-pip install -r requirements.txt
-python prepare.py  # Generate data/events.json and data/events_unlabeled.json
-python -m pytest tests/ -v  # Optional: verify installation
-```
-
-2. Activate environment:
-
-```bash
+cd ~/secopsai
 source .venv/bin/activate
 ```
 
-3. Run live pipeline:
+### Run detection
 
 ```bash
-python run_openclaw_live.py
-```
-
-## CLI: `secopsai`
-
-This project exposes a first-class CLI, `secopsai`, that runs the OpenClaw
-pipeline in-process (no `subprocess` shells) and provides both pretty and JSON
-output. The CLI is installed into the project's virtualenv by `install.sh`.
-
-Usage examples (after activating venv):
-
-```bash
-# 1) Run the full live pipeline and persist findings
+# OpenClaw-first refresh path
 secopsai refresh
-secopsai refresh --skip-export       # reuse existing native export
 
-# 2) List and inspect findings (auto-refresh with cache)
+# Universal adapter CLI (local repo workflow)
+python3 cli.py refresh --platform macos,openclaw
+
+# Live streaming from a platform adapter
+python3 cli.py live --platform macos --duration 60
+
+# Cross-platform correlation
+python3 cli.py correlate
+```
+
+### Review findings
+
+```bash
 secopsai list --severity high
-secopsai list --severity high --json
-secopsai list --severity high --cache-ttl 300   # reuse refresh from last 5 minutes
-
 secopsai show OCF-XXXX
 secopsai mitigate OCF-XXXX
-secopsai check --type malware --severity high
-
-# All subcommands accept --json for machine-friendly output
-# (works either before or after the subcommand)
-secopsai show OCF-XXXX --json
-secopsai --json show OCF-XXXX
-secopsai check --type malware --severity high --json
 ```
 
-## Security
+## Operator Surfaces
 
-This repo includes security guardrails and continuous scanning:
+### 1. CLI
 
-- Threat model: `docs/threat-model.md`
-- CI security scans (on PRs): Semgrep (SAST), Trivy (dependency scan), and Gitleaks (secrets)
+The packaged `secopsai` CLI currently remains the main operator surface for the OpenClaw pipeline:
+
+```bash
+secopsai refresh
+secopsai list --severity high
+secopsai show OCF-XXXX
+secopsai mitigate OCF-XXXX
+secopsai intel refresh
+```
+
+The repository also includes a universal adapter CLI flow via the top-level `cli.py` for platform-specific collection, live streaming, and correlation:
+
+```bash
+python3 cli.py refresh --platform macos
+python3 cli.py refresh --platform macos,openclaw
+python3 cli.py live --platform macos
+python3 cli.py correlate
+```
+
+### 2. OpenClaw Native Plugin
+
+Install SecOpsAI directly as an OpenClaw plugin for seamless integration:
+
+```bash
+openclaw plugins install secopsai
+```
+
+Available plugin tools:
+
+| Tool | Description |
+|------|-------------|
+| `secopsai_list_findings` | List findings with optional severity filter |
+| `secopsai_refresh` | Run the detection pipeline to refresh findings |
+| `secopsai_show_finding` | Get detailed information about a specific finding |
+| `secopsai_triage` | Set disposition, status, and add analyst notes |
+| `secopsai_check_threats` | Check for malware or exfiltration indicators |
+| `secopsai_mitigate` | Get recommended mitigation steps for a finding |
+| `secopsai_search` | Search findings by keyword or pattern |
+| `secopsai_stats` | Get statistics about the SOC database |
+
+See [docs/OpenClaw-Plugin.md](docs/OpenClaw-Plugin.md) for detailed usage.
+
+### 3. WhatsApp Workflows
+
+When correlations are detected, SecOpsAI can send WhatsApp alerts and support chat-driven triage workflows.
+
+Examples:
+- `check malware`
+- `check exfil`
+- `list high`
+- `show OCF-...`
+- `mitigate OCF-...`
+
+## Architecture
+
+```text
+OpenClaw + Host Adapters -> Unified Schema -> Detection Engine -> Correlation Engine -> SQLite SOC Store
+                                                           -> CLI / Plugin / WhatsApp
+```
+
+Core layers:
+
+- **Data adapters**: OpenClaw, macOS, Linux, Windows
+- **Normalization**: unified event schema for shared logic
+- **Detection**: rules and findings generation
+- **Correlation**: IP/user/time/hash correlation across platforms
+- **Operator surfaces**: CLI, plugin, WhatsApp
 
 ## Threat Intelligence (IOC) pipeline
 
-Security note: the intel pipeline downloads public IOC feeds and stores them locally under `data/intel/`. It does not call paid enrichment APIs by default.
-
-secopsai also includes a local-first threat intel pipeline:
+SecOpsAI also includes a local-first threat intel pipeline:
 
 - Downloads open-source IOC feeds (URLhaus + ThreatFox)
 - Normalizes + de-duplicates indicators
-- Optional lightweight enrichment (DNS resolution)
-- Matches IOCs against your latest OpenClaw replay events
-- Persists matches into the same local SOC store (so `secopsai list/show` can be used)
+- Optional lightweight enrichment (DNS)
+- Matches IOCs against replay events
+- Persists matches into the local SOC store
 
 Examples:
 
 ```bash
-# Download feeds and store them locally under data/intel/
 secopsai intel refresh --json
-
-# (Optional) add local enrichment
 secopsai intel refresh --enrich
-
-# List a few stored IOCs
 secopsai intel list --limit 20
-
-# Match IOCs against latest replay and persist matches as findings
 secopsai intel match --limit-iocs 500 --json
 ```
 
-Behavior notes:
+## Background Monitoring
 
-- `secopsai refresh` runs the full OpenClaw live pipeline by calling
-  `export_real_openclaw_native`, `ingest_openclaw`, `openclaw_prepare`,
-  `evaluate_openclaw`, and `openclaw_findings` directly in Python, then
-  writes findings into the local SOC store (`soc_store`).
-- After a successful `refresh`, a timestamp is written to `data/.last_refresh`.
-- `list`, `show`, `mitigate`, and `check` will, by default, auto-refresh via the
-  pipeline **unless** a recent refresh exists; the freshness window is controlled
-  by `--cache-ttl` (default 60 seconds). Use `--no-refresh` on those commands to
-  skip the pipeline entirely and operate on whatever is already in `soc_store`.
-- The CLI is designed to be idempotent and automation-friendly: pretty output for
-  humans, `--json` for integrations.
-- `--json` is accepted either before or after subcommands, so both
-  `secopsai --json list` and `secopsai list --json` work.
-- The installer/editable package includes the runtime helper modules used by the
-  CLI entrypoint, so `secopsai` works correctly from the installed virtualenv.
+Example operational model:
 
-4. Review findings:
+- scheduled refresh every 5 minutes
+- local findings persistence
+- cross-platform correlation pass
+- optional WhatsApp notifications on notable correlations
 
-```bash
-python soc_store.py list
-python soc_store.py show OCF-<ID>
-```
+On macOS, launchd-based execution is supported via helper scripts.
 
-5. Triage finding:
+## Documentation
 
-```bash
-python soc_store.py set-disposition OCF-<ID> true_positive
-python soc_store.py set-status OCF-<ID> triaged
-python soc_store.py add-note OCF-<ID> analyst "validated"
-```
+- [Docs site](https://docs.secopsai.dev)
+- [Getting Started](docs/getting-started.md)
+- [Universal Adapters](docs/universal-adapters.md)
+- [Rules Registry](docs/rules-registry.md)
+- [Deployment Guide](docs/deployment-guide.md)
+- [API Reference](docs/api-reference.md)
+- [Threat Intel](docs/threat-intel.md)
+- [Threat Model](docs/threat-model.md)
+- [Beginner Live Guide](docs/BEGINNER-LIVE-GUIDE.md)
+- [OpenClaw Integration](docs/OpenClaw-Integration.md)
 
-6. Get mitigation guidance:
+## Current state
 
-```bash
-python openclaw_plugin.py mitigate OCF-<ID>
-```
+What is implemented now:
 
-## Daily operation
-
-```bash
-cd "$HOME/secopsai" && source .venv/bin/activate && python run_openclaw_live.py --skip-export && python soc_store.py list
-```
-
-macOS launchd helper:
-
-```bash
-bash scripts/install_openclaw_launchd.sh
-```
-
-## Conversational commands
-
-- check malware
-- check exfil
-- list high
-- show OCF-...
-- triage OCF-...
-- mitigate OCF-...
-
-Twilio bridge:
-
-```bash
-python twilio_whatsapp_webhook.py --host 127.0.0.1 --port 8091
-```
-
-## Minimal files required to run
-
-- setup.sh
-- run_openclaw_live.py
-- detect.py
-- ingest_openclaw.py
-- openclaw_prepare.py
-- openclaw_findings.py
-- soc_store.py
-- openclaw_plugin.py
-- scripts/openclaw_daily.sh
-- scripts/install_openclaw_launchd.sh
-
-Optional chat files:
-
-- whatsapp_openclaw_router.py
-- twilio_whatsapp_webhook.py
-- scripts/run_twilio_whatsapp_bridge.sh
-
-## Docs
-
-- docs/BEGINNER-LIVE-GUIDE.md
-- docs/OpenClaw-Integration.md
-- docs/deployment-guide.md
-- docs/rules-registry.md
-- docs/api-reference.md
+- ✅ Base adapter abstraction and registry
+- ✅ OpenClaw adapter
+- ✅ macOS adapter
+- ✅ Linux adapter
+- ✅ Windows adapter
+- ✅ Unified event schema
+- ✅ CLI `--platform` support in universal adapter flow
+- ✅ Cross-platform correlation engine
+- ✅ Background monitoring / scheduled operation
+- ✅ WhatsApp alerting for correlations
 
 ## Contributing
 
-See CONTRIBUTING.md.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT (see LICENSE).
+MIT (see [LICENSE](LICENSE)).
