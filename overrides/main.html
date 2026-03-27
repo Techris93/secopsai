@@ -2,6 +2,8 @@
 
 {% block extrahead %}
   {{ super() }}
+  <link rel="icon" type="image/png" sizes="512x512" href="{{ base_url }}/assets/favicon-512.png?v=1" />
+  <link rel="apple-touch-icon" sizes="512x512" href="{{ base_url }}/assets/apple-touch-icon.png?v=1" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="SecOpsAI Docs" />
   <meta property="og:title" content="{{ config.site_name }}" />

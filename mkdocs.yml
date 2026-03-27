@@ -7,7 +7,7 @@ repo_name: Techris93/secopsai
 theme:
   name: material
   custom_dir: overrides
-  favicon: assets/favicon.svg
+  favicon: assets/favicon-512.png
   logo: assets/favicon.svg
   palette:
     - scheme: slate
