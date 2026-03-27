@@ -17,10 +17,10 @@ SecOpsAI is a local-first security operations toolkit that collects telemetry, g
 ## Why use it
 
 - Local-first: no external APIs required
-- Fast setup: one script and one environment
-- Practical SOC flow: detect -> list -> show -> triage -> mitigate
-- Automation-ready: daily runs and webhook bridge included
-- Open source and easy to extend
+- One command surface for OpenClaw and host-platform workflows
+- Practical operator flow: collect -> detect -> list -> investigate -> mitigate
+- Cross-platform correlation and IOC matching built in
+- Automation-ready and easy to extend
 
 ## Quick Start
 
@@ -78,19 +78,19 @@ python -m pytest tests/ -v  # Optional: verify installation
 source .venv/bin/activate
 ```
 
-3. Run live pipeline:
+3. Run your first workflow:
 
 ```bash
-# OpenClaw-first refresh path
+# Default pipeline
 secopsai refresh
 
-# Cross-platform adapter refresh
+# Cross-platform collection
 secopsai refresh --platform macos,openclaw
 
-# Live streaming from a platform adapter
+# Live adapter streaming
 secopsai live --platform macos --duration 60
 
-# Cross-platform correlation
+# Correlation
 secopsai correlate
 ```
 
@@ -144,16 +144,15 @@ See [docs/OpenClaw-Plugin.md](docs/OpenClaw-Plugin.md) for detailed usage.
 
 ## CLI: `secopsai`
 
-This project exposes a first-class CLI, `secopsai`, that runs the OpenClaw
-pipeline in-process (no `subprocess` shells) and provides both pretty and JSON
-output. The CLI is installed into the project's virtualenv by `install.sh`.
+This project exposes a first-class CLI, `secopsai`, for OpenClaw and host-platform workflows. It provides collection, findings review, correlation, threat-intel commands, and both pretty and JSON output. The CLI is installed into the project's virtualenv by `install.sh`.
 
 Usage examples (after activating venv):
 
 ```bash
-# 1) Run the full live pipeline and persist findings
+# 1) Run the default pipeline and persist findings
 secopsai refresh
 secopsai refresh --skip-export       # reuse existing native export
+secopsai refresh --platform macos    # collect from a specific platform adapter
 
 # 2) List and inspect findings (auto-refresh with cache)
 secopsai list --severity high
@@ -180,7 +179,7 @@ This repo includes security guardrails and continuous scanning:
 
 ## Cross-platform CLI
 
-The packaged `secopsai` CLI is the single operator surface for both the OpenClaw pipeline and the cross-platform adapter workflow:
+The packaged `secopsai` CLI is the single operator surface for both the default pipeline and the cross-platform adapter workflow:
 
 ```bash
 # OpenClaw pipeline
