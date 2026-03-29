@@ -1700,6 +1700,111 @@ def build_detection_findings(events: List[Dict[str, Any]], rule_results: Dict[st
     return findings
 
 
+# ═══ Web Attack Detection Rules ════════════════════════════════════════════════
+# Generated from CVE-based threat intelligence
+
+def detect_sql_injection(events: List[Dict]) -> List[str]:
+    """
+    RULE-301: Detects SQL injection patterns in HTTP requests.
+    MITRE: T1190 (Exploit Public-Facing Application)
+    """
+    sqli_patterns = [
+        r"'\s*OR\s*['\"]?\d['\"]?\s*=\s*['\"]?\d",  # ' OR 1=1
+        r"'\s*UNION\s+SELECT",  # ' UNION SELECT
+        r"--\s*$",  # SQL comment
+        r";\s*DROP\s+TABLE",
+        r"SLEEP\s*\(",
+        r"UNION\s+SELECT\s+",
+        r"INSERT\s+INTO\s+",
+        r"DELETE\s+FROM\s+",
+        r"'\s*OR\s*'\d'\s*=\s*'\d",
+    ]
+    detected = []
+    for event in events:
+        if event.get("event_type") != "http":
+            continue
+        url = event.get("url") or ""
+        request = event.get("request") or ""
+        body = event.get("body") or ""
+        content = url + " " + request + " " + body
+        for pattern in sqli_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                detected.append(event["event_id"])
+                break
+    return detected
+
+
+def detect_rce(events: List[Dict]) -> List[str]:
+    """
+    RULE-302: Detects Remote Code Execution patterns.
+    MITRE: T1059 (Command and Scripting Interpreter)
+    """
+    rce_patterns = [
+        r";\s*whoami\b",
+        r"\|\s*nc\s+-[el]\s+",
+        r"bash\s+-i\s+.*\/dev\/tcp\/",
+        r"python\d*\s+-c\s+.*import\s+socket",
+        r"perl\s+-e\s+.*Socket",
+        r"eval\s*\(",
+        r"exec\s*\(",
+        r"system\s*\(",
+        r"`[^`]*`",
+        r"\$\([^)]+\)",
+        r"\|\s*bash\s+-c",
+        r"\|\s*sh\s+-c",
+    ]
+    detected = []
+    for event in events:
+        if event.get("event_type") != "http":
+            continue
+        url = event.get("url") or ""
+        request = event.get("request") or ""
+        body = event.get("body") or ""
+        command = event.get("command") or ""
+        content = url + " " + request + " " + body + " " + command
+        for pattern in rce_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                detected.append(event["event_id"])
+                break
+    return detected
+
+
+def detect_xss(events: List[Dict]) -> List[str]:
+    """
+    RULE-303: Detects Cross-Site Scripting patterns.
+    MITRE: T1189 (Drive-by Compromise)
+    """
+    xss_patterns = [
+        r"<script[^>]*>",
+        r"</script>",
+        r"javascript:",
+        r"onerror\s*=",
+        r"onload\s*=",
+        r"onfocus\s*=",
+        r"alert\s*\(",
+        r"<iframe[^>]*>",
+        r"<svg[^>]*on\w+",
+        r"<input[^>]*on\w+",
+        r"<body[^>]*on\w+",
+        r"<marquee[^>]*>",
+        r"<details[^>]*on\w+",
+    ]
+    detected = []
+    for event in events:
+        if event.get("event_type") != "http":
+            continue
+        url = event.get("url") or ""
+        request = event.get("request") or ""
+        body = event.get("body") or ""
+        user_agent = event.get("user_agent") or ""
+        content = url + " " + request + " " + body + " " + user_agent
+        for pattern in xss_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                detected.append(event["event_id"])
+                break
+    return detected
+
+
 # ═══ Main Detection Pipeline ═════════════════════════════════════════════════
 
 # Registry of all active detection rules
@@ -1736,6 +1841,9 @@ DETECTION_RULES = [
     {"id": "RULE-108", "name": "OpenClaw Restart Loop",        "mitre": "T1529", "fn": detect_openclaw_restart_loop},
     {"id": "RULE-109", "name": "OpenClaw Data Exfiltration",   "mitre": "T1048", "fn": detect_openclaw_data_exfiltration},
     {"id": "RULE-110", "name": "OpenClaw Malware Presence",    "mitre": "T1204", "fn": detect_openclaw_malware_presence},
+    {"id": "RULE-301", "name": "SQL Injection Detection",      "mitre": "T1190", "fn": detect_sql_injection},
+    {"id": "RULE-302", "name": "Remote Code Execution",        "mitre": "T1059", "fn": detect_rce},
+    {"id": "RULE-303", "name": "Cross-Site Scripting",         "mitre": "T1189", "fn": detect_xss},
 ]
 
 

