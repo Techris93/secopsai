@@ -652,6 +652,324 @@ def detect_macos_suspicious_system_activity(events: List[Dict]) -> List[str]:
     return detected
 
 
+def detect_macos_tcc_violations(events: List[Dict]) -> List[str]:
+    """
+    T1078 — TCC privacy database tampering or access denials.
+    Detects TCC modifications, privacy access denials, and suspicious permission changes.
+    """
+    detected = []
+    
+    for event in events:
+        if not _is_macos_event(event):
+            continue
+        
+        event_type = str(event.get("event_type", ""))
+        risk_tags = event.get("risk_tags", [])
+        message = _event_message(event)
+        
+        # Check for TCC-specific event types
+        if event_type in ["tcc_modified", "tcc_denied"]:
+            detected.append(event["event_id"])
+            continue
+        
+        # Check for privacy-related risk tags
+        if "privacy" in risk_tags or "security_evasion" in risk_tags:
+            detected.append(event["event_id"])
+            continue
+        
+        # Pattern-based detection for TCC tampering
+        tcc_patterns = re.compile(
+            r"(?i)(tccutil\s+reset|privacy.*database.*modified|tcc.*access\s+denied|"
+            r"user\s+denied.*access|privacy.*violation|camera.*access.*denied|"
+            r"microphone.*access.*denied|location.*access.*denied)"
+        )
+        if tcc_patterns.search(message):
+            detected.append(event["event_id"])
+    
+    return detected
+
+
+def detect_macos_gatekeeper_alerts(events: List[Dict]) -> List[str]:
+    """
+    T1204.002 — Malicious file blocked by security tools.
+    Detects XProtect, Gatekeeper, MRT, and quarantine-related security events.
+    """
+    detected = []
+    
+    for event in events:
+        if not _is_macos_event(event):
+            continue
+        
+        event_type = str(event.get("event_type", ""))
+        message = _event_message(event)
+        subsystem = str(event.get("source_subsystem", ""))
+        process = _event_actor_process(event)
+        
+        # Direct event type matches
+        if event_type == "malware_blocked":
+            detected.append(event["event_id"])
+            continue
+        
+        # Check subsystem for security tool events
+        if any(x in subsystem for x in ["syspolicy", "quarantine", "xprotect"]):
+            security_patterns = re.compile(
+                r"(?i)(blocked|detected|quarantined|malware|threat|suspicious|"
+                r"unsigned.*not.*allowed|not.*notarized|code.*signature.*invalid)"
+            )
+            if security_patterns.search(message):
+                detected.append(event["event_id"])
+                continue
+        
+        # Process-based detection
+        if process and any(x in process.lower() for x in ["xprotect", "mrt", "syspolicyd"]):
+            alert_patterns = re.compile(r"(?i)(detected|removed|blocked|quarantined)")
+            if alert_patterns.search(message):
+                detected.append(event["event_id"])
+    
+    return detected
+
+
+def detect_macos_process_anomalies(events: List[Dict]) -> List[str]:
+    """
+    T1055 — Suspicious parent-child process relationships and execution anomalies.
+    Detects unusual process hierarchies, shell spawning from unexpected parents,
+    and execution from suspicious paths.
+    """
+    detected = []
+    
+    # Suspicious parent-child combinations
+    SUSPICIOUS_PARENT_CHILD = {
+        "safari": ["bash", "sh", "zsh", "python", "perl", "ruby"],
+        "preview": ["bash", "sh", "zsh", "python", "curl", "wget"],
+        "mail": ["bash", "sh", "zsh", "python", "osascript"],
+        "terminal": ["curl", "wget", "nc", "netcat"],
+    }
+    
+    # Suspicious execution paths
+    SUSPICIOUS_PATHS = re.compile(
+        r"(?i)(/tmp/|/private/tmp/|/var/tmp/|/Users/[^/]+/Downloads/|"
+        r"/Users/Shared/|/Volumes/[^/]+/|/dev/shm/|\.Trash)"
+    )
+    
+    for event in events:
+        if not _is_macos_event(event):
+            continue
+        
+        actor = event.get("actor", {})
+        parent = str(actor.get("parent_process", "")).lower()
+        process = str(actor.get("process", "")).lower()
+        exe_path = str(actor.get("executable_path", ""))
+        event_type = str(event.get("event_type", ""))
+        risk_tags = event.get("risk_tags", [])
+        
+        # Check for suspicious parent-child combinations
+        if parent and process:
+            for sus_parent, sus_children in SUSPICIOUS_PARENT_CHILD.items():
+                if sus_parent in parent and any(child in process for child in sus_children):
+                    detected.append(event["event_id"])
+                    break
+        
+        # Check for suspicious execution paths
+        if SUSPICIOUS_PATHS.search(exe_path):
+            detected.append(event["event_id"])
+            continue
+        
+        # Check for pipe-to-shell patterns
+        if "pipe_to_shell" in risk_tags or "suspicious_chain" in risk_tags:
+            detected.append(event["event_id"])
+            continue
+        
+        # Check for execution from temp directories
+        if event_type == "script_execution":
+            exec_cat = event.get("execution_category", "")
+            if exec_cat in ["temp_directory", "downloads_directory"]:
+                detected.append(event["event_id"])
+    
+    return detected
+
+
+def detect_macos_credential_access(events: List[Dict]) -> List[str]:
+    """
+    T1003 — Credential access attempts.
+    Detects keychain access patterns, securityd anomalies, and password-related events.
+    """
+    detected = []
+    
+    for event in events:
+        if not _is_macos_event(event):
+            continue
+        
+        event_type = str(event.get("event_type", ""))
+        message = _event_message(event)
+        process = _event_actor_process(event)
+        subsystem = str(event.get("source_subsystem", ""))
+        
+        # Direct credential event types
+        if event_type == "keychain_access":
+            detected.append(event["event_id"])
+            continue
+        
+        # Security/securityd subsystem events
+        if "security" in subsystem or process == "securityd":
+            credential_patterns = re.compile(
+                r"(?i)(keychain.*access|secitem.*read|password.*read|"
+                r"cert.*extract|private\s+key|ssh.*key|get\s+password)"
+            )
+            if credential_patterns.search(message):
+                detected.append(event["event_id"])
+                continue
+        
+        # Security command usage
+        if process == "security":
+            detected.append(event["event_id"])
+            continue
+        
+        # Password changes
+        if event_type == "password_changed":
+            detected.append(event["event_id"])
+    
+    return detected
+
+
+def detect_macos_network_anomalies(events: List[Dict]) -> List[str]:
+    """
+    T1071 — Suspicious network activity on macOS.
+    Detects unusual network tool usage, firewall bypass attempts, and connection anomalies.
+    """
+    detected = []
+    
+    # Network tools that are suspicious in certain contexts
+    NETWORK_TOOLS = re.compile(
+        r"(?i)\b(nc|netcat|ncat|curl|wget|ftp|telnet|ssh|scp|sftp)\b"
+    )
+    
+    # Suspicious network patterns
+    SUSPICIOUS_NETWORK = re.compile(
+        r"(?i)(reverse\s+shell|bind\s+shell|\|\s*nc\s+-|\|\s*netcat|"
+        r"curl.*\|\s*(bash|sh)|wget.*\|\s*(bash|sh)|"
+        r"iptables\s+-F|pfctl\s+-d)"
+    )
+    
+    for event in events:
+        if not _is_macos_event(event):
+            continue
+        
+        message = _event_message(event)
+        process = _event_actor_process(event)
+        risk_tags = event.get("risk_tags", [])
+        
+        # Check for network tool usage with suspicious patterns
+        if NETWORK_TOOLS.search(process) or NETWORK_TOOLS.search(message):
+            if SUSPICIOUS_NETWORK.search(message):
+                detected.append(event["event_id"])
+                continue
+            
+            # Check for pipe to shell
+            if "pipe_to_shell" in risk_tags:
+                detected.append(event["event_id"])
+                continue
+        
+        # Check for firewall/network control tampering
+        if re.search(r"(?i)(pfctl|ipfw|iptables)", message):
+            detected.append(event["event_id"])
+    
+    return detected
+
+
+def detect_macos_repeated_sudo_failures(events: List[Dict]) -> List[str]:
+    """
+    T1110 / T1548 — Repeated sudo authentication failures indicating brute force or misconfiguration.
+    Enhanced version with frequency-based scoring.
+    """
+    from collections import defaultdict
+    
+    # Group sudo failures by user
+    user_failures: Dict[str, List[Dict]] = defaultdict(list)
+    
+    for event in events:
+        if not _is_macos_event(event):
+            continue
+        
+        event_type = str(event.get("event_type", ""))
+        message = _event_message(event)
+        process = _event_actor_process(event)
+        
+        # Check for sudo-related auth failures
+        is_sudo = "sudo" in process.lower() or "sudo" in message.lower()
+        is_failure = event_type == "auth_failure" or "failure" in message.lower()
+        
+        if is_sudo and is_failure:
+            user = _event_actor_user(event) or "unknown"
+            user_failures[user].append(event)
+    
+    detected = []
+    threshold = RULE_THRESHOLDS.get("brute_force", {}).get("RAPID_THRESHOLD", 4)
+    window_minutes = RULE_THRESHOLDS.get("brute_force", {}).get("RAPID_WINDOW_MINUTES", 5)
+    
+    for user, failures in user_failures.items():
+        if len(failures) < threshold:
+            continue
+        
+        # Check for failures within time window
+        ordered = sorted(failures, key=lambda e: str(e.get("timestamp", "")))
+        for i in range(len(ordered) - threshold + 1):
+            window_start = ordered[i]
+            window_end = ordered[i + threshold - 1]
+            
+            if minutes_between(window_start, window_end) <= window_minutes:
+                # Add all events in this burst
+                for event in ordered[i:i + threshold]:
+                    if event["event_id"] not in detected:
+                        detected.append(event["event_id"])
+    
+    return detected
+
+
+def detect_macos_unsigned_execution(events: List[Dict]) -> List[str]:
+    """
+    T1553 — Execution of unsigned or untrusted binaries.
+    Detects execution of code without proper signatures or notarization.
+    """
+    detected = []
+    
+    for event in events:
+        if not _is_macos_event(event):
+            continue
+        
+        risk_tags = event.get("risk_tags", [])
+        message = _event_message(event)
+        actor = event.get("actor", {})
+        exe_path = str(actor.get("executable_path", ""))
+        
+        # Check for unsigned binary risk tag
+        if "unsigned_binary" in risk_tags:
+            detected.append(event["event_id"])
+            continue
+        
+        # Check for execution from quarantine with xattr removal
+        if "quarantine" in risk_tags and "security_evasion" in risk_tags:
+            detected.append(event["event_id"])
+            continue
+        
+        # Pattern-based detection
+        unsigned_patterns = re.compile(
+            r"(?i)(unsigned|not\s+notarized|code\s+signature\s+invalid|"
+            r"signature\s+verification\s+failed|ad-hoc\s+signed)"
+        )
+        if unsigned_patterns.search(message):
+            detected.append(event["event_id"])
+            continue
+        
+        # Execution from unusual paths (Downloads, tmp) without proper signing
+        unusual_path = re.compile(r"(?i)(/Users/[^/]+/Downloads/|/tmp/|/private/tmp/)")
+        if unusual_path.search(exe_path) and "execution" in str(event.get("event_type", "")):
+            # Only flag if no explicit approval pattern
+            if not re.search(r"(?i)(user\s+approved|allowed|granted)", message):
+                detected.append(event["event_id"])
+    
+    return detected
+
+
 def detect_openclaw_dangerous_exec(events: List[Dict]) -> List[str]:
     """
     OpenClaw-specific dangerous exec detection.
@@ -1133,6 +1451,83 @@ RULE_FINDING_PROFILES: Dict[str, Dict[str, Any]] = {
             "Inspect the host for follow-on persistence, downloaded payloads, or user-approved exceptions.",
         ],
     },
+    "RULE-207": {
+        "title": "macOS TCC privacy violation",
+        "severity": "high",
+        "severity_score": 79,
+        "summary": "TCC (Transparency, Consent, and Control) privacy database modification or unauthorized access was detected.",
+        "recommended_actions": [
+            "Review TCC database modifications to confirm they were authorized administrative actions.",
+            "Check for unauthorized privacy permission grants to sensitive resources (camera, microphone, location).",
+            "Reset TCC permissions if unauthorized changes are found and investigate the source process.",
+        ],
+    },
+    "RULE-208": {
+        "title": "macOS security tool alert",
+        "severity": "critical",
+        "severity_score": 88,
+        "summary": "XProtect, Gatekeeper, MRT, or quarantine system flagged malicious or suspicious activity.",
+        "recommended_actions": [
+            "Immediately isolate the flagged file and collect its hash for threat intelligence lookup.",
+            "Review the execution context and parent process to understand how the threat arrived.",
+            "Run a full system scan and check for persistence mechanisms related to the flagged activity.",
+        ],
+    },
+    "RULE-209": {
+        "title": "macOS process anomaly",
+        "severity": "medium",
+        "severity_score": 65,
+        "summary": "Suspicious parent-child process relationship or execution from unusual path detected.",
+        "recommended_actions": [
+            "Review the process tree to understand why an unusual parent spawned a shell or script.",
+            "Check execution history and command lines for the suspicious process chain.",
+            "Investigate any network connections or file modifications from the suspicious process.",
+        ],
+    },
+    "RULE-210": {
+        "title": "macOS credential access",
+        "severity": "high",
+        "severity_score": 75,
+        "summary": "Potential credential access activity detected via keychain, securityd, or password operations.",
+        "recommended_actions": [
+            "Verify that keychain access was from an authorized application or user action.",
+            "Review securityd logs for unusual credential read patterns or bulk extraction attempts.",
+            "Rotate affected credentials if unauthorized access is confirmed.",
+        ],
+    },
+    "RULE-211": {
+        "title": "macOS network anomaly",
+        "severity": "medium",
+        "severity_score": 62,
+        "summary": "Suspicious network tool usage or potential data exfiltration activity detected.",
+        "recommended_actions": [
+            "Review the network command and destination to confirm it was expected activity.",
+            "Check for pipe-to-shell patterns that may indicate staged payload execution.",
+            "Monitor subsequent network connections from the same user/process context.",
+        ],
+    },
+    "RULE-212": {
+        "title": "macOS repeated sudo failures",
+        "severity": "high",
+        "severity_score": 73,
+        "summary": "Multiple sudo authentication failures indicate potential brute force or privilege escalation attempt.",
+        "recommended_actions": [
+            "Check if the failed sudo attempts came from an authorized administrator.",
+            "Review the commands attempted and the session context for signs of compromise.",
+            "Consider temporarily disabling sudo access for the affected account if suspicious.",
+        ],
+    },
+    "RULE-213": {
+        "title": "macOS unsigned execution",
+        "severity": "medium",
+        "severity_score": 68,
+        "summary": "Execution of unsigned, unnotarized, or quarantine-flagged binary detected.",
+        "recommended_actions": [
+            "Validate the binary's source and signature before allowing further execution.",
+            "Check if quarantine attributes were manually removed (xattr -d) to bypass protections.",
+            "Remove unauthorized unsigned software and investigate how it was delivered to the host.",
+        ],
+    },
 }
 
 
@@ -1225,6 +1620,13 @@ DETECTION_RULES = [
     {"id": "RULE-204", "name": "macOS Unusual Script Execution", "mitre": "T1059", "fn": detect_macos_unusual_script_execution},
     {"id": "RULE-205", "name": "macOS Suspicious Binary Execution", "mitre": "T1553", "fn": detect_macos_suspicious_binary_execution},
     {"id": "RULE-206", "name": "macOS Suspicious System Activity", "mitre": "T1562", "fn": detect_macos_suspicious_system_activity},
+    {"id": "RULE-207", "name": "macOS TCC Violations", "mitre": "T1078", "fn": detect_macos_tcc_violations},
+    {"id": "RULE-208", "name": "macOS Gatekeeper Alerts", "mitre": "T1204.002", "fn": detect_macos_gatekeeper_alerts},
+    {"id": "RULE-209", "name": "macOS Process Anomalies", "mitre": "T1055", "fn": detect_macos_process_anomalies},
+    {"id": "RULE-210", "name": "macOS Credential Access", "mitre": "T1003", "fn": detect_macos_credential_access},
+    {"id": "RULE-211", "name": "macOS Network Anomalies", "mitre": "T1071", "fn": detect_macos_network_anomalies},
+    {"id": "RULE-212", "name": "macOS Repeated Sudo Failures", "mitre": "T1110", "fn": detect_macos_repeated_sudo_failures},
+    {"id": "RULE-213", "name": "macOS Unsigned Execution", "mitre": "T1553", "fn": detect_macos_unsigned_execution},
     {"id": "RULE-101", "name": "OpenClaw Dangerous Exec",      "mitre": "T1059", "fn": detect_openclaw_dangerous_exec},
     {"id": "RULE-102", "name": "OpenClaw Sensitive Config",    "mitre": "T1098", "fn": detect_openclaw_sensitive_config_change},
     {"id": "RULE-103", "name": "OpenClaw Skill Source Drift",  "mitre": "T1587", "fn": detect_openclaw_skill_source_drift},
