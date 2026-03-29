@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.secopsai.adaptive-intel</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/chrixchange/.openclaw/workspace/adaptive-intel-daily.sh</string>
+    </array>
+    
+    <key>WorkingDirectory</key>
+    <string>/Users/chrixchange/.openclaw/workspace/secopsai</string>
+    
+    <key>StandardOutPath</key>
+    <string>/Users/chrixchange/.openclaw/workspace/logs/adaptive-intel-out.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/Users/chrixchange/.openclaw/workspace/logs/adaptive-intel-err.log</string>
+    
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>23</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+        <key>HOME</key>
+        <string>/Users/chrixchange</string>
+        <key>TELEGRAM_BOT_TOKEN</key>
+        <string>8245246717:AAEh9gROV5LbFwchLryMWbp9XKu5ZSUK2RQ</string>
+        <key>TELEGRAM_CHAT_ID</key>
+        <string>623118122</string>
+    </dict>
+    
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
