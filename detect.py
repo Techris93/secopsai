@@ -600,15 +600,15 @@ def detect_macos_unusual_script_execution(events: List[Dict]) -> List[str]:
     """
     T1059 — Unusual shell or script execution chains on macOS.
     """
-    suspicious = re.compile(
-        r"(?i)(osascript|curl\s+[^|]+\|\s*(?:bash|sh)|python3?\s+-c\b|perl\s+-e\b|bash\s+-c\b|zsh\s+-c\b|sh\s+-c\b|base64\s+-d|chmod\s+\+x.*(?:/tmp|/private/tmp|/users/shared)|/tmp/|/private/tmp/|/users/shared/|https?://)"
-    )
+    direct_exec = re.compile(r"(?i)(osascript|curl\s+[^|]+\|\s*(?:bash|sh)|python3?\s+-c\b|perl\s+-e\b|base64\s+-d)")
+    temp_path_exec = re.compile(r"(?i)(?:bash|zsh|sh)\s+-c\b.*(?:/tmp/|/private/tmp/|/users/shared/)")
+    download_and_exec = re.compile(r"(?i)(https?://.*(?:bash|sh)|(?:bash|zsh|sh)\s+-c\b.*https?://|chmod\s+\+x.*(?:/tmp|/private/tmp|/users/shared))")
     detected = []
     for event in events:
         if not _is_macos_event(event):
             continue
         combined = f"{_event_actor_process(event)} {_event_message(event)}"
-        if suspicious.search(combined):
+        if direct_exec.search(combined) or temp_path_exec.search(combined) or download_and_exec.search(combined):
             detected.append(event["event_id"])
     return detected
 
@@ -618,7 +618,7 @@ def detect_macos_suspicious_binary_execution(events: List[Dict]) -> List[str]:
     T1204 / T1553 — Unsigned or suspicious binary execution paths on macOS.
     """
     unsigned_markers = re.compile(r"(?i)(unsigned|not notarized|signature invalid|code signature|quarantine)")
-    risky_paths = re.compile(r"(?i)(/users/shared/|/tmp/|/private/tmp/|/volumes/|/applications/[^\s]+\.app/contents/macos/)")
+    high_risk_paths = re.compile(r"(?i)(/users/shared/|/tmp/|/private/tmp/|/volumes/)")
     suspicious_names = re.compile(r"(?i)(installer|updater|agent|helper|payload|runme|launch|osascript)")
     detected = []
     for event in events:
@@ -627,7 +627,10 @@ def detect_macos_suspicious_binary_execution(events: List[Dict]) -> List[str]:
         message = _event_message(event)
         process = _event_actor_process(event)
         combined = f"{process} {message}"
-        if unsigned_markers.search(message) or (risky_paths.search(combined) and suspicious_names.search(combined)):
+        if unsigned_markers.search(combined):
+            detected.append(event["event_id"])
+            continue
+        if high_risk_paths.search(combined) and suspicious_names.search(combined):
             detected.append(event["event_id"])
     return detected
 

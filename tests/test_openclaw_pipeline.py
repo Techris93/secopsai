@@ -325,6 +325,47 @@ class MacOSDetectionPackTests(unittest.TestCase):
         self.assertTrue(sample["evidence"])
         self.assertEqual(sample["platform"], "macos")
 
+    def test_macos_benign_admin_activity_does_not_trigger_noisy_rules(self):
+        events = [
+            {
+                "event_id": "mac-benign-1",
+                "timestamp": "2026-03-29T09:00:00Z",
+                "platform": "macos",
+                "source": "unified_log",
+                "event_type": "process_exec",
+                "severity_hint": "low",
+                "actor": {"user": "alice", "process": "zsh -c brew upgrade wget"},
+                "metadata": {"macos_message": "User launched a local package upgrade from Terminal"},
+            },
+            {
+                "event_id": "mac-benign-2",
+                "timestamp": "2026-03-29T09:01:00Z",
+                "platform": "macos",
+                "source": "unified_log",
+                "event_type": "process_exec",
+                "severity_hint": "low",
+                "actor": {"user": "alice", "process": "/Applications/Slack.app/Contents/MacOS/Slack"},
+                "metadata": {"macos_message": "Slack launched normally with valid signature"},
+            },
+            {
+                "event_id": "mac-benign-3",
+                "timestamp": "2026-03-29T09:02:00Z",
+                "platform": "macos",
+                "source": "unified_log",
+                "event_type": "process_exec",
+                "severity_hint": "low",
+                "actor": {"user": "alice", "process": "bash -c ./scripts/bootstrap.sh"},
+                "metadata": {"macos_message": "Ran a local bootstrap script from the project workspace"},
+            },
+        ]
+
+        result = run_detection(events)
+        findings = result.get("findings", [])
+        rule_ids = {finding["rule_id"] for finding in findings}
+
+        self.assertNotIn("RULE-204", rule_ids)
+        self.assertNotIn("RULE-205", rule_ids)
+
 
 if __name__ == "__main__":
     unittest.main()
