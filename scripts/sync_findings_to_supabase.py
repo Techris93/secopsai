@@ -26,12 +26,39 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable
-from urllib import error, parse, request
+from urllib import error, request
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_FINDINGS_DIR = ROOT_DIR / "data" / "openclaw" / "findings"
 DEFAULT_SOC_DB = DEFAULT_FINDINGS_DIR / "openclaw_soc.db"
 DEFAULT_DASHBOARD_ENV = ROOT_DIR.parent / "secopsai-dashboard" / ".env"
+DEFAULT_SCHEMA_SQL = ROOT_DIR.parent / "secopsai-dashboard" / "supabase_migrations" / "2026-03-28_findings.sql"
+REQUIRED_TABLE = "findings"
+EXPECTED_COLUMNS = {
+    "external_finding_id",
+    "title",
+    "summary",
+    "severity",
+    "severity_score",
+    "status",
+    "disposition",
+    "confidence",
+    "source",
+    "source_name",
+    "detector",
+    "fingerprint",
+    "dedupe_key",
+    "detected_at",
+    "first_seen_at",
+    "last_seen_at",
+    "rule_id",
+    "rule_name",
+    "mitre",
+    "event_count",
+    "event_ids",
+    "recommended_actions",
+    "raw_payload",
+}
 
 
 @dataclass
@@ -41,16 +68,40 @@ class LoadResult:
     findings: list[dict[str, Any]]
 
 
-def parse_args() -> argparse.Namespace:
+@dataclass
+class SyncSummary:
+    source_kind: str
+    source_path: str | None
+    local_findings: int
+    normalized_rows: int
+    schema_checked: bool
+    schema_ok: bool
+    validated_columns: list[str]
+    synced_rows: int
+    dry_run: bool
+    table: str
+
+
+class SchemaValidationError(RuntimeError):
+    pass
+
+
+class SyncRequestError(RuntimeError):
+    pass
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sync SecOpsAI findings to Supabase")
     parser.add_argument("--db-path", default=str(DEFAULT_SOC_DB), help="Path to local SOC SQLite DB")
     parser.add_argument("--findings-dir", default=str(DEFAULT_FINDINGS_DIR), help="Directory containing openclaw-findings-*.json bundles")
     parser.add_argument("--dashboard-env", default=str(DEFAULT_DASHBOARD_ENV), help="Optional .env file to load Supabase credentials from")
     parser.add_argument("--supabase-url", default=None, help="Override Supabase URL")
     parser.add_argument("--supabase-key", default=None, help="Override Supabase API key (service role preferred)")
-    parser.add_argument("--table", default="findings", help="Supabase table name")
+    parser.add_argument("--table", default=REQUIRED_TABLE, help="Supabase table name")
+    parser.add_argument("--schema-sql", default=str(DEFAULT_SCHEMA_SQL), help="Schema SQL/migration file to validate mapping against")
+    parser.add_argument("--skip-schema-check", action="store_true", help="Skip local schema/mapping validation")
     parser.add_argument("--dry-run", action="store_true", help="Print payload summary without writing")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def load_env_file(path: Path) -> dict[str, str]:
@@ -244,6 +295,59 @@ def chunked(values: Iterable[dict[str, Any]], size: int) -> Iterable[list[dict[s
         yield batch
 
 
+def parse_schema_columns(schema_path: Path, table_name: str = REQUIRED_TABLE) -> set[str]:
+    if not schema_path.exists():
+        raise SchemaValidationError(f"Schema file does not exist: {schema_path}")
+
+    content = schema_path.read_text(encoding="utf-8")
+    marker = f"create table if not exists public.{table_name} ("
+    start = content.lower().find(marker)
+    if start == -1:
+        raise SchemaValidationError(f"Could not find table definition for public.{table_name} in {schema_path}")
+
+    body = content[start + len(marker):]
+    end = body.find(");")
+    if end == -1:
+        raise SchemaValidationError(f"Could not parse table body for public.{table_name} in {schema_path}")
+
+    columns: set[str] = set()
+    for raw_line in body[:end].splitlines():
+        line = raw_line.strip().rstrip(",")
+        if not line or line.startswith("--"):
+            continue
+        lowered = line.lower()
+        if lowered.startswith(("primary key", "foreign key", "unique", "constraint")):
+            continue
+        column_name = line.split()[0]
+        if column_name.isidentifier():
+            columns.add(column_name)
+    return columns
+
+
+def validate_row_mapping(rows: list[dict[str, Any]], schema_path: Path, table_name: str = REQUIRED_TABLE) -> list[str]:
+    schema_columns = parse_schema_columns(schema_path, table_name=table_name)
+    missing_required = sorted(EXPECTED_COLUMNS - schema_columns)
+    if missing_required:
+        raise SchemaValidationError(
+            f"Schema for public.{table_name} is missing expected columns: {', '.join(missing_required)}"
+        )
+
+    row_keys = set().union(*(row.keys() for row in rows)) if rows else set(EXPECTED_COLUMNS)
+    unknown_keys = sorted(row_keys - schema_columns)
+    if unknown_keys:
+        raise SchemaValidationError(
+            f"Normalized findings contain columns not present in public.{table_name}: {', '.join(unknown_keys)}"
+        )
+
+    missing_row_keys = sorted(EXPECTED_COLUMNS - row_keys)
+    if missing_row_keys:
+        raise SchemaValidationError(
+            f"Normalized findings are missing expected mapped columns: {', '.join(missing_row_keys)}"
+        )
+
+    return sorted(row_keys)
+
+
 def postgrest_upsert(url: str, key: str, table: str, rows: list[dict[str, Any]]) -> tuple[int, str]:
     endpoint = f"{url}/rest/v1/{table}?on_conflict=external_finding_id"
     data = json.dumps(rows).encode("utf-8")
@@ -263,43 +367,103 @@ def postgrest_upsert(url: str, key: str, table: str, rows: list[dict[str, Any]])
             return resp.status, resp.read().decode("utf-8", errors="replace")
     except error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
-        raise SystemExit(f"Supabase upsert failed ({exc.code}): {body}") from exc
+        raise SyncRequestError(f"Supabase upsert failed ({exc.code}): {body}") from exc
     except error.URLError as exc:
-        raise SystemExit(f"Supabase request failed: {exc}") from exc
+        raise SyncRequestError(f"Supabase request failed: {exc}") from exc
 
 
-def main() -> int:
-    args = parse_args()
+def execute_sync(args: argparse.Namespace) -> SyncSummary:
     result = load_local_findings(Path(args.db_path), Path(args.findings_dir))
     normalized = [row for row in (normalize_row(f) for f in result.findings) if row]
 
-    print(f"source_kind={result.source_kind}")
-    print(f"source_path={result.source_path or ''}")
-    print(f"local_findings={len(result.findings)}")
-    print(f"normalized_rows={len(normalized)}")
+    schema_checked = not args.skip_schema_check
+    schema_ok = False
+    validated_columns: list[str] = []
+    if schema_checked:
+        validated_columns = validate_row_mapping(normalized, Path(args.schema_sql), table_name=args.table)
+        schema_ok = True
 
     if not normalized:
-        print("No local findings found. Nothing to sync.")
-        return 0
+        return SyncSummary(
+            source_kind=result.source_kind,
+            source_path=result.source_path,
+            local_findings=len(result.findings),
+            normalized_rows=0,
+            schema_checked=schema_checked,
+            schema_ok=schema_ok,
+            validated_columns=validated_columns,
+            synced_rows=0,
+            dry_run=args.dry_run,
+            table=args.table,
+        )
 
     if args.dry_run:
-        sample = normalized[0]
-        print("dry_run=true")
-        print("sample_external_finding_id=" + str(sample.get("external_finding_id", "")))
-        print("sample_title=" + str(sample.get("title", "")))
-        return 0
+        return SyncSummary(
+            source_kind=result.source_kind,
+            source_path=result.source_path,
+            local_findings=len(result.findings),
+            normalized_rows=len(normalized),
+            schema_checked=schema_checked,
+            schema_ok=schema_ok,
+            validated_columns=validated_columns,
+            synced_rows=0,
+            dry_run=True,
+            table=args.table,
+        )
 
     url, key = resolve_supabase_config(args)
-
     synced = 0
     for batch in chunked(normalized, 100):
         status, _body = postgrest_upsert(url, key, args.table, batch)
         if status not in (200, 201, 204):
-            raise SystemExit(f"Unexpected Supabase status: {status}")
+            raise SyncRequestError(f"Unexpected Supabase status: {status}")
         synced += len(batch)
 
-    print(f"synced_rows={synced}")
-    print(f"supabase_table={args.table}")
+    return SyncSummary(
+        source_kind=result.source_kind,
+        source_path=result.source_path,
+        local_findings=len(result.findings),
+        normalized_rows=len(normalized),
+        schema_checked=schema_checked,
+        schema_ok=schema_ok,
+        validated_columns=validated_columns,
+        synced_rows=synced,
+        dry_run=False,
+        table=args.table,
+    )
+
+
+def print_summary(summary: SyncSummary) -> None:
+    print(f"source_kind={summary.source_kind}")
+    print(f"source_path={summary.source_path or ''}")
+    print(f"local_findings={summary.local_findings}")
+    print(f"normalized_rows={summary.normalized_rows}")
+    print(f"schema_checked={str(summary.schema_checked).lower()}")
+    print(f"schema_ok={str(summary.schema_ok).lower()}")
+    if summary.validated_columns:
+        print("validated_columns=" + ",".join(summary.validated_columns))
+    if summary.normalized_rows == 0:
+        print("No local findings found. Nothing to sync.")
+        return
+    if summary.dry_run:
+        print("dry_run=true")
+        print("sync_status=dry_run")
+        return
+    print(f"synced_rows={summary.synced_rows}")
+    print(f"supabase_table={summary.table}")
+    print("sync_status=ok")
+
+
+def main() -> int:
+    args = parse_args()
+    try:
+        summary = execute_sync(args)
+    except SchemaValidationError as exc:
+        raise SystemExit(f"Schema validation failed: {exc}") from exc
+    except SyncRequestError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    print_summary(summary)
     return 0
 
 

@@ -74,16 +74,19 @@ Automatic dashboard sync is intentionally safe and optional:
   `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_ANON_KEY`
 - Credentials can come from the current environment or from the default
   dashboard env file at `../secopsai-dashboard/.env`
+- Schema mapping is validated against the dashboard findings migration by default
 - If credentials are missing, the refresh/pipeline still succeeds and sync is
   skipped
 - If sync fails after findings are persisted locally, the local pipeline still
   completes; the sync error is printed for operator visibility
+- Upserts are idempotent by `external_finding_id`
 
 You can still call the script directly if needed:
 
 ```bash
 python run_openclaw_live.py
 python run_openclaw_live.py --skip-export
+secopsai sync-findings --dry-run
 ```
 
 At the end, inspect the findings store:

@@ -17,6 +17,8 @@ from detect import run_detection
 from secopsai.formatters import fmt_finding, fmt_list, to_json
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
 from secopsai.pipeline import refresh as refresh_pipeline
+from scripts.sync_findings_to_supabase import execute_sync as execute_findings_sync
+from scripts.sync_findings_to_supabase import parse_args as parse_findings_sync_args
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE_FILE = ROOT / "data" / ".last_refresh"
@@ -275,6 +277,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     refresh.add_argument("--openclaw-home", help="Override OPENCLAW_HOME")
     refresh.add_argument("--verbose", action="store_true", help="Verbose refresh output (future use)")
 
+    sync_findings = sub.add_parser("sync-findings", help="Sync persisted findings to the dashboard Supabase table")
+    sync_findings.add_argument("--db-path", default=str(ROOT / "data" / "openclaw" / "findings" / "openclaw_soc.db"))
+    sync_findings.add_argument("--findings-dir", default=str(ROOT / "data" / "openclaw" / "findings"))
+    sync_findings.add_argument("--dashboard-env", default=str(ROOT.parent / "secopsai-dashboard" / ".env"))
+    sync_findings.add_argument("--supabase-url", default=None)
+    sync_findings.add_argument("--supabase-key", default=None)
+    sync_findings.add_argument("--table", default="findings")
+    sync_findings.add_argument("--schema-sql", default=str(ROOT.parent / "secopsai-dashboard" / "supabase_migrations" / "2026-03-28_findings.sql"))
+    sync_findings.add_argument("--skip-schema-check", action="store_true")
+    sync_findings.add_argument("--dry-run", action="store_true")
+
     live = sub.add_parser("live", help="Stream events in real time from platform adapters")
     live.add_argument("--platform", "-p", help="Adapters to stream: openclaw,macos,linux,windows")
     live.add_argument("--duration", "-d", type=int, default=60, help="Stream duration in seconds (0=infinite)")
@@ -398,6 +411,30 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"findings_file={res.findings_file}")
             print(f"total_findings={res.total_findings}")
             print(f"total_detections={res.total_detections}")
+            print(f"sync_attempted={res.sync_attempted}")
+            print(f"sync_succeeded={res.sync_succeeded}")
+        return 0
+
+    if args.cmd == "sync-findings":
+        summary = execute_findings_sync(args)
+        payload = {
+            "source_kind": summary.source_kind,
+            "source_path": summary.source_path,
+            "local_findings": summary.local_findings,
+            "normalized_rows": summary.normalized_rows,
+            "schema_checked": summary.schema_checked,
+            "schema_ok": summary.schema_ok,
+            "validated_columns": summary.validated_columns,
+            "synced_rows": summary.synced_rows,
+            "dry_run": summary.dry_run,
+            "table": summary.table,
+        }
+        if args.json:
+            print(to_json(payload))
+        else:
+            print("secopsai sync-findings complete")
+            for key, value in payload.items():
+                print(f"{key}={value}")
         return 0
 
     if args.cmd == "live":
@@ -420,9 +457,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             if refresh_meta and not refresh_meta.get("skipped"):
                 print(
-                    "refreshed: total_findings={tf} total_detections={td}\n".format(
+                    "refreshed: total_findings={tf} total_detections={td} sync_attempted={sa} sync_succeeded={ss}\n".format(
                         tf=refresh_meta.get("total_findings"),
                         td=refresh_meta.get("total_detections"),
+                        sa=refresh_meta.get("sync_attempted"),
+                        ss=refresh_meta.get("sync_succeeded"),
                     )
                 )
             print(fmt_list(rows))
@@ -440,7 +479,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(to_json({"refreshed": bool(refresh_meta and not refresh_meta.get("skipped")), "refresh": refresh_meta, "finding": finding}))
         else:
             if refresh_meta and not refresh_meta.get("skipped"):
-                print("refreshed before show\n")
+                print("refreshed before show")
+                print(
+                    "sync_status: attempted={sa} succeeded={ss}\n".format(
+                        sa=refresh_meta.get("sync_attempted"),
+                        ss=refresh_meta.get("sync_succeeded"),
+                    )
+                )
             print(fmt_finding(finding))
         return 0
 
@@ -466,7 +511,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(to_json({"refreshed": bool(refresh_meta and not refresh_meta.get("skipped")), "refresh": refresh_meta, "mitigation": payload}))
         else:
             if refresh_meta and not refresh_meta.get("skipped"):
-                print("refreshed before mitigate\n")
+                print("refreshed before mitigate")
+                print(
+                    "sync_status: attempted={sa} succeeded={ss}\n".format(
+                        sa=refresh_meta.get("sync_attempted"),
+                        ss=refresh_meta.get("sync_succeeded"),
+                    )
+                )
             print(f"{payload['finding_id']} | {str(payload['severity']).upper()} | {payload['title']}")
             print("RECOMMENDED_ACTIONS:")
             for action in payload["recommended_actions"]:
@@ -486,7 +537,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(to_json({"refreshed": bool(refresh_meta and not refresh_meta.get("skipped")), "refresh": refresh_meta, "check": payload}))
         else:
             if refresh_meta and not refresh_meta.get("skipped"):
-                print("refreshed before check\n")
+                print("refreshed before check")
+                print(
+                    "sync_status: attempted={sa} succeeded={ss}\n".format(
+                        sa=refresh_meta.get("sync_attempted"),
+                        ss=refresh_meta.get("sync_succeeded"),
+                    )
+                )
             print(f"CHECK: {payload['check_type']} (min_severity={args.severity})")
             print(
                 "findings_total={total} matched={matched} high_or_above={high}".format(

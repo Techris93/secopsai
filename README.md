@@ -176,12 +176,21 @@ secopsai check --type malware --severity high --json
 If you want to publish the local SecOpsAI findings store into the dashboard Supabase `findings` table:
 
 ```bash
+secopsai sync-findings --dashboard-env ../secopsai-dashboard/.env
+```
+
+Direct script usage also works:
+
+```bash
 python3 scripts/sync_findings_to_supabase.py --dashboard-env ../secopsai-dashboard/.env
 ```
 
 Notes:
 - the sync prefers the local SQLite SOC store at `data/openclaw/findings/openclaw_soc.db`
 - if the DB is missing or empty, it falls back to the latest `openclaw-findings-*.json` bundle
+- schema mapping is validated against the dashboard findings migration by default
+- use `--dry-run` to validate payload shape without writing
+- upserts are idempotent via `external_finding_id`
 - set `SUPABASE_SERVICE_ROLE_KEY` for write access; `SUPABASE_ANON_KEY` is accepted as fallback if your project permits inserts
 - the script is safe to run when no local findings exist; it exits cleanly with `Nothing to sync`
 
@@ -303,6 +312,9 @@ Behavior notes:
   `export_real_openclaw_native`, `ingest_openclaw`, `openclaw_prepare`,
   `evaluate_openclaw`, and `openclaw_findings` directly in Python, then
   writes findings into the local SOC store (`soc_store`).
+- after local persistence, `secopsai refresh` will attempt dashboard sync when
+  Supabase credentials are available; CLI output now reports whether sync was
+  attempted and whether it succeeded.
 - After a successful `refresh`, a timestamp is written to `data/.last_refresh`.
 - `list`, `show`, `mitigate`, and `check` will, by default, auto-refresh via the
   pipeline **unless** a recent refresh exists; the freshness window is controlled

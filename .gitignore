@@ -1,4 +1,7 @@
 data/
+!data/.gitkeep
+!data/fixtures/
+!data/fixtures/**
 __pycache__/
 *.pyc
 site/

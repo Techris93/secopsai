@@ -21,6 +21,8 @@ class RefreshResult:
     findings_db: str
     total_findings: int
     total_detections: int
+    sync_attempted: bool
+    sync_succeeded: bool
 
 
 def refresh(
@@ -36,7 +38,6 @@ def refresh(
     if openclaw_home:
         os.environ["OPENCLAW_HOME"] = openclaw_home
 
-    # 1) export
     if not skip_export:
         export_real_openclaw_native.main()
         exported = True
@@ -50,7 +51,6 @@ def refresh(
     labeled_out = os.path.join(root_dir, "data", "openclaw", "replay", "labeled", "current.json")
     unlabeled_out = os.path.join(root_dir, "data", "openclaw", "replay", "unlabeled", "current.json")
 
-    # 2) ingest
     surface_paths = ingest_openclaw._resolve_surface_paths(  # type: ignore[attr-defined]
         type(
             "Args",
@@ -77,7 +77,6 @@ def refresh(
     os.makedirs(os.path.dirname(raw_audit), exist_ok=True)
     ingest_openclaw.common.write_jsonl(raw_audit, records, append=False)  # type: ignore[attr-defined]
 
-    # 3) prepare
     audit_schema = openclaw_prepare.load_json(
         os.path.join(root_dir, "schemas", "openclaw_audit.schema.json")
     )
@@ -99,11 +98,9 @@ def refresh(
         unlabeled_out, openclaw_prepare.strip_labels(flat_records), indent=2
     )
 
-    # 4) evaluate
     detection_result = evaluate_openclaw.run_detection(flat_records)
     total_detections = detection_result["total_detections"]
 
-    # 5) findings (writes bundle + persists to sqlite)
     bundle = openclaw_findings.build_bundle(labeled_out, flat_records)
     findings_dir = openclaw_findings.default_output_dir()
     findings_file = openclaw_findings.write_bundle(findings_dir, bundle)
@@ -112,7 +109,8 @@ def refresh(
         bundle["source"],
         openclaw_findings.default_db_path(findings_dir),
     )
-    openclaw_findings.maybe_sync_findings_to_supabase(
+    sync_attempted = openclaw_findings.auto_sync_config_available()
+    sync_succeeded = openclaw_findings.maybe_sync_findings_to_supabase(
         db_path=findings_db,
         findings_dir=findings_dir,
     )
@@ -126,4 +124,6 @@ def refresh(
         findings_db=findings_db,
         total_findings=bundle["total_findings"],
         total_detections=total_detections,
+        sync_attempted=sync_attempted,
+        sync_succeeded=sync_succeeded,
     )
