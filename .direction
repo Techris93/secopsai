@@ -1,0 +1,7 @@
+{
+  "agent_id": "agent-1",
+  "branch": "experiment/agent-1",
+  "direction": "threshold-tuning",
+  "hint": "Experiment with detection thresholds. Lower thresholds catch stealthy attacks but may increase false positives. Find the optimal balance.",
+  "created_at": "2026-03-29T19:37:42.580071"
+}
