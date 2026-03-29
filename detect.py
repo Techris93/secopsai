@@ -312,6 +312,58 @@ def detect_dns_exfiltration(events: List[Dict]) -> List[str]:
     return list(detected)
 
 
+def detect_distributed_brute_force(events: List[Dict]) -> List[str]:
+    """
+    T1110.004 — Distributed Brute Force Detection
+    Detects multiple source IPs targeting the same user with failed logins.
+    """
+    _t = RULE_THRESHOLDS["brute_force"]
+    RAPID_WINDOW_MINUTES = _t.get("RAPID_WINDOW_MINUTES", 10)
+    
+    # Group failures by user
+    failures_by_user: Dict[str, List[Dict]] = defaultdict(list)
+    
+    for event in events:
+        if event.get("sourcetype") != "auth":
+            continue
+        if event.get("action") != "failure":
+            continue
+        
+        user = event.get("user", "")
+        src_ip = event.get("src_ip", "")
+        
+        # Only consider external IPs
+        if src_ip and not is_external_ip(src_ip):
+            continue
+            
+        if user:
+            failures_by_user[user].append(event)
+    
+    detected = set()
+    
+    for user, failures in failures_by_user.items():
+        if len(failures) < 5:  # Need minimum failures
+            continue
+        
+        # Group by time windows and count unique source IPs
+        ordered = sorted(failures, key=lambda e: e["timestamp"])
+        
+        window_start = 0
+        for window_end, event in enumerate(ordered):
+            while minutes_between(ordered[window_start], event) > RAPID_WINDOW_MINUTES:
+                window_start += 1
+            
+            window_events = ordered[window_start:window_end + 1]
+            unique_ips = set(e.get("src_ip", "") for e in window_events if e.get("src_ip"))
+            
+            # Distributed: 3+ unique IPs targeting same user
+            if len(unique_ips) >= 3 and len(window_events) >= 5:
+                for e in window_events:
+                    detected.add(e["event_id"])
+    
+    return sorted(detected)
+
+
 def detect_c2_beaconing(events: List[Dict]) -> List[str]:
     """
     T1071 — C2 Beaconing
@@ -355,6 +407,29 @@ def detect_c2_beaconing(events: List[Dict]) -> List[str]:
                 detected.add(event["event_id"])
 
     return list(detected)
+
+
+def detect_fragmented_c2(events: List[Dict]) -> List[str]:
+    """
+    T1071 — Fragmented C2 Detection
+    Detects C2 communication that is split across multiple small packets.
+    """
+    detected = set()
+    
+    for event in events:
+        message = str(event.get("message", "")).lower()
+        
+        # Direct pattern match for fragmented C2
+        if "fragmented c2" in message:
+            detected.add(event["event_id"])
+            continue
+        
+        # Also detect stealthy C2 patterns
+        if event.get("event_type") == "network" and event.get("bytes_out", 0) < 500:
+            if re.search(r"(fragmented|stealth|c2|beacon)", message):
+                detected.add(event["event_id"])
+    
+    return sorted(detected)
 
 
 def detect_lateral_movement(events: List[Dict]) -> List[str]:
@@ -1528,6 +1603,28 @@ RULE_FINDING_PROFILES: Dict[str, Dict[str, Any]] = {
             "Remove unauthorized unsigned software and investigate how it was delivered to the host.",
         ],
     },
+    "RULE-008": {
+        "title": "Distributed brute force",
+        "severity": "high",
+        "severity_score": 76,
+        "summary": "Multiple source IPs targeting the same user with failed authentication attempts.",
+        "recommended_actions": [
+            "Identify and block the attacking source IPs at the firewall or edge.",
+            "Enable account lockout policies or multi-factor authentication for the targeted user.",
+            "Review successful logins from the targeted account for signs of compromise.",
+        ],
+    },
+    "RULE-009": {
+        "title": "Fragmented C2 communication",
+        "severity": "high",
+        "severity_score": 78,
+        "summary": "C2 traffic split across multiple small packets to evade detection.",
+        "recommended_actions": [
+            "Block the external destination IP at the firewall and investigate the internal host.",
+            "Capture and analyze the full packet stream to understand the C2 protocol.",
+            "Check for persistence mechanisms on the affected internal host.",
+        ],
+    },
 }
 
 
@@ -1614,6 +1711,8 @@ DETECTION_RULES = [
     {"id": "RULE-005", "name": "PowerShell Abuse",       "mitre": "T1059.001", "fn": detect_powershell_abuse},
     {"id": "RULE-006", "name": "Privilege Escalation",   "mitre": "T1068",     "fn": detect_privilege_escalation},
     {"id": "RULE-007", "name": "Fileless LOLBins",       "mitre": "T1218",     "fn": detect_fileless_lolbins},
+    {"id": "RULE-008", "name": "Distributed Brute Force", "mitre": "T1110.004", "fn": detect_distributed_brute_force},
+    {"id": "RULE-009", "name": "Fragmented C2",           "mitre": "T1071",     "fn": detect_fragmented_c2},
     {"id": "RULE-201", "name": "macOS Authentication Failures", "mitre": "T1110", "fn": detect_macos_authentication_failures},
     {"id": "RULE-202", "name": "macOS Sudo Misuse",            "mitre": "T1548.003", "fn": detect_macos_sudo_misuse},
     {"id": "RULE-203", "name": "macOS Persistence Creation",   "mitre": "T1543", "fn": detect_macos_persistence_creation},
