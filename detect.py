@@ -1840,6 +1840,193 @@ def detect_path_traversal(events: List[Dict]) -> List[str]:
     return detected
 
 
+def detect_ldap_injection(events: List[Dict]) -> List[str]:
+    """
+    RULE-305: Detects LDAP Injection patterns.
+    MITRE: T1213 (Data from Information Repositories)
+    """
+    ldap_patterns = [
+        r"\*\).*\(uid=\*",              # *)(uid=*
+        r"\*\)\(objectClass=\*",       # *)(objectClass=*
+        r"\)\(\|\(password=\*",        # )(|(password=*
+        r"\*\)\).*\(\&\(uid=\*",        # *)(&uid=*
+        r"\*\)\)\(\|\(uid=\*",         # *))(|(uid=*
+        r"\(\|\(\w+=\*",               # (|(attr=*
+        r"\(\&\(\w+=\*",                # (&(attr=*
+        r"\)\(\&\(\)",                  # )(&( )
+        r"\$ne",
+        r"\$gt",
+        r"\$regex",
+    ]
+    detected = []
+    for event in events:
+        if event.get("event_type") != "http":
+            continue
+        url = event.get("url") or ""
+        body = event.get("body") or ""
+        content = url + " " + body
+        for pattern in ldap_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                detected.append(event["event_id"])
+                break
+    return detected
+
+
+def detect_command_injection(events: List[Dict]) -> List[str]:
+    """
+    RULE-306: Detects Command Injection patterns.
+    MITRE: T1059 (Command and Scripting Interpreter)
+    """
+    cmd_patterns = [
+        r";\s*(cat|whoami|id|ls|pwd|curl|wget|nc)\s",
+        r"\|\s*(whoami|id|ls|cat|bash|sh|nc)\s",
+        r"`[^`]*(cat|whoami|id|ls|curl)`",
+        r"\$\([^)]*(cat|whoami|id|ls|curl)[^)]*\)",
+        r"\&\&\s*(echo|id|whoami|ls)",
+        r"\|\s*bash\s+-c",
+        r"\|\s*sh\s+-c",
+        r";\s*python\d*\s+-c",
+        r";\s*perl\s+-e",
+    ]
+    detected = []
+    for event in events:
+        if event.get("event_type") != "http":
+            continue
+        url = event.get("url") or ""
+        body = event.get("body") or ""
+        command = event.get("command") or ""
+        content = url + " " + body + " " + command
+        for pattern in cmd_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                detected.append(event["event_id"])
+                break
+    return detected
+
+
+def detect_xxe(events: List[Dict]) -> List[str]:
+    """
+    RULE-307: Detects XML External Entity (XXE) patterns.
+    MITRE: T1059 (Command and Scripting Interpreter)
+    """
+    xxe_patterns = [
+        r"<!ENTITY\s+\w+\s+SYSTEM\s+[\"']file://",
+        r"<!ENTITY\s+\w+\s+SYSTEM\s+[\"']http://",
+        r"<!ENTITY\s+\w+\s+PUBLIC\s+",
+        r"<xi:include",
+        r"file:///etc/passwd",
+        r"file:///etc/shadow",
+        r"file:///c:/windows/win.ini",
+        r"php://filter",
+        r"expect://",
+        r"\&\w+;",                      # Entity reference
+    ]
+    detected = []
+    for event in events:
+        if event.get("event_type") != "http":
+            continue
+        body = event.get("body") or ""
+        for pattern in xxe_patterns:
+            if re.search(pattern, body, re.IGNORECASE):
+                detected.append(event["event_id"])
+                break
+    return detected
+
+
+def detect_ssrf(events: List[Dict]) -> List[str]:
+    """
+    RULE-308: Detects Server-Side Request Forgery (SSRF) patterns.
+    MITRE: T1189 (Drive-by Compromise)
+    """
+    ssrf_patterns = [
+        r"https?://169\.254\.169\.254",    # AWS metadata
+        r"https?://metadata\.google\.internal",
+        r"https?://10\.\d+\.\d+\.\d+",     # 10.x.x.x
+        r"https?://192\.168\.\d+\.\d+",    # 192.168.x.x
+        r"https?://127\.\d+\.\d+\.\d+",    # 127.x.x.x
+        r"https?://0\.0\.0\.0",
+        r"https?://\[::ffff:",              # IPv6 bypass
+        r"file:///etc/passwd",
+        r"file:///etc/shadow",
+        r"dict://",
+        r"gopher://",
+        r"ftp://.*@10\.\d+",
+        r"ftp://.*@192\.168\.\d+",
+    ]
+    detected = []
+    for event in events:
+        if event.get("event_type") != "http":
+            continue
+        url = event.get("url") or ""
+        body = event.get("body") or ""
+        ssrf_target = event.get("ssrf_target") or ""
+        content = url + " " + body + " " + ssrf_target
+        for pattern in ssrf_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                detected.append(event["event_id"])
+                break
+    return detected
+
+
+def detect_nosql_injection(events: List[Dict]) -> List[str]:
+    """
+    RULE-309: Detects NoSQL Injection patterns.
+    MITRE: T1190 (Exploit Public-Facing Application)
+    """
+    nosql_patterns = [
+        r'"\$ne":\s*null',
+        r'"\$gt":\s*""',
+        r'"\$regex":',
+        r'"\$where":',
+        r'"\$or":\s*\[',
+        r'"\$and":\s*\[',
+        r'"\$in":\s*\[',
+        r'"\$exists":\s*true',
+        r'"\$exists":\s*false',
+        r"sleep\s*\(",
+    ]
+    detected = []
+    for event in events:
+        if event.get("event_type") != "http":
+            continue
+        body = event.get("body") or ""
+        for pattern in nosql_patterns:
+            if re.search(pattern, body, re.IGNORECASE):
+                detected.append(event["event_id"])
+                break
+    return detected
+
+
+def detect_log4j(events: List[Dict]) -> List[str]:
+    """
+    RULE-310: Detects Log4j / JNDI Injection (CVE-2021-44228).
+    MITRE: T1190 (Exploit Public-Facing Application)
+    """
+    log4j_patterns = [
+        r"\$\{jndi:ldap://",
+        r"\$\{jndi:rmi://",
+        r"\$\{jndi:dns://",
+        r"\$\{jndi:ldaps://",
+        r"\$\{.*j.*n.*d.*i.*:.*ldap",
+        r"\$\{.*j.*n.*d.*i.*:.*rmi",
+        r"\$\{env:.*:-j\}ndi",
+        r"\$\{lower:j\}ndi",
+        r"\$\{::-j\}ndi",
+        r"\$\{\$\{::-j\}\$\{::-n\}",
+    ]
+    detected = []
+    for event in events:
+        if event.get("event_type") != "http":
+            continue
+        url = event.get("url") or ""
+        body = event.get("body") or ""
+        user_agent = event.get("user_agent") or ""
+        headers = str(event.get("headers") or "")
+        content = url + " " + body + " " + user_agent + " " + headers
+        for pattern in log4j_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                detected.append(event["event_id"])
+                break
+    return detected
 # ═══ Main Detection Pipeline ═════════════════════════════════════════════════
 
 # Registry of all active detection rules
@@ -1880,6 +2067,12 @@ DETECTION_RULES = [
     {"id": "RULE-302", "name": "Remote Code Execution",        "mitre": "T1059", "fn": detect_rce},
     {"id": "RULE-303", "name": "Cross-Site Scripting",         "mitre": "T1189", "fn": detect_xss},
     {"id": "RULE-304", "name": "Path Traversal",               "mitre": "T1083", "fn": detect_path_traversal},
+    {"id": "RULE-305", "name": "LDAP Injection",               "mitre": "T1213", "fn": detect_ldap_injection},
+    {"id": "RULE-306", "name": "Command Injection",            "mitre": "T1059", "fn": detect_command_injection},
+    {"id": "RULE-307", "name": "XXE Injection",                "mitre": "T1059", "fn": detect_xxe},
+    {"id": "RULE-308", "name": "SSRF Attack",                  "mitre": "T1189", "fn": detect_ssrf},
+    {"id": "RULE-309", "name": "NoSQL Injection",              "mitre": "T1190", "fn": detect_nosql_injection},
+    {"id": "RULE-310", "name": "Log4j JNDI Injection",         "mitre": "T1190", "fn": detect_log4j},
 ]
 
 
@@ -1917,3 +2110,4 @@ def run_detection(events: List[Dict]) -> Dict[str, Any]:
         "findings": findings,
     }
 
+# ═══ Additional Web Attack Detection Rules ════════════════════════════════════
