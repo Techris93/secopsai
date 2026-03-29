@@ -1,13 +1,28 @@
 # SecOpsAI
 
-Local-first security operations for OpenClaw, macOS, Linux, and Windows.
+Local-first security operations for OpenClaw, macOS, Linux, and Windows with **adaptive threat intelligence** and **continuous learning**.
 
-SecOpsAI is a local-first security operations toolkit that collects telemetry, generates findings, correlates activity across platforms, and supports operator review and response workflows.
+SecOpsAI is a local-first security operations toolkit that collects telemetry, generates findings, correlates activity across platforms, and supports operator review and response workflows. It now **actively learns** from threat intelligence sources and **auto-generates detection rules** to catch emerging attacks.
+
+## What's New
+
+🧠 **Adaptive Intelligence System** — Actively learns from CVEs, security news, and exploit repositories to generate new detection rules daily
+
+🔄 **Continuous Learning** — Auto-validates new rules against F1 score; only deploys improving rules
+
+🛡️ **Enhanced macOS Detection** — 15+ event sources including TCC, Gatekeeper, XProtect, launchd
+
+📊 **Cross-Platform Correlation** — Links findings across OpenClaw, macOS, Linux, Windows
+
+🧷 **Paperclip Integration** — Hierarchical org map for agent orchestration
+
+---
 
 ## What it does
 
 - Collects telemetry from OpenClaw, macOS, Linux, and Windows
 - Normalizes events into a shared model for multi-platform analysis
+- **Auto-generates detection rules** from daily threat intelligence
 - Groups and deduplicates detections into incident findings
 - Stores findings in local SQLite
 - Can auto-sync persisted findings to a Supabase dashboard when credentials are configured
@@ -17,19 +32,115 @@ SecOpsAI is a local-first security operations toolkit that collects telemetry, g
 
 ## Why use it
 
-- Local-first: no external APIs required
-- One command surface for OpenClaw and host-platform workflows
-- Practical operator flow: collect -> detect -> list -> investigate -> mitigate
-- Cross-platform correlation and IOC matching built in
-- Automation-ready and easy to extend
+- **Local-first**: no external APIs required
+- **Self-improving**: learns from new threats automatically
+- **Validated**: only keeps rules that improve detection accuracy
+- **One command surface** for OpenClaw and host-platform workflows
+- **Practical operator flow**: collect -> detect -> list -> investigate -> mitigate
+- **Cross-platform correlation** and IOC matching built in
+- **Automation-ready** and easy to extend
+
+---
+
+## 🧠 Adaptive Intelligence System
+
+SecOpsAI now **actively learns** from security sources and adapts its detection rules:
+
+### How It Works
+
+```
+Daily at 11:00 PM UTC
+         |
+         v
+┌─────────────────────┐
+│  Fetch Threat Intel │  ← CVEs, RSS feeds, GitHub PoCs
+│  from 10+ sources   │
+└──────────┬──────────┘
+           |
+           v
+┌─────────────────────┐
+│  Parse & Extract    │  ← IOCs, TTPs, MITRE techniques
+│  Attack Patterns    │
+└──────────┬──────────┘
+           |
+           v
+┌─────────────────────┐
+│  Generate Detection │  ← SQLi, RCE, Auth Bypass, etc.
+│  Rules via LLM      │
+└──────────┬──────────┘
+           |
+           v
+┌─────────────────────┐
+│  Test Against       │  ← Synthetic attack dataset
+│  Evaluation Dataset │
+└──────────┬──────────┘
+           |
+           v
+┌─────────────────────┐
+│  F1 Improved?       │  ← Only deploy if accuracy ↑
+└──────────┬──────────┘
+           |
+     ┌─────┴─────┐
+    YES          NO
+     |           |
+     v           v
+┌────────┐  ┌────────┐
+│DEPLOY  │  │DISCARD │
+│Rules   │  │Rules   │
+└────────┘  └────────┘
+```
+
+### Threat Intelligence Sources
+
+| Source | Type | Frequency |
+|--------|------|-----------|
+| NVD (CVE Database) | Vulnerabilities | Daily |
+| Bleeping Computer | News | Daily |
+| Krebs on Security | Analysis | Daily |
+| The Hacker News | News | Daily |
+| Microsoft Security | Alerts | Daily |
+| Google TAG | Reports | Daily |
+| GitHub (PoCs) | Exploits | Daily |
+| Ars Technica | News | Daily |
+| Wired Security | News | Daily |
+| Bruce Schneier | Analysis | Daily |
+
+### Auto-Generated Detection Rules
+
+The system generates rules for:
+
+- **SQL Injection** (SQLi) — `T1190`
+- **Remote Code Execution** (RCE) — `T1059, T1203`
+- **Authentication Bypass** — `T1552, T1078`
+- **Path Traversal** — `T1083`
+- **Command Injection** — `T1059`
+- **Cross-Site Scripting** (XSS) — `T1189`
+- **Privilege Escalation** — `T1068, T1548`
+- **IOC-based** (IPs, domains, hashes)
+
+### Running Adaptive Intelligence
+
+```bash
+# Manual run
+python3 adaptive_intelligence_pipeline.py
+
+# Or use launchd service
+launchctl load ~/Library/LaunchAgents/com.openclaw.secopsai.adaptive-intel.plist
+
+# Check status
+launchctl list | grep adaptive-intel
+```
+
+See [ADAPTIVE_INTELLIGENCE.md](ADAPTIVE_INTELLIGENCE.md) for full documentation.
+
+---
 
 ## Quick Start
 
 For a short first-run guide, see [docs/quickstart-beginner.md](docs/quickstart-beginner.md).
 For a platform-by-platform operations guide, see [docs/operator-runbook.md](docs/operator-runbook.md).
 
-
-1. Install:
+### 1. Install
 
 ```bash
 curl -fsSL https://secopsai.dev/install.sh | bash
@@ -73,13 +184,13 @@ python prepare.py  # Generate data/events.json and data/events_unlabeled.json
 python -m pytest tests/ -v  # Optional: verify installation
 ```
 
-2. Activate environment:
+### 2. Activate environment
 
 ```bash
 source .venv/bin/activate
 ```
 
-3. Run your first workflow:
+### 3. Run your first workflow
 
 ```bash
 # Default pipeline
@@ -93,7 +204,67 @@ secopsai live --platform macos --duration 60
 
 # Correlation
 secopsai correlate
+
+# Run adaptive intelligence (generate rules from threat intel)
+python3 adaptive_intelligence_pipeline.py
 ```
+
+---
+
+## 🛡️ Enhanced macOS Detection
+
+SecOpsAI includes enhanced macOS telemetry with 15+ event sources:
+
+| Source | Detection Focus |
+|--------|-----------------|
+| TCC (Transparency, Consent, Control) | Unauthorized access to camera, microphone, contacts |
+| Gatekeeper | Unsigned/quarantined app execution |
+| XProtect | Known malware detection |
+| launchd | Persistent daemons, suspicious agents |
+| System Extensions | Kernel extensions, driver loads |
+| Network | C2 beacons, data exfiltration |
+| Keychain | Credential access attempts |
+
+### macOS Detection Rules
+
+- **RULE-207**: TCC Privacy Violations
+- **RULE-208**: Gatekeeper Bypass Attempts
+- **RULE-209**: Process Anomalies
+- **RULE-210**: Credential Access
+- **RULE-211**: Network Anomalies
+- **RULE-212**: Repeated Sudo Failures
+- **RULE-213**: Unsigned Code Execution
+
+See `adapters/macos/adapter.py` for implementation.
+
+---
+
+## 🔗 Cross-Platform Correlation
+
+SecOpsAI correlates findings across platforms to detect multi-stage attacks:
+
+### Correlation Patterns
+
+| Pattern | Description | MITRE |
+|---------|-------------|-------|
+| `auth_compromise_then_abuse` | Auth failure → successful login from new IP | T1078, T1110 |
+| `potential_exfiltration` | Large outbound transfer after sensitive access | T1041, T1048 |
+| `persistence_then_config_change` | Persistence → config modification | T1543, T1098 |
+| `defense_evasion` | Multiple evasion techniques in sequence | T1562, T1070 |
+| `suspicious_execution_then_burst` | Unusual execution → rapid activity | T1204, T1496 |
+| `credential_harvest_and_use` | Credential access → lateral movement | T1003, T1021 |
+
+### Using Correlation
+
+```bash
+# Run correlation engine
+python3 correlation.py
+
+# Or via CLI
+secopsai correlate
+```
+
+---
 
 ## OpenClaw Native Plugin
 
@@ -104,8 +275,6 @@ openclaw plugins install secopsai
 ```
 
 ### Available Plugin Tools
-
-Once installed, these tools are available directly in OpenClaw:
 
 | Tool | Description |
 |------|-------------|
@@ -143,6 +312,8 @@ Add to your `openclaw.json`:
 
 See [docs/OpenClaw-Plugin.md](docs/OpenClaw-Plugin.md) for detailed usage.
 
+---
+
 ## CLI: `secopsai`
 
 This project exposes a first-class CLI, `secopsai`, for OpenClaw and host-platform workflows. It provides collection, findings review, correlation, threat-intel commands, and both pretty and JSON output. The CLI is installed into the project's virtualenv by `install.sh`.
@@ -171,6 +342,29 @@ secopsai --json show OCF-XXXX
 secopsai check --type malware --severity high --json
 ```
 
+---
+
+## 🧷 Dashboard Integration (Paperclip)
+
+SecOpsAI Dashboard now includes Paperclip-style hierarchical organization:
+
+- **Executive** (Agents Orchestrator) at top
+- **Departments**: Platform, Security, Product, Revenue, Support
+- **Visual connectors** between hierarchy levels
+- **Role status indicators** (online/busy/offline)
+- **Click for details** — stats and recent runs
+- **Quick task creation** from any role
+
+### Setup
+
+```bash
+cd secopsai-dashboard
+./setup-paperclip.sh
+python3 dashboard_server.py
+```
+
+---
+
 ## Sync findings to the dashboard
 
 If you want to publish the local SecOpsAI findings store into the dashboard Supabase `findings` table:
@@ -194,6 +388,8 @@ Notes:
 - set `SUPABASE_SERVICE_ROLE_KEY` for write access; `SUPABASE_ANON_KEY` is accepted as fallback if your project permits inserts
 - the script is safe to run when no local findings exist; it exits cleanly with `Nothing to sync`
 
+---
+
 ## Security
 
 This repo includes security guardrails and continuous scanning:
@@ -201,88 +397,65 @@ This repo includes security guardrails and continuous scanning:
 - Threat model: `docs/threat-model.md`
 - CI security scans (on PRs): Semgrep (SAST), Trivy (dependency scan), and Gitleaks (secrets)
 
-## Cross-platform CLI
-
-The packaged `secopsai` CLI is the single operator surface for both the default pipeline and the cross-platform adapter workflow:
-
-```bash
-# OpenClaw pipeline
-secopsai refresh
-secopsai list --severity high
-secopsai show OCF-XXXX
-secopsai mitigate OCF-XXXX
-secopsai intel refresh
-
-# Cross-platform adapter workflow
-secopsai refresh --platform macos
-secopsai refresh --platform macos,openclaw
-secopsai live --platform macos
-secopsai correlate
-```
-
-For repo-local development you can still run the wrapper directly:
-
-```bash
-python3 cli.py refresh --platform macos,openclaw
-python3 cli.py correlate
-```
-
-## Operator Surfaces
-
-### 1. OpenClaw Native Plugin
-
-Install SecOpsAI directly as an OpenClaw plugin for seamless integration:
-
-```bash
-openclaw plugins install secopsai
-```
-
-Available plugin tools:
-
-| Tool | Description |
-|------|-------------|
-| `secopsai_list_findings` | List findings with optional severity filter |
-| `secopsai_refresh` | Run the detection pipeline to refresh findings |
-| `secopsai_show_finding` | Get detailed information about a specific finding |
-| `secopsai_triage` | Set disposition, status, and add analyst notes |
-| `secopsai_check_threats` | Check for malware or exfiltration indicators |
-| `secopsai_mitigate` | Get recommended mitigation steps for a finding |
-| `secopsai_search` | Search findings by keyword or pattern |
-| `secopsai_stats` | Get statistics about the SOC database |
-
-See [docs/OpenClaw-Plugin.md](docs/OpenClaw-Plugin.md) for detailed usage.
-
-### 2. WhatsApp Workflows
-
-When correlations are detected, SecOpsAI can send WhatsApp alerts and support chat-driven triage workflows.
-
-Examples:
-- `check malware`
-- `check exfil`
-- `list high`
-- `show OCF-...`
-- `mitigate OCF-...`
+---
 
 ## Architecture
 
 ```text
-OpenClaw + Host Adapters -> Unified Schema -> Detection Engine -> Correlation Engine -> SQLite SOC Store
-                                                           -> CLI / Plugin / WhatsApp
+                         ┌─────────────────────┐
+                         │  Threat Intelligence │
+                         │  (CVE, RSS, GitHub) │
+                         └──────────┬──────────┘
+                                    │
+┌──────────────────┐                │        ┌──────────────────┐
+│  OpenClaw        │                │        │  macOS Adapter   │
+│  Telemetry       │                │        │  (15+ sources)   │
+└────────┬─────────┘                │        └────────┬─────────┘
+         │                          │                 │
+         └────────────────────┬─────┴─────────────────┘
+                              │
+                    ┌─────────▼──────────┐
+                    │  Normalization     │
+                    │  (Unified Schema)  │
+                    └─────────┬──────────┘
+                              │
+         ┌────────────────────┼────────────────────┐
+         │                    │                    │
+┌────────▼────────┐  ┌────────▼────────┐  ┌────────▼────────┐
+│ Detection Rules │  │ Correlation     │  │ Adaptive        │
+│ (Static + Auto) │  │ Engine          │  │ Intelligence    │
+└────────┬────────┘  └────────┬────────┘  └────────┬────────┘
+         │                    │                    │
+         └────────────────────┼────────────────────┘
+                              │
+                    ┌─────────▼──────────┐
+                    │  SQLite SOC Store  │
+                    └─────────┬──────────┘
+                              │
+         ┌────────────────────┼────────────────────┐
+         │                    │                    │
+┌────────▼────────┐  ┌────────▼────────┐  ┌────────▼────────┐
+│ CLI / Plugin    │  │ Dashboard       │  │ WhatsApp        │
+└─────────────────┘  │ (Supabase)      │  │ Bridge          │
+                     └─────────────────┘  └─────────────────┘
 ```
 
 Core layers:
 
 - **Data adapters**: OpenClaw, macOS, Linux, Windows
 - **Normalization**: unified event schema for shared logic
-- **Detection**: rules and findings generation
+- **Detection**: rules (static + auto-generated) and findings generation
 - **Correlation**: IP/user/time/hash correlation across platforms
-- **Operator surfaces**: CLI, plugin, WhatsApp
+- **Adaptive Intelligence**: continuous learning from threat feeds
+- **Operator surfaces**: CLI, plugin, WhatsApp, Dashboard
 
-## Threat Intelligence (IOC) pipeline
+---
+
+## Threat Intelligence (IOC) Pipeline
 
 Security note: the intel pipeline downloads public IOC feeds and stores them locally under `data/intel/`. It does not call paid enrichment APIs by default.
 
-secopsai also includes a local-first threat intel pipeline:
+secopsai includes a local-first threat intel pipeline:
 
 - Downloads open-source IOC feeds (URLhaus + ThreatFox)
 - Normalizes + de-duplicates indicators
@@ -306,61 +479,30 @@ secopsai intel list --limit 20
 secopsai intel match --limit-iocs 500 --json
 ```
 
-Behavior notes:
+---
 
-- `secopsai refresh` runs the full OpenClaw live pipeline by calling
-  `export_real_openclaw_native`, `ingest_openclaw`, `openclaw_prepare`,
-  `evaluate_openclaw`, and `openclaw_findings` directly in Python, then
-  writes findings into the local SOC store (`soc_store`).
-- after local persistence, `secopsai refresh` will attempt dashboard sync when
-  Supabase credentials are available; CLI output now reports whether sync was
-  attempted and whether it succeeded.
-- After a successful `refresh`, a timestamp is written to `data/.last_refresh`.
-- `list`, `show`, `mitigate`, and `check` will, by default, auto-refresh via the
-  pipeline **unless** a recent refresh exists; the freshness window is controlled
-  by `--cache-ttl` (default 60 seconds). Use `--no-refresh` on those commands to
-  skip the pipeline entirely and operate on whatever is already in `soc_store`.
-- The CLI is designed to be idempotent and automation-friendly: pretty output for
-  humans, `--json` for integrations.
-- `--json` is accepted either before or after subcommands, so both
-  `secopsai --json list` and `secopsai list --json` work.
-- The installer/editable package includes the runtime helper modules used by the
-  CLI entrypoint, so `secopsai` works correctly from the installed virtualenv.
-
-4. Review findings:
-
-```bash
-python soc_store.py list
-python soc_store.py show OCF-<ID>
-```
-
-5. Triage finding:
-
-```bash
-python soc_store.py set-disposition OCF-<ID> true_positive
-python soc_store.py set-status OCF-<ID> triaged
-python soc_store.py add-note OCF-<ID> analyst "validated"
-```
-
-6. Get mitigation guidance:
-
-```bash
-python openclaw_plugin.py mitigate OCF-<ID>
-```
-
-## Daily operation
+## Daily Operation
 
 ```bash
 cd "$HOME/secopsai" && source .venv/bin/activate && python run_openclaw_live.py --skip-export && python soc_store.py list
 ```
 
-macOS launchd helper:
+macOS launchd helpers:
 
 ```bash
+# Install OpenClaw daily collection
 bash scripts/install_openclaw_launchd.sh
+
+# Install adaptive intelligence
+launchctl load ~/Library/LaunchAgents/com.openclaw.secopsai.adaptive-intel.plist
+
+# Install autoresearch (threshold optimization)
+launchctl load ~/Library/LaunchAgents/com.openclaw.secopsai.autoresearch.plist
 ```
 
-## Conversational commands
+---
+
+## Conversational Commands
 
 - check malware
 - check exfil
@@ -375,7 +517,9 @@ Twilio bridge:
 python twilio_whatsapp_webhook.py --host 127.0.0.1 --port 8091
 ```
 
-## Minimal files required to run
+---
+
+## Minimal Files Required to Run
 
 - setup.sh
 - run_openclaw_live.py
@@ -388,23 +532,40 @@ python twilio_whatsapp_webhook.py --host 127.0.0.1 --port 8091
 - scripts/openclaw_daily.sh
 - scripts/install_openclaw_launchd.sh
 
+**New (Adaptive Intelligence):**
+- threat_intel_ingestor.py
+- adaptive_rule_generator.py
+- adaptive_rule_validator.py
+- adaptive_intelligence_pipeline.py
+
+**New (Cross-Platform):**
+- correlation.py
+- adapters/macos/adapter.py
+
 Optional chat files:
 
 - whatsapp_openclaw_router.py
 - twilio_whatsapp_webhook.py
 - scripts/run_twilio_whatsapp_bridge.sh
 
+---
+
 ## Docs
 
+- [ADAPTIVE_INTELLIGENCE.md](ADAPTIVE_INTELLIGENCE.md) — Continuous learning system
 - docs/BEGINNER-LIVE-GUIDE.md
 - docs/OpenClaw-Integration.md
 - docs/deployment-guide.md
 - docs/rules-registry.md
 - docs/api-reference.md
 
+---
+
 ## Contributing
 
 See CONTRIBUTING.md.
+
+---
 
 ## License
 
