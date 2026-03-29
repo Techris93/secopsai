@@ -191,15 +191,15 @@ class AdaptiveRuleGenerator:
     Generated: {datetime.utcnow().isoformat()}
     """
     sqli_patterns = [
-        r"(\%27)|(\')|(\-\-)|(\%23)|(#)",
-        r"((\%3D)|(=))[^\\n]*((\%27)|(\')|(\-\-)|(\%3B)|(;))",
-        r"\w*((\%27)|(\'))((\%6F)|o|(\%4F))((\%72)|r|(\%52))",
-        r"((\%27)|(\'))union",
-        r"exec(\s|\\+)+(s|x)p\\w+",
-        r"UNION\\s+SELECT",
-        r"INSERT\\s+INTO",
-        r"DELETE\\s+FROM",
-        r"DROP\\s+TABLE",
+        r"(%27)|(')|(--)|(%23)|(#)",
+        r"((%3D)|(=))[^\\n]*((%27)|(')|(--)|(%3B)|(;))",
+        r"\w*((%27)|('))((%6F)|o|(%4F))((%72)|r|(%52))",
+        r"((%27)|('))union",
+        r"exec(\s|\+)+(s|x)p\w+",
+        r"UNION\s+SELECT",
+        r"INSERT\s+INTO",
+        r"DELETE\s+FROM",
+        r"DROP\s+TABLE",
     ]
     
     import re
@@ -211,7 +211,7 @@ class AdaptiveRuleGenerator:
         request = event.get("request") or event.get("http_request") or ""
         body = event.get("body") or event.get("data") or ""
         
-        content = f"{{url}} {{request}} {{body}}"
+        content = url + " " + request + " " + body
         
         for pattern in sqli_patterns:
             if re.search(pattern, content, re.IGNORECASE):
@@ -270,7 +270,7 @@ class AdaptiveRuleGenerator:
         body = event.get("body") or event.get("data") or ""
         command = event.get("command") or event.get("cmd") or ""
         
-        content = f"{{url}} {{request}} {{body}} {{command}}"
+        content = url + " " + request + " " + body + " " + command
         
         for pattern in rce_patterns:
             if re.search(pattern, content, re.IGNORECASE):
@@ -320,11 +320,11 @@ class AdaptiveRuleGenerator:
     detected = []
     
     for event in events:
-        headers = event.get("headers") or event.get("request_headers") or {}
+        headers = event.get("headers") or event.get("request_headers") or {{}}
         url = event.get("url") or ""
         body = event.get("body") or ""
         
-        content = f"{{url}} {{body}} {{json.dumps(headers)}}"
+        content = url + " " + body + " " + str(headers)
         
         for pattern in bypass_patterns:
             if re.search(pattern, content, re.IGNORECASE):
@@ -382,7 +382,7 @@ class AdaptiveRuleGenerator:
         request = event.get("request") or ""
         filepath = event.get("filepath") or event.get("path") or ""
         
-        content = f"{{url}} {{request}} {{filepath}}"
+        content = url + " " + request + " " + filepath
         
         for pattern in traversal_patterns:
             if re.search(pattern, content, re.IGNORECASE):
@@ -442,7 +442,7 @@ class AdaptiveRuleGenerator:
         body = event.get("body") or ""
         request = event.get("request") or ""
         
-        content = f"{{url}} {{body}} {{request}}"
+        content = url + " " + body + " " + request
         
         for pattern in xss_patterns:
             if re.search(pattern, content, re.IGNORECASE):
@@ -498,7 +498,7 @@ class AdaptiveRuleGenerator:
         command = event.get("command") or event.get("cmd") or ""
         process = event.get("process") or event.get("process_name") or ""
         
-        content = f"{{command}} {{process}}"
+        content = command + " " + process
         
         for pattern in privesc_indicators:
             if re.search(pattern, content, re.IGNORECASE):

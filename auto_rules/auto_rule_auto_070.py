@@ -1,0 +1,46 @@
+"""
+SQL Injection: CVE_2026_2576_PoC
+================================
+
+Description: Detects SQL injection patterns from github.com/SowatKheang/CVE_2026_2576_PoC
+Severity: high
+MITRE: T1190, T1190
+Source: 2434ede2199b01c0
+Generated: 2026-03-29T19:53:18.136059
+"""
+
+def detect_auto_070(events):
+    """
+    Threat Intel: github.com/SowatKheang/CVE_2026_2576_PoC
+    Description: SQL Injection detection
+    Generated: 2026-03-29T19:53:18.131598
+    """
+    sqli_patterns = [
+        r"(%27)|(')|(--)|(%23)|(#)",
+        r"((%3D)|(=))[^\n]*((%27)|(')|(--)|(%3B)|(;))",
+        r"\w*((%27)|('))((%6F)|o|(%4F))((%72)|r|(%52))",
+        r"((%27)|('))union",
+        r"exec(\s|\+)+(s|x)p\w+",
+        r"UNION\s+SELECT",
+        r"INSERT\s+INTO",
+        r"DELETE\s+FROM",
+        r"DROP\s+TABLE",
+    ]
+    
+    import re
+    detected = []
+    
+    for event in events:
+        # Check URL and request body
+        url = event.get("url") or ""
+        request = event.get("request") or event.get("http_request") or ""
+        body = event.get("body") or event.get("data") or ""
+        
+        content = url + " " + request + " " + body
+        
+        for pattern in sqli_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                detected.append(event["event_id"])
+                break
+    
+    return detected

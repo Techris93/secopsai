@@ -1,0 +1,730 @@
+{
+  "generated_at": "2026-03-29T19:53:18.136198",
+  "count": 72,
+  "rules": [
+    {
+      "rule_id": "AUTO-001",
+      "name": "SQL Injection: CVE-2026-2580",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "a1bd12b1a43e3e93"
+    },
+    {
+      "rule_id": "AUTO-002",
+      "name": "PrivEsc: CVE-2026-4606",
+      "severity": "high",
+      "mitre": [
+        "T1068",
+        "T1548",
+        "T1068"
+      ],
+      "source": "555cfb7ce3cdea77"
+    },
+    {
+      "rule_id": "AUTO-003",
+      "name": "SQL Injection: CVE-2026-4568",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "d316ec68f3e35816"
+    },
+    {
+      "rule_id": "AUTO-004",
+      "name": "SQL Injection: CVE-2026-4569",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "889569e3c160cc2b"
+    },
+    {
+      "rule_id": "AUTO-005",
+      "name": "RCE Detection: CVE-2025-10736",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "dd6f5539f09b830f"
+    },
+    {
+      "rule_id": "AUTO-006",
+      "name": "SQL Injection: CVE-2026-4570",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "04ee5ae428b53902"
+    },
+    {
+      "rule_id": "AUTO-007",
+      "name": "SQL Injection: CVE-2026-4571",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "a37995e0a2a51b02"
+    },
+    {
+      "rule_id": "AUTO-008",
+      "name": "SQL Injection: CVE-2026-4572",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "44541240a8f62080"
+    },
+    {
+      "rule_id": "AUTO-009",
+      "name": "RCE Detection: CVE-2025-10679",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "1f2a507b768653df"
+    },
+    {
+      "rule_id": "AUTO-010",
+      "name": "RCE Detection: CVE-2025-10731",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "497c5dc865a58244"
+    },
+    {
+      "rule_id": "AUTO-011",
+      "name": "RCE Detection: CVE-2025-10734",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "51197df64c3a9dd1"
+    },
+    {
+      "rule_id": "AUTO-012",
+      "name": "SQL Injection: CVE-2026-4573",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "1bdd877d55b7ff4d"
+    },
+    {
+      "rule_id": "AUTO-013",
+      "name": "SQL Injection: CVE-2026-4574",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "ea2dcf319b8817c0"
+    },
+    {
+      "rule_id": "AUTO-014",
+      "name": "RCE Detection: CVE-2026-4602",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "7ec1ca229a1afbf2"
+    },
+    {
+      "rule_id": "AUTO-015",
+      "name": "RCE Detection: CVE-2026-4603",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "128df6f993aa2e13"
+    },
+    {
+      "rule_id": "AUTO-016",
+      "name": "RCE Detection: CVE-2025-13997",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "27071c16c70648b4"
+    },
+    {
+      "rule_id": "AUTO-017",
+      "name": "XSS: CVE-2025-6229",
+      "severity": "medium",
+      "mitre": [
+        "T1189"
+      ],
+      "source": "ac84a1700003bbd1"
+    },
+    {
+      "rule_id": "AUTO-018",
+      "name": "RCE Detection: CVE-2026-23555",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "d922beaf67074b35"
+    },
+    {
+      "rule_id": "AUTO-019",
+      "name": "SQL Injection: CVE-2026-4579",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "ff9799afea2f5f10"
+    },
+    {
+      "rule_id": "AUTO-020",
+      "name": "SQL Injection: CVE-2026-4580",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "ba993bdc1e377e0b"
+    },
+    {
+      "rule_id": "AUTO-021",
+      "name": "RCE Detection: CVE-2026-4628",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "df39d66f92ee7da7"
+    },
+    {
+      "rule_id": "AUTO-022",
+      "name": "SQL Injection: CVE-2026-4581",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "043942c94557335c"
+    },
+    {
+      "rule_id": "AUTO-023",
+      "name": "Auth Bypass: CVE-2026-4583",
+      "severity": "critical",
+      "mitre": [
+        "T1552",
+        "T1078"
+      ],
+      "source": "1a340458d7a11e22"
+    },
+    {
+      "rule_id": "AUTO-024",
+      "name": "RCE Detection: CVE-2026-32968",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "441a01f75d47f8d5"
+    },
+    {
+      "rule_id": "AUTO-025",
+      "name": "SQL Injection: CVE-2026-32969",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "67df350a47991715"
+    },
+    {
+      "rule_id": "AUTO-026",
+      "name": "RCE Detection: CVE-2026-4585",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "e7a237563dbdbb6e"
+    },
+    {
+      "rule_id": "AUTO-027",
+      "name": "SQL Injection: CVE-2025-41007",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "3e1181c45019ca21"
+    },
+    {
+      "rule_id": "AUTO-028",
+      "name": "RCE Detection: CVE-2026-31851",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "365fac6156a8447d"
+    },
+    {
+      "rule_id": "AUTO-029",
+      "name": "RCE Detection: CVE-2026-4588",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "0a15a050deec2f88"
+    },
+    {
+      "rule_id": "AUTO-030",
+      "name": "SQL Injection: CVE-2025-41008",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "7b6e98a20e5aa058"
+    },
+    {
+      "rule_id": "AUTO-031",
+      "name": "RCE Detection: CVE-2026-33297",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "9b3a8ca9ad79be87"
+    },
+    {
+      "rule_id": "AUTO-032",
+      "name": "RCE Detection: CVE-2026-33351",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "483ce3ef20a9f0ad"
+    },
+    {
+      "rule_id": "AUTO-033",
+      "name": "SQL Injection: CVE-2026-33352",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "c94738966e00b2b3"
+    },
+    {
+      "rule_id": "AUTO-034",
+      "name": "RCE Detection: CVE-2026-3635",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "46919da84306b8a2"
+    },
+    {
+      "rule_id": "AUTO-035",
+      "name": "RCE Detection: CVE-2026-4589",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "09d1e88201efcc0f"
+    },
+    {
+      "rule_id": "AUTO-036",
+      "name": "RCE Detection: CVE-2026-33354",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "ca7015009f0b1f65"
+    },
+    {
+      "rule_id": "AUTO-037",
+      "name": "RCE Detection: CVE-2026-33478",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "ac02e020cb92ae62"
+    },
+    {
+      "rule_id": "AUTO-038",
+      "name": "RCE Detection: CVE-2026-33479",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "bd5833e40ea540aa"
+    },
+    {
+      "rule_id": "AUTO-039",
+      "name": "RCE Detection: CVE-2026-33480",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "88ac21f2e292fb7d"
+    },
+    {
+      "rule_id": "AUTO-040",
+      "name": "RCE Detection: CVE-2026-33482",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "f2ba1245e76c8f34"
+    },
+    {
+      "rule_id": "AUTO-041",
+      "name": "RCE Detection: CVE-2026-33483",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "820f3b468e140f04"
+    },
+    {
+      "rule_id": "AUTO-042",
+      "name": "SQL Injection: CVE-2026-33485",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "949c6ea4d438141c"
+    },
+    {
+      "rule_id": "AUTO-043",
+      "name": "RCE Detection: CVE-2026-4590",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "e1a2fd92c06d38af"
+    },
+    {
+      "rule_id": "AUTO-044",
+      "name": "XSS: CVE-2024-51222",
+      "severity": "medium",
+      "mitre": [
+        "T1189",
+        "T1189"
+      ],
+      "source": "6650ace9ab1fb95b"
+    },
+    {
+      "rule_id": "AUTO-045",
+      "name": "XSS: CVE-2024-51223",
+      "severity": "medium",
+      "mitre": [
+        "T1189",
+        "T1189"
+      ],
+      "source": "42f7351666d590fe"
+    },
+    {
+      "rule_id": "AUTO-046",
+      "name": "XSS: CVE-2024-51224",
+      "severity": "medium",
+      "mitre": [
+        "T1189",
+        "T1189"
+      ],
+      "source": "76db1b37fda5f8d5"
+    },
+    {
+      "rule_id": "AUTO-047",
+      "name": "XSS: CVE-2024-51225",
+      "severity": "medium",
+      "mitre": [
+        "T1189",
+        "T1189"
+      ],
+      "source": "1101ef512e50ec0e"
+    },
+    {
+      "rule_id": "AUTO-048",
+      "name": "XSS: CVE-2024-51226",
+      "severity": "medium",
+      "mitre": [
+        "T1189",
+        "T1189"
+      ],
+      "source": "e8e2743d344833b3"
+    },
+    {
+      "rule_id": "AUTO-049",
+      "name": "RCE Detection: CVE-2026-33488",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "8f7e7697c3d493e9"
+    },
+    {
+      "rule_id": "AUTO-050",
+      "name": "RCE Detection: CVE-2026-33492",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "c750d262302ec0ef"
+    },
+    {
+      "rule_id": "AUTO-051",
+      "name": "RCE Detection: CVE-2026-33493",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "2feb707119d8d60f"
+    },
+    {
+      "rule_id": "AUTO-052",
+      "name": "RCE Detection: CVE-2026-4591",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "d257289cacab6317"
+    },
+    {
+      "rule_id": "AUTO-053",
+      "name": "RCE Detection: CVE-2026-4592",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "8ddfbef0d02eb6b8"
+    },
+    {
+      "rule_id": "AUTO-054",
+      "name": "RCE Detection: CVE-2026-24516",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203",
+        "T1041",
+        "T1021",
+        "T1068"
+      ],
+      "source": "a1c6b25617221ae9"
+    },
+    {
+      "rule_id": "AUTO-055",
+      "name": "RCE Detection: CVE-2026-33499",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203",
+        "T1189"
+      ],
+      "source": "34c05ed5f63635a3"
+    },
+    {
+      "rule_id": "AUTO-056",
+      "name": "RCE Detection: CVE-2026-33500",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203",
+        "T1189"
+      ],
+      "source": "3fd2906e3e839279"
+    },
+    {
+      "rule_id": "AUTO-057",
+      "name": "RCE Detection: CVE-2026-33501",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "5deaefa1349d320b"
+    },
+    {
+      "rule_id": "AUTO-058",
+      "name": "Threat Intel: Microsoft Xbox One Hacked",
+      "severity": "high",
+      "mitre": [],
+      "source": "d00b267de7cfd9e7"
+    },
+    {
+      "rule_id": "AUTO-059",
+      "name": "RCE Detection: CISA Adds CVE-2025-53521 to KEV After Active F5 BIG-IP APM Exploitation",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "71f42c47584eb718"
+    },
+    {
+      "rule_id": "AUTO-060",
+      "name": "RCE Detection: CVE_2025_23209",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "ed5db595f59ffe5c"
+    },
+    {
+      "rule_id": "AUTO-061",
+      "name": "Path Traversal: CVE-2026-31802",
+      "severity": "high",
+      "mitre": [
+        "T1083"
+      ],
+      "source": "fc9c217abe76d064"
+    },
+    {
+      "rule_id": "AUTO-062",
+      "name": "RCE Detection: cve-2026-33937",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "03ff36761e76ad21"
+    },
+    {
+      "rule_id": "AUTO-063",
+      "name": "RCE Detection: CVE-2025-66034",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "82abe646c0ffc3cc"
+    },
+    {
+      "rule_id": "AUTO-064",
+      "name": "RCE Detection: CVE-2026-23744-POC",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "18a25452f10ea8b7"
+    },
+    {
+      "rule_id": "AUTO-065",
+      "name": "RCE Detection: CVE-2026-23744",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "6a3abf1d24394d1f"
+    },
+    {
+      "rule_id": "AUTO-066",
+      "name": "XSS: xss-coding-challenge",
+      "severity": "medium",
+      "mitre": [
+        "T1189",
+        "T1189"
+      ],
+      "source": "1b5f5099ef97cc2a"
+    },
+    {
+      "rule_id": "AUTO-067",
+      "name": "RCE Detection: CVE-2025-54123",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "fb18dcd89a33005c"
+    },
+    {
+      "rule_id": "AUTO-068",
+      "name": "RCE Detection: CVE-2025-54123-Poc",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203"
+      ],
+      "source": "a4c508ad78b23676"
+    },
+    {
+      "rule_id": "AUTO-069",
+      "name": "SQL Injection: CVE-2026-21643",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "8be91a3b737b043c"
+    },
+    {
+      "rule_id": "AUTO-070",
+      "name": "SQL Injection: CVE_2026_2576_PoC",
+      "severity": "high",
+      "mitre": [
+        "T1190",
+        "T1190"
+      ],
+      "source": "2434ede2199b01c0"
+    },
+    {
+      "rule_id": "AUTO-071",
+      "name": "RCE Detection: Smart-URL-Security-Analyzer-",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203",
+        "T1566",
+        "T1204"
+      ],
+      "source": "c1bbdd53f81ecc0f"
+    },
+    {
+      "rule_id": "AUTO-072",
+      "name": "RCE Detection: huntframework",
+      "severity": "critical",
+      "mitre": [
+        "T1059",
+        "T1203",
+        "T1204"
+      ],
+      "source": "5f9f0ce8e66f2610"
+    }
+  ]
+}

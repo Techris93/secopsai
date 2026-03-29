@@ -47,10 +47,15 @@ class RuleValidator:
         for line in result.stdout.split('\n'):
             if 'F1_SCORE=' in line:
                 try:
-                    self.baseline_f1 = float(line.split('=')[1].strip())
+                    # Handle format: ">>> F1_SCORE=0.862651 <<<"
+                    f1_part = line.split('=')[1].strip()
+                    # Remove any trailing characters like "<<<"
+                    f1_str = f1_part.split()[0]
+                    self.baseline_f1 = float(f1_str)
                     print(f"[BASELINE] F1 Score: {self.baseline_f1:.6f}")
                     return self.baseline_f1
-                except:
+                except Exception as e:
+                    print(f"[DEBUG] Failed to parse F1 from: {line} - {e}")
                     pass
         
         print(f"[WARN] Could not parse F1, using default 0.0")
@@ -138,10 +143,15 @@ class RuleValidator:
         for line in result.stdout.split('\n'):
             if 'F1_SCORE=' in line:
                 try:
-                    self.new_f1 = float(line.split('=')[1].strip())
+                    # Handle format: ">>> F1_SCORE=0.862651 <<<"
+                    f1_part = line.split('=')[1].strip()
+                    # Remove any trailing characters like "<<<"
+                    f1_str = f1_part.split()[0]
+                    self.new_f1 = float(f1_str)
                     print(f"[TEST] F1 Score with new rules: {self.new_f1:.6f}")
                     return self.new_f1
-                except:
+                except Exception as e:
+                    print(f"[DEBUG] Failed to parse F1 from: {line} - {e}")
                     pass
         
         return 0.0
