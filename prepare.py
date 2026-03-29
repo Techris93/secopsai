@@ -375,6 +375,55 @@ def _gen_xss_attack(base_time: datetime, rng: random.Random) -> list:
     return events
 
 
+def _gen_path_traversal(base_time: datetime, rng: random.Random) -> list:
+    """T1083 — Path Traversal / Local File Inclusion attacks."""
+    events = []
+    src = rng.choice(EXTERNAL_IPS)
+    target = rng.choice(INTERNAL_IPS)
+    
+    traversal_payloads = [
+        "../../../etc/passwd",
+        "../../windows/system32/config/sam",
+        "....//....//etc/shadow",
+        "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+        "..%252f..%252f..%252fetc%252fpasswd",
+        "../../../proc/self/environ",
+        "../../boot.ini",
+        "../../../var/log/apache2/access.log",
+        "..\\..\\..\\windows\\win.ini",
+        "....\\....\\....\\windows\\system.ini",
+    ]
+    
+    endpoints = ["/download", "/view", "/file", "/api/document", "/static", "/resource"]
+    params = ["file", "path", "doc", "filename", "resource", "page"]
+    
+    payload = rng.choice(traversal_payloads)
+    endpoint = rng.choice(endpoints)
+    param = rng.choice(params)
+    url = f"http://app.internal{endpoint}?{param}={payload}"
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": target,
+        "dest_port": 80,
+        "url": url,
+        "request": f"GET {endpoint}?{param}={payload} HTTP/1.1",
+        "body": "",
+        "filepath": payload,
+        "method": "GET",
+        "user_agent": rng.choice(["Mozilla/5.0", "curl/7.68.0", "sqlmap/1.0"]),
+        "event_type": "http",
+        "message": f"Path traversal attempt: {payload[:40]}...",
+        "label": "malicious",
+        "attack_type": "path_traversal",
+        "mitre": "T1083"
+    })
+
+    return events
+
+
 # ═══ STEALTHY attack variants (harder to detect) ═════════════════════════════
 
 def _gen_slow_brute_force(base_time: datetime, rng: random.Random) -> list:
@@ -981,6 +1030,51 @@ def _gen_benign_api_call(base_time: datetime, rng: random.Random) -> list:
     return events
 
 
+def _gen_benign_file_access(base_time: datetime, rng: random.Random) -> list:
+    """Benign file access that might look like path traversal."""
+    events = []
+    src = rng.choice(INTERNAL_IPS)
+    
+    # Legitimate file paths with dots
+    legit_paths = [
+        "assets/../images/logo.png",
+        "static/./css/main.css",
+        "docs/v1.2/../v2.0/api.md",
+        "../../../home/user/project/README.md",
+        
+        # Windows-style
+        "..\\..\\shared\\documents\\report.pdf",
+        "templates\\..\\..\\config.yaml",
+        
+        # Encoded dots (legitimate URL encoding)
+        "file%2ename.txt",
+        "path%2f%2eto%2fresource",
+    ]
+    
+    path = rng.choice(legit_paths)
+    endpoint = rng.choice(["/download", "/static", "/resource", "/assets"])
+    
+    events.append({
+        "timestamp": _ts(base_time),
+        "sourcetype": "web",
+        "src_ip": src,
+        "dest_ip": rng.choice(INTERNAL_IPS),
+        "dest_port": 80,
+        "url": f"http://app.internal{endpoint}?file={path}",
+        "request": f"GET {endpoint}?file={path} HTTP/1.1",
+        "body": "",
+        "filepath": path,
+        "method": "GET",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "event_type": "http",
+        "message": f"Benign file access: {path[:40]}...",
+        "label": "benign",
+        "attack_type": "none"
+    })
+
+    return events
+
+
 # ═══ Dataset Generation ══════════════════════════════════════════════════════
 
 # ═══ NEAR-MISS malicious variants (evade current threshold defaults) ══════════════
@@ -1063,6 +1157,7 @@ ATTACK_GENERATORS = {
     "sql_injection":        (_gen_sql_injection, 15),
     "rce":                  (_gen_rce_attack, 12),
     "xss":                  (_gen_xss_attack, 10),
+    "path_traversal":       (_gen_path_traversal, 10),
 }
 
 # Stealthy attacks (harder to detect — distinguishes good from great detection)
@@ -1084,6 +1179,7 @@ BENIGN_GENERATORS = [
     (_gen_normal_process, 50),
     (_gen_normal_http, 100),        # Normal web traffic
     (_gen_benign_api_call, 30),     # API calls that look like attacks but aren't
+    (_gen_benign_file_access, 20),  # File access that looks like traversal
 ]
 
 # Noisy benign (designed to trigger false positives in naive rules)

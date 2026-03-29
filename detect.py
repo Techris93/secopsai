@@ -1805,6 +1805,41 @@ def detect_xss(events: List[Dict]) -> List[str]:
     return detected
 
 
+def detect_path_traversal(events: List[Dict]) -> List[str]:
+    """
+    RULE-304: Detects Path Traversal / Local File Inclusion patterns.
+    MITRE: T1083 (File and Directory Discovery)
+    """
+    traversal_patterns = [
+        r"\.\./\.\./\.\./",           # ../../../
+        r"\.\.\\\.\.\\\.\.\\",         # ..\..\..\
+        r"\.\.//\.\.//",                # ....//....//
+        r"%2e%2e%2f",                   # URL-encoded ../
+        r"%252e%252e%252f",             # Double-encoded ../
+        r"/etc/passwd",
+        r"/etc/shadow",
+        r"windows/system32/config",
+        r"boot\.ini",
+        r"win\.ini",
+        r"/proc/self/",
+        r"\.\./\.\./\.\./[a-z]+/[a-z]+",  # ../../../something/something
+    ]
+    detected = []
+    for event in events:
+        if event.get("event_type") != "http":
+            continue
+        url = event.get("url") or ""
+        request = event.get("request") or ""
+        body = event.get("body") or ""
+        filepath = event.get("filepath") or ""
+        content = url + " " + request + " " + body + " " + filepath
+        for pattern in traversal_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                detected.append(event["event_id"])
+                break
+    return detected
+
+
 # ═══ Main Detection Pipeline ═════════════════════════════════════════════════
 
 # Registry of all active detection rules
@@ -1844,6 +1879,7 @@ DETECTION_RULES = [
     {"id": "RULE-301", "name": "SQL Injection Detection",      "mitre": "T1190", "fn": detect_sql_injection},
     {"id": "RULE-302", "name": "Remote Code Execution",        "mitre": "T1059", "fn": detect_rce},
     {"id": "RULE-303", "name": "Cross-Site Scripting",         "mitre": "T1189", "fn": detect_xss},
+    {"id": "RULE-304", "name": "Path Traversal",               "mitre": "T1083", "fn": detect_path_traversal},
 ]
 
 
