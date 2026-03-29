@@ -65,6 +65,19 @@ Under the hood this runs the same sequence as before:
 3. `openclaw_prepare.py` — builds replay bundles
 4. `evaluate_openclaw.py` — runs detectors in live mode
 5. `openclaw_findings.py` — writes findings (with mitigations) into the local SOC store
+   and, when Supabase credentials are available, automatically syncs the
+   persisted findings to the dashboard via `scripts/sync_findings_to_supabase.py`.
+
+Automatic dashboard sync is intentionally safe and optional:
+
+- Enabled by configuration presence: `SUPABASE_URL` plus either
+  `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_ANON_KEY`
+- Credentials can come from the current environment or from the default
+  dashboard env file at `../secopsai-dashboard/.env`
+- If credentials are missing, the refresh/pipeline still succeeds and sync is
+  skipped
+- If sync fails after findings are persisted locally, the local pipeline still
+  completes; the sync error is printed for operator visibility
 
 You can still call the script directly if needed:
 

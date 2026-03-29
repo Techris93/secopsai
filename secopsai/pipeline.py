@@ -105,13 +105,16 @@ def refresh(
 
     # 5) findings (writes bundle + persists to sqlite)
     bundle = openclaw_findings.build_bundle(labeled_out, flat_records)
-    findings_file = openclaw_findings.write_bundle(
-        openclaw_findings.default_output_dir(), bundle
-    )
+    findings_dir = openclaw_findings.default_output_dir()
+    findings_file = openclaw_findings.write_bundle(findings_dir, bundle)
     findings_db = openclaw_findings.soc_store.persist_findings(
         bundle["findings"],
         bundle["source"],
-        openclaw_findings.default_db_path(openclaw_findings.default_output_dir()),
+        openclaw_findings.default_db_path(findings_dir),
+    )
+    openclaw_findings.maybe_sync_findings_to_supabase(
+        db_path=findings_db,
+        findings_dir=findings_dir,
     )
 
     return RefreshResult(

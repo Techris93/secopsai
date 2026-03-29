@@ -10,6 +10,7 @@ SecOpsAI is a local-first security operations toolkit that collects telemetry, g
 - Normalizes events into a shared model for multi-platform analysis
 - Groups and deduplicates detections into incident findings
 - Stores findings in local SQLite
+- Can auto-sync persisted findings to a Supabase dashboard when credentials are configured
 - Supports triage workflow: list, show, status, disposition, notes
 - Provides mitigation guidance per finding
 - Supports conversational workflows through plugin and WhatsApp bridge
@@ -169,6 +170,20 @@ secopsai show OCF-XXXX --json
 secopsai --json show OCF-XXXX
 secopsai check --type malware --severity high --json
 ```
+
+## Sync findings to the dashboard
+
+If you want to publish the local SecOpsAI findings store into the dashboard Supabase `findings` table:
+
+```bash
+python3 scripts/sync_findings_to_supabase.py --dashboard-env ../secopsai-dashboard/.env
+```
+
+Notes:
+- the sync prefers the local SQLite SOC store at `data/openclaw/findings/openclaw_soc.db`
+- if the DB is missing or empty, it falls back to the latest `openclaw-findings-*.json` bundle
+- set `SUPABASE_SERVICE_ROLE_KEY` for write access; `SUPABASE_ANON_KEY` is accepted as fallback if your project permits inserts
+- the script is safe to run when no local findings exist; it exits cleanly with `Nothing to sync`
 
 ## Security
 

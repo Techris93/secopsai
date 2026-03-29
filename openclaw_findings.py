@@ -11,8 +11,11 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess  # nosec B404
+import sys
 from collections import Counter
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List
 
 from detect import DETECTION_RULES, minutes_between, run_detection
@@ -284,6 +287,79 @@ def write_bundle(output_dir: str, bundle: Dict[str, Any]) -> str:
     return path
 
 
+def _load_env_file(path: Path) -> Dict[str, str]:
+    if not path.exists():
+        return {}
+    loaded: Dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        loaded[key.strip()] = value.strip().strip('"').strip("'")
+    return loaded
+
+
+def auto_sync_config_available(dashboard_env: str | None = None) -> bool:
+    env_path = Path(dashboard_env) if dashboard_env else Path(ROOT_DIR).parent / "secopsai-dashboard" / ".env"
+    env_from_file = _load_env_file(env_path)
+    url = os.environ.get("SUPABASE_URL") or env_from_file.get("SUPABASE_URL")
+    key = (
+        os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        or env_from_file.get("SUPABASE_SERVICE_ROLE_KEY")
+        or os.environ.get("SUPABASE_ANON_KEY")
+        or env_from_file.get("SUPABASE_ANON_KEY")
+    )
+    return bool(url and key)
+
+
+def maybe_sync_findings_to_supabase(
+    *,
+    db_path: str,
+    findings_dir: str,
+    dashboard_env: str | None = None,
+) -> bool:
+    if not auto_sync_config_available(dashboard_env):
+        print("findings_supabase_sync=skipped")
+        print("findings_supabase_sync_reason=missing_supabase_config")
+        return False
+
+    script_path = Path(ROOT_DIR) / "scripts" / "sync_findings_to_supabase.py"
+    command = [
+        sys.executable,
+        str(script_path),
+        "--db-path",
+        db_path,
+        "--findings-dir",
+        findings_dir,
+    ]
+    if dashboard_env:
+        command.extend(["--dashboard-env", dashboard_env])
+
+    try:
+        result = subprocess.run(  # nosec B603
+            command,
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        print("findings_supabase_sync=error")
+        stderr = (exc.stderr or "").strip()
+        stdout = (exc.stdout or "").strip()
+        detail = stderr or stdout or str(exc)
+        print(f"findings_supabase_sync_error={detail}")
+        return False
+
+    print("findings_supabase_sync=ok")
+    if result.stdout:
+        for line in result.stdout.splitlines():
+            if line.strip():
+                print(f"findings_supabase_sync_detail={line}")
+    return True
+
+
 def main() -> int:
     args = parse_args()
     events = load_events(args.input)
@@ -296,6 +372,10 @@ def main() -> int:
     print(f"total_candidate_findings={bundle['total_candidate_findings']}")
     print(f"total_findings={bundle['total_findings']}")
     print(f"total_detections={bundle['total_detections']}")
+    maybe_sync_findings_to_supabase(
+        db_path=db_path,
+        findings_dir=args.output_dir,
+    )
     return 0
 
 
