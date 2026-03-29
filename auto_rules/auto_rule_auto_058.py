@@ -6,14 +6,14 @@ Description: Detects IOCs from www.schneier.com
 Severity: high
 MITRE: 
 Source: d00b267de7cfd9e7
-Generated: 2026-03-29T19:53:18.135321
+Generated: 2026-03-29T20:16:54.444739
 """
 
 def detect_auto_058(events):
     """
     Threat Intel: www.schneier.com
     Description: <p>It&#8217;s an <a href="https://www.tomshardware.com/video-games/console-gaming/microsofts-unhacka...
-    Generated: 2026-03-29T19:53:18.131037
+    Generated: 2026-03-29T20:16:54.438958
     """
     malicious_ips = []
     malicious_domains = ['www.tomshardware.com', 'www.tomshardware.com']

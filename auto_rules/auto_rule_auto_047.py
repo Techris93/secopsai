@@ -6,14 +6,14 @@ Description: Detects XSS from NVD-CVE-2024-51225
 Severity: medium
 MITRE: T1189, T1189
 Source: 1101ef512e50ec0e
-Generated: 2026-03-29T19:53:18.134725
+Generated: 2026-03-29T20:16:54.443950
 """
 
 def detect_auto_047(events):
     """
     Threat Intel: NVD-CVE-2024-51225
     Description: XSS detection
-    Generated: 2026-03-29T19:53:18.130749
+    Generated: 2026-03-29T20:16:54.438696
     """
     xss_patterns = [
         r"<script[^>]*>[\s\S]*?</script>",

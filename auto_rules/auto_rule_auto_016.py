@@ -6,14 +6,14 @@ Description: Detects remote code execution from NVD-CVE-2025-13997
 Severity: critical
 MITRE: T1059, T1203
 Source: 27071c16c70648b4
-Generated: 2026-03-29T19:53:18.133128
+Generated: 2026-03-29T20:16:54.441847
 """
 
 def detect_auto_016(events):
     """
     Threat Intel: NVD-CVE-2025-13997
     Description: Remote Code Execution detection
-    Generated: 2026-03-29T19:53:18.129900
+    Generated: 2026-03-29T20:16:54.437701
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution

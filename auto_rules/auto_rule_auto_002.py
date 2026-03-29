@@ -6,14 +6,14 @@ Description: Detects privilege escalation from NVD-CVE-2026-4606
 Severity: high
 MITRE: T1068, T1548, T1068
 Source: 555cfb7ce3cdea77
-Generated: 2026-03-29T19:53:18.132411
+Generated: 2026-03-29T20:16:54.440594
 """
 
 def detect_auto_002(events):
     """
     Threat Intel: NVD-CVE-2026-4606
     Description: Privilege Escalation detection
-    Generated: 2026-03-29T19:53:18.129558
+    Generated: 2026-03-29T20:16:54.437337
     """
     privesc_indicators = [
         r"sudo\s+-l",

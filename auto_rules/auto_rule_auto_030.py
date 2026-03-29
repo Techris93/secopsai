@@ -6,14 +6,14 @@ Description: Detects SQL injection patterns from NVD-CVE-2025-41008
 Severity: high
 MITRE: T1190, T1190
 Source: 7b6e98a20e5aa058
-Generated: 2026-03-29T19:53:18.133800
+Generated: 2026-03-29T20:16:54.442810
 """
 
 def detect_auto_030(events):
     """
     Threat Intel: NVD-CVE-2025-41008
     Description: SQL Injection detection
-    Generated: 2026-03-29T19:53:18.130415
+    Generated: 2026-03-29T20:16:54.438421
     """
     sqli_patterns = [
         r"(%27)|(')|(--)|(%23)|(#)",

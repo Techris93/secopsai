@@ -6,14 +6,14 @@ Description: Detects remote code execution from github.com/JawadAbbasi14/Smart-U
 Severity: critical
 MITRE: T1059, T1203, T1566, T1204
 Source: c1bbdd53f81ecc0f
-Generated: 2026-03-29T19:53:18.136106
+Generated: 2026-03-29T20:16:54.445560
 """
 
 def detect_auto_071(events):
     """
     Threat Intel: github.com/JawadAbbasi14/Smart-URL-Security-Analyzer-
     Description: Remote Code Execution detection
-    Generated: 2026-03-29T19:53:18.131612
+    Generated: 2026-03-29T20:16:54.439596
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution

@@ -6,14 +6,14 @@ Description: Detects path traversal from github.com/Recorded-texteditor120/CVE-2
 Severity: high
 MITRE: T1083
 Source: fc9c217abe76d064
-Generated: 2026-03-29T19:53:18.135467
+Generated: 2026-03-29T20:16:54.444934
 """
 
 def detect_auto_061(events):
     """
     Threat Intel: github.com/Recorded-texteditor120/CVE-2026-31802
     Description: Path Traversal detection
-    Generated: 2026-03-29T19:53:18.131297
+    Generated: 2026-03-29T20:16:54.439242
     """
     traversal_patterns = [
         r"\.\./",

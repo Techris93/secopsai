@@ -1880,3 +1880,4 @@ def run_detection(events: List[Dict]) -> Dict[str, Any]:
         "total_detections": len(all_detected),
         "findings": findings,
     }
+

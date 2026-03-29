@@ -6,14 +6,14 @@ Description: Detects remote code execution from github.com/ctzisme/CVE-2026-2374
 Severity: critical
 MITRE: T1059, T1203
 Source: 6a3abf1d24394d1f
-Generated: 2026-03-29T19:53:18.135747
+Generated: 2026-03-29T20:16:54.445171
 """
 
 def detect_auto_065(events):
     """
     Threat Intel: github.com/ctzisme/CVE-2026-23744
     Description: Remote Code Execution detection
-    Generated: 2026-03-29T19:53:18.131408
+    Generated: 2026-03-29T20:16:54.439331
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution

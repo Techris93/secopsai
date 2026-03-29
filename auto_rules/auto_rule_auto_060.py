@@ -6,14 +6,14 @@ Description: Detects remote code execution from github.com/farid-khelil/CVE_2025
 Severity: critical
 MITRE: T1059, T1203
 Source: ed5db595f59ffe5c
-Generated: 2026-03-29T19:53:18.135418
+Generated: 2026-03-29T20:16:54.444860
 """
 
 def detect_auto_060(events):
     """
     Threat Intel: github.com/farid-khelil/CVE_2025_23209
     Description: Remote Code Execution detection
-    Generated: 2026-03-29T19:53:18.131251
+    Generated: 2026-03-29T20:16:54.439203
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution

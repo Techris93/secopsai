@@ -6,14 +6,14 @@ Description: Detects authentication bypass attempts from NVD-CVE-2026-4583
 Severity: critical
 MITRE: T1552, T1078
 Source: 1a340458d7a11e22
-Generated: 2026-03-29T19:53:18.133451
+Generated: 2026-03-29T20:16:54.442399
 """
 
 def detect_auto_023(events):
     """
     Threat Intel: NVD-CVE-2026-4583
     Description: Authentication Bypass detection
-    Generated: 2026-03-29T19:53:18.130126
+    Generated: 2026-03-29T20:16:54.437989
     """
     bypass_patterns = [
         r"admin['"]?\s*:\s*['"]?admin",

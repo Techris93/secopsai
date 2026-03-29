@@ -6,14 +6,14 @@ Description: Detects SQL injection patterns from NVD-CVE-2026-4574
 Severity: high
 MITRE: T1190, T1190
 Source: ea2dcf319b8817c0
-Generated: 2026-03-29T19:53:18.132963
+Generated: 2026-03-29T20:16:54.441561
 """
 
 def detect_auto_013(events):
     """
     Threat Intel: NVD-CVE-2026-4574
     Description: SQL Injection detection
-    Generated: 2026-03-29T19:53:18.129783
+    Generated: 2026-03-29T20:16:54.437586
     """
     sqli_patterns = [
         r"(%27)|(')|(--)|(%23)|(#)",
