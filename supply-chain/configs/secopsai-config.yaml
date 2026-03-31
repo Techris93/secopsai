@@ -1,0 +1,208 @@
+# SecOpsAI Configuration File
+# Copy to /etc/secopsai/config.yaml or ~/.secopsai/config.yaml
+
+secopsai:
+  version: "1.0.0"
+  environment: "production"  # development, staging, production
+  
+  # Monitoring settings
+  monitoring:
+    enabled: true
+    interval_seconds: 5
+    alert_on_suspicious: true
+    alert_on_critical: true
+    
+    # Process monitoring
+    processes:
+      check_interval: 5
+      max_cpu_percent: 95
+      max_memory_mb: 1024
+      suspicious_patterns:
+        - name: "npm_postinstall_exec"
+          severity: "critical"
+        - name: "editor_shell_spawn"
+          severity: "high"
+        - name: "python_pth_execution"
+          severity: "high"
+    
+    # Network monitoring
+    network:
+      check_interval: 10
+      block_c2_domains: true
+      c2_domain_list:
+        - "sfrclak.com"
+        - "models.litellm.cloud"
+        - "checkmarx.zone"
+        - "litellm-api.com"
+      
+    # File system monitoring
+    filesystem:
+      check_interval: 30
+      watch_paths:
+        - "/tmp"
+        - "/var/tmp"
+        - "/Library/Caches"
+      suspicious_files:
+        - "ld.py"
+        - "sysmon.py"
+        - "com.apple.act.mond"
+        - "wt.exe"
+        - ".pth"
+  
+  # NPM registry monitoring
+  npm:
+    registry_url: "https://registry.npmjs.org"
+    cache_ttl_minutes: 5
+    
+    # Known malicious packages (auto-updated from threat intel)
+    malicious_packages:
+      plain-crypto-js:
+        versions: ["4.2.1"]
+        cve: "CVE-2026-Axios-SC"
+        severity: "critical"
+      
+      axios:
+        versions: ["1.14.1", "0.30.4"]
+        cve: "CVE-2026-Axios-SC"
+        severity: "critical"
+      
+      litellm:
+        versions: ["1.82.7", "1.82.8"]
+        cve: "CVE-2026-LiteLLM-SC"
+        severity: "critical"
+      
+      sync-axios:
+        versions: ["*"]
+        cve: "CVE-2024-SYNC-AXIOS"
+        severity: "high"
+    
+    # Policy settings
+    policy:
+      block_install_scripts: true
+      require_provenance: false
+      min_package_age_days: 7
+      max_dependencies: 500
+      block_typosquats: true
+      
+      # Trusted maintainers (auto-populated)
+      trusted_maintainers: []
+      
+      # Blocked maintainers
+      blocked_maintainers: []
+  
+  # SBOM validation
+  sbom:
+    enabled: true
+    default_policy: "standard"  # permissive, standard, strict
+    
+    policies:
+      permissive:
+        max_risk_score: 100
+        block_install_scripts: false
+        require_provenance: false
+        
+      standard:
+        max_risk_score: 50
+        block_install_scripts: true
+        require_provenance: false
+        
+      strict:
+        max_risk_score: 20
+        block_install_scripts: true
+        require_provenance: true
+        require_signed_releases: true
+    
+    # Vulnerability database
+    vulnerability_db:
+      update_interval_hours: 24
+      sources:
+        - "https://api.osv.dev/v1/"
+        - "https://registry.npmjs.org/-/npm/v1/security/audits"
+  
+  # Incident response
+  incident_response:
+    enabled: true
+    auto_contain: false  # Require manual confirmation for containment
+    auto_rotate_credentials: false
+    
+    # Notification settings
+    notifications:
+      webhook_url: ""  # Slack/Teams webhook
+      email_alerts: false
+      email_recipients: []
+      
+    # Playbook settings
+    playbooks:
+      npm_supply_chain_compromise:
+        enabled: true
+        auto_execute: [1, 3, 4]  # Steps to auto-execute
+        
+      editor_exploit_compromise:
+        enabled: true
+        auto_execute: [2, 3]
+        
+      python_pth_persistence:
+        enabled: true
+        auto_execute: [1]
+        
+      litellm_credential_exposure:
+        enabled: true
+        auto_execute: [1]
+  
+  # Editor security
+  editors:
+    vim:
+      disable_modelines: true
+      disable_tar_plugin: true
+      disable_zip_plugin: true
+      restrict_shell: true
+      
+    emacs:
+      disable_man_uri: true
+      restrict_browse_url: true
+      disable_local_eval: true
+      
+  # Logging
+  logging:
+    level: "info"  # debug, info, warning, error
+    file: "/var/log/secopsai/secopsai.log"
+    max_size_mb: 100
+    max_files: 10
+    
+    # Audit log
+    audit_log: "/var/log/secopsai/audit.log"
+    log_all_processes: false
+    log_network_connections: true
+    log_file_changes: true
+  
+  # Integration settings
+  integrations:
+    siem:
+      enabled: false
+      type: "splunk"  # splunk, elastic, qradar
+      endpoint: ""
+      api_key: ""
+      
+    edr:
+      enabled: false
+      type: "crowdstrike"  # crowdstrike, sentinelone, carbonblack
+      
+    ticketing:
+      enabled: false
+      type: "jira"  # jira, servicenow
+      endpoint: ""
+      project: ""
+
+# Detection rules configuration
+rules:
+  sigma:
+    enabled: true
+    rules_path: "/etc/secopsai/rules/sigma"
+    auto_update: true
+    
+  yara:
+    enabled: true
+    rules_path: "/etc/secopsai/rules/yara"
+    auto_update: true
+    scan_on_access: false
+    scan_interval_hours: 24

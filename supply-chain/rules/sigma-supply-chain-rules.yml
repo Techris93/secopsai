@@ -1,0 +1,344 @@
+# Sigma Rules for Supply Chain Attack Detection
+# Place in: /etc/sigma/rules/ or your SIEM's sigma directory
+# Requires: Sigma CLI or sigmac for conversion
+
+title: npm Postinstall Network Activity - Supply Chain Indicator
+id: secopsai-0001
+status: experimental
+description: |
+  Detects when npm/node processes spawn network utilities (curl, wget, powershell) 
+  during package installation. This is a high-confidence indicator of supply chain 
+  attacks like the Axios incident (March 2026).
+  
+  References:
+  - https://www.picussecurity.com/resource/blog/axios-npm-supply-chain-attack
+  - CVE-2026-Axios-SupplyChain
+logsource:
+  category: process_creation
+  product: linux, macos, windows
+detection:
+  selection_parent:
+    ParentImage|endswith:
+      - '/node'
+      - '/nodejs'
+      - '\node.exe'
+      - '/npm'
+      - '/npx'
+      - '\\npm.cmd'
+      - '\\npx.cmd'
+  selection_child_network:
+    Image|endswith:
+      - '/curl'
+      - '/wget'
+      - '/python'
+      - '/python3'
+      - '/powershell'
+      - '/pwsh'
+      - '\\powershell.exe'
+      - '\\pwsh.exe'
+      - '/bash'
+      - '/sh'
+      - '/zsh'
+    CommandLine|contains:
+      - 'http://'
+      - 'https://'
+      - '.com'
+      - '.net'
+      - '.org'
+  selection_suspicious_args:
+    CommandLine|contains:
+      - 'Invoke-WebRequest'
+      - 'iwr'
+      - 'curl -O'
+      - 'wget -O'
+      - 'base64'
+      - 'eval'
+      - 'exec'
+  condition: selection_parent and (selection_child_network or selection_suspicious_args)
+falsepositives:
+  - Legitimate build scripts that download assets
+  - CI/CD pipelines with intentional network calls
+level: critical
+tags:
+  - attack.supply-chain
+  - attack.t1195.001
+  - attack.execution
+  - detection.threat-hunting
+---
+title: Suspicious Editor Plugin Modification
+description: |
+  Detects when Vim or Emacs plugins are modified with suspicious content
+  containing shell execution functions. Detects CVE-2025-27423, CVE-2025-1244.
+id: secopsai-0002
+status: experimental
+logsource:
+  category: file_event
+  product: linux, macos, windows
+detection:
+  selection_paths:
+    TargetFilename|contains:
+      - '/.vim/plugin/'
+      - '/.vim/syntax/'
+      - '/.vim/after/'
+      - '/.vimrc'
+      - '/.config/nvim/'
+      - '/.emacs.d/'
+      - '/.emacs'
+      - '/usr/share/vim/'
+      - '/usr/share/emacs/'
+      - '\\vimfiles\\'
+      - '_vimrc'
+  selection_suspicious_content:
+    - Content|contains:
+        - 'system('
+        - 'exec('
+        - 'eval('
+        - '__import__'
+        - 'subprocess.call'
+        - 'os.system'
+        - 'shell_exec'
+        - ':read !'
+    - Content|re:
+        - '.*[`;|&].*http.*'
+        - '.*curl.*\|.*sh.*'
+        - '.*wget.*-O.*-.*'
+  condition: selection_paths and selection_suspicious_content
+falsepositives:
+  - Legitimate plugin development
+  - Configuration management tools
+level: high
+tags:
+  - attack.execution
+  - attack.t1059
+  - attack.persistence
+---
+title: Python .pth File Execution - Supply Chain Persistence
+description: |
+  Detects creation or modification of Python .pth files which execute on 
+  every Python interpreter startup. Used in LiteLLM attack (CVE-2026-LiteLLM).
+id: secopsai-0003
+status: experimental
+logsource:
+  category: file_event
+  product: linux, macos, windows
+detection:
+  selection_extension:
+    TargetFilename|endswith: '.pth'
+  selection_paths:
+    TargetFilename|contains:
+      - '/site-packages/'
+      - '/dist-packages/'
+      - '\\site-packages\\'
+      - '\\Lib\\site-packages\\'
+  selection_suspicious_content:
+    - Content|contains:
+        - 'import'
+        - 'exec'
+        - 'eval'
+        - '__import__'
+        - 'base64'
+        - 'decode'
+  filter_legitimate:
+    - Content|startswith: '#'
+    - Content|contains: 'pth file generated'
+  condition: selection_extension and selection_paths and selection_suspicious_content and not filter_legitimate
+falsepositives:
+  - Legitimate .pth files for path configuration
+level: critical
+tags:
+  - attack.persistence
+  - attack.t1546.018
+  - attack.supply-chain
+---
+title: Suspicious npm Package Installation Pattern
+description: |
+  Detects installation of packages with suspicious characteristics:
+  - New maintainer accounts
+  - Postinstall scripts in recently published packages
+  - Typosquatting candidates
+id: secopsai-0004
+status: experimental
+logsource:
+  category: process_creation
+  product: linux, macos, windows
+detection:
+  selection_npm_install:
+    CommandLine|contains:
+      - 'npm install'
+      - 'npm i '
+      - 'npm add '
+      - 'yarn add'
+      - 'pnpm add'
+  selection_suspicious_packages:
+    CommandLine|contains:
+      - 'plain-crypto-js'
+      - 'sync-axios'
+      - 'axios-http-client'
+      - 'node-axios'
+  condition: selection_npm_install and selection_suspicious_packages
+falsepositives:
+  - Legitimate installations (though these specific packages are known malicious)
+level: critical
+tags:
+  - attack.supply-chain
+  - attack.t1195.001
+---
+title: LiteLLM Proxy Server Anomaly
+description: |
+  Detects anomalous behavior from LiteLLM proxy processes including
+  credential access, unusual API calls, or configuration changes.
+id: secopsai-0005
+status: experimental
+logsource:
+  category: process_creation
+  product: linux, macos
+detection:
+  selection_litellm_process:
+    Image|contains:
+      - 'litellm'
+      - 'proxy_server'
+    CommandLine|contains:
+      - 'litellm'
+  selection_credential_access:
+    CommandLine|contains:
+      - '.env'
+      - 'config.yaml'
+      - 'credentials'
+      - 'api_key'
+      - 'AWS_'
+      - 'AZURE_'
+      - 'OPENAI_'
+  selection_suspicious_behavior:
+    - CommandLine|contains:
+        - 'base64'
+        - 'curl'
+        - 'wget'
+        - 'nc '
+        - 'netcat'
+        - '/dev/tcp'
+  condition: selection_litellm_process and (selection_credential_access or selection_suspicious_behavior)
+falsepositives:
+  - Normal LiteLLM configuration
+level: high
+tags:
+  - attack.credential-access
+  - attack.t1552
+  - attack.collection
+---
+title: Editor Spawning Shell with Network Connection
+description: |
+  Detects when Vim/Emacs spawn shell processes that establish network connections.
+  High-confidence indicator of editor-based exploitation.
+id: secopsai-0006
+status: experimental
+logsource:
+  category: network_connection
+  product: linux, macos, windows
+detection:
+  selection_editor_process:
+    Image|endswith:
+      - '/vim'
+      - '/nvim'
+      - '/emacs'
+      - '/gvim'
+      - '\\vim.exe'
+      - '\\emacs.exe'
+  selection_shell_child:
+    ParentImage|endswith:
+      - '/vim'
+      - '/nvim'
+      - '/emacs'
+      - '/gvim'
+      - '\\vim.exe'
+      - '\\emacs.exe'
+    Image|endswith:
+      - '/bash'
+      - '/sh'
+      - '/zsh'
+      - '/python'
+      - '/python3'
+      - '/curl'
+      - '/wget'
+      - '\\cmd.exe'
+      - '\\powershell.exe'
+  selection_network:
+    DestinationPort|contains:
+      - 80
+      - 443
+      - 8000
+      - 8080
+      - 9000
+  condition: selection_editor_process or (selection_shell_child and selection_network)
+falsepositives:
+  - Legitimate :! commands in Vim
+  - Emacs shell mode usage
+level: high
+tags:
+  - attack.execution
+  - attack.t1059
+  - attack.command-and-control
+---
+title: npm Registry Account Anomaly - Email Change Followed by Publish
+description: |
+  Detects suspicious npm registry events where an account email is changed
+  followed by package publication within 24 hours. Pattern from Axios attack.
+id: secopsai-0007
+status: experimental
+logsource:
+  category: application
+  product: npm
+detection:
+  selection_email_change:
+    EventType: 'account.email_changed'
+  selection_publish:
+    EventType: 'package.publish'
+  timeframe: 24h
+  condition: selection_email_change followed by selection_publish
+falsepositives:
+  - Legitimate account maintenance
+level: high
+tags:
+  - attack.supply-chain
+  - attack.t1195.001
+  - attack.initial-access
+---
+title: Suspicious File Drops in System Directories
+description: |
+  Detects creation of suspicious files in system directories that match
+  known supply chain RAT payloads (Axios, Shai-Hulud patterns).
+id: secopsai-0008
+status: experimental
+logsource:
+  category: file_event
+  product: linux, macos, windows
+detection:
+  macos_suspicious:
+    TargetFilename|contains:
+      - '/Library/Caches/com.apple.act.'
+      - '/Library/LaunchAgents/com.apple.'
+  linux_suspicious:
+    TargetFilename|endswith:
+      - '/tmp/ld.py'
+      - '/tmp/.X11-unix/.'
+      - '/var/tmp/systemd-'
+  windows_suspicious:
+    TargetFilename|contains:
+      - '\\wt.exe'
+      - '\\ProgramData\\Microsoft\\Windows\\SystemData\\'
+      - '\\AppData\\Local\\Temp\\sys'
+  selection_content:
+    - Content|contains:
+        - 'import socket'
+        - 'import requests'
+        - 'subprocess.Popen'
+        - 'base64.b64decode'
+        - 'exec('
+        - 'eval('
+  condition: (macos_suspicious or linux_suspicious or windows_suspicious) and selection_content
+falsepositives:
+  - Legitimate system files
+level: critical
+tags:
+  - attack.persistence
+  - attack.t1543
+  - attack.supply-chain
