@@ -26,7 +26,7 @@ def detect_auto_034(events):
         r"\|\s*perl\s+-e",
         r"\|\s*nc\s+-[el]",
         r"bash\s+-i\s+\>&\s+/dev/tcp/",
-        r"python\d*\s+-c\s+['"]import\s+socket",
+        r"python\d*\s+-c\s+['\"]import\s+socket",
         r"ruby\s+-rsocket",
     ]
     
