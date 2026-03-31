@@ -1,0 +1,59 @@
+{
+  "name": "secopsai",
+  "version": "1.0.0",
+  "description": "SecOpsAI - Unified Security Operations Platform with Supply Chain Security Module",
+  "author": "SecOpsAI Research",
+  "license": "MIT",
+  "main": "secopsai",
+  "bin": {
+    "secopsai": "./secopsai"
+  },
+  "scripts": {
+    "install": "bash install.sh",
+    "postinstall": "python3 secopsai install",
+    "scan": "python3 secopsai supply-chain scan",
+    "monitor": "sudo python3 secopsai supply-chain monitor",
+    "check": "python3 secopsai supply-chain check",
+    "validate": "python3 secopsai supply-chain validate",
+    "respond": "python3 secopsai supply-chain respond"
+  },
+  "dependencies": {
+    "psutil": "^5.9.0",
+    "requests": "^2.28.0",
+    "pyyaml": "^6.0"
+  },
+  "engines": {
+    "python": ">=3.8"
+  },
+  "keywords": [
+    "security",
+    "supply-chain",
+    "secopsai",
+    "npm",
+    "pypi",
+    "detection",
+    "monitoring",
+    "incident-response"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/secopsai/secopsai"
+  },
+  "modules": {
+    "supply-chain": {
+      "version": "1.0.0",
+      "description": "Supply chain attack detection and mitigation",
+      "commands": ["scan", "monitor", "check", "validate", "respond"]
+    }
+  },
+  "threat-intelligence": {
+    "last-updated": "2026-01-01",
+    "auto-update": true,
+    "sources": [
+      "npm-security-advisories",
+      "github-security-advisories",
+      "osv-database",
+      "snyk-vuln-db"
+    ]
+  }
+}

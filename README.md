@@ -6,6 +6,8 @@ SecOpsAI is a local-first security operations toolkit that collects telemetry, g
 
 ## What's New
 
+🛡️ **Supply Chain Security Module** — Detect and mitigate supply chain attacks on npm, PyPI, Vim, Emacs, and other developer tools. Includes detection rules for Axios, LiteLLM, and editor exploits.
+
 🧠 **Adaptive Intelligence System** — Actively learns from CVEs, security news, and exploit repositories to generate new detection rules daily
 
 🔄 **Continuous Learning** — Auto-validates new rules against F1 score; only deploys improving rules
@@ -132,6 +134,114 @@ launchctl list | grep adaptive-intel
 ```
 
 See [ADAPTIVE_INTELLIGENCE.md](ADAPTIVE_INTELLIGENCE.md) for full documentation.
+
+---
+
+## 🛡️ Supply Chain Security Module
+
+SecOpsAI now includes a dedicated module for detecting and mitigating supply chain attacks targeting developer tools and package ecosystems.
+
+### What It Detects
+
+| Attack Vector | CVE/Attack | Detection Method |
+|--------------|------------|------------------|
+| **npm packages** | Axios supply chain (March 2026) | Known malicious package detection |
+| **PyPI packages** | LiteLLM backdoor (March 2026) | .pth file execution monitoring |
+| **Vim exploits** | tar.vim injection (CVE-2025-27423) | Editor configuration analysis |
+| **Emacs exploits** | URI handler injection (CVE-2025-1244) | Config file scanning |
+| **Runtime droppers** | Cross-platform RATs | Suspicious file path detection |
+
+### Known Malicious Packages
+
+| Package | Affected Versions | Attack Type |
+|---------|-------------------|-------------|
+| `axios` | 1.14.1, 0.30.4 | Compromised npm credentials |
+| `plain-crypto-js` | 4.2.1 | Supply chain RAT dropper |
+| `litellm` | 1.82.7, 1.82.8 | PyPI .pth backdoor |
+
+### Module Components
+
+```
+secopsai-toolkit/
+├── supply_chain_module.py      # Main detection module
+├── agents/
+│   ├── npm_registry_monitor.py # npm package analysis
+│   ├── sbom_validator.py       # SBOM policy validation
+│   ├── runtime_monitor.py      # Process/file monitoring
+│   └── threat_intel.py         # Threat intelligence aggregator
+├── rules/
+│   ├── sigma-supply-chain-rules.yml  # SIEM detection rules
+│   └── yara-supply-chain-rules.yar   # File scanning signatures
+├── playbooks/
+│   └── incident_response.py    # Automated response playbooks
+└── configs/
+    └── security-configs.conf   # Hardening configurations
+```
+
+### Using the Supply Chain Module
+
+```bash
+# Run comprehensive supply chain check
+secopsai-supply-chain check
+
+# Check specific project
+secopsai-supply-chain check --project-path /path/to/project
+
+# Export findings to JSON
+secopsai-supply-chain check --output supply_chain_findings.json
+
+# Fail on critical findings (CI/CD integration)
+secopsai-supply-chain check --fail-on-critical
+```
+
+### Findings Format
+
+Supply chain findings use the `SCF-` prefix (Supply Chain Finding) and integrate with the main SecOpsAI SOC store:
+
+```bash
+# List supply chain findings
+secopsai list --category supply_chain_npm
+secopsai list --category supply_chain_editor_vim
+
+# View specific finding
+secopsai show SCF-20260401123456-abc123
+
+# Get mitigation guidance
+secopsai mitigate SCF-20260401123456-abc123
+```
+
+### Detection Capabilities
+
+**Static Analysis:**
+- npm package-lock.json analysis
+- SBOM validation against security policies
+- Typosquatting detection
+- Known malicious package detection
+
+**Runtime Monitoring:**
+- npm postinstall script execution
+- Editor process anomalies (vim/emacs spawning shells)
+- Suspicious file drops (RAT payloads)
+- C2 beaconing detection
+
+**Threat Intelligence:**
+- C2 domain blocklists (sfrclak.com, models.litellm.cloud)
+- Malicious package database (auto-updating)
+- CVE correlation
+
+### Installation
+
+The supply chain module is included in the main SecOpsAI installation. To use it:
+
+```bash
+cd ~/secopsai
+source .venv/bin/activate
+
+# Run supply chain checks
+secopsai-supply-chain check
+```
+
+See [secopsai-toolkit/README.md](secopsai-toolkit/README.md) and [secopsai-toolkit/SECOPSAI_INTEGRATION.md](secopsai-toolkit/SECOPSAI_INTEGRATION.md) for detailed documentation.
 
 ---
 
@@ -443,6 +553,7 @@ This repo includes security guardrails and continuous scanning:
 Core layers:
 
 - **Data adapters**: OpenClaw, macOS, Linux, Windows
+- **Supply Chain Security**: npm, PyPI, editor exploit detection
 - **Normalization**: unified event schema for shared logic
 - **Detection**: rules (static + auto-generated) and findings generation
 - **Correlation**: IP/user/time/hash correlation across platforms
@@ -542,6 +653,16 @@ python twilio_whatsapp_webhook.py --host 127.0.0.1 --port 8091
 - correlation.py
 - adapters/macos/adapter.py
 
+**New (Supply Chain Security):**
+- secopsai-toolkit/supply_chain_module.py
+- secopsai-toolkit/agents/npm_registry_monitor.py
+- secopsai-toolkit/agents/sbom_validator.py
+- secopsai-toolkit/agents/runtime_monitor.py
+- secopsai-toolkit/agents/threat_intel.py
+- secopsai-toolkit/rules/sigma-supply-chain-rules.yml
+- secopsai-toolkit/rules/yara-supply-chain-rules.yar
+- secopsai-toolkit/playbooks/incident_response.py
+
 Optional chat files:
 
 - whatsapp_openclaw_router.py
@@ -552,6 +673,8 @@ Optional chat files:
 
 ## Docs
 
+- [secopsai-toolkit/README.md](secopsai-toolkit/README.md) — Supply chain security module
+- [secopsai-toolkit/SECOPSAI_INTEGRATION.md](secopsai-toolkit/SECOPSAI_INTEGRATION.md) — Integration guide
 - [ADAPTIVE_INTELLIGENCE.md](ADAPTIVE_INTELLIGENCE.md) — Continuous learning system
 - docs/BEGINNER-LIVE-GUIDE.md
 - docs/OpenClaw-Integration.md

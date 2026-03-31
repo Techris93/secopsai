@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+"""
+SecOpsAI - Unified Security Operations CLI
+Main entry point that includes supply chain security module
+
+Usage:
+    secopsai install                    # Install SecOpsAI with all modules
+    secopsai supply-chain scan          # Run supply chain scan
+    secopsai supply-chain monitor       # Start monitoring
+    secopsai supply-chain check axios   # Check specific package
+"""
+
+import argparse
+import sys
+import os
+import subprocess
+import json
+from pathlib import Path
+from typing import List, Optional
+
+# SecOpsAI base directory
+SECOPSAI_DIR = Path.home() / ".secopsai"
+MODULES_DIR = SECOPSAI_DIR / "modules"
+LOG_DIR = SECOPSAI_DIR / "logs"
+
+# Module registry
+MODULES = {
+    "supply-chain": {
+        "name": "Supply Chain Security",
+        "description": "Detect and mitigate supply chain attacks on npm, PyPI, editors",
+        "path": "supply-chain",
+        "commands": ["scan", "monitor", "check", "validate", "respond"],
+        "install_check": "agents/npm_registry_monitor.py"
+    }
+}
+
+
+def ensure_directories():
+    """Create SecOpsAI directory structure"""
+    SECOPSAI_DIR.mkdir(exist_ok=True)
+    MODULES_DIR.mkdir(exist_ok=True)
+    LOG_DIR.mkdir(exist_ok=True)
+
+
+def is_module_installed(module_name: str) -> bool:
+    """Check if a module is installed"""
+    module_info = MODULES.get(module_name)
+    if not module_info:
+        return False
+    
+    check_file = MODULES_DIR / module_info["path"] / module_info["install_check"]
+    return check_file.exists()
+
+
+def install_module(module_name: str, source_dir: Optional[str] = None):
+    """Install a SecOpsAI module"""
+    if module_name not in MODULES:
+        print(f"❌ Unknown module: {module_name}")
+        print(f"Available modules: {', '.join(MODULES.keys())}")
+        return False
+    
+    module_info = MODULES[module_name]
+    target_dir = MODULES_DIR / module_info["path"]
+    
+    if is_module_installed(module_name):
+        print(f"✅ Module '{module_name}' is already installed")
+        return True
+    
+    print(f"📦 Installing {module_info['name']}...")
+    
+    # Determine source directory
+    if source_dir:
+        src = Path(source_dir)
+    else:
+        # Look for toolkit in standard locations
+        possible_paths = [
+            Path(__file__).parent / "secopsai-toolkit",
+            Path(__file__).parent.parent / "secopsai-toolkit",
+            Path.cwd() / "secopsai-toolkit",
+            Path.home() / "secopsai-toolkit",
+        ]
+        src = None
+        for p in possible_paths:
+            if p.exists():
+                src = p
+                break
+    
+    if not src or not src.exists():
+        print(f"❌ Cannot find {module_name} toolkit")
+        print("Please ensure secopsai-toolkit is in one of these locations:")
+        for p in possible_paths:
+            print(f"  - {p}")
+        return False
+    
+    # Copy module files
+    import shutil
+    try:
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+        shutil.copytree(src, target_dir)
+        
+        # Make scripts executable
+        for script in target_dir.rglob("*.py"):
+            script.chmod(0o755)
+        for script in target_dir.rglob("*.sh"):
+            script.chmod(0o755)
+        
+        print(f"✅ {module_info['name']} installed to {target_dir}")
+        
+        # Install Python dependencies
+        print("📦 Installing Python dependencies...")
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--user", "psutil", "requests", "pyyaml"],
+            capture_output=True
+        )
+        
+        # Create shell aliases
+        setup_shell_aliases()
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Installation failed: {e}")
+        return False
+
+
+def setup_shell_aliases():
+    """Setup shell aliases for secopsai"""
+    shell_rc = None
+    if Path.home() / ".zshrc" in [Path.home() / ".zshrc"]:
+        shell_rc = Path.home() / ".zshrc"
+    elif Path.home() / ".bashrc" in [Path.home() / ".bashrc"]:
+        shell_rc = Path.home() / ".bashrc"
+    
+    if shell_rc:
+        alias_block = f"""
+# SecOpsAI aliases
+alias secopsai='{sys.executable} {Path(__file__).absolute()}'
+"""
+        # Check if already exists
+        if shell_rc.exists():
+            content = shell_rc.read_text()
+            if "SecOpsAI aliases" not in content:
+                with open(shell_rc, "a") as f:
+                    f.write(alias_block)
+                print(f"📝 Added aliases to {shell_rc}")
+                print(f"   Run 'source {shell_rc}' to use them now")
+
+
+def run_supply_chain_command(args):
+    """Run supply chain security commands"""
+    if not is_module_installed("supply-chain"):
+        print("❌ Supply chain module not installed")
+        print("Run: secopsai install supply-chain")
+        return 1
+    
+    module_dir = MODULES_DIR / "supply-chain"
+    
+    if args.command == "scan":
+        # Run comprehensive scan
+        print("🔍 Running supply chain security scan...")
+        
+        # Check for lockfile
+        lockfiles = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"]
+        found_lockfile = None
+        for lf in lockfiles:
+            if Path(lf).exists():
+                found_lockfile = lf
+                break
+        
+        if found_lockfile:
+            print(f"📋 Found lockfile: {found_lockfile}")
+            result = subprocess.run([
+                sys.executable, str(module_dir / "agents" / "npm_registry_monitor.py"),
+                "--check-lockfile", found_lockfile
+            ])
+            return result.returncode
+        else:
+            print("⚠️ No lockfile found. Run from project root.")
+            return 1
+    
+    elif args.command == "monitor":
+        # Start runtime monitoring
+        print("👁️ Starting supply chain runtime monitor...")
+        print("Press Ctrl+C to stop")
+        result = subprocess.run([
+            sys.executable, str(module_dir / "agents" / "runtime_monitor.py"),
+            "--monitor"
+        ])
+        return result.returncode
+    
+    elif args.command == "check":
+        # Check specific package
+        if not args.target:
+            print("❌ Package name required (e.g., secopsai supply-chain check axios)")
+            return 1
+        
+        package = args.target
+        version = None
+        if "@" in package:
+            package, version = package.split("@", 1)
+        
+        print(f"🔍 Checking {package}@{version or 'latest'}...")
+        cmd = [sys.executable, str(module_dir / "agents" / "npm_registry_monitor.py"), "--package", package]
+        if version:
+            cmd.extend(["--version", version])
+        
+        result = subprocess.run(cmd)
+        return result.returncode
+    
+    elif args.command == "validate":
+        # Validate SBOM
+        print("📋 Validating SBOM...")
+        
+        sbom_file = args.target if args.target else "sbom.json"
+        if Path(sbom_file).exists():
+            result = subprocess.run([
+                sys.executable, str(module_dir / "agents" / "sbom_validator.py"),
+                "--sbom", sbom_file, "--fail-on-critical"
+            ])
+        else:
+            # Generate and validate
+            result = subprocess.run([
+                sys.executable, str(module_dir / "agents" / "sbom_validator.py"),
+                "--generate", ".", "--policy", "strict"
+            ])
+        return result.returncode
+    
+    elif args.command == "respond":
+        # Incident response
+        if not args.target:
+            print("📚 Available playbooks:")
+            result = subprocess.run([
+                sys.executable, str(module_dir / "playbooks" / "incident_response.py"),
+                "--list-playbooks"
+            ])
+            return result.returncode
+        
+        playbook = args.target
+        print(f"🚨 Executing playbook: {playbook}")
+        result = subprocess.run([
+            sys.executable, str(module_dir / "playbooks" / "incident_response.py"),
+            "--playbook", playbook, "--dry-run"
+        ])
+        return result.returncode
+    
+    else:
+        print(f"❌ Unknown command: {args.command}")
+        print(f"Available commands: {', '.join(MODULES['supply-chain']['commands'])}")
+        return 1
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="SecOpsAI - Unified Security Operations Platform",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  secopsai install                      # Install all modules
+  secopsai install supply-chain         # Install supply chain module
+  secopsai supply-chain scan            # Scan current project
+  secopsai supply-chain check axios     # Check specific package
+  secopsai supply-chain monitor         # Start monitoring
+  secopsai supply-chain validate        # Validate SBOM
+  secopsai supply-chain respond         # List incident playbooks
+        """
+    )
+    
+    subparsers = parser.add_subparsers(dest="action", help="Available actions")
+    
+    # Install command
+    install_parser = subparsers.add_parser("install", help="Install SecOpsAI modules")
+    install_parser.add_argument("module", nargs="?", help="Module to install (default: all)")
+    install_parser.add_argument("--source", help="Source directory for module files")
+    
+    # Supply-chain command
+    sc_parser = subparsers.add_parser("supply-chain", help="Supply chain security operations")
+    sc_parser.add_argument("command", choices=MODULES["supply-chain"]["commands"],
+                          help="Supply chain command")
+    sc_parser.add_argument("target", nargs="?", help="Target package/playbook/file")
+    
+    # Status command
+    status_parser = subparsers.add_parser("status", help="Check SecOpsAI status")
+    
+    # Update command
+    update_parser = subparsers.add_parser("update", help="Update SecOpsAI modules")
+    
+    args = parser.parse_args()
+    
+    ensure_directories()
+    
+    if args.action == "install":
+        if args.module:
+            success = install_module(args.module, args.source)
+            return 0 if success else 1
+        else:
+            # Install all modules
+            print("📦 Installing SecOpsAI with all modules...")
+            for module_name in MODULES:
+                install_module(module_name, args.source)
+            return 0
+    
+    elif args.action == "supply-chain":
+        return run_supply_chain_command(args)
+    
+    elif args.action == "status":
+        print("📊 SecOpsAI Status")
+        print(f"Installation directory: {SECOPSAI_DIR}")
+        print(f"\nInstalled modules:")
+        for name, info in MODULES.items():
+            status = "✅" if is_module_installed(name) else "❌"
+            print(f"  {status} {name}: {info['name']}")
+        return 0
+    
+    elif args.action == "update":
+        print("🔄 Updating SecOpsAI modules...")
+        for name in MODULES:
+            if is_module_installed(name):
+                print(f"  Updating {name}...")
+                install_module(name)
+        return 0
+    
+    else:
+        parser.print_help()
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
