@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecOpsAI | Local-first security operations</title>
+    <meta name="description" content="Local-first cross-platform SecOps for OpenClaw, macOS, Linux, and Windows. Detect supply chain attacks, correlate findings, and protect your infrastructure.">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        
+        /* Header */
+        header {
+            background: linear-gradient(135deg, #161b22 0%, #0d1117 100%);
+            border-bottom: 1px solid #30363d;
+            padding: 20px 0;
+        }
+        
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            color: #f0883e;
+        }
+        
+        .nav-links a {
+            color: #c9d1d9;
+            text-decoration: none;
+            margin-left: 30px;
+            transition: color 0.3s;
+        }
+        
+        .nav-links a:hover {
+            color: #f0883e;
+        }
+        
+        /* Hero */
+        .hero {
+            background: linear-gradient(135deg, #161b22 0%, #0d1117 100%);
+            padding: 80px 0;
+            text-align: center;
+        }
+        
+        .hero h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            background: linear-gradient(90deg, #f0883e, #fb923c);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .hero p {
+            font-size: 20px;
+            color: #8b949e;
+            max-width: 700px;
+            margin: 0 auto 40px;
+        }
+        
+        .badge {
+            display: inline-block;
+            background: #238636;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }
+        
+        .cta-buttons {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 15px 30px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: #f0883e;
+            color: #0d1117;
+        }
+        
+        .btn-primary:hover {
+            background: #fb923c;
+        }
+        
+        .btn-secondary {
+            background: transparent;
+            color: #c9d1d9;
+            border: 2px solid #30363d;
+        }
+        
+        .btn-secondary:hover {
+            border-color: #f0883e;
+            color: #f0883e;
+        }
+        
+        /* Terminal Demo */
+        .terminal-demo {
+            background: #0d1117;
+            padding: 40px 0;
+        }
+        
+        .terminal {
+            background: #161b22;
+            border-radius: 12px;
+            border: 1px solid #30363d;
+            max-width: 800px;
+            margin: 0 auto;
+            overflow: hidden;
+        }
+        
+        .terminal-header {
+            background: #21262d;
+            padding: 12px 20px;
+            display: flex;
+            gap: 8px;
+        }
+        
+        .terminal-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        
+        .dot-red { background: #ff5f56; }
+        .dot-yellow { background: #ffbd2e; }
+        .dot-green { background: #27c93f; }
+        
+        .terminal-body {
+            padding: 20px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        
+        .terminal-line {
+            margin: 4px 0;
+        }
+        
+        .prompt { color: #27c93f; }
+        .command { color: #c9d1d9; }
+        .output { color: #8b949e; }
+        .success { color: #3fb950; }
+        .warning { color: #f0883e; }
+        .error { color: #f85149; }
+        
+        /* Features */
+        .features {
+            padding: 80px 0;
+            background: #0d1117;
+        }
+        
+        .section-title {
+            text-align: center;
+            font-size: 36px;
+            margin-bottom: 60px;
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 40px;
+        }
+        
+        .feature-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 30px;
+            transition: transform 0.3s, border-color 0.3s;
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-5px);
+            border-color: #f0883e;
+        }
+        
+        .feature-icon {
+            font-size: 40px;
+            margin-bottom: 20px;
+        }
+        
+        .feature-card h3 {
+            color: #f0883e;
+            margin-bottom: 15px;
+            font-size: 22px;
+        }
+        
+        .feature-card p {
+            color: #8b949e;
+        }
+        
+        .new-badge {
+            display: inline-block;
+            background: #238636;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        
+        /* Supply Chain Highlight */
+        .supply-chain-highlight {
+            background: linear-gradient(135deg, #1f2937 0%, #161b22 100%);
+            padding: 80px 0;
+            border-top: 1px solid #30363d;
+            border-bottom: 1px solid #30363d;
+        }
+        
+        .supply-chain-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 60px;
+            align-items: center;
+        }
+        
+        .supply-chain-text h2 {
+            font-size: 36px;
+            margin-bottom: 20px;
+        }
+        
+        .supply-chain-text h2 span {
+            color: #f0883e;
+        }
+        
+        .supply-chain-text p {
+            color: #8b949e;
+            margin-bottom: 30px;
+            font-size: 18px;
+        }
+        
+        .threat-list {
+            list-style: none;
+        }
+        
+        .threat-list li {
+            padding: 10px 0;
+            padding-left: 30px;
+            position: relative;
+        }
+        
+        .threat-list li::before {
+            content: "🛡️";
+            position: absolute;
+            left: 0;
+        }
+        
+        .supply-chain-code {
+            background: #0d1117;
+            border-radius: 12px;
+            padding: 30px;
+            border: 1px solid #30363d;
+        }
+        
+        .supply-chain-code pre {
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 14px;
+            color: #c9d1d9;
+            overflow-x: auto;
+        }
+        
+        /* Stats */
+        .stats {
+            background: #161b22;
+            padding: 60px 0;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 40px;
+            text-align: center;
+        }
+        
+        .stat-number {
+            font-size: 48px;
+            font-weight: bold;
+            color: #f0883e;
+        }
+        
+        .stat-label {
+            color: #8b949e;
+            margin-top: 10px;
+        }
+        
+        /* Quick Start */
+        .quick-start {
+            padding: 80px 0;
+            background: #0d1117;
+        }
+        
+        .install-box {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 30px;
+            max-width: 800px;
+            margin: 40px auto;
+        }
+        
+        .install-box code {
+            display: block;
+            background: #0d1117;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            color: #c9d1d9;
+            overflow-x: auto;
+        }
+        
+        /* Footer */
+        footer {
+            background: #161b22;
+            border-top: 1px solid #30363d;
+            padding: 40px 0;
+            text-align: center;
+        }
+        
+        footer p {
+            color: #8b949e;
+        }
+        
+        footer a {
+            color: #f0883e;
+            text-decoration: none;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 32px;
+            }
+            
+            .supply-chain-content {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .nav-links {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <div class="container">
+            <nav>
+                <div class="logo">🔒 SecOpsAI</div>
+                <div class="nav-links">
+                    <a href="https://docs.secopsai.dev">Documentation</a>
+                    <a href="https://github.com/Techris93/secopsai">GitHub</a>
+                    <a href="https://docs.secopsai.dev/supply-chain/">Supply Chain</a>
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Hero -->
+    <section class="hero">
+        <div class="container">
+            <span class="badge">🛡️ Supply Chain Security Module Added</span>
+            <h1>Local-first security operations,<br>across OpenClaw and host platforms.</h1>
+            <p>SecOpsAI collects telemetry from OpenClaw, macOS, Linux, and Windows, then turns it into findings, correlations, and threat-intel matches you can review locally.</p>
+            <div class="cta-buttons">
+                <a href="https://docs.secopsai.dev/getting-started/" class="btn btn-primary">Get Started</a>
+                <a href="https://github.com/Techris93/secopsai" class="btn btn-secondary">View on GitHub</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Terminal Demo -->
+    <section class="terminal-demo">
+        <div class="container">
+            <div class="terminal">
+                <div class="terminal-header">
+                    <div class="terminal-dot dot-red"></div>
+                    <div class="terminal-dot dot-yellow"></div>
+                    <div class="terminal-dot dot-green"></div>
+                </div>
+                <div class="terminal-body">
+                    <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai refresh --platform macos,openclaw</span></div>
+                    <div class="terminal-line"><span class="output">[OK] Collected host + OpenClaw telemetry</span></div>
+                    <div class="terminal-line"><span class="output">[OK] Findings persisted to local SOC store (SQLite)</span></div>
+                    <div class="terminal-line"></div>
+                    <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai-supply-chain check --project-path .</span></div>
+                    <div class="terminal-line"><span class="success">✓ 8 packages scanned</span></div>
+                    <div class="terminal-line"><span class="warning">⚠ 1 suspicious package detected</span></div>
+                    <div class="terminal-line"></div>
+                    <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai correlate</span></div>
+                    <div class="terminal-line"><span class="output">[OK] Cross-platform correlation complete</span></div>
+                    <div class="terminal-line"></div>
+                    <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai list --severity high</span></div>
+                    <div class="terminal-line"><span class="warning">⚠ HIGH: Suspicious execution / policy abuse detected</span></div>
+                    <div class="terminal-line"><span class="output">SCF-… | npm package | status=open | disposition=unreviewed</span></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Supply Chain Highlight -->
+    <section class="supply-chain-highlight">
+        <div class="container">
+            <div class="supply-chain-content">
+                <div class="supply-chain-text">
+                    <h2>🛡️ <span>Supply Chain Security</span> <span class="new-badge">NEW</span></h2>
+                    <p>Detect and mitigate supply chain attacks on npm, PyPI, Vim, Emacs, and more. Protect your dependencies before they compromise your systems.</p>
+                    <ul class="threat-list">
+                        <li>Malicious npm packages (axios@1.14.1)</li>
+                        <li>PyPI backdoors (litellm@1.82.7)</li>
+                        <li>Editor exploits (Vim, Emacs)</li>
+                        <li>Runtime droppers and RATs</li>
+                        <li>Typosquatting attacks</li>
+                    </ul>
+                    <br>
+                    <a href="https://docs.secopsai.dev/supply-chain/" class="btn btn-primary">Learn More</a>
+                </div>
+                <div class="supply-chain-code">
+                    <pre><code># Check your project for malicious packages
+$ secopsai-supply-chain check --project-path .
+
+📦 Supply Chain Security Report
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✓ 8 Sigma detection rules active
+✓ 8 YARA signatures loaded
+✓ npm registry: CONNECTED
+
+🔍 Scan Results:
+  lodash@4.17.21      ✓ CLEAN
+  axios@1.6.0         ✓ CLEAN
+  
+🛡️ No threats detected!</code></pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Stats -->
+    <section class="stats">
+        <div class="container">
+            <div class="stats-grid">
+                <div>
+                    <div class="stat-number">100+</div>
+                    <div class="stat-label">Detection Rules</div>
+                </div>
+                <div>
+                    <div class="stat-number">4</div>
+                    <div class="stat-label">Platforms Supported</div>
+                </div>
+                <div>
+                    <div class="stat-number">50K+</div>
+                    <div class="stat-label">Lines of Code</div>
+                </div>
+                <div>
+                    <div class="stat-number">0</div>
+                    <div class="stat-label">External API Dependencies</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section class="features">
+        <div class="container">
+            <h2 class="section-title">Detect, triage, and act — locally</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🔌</div>
+                    <h3>OpenClaw Plugin</h3>
+                    <p>Native TypeScript plugin for seamless OpenClaw integration. Install once, use 8 built-in tools directly from OpenClaw.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🛡️</div>
+                    <h3>Supply Chain Security <span class="new-badge">NEW</span></h3>
+                    <p>Detect malicious npm/PyPI packages, editor exploits (Vim, Emacs), and runtime droppers. 8 Sigma rules + 8 YARA signatures.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🧠</div>
+                    <h3>Adaptive Intelligence</h3>
+                    <p>Auto-generates detection rules from CVEs and threat feeds. Validates with F1 scores. Only deploys improving rules.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">💬</div>
+                    <h3>WhatsApp Workflows</h3>
+                    <p>Use OpenClaw to interact with SecOpsAI from WhatsApp: "check malware", "show OCF-…", "mitigate OCF-…".</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🎯</div>
+                    <h3>Threat Intel (IOCs)</h3>
+                    <p>Pull open-source IOCs, normalize + score them, optional local enrichment (DNS), then match against events.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <h3>Local-first</h3>
+                    <p>All data stays on your machine. SQLite SOC store. No log shipping by default. You own your security data.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Quick Start -->
+    <section class="quick-start">
+        <div class="container">
+            <h2 class="section-title">Install SecOpsAI</h2>
+            <p style="text-align: center; color: #8b949e; margin-bottom: 40px;">Works everywhere. Installs everything.</p>
+            
+            <div class="install-box">
+                <p style="margin-bottom: 15px; color: #8b949e;">One-liner install for macOS/Linux:</p>
+                <code>curl -fsSL https://secopsai.dev/install.sh | bash</code>
+            </div>
+            
+            <div style="text-align: center; margin-top: 40px;">
+                <p style="color: #8b949e; margin-bottom: 20px;">After installation:</p>
+                <div class="install-box" style="text-align: left;">
+                    <code>cd ~/secopsai && source .venv/bin/activate<br>
+secopsai refresh && secopsai list --severity high<br>
+secopsai-supply-chain check --project-path .</code>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <p>© 2026 SecOpsAI. Open source under MIT License.</p>
+            <p style="margin-top: 10px;">
+                <a href="https://github.com/Techris93/secopsai">GitHub</a> • 
+                <a href="https://docs.secopsai.dev">Documentation</a> • 
+                <a href="https://docs.secopsai.dev/supply-chain/">Supply Chain Security</a>
+            </p>
+        </div>
+    </footer>
+</body>
+</html>

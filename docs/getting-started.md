@@ -15,9 +15,11 @@ Welcome! This guide will get you up and running with SecOpsAI in under 5 minutes
 
 - **A unified CLI** for collection, findings review, correlation, and threat intel
 - **Multi-platform telemetry support** across OpenClaw and host adapters
+- **🛡️ Supply Chain Security** — Detect malicious npm/PyPI packages and editor exploits
 - **Production-ready findings reports** with severity and incident deduplication
 - **Cross-platform correlation** to connect related activity across sources
 - **Threat-intel / IOC workflows** for local matching and enrichment
+- **Adaptive Intelligence** — Auto-generates detection rules from CVEs
 
 ## Install (2 minutes)
 
@@ -103,6 +105,23 @@ secopsai list
 ```
 
 This is the simplest first run and the best default starting point.
+
+### 🛡️ Check for Supply Chain Attacks (NEW!)
+
+Protect your dependencies from supply chain attacks:
+
+```bash
+# Check your current project
+secopsai-supply-chain check --project-path .
+
+# Check a specific package before installing
+secopsai-supply-chain check --package axios --version 1.6.0
+
+# Export results to JSON
+secopsai-supply-chain check --output supply_chain_report.json
+```
+
+**Detects:** Malicious npm packages, PyPI backdoors, Vim/Emacs exploits, typosquatting
 
 To inspect a finding in detail:
 

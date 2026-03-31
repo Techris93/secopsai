@@ -21,6 +21,7 @@ theme:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Supply Chain Security: supply-chain.md
   - Rules Registry: rules-registry.md
   - Deployment Guide: deployment-guide.md
   - API Reference: api-reference.md
