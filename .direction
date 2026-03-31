@@ -1,0 +1,7 @@
+{
+  "agent_id": "agent-2",
+  "branch": "experiment/agent-2",
+  "direction": "new-rules",
+  "hint": "Add entirely new detection rules for attack types that are currently missed. Check the 'Missed attack events' output for ideas.",
+  "created_at": "2026-03-29T19:37:42.607950"
+}
