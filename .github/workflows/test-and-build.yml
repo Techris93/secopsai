@@ -33,6 +33,16 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-cov flake8 mypy
 
+      - name: Prepare test data directories
+        run: |
+          mkdir -p data/openclaw/raw
+          mkdir -p data/openclaw/replay/labeled
+          # Copy fixture data if it exists
+          if [ -d "data/fixtures/openclaw" ]; then
+            cp data/fixtures/openclaw/sample_audit.jsonl data/openclaw/raw/ 2>/dev/null || true
+            cp data/fixtures/openclaw/attack_mix.json data/openclaw/replay/labeled/ 2>/dev/null || true
+          fi
+
       - name: Lint with flake8
         run: |
           # Stop the build if there are Python syntax errors or undefined names
