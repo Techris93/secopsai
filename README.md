@@ -247,6 +247,8 @@ See [secopsai-toolkit/README.md](secopsai-toolkit/README.md) and [secopsai-toolk
 
 ## Quick Start
 
+📚 **New to SecOpsAI?** Start with the [USER_WORKBOOK.md](USER_WORKBOOK.md) for a complete step-by-step guide including installation, first scan, and daily workflows!
+
 For a short first-run guide, see [docs/quickstart-beginner.md](docs/quickstart-beginner.md).
 For a platform-by-platform operations guide, see [docs/operator-runbook.md](docs/operator-runbook.md).
 
@@ -673,6 +675,7 @@ Optional chat files:
 
 ## Docs
 
+- **[USER_WORKBOOK.md](USER_WORKBOOK.md)** — 🆕 Complete guide for new users (start here!)
 - [secopsai-toolkit/README.md](secopsai-toolkit/README.md) — Supply chain security module
 - [secopsai-toolkit/SECOPSAI_INTEGRATION.md](secopsai-toolkit/SECOPSAI_INTEGRATION.md) — Integration guide
 - [ADAPTIVE_INTELLIGENCE.md](ADAPTIVE_INTELLIGENCE.md) — Continuous learning system
