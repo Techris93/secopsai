@@ -11,7 +11,7 @@ Current baseline: Rules ported from OpenSentinel with initial thresholds.
 import re
 import math
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, Iterable
+from typing import List, Dict, Any, Optional, Iterable, DefaultDict, Callable, cast
 from collections import Counter, defaultdict
 import hashlib
 
@@ -130,7 +130,7 @@ def shannon_entropy(text: str) -> float:
     if not text:
         return 0.0
 
-    counts = defaultdict(int)
+    counts: DefaultDict[str, int] = defaultdict(int)
     for char in text:
         counts[char] += 1
 
@@ -2306,17 +2306,19 @@ def run_detection(events: List[Dict]) -> Dict[str, Any]:
             "total_detections": int,
         }
     """
-    all_detected = set()
-    rule_results = {}
+    all_detected: set[str] = set()
+    rule_results: Dict[str, List[str]] = {}
 
     for rule in DETECTION_RULES:
+        rule_id = str(rule.get("id", "unknown-rule"))
         try:
-            detected_ids = rule["fn"](events)
-            rule_results[rule["id"]] = detected_ids
+            rule_fn = cast(Callable[[List[Dict[str, Any]]], List[str]], rule["fn"])
+            detected_ids = rule_fn(events)
+            rule_results[rule_id] = detected_ids
             all_detected.update(detected_ids)
         except (KeyError, TypeError, ValueError, ZeroDivisionError, re.error) as e:
             print(f"  ⚠️  Rule {rule['id']} ({rule['name']}) error: {e}")
-            rule_results[rule["id"]] = []
+            rule_results[rule_id] = []
 
     findings = build_detection_findings(events, rule_results)
 

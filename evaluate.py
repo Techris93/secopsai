@@ -18,7 +18,7 @@ import subprocess  # nosec B404
 import argparse
 import shutil
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -107,8 +107,8 @@ def compute_per_rule_metrics(
 
 # ═══ Reporting ═══════════════════════════════════════════════════════════════
 
-def print_results(metrics: Dict[str, Any], rule_results: Dict = None,
-                  events: List[Dict] = None, verbose: bool = False):
+def print_results(metrics: Dict[str, Any], rule_results: Optional[Dict[str, List[str]]] = None,
+                  events: Optional[List[Dict[str, Any]]] = None, verbose: bool = False):
     """Print evaluation results in a clear format."""
 
     print(f"\n{'═' * 60}")
@@ -148,7 +148,7 @@ def print_results(metrics: Dict[str, Any], rule_results: Dict = None,
         missed = [e for e in events
                   if e.get("label") == "malicious" and e["event_id"] not in detected_set]
         if missed:
-            missed_types = {}
+            missed_types: dict[str, int] = {}
             for e in missed:
                 at = e.get("attack_type", "unknown")
                 missed_types[at] = missed_types.get(at, 0) + 1
