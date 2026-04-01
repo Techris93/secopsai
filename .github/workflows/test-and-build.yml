@@ -37,11 +37,16 @@ jobs:
         run: |
           mkdir -p data/openclaw/raw
           mkdir -p data/openclaw/replay/labeled
-          # Copy fixture data if it exists
-          if [ -d "data/fixtures/openclaw" ]; then
-            cp data/fixtures/openclaw/sample_audit.jsonl data/openclaw/raw/ 2>/dev/null || true
-            cp data/fixtures/openclaw/attack_mix.json data/openclaw/replay/labeled/ 2>/dev/null || true
+          mkdir -p secopsai-dashboard/supabase_migrations
+          # Copy fixture data
+          if [ -f "data/fixtures/openclaw/sample_audit.jsonl" ]; then
+            cp data/fixtures/openclaw/sample_audit.jsonl data/openclaw/raw/audit.jsonl
           fi
+          if [ -f "data/fixtures/openclaw/attack_mix.json" ]; then
+            cp data/fixtures/openclaw/attack_mix.json data/openclaw/replay/labeled/current.json
+          fi
+          # Create mock schema file for tests
+          echo "CREATE TABLE IF NOT EXISTS findings (id UUID PRIMARY KEY);" > secopsai-dashboard/supabase_migrations/2026-03-28_findings.sql
 
       - name: Lint with flake8
         run: |
