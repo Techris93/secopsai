@@ -55,31 +55,31 @@ RULE_THRESHOLDS: dict = {
     "brute_force": {
         # tune.py (quick grid, 2026-03-17): RAPID_THRESHOLD 6→4, WINDOW 10→5 min
         # lifted overall F1 from 0.720 → 0.796 by catching more slow/distributed bursts.
-        "RAPID_THRESHOLD": 12,
-        "RAPID_WINDOW_MINUTES": 15,
+        "RAPID_THRESHOLD": 4,
+        "RAPID_WINDOW_MINUTES": 5,
         "SLOW_THRESHOLD": 2,
-        "SLOW_MIN_SPAN_MINUTES": 60,
+        "SLOW_MIN_SPAN_MINUTES": 15,
         "COMPROMISE_WINDOW_MINUTES": 20,
         "SOURCELESS_THRESHOLD": 8,
     },
     "dns_exfiltration": {
-        "MIN_QUERIES_PER_DOMAIN": 5,
-        "MIN_LABEL_LENGTH": 20,
-        "MIN_ENTROPY": 4.0,
-        "MIN_UNIQUE_LABEL_RATIO": 0.8,
+        "MIN_QUERIES_PER_DOMAIN": 3,
+        "MIN_LABEL_LENGTH": 10,
+        "MIN_ENTROPY": 2.5,
+        "MIN_UNIQUE_LABEL_RATIO": 0.6,
         "FALLBACK_LABEL_LENGTH": 20,
         "FALLBACK_UNIQUE_RATIO": 0.7,
     },
     "c2_beaconing": {
         "MIN_CONNECTIONS": 3,
         "MAX_BYTES_OUT": 500,
-        "MAX_BYTES_IN": 400,
+        "MAX_BYTES_IN": 200,
     },
     "lateral_movement": {
         "UNIQUE_DEST_THRESHOLD": 3,
         "WINDOW_MINUTES": 30,
         "MAX_AVERAGE_GAP_SECONDS": 180,
-        "MAX_TRANSFER_BYTES": 75000,
+        "MAX_TRANSFER_BYTES": 50000,
     },
 }
 
@@ -605,6 +605,69 @@ def _is_macos_event(event: Dict[str, Any]) -> bool:
     return str(event.get("platform", "")).lower() == "macos"
 
 
+def _is_windows_event(event: Dict[str, Any]) -> bool:
+    return str(event.get("platform", "")).lower() == "windows"
+
+
+def _is_linux_event(event: Dict[str, Any]) -> bool:
+    return str(event.get("platform", "")).lower() == "linux"
+
+
+def _basename(text: str) -> str:
+    value = (text or "").strip().replace("\\", "/")
+    return value.rsplit("/", 1)[-1].lower() if value else ""
+
+
+def _process_name(event: Dict[str, Any]) -> str:
+    actor = event.get("actor")
+    if isinstance(actor, dict):
+        for key in ("process", "process_name", "executable_path", "command_line"):
+            value = actor.get(key)
+            if isinstance(value, str) and value.strip():
+                return _basename(value)
+    for key in ("process", "process_name", "filepath", "path", "command_line", "command"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return _basename(value)
+    return ""
+
+
+def _parent_process_name(event: Dict[str, Any]) -> str:
+    actor = event.get("actor")
+    if isinstance(actor, dict):
+        for key in ("parent_process", "parent_executable"):
+            value = actor.get(key)
+            if isinstance(value, str) and value.strip():
+                return _basename(value)
+    value = event.get("parent_process")
+    return _basename(value) if isinstance(value, str) else ""
+
+
+def _command_line(event: Dict[str, Any]) -> str:
+    actor = event.get("actor")
+    if isinstance(actor, dict):
+        for key in ("command_line", "process", "executable_path"):
+            value = actor.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    for key in ("command_line", "command", "message", "filepath", "registry_path"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
+def _combined_text(event: Dict[str, Any]) -> str:
+    pieces = [
+        _command_line(event),
+        _event_message(event),
+        str(event.get("registry_path") or ""),
+        str(event.get("filepath") or ""),
+        str(event.get("path") or ""),
+    ]
+    return " ".join(piece for piece in pieces if piece)
+
+
 def detect_macos_authentication_failures(events: List[Dict]) -> List[str]:
     """
     T1110 — Suspicious macOS authentication failure bursts.
@@ -630,6 +693,113 @@ def detect_macos_authentication_failures(events: List[Dict]) -> List[str]:
                 if minutes_between(ordered[start], ordered[end]) <= 10:
                     detected.update(event["event_id"] for event in ordered[start:end + 1])
     return sorted(detected)
+
+
+def detect_node_installer_remote_fetch(events: List[Dict]) -> List[str]:
+    """
+    T1195 — Suspicious package-install chain where node/npm/bun spawns native execution
+    to fetch remote content during dependency installation.
+    """
+    detected = []
+    parent_names = {"node", "node.exe", "npm", "npm.cmd", "npx", "bun", "bun.exe"}
+    child_fetchers = {
+        "sh", "bash", "dash", "zsh", "ksh", "fish", "curl", "curl.exe", "wget",
+        "wget.exe", "cmd.exe", "powershell.exe", "cscript.exe", "osascript",
+    }
+    url_hint = re.compile(r"(?i)https?://")
+    install_hint = re.compile(r"(?i)(npm\s+install|bun\s+install|postinstall|node_modules)")
+    fetch_hint = re.compile(r"(?i)\b(curl|wget|invoke-webrequest|invoke-restmethod)\b")
+
+    for event in events:
+        event_type = str(event.get("event_type", "")).lower()
+        if event_type not in {"process", "process_exec", "process_execution", ""} and event.get("sourcetype") != "sysmon":
+            continue
+
+        parent = _parent_process_name(event)
+        process = _process_name(event)
+        combined = _combined_text(event)
+        if parent not in parent_names:
+            continue
+        if process not in child_fetchers:
+            continue
+        if (url_hint.search(combined) and fetch_hint.search(combined)) or install_hint.search(combined):
+            detected.append(event["event_id"])
+    return detected
+
+
+def detect_detached_payload_execution(events: List[Dict]) -> List[str]:
+    """
+    T1059 / T1105 — Detect installer-time shells that fetch a payload and detach it.
+    """
+    detached_patterns = re.compile(
+        r"(?i)(nohup\s+.+\s+&\b|/bin/\w+\s+-c\s+.*\s+&\b|start\s+/min\s+powershell|powershell.*-enc\b|"
+        r"cscript(?:\.exe)?\s+.*\.vbs\b|osascript\s+.*\.scpt\b|chmod\s+\d+\s+.+&&.+https?://|"
+        r"invoke-webrequest.*https?://.*\|\s*powershell)"
+    )
+    download_exec = re.compile(
+        r"(?i)(curl|wget|invoke-webrequest|invoke-restmethod).*(https?://).*(python|bash|sh|zsh|powershell|cmd|osascript|cscript)"
+    )
+    detected = []
+    for event in events:
+        if is_openclaw_event(event):
+            continue
+        event_type = str(event.get("event_type", "")).lower()
+        if event_type not in {"process", "process_exec", "process_execution", "script_execution", ""} and event.get("sourcetype") != "sysmon":
+            continue
+        combined = _combined_text(event)
+        if ("http://" in combined.lower() or "https://" in combined.lower()) and (
+            detached_patterns.search(combined) or download_exec.search(combined)
+        ):
+            detected.append(event["event_id"])
+    return detected
+
+
+def detect_windows_renamed_proxy_persistence(events: List[Dict]) -> List[str]:
+    """
+    T1218 / T1547 — Detect renamed script proxy binaries and associated Run-key persistence.
+    """
+    detected = []
+    renamed_proxy = re.compile(
+        r"(?i)(programdata[/\\]wt\.exe|programdata[/\\].*powershell.*\.exe|powershell.*programdata|"
+        r"run[/\\]microsoftupdate|currentversion[/\\]run[/\\]microsoftupdate)"
+    )
+    script_fetch = re.compile(
+        r"(?i)(curl|invoke-webrequest|invoke-restmethod).*(https?://|packages\.npm\.org/product)"
+    )
+
+    for event in events:
+        if not _is_windows_event(event) and event.get("sourcetype") != "sysmon":
+            continue
+        combined = _combined_text(event)
+        process = _process_name(event)
+        if renamed_proxy.search(combined):
+            detected.append(event["event_id"])
+            continue
+        if process in {"wt.exe", "powershell.exe", "cmd.exe", "cscript.exe"} and script_fetch.search(combined):
+            detected.append(event["event_id"])
+    return detected
+
+
+def detect_macos_applescript_loader(events: List[Dict]) -> List[str]:
+    """
+    T1059.002 / T1105 — Detect macOS osascript-based loaders that stage and execute remote payloads.
+    """
+    detected = []
+    apple_loader = re.compile(
+        r"(?i)(osascript|\.scpt\b|/library/caches/com\.apple\.[\w.-]+|do shell script|"
+        r"curl\s+-o\s+/library/caches/com\.apple\.[\w.-]+|/bin/zsh\s+-c\s+.+https?://)"
+    )
+    suspicious_parent = {"node", "npm", "bun", "osascript", "curl"}
+
+    for event in events:
+        if not _is_macos_event(event):
+            continue
+        combined = _combined_text(event)
+        parent = _parent_process_name(event)
+        process = _process_name(event)
+        if apple_loader.search(combined) and (parent in suspicious_parent or process in {"osascript", "zsh", "sh", "curl"}):
+            detected.append(event["event_id"])
+    return detected
 
 
 def detect_macos_sudo_misuse(events: List[Dict]) -> List[str]:
@@ -1460,6 +1630,50 @@ class AnomalyDetector:
 # ═══ Finding Shaping ══════════════════════════════════════════════════════════
 
 RULE_FINDING_PROFILES: Dict[str, Dict[str, Any]] = {
+    "RULE-111": {
+        "title": "Suspicious package install remote fetch",
+        "severity": "high",
+        "severity_score": 82,
+        "summary": "A node/npm/bun install chain spawned native tooling to fetch remote content, which is strongly associated with package postinstall compromise.",
+        "recommended_actions": [
+            "Identify the package name, version, and dependency tree involved in the install sequence.",
+            "Remove the affected package version, clear local package caches, and inspect developer workstations for follow-on payloads.",
+            "Block the remote domain or URL if it is not part of an approved package mirror or build workflow.",
+        ],
+    },
+    "RULE-112": {
+        "title": "Detached payload execution after remote retrieval",
+        "severity": "high",
+        "severity_score": 84,
+        "summary": "A shell or interpreter fetched remote content and then detached execution, which is a high-signal delivery-stage pattern for supply-chain and loader malware.",
+        "recommended_actions": [
+            "Review the full command line and parent process to confirm whether this was a package install or scripted task.",
+            "Collect the downloaded payload, execution path, and hashes before cleanup.",
+            "Inspect the host for persistence and network beacons from the same user or process context.",
+        ],
+    },
+    "RULE-113": {
+        "title": "Windows renamed proxy and persistence chain",
+        "severity": "critical",
+        "severity_score": 89,
+        "summary": "A Windows script interpreter or proxy binary executed from an unusual path or wrote suspicious Run-key persistence consistent with staged malware delivery.",
+        "recommended_actions": [
+            "Inspect the referenced ProgramData binary or script for tampering and compare it to a known-good signed binary.",
+            "Remove unauthorized Run-key persistence and capture the backing script or executable for analysis.",
+            "Review child processes, network retrievals, and any encoded PowerShell that followed the proxy execution.",
+        ],
+    },
+    "RULE-214": {
+        "title": "macOS AppleScript loader chain",
+        "severity": "high",
+        "severity_score": 86,
+        "summary": "A macOS AppleScript or shell loader staged a payload in an Apple-looking cache path or temp script location and executed it.",
+        "recommended_actions": [
+            "Inspect the AppleScript, dropped binary, and cache path for masquerading or ad-hoc signed payloads.",
+            "Remove unauthorized payloads from /Library/Caches, /tmp, or related staging paths after collecting hashes.",
+            "Review the full parent-child chain to determine whether a package install or browser-driven script launched the loader.",
+        ],
+    },
     "RULE-201": {
         "title": "macOS authentication failures",
         "severity": "medium",
@@ -2063,6 +2277,9 @@ DETECTION_RULES = [
     {"id": "RULE-108", "name": "OpenClaw Restart Loop",        "mitre": "T1529", "fn": detect_openclaw_restart_loop},
     {"id": "RULE-109", "name": "OpenClaw Data Exfiltration",   "mitre": "T1048", "fn": detect_openclaw_data_exfiltration},
     {"id": "RULE-110", "name": "OpenClaw Malware Presence",    "mitre": "T1204", "fn": detect_openclaw_malware_presence},
+    {"id": "RULE-111", "name": "Node Installer Remote Fetch",  "mitre": "T1195", "fn": detect_node_installer_remote_fetch},
+    {"id": "RULE-112", "name": "Detached Payload Execution",   "mitre": "T1059", "fn": detect_detached_payload_execution},
+    {"id": "RULE-113", "name": "Windows Renamed Proxy Persistence", "mitre": "T1547", "fn": detect_windows_renamed_proxy_persistence},
     {"id": "RULE-301", "name": "SQL Injection Detection",      "mitre": "T1190", "fn": detect_sql_injection},
     {"id": "RULE-302", "name": "Remote Code Execution",        "mitre": "T1059", "fn": detect_rce},
     {"id": "RULE-303", "name": "Cross-Site Scripting",         "mitre": "T1189", "fn": detect_xss},
@@ -2073,6 +2290,7 @@ DETECTION_RULES = [
     {"id": "RULE-308", "name": "SSRF Attack",                  "mitre": "T1189", "fn": detect_ssrf},
     {"id": "RULE-309", "name": "NoSQL Injection",              "mitre": "T1190", "fn": detect_nosql_injection},
     {"id": "RULE-310", "name": "Log4j JNDI Injection",         "mitre": "T1190", "fn": detect_log4j},
+    {"id": "RULE-214", "name": "macOS AppleScript Loader",     "mitre": "T1059.002", "fn": detect_macos_applescript_loader},
 ]
 
 
