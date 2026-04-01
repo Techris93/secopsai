@@ -39,6 +39,46 @@ ENRICH_STORE = INTEL_DIR / "enriched.json"
 DEFAULT_TIMEOUT_SECONDS = 20
 
 
+def _curated_supply_chain_iocs() -> List["IOC"]:
+    first_seen = "2026-03-31T00:00:00Z"
+    entries = [
+        ("domain", "sfrclak.com", "elastic-curated", ["axios-compromise", "c2", "supply-chain"], 95),
+        ("ip", "142.11.206.73", "elastic-curated", ["axios-compromise", "c2", "supply-chain"], 95),
+        ("url", "http://sfrclak.com:8000/6202033", "elastic-curated", ["axios-compromise", "stage2", "supply-chain"], 98),
+        ("hash", "e10b1fa84f1d6481625f741b69892780140d4e0e7769e7491e5f4d894c2e0e09", "elastic-curated", ["axios-compromise", "setup.js", "supply-chain"], 95),
+        ("hash", "6483c004e207137385f480909d6edecf1b699087378aa91745ecba7c3394f9d7", "elastic-curated", ["axios-compromise", "linux-rat", "supply-chain"], 95),
+        ("hash", "ed8560c1ac7ceb6983ba995124d5917dc1a00288912387a6389296637d5f815c", "elastic-curated", ["axios-compromise", "powershell-rat", "supply-chain"], 95),
+        ("hash", "e49c2732fb9861548208a78e72996b9c3c470b6b562576924bcc3a9fb75bf9ff", "elastic-curated", ["axios-compromise", "persistence", "supply-chain"], 92),
+        ("hash", "92ff08773995ebc8d55ec4b8e1a225d0d1e51efa4ef88b8849d0071230c9645a", "elastic-curated", ["axios-compromise", "macos-backdoor", "supply-chain"], 95),
+        ("artifact", "axios@1.14.1", "elastic-curated", ["axios-compromise", "package-version", "supply-chain"], 88),
+        ("artifact", "axios@0.30.4", "elastic-curated", ["axios-compromise", "package-version", "supply-chain"], 88),
+        ("artifact", "plain-crypto-js@4.2.1", "elastic-curated", ["axios-compromise", "dependency", "postinstall"], 92),
+        ("artifact", "@shadanai/openclaw@2026.3.28-2", "elastic-curated", ["openclaw-ecosystem", "package-version", "supply-chain"], 90),
+        ("artifact", "@shadanai/openclaw@2026.3.28-3", "elastic-curated", ["openclaw-ecosystem", "package-version", "supply-chain"], 90),
+        ("artifact", "@shadanai/openclaw@2026.3.31-1", "elastic-curated", ["openclaw-ecosystem", "package-version", "supply-chain"], 90),
+        ("artifact", "@shadanai/openclaw@2026.3.31-2", "elastic-curated", ["openclaw-ecosystem", "package-version", "supply-chain"], 90),
+        ("artifact", "node_modules/plain-crypto-js/setup.js", "elastic-curated", ["axios-compromise", "filesystem", "postinstall"], 85),
+        ("artifact", "/tmp/ld.py", "elastic-curated", ["axios-compromise", "filesystem", "linux"], 90),
+        ("artifact", "programdata\\wt.exe", "elastic-curated", ["axios-compromise", "filesystem", "windows"], 90),
+        ("artifact", "programdata\\system.bat", "elastic-curated", ["axios-compromise", "filesystem", "windows"], 88),
+        ("artifact", "currentversion\\run\\microsoftupdate", "elastic-curated", ["axios-compromise", "registry", "persistence"], 92),
+        ("artifact", "/Library/Caches/com.apple.act.mond", "elastic-curated", ["axios-compromise", "filesystem", "macos"], 92),
+        ("artifact", ".scpt", "elastic-curated", ["axios-compromise", "applescript", "macos"], 82),
+    ]
+    return [
+        IOC(
+            ioc_type=ioc_type,
+            value=value,
+            source=source,
+            tags=tags,
+            first_seen=first_seen,
+            last_seen=first_seen,
+            score=score,
+        )
+        for ioc_type, value, source, tags, score in entries
+    ]
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -223,7 +263,7 @@ def refresh_iocs(*, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> Dict[str, Any]:
         "threatfox": "https://threatfox.abuse.ch/export/csv/recent/",
     }
 
-    all_iocs: List[IOC] = []
+    all_iocs: List[IOC] = _curated_supply_chain_iocs()
     errors: Dict[str, str] = {}
 
     for name, url in feeds.items():
@@ -253,7 +293,7 @@ def refresh_iocs(*, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> Dict[str, Any]:
     payload = {
         "generated_at": utc_now(),
         "total": len(persisted),
-        "feeds": list(feeds.keys()),
+        "feeds": ["elastic-curated", *list(feeds.keys())],
         "errors": errors,
         "iocs": persisted,
     }
