@@ -20,8 +20,17 @@ class DetectionRegressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         data_dir = REPO_ROOT / "data"
-        cls.labeled_events = json.loads((data_dir / "events.json").read_text(encoding="utf-8"))
-        cls.unlabeled_events = json.loads((data_dir / "events_unlabeled.json").read_text(encoding="utf-8"))
+        fixtures_dir = data_dir / "fixtures"
+        labeled_path = data_dir / "events.json"
+        unlabeled_path = data_dir / "events_unlabeled.json"
+
+        if not labeled_path.exists():
+            labeled_path = fixtures_dir / "events.json"
+        if not unlabeled_path.exists():
+            unlabeled_path = fixtures_dir / "events_unlabeled.json"
+
+        cls.labeled_events = json.loads(labeled_path.read_text(encoding="utf-8"))
+        cls.unlabeled_events = json.loads(unlabeled_path.read_text(encoding="utf-8"))
 
     def test_detection_matches_benchmark_dataset(self):
         results = run_detection(self.unlabeled_events)
