@@ -37,7 +37,6 @@ jobs:
         run: |
           mkdir -p data/openclaw/raw
           mkdir -p data/openclaw/replay/labeled
-          mkdir -p secopsai-dashboard/supabase_migrations
           # Copy fixture data
           if [ -f "data/fixtures/openclaw/sample_audit.jsonl" ]; then
             cp data/fixtures/openclaw/sample_audit.jsonl data/openclaw/raw/audit.jsonl
@@ -45,8 +44,36 @@ jobs:
           if [ -f "data/fixtures/openclaw/attack_mix.json" ]; then
             cp data/fixtures/openclaw/attack_mix.json data/openclaw/replay/labeled/current.json
           fi
-          # Create mock schema file for tests
-          echo "CREATE TABLE IF NOT EXISTS findings (id UUID PRIMARY KEY);" > secopsai-dashboard/supabase_migrations/2026-03-28_findings.sql
+          # Create mock schema file for tests (at parent directory level)
+          mkdir -p ../secopsai-dashboard/supabase_migrations
+          cat > ../secopsai-dashboard/supabase_migrations/2026-03-28_findings.sql << 'SCHEMA_EOF'
+create table if not exists public.findings (
+  id uuid primary key default gen_random_uuid(),
+  external_finding_id text not null,
+  title text not null,
+  summary text,
+  severity text,
+  severity_score int,
+  status text,
+  disposition text,
+  confidence float,
+  source text,
+  source_name text,
+  detector text,
+  fingerprint text,
+  dedupe_key text,
+  detected_at timestamptz,
+  first_seen_at timestamptz,
+  last_seen_at timestamptz,
+  rule_id text,
+  rule_name text,
+  mitre text,
+  event_count int,
+  event_ids jsonb,
+  recommended_actions jsonb,
+  raw_payload jsonb
+);
+SCHEMA_EOF
 
       - name: Lint with flake8
         run: |
