@@ -37,6 +37,13 @@ jobs:
         run: |
           mkdir -p data/openclaw/raw
           mkdir -p data/openclaw/replay/labeled
+          # Materialize the benchmark corpus expected by regression tests.
+          if [ -f "data/fixtures/events.json" ]; then
+            cp data/fixtures/events.json data/events.json
+          fi
+          if [ -f "data/fixtures/events_unlabeled.json" ]; then
+            cp data/fixtures/events_unlabeled.json data/events_unlabeled.json
+          fi
           # Copy fixture data
           if [ -f "data/fixtures/openclaw/sample_audit.jsonl" ]; then
             cp data/fixtures/openclaw/sample_audit.jsonl data/openclaw/raw/audit.jsonl
