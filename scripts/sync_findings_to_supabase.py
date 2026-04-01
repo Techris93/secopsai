@@ -44,20 +44,22 @@ EXPECTED_COLUMNS = {
     "disposition",
     "confidence",
     "source",
-    "source_name",
-    "detector",
-    "fingerprint",
-    "dedupe_key",
+    "source_platform",
+    "correlation_type",
+    "detection_layer",
     "detected_at",
     "first_seen_at",
     "last_seen_at",
     "rule_id",
     "rule_name",
     "mitre",
+    "mitre_ids",
     "event_count",
     "event_ids",
+    "risk_tags",
     "recommended_actions",
     "raw_payload",
+    "metadata",
 }
 
 
@@ -234,16 +236,42 @@ def compact_fingerprint(finding: dict[str, Any]) -> str | None:
     return None
 
 
-def normalize_confidence(finding: dict[str, Any]) -> float | None:
-    for key in ("confidence", "confidence_score", "score"):
+def normalize_confidence(finding: dict[str, Any]) -> str:
+    for key in ("confidence", "confidence_score", "score", "severity_score"):
         value = finding.get(key)
         if value is None:
             continue
         try:
-            return float(value)
+            score = float(value)
+            if score >= 80:
+                return "high"
+            if score >= 50:
+                return "medium"
+            return "low"
         except (TypeError, ValueError):
-            continue
-    return None
+            text = str(value).strip().lower()
+            if text in {"low", "medium", "high"}:
+                return text
+    return "medium"
+
+
+def normalize_source_fields(finding: dict[str, Any]) -> tuple[str, str, str | None, str]:
+    raw_source = str(finding.get("source") or "").strip().lower()
+    platform = str(finding.get("platform") or raw_source or "openclaw").strip().lower()
+    platform = platform if platform in {"openclaw", "macos", "linux", "windows"} else "openclaw"
+
+    source = raw_source if raw_source in {"openclaw", "macos", "linux", "windows", "correlated"} else platform
+    if source not in {"openclaw", "macos", "linux", "windows", "correlated"}:
+        source = "openclaw"
+
+    detection_layer = "correlated" if source == "correlated" else (
+        "application" if source == "openclaw" else "host"
+    )
+    correlation_type = finding.get("correlation_type")
+    if source != "correlated":
+        correlation_type = None
+
+    return source, platform, correlation_type, detection_layer
 
 
 def normalize_row(finding: dict[str, Any]) -> dict[str, Any] | None:
@@ -251,35 +279,50 @@ def normalize_row(finding: dict[str, Any]) -> dict[str, Any] | None:
     if not external_finding_id:
         return None
 
-    source = finding.get("source")
-    source_name = None
-    if isinstance(source, str) and source:
-        source_name = Path(source).name
+    source, source_platform, correlation_type, detection_layer = normalize_source_fields(finding)
+    metadata = {
+        "source_name": Path(str(finding.get("source"))).name if isinstance(finding.get("source"), str) and finding.get("source") else None,
+        "detector": finding.get("rule_name") or finding.get("detector") or None,
+        "fingerprint": compact_fingerprint(finding),
+        "dedupe_key": finding.get("dedupe_key") or finding.get("finding_id") or None,
+    }
+    metadata = {k: v for k, v in metadata.items() if v not in (None, "", [], {})}
+
+    mitre = finding.get("mitre")
+    mitre_ids = finding.get("mitre_ids")
+    if not mitre_ids and mitre:
+        mitre_ids = [mitre]
+
+    risk_tags = finding.get("risk_tags") or []
+    if not risk_tags:
+        risk_tags = list(metadata.keys()) if metadata else []
 
     row = {
         "external_finding_id": str(external_finding_id),
         "title": str(finding.get("title") or finding.get("rule_name") or finding.get("name") or "Untitled finding"),
-        "summary": finding.get("summary") or finding.get("description") or None,
+        "summary": finding.get("summary") or finding.get("description") or "No summary provided.",
         "severity": str(finding.get("severity") or "low"),
         "severity_score": finding.get("severity_score"),
         "status": str(finding.get("status") or finding.get("triage_status") or "open"),
-        "disposition": finding.get("disposition"),
+        "disposition": str(finding.get("disposition") or "unreviewed"),
         "confidence": normalize_confidence(finding),
         "source": source,
-        "source_name": source_name,
-        "detector": finding.get("rule_name") or finding.get("detector") or None,
-        "fingerprint": compact_fingerprint(finding),
-        "dedupe_key": finding.get("dedupe_key") or finding.get("finding_id") or None,
+        "source_platform": source_platform,
+        "correlation_type": correlation_type,
+        "detection_layer": detection_layer,
         "detected_at": finding.get("first_seen") or finding.get("detected_at") or finding.get("created_at"),
         "first_seen_at": finding.get("first_seen") or finding.get("detected_at") or finding.get("created_at"),
         "last_seen_at": finding.get("last_seen") or finding.get("updated_at") or finding.get("created_at"),
-        "rule_id": finding.get("rule_id"),
-        "rule_name": finding.get("rule_name"),
+        "rule_id": finding.get("rule_id") or "unknown",
+        "rule_name": finding.get("rule_name") or finding.get("title") or "Unknown detector",
         "mitre": finding.get("mitre"),
+        "mitre_ids": to_jsonable(mitre_ids or []),
         "event_count": finding.get("event_count"),
         "event_ids": to_jsonable(finding.get("event_ids") or []),
+        "risk_tags": to_jsonable(risk_tags),
         "recommended_actions": to_jsonable(finding.get("recommended_actions") or []),
         "raw_payload": to_jsonable(finding),
+        "metadata": to_jsonable(metadata),
     }
     return row
 
