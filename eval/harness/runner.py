@@ -224,8 +224,11 @@ class EvaluationRunner:
                 scenario_metrics[cat] = ScenarioMetrics(scenario_name=cat)
             
             scenario_events = scenario.get("events", [scenario])
-            scenario_detected = {e.get("event_id") for e in scenario_events & 
-                               e.get("event_id") in detected_ids}
+            scenario_detected = {
+                event.get("event_id")
+                for event in scenario_events
+                if event.get("event_id") in detected_ids
+            }
             
             cat_matrix = MetricsCalculator.compute_confusion_matrix(
                 detected_ids=scenario_detected,
