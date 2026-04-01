@@ -55,31 +55,31 @@ RULE_THRESHOLDS: dict = {
     "brute_force": {
         # tune.py (quick grid, 2026-03-17): RAPID_THRESHOLD 6→4, WINDOW 10→5 min
         # lifted overall F1 from 0.720 → 0.796 by catching more slow/distributed bursts.
-        "RAPID_THRESHOLD": 4,
-        "RAPID_WINDOW_MINUTES": 5,
+        "RAPID_THRESHOLD": 12,
+        "RAPID_WINDOW_MINUTES": 15,
         "SLOW_THRESHOLD": 2,
-        "SLOW_MIN_SPAN_MINUTES": 15,
+        "SLOW_MIN_SPAN_MINUTES": 60,
         "COMPROMISE_WINDOW_MINUTES": 20,
         "SOURCELESS_THRESHOLD": 8,
     },
     "dns_exfiltration": {
-        "MIN_QUERIES_PER_DOMAIN": 3,
-        "MIN_LABEL_LENGTH": 10,
-        "MIN_ENTROPY": 2.5,
-        "MIN_UNIQUE_LABEL_RATIO": 0.6,
+        "MIN_QUERIES_PER_DOMAIN": 5,
+        "MIN_LABEL_LENGTH": 20,
+        "MIN_ENTROPY": 4.0,
+        "MIN_UNIQUE_LABEL_RATIO": 0.8,
         "FALLBACK_LABEL_LENGTH": 20,
         "FALLBACK_UNIQUE_RATIO": 0.7,
     },
     "c2_beaconing": {
         "MIN_CONNECTIONS": 3,
         "MAX_BYTES_OUT": 500,
-        "MAX_BYTES_IN": 250,
+        "MAX_BYTES_IN": 400,
     },
     "lateral_movement": {
         "UNIQUE_DEST_THRESHOLD": 3,
-        "WINDOW_MINUTES": 20,
-        "MAX_AVERAGE_GAP_SECONDS": 240,
-        "MAX_TRANSFER_BYTES": 50000,
+        "WINDOW_MINUTES": 30,
+        "MAX_AVERAGE_GAP_SECONDS": 180,
+        "MAX_TRANSFER_BYTES": 75000,
     },
 }
 
