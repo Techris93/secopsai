@@ -1,0 +1,183 @@
+name: SecOpsAI Evaluation Harness v2
+
+on:
+  schedule:
+    # Run daily at 9 AM UTC
+    - cron: "0 9 * * *"
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      evaluation_type:
+        description: 'Evaluation type'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - accuracy
+          - performance
+          - supply_chain
+      compare_baseline:
+        description: 'Compare against baseline'
+        required: false
+        default: true
+        type: boolean
+
+  # Run on PRs affecting detection logic
+  pull_request:
+    branches: [main]
+    paths:
+      - "detect.py"
+      - "prepare.py"
+      - "tune.py"
+      - "eval/**"
+      - "data/test_scenarios/**"
+      - ".github/workflows/eval-harness-v2.yml"
+
+  push:
+    branches: [main]
+    paths:
+      - "detect.py"
+      - "eval/**"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyyaml psutil
+
+      - name: Generate test fixtures
+        run: |
+          python prepare.py --stats
+
+      - name: Run Evaluation Harness v2
+        id: eval
+        run: |
+          EVAL_TYPE="${{ github.event.inputs.evaluation_type || 'full' }}"
+          
+          if [ "$EVAL_TYPE" == "full" ]; then
+            python -m eval.harness.runner --full --ci 2>&1 | tee eval-results.txt
+          elif [ "$EVAL_TYPE" == "accuracy" ]; then
+            python -m eval.harness.runner --full --ci 2>&1 | tee eval-results.txt
+          elif [ "$EVAL_TYPE" == "performance" ]; then
+            python -m eval.harness.runner --performance --ci 2>&1 | tee eval-results.txt
+          elif [ "$EVAL_TYPE" == "supply_chain" ]; then
+            python -m eval.harness.runner --category supply_chain --ci 2>&1 | tee eval-results.txt
+          fi
+          
+          # Extract F1 score for gate check
+          F1=$(grep -oP 'F1 Score:\s+\K[0-9.]+' eval-results.txt || echo "0")
+          echo "f1_score=$F1" >> $GITHUB_OUTPUT
+          
+          # Check if gates passed
+          if grep -q "ALL GATES PASSED" eval-results.txt; then
+            echo "gates_passed=true" >> $GITHUB_OUTPUT
+          else
+            echo "gates_passed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload evaluation artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: eval-report-${{ github.sha }}
+          path: |
+            eval-results.txt
+            eval/reports/*.json
+          retention-days: 90
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const fs = require('fs');
+            const results = fs.readFileSync('eval-results.txt', 'utf8');
+            
+            // Extract key metrics
+            const f1Match = results.match(/F1 Score:\s+([0-9.]+)/);
+            const precisionMatch = results.match(/Precision:\s+([0-9.]+)/);
+            const recallMatch = results.match(/Recall:\s+([0-9.]+)/);
+            const throughputMatch = results.match(/Throughput:\s+([0-9.]+)/);
+            
+            const f1 = f1Match ? f1Match[1] : 'N/A';
+            const precision = precisionMatch ? precisionMatch[1] : 'N/A';
+            const recall = recallMatch ? recallMatch[1] : 'N/A';
+            const throughput = throughputMatch ? throughputMatch[1] : 'N/A';
+            
+            const gatesPassed = results.includes('ALL GATES PASSED');
+            const statusEmoji = gatesPassed ? '✅' : '❌';
+            
+            const body = `## ${statusEmoji} SecOpsAI Evaluation Results
+            
+            | Metric | Value |
+            |--------|-------|
+            | F1 Score | ${f1} |
+            | Precision | ${precision} |
+            | Recall | ${recall} |
+            | Throughput | ${throughput} evt/s |
+            
+            <details>
+            <summary>Full Output</summary>
+            
+            \`\`\`
+            ${results}
+            \`\`\`
+            </details>
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Update baseline (on main branch only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && steps.eval.outputs.gates_passed == 'true'
+        run: |
+          echo "✅ Evaluation passed - baseline maintained"
+          # In future: auto-update baseline if significantly improved
+
+      - name: Notify on failure
+        if: failure() && steps.eval.outputs.gates_passed == 'false'
+        uses: slackapi/slack-github-action@e28cf165c92ffef168d23c5c9000cffc8a25e117
+        with:
+          payload: |
+            {
+              "text": "🚨 SecOpsAI Evaluation Failed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Evaluation Harness v2 Failed*\nRepository: ${{ github.repository }}\nBranch: ${{ github.ref }}\nCommit: ${{ github.sha }}\nF1 Score: ${{ steps.eval.outputs.f1_score }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

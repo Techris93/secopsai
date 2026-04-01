@@ -1,0 +1,67 @@
+# SecOpsAI Evaluation Harness Configuration
+
+# Quality Gate Thresholds
+thresholds:
+  # Detection accuracy
+  min_f1_score: 0.70
+  min_precision: 0.60
+  min_recall: 0.60
+  max_fpr: 0.10  # Maximum false positive rate
+  min_coverage: 0.50  # Minimum ATT&CK coverage
+  
+  # Per-rule thresholds
+  min_rule_f1: 0.50
+  max_rule_fp: 10
+
+# Performance Requirements
+performance:
+  min_throughput: 100  # events per second
+  max_avg_latency_ms: 100
+  max_p99_latency_ms: 500
+  max_memory_mb: 512
+  max_cpu_percent: 50
+
+# Scenario Selection
+scenarios:
+  include: "*"  # wildcard for all, or list specific categories
+  exclude: []
+  # Examples:
+  # include: ["supply_chain", "malware", "exfiltration"]
+  # exclude: ["benign_noise_tests"]
+
+# MITRE ATT&CK Coverage Analysis
+attack_coverage:
+  enabled: true
+  techniques_file: "eval/data/attack_techniques.json"
+  min_coverage_percent: 40
+
+# Adversarial Testing
+adversarial:
+  enabled: false
+  mutation_rate: 0.1
+  obfuscation_types:
+    - base64
+    - hex_encoding
+    - command_chaining
+  
+# Report Generation
+reporting:
+  formats:
+    - json
+    - html
+    - markdown
+  output_dir: "eval/reports"
+  include_visualizations: true
+  
+# Baseline Comparison
+baseline:
+  enabled: true
+  baseline_file: "eval/baselines/known_good/baseline_v1.json"
+  regression_threshold: 0.05  # 5% regression allowed
+
+# CI/CD Settings
+ci:
+  fail_on_gate_failure: true
+  upload_artifacts: true
+  artifact_retention_days: 90
+  slack_notifications: true
