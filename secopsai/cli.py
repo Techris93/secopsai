@@ -18,6 +18,25 @@ from secopsai.formatters import fmt_finding, fmt_list, to_json
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
 from secopsai.pipeline import refresh as refresh_pipeline
 
+try:
+    from secopsai.supply_chain_enhanced import (
+        explain_policy,
+        explain_verdict,
+        load_recent_results,
+        reconcile_history,
+        run_recent_top_scan,
+        run_scan,
+    )
+except Exception:
+    from secopsai.supply_chain import (
+        explain_policy,
+        explain_verdict,
+        load_recent_results,
+        reconcile_history,
+        run_recent_top_scan,
+        run_scan,
+    )
+
 ROOT = Path(__file__).resolve().parents[1]
 CACHE_FILE = ROOT / "data" / ".last_refresh"
 DEFAULT_TTL_SECONDS = 60
@@ -255,6 +274,80 @@ def _run_correlate(time_window: int = 60, json_output: bool = False) -> int:
     return 0
 
 
+def _run_supply_chain_monitor(
+    *,
+    enable_pypi: bool,
+    enable_npm: bool,
+    top: int,
+    npm_top: Optional[int],
+    interval: int,
+    lookback_seconds: int,
+    model: Optional[str],
+    slack: bool,
+    json_output: bool,
+) -> int:
+    stop_requested = False
+
+    def signal_handler(sig: int, frame: object) -> None:
+        nonlocal stop_requested
+        stop_requested = True
+        print("\n[SecOpsAI] Stopping supply-chain monitor...")
+
+    signal.signal(signal.SIGINT, signal_handler)
+
+    while not stop_requested:
+        payload = run_recent_top_scan(
+            enable_pypi=enable_pypi,
+            enable_npm=enable_npm,
+            top=top,
+            npm_top=npm_top,
+            lookback_seconds=lookback_seconds,
+            model=model,
+            slack=slack,
+            use_state=True,
+        )
+        if json_output:
+            print(to_json(payload))
+        else:
+            print(
+                "supply-chain monitor cycle: scanned={scanned} malicious={mal} benign={benign} errors={errors} skipped={skipped} slack_alerts={alerts}".format(
+                    scanned=payload["total_scanned"],
+                    mal=payload["malicious"],
+                    benign=payload["benign"],
+                    errors=payload["errors"],
+                    skipped=payload["skipped"],
+                    alerts=payload.get("slack_alerts_sent", 0),
+                )
+            )
+        if stop_requested:
+            break
+        time.sleep(interval)
+
+    return 0
+
+
+def _resolve_supply_chain_report(
+    *,
+    report_path: Optional[str],
+    ecosystem: str,
+    package: str,
+    version: Optional[str],
+) -> Path:
+    if report_path:
+        return Path(report_path)
+
+    for row in load_recent_results(limit=500):
+        if row.get("ecosystem") != ecosystem or row.get("package") != package:
+            continue
+        if version and row.get("new_version") != version:
+            continue
+        candidate = row.get("report_path")
+        if candidate:
+            return Path(candidate)
+    version_hint = f" version={version}" if version else ""
+    raise FileNotFoundError(f"No stored report found for {ecosystem}:{package}{version_hint}")
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     argv = _normalize_global_flags(argv)
     p = argparse.ArgumentParser(
@@ -342,6 +435,63 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     intel_match = intel_sub.add_parser("match", help="Match IOCs against latest OpenClaw replay and persist matches")
     intel_match.add_argument("--limit-iocs", type=int, default=2000)
     intel_match.add_argument("--replay", help="Override replay path (default: data/openclaw/replay/labeled/current.json)")
+
+    supply_chain = sub.add_parser("supply-chain", help="Monitor PyPI/npm package releases for supply-chain compromise")
+    supply_chain_sub = supply_chain.add_subparsers(dest="supply_chain_cmd", required=True)
+
+    supply_chain_scan = supply_chain_sub.add_parser("scan", help="Scan a specific package release")
+    supply_chain_scan.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    supply_chain_scan.add_argument("--package", required=True, help="Package name")
+    supply_chain_scan.add_argument("--version", required=True, help="New version to review")
+    supply_chain_scan.add_argument("--previous-version", help="Override previous version instead of auto-discovery")
+    supply_chain_scan.add_argument("--model", help="Override analysis model passed to Cursor Agent CLI")
+    supply_chain_scan.add_argument("--no-report", action="store_true", help="Do not persist the diff report to disk")
+    supply_chain_scan.add_argument("--slack", action="store_true", help="Send Slack alert when verdict is malicious")
+
+    supply_chain_once = supply_chain_sub.add_parser("once", help="Scan recent releases from the top watchlists")
+    supply_chain_once.add_argument("--top", type=int, default=1000, help="Top N packages per ecosystem (default: 1000)")
+    supply_chain_once.add_argument("--npm-top", type=int, help="Top N npm packages (defaults to --top)")
+    supply_chain_once.add_argument("--lookback", type=int, default=600, help="Look back this many seconds (default: 600)")
+    supply_chain_once.add_argument("--no-pypi", action="store_true", help="Disable PyPI scanning")
+    supply_chain_once.add_argument("--no-npm", action="store_true", help="Disable npm scanning")
+    supply_chain_once.add_argument("--model", help="Override analysis model passed to Cursor Agent CLI")
+    supply_chain_once.add_argument("--slack", action="store_true", help="Send Slack alert for malicious results")
+
+    supply_chain_monitor = supply_chain_sub.add_parser("monitor", help="Continuously scan recent top-package releases")
+    supply_chain_monitor.add_argument("--top", type=int, default=1000, help="Top N packages per ecosystem (default: 1000)")
+    supply_chain_monitor.add_argument("--npm-top", type=int, help="Top N npm packages (defaults to --top)")
+    supply_chain_monitor.add_argument("--lookback", type=int, default=600, help="Look back this many seconds per cycle (default: 600)")
+    supply_chain_monitor.add_argument("--interval", type=int, default=300, help="Sleep seconds between cycles (default: 300)")
+    supply_chain_monitor.add_argument("--no-pypi", action="store_true", help="Disable PyPI scanning")
+    supply_chain_monitor.add_argument("--no-npm", action="store_true", help="Disable npm scanning")
+    supply_chain_monitor.add_argument("--model", help="Override analysis model passed to Cursor Agent CLI")
+    supply_chain_monitor.add_argument("--slack", action="store_true", help="Send Slack alert for malicious results")
+
+    supply_chain_list = supply_chain_sub.add_parser("list", help="List recent supply-chain scan results")
+    supply_chain_list.add_argument("--limit", type=int, default=20)
+
+    supply_chain_reconcile = supply_chain_sub.add_parser(
+        "reconcile-history",
+        help="Re-evaluate stored supply-chain results and clean stale false positives",
+    )
+    supply_chain_reconcile.add_argument(
+        "--drop-benign",
+        action="store_true",
+        help="Remove reclassified benign rows from local history instead of keeping them with updated verdicts",
+    )
+
+    supply_chain_explain = supply_chain_sub.add_parser("explain-policy", help="Show the effective policy for a package")
+    supply_chain_explain.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    supply_chain_explain.add_argument("--package", required=True, help="Package name")
+
+    supply_chain_explain_verdict = supply_chain_sub.add_parser(
+        "explain-verdict",
+        help="Explain which rules fired for a supply-chain scan report",
+    )
+    supply_chain_explain_verdict.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    supply_chain_explain_verdict.add_argument("--package", required=True, help="Package name")
+    supply_chain_explain_verdict.add_argument("--version", help="Release version to resolve from stored results")
+    supply_chain_explain_verdict.add_argument("--report", help="Path to a stored report file")
 
     return p.parse_args(argv)
 
@@ -541,6 +691,185 @@ def main(argv: Optional[List[str]] = None) -> int:
                         db=meta["db_path"],
                     )
                 )
+            return 0
+
+    if args.cmd == "supply-chain":
+        if args.supply_chain_cmd == "scan":
+            payload = run_scan(
+                ecosystem=args.ecosystem,
+                package=args.package,
+                version=args.version,
+                previous_version=args.previous_version,
+                model=args.model,
+                keep_report=not args.no_report,
+                slack=args.slack,
+            )
+            if args.json:
+                print(to_json(payload))
+            else:
+                result = payload["result"]
+                print(
+                    "supply-chain scan: {eco} {pkg}@{ver} verdict={verdict}".format(
+                        eco=result["ecosystem"],
+                        pkg=result["package"],
+                        ver=result["new_version"],
+                        verdict=result["verdict"],
+                    )
+                )
+                if result.get("finding_id"):
+                    print(f"finding_id={result['finding_id']}")
+                if result.get("report_path"):
+                    print(f"report_path={result['report_path']}")
+                if payload.get("db_path"):
+                    print(f"db_path={payload['db_path']}")
+                if payload.get("slack_alerts_sent"):
+                    print(f"slack_alerts_sent={payload['slack_alerts_sent']}")
+            return 0 if payload["result"]["verdict"] != "error" else 1
+
+        if args.supply_chain_cmd == "once":
+            payload = run_recent_top_scan(
+                enable_pypi=not args.no_pypi,
+                enable_npm=not args.no_npm,
+                top=args.top,
+                npm_top=args.npm_top,
+                lookback_seconds=args.lookback,
+                model=args.model,
+                slack=args.slack,
+            )
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(
+                    "supply-chain once: scanned={scanned} malicious={mal} benign={benign} errors={errors} skipped={skipped}".format(
+                        scanned=payload["total_scanned"],
+                        mal=payload["malicious"],
+                        benign=payload["benign"],
+                        errors=payload["errors"],
+                        skipped=payload["skipped"],
+                    )
+                )
+                if payload.get("db_path"):
+                    print(f"db_path={payload['db_path']}")
+                if payload.get("slack_alerts_sent"):
+                    print(f"slack_alerts_sent={payload['slack_alerts_sent']}")
+            return 0
+
+        if args.supply_chain_cmd == "monitor":
+            return _run_supply_chain_monitor(
+                enable_pypi=not args.no_pypi,
+                enable_npm=not args.no_npm,
+                top=args.top,
+                npm_top=args.npm_top,
+                interval=args.interval,
+                lookback_seconds=args.lookback,
+                model=args.model,
+                slack=args.slack,
+                json_output=args.json,
+            )
+
+        if args.supply_chain_cmd == "list":
+            payload = {"results": load_recent_results(args.limit)}
+            if args.json:
+                print(to_json(payload))
+            else:
+                for row in payload["results"]:
+                    print(
+                        "{ts} | {eco:4s} | {pkg}@{ver} | verdict={verdict}".format(
+                            ts=row.get("recorded_at", ""),
+                            eco=row.get("ecosystem", ""),
+                            pkg=row.get("package", ""),
+                            ver=row.get("new_version", ""),
+                            verdict=row.get("verdict", ""),
+                        )
+                        )
+            return 0
+
+        if args.supply_chain_cmd == "reconcile-history":
+            payload = reconcile_history(drop_benign=args.drop_benign)
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(f"total_rows={payload['total_rows']}")
+                print(f"reclassified={payload['reclassified']}")
+                print(f"dropped={payload['dropped']}")
+                print(f"removed_from_slack_state={payload['removed_from_slack_state']}")
+                print(f"removed_from_db={payload['removed_from_db']}")
+                if payload["changed_finding_ids"]:
+                    print(f"changed_finding_ids={payload['changed_finding_ids']}")
+                if payload["removed_finding_ids"]:
+                    print(f"removed_finding_ids={payload['removed_finding_ids']}")
+            return 0
+
+        if args.supply_chain_cmd == "explain-policy":
+            payload = explain_policy(args.ecosystem, args.package)
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(f"target={payload['target']['ecosystem']}:{payload['target']['package']}")
+                print(f"effective_threshold={payload['effective_threshold']}")
+                print(f"precedence={','.join(payload['precedence'])}")
+                if payload["allow_matches"]:
+                    print(f"allow_matches={payload['allow_matches']}")
+                if payload["deny_matches"]:
+                    print(f"deny_matches={payload['deny_matches']}")
+                if payload["ecosystem_threshold"] is not None:
+                    print(f"ecosystem_threshold={payload['ecosystem_threshold']}")
+                if payload["matched_package_threshold"]:
+                    print(f"matched_package_threshold={payload['matched_package_threshold']}")
+                if payload["disabled_rules"]:
+                    print(f"disabled_rules={payload['disabled_rules']}")
+                if payload["rule_weight_overrides"]:
+                    print(f"rule_weight_overrides={payload['rule_weight_overrides']}")
+            return 0
+
+        if args.supply_chain_cmd == "explain-verdict":
+            try:
+                report_path = _resolve_supply_chain_report(
+                    report_path=args.report,
+                    ecosystem=args.ecosystem,
+                    package=args.package,
+                    version=args.version,
+                )
+                report_text = report_path.read_text(encoding="utf-8")
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc)}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+
+            payload = explain_verdict(
+                report_text,
+                ecosystem=args.ecosystem,
+                package=args.package,
+            )
+            payload["report_path"] = str(report_path)
+            if args.version:
+                payload["version"] = args.version
+
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(f"target={args.ecosystem}:{args.package}")
+                if args.version:
+                    print(f"version={args.version}")
+                print(f"report_path={report_path}")
+                print(f"verdict={payload['verdict']}")
+                print(f"score={payload['score']}")
+                print(f"effective_threshold={payload['effective_threshold']}")
+                print(f"analysis={payload['analysis']}")
+                if payload["matched_rules"]:
+                    print("matched_rules:")
+                    for rule in payload["matched_rules"]:
+                        print(f"- {rule['rule']} weight={rule['weight']} reason={rule['reason']}")
+                else:
+                    print("matched_rules: none")
+                if payload.get("policy"):
+                    print(f"policy_precedence={','.join(payload['policy']['precedence'])}")
+                    if payload["allow_matches"]:
+                        print(f"allow_matches={payload['allow_matches']}")
+                    if payload["deny_matches"]:
+                        print(f"deny_matches={payload['deny_matches']}")
             return 0
 
     return 2
