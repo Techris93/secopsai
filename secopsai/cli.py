@@ -18,24 +18,14 @@ from secopsai.formatters import fmt_finding, fmt_list, to_json
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
 from secopsai.pipeline import refresh as refresh_pipeline
 
-try:
-    from secopsai.supply_chain_enhanced import (
-        explain_policy,
-        explain_verdict,
-        load_recent_results,
-        reconcile_history,
-        run_recent_top_scan,
-        run_scan,
-    )
-except Exception:
-    from secopsai.supply_chain import (
-        explain_policy,
-        explain_verdict,
-        load_recent_results,
-        reconcile_history,
-        run_recent_top_scan,
-        run_scan,
-    )
+from secopsai.supply_chain import (
+    explain_policy,
+    explain_verdict,
+    load_recent_results,
+    reconcile_history,
+    run_recent_top_scan,
+    run_scan,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE_FILE = ROOT / "data" / ".last_refresh"
