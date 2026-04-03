@@ -46,34 +46,36 @@ jobs:
           fi
           # Create mock schema file for tests (at parent directory level)
           mkdir -p ../secopsai-dashboard/supabase_migrations
-          cat > ../secopsai-dashboard/supabase_migrations/2026-03-28_findings.sql << 'SCHEMA_EOF'
-create table if not exists public.findings (
-  id uuid primary key default gen_random_uuid(),
-  external_finding_id text not null,
-  title text not null,
-  summary text,
-  severity text,
-  severity_score int,
-  status text,
-  disposition text,
-  confidence float,
-  source text,
-  source_name text,
-  detector text,
-  fingerprint text,
-  dedupe_key text,
-  detected_at timestamptz,
-  first_seen_at timestamptz,
-  last_seen_at timestamptz,
-  rule_id text,
-  rule_name text,
-  mitre text,
-  event_count int,
-  event_ids jsonb,
-  recommended_actions jsonb,
-  raw_payload jsonb
-);
-SCHEMA_EOF
+          cat > ../secopsai-dashboard/supabase_migrations/2026-03-28_findings.sql <<'SCHEMA_EOF'
+            create table if not exists public.findings (
+              id uuid primary key default gen_random_uuid(),
+              external_finding_id text not null,
+              title text not null,
+              summary text,
+              severity text,
+              severity_score int,
+              status text,
+              disposition text,
+              confidence text,
+              source text,
+              source_platform text,
+              correlation_type text,
+              detection_layer text,
+              detected_at timestamptz,
+              first_seen_at timestamptz,
+              last_seen_at timestamptz,
+              rule_id text,
+              rule_name text,
+              mitre text,
+              mitre_ids text[],
+              event_count int,
+              event_ids jsonb,
+              risk_tags text[],
+              recommended_actions jsonb,
+              raw_payload jsonb,
+              metadata jsonb
+            );
+          SCHEMA_EOF
 
       - name: Lint with flake8
         run: |
