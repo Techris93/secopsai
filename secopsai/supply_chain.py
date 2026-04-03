@@ -24,7 +24,12 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import soc_store
 
-from secopsai.alerts import alert_new_supply_chain_findings
+from secopsai.alerts import (
+    SUPPLY_CHAIN_SLACK_STATE_PATH,
+    alert_new_supply_chain_findings,
+    load_slack_state,
+    save_slack_state,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -404,6 +409,18 @@ def load_recent_results(limit: int = 20) -> List[Dict[str, Any]]:
     rows = [json.loads(line) for line in RESULTS_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
     rows.reverse()
     return rows[:limit]
+
+
+def _load_all_results() -> List[Dict[str, Any]]:
+    if not RESULTS_PATH.exists():
+        return []
+    return [json.loads(line) for line in RESULTS_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _save_all_results(rows: List[Dict[str, Any]]) -> None:
+    _ensure_dirs()
+    payload = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+    RESULTS_PATH.write_text(payload, encoding="utf-8")
 
 
 def _pick_best_wheel(wheels: list[dict]) -> dict:
@@ -1533,4 +1550,95 @@ def run_recent_top_scan(
         "db_path": db_path,
         "slack_alerts_sent": int(bool(slack_meta.get("sent"))),
         "results": [result.to_dict() for result in results],
+    }
+
+
+def reconcile_history(*, drop_benign: bool = False) -> Dict[str, Any]:
+    rows = _load_all_results()
+    if not rows:
+        return {
+            "total_rows": 0,
+            "reclassified": 0,
+            "dropped": 0,
+            "removed_from_slack_state": 0,
+            "removed_from_db": 0,
+            "changed_finding_ids": [],
+        }
+
+    retained_rows: List[Dict[str, Any]] = []
+    changed_finding_ids: List[str] = []
+    removed_finding_ids: List[str] = []
+
+    for row in rows:
+        report_path = row.get("report_path")
+        finding_id = str(row.get("finding_id") or "")
+        if row.get("verdict") not in {"malicious", "benign"} or not report_path:
+            retained_rows.append(row)
+            continue
+
+        path = Path(str(report_path))
+        if not path.exists():
+            retained_rows.append(row)
+            continue
+
+        try:
+            report = path.read_text(encoding="utf-8")
+            explained = explain_verdict(
+                report,
+                ecosystem=str(row.get("ecosystem") or ""),
+                package=str(row.get("package") or ""),
+            )
+        except Exception:
+            retained_rows.append(row)
+            continue
+
+        old_verdict = str(row.get("verdict") or "")
+        new_verdict = str(explained.get("verdict") or old_verdict)
+        row["verdict"] = new_verdict
+        row["analysis"] = str(explained.get("analysis") or row.get("analysis") or "")
+
+        if old_verdict != new_verdict and finding_id:
+            changed_finding_ids.append(finding_id)
+
+        if drop_benign and new_verdict == "benign":
+            if finding_id:
+                removed_finding_ids.append(finding_id)
+            continue
+
+        retained_rows.append(row)
+
+    _save_all_results(retained_rows)
+
+    if changed_finding_ids or removed_finding_ids:
+        state = load_slack_state(SUPPLY_CHAIN_SLACK_STATE_PATH)
+        to_remove = set(changed_finding_ids) | set(removed_finding_ids)
+        before = set(state["finding_ids"])
+        after = sorted(before - to_remove)
+        state["finding_ids"] = after
+        save_slack_state(state, SUPPLY_CHAIN_SLACK_STATE_PATH)
+        removed_from_slack_state = len(before) - len(after)
+    else:
+        removed_from_slack_state = 0
+
+    removed_from_db = 0
+    if changed_finding_ids or removed_finding_ids:
+        resolved = soc_store.default_db_path()
+        soc_store.init_db(resolved)
+        to_remove = sorted(set(changed_finding_ids) | set(removed_finding_ids))
+        with soc_store.closing(soc_store.connect(resolved)) as connection:
+            for finding_id in to_remove:
+                removed_from_db += connection.execute(
+                    "DELETE FROM findings WHERE finding_id = ?",
+                    (finding_id,),
+                ).rowcount
+            connection.commit()
+
+    return {
+        "total_rows": len(rows),
+        "reclassified": len(changed_finding_ids),
+        "dropped": len(removed_finding_ids),
+        "removed_from_slack_state": removed_from_slack_state,
+        "removed_from_db": removed_from_db,
+        "changed_finding_ids": sorted(set(changed_finding_ids)),
+        "removed_finding_ids": sorted(set(removed_finding_ids)),
     }

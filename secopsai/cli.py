@@ -17,17 +17,18 @@ from detect import run_detection
 from secopsai.formatters import fmt_finding, fmt_list, to_json
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
 from secopsai.pipeline import refresh as refresh_pipeline
-from secopsai.supply_chain import explain_policy, explain_verdict, load_recent_results, run_recent_top_scan, run_scan
+from secopsai.supply_chain import (
+    explain_policy,
+    explain_verdict,
+    load_recent_results,
+    reconcile_history,
+    run_recent_top_scan,
+    run_scan,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE_FILE = ROOT / "data" / ".last_refresh"
 DEFAULT_TTL_SECONDS = 60
-
-
-def execute_findings_sync(args: argparse.Namespace):
-    from scripts.sync_findings_to_supabase import execute_sync
-
-    return execute_sync(args)
 
 
 def _severity_at_least(sev: str, threshold: str) -> bool:
@@ -356,17 +357,6 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     refresh.add_argument("--openclaw-home", help="Override OPENCLAW_HOME")
     refresh.add_argument("--verbose", action="store_true", help="Verbose refresh output (future use)")
 
-    sync_findings = sub.add_parser("sync-findings", help="Sync persisted findings to the dashboard Supabase table")
-    sync_findings.add_argument("--db-path", default=str(ROOT / "data" / "openclaw" / "findings" / "openclaw_soc.db"))
-    sync_findings.add_argument("--findings-dir", default=str(ROOT / "data" / "openclaw" / "findings"))
-    sync_findings.add_argument("--dashboard-env", default=str(ROOT.parent / "secopsai-dashboard" / ".env"))
-    sync_findings.add_argument("--supabase-url", default=None)
-    sync_findings.add_argument("--supabase-key", default=None)
-    sync_findings.add_argument("--table", default="findings")
-    sync_findings.add_argument("--schema-sql", default=str(ROOT.parent / "secopsai-dashboard" / "supabase_migrations" / "2026-03-28_findings.sql"))
-    sync_findings.add_argument("--skip-schema-check", action="store_true")
-    sync_findings.add_argument("--dry-run", action="store_true")
-
     live = sub.add_parser("live", help="Stream events in real time from platform adapters")
     live.add_argument("--platform", "-p", help="Adapters to stream: openclaw,macos,linux,windows")
     live.add_argument("--duration", "-d", type=int, default=60, help="Stream duration in seconds (0=infinite)")
@@ -469,6 +459,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_list = supply_chain_sub.add_parser("list", help="List recent supply-chain scan results")
     supply_chain_list.add_argument("--limit", type=int, default=20)
 
+    supply_chain_reconcile = supply_chain_sub.add_parser(
+        "reconcile-history",
+        help="Re-evaluate stored supply-chain results and clean stale false positives",
+    )
+    supply_chain_reconcile.add_argument(
+        "--drop-benign",
+        action="store_true",
+        help="Remove reclassified benign rows from local history instead of keeping them with updated verdicts",
+    )
+
     supply_chain_explain = supply_chain_sub.add_parser("explain-policy", help="Show the effective policy for a package")
     supply_chain_explain.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
     supply_chain_explain.add_argument("--package", required=True, help="Package name")
@@ -537,28 +537,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"findings_file={res.findings_file}")
             print(f"total_findings={res.total_findings}")
             print(f"total_detections={res.total_detections}")
-        return 0
-
-    if args.cmd == "sync-findings":
-        summary = execute_findings_sync(args)
-        payload = {
-            "source_kind": summary.source_kind,
-            "source_path": summary.source_path,
-            "local_findings": summary.local_findings,
-            "normalized_rows": summary.normalized_rows,
-            "schema_checked": summary.schema_checked,
-            "schema_ok": summary.schema_ok,
-            "validated_columns": summary.validated_columns,
-            "synced_rows": summary.synced_rows,
-            "dry_run": summary.dry_run,
-            "table": summary.table,
-        }
-        if args.json:
-            print(to_json(payload))
-        else:
-            print("secopsai sync-findings complete")
-            for key, value in payload.items():
-                print(f"{key}={value}")
         return 0
 
     if args.cmd == "live":
@@ -792,7 +770,23 @@ def main(argv: Optional[List[str]] = None) -> int:
                             ver=row.get("new_version", ""),
                             verdict=row.get("verdict", ""),
                         )
-                    )
+                        )
+            return 0
+
+        if args.supply_chain_cmd == "reconcile-history":
+            payload = reconcile_history(drop_benign=args.drop_benign)
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(f"total_rows={payload['total_rows']}")
+                print(f"reclassified={payload['reclassified']}")
+                print(f"dropped={payload['dropped']}")
+                print(f"removed_from_slack_state={payload['removed_from_slack_state']}")
+                print(f"removed_from_db={payload['removed_from_db']}")
+                if payload["changed_finding_ids"]:
+                    print(f"changed_finding_ids={payload['changed_finding_ids']}")
+                if payload["removed_finding_ids"]:
+                    print(f"removed_finding_ids={payload['removed_finding_ids']}")
             return 0
 
         if args.supply_chain_cmd == "explain-policy":
