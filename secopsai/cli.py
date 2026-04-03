@@ -24,6 +24,12 @@ CACHE_FILE = ROOT / "data" / ".last_refresh"
 DEFAULT_TTL_SECONDS = 60
 
 
+def execute_findings_sync(args: argparse.Namespace):
+    from scripts.sync_findings_to_supabase import execute_sync
+
+    return execute_sync(args)
+
+
 def _severity_at_least(sev: str, threshold: str) -> bool:
     order = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
     return order.get(sev.lower(), 0) >= order.get(threshold.lower(), 0)
@@ -534,8 +540,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     if args.cmd == "sync-findings":
-        from scripts.sync_findings_to_supabase import execute_sync as execute_findings_sync
-
         summary = execute_findings_sync(args)
         payload = {
             "source_kind": summary.source_kind,

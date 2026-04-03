@@ -44,10 +44,9 @@ EXPECTED_COLUMNS = {
     "disposition",
     "confidence",
     "source",
-    "source_name",
-    "detector",
-    "fingerprint",
-    "dedupe_key",
+    "source_platform",
+    "correlation_type",
+    "detection_layer",
     "detected_at",
     "first_seen_at",
     "last_seen_at",
@@ -252,9 +251,9 @@ def normalize_row(finding: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     source = finding.get("source")
-    source_name = None
-    if isinstance(source, str) and source:
-        source_name = Path(source).name
+    source_platform = finding.get("source_platform") or finding.get("platform")
+    if not source_platform and isinstance(source, str) and source:
+        source_platform = Path(source).name
 
     row = {
         "external_finding_id": str(external_finding_id),
@@ -266,10 +265,9 @@ def normalize_row(finding: dict[str, Any]) -> dict[str, Any] | None:
         "disposition": finding.get("disposition"),
         "confidence": normalize_confidence(finding),
         "source": source,
-        "source_name": source_name,
-        "detector": finding.get("rule_name") or finding.get("detector") or None,
-        "fingerprint": compact_fingerprint(finding),
-        "dedupe_key": finding.get("dedupe_key") or finding.get("finding_id") or None,
+        "source_platform": source_platform,
+        "correlation_type": finding.get("correlation_type"),
+        "detection_layer": finding.get("detection_layer") or "openclaw",
         "detected_at": finding.get("first_seen") or finding.get("detected_at") or finding.get("created_at"),
         "first_seen_at": finding.get("first_seen") or finding.get("detected_at") or finding.get("created_at"),
         "last_seen_at": finding.get("last_seen") or finding.get("updated_at") or finding.get("created_at"),

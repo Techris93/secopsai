@@ -54,12 +54,12 @@ Then explain briefly.
 """
 
 SUSPICIOUS_RULES: list[tuple[str, str, int]] = [
-    ("obfuscated eval", r"\b(eval|exec|Function|new Function)\b", 3),
+    ("obfuscated eval", r"\b(?:eval|exec)\s*\(|\bnew Function\s*\(|\bFunction\s*\(", 3),
     ("subprocess spawn", r"\b(child_process|subprocess|os\.system|popen|spawn|execFile)\b", 3),
     ("shell downloader", r"\b(curl|wget|Invoke-WebRequest|bitsadmin|certutil)\b", 3),
     ("base64 or encoded payload", r"\b(base64|fromCharCode|atob|btoa|decodeURIComponent)\b", 2),
     ("network egress", r"https?://", 2),
-    ("credential access", r"\b(token|secret|password|credential|aws_access_key_id|BEGIN RSA PRIVATE KEY)\b", 2),
+    ("credential access", r"\b(api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password|credential|aws_access_key_id|BEGIN RSA PRIVATE KEY)\b", 2),
     ("startup persistence", r"\b(postinstall|preinstall|install|cron|LaunchAgents|systemd|Startup)\b", 3),
     ("suspicious archive extraction", r"\b(tarfile|zipfile|extractall)\b", 1),
 ]
@@ -78,8 +78,28 @@ COMMON_BUILD_BACKENDS = {
 }
 
 NPM_INSTALL_HOOK_RE = re.compile(
-    r'^\+\s+"(?P<hook>preinstall|install|postinstall|prepare|prepack|prepublishOnly)"\s*:\s*"(?P<cmd>.+)"',
+    r'^\+\s+"(?P<hook>preinstall|install|postinstall|prepare)"\s*:\s*"(?P<cmd>.+)"',
     re.MULTILINE | re.IGNORECASE,
+)
+
+BENIGN_ARTIFACT_PATH_PREFIXES = (
+    "tests/",
+    "test/",
+    "docs/",
+    "doc/",
+    "examples/",
+    "example/",
+    "bench/",
+    "benchmark/",
+    "benchmarks/",
+    "scripts/",
+)
+
+BENIGN_ARTIFACT_PATH_SUFFIXES = (
+    ".dist-info/metadata",
+    ".dist-info/record",
+    ".dist-info/wheel",
+    ".dist-info/top_level.txt",
 )
 
 
@@ -534,7 +554,7 @@ def _javascript_semantic_findings(path: str, source: str) -> List[str]:
     findings: List[str] = []
     if re.search(r"\b(eval|Function)\s*\(", source):
         findings.append(f"{path}: javascript dynamic execution via eval/Function")
-    if re.search(r"\b(child_process|execSync|spawnSync|execFileSync|exec)\b", source):
+    if re.search(r"\bchild_process\b", source) or re.search(r"\b(execSync|spawnSync|execFileSync|spawn|execFile)\s*\(", source):
         findings.append(f"{path}: javascript subprocess-capable API")
     if re.search(r"https?://", source) and re.search(r"\b(fetch|axios|https?\.request|XMLHttpRequest)\b", source):
         findings.append(f"{path}: javascript outbound network request")
@@ -555,7 +575,7 @@ def _package_json_policy_findings(path: str, source: str) -> List[str]:
         for hook, command in scripts.items():
             if not isinstance(command, str):
                 continue
-            if hook in {"preinstall", "install", "postinstall", "prepare", "prepack", "prepublishOnly"}:
+            if hook in {"preinstall", "install", "postinstall", "prepare"}:
                 findings.append(f"{path}: npm lifecycle hook present ({hook})")
                 if re.search(r"\b(curl|wget|powershell|node\s+-e|python\s+-c|bash\s+-c|sh\s+-c|npx|npm\s+exec)\b", command, re.IGNORECASE):
                     findings.append(f"{path}: npm lifecycle hook runs remote or inline code ({hook})")
@@ -633,6 +653,62 @@ def _added_text_scope(report: str) -> str:
             added_lines.append(line[1:])
     scoped = "\n".join(added_lines).strip()
     return scoped if scoped else report
+
+
+def _normalized_artifact_path(path: str) -> str:
+    cleaned = path.strip().strip("`").replace("\\", "/").lower()
+    cleaned = re.sub(r"/+", "/", cleaned)
+    cleaned = re.sub(r"^[^/]+\.dist-info/", "", cleaned)
+    return cleaned
+
+
+def _artifact_path_is_benign(path: str) -> bool:
+    normalized = _normalized_artifact_path(path)
+    if normalized.startswith(BENIGN_ARTIFACT_PATH_PREFIXES):
+        return True
+    return normalized.endswith(BENIGN_ARTIFACT_PATH_SUFFIXES)
+
+
+def _filter_semantic_findings(findings: List[str]) -> List[str]:
+    filtered: List[str] = []
+    for finding in findings:
+        path_part, _, detail = finding.partition(":")
+        detail = detail.strip()
+        if _artifact_path_is_benign(path_part):
+            continue
+        if detail.startswith("npm lifecycle hook present") and any(hook in detail for hook in ("prepublishOnly", "prepack")):
+            continue
+        backend_match = re.search(r"custom build backend\s+([^\s]+)", detail)
+        if backend_match and backend_match.group(1) in COMMON_BUILD_BACKENDS:
+            continue
+        filtered.append(finding)
+    return filtered
+
+
+def _artifact_divergence_candidates(report: str) -> tuple[List[str], List[str]]:
+    suspicious_wheel: List[str] = []
+    suspicious_sdist: List[str] = []
+    current: Optional[str] = None
+    for raw_line in report.splitlines():
+        line = raw_line.strip()
+        if line == "- suspicious_wheel_only_files:":
+            current = "wheel"
+            continue
+        if line == "- suspicious_sdist_only_files:":
+            current = "sdist"
+            continue
+        if line.startswith("- ") and not line.startswith("- `"):
+            current = None
+            continue
+        if current and line.startswith("- `") and line.endswith("`"):
+            path = line[3:-1]
+            if _artifact_path_is_benign(path):
+                continue
+            if current == "wheel":
+                suspicious_wheel.append(path)
+            else:
+                suspicious_sdist.append(path)
+    return suspicious_wheel, suspicious_sdist
 
 
 def _semantic_findings_for_file(path: str, file_path: Path) -> List[str]:
@@ -966,7 +1042,7 @@ def explain_verdict(
             "Diff adds both execution-capable code and outbound network behavior.",
         )
 
-    semantic_findings = re.findall(r"^- (.+:.+)$", report, re.MULTILINE)
+    semantic_findings = _filter_semantic_findings(re.findall(r"^- (.+:.+)$", report, re.MULTILINE))
     if semantic_findings and _rule_enabled(policy, "ast-aware semantic findings"):
         semantic_dynamic = any("dynamic execution" in finding for finding in semantic_findings)
         semantic_outbound = any("outbound" in finding for finding in semantic_findings)
@@ -1062,11 +1138,11 @@ def explain_verdict(
 
     wheel_only_count_match = re.search(r"wheel_only_count=(\d+)", report)
     sdist_only_count_match = re.search(r"sdist_only_count=(\d+)", report)
-    suspicious_wheel_only = len(re.findall(r"^\s+- `.+`$", report, re.MULTILINE))
+    suspicious_wheel_only_paths, suspicious_sdist_only_paths = _artifact_divergence_candidates(report)
     if wheel_only_count_match and sdist_only_count_match:
         wheel_only_count = int(wheel_only_count_match.group(1))
         sdist_only_count = int(sdist_only_count_match.group(1))
-        suspicious_divergence = bool(re.search(r"^- suspicious_(wheel|sdist)_only_files:", report, re.MULTILINE))
+        suspicious_divergence = bool(suspicious_wheel_only_paths or suspicious_sdist_only_paths)
         if suspicious_divergence and (wheel_only_count or sdist_only_count) and _rule_enabled(policy, "wheel/sdist artifact divergence"):
             applied_weight = _rule_weight(policy, "wheel/sdist artifact divergence", 2)
             score += applied_weight
@@ -1077,7 +1153,7 @@ def explain_verdict(
                 applied_weight,
                 "Wheel and sdist file inventories diverge.",
             )
-        if suspicious_wheel_only and _rule_enabled(policy, "suspicious code present only in one PyPI artifact"):
+        if suspicious_wheel_only_paths and _rule_enabled(policy, "suspicious code present only in one PyPI artifact"):
             applied_weight = _rule_weight(policy, "suspicious code present only in one PyPI artifact", 4)
             score += applied_weight
             _record_rule_match(

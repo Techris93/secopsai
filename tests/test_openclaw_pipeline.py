@@ -22,7 +22,12 @@ from detect import run_detection
 def _preferred_raw_audit_path() -> Path:
     sample_path = REPO_ROOT / "data" / "openclaw" / "raw" / "sample_audit.jsonl"
     current_path = REPO_ROOT / "data" / "openclaw" / "raw" / "audit.jsonl"
-    return sample_path if sample_path.exists() else current_path
+    fixture_path = REPO_ROOT / "data" / "fixtures" / "openclaw" / "sample_audit.jsonl"
+    if sample_path.exists():
+        return sample_path
+    if fixture_path.exists():
+        return fixture_path
+    return current_path
 
 
 def _preferred_labeled_replay_path() -> Path:
@@ -30,10 +35,13 @@ def _preferred_labeled_replay_path() -> Path:
     attack_mix_path = replay_dir / "attack_mix.json"
     sample_path = replay_dir / "sample_events.json"
     current_path = replay_dir / "current.json"
+    fixture_path = REPO_ROOT / "data" / "fixtures" / "openclaw" / "attack_mix.json"
     if attack_mix_path.exists():
         return attack_mix_path
     if sample_path.exists():
         return sample_path
+    if fixture_path.exists():
+        return fixture_path
     return current_path
 
 

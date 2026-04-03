@@ -217,6 +217,46 @@ name = "normalpkg"
         verdict, _analysis = supply_chain._classify_report_text(report)
         self.assertEqual(verdict, "benign")
 
+    def test_classifier_ignores_common_build_backend_in_report_semantics(self):
+        report = """
+## Semantic Findings
+
+- pyproject.toml: pyproject custom build backend hatchling.build
+"""
+        verdict, _analysis = supply_chain._classify_report_text(report)
+        self.assertEqual(verdict, "benign")
+
+    def test_classifier_ignores_benign_artifact_divergence_paths(self):
+        report = """
+## Artifact Divergence
+
+- wheel_only_count=4
+- sdist_only_count=113
+- suspicious_sdist_only_files:
+  - `scripts/check_imports.py`
+  - `tests/test_pkg.py`
+  - `bench/run_bench.py`
+"""
+        verdict, _analysis = supply_chain._classify_report_text(report)
+        self.assertEqual(verdict, "benign")
+
+    def test_classifier_ignores_prepublish_only_lifecycle_hook(self):
+        report = """
+## Semantic Findings
+
+- package.json: npm lifecycle hook present (prepublishOnly)
+- dist/embedder.js: javascript outbound network request
+"""
+        verdict, _analysis = supply_chain._classify_report_text(report)
+        self.assertEqual(verdict, "benign")
+
+    def test_javascript_semantic_findings_do_not_treat_db_exec_as_subprocess(self):
+        findings = supply_chain._javascript_semantic_findings(
+            "dist/db/seed.js",
+            "const stmt = db.prepare(`select 1`); db.exec(`pragma journal_mode = wal`);",
+        )
+        self.assertEqual(findings, [])
+
     def test_classifier_does_not_flag_unsuspicious_artifact_divergence_alone(self):
         report = """
 ## Artifact Divergence
@@ -301,7 +341,7 @@ name = "normalpkg"
             "rules": {},
         }
         verdict, _analysis = supply_chain._classify_report_text(
-            "https://evil.example eval",
+            "https://evil.example eval(",
             ecosystem="pypi",
             package="sample",
             policy=policy,
@@ -317,7 +357,7 @@ name = "normalpkg"
             "rules": {},
         }
         verdict, _analysis = supply_chain._classify_report_text(
-            "https://evil.example eval",
+            "https://evil.example eval(",
             ecosystem="pypi",
             package="sample",
             policy=policy,
@@ -335,7 +375,7 @@ name = "normalpkg"
             "rule_weights": {},
         }
         verdict, _analysis = supply_chain._classify_report_text(
-            "eval",
+            "eval(",
             ecosystem="pypi",
             package="sample",
             policy=policy,
@@ -371,7 +411,7 @@ name = "normalpkg"
             "rule_weights": {"obfuscated eval": 5},
         }
         verdict, _analysis = supply_chain._classify_report_text(
-            "eval",
+            "eval(",
             ecosystem="pypi",
             package="sample",
             policy=policy,
@@ -421,7 +461,7 @@ name = "normalpkg"
             "rule_weights": {"obfuscated eval": 5},
         }
         payload = supply_chain.explain_verdict(
-            "eval",
+            "eval(",
             ecosystem="pypi",
             package="sample",
             policy=policy,
