@@ -26,6 +26,25 @@ from secopsai.supply_chain import (
     run_scan,
 )
 
+try:
+    from secopsai.supply_chain_enhanced import (
+        explain_policy,
+        explain_verdict,
+        load_recent_results,
+        reconcile_history,
+        run_recent_top_scan,
+        run_scan,
+    )
+except Exception:
+    from secopsai.supply_chain import (
+        explain_policy,
+        explain_verdict,
+        load_recent_results,
+        reconcile_history,
+        run_recent_top_scan,
+        run_scan,
+    )
+
 ROOT = Path(__file__).resolve().parents[1]
 CACHE_FILE = ROOT / "data" / ".last_refresh"
 DEFAULT_TTL_SECONDS = 60
