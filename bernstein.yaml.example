@@ -7,6 +7,11 @@ cli: auto
 max_agents: 4
 budget: "$20"
 
+catalogs:
+  - name: agency
+    type: agency
+    enabled: true
+
 constraints:
   - "Read the exported finding brief before changing code."
   - "Use secopsai show <finding_id> for full evidence and remediation context."

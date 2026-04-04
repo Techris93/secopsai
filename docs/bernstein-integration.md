@@ -49,6 +49,8 @@ Copy the example configuration:
 cp bernstein.yaml.example bernstein.yaml
 ```
 
+The example configuration already enables Bernstein's `agency` catalog so it can route work to specialist agents when that catalog is available in your Bernstein installation.
+
 ## Export SecOpsAI findings into a Bernstein plan
 
 Generate a Bernstein-compatible remediation plan from the current SOC store:
@@ -89,6 +91,15 @@ Open the browser dashboard:
 
 ```bash
 bernstein dashboard
+```
+
+If you want to confirm the catalog-backed routing behavior, inspect `bernstein.yaml` and ensure it contains:
+
+```yaml
+catalogs:
+  - name: agency
+    type: agency
+    enabled: true
 ```
 
 ## Operator workflow
