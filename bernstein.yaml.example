@@ -1,0 +1,34 @@
+goal: >
+  Investigate and remediate SecOpsAI findings exported into .sdd/plans/secopsai-remediation.yaml.
+  Treat SecOpsAI as the source of truth for findings, and use Bernstein for task execution,
+  code changes, validation, and remediation tracking.
+
+cli: auto
+max_agents: 4
+budget: "$20"
+
+constraints:
+  - "Read the exported finding brief before changing code."
+  - "Use secopsai show <finding_id> for full evidence and remediation context."
+  - "Run targeted tests before completing a task."
+  - "Do not modify SecOpsAI finding records except through supported CLI workflows."
+
+quality_gates:
+  enabled: true
+  lint: true
+  type_check: true
+  tests: true
+
+role_model_policy:
+  manager:
+    model: opus
+    effort: max
+  security:
+    model: sonnet
+    effort: high
+  backend:
+    model: sonnet
+    effort: high
+  qa:
+    model: sonnet
+    effort: high

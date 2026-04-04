@@ -1,0 +1,67 @@
+name: "SecOpsAI Remediation Queue"
+description: >
+  Investigate and remediate the highest-priority SecOpsAI findings exported
+  from the local SOC store. Treat SecOpsAI as the source of truth for findings
+  and use this plan to execute remediation tasks in Bernstein.
+
+cli: auto
+max_agents: 4
+budget: "$20"
+constraints:
+  - "Use secopsai show <finding_id> before deciding on remediation."
+  - "Preserve evidence and analyst notes; do not mutate SecOpsAI data directly except through supported workflows."
+  - "Run targeted tests for any code change."
+context_files:
+  - ".sdd/secopsai/findings/scm-e4478b5eb136e2ae.md"
+  - ".sdd/secopsai/findings/scm-fa4bae45589358a2.md"
+  - ".sdd/secopsai/findings/scm-ff3461f8e3215af8.md"
+
+stages:
+  - name: "Investigate Findings"
+    steps:
+      - title: "SCM-FF3461F8E3215AF8 | Suspicious pypi package release: duckdb@1.5.2.dev38"
+        description: >
+          Investigate SCM-FF3461F8E3215AF8. Read .sdd/secopsai/findings/scm-ff3461f8e3215af8.md. Confirm whether the finding is valid, identify impacted code, dependencies, or infrastructure, and produce either a remediation patch or a false-positive assessment with evidence.
+        role: security
+        scope: medium
+        complexity: high
+        completion_signals:
+          - type: path_exists
+            path: ".sdd/secopsai/findings/scm-ff3461f8e3215af8.md"
+          - type: file_contains
+            path: ".sdd/secopsai/findings/scm-ff3461f8e3215af8.md"
+            contains: "SCM-FF3461F8E3215AF8"
+      - title: "SCM-FA4BAE45589358A2 | Suspicious pypi package release: bitarray@3.8.1"
+        description: >
+          Investigate SCM-FA4BAE45589358A2. Read .sdd/secopsai/findings/scm-fa4bae45589358a2.md. Confirm whether the finding is valid, identify impacted code, dependencies, or infrastructure, and produce either a remediation patch or a false-positive assessment with evidence.
+        role: security
+        scope: medium
+        complexity: high
+        completion_signals:
+          - type: path_exists
+            path: ".sdd/secopsai/findings/scm-fa4bae45589358a2.md"
+          - type: file_contains
+            path: ".sdd/secopsai/findings/scm-fa4bae45589358a2.md"
+            contains: "SCM-FA4BAE45589358A2"
+      - title: "SCM-E4478B5EB136E2AE | Suspicious pypi package release: ty@0.0.28"
+        description: >
+          Investigate SCM-E4478B5EB136E2AE. Read .sdd/secopsai/findings/scm-e4478b5eb136e2ae.md. Confirm whether the finding is valid, identify impacted code, dependencies, or infrastructure, and produce either a remediation patch or a false-positive assessment with evidence.
+        role: security
+        scope: medium
+        complexity: high
+        completion_signals:
+          - type: path_exists
+            path: ".sdd/secopsai/findings/scm-e4478b5eb136e2ae.md"
+          - type: file_contains
+            path: ".sdd/secopsai/findings/scm-e4478b5eb136e2ae.md"
+            contains: "SCM-E4478B5EB136E2AE"
+  - name: "Verification and Triage"
+    depends_on: ["Investigate Findings"]
+    steps:
+      - title: "Validate remediation output and update SecOpsAI triage"
+        description: >
+          Review completed remediation work, run any required verification, and update the
+          corresponding finding status or disposition in SecOpsAI using the supported CLI.
+        role: qa
+        scope: medium
+        complexity: medium
