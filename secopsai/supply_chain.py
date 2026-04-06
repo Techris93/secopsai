@@ -220,6 +220,170 @@ def load_policy(path: Optional[Path] = None) -> Dict[str, Any]:
     return payload
 
 
+def _toml_literal(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    text = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
+def _policy_target(ecosystem: str, package: str) -> str:
+    return f"{ecosystem.lower()}:{package}"
+
+
+def save_policy(policy: Dict[str, Any], path: Optional[Path] = None) -> Path:
+    path = path or Path(os.environ.get("SECOPS_SUPPLY_CHAIN_POLICY", str(POLICY_PATH)))
+    threshold = int(policy.get("thresholds", {}).get("malicious_score", 10))
+    eco_thresholds = {
+        str(key).lower(): int(value) for key, value in policy.get("ecosystem_thresholds", {}).items()
+    }
+    allow_packages = sorted({str(item) for item in policy.get("allow", {}).get("packages", [])}, key=str.lower)
+    deny_packages = sorted({str(item) for item in policy.get("deny", {}).get("packages", [])}, key=str.lower)
+    package_thresholds = {
+        str(key): int(value) for key, value in policy.get("package_thresholds", {}).items()
+    }
+    rules = {str(key): bool(value) for key, value in policy.get("rules", {}).items()}
+    rule_weights = {str(key): int(value) for key, value in policy.get("rule_weights", {}).items()}
+
+    lines: List[str] = []
+    lines.append("[thresholds]")
+    lines.append(f"malicious_score = {threshold}")
+    lines.append("")
+
+    lines.append("[ecosystem_thresholds]")
+    if eco_thresholds:
+        for key in sorted(eco_thresholds):
+            lines.append(f"{key} = {eco_thresholds[key]}")
+    lines.append("")
+
+    lines.append("[allow]")
+    lines.append("packages = [")
+    for item in allow_packages:
+        lines.append(f"    {_toml_literal(item)},")
+    lines.append("]")
+    lines.append("")
+
+    lines.append("[deny]")
+    lines.append("packages = [")
+    for item in deny_packages:
+        lines.append(f"    {_toml_literal(item)},")
+    lines.append("]")
+    lines.append("")
+
+    lines.append("[package_thresholds]")
+    if package_thresholds:
+        for key in sorted(package_thresholds, key=str.lower):
+            lines.append(f"{_toml_literal(key)} = {package_thresholds[key]}")
+    lines.append("")
+
+    lines.append("[rules]")
+    if rules:
+        for key in sorted(rules, key=str.lower):
+            lines.append(f"{_toml_literal(key)} = {_toml_literal(rules[key])}")
+    lines.append("")
+
+    lines.append("[rule_weights]")
+    if rule_weights:
+        for key in sorted(rule_weights, key=str.lower):
+            lines.append(f"{_toml_literal(key)} = {rule_weights[key]}")
+    lines.append("")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def allowlist_add(ecosystem: str, package: str, path: Optional[Path] = None) -> Dict[str, Any]:
+    policy = load_policy(path)
+    target = _policy_target(ecosystem, package)
+    entries = {str(item) for item in policy.get("allow", {}).get("packages", [])}
+    changed = target not in entries
+    entries.add(target)
+    policy.setdefault("allow", {})["packages"] = sorted(entries, key=str.lower)
+    saved_path = save_policy(policy, path)
+    return {
+        "changed": changed,
+        "entry": target,
+        "policy_path": str(saved_path),
+        "policy": explain_policy(ecosystem, package, policy=policy),
+    }
+
+
+def allowlist_remove(ecosystem: str, package: str, path: Optional[Path] = None) -> Dict[str, Any]:
+    policy = load_policy(path)
+    target = _policy_target(ecosystem, package)
+    entries = {str(item) for item in policy.get("allow", {}).get("packages", [])}
+    changed = target in entries
+    entries.discard(target)
+    policy.setdefault("allow", {})["packages"] = sorted(entries, key=str.lower)
+    saved_path = save_policy(policy, path)
+    return {
+        "changed": changed,
+        "entry": target,
+        "policy_path": str(saved_path),
+        "policy": explain_policy(ecosystem, package, policy=policy),
+    }
+
+
+def tune_rule(
+    rule_name: str,
+    *,
+    weight: Optional[int] = None,
+    enabled: Optional[bool] = None,
+    path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    policy = load_policy(path)
+    if weight is None and enabled is None:
+        raise ValueError("at least one of weight or enabled must be provided")
+    if weight is not None:
+        policy.setdefault("rule_weights", {})[rule_name] = int(weight)
+    if enabled is not None:
+        policy.setdefault("rules", {})[rule_name] = bool(enabled)
+    saved_path = save_policy(policy, path)
+    return {
+        "rule": rule_name,
+        "weight": policy.get("rule_weights", {}).get(rule_name),
+        "enabled": policy.get("rules", {}).get(rule_name),
+        "policy_path": str(saved_path),
+    }
+
+
+def tune_threshold(
+    *,
+    global_threshold: Optional[int] = None,
+    ecosystem: Optional[str] = None,
+    package: Optional[str] = None,
+    value: int,
+    path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    policy = load_policy(path)
+    if package and not ecosystem:
+        raise ValueError("ecosystem is required when setting a package threshold")
+    if package:
+        target = _policy_target(ecosystem or "", package)
+        policy.setdefault("package_thresholds", {})[target] = int(value)
+        scope = "package"
+        target_value = target
+    elif ecosystem:
+        policy.setdefault("ecosystem_thresholds", {})[ecosystem.lower()] = int(value)
+        scope = "ecosystem"
+        target_value = ecosystem.lower()
+    elif global_threshold is not None:
+        policy.setdefault("thresholds", {})["malicious_score"] = int(value)
+        scope = "global"
+        target_value = "malicious_score"
+    else:
+        raise ValueError("must specify --global, --ecosystem, or --package target")
+    saved_path = save_policy(policy, path)
+    return {
+        "scope": scope,
+        "target": target_value,
+        "value": int(value),
+        "policy_path": str(saved_path),
+    }
+
+
 def _package_matches_policy(entries: List[str], ecosystem: Optional[str], package: Optional[str]) -> bool:
     if not ecosystem or not package:
         return False

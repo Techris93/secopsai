@@ -17,13 +17,18 @@ from detect import run_detection
 from secopsai.formatters import fmt_finding, fmt_list, to_json
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
 from secopsai.pipeline import refresh as refresh_pipeline
+
 from secopsai.supply_chain import (
+    allowlist_add,
+    allowlist_remove,
     explain_policy,
     explain_verdict,
     load_recent_results,
     reconcile_history,
     run_recent_top_scan,
     run_scan,
+    tune_rule,
+    tune_threshold,
 )
 from secopsai.triage import VALID_DISPOSITIONS, close_finding, investigate_finding, list_triage_findings, start_finding
 
@@ -473,6 +478,31 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_explain = supply_chain_sub.add_parser("explain-policy", help="Show the effective policy for a package")
     supply_chain_explain.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
     supply_chain_explain.add_argument("--package", required=True, help="Package name")
+
+    supply_chain_allowlist = supply_chain_sub.add_parser("allowlist", help="Manage supply-chain allowlist entries")
+    supply_chain_allowlist_sub = supply_chain_allowlist.add_subparsers(dest="supply_chain_allowlist_cmd", required=True)
+    supply_chain_allowlist_add = supply_chain_allowlist_sub.add_parser("add", help="Add a package to the allowlist")
+    supply_chain_allowlist_add.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    supply_chain_allowlist_add.add_argument("--package", required=True, help="Package name or wildcard")
+    supply_chain_allowlist_remove = supply_chain_allowlist_sub.add_parser("remove", help="Remove a package from the allowlist")
+    supply_chain_allowlist_remove.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    supply_chain_allowlist_remove.add_argument("--package", required=True, help="Package name or wildcard")
+
+    supply_chain_tune = supply_chain_sub.add_parser("tune", help="Tune supply-chain thresholds and rules")
+    supply_chain_tune_sub = supply_chain_tune.add_subparsers(dest="supply_chain_tune_cmd", required=True)
+    supply_chain_tune_rule = supply_chain_tune_sub.add_parser("rule", help="Enable/disable a rule or set its weight")
+    supply_chain_tune_rule.add_argument("rule_name", help="Rule name exactly as shown in explain-verdict output")
+    supply_chain_tune_rule.add_argument("--weight", type=int, help="Override the rule weight")
+    rule_toggle = supply_chain_tune_rule.add_mutually_exclusive_group()
+    rule_toggle.add_argument("--disable", action="store_true", help="Disable the rule")
+    rule_toggle.add_argument("--enable", action="store_true", help="Enable the rule")
+    supply_chain_tune_threshold = supply_chain_tune_sub.add_parser("threshold", help="Set global, ecosystem, or package threshold")
+    threshold_scope = supply_chain_tune_threshold.add_mutually_exclusive_group(required=True)
+    threshold_scope.add_argument("--global-threshold", action="store_true", help="Set the global malicious score threshold")
+    threshold_scope.add_argument("--ecosystem", choices=["pypi", "npm"], help="Set the threshold for one ecosystem")
+    threshold_scope.add_argument("--package", help="Set the threshold for one package target")
+    supply_chain_tune_threshold.add_argument("--package-ecosystem", choices=["pypi", "npm"], help="Required with --package")
+    supply_chain_tune_threshold.add_argument("--value", type=int, required=True, help="Threshold value")
 
     supply_chain_explain_verdict = supply_chain_sub.add_parser(
         "explain-verdict",
@@ -932,7 +962,64 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if payload["disabled_rules"]:
                     print(f"disabled_rules={payload['disabled_rules']}")
                 if payload["rule_weight_overrides"]:
-                    print(f"rule_weight_overrides={payload['rule_weight_overrides']}")
+                        print(f"rule_weight_overrides={payload['rule_weight_overrides']}")
+            return 0
+
+        if args.supply_chain_cmd == "allowlist":
+            if args.supply_chain_allowlist_cmd == "add":
+                payload = allowlist_add(args.ecosystem, args.package)
+            else:
+                payload = allowlist_remove(args.ecosystem, args.package)
+            if args.json:
+                print(to_json(payload))
+            else:
+                action = "added" if args.supply_chain_allowlist_cmd == "add" else "removed"
+                print(f"{action}={payload['entry']}")
+                print(f"changed={payload['changed']}")
+                print(f"policy_path={payload['policy_path']}")
+                print(f"effective_threshold={payload['policy']['effective_threshold']}")
+                if payload["policy"]["allow_matches"]:
+                    print(f"allow_matches={payload['policy']['allow_matches']}")
+            return 0
+
+        if args.supply_chain_cmd == "tune":
+            try:
+                if args.supply_chain_tune_cmd == "rule":
+                    enabled = True if args.enable else False if args.disable else None
+                    payload = tune_rule(args.rule_name, weight=args.weight, enabled=enabled)
+                else:
+                    if args.package and not args.package_ecosystem:
+                        raise ValueError("--package-ecosystem is required with --package")
+                    payload = tune_threshold(
+                        global_threshold=args.value if args.global_threshold else None,
+                        ecosystem=args.ecosystem,
+                        package=args.package,
+                        value=args.value,
+                        path=None,
+                    ) if not args.package else tune_threshold(
+                        ecosystem=args.package_ecosystem,
+                        package=args.package,
+                        value=args.value,
+                        path=None,
+                    )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc)}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            else:
+                if args.supply_chain_tune_cmd == "rule":
+                    print(f"rule={payload['rule']}")
+                    print(f"enabled={payload['enabled']}")
+                    print(f"weight={payload['weight']}")
+                else:
+                    print(f"scope={payload['scope']}")
+                    print(f"target={payload['target']}")
+                    print(f"value={payload['value']}")
+                print(f"policy_path={payload['policy_path']}")
             return 0
 
         if args.supply_chain_cmd == "explain-verdict":

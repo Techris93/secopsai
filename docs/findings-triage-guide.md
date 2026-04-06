@@ -65,6 +65,40 @@ Use it to quickly decide whether a package is:
 - `expected_behavior`
 - `needs_review`
 
+### False-Positive Relief
+
+Immediate allowlist relief:
+
+```bash
+secopsai supply-chain allowlist add --ecosystem pypi --package textual
+secopsai supply-chain explain-policy --ecosystem pypi --package textual
+secopsai supply-chain reconcile-history --json
+secopsai triage close SCM-XXXX --disposition false_positive --note "Verified legitimate package; added to allowlist."
+```
+
+Remove an allowlist entry:
+
+```bash
+secopsai supply-chain allowlist remove --ecosystem pypi --package textual
+```
+
+Tune a noisy rule instead of allowlisting a package:
+
+```bash
+secopsai supply-chain tune rule "wheel/sdist artifact divergence" --weight 1
+secopsai supply-chain tune rule "manifest executable entrypoints" --disable
+```
+
+Tune thresholds:
+
+```bash
+secopsai supply-chain tune threshold --global-threshold --value 12
+secopsai supply-chain tune threshold --ecosystem pypi --value 12
+secopsai supply-chain tune threshold --package langchain --package-ecosystem pypi --value 14
+```
+
+Use allowlisting when one known-safe package keeps firing. Use rule or threshold tuning when the same heuristic is noisy across many legitimate packages.
+
 ## Host-Based Triage
 
 `secopsai triage investigate OCF-XXXX` currently supports:

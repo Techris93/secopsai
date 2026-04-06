@@ -16,6 +16,74 @@ from secopsai import cli as secopsai_cli
 
 
 class SupplyChainTests(unittest.TestCase):
+    def test_allowlist_add_and_remove_updates_policy(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            policy_path = Path(temp_dir) / "policy.toml"
+            policy_path.write_text(
+                "[thresholds]\nmalicious_score = 10\n\n[ecosystem_thresholds]\n\n[allow]\npackages = [\n]\n\n[deny]\npackages = [\n]\n\n[package_thresholds]\n\n[rules]\n\n[rule_weights]\n",
+                encoding="utf-8",
+            )
+
+            added = supply_chain.allowlist_add("pypi", "textual", path=policy_path)
+            removed = supply_chain.allowlist_remove("pypi", "textual", path=policy_path)
+            policy = supply_chain.load_policy(policy_path)
+
+        self.assertTrue(added["changed"])
+        self.assertTrue(removed["changed"])
+        self.assertEqual(policy["allow"]["packages"], [])
+
+    def test_tune_rule_and_threshold_update_policy(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            policy_path = Path(temp_dir) / "policy.toml"
+            policy_path.write_text(
+                "[thresholds]\nmalicious_score = 10\n\n[ecosystem_thresholds]\n\n[allow]\npackages = [\n]\n\n[deny]\npackages = [\n]\n\n[package_thresholds]\n\n[rules]\n\n[rule_weights]\n",
+                encoding="utf-8",
+            )
+
+            supply_chain.tune_rule("manifest executable entrypoints", enabled=False, weight=1, path=policy_path)
+            supply_chain.tune_threshold(ecosystem="pypi", value=12, path=policy_path)
+            supply_chain.tune_threshold(ecosystem="pypi", package="langchain", value=14, path=policy_path)
+            policy = supply_chain.load_policy(policy_path)
+
+        self.assertEqual(policy["rules"]["manifest executable entrypoints"], False)
+        self.assertEqual(policy["rule_weights"]["manifest executable entrypoints"], 1)
+        self.assertEqual(policy["ecosystem_thresholds"]["pypi"], 12)
+        self.assertEqual(policy["package_thresholds"]["pypi:langchain"], 14)
+
+    def test_cli_allowlist_add_and_tune_rule(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            policy_path = Path(temp_dir) / "policy.toml"
+            policy_path.write_text(
+                "[thresholds]\nmalicious_score = 10\n\n[ecosystem_thresholds]\n\n[allow]\npackages = [\n]\n\n[deny]\npackages = [\n]\n\n[package_thresholds]\n\n[rules]\n\n[rule_weights]\n",
+                encoding="utf-8",
+            )
+            old_env = os.environ.get("SECOPS_SUPPLY_CHAIN_POLICY")
+            os.environ["SECOPS_SUPPLY_CHAIN_POLICY"] = str(policy_path)
+            stdout = StringIO()
+            try:
+                with mock.patch("sys.stdout", stdout):
+                    rc_add = secopsai_cli.main(
+                        ["--json", "supply-chain", "allowlist", "add", "--ecosystem", "pypi", "--package", "textual"]
+                    )
+                add_output = stdout.getvalue()
+                stdout.seek(0)
+                stdout.truncate(0)
+                with mock.patch("sys.stdout", stdout):
+                    rc_tune = secopsai_cli.main(
+                        ["--json", "supply-chain", "tune", "rule", "manifest executable entrypoints", "--disable", "--weight", "1"]
+                    )
+                tune_output = stdout.getvalue()
+            finally:
+                if old_env is None:
+                    os.environ.pop("SECOPS_SUPPLY_CHAIN_POLICY", None)
+                else:
+                    os.environ["SECOPS_SUPPLY_CHAIN_POLICY"] = old_env
+
+        self.assertEqual(rc_add, 0)
+        self.assertEqual(rc_tune, 0)
+        self.assertIn('"entry": "pypi:textual"', add_output)
+        self.assertIn('"rule": "manifest executable entrypoints"', tune_output)
+
     def test_build_finding_uses_stable_identifier(self):
         result = supply_chain.ScanResult(
             ecosystem="pypi",
