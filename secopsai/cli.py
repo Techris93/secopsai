@@ -25,6 +25,7 @@ from secopsai.supply_chain import (
     run_recent_top_scan,
     run_scan,
 )
+from secopsai.triage import VALID_DISPOSITIONS, close_finding, investigate_finding, list_triage_findings, start_finding
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE_FILE = ROOT / "data" / ".last_refresh"
@@ -482,6 +483,38 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_explain_verdict.add_argument("--version", help="Release version to resolve from stored results")
     supply_chain_explain_verdict.add_argument("--report", help="Path to a stored report file")
 
+    triage = sub.add_parser("triage", help="Native finding triage workflows")
+    triage_sub = triage.add_subparsers(dest="triage_cmd", required=True)
+
+    triage_list = triage_sub.add_parser("list", help="List findings for triage")
+    triage_list.add_argument("--severity", choices=["info", "low", "medium", "high", "critical"])
+    triage_list.add_argument("--status", choices=["open", "in_review", "triaged", "closed"])
+    triage_list.add_argument("--category", choices=["supply_chain", "policy_denial", "exfiltration", "host"])
+    triage_list.add_argument("--limit", type=int, default=50)
+    triage_list.add_argument("--db-path", default=None, help="Override SQLite database path")
+
+    triage_start = triage_sub.add_parser("start", help="Mark a finding as in review")
+    triage_start.add_argument("finding_id")
+    triage_start.add_argument("--author", default=None)
+    triage_start.add_argument("--note", default=None)
+    triage_start.add_argument("--db-path", default=None, help="Override SQLite database path")
+
+    triage_investigate = triage_sub.add_parser("investigate", help="Gather evidence and generate a triage report")
+    triage_investigate.add_argument("finding_id")
+    triage_investigate.add_argument("--search-root", default=None, help="Root path to scan for dependency references")
+    triage_investigate.add_argument("--report-dir", default=None, help="Directory to write triage reports")
+    triage_investigate.add_argument("--author", default=None)
+    triage_investigate.add_argument("--note", default=None)
+    triage_investigate.add_argument("--db-path", default=None, help="Override SQLite database path")
+
+    triage_close = triage_sub.add_parser("close", help="Close a finding with analyst disposition and note")
+    triage_close.add_argument("finding_id")
+    triage_close.add_argument("--disposition", required=True, choices=sorted(VALID_DISPOSITIONS))
+    triage_close.add_argument("--note", required=True, help="Closure note / analyst rationale")
+    triage_close.add_argument("--author", default=None)
+    triage_close.add_argument("--status", default="closed", choices=["triaged", "closed"])
+    triage_close.add_argument("--db-path", default=None, help="Override SQLite database path")
+
     return p.parse_args(argv)
 
 
@@ -680,6 +713,97 @@ def main(argv: Optional[List[str]] = None) -> int:
                         db=meta["db_path"],
                     )
                 )
+            return 0
+
+    if args.cmd == "triage":
+        if args.triage_cmd == "list":
+            rows = list_triage_findings(
+                db_path=args.db_path,
+                severity=args.severity,
+                status=args.status,
+                category=args.category,
+                limit=args.limit,
+            )
+            if args.json:
+                print(to_json({"findings": rows}))
+            else:
+                print(fmt_list(rows))
+            return 0
+
+        if args.triage_cmd == "start":
+            try:
+                payload = start_finding(
+                    args.finding_id,
+                    author=args.author,
+                    note=args.note,
+                    db_path=args.db_path,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc), "finding_id": args.finding_id}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json({"finding": payload}))
+            else:
+                print(fmt_finding(payload))
+            return 0
+
+        if args.triage_cmd == "investigate":
+            try:
+                payload = investigate_finding(
+                    args.finding_id,
+                    db_path=args.db_path,
+                    search_root=args.search_root,
+                    report_dir=args.report_dir,
+                    author=args.author,
+                    note=args.note,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc), "finding_id": args.finding_id}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            else:
+                investigation = payload["investigation"]
+                print(fmt_finding(payload["finding"]))
+                print("")
+                print(f"CATEGORY: {payload['category']}")
+                print(f"SUGGESTED_DISPOSITION: {investigation['recommended_disposition']}")
+                print(f"CONFIDENCE: {investigation['confidence']}")
+                print(f"SUMMARY: {investigation['summary']}")
+                print(f"JSON_REPORT: {payload['json_report']}")
+                print(f"MARKDOWN_REPORT: {payload['markdown_report']}")
+                if investigation.get("next_actions"):
+                    print("NEXT_ACTIONS:")
+                    for action in investigation["next_actions"]:
+                        print(f"- {action}")
+            return 0
+
+        if args.triage_cmd == "close":
+            try:
+                payload = close_finding(
+                    args.finding_id,
+                    disposition=args.disposition,
+                    note=args.note,
+                    author=args.author,
+                    status=args.status,
+                    db_path=args.db_path,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc), "finding_id": args.finding_id}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json({"finding": payload}))
+            else:
+                print(fmt_finding(payload))
             return 0
 
     if args.cmd == "supply-chain":

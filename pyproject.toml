@@ -20,7 +20,7 @@ secopsai = "secopsai.cli:main"
 
 [tool.setuptools]
 # Install the package plus the top-level helper modules/scripts that the CLI imports.
-packages = ["secopsai", "openclaw_adapters"]
+packages = ["secopsai", "secopsai.triage", "openclaw_adapters"]
 py-modules = [
   "confidence",
   "detect",
