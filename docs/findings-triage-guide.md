@@ -97,6 +97,13 @@ secopsai supply-chain tune threshold --ecosystem pypi --value 12
 secopsai supply-chain tune threshold --package langchain --package-ecosystem pypi --value 14
 ```
 
+Ask SecOpsAI to propose a threshold from reviewed history:
+
+```bash
+secopsai supply-chain suggest-threshold --ecosystem npm
+secopsai supply-chain suggest-threshold --ecosystem pypi --package textual
+```
+
 Use allowlisting when one known-safe package keeps firing. Use rule or threshold tuning when the same heuristic is noisy across many legitimate packages.
 
 Get a recommended false-positive action from a finding ID:

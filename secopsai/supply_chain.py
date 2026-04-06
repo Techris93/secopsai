@@ -513,6 +513,129 @@ def explain_policy(ecosystem: str, package: str, policy: Optional[Dict[str, Any]
     }
 
 
+def suggest_threshold(
+    ecosystem: str,
+    *,
+    package: Optional[str] = None,
+    db_path: Optional[str] = None,
+    limit: int = 200,
+) -> Dict[str, Any]:
+    reviewed_safe = {"false_positive", "expected_behavior", "tune_policy", "exception_granted"}
+    reviewed_risky = {"true_positive", "needs_review", "remediated"}
+    rows = load_recent_results(limit=max(limit, 1))
+    filtered = [
+        row for row in rows
+        if str(row.get("ecosystem") or "").lower() == ecosystem.lower()
+        and (not package or str(row.get("package") or "").lower() == package.lower())
+    ]
+
+    scored_rows: List[Dict[str, Any]] = []
+    for row in filtered:
+        report_path = row.get("report_path")
+        if not report_path:
+            continue
+        path = Path(str(report_path))
+        if not path.exists():
+            continue
+        try:
+            explanation = explain_verdict(
+                path.read_text(encoding="utf-8"),
+                ecosystem=str(row.get("ecosystem") or ecosystem),
+                package=str(row.get("package") or package or ""),
+            )
+        except Exception:
+            continue
+        finding = soc_store.get_finding(str(row.get("finding_id") or ""), db_path) if row.get("finding_id") else None
+        disposition = str((finding or {}).get("disposition") or "unreviewed").lower()
+        scored_rows.append(
+            {
+                "finding_id": row.get("finding_id"),
+                "package": row.get("package"),
+                "version": row.get("new_version"),
+                "score": int(explanation.get("score") or 0),
+                "disposition": disposition,
+                "verdict": explanation.get("verdict"),
+                "report_path": str(path),
+            }
+        )
+
+    current_policy = load_policy()
+    if package:
+        current_threshold = _package_threshold(current_policy, ecosystem, package)
+    else:
+        current_threshold = int(
+            {
+                str(key).lower(): value for key, value in current_policy.get("ecosystem_thresholds", {}).items()
+            }.get(ecosystem.lower(), current_policy.get("thresholds", {}).get("malicious_score", 10))
+        )
+    safe_scores = sorted(row["score"] for row in scored_rows if row["disposition"] in reviewed_safe)
+    risky_scores = sorted(row["score"] for row in scored_rows if row["disposition"] in reviewed_risky)
+    unreviewed_scores = sorted(row["score"] for row in scored_rows if row["disposition"] not in reviewed_safe | reviewed_risky)
+
+    rationale = "Not enough reviewed findings to recommend a threshold change yet."
+    confidence = "low"
+    suggested = current_threshold
+
+    if safe_scores and risky_scores:
+        max_safe = max(safe_scores)
+        min_risky = min(risky_scores)
+        suggested = max_safe + 1
+        if suggested <= min_risky:
+            confidence = "high"
+            rationale = (
+                f"Reviewed safe findings cluster at or below {max_safe}, while reviewed risky findings start at {min_risky}."
+            )
+        else:
+            confidence = "medium"
+            rationale = (
+                f"Reviewed safe and risky scores overlap (max safe {max_safe}, min risky {min_risky}); "
+                f"{suggested} is the smallest stricter threshold that suppresses the reviewed safe cluster."
+            )
+    elif safe_scores:
+        max_safe = max(safe_scores)
+        suggested = max(current_threshold, max_safe + 1)
+        confidence = "medium"
+        rationale = f"Only reviewed safe findings were available; raising the threshold above max safe score {max_safe} reduces similar false positives."
+    elif risky_scores:
+        min_risky = min(risky_scores)
+        suggested = min(current_threshold, min_risky)
+        confidence = "low"
+        rationale = f"Only reviewed risky findings were available; keep the threshold no higher than {min_risky} to avoid suppressing reviewed malicious activity."
+    elif unreviewed_scores:
+        suggested = current_threshold
+        confidence = "low"
+        rationale = (
+            f"There are {len(unreviewed_scores)} unreviewed scored findings, but no reviewed safe/risky baseline yet. "
+            "Investigate and disposition a few findings before tuning thresholds."
+        )
+
+    examples = {
+        "reviewed_safe": [row for row in scored_rows if row["disposition"] in reviewed_safe][:5],
+        "reviewed_risky": [row for row in scored_rows if row["disposition"] in reviewed_risky][:5],
+        "unreviewed": [row for row in scored_rows if row["disposition"] not in reviewed_safe | reviewed_risky][:5],
+    }
+
+    return {
+        "target": {"ecosystem": ecosystem, "package": package},
+        "current_threshold": current_threshold,
+        "suggested_threshold": suggested,
+        "confidence": confidence,
+        "rationale": rationale,
+        "counts": {
+            "considered_results": len(scored_rows),
+            "reviewed_safe": len(safe_scores),
+            "reviewed_risky": len(risky_scores),
+            "unreviewed": len(unreviewed_scores),
+        },
+        "score_ranges": {
+            "reviewed_safe": {"min": min(safe_scores) if safe_scores else None, "max": max(safe_scores) if safe_scores else None},
+            "reviewed_risky": {"min": min(risky_scores) if risky_scores else None, "max": max(risky_scores) if risky_scores else None},
+            "unreviewed": {"min": min(unreviewed_scores) if unreviewed_scores else None, "max": max(unreviewed_scores) if unreviewed_scores else None},
+        },
+        "examples": examples,
+    }
+
+
 def _record_rule_match(
     matched_rules: List[Dict[str, Any]],
     seen_rule_names: set[str],

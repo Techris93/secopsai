@@ -27,6 +27,7 @@ from secopsai.supply_chain import (
     reconcile_history,
     run_recent_top_scan,
     run_scan,
+    suggest_threshold,
     tune_rule,
     tune_threshold,
 )
@@ -519,6 +520,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_suggest.add_argument("finding_id", help="Supply-chain finding ID (SCM-...)")
     supply_chain_suggest.add_argument("--search-root", default=None, help="Root path to scan for dependency references")
     supply_chain_suggest.add_argument("--db-path", default=None, help="Override SQLite database path")
+
+    supply_chain_suggest_threshold = supply_chain_sub.add_parser(
+        "suggest-threshold",
+        help="Suggest a threshold based on reviewed safe vs risky historical scores",
+    )
+    supply_chain_suggest_threshold.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    supply_chain_suggest_threshold.add_argument("--package", help="Optional package to scope the suggestion")
+    supply_chain_suggest_threshold.add_argument("--limit", type=int, default=200, help="How many recent results to analyze")
+    supply_chain_suggest_threshold.add_argument("--db-path", default=None, help="Override SQLite database path")
 
     supply_chain_explain_verdict = supply_chain_sub.add_parser(
         "explain-verdict",
@@ -1099,6 +1109,25 @@ def main(argv: Optional[List[str]] = None) -> int:
                     print("commands:")
                     for command in suggestion["commands"]:
                         print(f"- {command}")
+            return 0
+
+        if args.supply_chain_cmd == "suggest-threshold":
+            payload = suggest_threshold(
+                args.ecosystem,
+                package=args.package,
+                db_path=args.db_path,
+                limit=args.limit,
+            )
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(f"target={args.ecosystem}:{args.package or '*'}")
+                print(f"current_threshold={payload['current_threshold']}")
+                print(f"suggested_threshold={payload['suggested_threshold']}")
+                print(f"confidence={payload['confidence']}")
+                print(f"rationale={payload['rationale']}")
+                print(f"counts={payload['counts']}")
+                print(f"score_ranges={payload['score_ranges']}")
             return 0
 
         if args.supply_chain_cmd == "explain-verdict":

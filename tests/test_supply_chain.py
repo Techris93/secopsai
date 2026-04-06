@@ -84,6 +84,122 @@ class SupplyChainTests(unittest.TestCase):
         self.assertIn('"entry": "pypi:textual"', add_output)
         self.assertIn('"rule": "manifest executable entrypoints"', tune_output)
 
+    def test_suggest_threshold_uses_reviewed_safe_and_risky_scores(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            original_results = supply_chain.RESULTS_PATH
+            original_db_env = os.environ.get("SECOPS_FINDINGS_DIR")
+            original_policy_env = os.environ.get("SECOPS_SUPPLY_CHAIN_POLICY")
+            supply_chain.RESULTS_PATH = temp_path / "results.jsonl"
+            os.environ["SECOPS_FINDINGS_DIR"] = str(temp_path / "findings")
+            policy_path = temp_path / "policy.toml"
+            policy_path.write_text(
+                "[thresholds]\nmalicious_score = 10\n\n[ecosystem_thresholds]\n\n[allow]\npackages = [\n]\n\n[deny]\npackages = [\n]\n\n[package_thresholds]\n\n[rules]\n\n[rule_weights]\n",
+                encoding="utf-8",
+            )
+            os.environ["SECOPS_SUPPLY_CHAIN_POLICY"] = str(policy_path)
+            try:
+                report_a = temp_path / "a.md"
+                report_b = temp_path / "b.md"
+                report_c = temp_path / "c.md"
+                report_a.write_text("a", encoding="utf-8")
+                report_b.write_text("b", encoding="utf-8")
+                report_c.write_text("c", encoding="utf-8")
+                supply_chain._save_all_results(
+                    [
+                        {
+                            "ecosystem": "npm",
+                            "package": "alpha",
+                            "new_version": "1.0.0",
+                            "finding_id": "SCM-A",
+                            "report_path": str(report_a),
+                            "recorded_at": "2026-04-06T00:00:00Z",
+                            "verdict": "malicious",
+                        },
+                        {
+                            "ecosystem": "npm",
+                            "package": "beta",
+                            "new_version": "1.0.0",
+                            "finding_id": "SCM-B",
+                            "report_path": str(report_b),
+                            "recorded_at": "2026-04-06T00:01:00Z",
+                            "verdict": "malicious",
+                        },
+                        {
+                            "ecosystem": "npm",
+                            "package": "gamma",
+                            "new_version": "1.0.0",
+                            "finding_id": "SCM-C",
+                            "report_path": str(report_c),
+                            "recorded_at": "2026-04-06T00:02:00Z",
+                            "verdict": "malicious",
+                        },
+                    ]
+                )
+                supply_chain._upsert_findings(
+                    [
+                        {
+                            "finding_id": "SCM-A",
+                            "title": "A",
+                            "summary": "A",
+                            "severity": "critical",
+                            "severity_score": 90,
+                            "status": "closed",
+                            "disposition": "false_positive",
+                            "first_seen": "2026-04-06T00:00:00Z",
+                            "last_seen": "2026-04-06T00:00:00Z",
+                            "event_ids": [],
+                        },
+                        {
+                            "finding_id": "SCM-B",
+                            "title": "B",
+                            "summary": "B",
+                            "severity": "critical",
+                            "severity_score": 90,
+                            "status": "closed",
+                            "disposition": "expected_behavior",
+                            "first_seen": "2026-04-06T00:01:00Z",
+                            "last_seen": "2026-04-06T00:01:00Z",
+                            "event_ids": [],
+                        },
+                        {
+                            "finding_id": "SCM-C",
+                            "title": "C",
+                            "summary": "C",
+                            "severity": "critical",
+                            "severity_score": 90,
+                            "status": "triaged",
+                            "disposition": "needs_review",
+                            "first_seen": "2026-04-06T00:02:00Z",
+                            "last_seen": "2026-04-06T00:02:00Z",
+                            "event_ids": [],
+                        },
+                    ]
+                )
+
+                def fake_explain(report_text, ecosystem=None, package=None, policy=None):
+                    score_map = {"alpha": 10, "beta": 11, "gamma": 18}
+                    return {"score": score_map[package], "effective_threshold": 10, "verdict": "malicious"}
+
+                with mock.patch.object(supply_chain, "explain_verdict", side_effect=fake_explain):
+                    payload = supply_chain.suggest_threshold("npm", limit=10)
+            finally:
+                supply_chain.RESULTS_PATH = original_results
+                if original_db_env is None:
+                    os.environ.pop("SECOPS_FINDINGS_DIR", None)
+                else:
+                    os.environ["SECOPS_FINDINGS_DIR"] = original_db_env
+                if original_policy_env is None:
+                    os.environ.pop("SECOPS_SUPPLY_CHAIN_POLICY", None)
+                else:
+                    os.environ["SECOPS_SUPPLY_CHAIN_POLICY"] = original_policy_env
+
+        self.assertEqual(payload["current_threshold"], 10)
+        self.assertEqual(payload["suggested_threshold"], 12)
+        self.assertEqual(payload["confidence"], "high")
+        self.assertEqual(payload["counts"]["reviewed_safe"], 2)
+        self.assertEqual(payload["counts"]["reviewed_risky"], 1)
+
     def test_build_finding_uses_stable_identifier(self):
         result = supply_chain.ScanResult(
             ecosystem="pypi",
