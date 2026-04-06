@@ -3,10 +3,11 @@
 secopsai includes a local-first threat intelligence pipeline that can:
 
 1) Aggregate IOCs from open-source feeds
-2) Normalize + de-duplicate + score them
-3) Optionally enrich them with lightweight local OSINT (DNS resolution)
-4) Match IOCs against your latest OpenClaw replay events
-5) Persist any matches as findings in the local SOC store
+2) Merge curated high-confidence indicators shipped with SecOpsAI
+3) Normalize + de-duplicate + score them
+4) Optionally enrich them with lightweight local OSINT (DNS resolution)
+5) Match IOCs against your latest OpenClaw replay events
+6) Persist any matches as findings in the local SOC store
 
 ## Security model (important)
 
@@ -30,6 +31,11 @@ source .venv/bin/activate
 ```bash
 secopsai intel refresh
 ```
+
+This refresh includes:
+
+- open-source feeds such as URLhaus and ThreatFox
+- curated SecOpsAI indicators for notable ecosystem and supply-chain compromise cases
 
 JSON output:
 

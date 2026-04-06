@@ -1789,7 +1789,7 @@ def print_stats(events: list):
     print()
 
     # Attack type breakdown
-    attack_types = {}
+    attack_types: dict[str, int] = {}
     for e in malicious:
         at = e.get("attack_type", "unknown")
         attack_types[at] = attack_types.get(at, 0) + 1
@@ -1800,7 +1800,7 @@ def print_stats(events: list):
 
     # Event type breakdown
     print(f"\n  Event types:")
-    event_types = {}
+    event_types: dict[str, int] = {}
     for e in events:
         et = e.get("event_type", "unknown")
         event_types[et] = event_types.get(et, 0) + 1

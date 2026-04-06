@@ -231,7 +231,14 @@ def explain_c2_beaconing(events: List[Dict], detected_ids: Set[str]) -> List[Dic
         ]
         avg_interval = _average(deltas)
         interval_cv  = _cv(deltas)
-        ports = sorted({ev.get("dest_port") for ev in ordered if ev.get("dest_port")})
+        ports = sorted(
+            {
+                dest_port
+                for ev in ordered
+                for dest_port in [ev.get("dest_port")]
+                if isinstance(dest_port, int)
+            }
+        )
         max_bytes_out = max((ev.get("bytes_out", 0) for ev in ordered), default=0)
         max_bytes_in  = max((ev.get("bytes_in", 0) for ev in ordered), default=0)
 
@@ -279,7 +286,14 @@ def explain_lateral_movement(events: List[Dict], detected_ids: Set[str]) -> List
             continue
 
         ordered = sorted(smb_events, key=lambda e: e["timestamp"])
-        unique_dests = sorted({e.get("dest_ip") for e in ordered if e.get("dest_ip")})
+        unique_dests = sorted(
+            {
+                dest_ip
+                for e in ordered
+                for dest_ip in [e.get("dest_ip")]
+                if isinstance(dest_ip, str)
+            }
+        )
         window_minutes = (
             _minutes_between(ordered[0], ordered[-1]) if len(ordered) > 1 else 0.0
         )
