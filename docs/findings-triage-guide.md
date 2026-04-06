@@ -99,6 +99,19 @@ secopsai supply-chain tune threshold --package langchain --package-ecosystem pyp
 
 Use allowlisting when one known-safe package keeps firing. Use rule or threshold tuning when the same heuristic is noisy across many legitimate packages.
 
+Get a recommended false-positive action from a finding ID:
+
+```bash
+secopsai supply-chain suggest-fp-action SCM-XXXX --search-root /path/to/repo
+```
+
+This suggests one of:
+
+- close as `expected_behavior`
+- add the package to the allowlist
+- tune a noisy rule
+- keep the finding in `needs_review`
+
 ## Host-Based Triage
 
 `secopsai triage investigate OCF-XXXX` currently supports:

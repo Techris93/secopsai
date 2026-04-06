@@ -218,3 +218,64 @@ def investigate_supply_chain(finding: Dict[str, Any], *, search_root: Path) -> D
         "next_actions": next_actions,
         "external_links": external_links,
     }
+
+
+def suggest_fp_action_for_supply_chain(
+    finding: Dict[str, Any],
+    *,
+    search_root: Path,
+) -> Dict[str, Any]:
+    investigation = investigate_supply_chain(finding, search_root=search_root)
+    ecosystem = str(finding.get("ecosystem") or "").lower()
+    package = str(finding.get("package") or "")
+    finding_id = str(finding.get("finding_id") or "")
+    matched_rules = [
+        str(rule.get("rule") or "")
+        for rule in (investigation.get("verdict_explanation", {}) or {}).get("matched_rules", []) or []
+        if str(rule.get("rule") or "").strip()
+    ]
+    dependency_present = bool((investigation.get("dependency_presence") or {}).get("present"))
+    allow_matches = (investigation.get("policy") or {}).get("allow_matches") or []
+    recommended_disposition = str(investigation.get("recommended_disposition") or "")
+
+    action = "needs_review"
+    rationale = investigation.get("summary") or "Analyst review is still required."
+    commands: List[str] = []
+
+    if allow_matches:
+        action = "close_false_positive"
+        rationale = "The package already matches the local allowlist."
+        commands = [
+            f'secopsai triage close {finding_id} --disposition false_positive --note "Package already matches local allowlist; verified safe."'
+        ]
+    elif recommended_disposition == "expected_behavior" and not dependency_present:
+        action = "close_expected_behavior"
+        rationale = "The package is not referenced in local dependency manifests, so this is likely ecosystem intelligence outside your current risk boundary."
+        commands = [
+            f'secopsai triage close {finding_id} --disposition expected_behavior --note "Package not referenced in local dependency manifests; treating as ecosystem intelligence outside current risk boundary."'
+        ]
+    elif recommended_disposition == "false_positive" and not dependency_present:
+        action = "allowlist_package"
+        rationale = "The heuristics look weak for a package that is not in your local dependency graph. If this is a known-safe recurring package, allowlist it for immediate relief."
+        commands = [
+            f"secopsai supply-chain allowlist add --ecosystem {ecosystem} --package {package}",
+            "secopsai supply-chain reconcile-history --json",
+            f'secopsai triage close {finding_id} --disposition false_positive --note "Verified legitimate package; added to allowlist."',
+        ]
+    elif not dependency_present and matched_rules:
+        weak_rules = [rule for rule in matched_rules if rule.lower() in WEAK_RULE_MARKERS]
+        if weak_rules and len(weak_rules) == len(matched_rules):
+            action = "tune_rule"
+            noisy_rule = weak_rules[0]
+            rationale = f"Only weak heuristic rules fired for a package outside your dependency graph. Tune the noisy rule if this pattern repeats across legitimate packages."
+            commands = [
+                f'secopsai supply-chain tune rule "{noisy_rule}" --weight 1',
+                "secopsai supply-chain reconcile-history --json",
+            ]
+
+    return {
+        "action": action,
+        "rationale": rationale,
+        "commands": commands,
+        "investigation": investigation,
+    }

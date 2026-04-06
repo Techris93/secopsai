@@ -31,6 +31,7 @@ from secopsai.supply_chain import (
     tune_threshold,
 )
 from secopsai.triage import VALID_DISPOSITIONS, close_finding, investigate_finding, list_triage_findings, start_finding
+from secopsai.triage import suggest_supply_chain_fp_action
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE_FILE = ROOT / "data" / ".last_refresh"
@@ -503,6 +504,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     threshold_scope.add_argument("--package", help="Set the threshold for one package target")
     supply_chain_tune_threshold.add_argument("--package-ecosystem", choices=["pypi", "npm"], help="Required with --package")
     supply_chain_tune_threshold.add_argument("--value", type=int, required=True, help="Threshold value")
+
+    supply_chain_suggest = supply_chain_sub.add_parser(
+        "suggest-fp-action",
+        help="Suggest the best false-positive action for a supply-chain finding ID",
+    )
+    supply_chain_suggest.add_argument("finding_id", help="Supply-chain finding ID (SCM-...)")
+    supply_chain_suggest.add_argument("--search-root", default=None, help="Root path to scan for dependency references")
+    supply_chain_suggest.add_argument("--db-path", default=None, help="Override SQLite database path")
 
     supply_chain_explain_verdict = supply_chain_sub.add_parser(
         "explain-verdict",
@@ -1020,6 +1029,32 @@ def main(argv: Optional[List[str]] = None) -> int:
                     print(f"target={payload['target']}")
                     print(f"value={payload['value']}")
                 print(f"policy_path={payload['policy_path']}")
+            return 0
+
+        if args.supply_chain_cmd == "suggest-fp-action":
+            try:
+                payload = suggest_supply_chain_fp_action(
+                    args.finding_id,
+                    db_path=args.db_path,
+                    search_root=args.search_root,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc), "finding_id": args.finding_id}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            else:
+                suggestion = payload["suggestion"]
+                print(f"finding_id={payload['finding_id']}")
+                print(f"action={suggestion['action']}")
+                print(f"rationale={suggestion['rationale']}")
+                if suggestion["commands"]:
+                    print("commands:")
+                    for command in suggestion["commands"]:
+                        print(f"- {command}")
             return 0
 
         if args.supply_chain_cmd == "explain-verdict":

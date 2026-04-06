@@ -6,6 +6,7 @@ from .engine import (
     infer_category,
     investigate_finding,
     list_triage_findings,
+    suggest_supply_chain_fp_action,
     start_finding,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "infer_category",
     "investigate_finding",
     "list_triage_findings",
+    "suggest_supply_chain_fp_action",
     "start_finding",
 ]

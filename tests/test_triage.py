@@ -10,7 +10,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import soc_store
-from secopsai.triage import close_finding, investigate_finding, list_triage_findings, start_finding
+from secopsai.triage import close_finding, investigate_finding, list_triage_findings, start_finding, suggest_supply_chain_fp_action
 
 
 def _write_findings(db_path: str, findings):
@@ -18,6 +18,55 @@ def _write_findings(db_path: str, findings):
 
 
 class TriageTests(unittest.TestCase):
+    def test_suggest_supply_chain_fp_action_prefers_expected_behavior_for_unreferenced_package(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            db_path = str(temp_path / "soc.db")
+            report_path = temp_path / "npm-widget-1.0.0-to-1.0.1.md"
+            report_path.write_text("fake report", encoding="utf-8")
+            findings = [
+                {
+                    "finding_id": "SCM-TEST-SUGGEST",
+                    "title": "Suspicious npm package release: widget@1.0.1",
+                    "summary": "Deterministic rules flagged: ast-aware semantic findings",
+                    "severity": "high",
+                    "severity_score": 80,
+                    "status": "open",
+                    "disposition": "unreviewed",
+                    "source": "secopsai-supply-chain",
+                    "first_seen": "2026-04-06T00:00:00Z",
+                    "last_seen": "2026-04-06T00:00:00Z",
+                    "event_ids": ["evt-1"],
+                    "rule_ids": ["SUPPLY-CHAIN-NATIVE"],
+                    "platform": "supply_chain",
+                    "package": "widget",
+                    "ecosystem": "npm",
+                    "new_version": "1.0.1",
+                    "old_version": "1.0.0",
+                    "report_path": str(report_path),
+                    "analysis": "heuristics only",
+                    "verdict": "malicious",
+                    "rank": 5,
+                }
+            ]
+            _write_findings(db_path, findings)
+
+            with mock.patch("secopsai.triage.supply_chain.supply_chain.explain_policy", return_value={"allow_matches": [], "deny_matches": []}), \
+                 mock.patch("secopsai.triage.supply_chain.supply_chain.explain_verdict", return_value={
+                     "score": 4,
+                     "effective_threshold": 10,
+                     "matched_rules": [{"rule": "ast-aware semantic findings"}],
+                 }), \
+                 mock.patch("secopsai.triage.supply_chain._reputation_summary", return_value={"release_count": 5}):
+                result = suggest_supply_chain_fp_action(
+                    "SCM-TEST-SUGGEST",
+                    db_path=db_path,
+                    search_root=str(temp_path),
+                )
+
+        self.assertEqual(result["suggestion"]["action"], "allowlist_package")
+        self.assertIn("allowlist add", result["suggestion"]["commands"][0])
+
     def test_supply_chain_investigation_writes_reports(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
