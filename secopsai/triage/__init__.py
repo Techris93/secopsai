@@ -1,6 +1,7 @@
 """Native triage workflows for SecOpsAI findings."""
 
 from .engine import (
+    auto_close_safe_supply_chain_fp,
     VALID_DISPOSITIONS,
     close_finding,
     infer_category,
@@ -11,6 +12,7 @@ from .engine import (
 )
 
 __all__ = [
+    "auto_close_safe_supply_chain_fp",
     "VALID_DISPOSITIONS",
     "close_finding",
     "infer_category",

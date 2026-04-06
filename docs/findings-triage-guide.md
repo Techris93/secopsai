@@ -112,6 +112,18 @@ This suggests one of:
 - tune a noisy rule
 - keep the finding in `needs_review`
 
+Guarded auto-close for clearly safe supply-chain false positives:
+
+```bash
+secopsai triage auto-close-safe-fp SCM-XXXX --search-root /path/to/repo
+```
+
+If the safe path requires an allowlist entry first, make that explicit:
+
+```bash
+secopsai triage auto-close-safe-fp SCM-XXXX --search-root /path/to/repo --allow-allowlist --reconcile-history
+```
+
 ## Host-Based Triage
 
 `secopsai triage investigate OCF-XXXX` currently supports:

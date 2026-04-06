@@ -10,7 +10,14 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import soc_store
-from secopsai.triage import close_finding, investigate_finding, list_triage_findings, start_finding, suggest_supply_chain_fp_action
+from secopsai.triage import (
+    auto_close_safe_supply_chain_fp,
+    close_finding,
+    investigate_finding,
+    list_triage_findings,
+    start_finding,
+    suggest_supply_chain_fp_action,
+)
 
 
 def _write_findings(db_path: str, findings):
@@ -123,6 +130,58 @@ class TriageTests(unittest.TestCase):
             self.assertTrue(Path(result["json_report"]).exists())
             self.assertTrue(Path(result["markdown_report"]).exists())
             self.assertTrue(result["investigation"]["dependency_presence"]["present"])
+
+    def test_auto_close_safe_supply_chain_fp_closes_expected_behavior(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            db_path = str(temp_path / "soc.db")
+            report_path = temp_path / "npm-widget-1.0.0-to-1.0.1.md"
+            report_path.write_text("fake report", encoding="utf-8")
+            findings = [
+                {
+                    "finding_id": "SCM-TEST-AUTO",
+                    "title": "Suspicious npm package release: widget@1.0.1",
+                    "summary": "Deterministic rules flagged: startup persistence",
+                    "severity": "high",
+                    "severity_score": 80,
+                    "status": "open",
+                    "disposition": "unreviewed",
+                    "source": "secopsai-supply-chain",
+                    "first_seen": "2026-04-06T00:00:00Z",
+                    "last_seen": "2026-04-06T00:00:00Z",
+                    "event_ids": ["evt-1"],
+                    "rule_ids": ["SUPPLY-CHAIN-NATIVE"],
+                    "platform": "supply_chain",
+                    "package": "widget",
+                    "ecosystem": "npm",
+                    "new_version": "1.0.1",
+                    "old_version": "1.0.0",
+                    "report_path": str(report_path),
+                    "analysis": "heuristics only",
+                    "verdict": "malicious",
+                    "rank": 5,
+                }
+            ]
+            _write_findings(db_path, findings)
+
+            with mock.patch("secopsai.triage.supply_chain.supply_chain.explain_policy", return_value={"allow_matches": [], "deny_matches": []}), \
+                 mock.patch("secopsai.triage.supply_chain.supply_chain.explain_verdict", return_value={
+                     "score": 10,
+                     "effective_threshold": 10,
+                     "matched_rules": [{"rule": "startup persistence"}],
+                 }), \
+                 mock.patch("secopsai.triage.supply_chain._reputation_summary", return_value={"release_count": 5}):
+                result = auto_close_safe_supply_chain_fp(
+                    "SCM-TEST-AUTO",
+                    db_path=db_path,
+                    search_root=str(temp_path),
+                    author="analyst",
+                )
+
+        self.assertTrue(result["executed"])
+        self.assertEqual(result["action"], "close_expected_behavior")
+        self.assertEqual(result["closed"]["status"], "closed")
+        self.assertEqual(result["closed"]["disposition"], "expected_behavior")
 
     def test_start_close_and_list_triage_findings(self):
         with tempfile.TemporaryDirectory() as temp_dir:

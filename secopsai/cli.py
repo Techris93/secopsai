@@ -30,8 +30,15 @@ from secopsai.supply_chain import (
     tune_rule,
     tune_threshold,
 )
-from secopsai.triage import VALID_DISPOSITIONS, close_finding, investigate_finding, list_triage_findings, start_finding
-from secopsai.triage import suggest_supply_chain_fp_action
+from secopsai.triage import (
+    VALID_DISPOSITIONS,
+    auto_close_safe_supply_chain_fp,
+    close_finding,
+    investigate_finding,
+    list_triage_findings,
+    start_finding,
+    suggest_supply_chain_fp_action,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE_FILE = ROOT / "data" / ".last_refresh"
@@ -554,6 +561,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     triage_close.add_argument("--status", default="closed", choices=["triaged", "closed"])
     triage_close.add_argument("--db-path", default=None, help="Override SQLite database path")
 
+    triage_auto_close = triage_sub.add_parser(
+        "auto-close-safe-fp",
+        help="Auto-close a supply-chain finding only when the false-positive action is clearly safe",
+    )
+    triage_auto_close.add_argument("finding_id")
+    triage_auto_close.add_argument("--search-root", default=None, help="Root path to scan for dependency references")
+    triage_auto_close.add_argument("--author", default=None)
+    triage_auto_close.add_argument("--allow-allowlist", action="store_true", help="Permit allowlist-backed false-positive closure")
+    triage_auto_close.add_argument("--reconcile-history", action="store_true", help="Reconcile stored supply-chain history after allowlisting")
+    triage_auto_close.add_argument("--db-path", default=None, help="Override SQLite database path")
+
     return p.parse_args(argv)
 
 
@@ -843,6 +861,32 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(to_json({"finding": payload}))
             else:
                 print(fmt_finding(payload))
+            return 0
+
+        if args.triage_cmd == "auto-close-safe-fp":
+            try:
+                payload = auto_close_safe_supply_chain_fp(
+                    args.finding_id,
+                    db_path=args.db_path,
+                    search_root=args.search_root,
+                    author=args.author,
+                    allow_allowlist=args.allow_allowlist,
+                    reconcile=args.reconcile_history,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc), "finding_id": args.finding_id}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(f"finding_id={payload['finding_id']}")
+                print(f"executed={payload['executed']}")
+                print(f"action={payload['action']}")
+                print(f"status={payload['closed'].get('status')}")
+                print(f"disposition={payload['closed'].get('disposition')}")
             return 0
 
     if args.cmd == "supply-chain":
