@@ -27,18 +27,20 @@ from secopsai.supply_chain import (
     reconcile_history,
     run_recent_top_scan,
     run_scan,
-    suggest_threshold,
     tune_rule,
     tune_threshold,
 )
 from secopsai.triage import (
     VALID_DISPOSITIONS,
-    auto_close_safe_supply_chain_fp,
+    apply_action,
     close_finding,
+    generate_summary,
+    get_action,
     investigate_finding,
+    list_actions,
     list_triage_findings,
+    orchestrate_findings,
     start_finding,
-    suggest_supply_chain_fp_action,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -513,23 +515,6 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_tune_threshold.add_argument("--package-ecosystem", choices=["pypi", "npm"], help="Required with --package")
     supply_chain_tune_threshold.add_argument("--value", type=int, required=True, help="Threshold value")
 
-    supply_chain_suggest = supply_chain_sub.add_parser(
-        "suggest-fp-action",
-        help="Suggest the best false-positive action for a supply-chain finding ID",
-    )
-    supply_chain_suggest.add_argument("finding_id", help="Supply-chain finding ID (SCM-...)")
-    supply_chain_suggest.add_argument("--search-root", default=None, help="Root path to scan for dependency references")
-    supply_chain_suggest.add_argument("--db-path", default=None, help="Override SQLite database path")
-
-    supply_chain_suggest_threshold = supply_chain_sub.add_parser(
-        "suggest-threshold",
-        help="Suggest a threshold based on reviewed safe vs risky historical scores",
-    )
-    supply_chain_suggest_threshold.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
-    supply_chain_suggest_threshold.add_argument("--package", help="Optional package to scope the suggestion")
-    supply_chain_suggest_threshold.add_argument("--limit", type=int, default=200, help="How many recent results to analyze")
-    supply_chain_suggest_threshold.add_argument("--db-path", default=None, help="Override SQLite database path")
-
     supply_chain_explain_verdict = supply_chain_sub.add_parser(
         "explain-verdict",
         help="Explain which rules fired for a supply-chain scan report",
@@ -571,16 +556,34 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     triage_close.add_argument("--status", default="closed", choices=["triaged", "closed"])
     triage_close.add_argument("--db-path", default=None, help="Override SQLite database path")
 
-    triage_auto_close = triage_sub.add_parser(
-        "auto-close-safe-fp",
-        help="Auto-close a supply-chain finding only when the false-positive action is clearly safe",
-    )
-    triage_auto_close.add_argument("finding_id")
-    triage_auto_close.add_argument("--search-root", default=None, help="Root path to scan for dependency references")
-    triage_auto_close.add_argument("--author", default=None)
-    triage_auto_close.add_argument("--allow-allowlist", action="store_true", help="Permit allowlist-backed false-positive closure")
-    triage_auto_close.add_argument("--reconcile-history", action="store_true", help="Reconcile stored supply-chain history after allowlisting")
-    triage_auto_close.add_argument("--db-path", default=None, help="Override SQLite database path")
+    triage_orchestrate = triage_sub.add_parser("orchestrate", help="Run native triage orchestration across findings")
+    triage_orchestrate.add_argument("finding_ids", nargs="*", help="Optional explicit finding IDs to orchestrate")
+    triage_orchestrate.add_argument("--search-root", default=None, help="Root path to scan for dependency references")
+    triage_orchestrate.add_argument("--report-dir", default=None, help="Directory to write triage reports")
+    triage_orchestrate.add_argument("--summary-dir", default=None, help="Directory to write orchestrator summaries")
+    triage_orchestrate.add_argument("--queue-file", default=None, help="Override triage action queue JSON path")
+    triage_orchestrate.add_argument("--author", default=None)
+    triage_orchestrate.add_argument("--db-path", default=None, help="Override SQLite database path")
+    triage_orchestrate.add_argument("--limit", type=int, default=None, help="Cap findings processed in one run")
+    triage_orchestrate.add_argument("--no-auto-apply-safe", action="store_true", help="Do not auto-close low-risk findings")
+
+    triage_queue = triage_sub.add_parser("queue", help="List queued triage actions")
+    triage_queue.add_argument("--status", choices=["pending", "applied"])
+    triage_queue.add_argument("--limit", type=int, default=50)
+    triage_queue.add_argument("--queue-file", default=None, help="Override triage action queue JSON path")
+
+    triage_apply = triage_sub.add_parser("apply-action", help="Apply a queued triage action")
+    triage_apply.add_argument("action_id")
+    triage_apply.add_argument("--queue-file", default=None, help="Override triage action queue JSON path")
+    triage_apply.add_argument("--db-path", default=None, help="Override SQLite database path")
+    triage_apply.add_argument("--author", default=None)
+    triage_apply.add_argument("--yes", action="store_true", help="Execute the action without prompting")
+
+    triage_summary = triage_sub.add_parser("summary", help="Generate a triage queue and finding summary")
+    triage_summary.add_argument("--db-path", default=None, help="Override SQLite database path")
+    triage_summary.add_argument("--queue-file", default=None, help="Override triage action queue JSON path")
+    triage_summary.add_argument("--summary-dir", default=None, help="Directory to write summary reports")
+    triage_summary.add_argument("--limit", type=int, default=20)
 
     return p.parse_args(argv)
 
@@ -873,30 +876,129 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(fmt_finding(payload))
             return 0
 
-        if args.triage_cmd == "auto-close-safe-fp":
+        if args.triage_cmd == "orchestrate":
             try:
-                payload = auto_close_safe_supply_chain_fp(
-                    args.finding_id,
+                payload = orchestrate_findings(
+                    finding_ids=args.finding_ids or None,
                     db_path=args.db_path,
                     search_root=args.search_root,
+                    report_dir=args.report_dir,
+                    summary_dir=args.summary_dir,
+                    queue_file=args.queue_file,
                     author=args.author,
-                    allow_allowlist=args.allow_allowlist,
-                    reconcile=args.reconcile_history,
+                    limit=args.limit,
+                    auto_apply_safe=not args.no_auto_apply_safe,
                 )
             except Exception as exc:
                 if args.json:
-                    print(to_json({"error": str(exc), "finding_id": args.finding_id}))
+                    print(to_json({"error": str(exc)}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(
+                    to_json(
+                        {
+                            "processed": payload.processed,
+                            "auto_applied": payload.auto_applied,
+                            "queued": payload.queued,
+                            "findings": payload.findings,
+                            "queue_path": payload.queue_path,
+                            "summary_json": payload.summary_json,
+                            "summary_markdown": payload.summary_markdown,
+                        }
+                    )
+                )
+            else:
+                print(f"processed={payload.processed}")
+                print(f"auto_applied={payload.auto_applied}")
+                print(f"queued={payload.queued}")
+                print(f"queue_path={payload.queue_path}")
+                print(f"summary_json={payload.summary_json}")
+                print(f"summary_markdown={payload.summary_markdown}")
+                for item in payload.findings:
+                    print(
+                        "{fid} | {cat} | recommended={disp} | outcome={outcome}{suffix}".format(
+                            fid=item.get("finding_id"),
+                            cat=item.get("category"),
+                            disp=item.get("recommended_disposition"),
+                            outcome=item.get("outcome"),
+                            suffix=f" | action_id={item.get('action_id')}" if item.get("action_id") else "",
+                        )
+                    )
+            return 0
+
+        if args.triage_cmd == "queue":
+            rows = list_actions(status=args.status, path=args.queue_file, limit=args.limit)
+            if args.json:
+                print(to_json({"actions": rows}))
+            else:
+                if not rows:
+                    print("No queued actions.")
+                for row in rows:
+                    print(
+                        "{aid} | {status} | {atype} | {fid} | {summary}".format(
+                            aid=row.get("action_id"),
+                            status=row.get("status"),
+                            atype=row.get("action_type"),
+                            fid=row.get("finding_id"),
+                            summary=row.get("summary"),
+                        )
+                    )
+            return 0
+
+        if args.triage_cmd == "apply-action":
+            try:
+                payload = apply_action(
+                    args.action_id,
+                    queue_file=args.queue_file,
+                    db_path=args.db_path,
+                    author=args.author,
+                    yes=args.yes,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc), "action_id": args.action_id}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json({"action": payload}))
+            else:
+                print(
+                    "{aid} | status={status} | type={atype} | finding_id={fid}".format(
+                        aid=payload.get("action_id"),
+                        status=payload.get("status"),
+                        atype=payload.get("action_type"),
+                        fid=payload.get("finding_id"),
+                    )
+                )
+            return 0
+
+        if args.triage_cmd == "summary":
+            try:
+                payload = generate_summary(
+                    db_path=args.db_path,
+                    queue_file=args.queue_file,
+                    summary_dir=args.summary_dir,
+                    limit=args.limit,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc)}))
                 else:
                     print(f"error: {exc}")
                 return 1
             if args.json:
                 print(to_json(payload))
             else:
-                print(f"finding_id={payload['finding_id']}")
-                print(f"executed={payload['executed']}")
-                print(f"action={payload['action']}")
-                print(f"status={payload['closed'].get('status')}")
-                print(f"disposition={payload['closed'].get('disposition')}")
+                print(f"open_findings={payload['open_findings']}")
+                print(f"in_review_findings={payload['in_review_findings']}")
+                print(f"pending_actions={payload['pending_actions']}")
+                print(f"applied_actions={payload['applied_actions']}")
+                print(f"queue_path={payload['queue_path']}")
+                print(f"summary_json={payload['summary_json']}")
+                print(f"summary_markdown={payload['summary_markdown']}")
             return 0
 
     if args.cmd == "supply-chain":
@@ -1083,51 +1185,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                     print(f"target={payload['target']}")
                     print(f"value={payload['value']}")
                 print(f"policy_path={payload['policy_path']}")
-            return 0
-
-        if args.supply_chain_cmd == "suggest-fp-action":
-            try:
-                payload = suggest_supply_chain_fp_action(
-                    args.finding_id,
-                    db_path=args.db_path,
-                    search_root=args.search_root,
-                )
-            except Exception as exc:
-                if args.json:
-                    print(to_json({"error": str(exc), "finding_id": args.finding_id}))
-                else:
-                    print(f"error: {exc}")
-                return 1
-            if args.json:
-                print(to_json(payload))
-            else:
-                suggestion = payload["suggestion"]
-                print(f"finding_id={payload['finding_id']}")
-                print(f"action={suggestion['action']}")
-                print(f"rationale={suggestion['rationale']}")
-                if suggestion["commands"]:
-                    print("commands:")
-                    for command in suggestion["commands"]:
-                        print(f"- {command}")
-            return 0
-
-        if args.supply_chain_cmd == "suggest-threshold":
-            payload = suggest_threshold(
-                args.ecosystem,
-                package=args.package,
-                db_path=args.db_path,
-                limit=args.limit,
-            )
-            if args.json:
-                print(to_json(payload))
-            else:
-                print(f"target={args.ecosystem}:{args.package or '*'}")
-                print(f"current_threshold={payload['current_threshold']}")
-                print(f"suggested_threshold={payload['suggested_threshold']}")
-                print(f"confidence={payload['confidence']}")
-                print(f"rationale={payload['rationale']}")
-                print(f"counts={payload['counts']}")
-                print(f"score_ranges={payload['score_ranges']}")
             return 0
 
         if args.supply_chain_cmd == "explain-verdict":

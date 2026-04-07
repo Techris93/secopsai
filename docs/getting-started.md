@@ -1,25 +1,23 @@
 # Getting Started with secopsai
 
-Welcome! This guide will get you up and running with SecOpsAI in under 5 minutes, whether you are starting with OpenClaw or expanding into macOS, Linux, and Windows workflows.
+Welcome! This guide will get you from telemetry refresh to triage in under 5 minutes.
 
 ## What You'll Learn
 
 - How to install secopsai
 - How to run your first detection
 - How to understand findings
+- How to investigate and triage them
 - Where to go next
 
 ## 30-Second Overview
 
-**secopsai** is a local-first security operations toolkit for [OpenClaw](https://docs.openclaw.ai), macOS, Linux, and Windows. It comes with:
+**secopsai** is a local-first detection and triage platform for OpenClaw and host telemetry. It comes with:
 
-- **A unified CLI** for collection, findings review, correlation, and threat intel
-- **Multi-platform telemetry support** across OpenClaw and host adapters
-- **🛡️ Supply Chain Security** — Detect malicious npm/PyPI packages and editor exploits
-- **Production-ready findings reports** with severity and incident deduplication
-- **Cross-platform correlation** to connect related activity across sources
-- **Threat-intel / IOC workflows** for local matching and enrichment
-- **Adaptive Intelligence** — Auto-generates detection rules from CVEs
+- **Detection rules** for dangerous execution, policy abuse, data exfiltration, malware, and supply-chain release review
+- **Reproducible benchmark corpus** for OpenClaw validation
+- **Live telemetry support** for OpenClaw and host adapters
+- **Native triage workflow** with investigation reports and queued analyst actions
 
 ## Install (2 minutes)
 
@@ -73,6 +71,7 @@ secopsai live --platform macos           # stream adapter events live
 secopsai correlate                       # run cross-platform correlation
 secopsai list --severity high            # list high-severity findings
 secopsai show OCF-XXXX                   # inspect a finding
+secopsai triage orchestrate --search-root ~/secopsai  # investigate open findings
 
 # Add --json to any command for machine-friendly output
 # (either before or after the subcommand)
@@ -95,114 +94,163 @@ python prepare.py  # Generate data/events.json and data/events_unlabeled.json
 python -m pytest tests/ -v  # Optional: verify installation
 ```
 
-## Run Your First Workflow (1 minute)
+## Run Your First Detection (1 minute)
 
-Start with the unified CLI:
+### Generate a Benchmark Corpus
 
-```bash
-secopsai refresh
-secopsai list
-```
-
-This is the simplest first run and the best default starting point.
-
-### 🛡️ Check for Supply Chain Attacks (NEW!)
-
-Protect your dependencies from supply chain attacks:
-
-```bash
-# Check your current project
-secopsai-supply-chain check --project-path .
-
-# Check a specific package before installing
-secopsai-supply-chain check --package axios --version 1.6.0
-
-# Export results to JSON
-secopsai-supply-chain check --output supply_chain_report.json
-```
-
-**Detects:** Malicious npm packages, PyPI backdoors, Vim/Emacs exploits, typosquatting
-
-To inspect a finding in detail:
-
-```bash
-secopsai show OCF-XXXX
-secopsai mitigate OCF-XXXX
-```
-
-### Try platform-specific collection
-
-You can collect from one or more platforms using `--platform`:
-
-```bash
-secopsai refresh --platform macos
-secopsai refresh --platform linux
-secopsai refresh --platform windows
-secopsai refresh --platform openclaw
-secopsai refresh --platform macos,openclaw
-```
-
-### Try correlation
-
-```bash
-secopsai correlate
-```
-
-### Try threat intel
-
-```bash
-secopsai intel refresh
-secopsai intel list --limit 20
-secopsai intel match --limit-iocs 500
-```
-
-### Optional: benchmark / OpenClaw-specific evaluation
-
-If you want to validate the OpenClaw detection path with the benchmark corpus, you can still run the existing benchmark tools:
+Create a reproducible labeled attack dataset:
 
 ```bash
 python generate_openclaw_attack_mix.py --stats
+```
+
+Output:
+
+```
+┌──────────────────────────────────────────┐
+│ Attack-Mix Benchmark Generator           │
+├──────────────────────────────────────────┤
+│ Base benign events:    58                │
+│ Simulated attacks:     22                │
+│ Total events:          80                │
+│ Timestamp range:       2 hours           │
+└──────────────────────────────────────────┘
+
+Attack Types:
+  ✓ Dangerous Exec (2 events)
+  ✓ Sensitive Config (1 event)
+  ✓ Skill Source Drift (1 event)
+  ✓ Policy Denial Churn (1 event)
+  ✓ Tool Burst (2 events)
+  ✓ Pairing Churn (1 event)
+  ✓ Subagent Fanout (2 events)
+  ✓ Restart Loop (2 events)
+  ✓ Data Exfiltration (3 events)
+  ✓ Malware Presence (2 events)
+
+Files written:
+  ✓ data/openclaw/replay/labeled/attack_mix.json
+  ✓ data/openclaw/replay/unlabeled/attack_mix.json
+```
+
+### Evaluate Detection Accuracy
+
+```bash
 python evaluate_openclaw.py \
   --labeled data/openclaw/replay/labeled/attack_mix.json \
   --unlabeled data/openclaw/replay/unlabeled/attack_mix.json \
   --mode benchmark --verbose
 ```
 
-## Understand Your First Findings
+Expected result:
 
-Your main review workflow is:
-
-```bash
-secopsai list
-secopsai show OCF-XXXX
-secopsai mitigate OCF-XXXX
+```
+┌─────────────────────────────────────────────┐
+│ OpenClaw Attack Detection                   │
+├─────────────────────────────────────────────┤
+│ F1 Score:       1.000000  ✓                │
+│ Precision:      1.000000  ✓                │
+│ Recall:         1.000000  ✓                │
+│ False Positive Rate:  0.000000             │
+│                                             │
+│ True Positives:       22  (attacks caught) │
+│ False Positives:       0  (zero noise)     │
+│ False Negatives:       0  (nothing missed) │
+│ True Negatives:       58  (benign OK)      │
+└─────────────────────────────────────────────┘
 ```
 
-In general, each finding gives you:
+Perfect score! Your detection pipeline is ready.
 
-- **What was detected**
-- **How severe it is**
-- **Why it was flagged**
-- **What evidence or context is attached**
-- **What action to take next**
+### Run on Live Telemetry (Optional)
+
+If you have OpenClaw installed with audit logs in `~/.openclaw/`:
+
+```bash
+python detect.py
+```
+
+This will:
+
+1. Export your local OpenClaw audit logs
+2. Run detection rules
+3. Output findings in `findings.json`
+
+## Run Your First Triage Pass
+
+Once findings exist in the SOC store:
+
+```bash
+secopsai triage list --status open --limit 20
+secopsai triage investigate SCM-XXXX --json
+secopsai triage orchestrate --search-root ~/secopsai
+secopsai triage queue
+```
+
+This gives you:
+
+- evidence-gathering case files in `reports/triage/`
+- low-risk auto-closure for clearly safe findings
+- a queue for risky actions such as allowlisting or tuning
+
+## Understand Your First Findings
+
+The `findings.json` file contains detected attacks with context:
+
+```json
+{
+  "total_findings": 22,
+  "findings": [
+    {
+      "finding_id": "OCF-001",
+      "title": "Dangerous Exec: curl | bash injection",
+      "rule_id": "RULE-101",
+      "attack_type": "T1059 - Command and Scripting Interpreter",
+      "severity": "CRITICAL",
+      "confidence": 1.0,
+      "event_ids": ["evt-042"],
+      "description": "Detected dangerous pipe execution pattern",
+      "pattern": "curl ... | bash",
+      "remediation": "Review command source; disable if unauthorized"
+    },
+    {
+      "finding_id": "OCF-002",
+      "title": "Data Exfiltration: curl -F upload",
+      "rule_id": "RULE-109",
+      "attack_type": "T1048 - Exfiltration Over Alternative Protocol",
+      "severity": "HIGH",
+      "timestamp": "2026-03-15T14:23:45Z",
+      ...
+    }
+  ]
+}
+```
+
+Each finding shows:
+
+- **What was detected** — the attack pattern
+- **Which rule caught it** — RULE-101, RULE-109, etc.
+- **How severe** — CRITICAL, HIGH, MEDIUM, LOW
+- **Confidence** — 0.0-1.0 likelihood of being a real attack
+- **What action to take** — remediation guidance
 
 ## Next Steps
-
-### Beginner path
-
-Read [Beginner Quickstart](quickstart-beginner.md) for the shortest path from install to findings.
-
-### Platform-by-platform operations
-
-Read [Operator Runbook](operator-runbook.md) for OpenClaw, macOS, Linux, and Windows workflows.
 
 ### Learn More About the Rules
 
 Read [Rules Registry](rules-registry.md) to understand what each rule detects and how to tune it.
 
+### Understand Performance Metrics
+
+See [Rules Registry](rules-registry.md) for per-rule detection behavior and tuning guidance.
+
 ### Integrate Into Your Environment
 
 Check [Deployment Guide](deployment-guide.md) for production deployment patterns.
+
+### Learn the analyst workflow
+
+Read [Findings Triage Guide](findings-triage-guide.md) for manual review and [Triage Orchestrator](triage-orchestrator.md) for the automated guarded workflow.
 
 ### Customize Detection Rules
 

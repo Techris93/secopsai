@@ -11,6 +11,7 @@ secopsai can be deployed as:
 3. **Container** — Docker/OCI image for infrastructure consistency
 4. **CI/CD Integration** — GitHub Actions, GitLab CI, Jenkins for continuous validation
 5. **SOC Integration** — API endpoint for SIEM platforms
+6. **Scheduled Triage** — guarded orchestration of investigation and queue generation
 
 Choose based on your infrastructure and workflow.
 
@@ -165,7 +166,7 @@ Create `/etc/systemd/system/secopsai.service`:
 
 ```ini
 [Unit]
-Description=SecOps AutoResearch - OpenClaw Detection Daemon
+Description=SecOpsAI OpenClaw Detection Daemon
 After=network.target
 
 [Service]
@@ -201,7 +202,7 @@ sudo journalctl -u secopsai -f
 
 ### launchd Service (macOS)
 
-Create `~/Library/LaunchAgents/dev.secops.autoresearch.plist`:
+Create `~/Library/LaunchAgents/dev.secopsai.openclaw.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -209,7 +210,7 @@ Create `~/Library/LaunchAgents/dev.secops.autoresearch.plist`:
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>dev.secops.autoresearch</string>
+    <string>dev.secopsai.openclaw</string>
     <key>Program</key>
     <string>/opt/secopsai/.venv/bin/python</string>
     <key>ProgramArguments</key>
@@ -234,8 +235,49 @@ Create `~/Library/LaunchAgents/dev.secops.autoresearch.plist`:
 Load service:
 
 ```bash
-launchctl load ~/Library/LaunchAgents/dev.secops.autoresearch.plist
+launchctl load ~/Library/LaunchAgents/dev.secopsai.openclaw.plist
 ```
+
+SecOpsAI also ships a helper installer:
+
+```bash
+bash scripts/install_openclaw_launchd.sh
+```
+
+## 2.1 Supply-Chain Monitor Scheduling
+
+Use the built-in helper to schedule continuous package monitoring:
+
+```bash
+bash scripts/install_supply_chain_launchd.sh
+```
+
+This wraps:
+
+```bash
+bash scripts/supply_chain_monitor.sh
+```
+
+## 2.2 Triage Orchestrator Scheduling
+
+For guarded unattended triage runs:
+
+```bash
+bash scripts/install_triage_orchestrator_launchd.sh
+```
+
+The orchestrator runner:
+
+```bash
+bash scripts/run_triage_orchestrator.sh
+```
+
+This scheduled path will:
+
+- investigate open findings
+- auto-apply low-risk dispositions
+- queue higher-risk actions
+- write summaries under `reports/triage/orchestrator/`
 
 ---
 

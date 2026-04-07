@@ -2,6 +2,11 @@
 
 A step-by-step guide for reviewing, investigating, and dispositioning SecOpsAI alerts.
 
+For day-to-day operations you now have two valid paths:
+
+- manual analyst workflow with `triage start`, `triage investigate`, and `triage close`
+- guarded automation with `triage orchestrate`, `triage queue`, and `triage apply-action`
+
 ## Workflow
 
 1. Refresh and inspect findings:
@@ -35,6 +40,24 @@ Generated artifacts:
 ```bash
 secopsai triage close <FINDING_ID> --disposition needs_review --note "Escalated to senior analyst"
 ```
+
+## Orchestrated Workflow
+
+Use the native orchestrator when you want SecOpsAI to investigate open findings and auto-apply only the safest actions:
+
+```bash
+secopsai triage orchestrate --search-root ~/secopsai
+secopsai triage queue
+secopsai triage apply-action ACT-0001 --yes
+secopsai triage summary
+```
+
+The orchestrator will:
+
+- move findings into `in_review`
+- write the same case files as manual investigation
+- auto-close low-risk `expected_behavior`
+- queue higher-risk actions such as allowlisting and tuning
 
 ## Supported Dispositions
 
@@ -97,39 +120,7 @@ secopsai supply-chain tune threshold --ecosystem pypi --value 12
 secopsai supply-chain tune threshold --package langchain --package-ecosystem pypi --value 14
 ```
 
-Ask SecOpsAI to propose a threshold from reviewed history:
-
-```bash
-secopsai supply-chain suggest-threshold --ecosystem npm
-secopsai supply-chain suggest-threshold --ecosystem pypi --package textual
-```
-
 Use allowlisting when one known-safe package keeps firing. Use rule or threshold tuning when the same heuristic is noisy across many legitimate packages.
-
-Get a recommended false-positive action from a finding ID:
-
-```bash
-secopsai supply-chain suggest-fp-action SCM-XXXX --search-root /path/to/repo
-```
-
-This suggests one of:
-
-- close as `expected_behavior`
-- add the package to the allowlist
-- tune a noisy rule
-- keep the finding in `needs_review`
-
-Guarded auto-close for clearly safe supply-chain false positives:
-
-```bash
-secopsai triage auto-close-safe-fp SCM-XXXX --search-root /path/to/repo
-```
-
-If the safe path requires an allowlist entry first, make that explicit:
-
-```bash
-secopsai triage auto-close-safe-fp SCM-XXXX --search-root /path/to/repo --allow-allowlist --reconcile-history
-```
 
 ## Host-Based Triage
 

@@ -7,6 +7,8 @@ __pycache__/
 site/
 .venv/
 *.code-workspace
+.pytest_cache/
+.DS_Store
 
 # Local OpenClaw findings artifacts
 data/openclaw/findings/*.json
@@ -17,3 +19,16 @@ findings/*.db-journal
 
 # Generated finding bundles (runtime output)
 findings/openclaw-findings-*.json
+.sdd/
+.brv/
+.claude/
+.backups/
+logs/
+reports/
+results/
+secopsai.egg-info/
+config/slack.json
+config/supply_chain_policy.toml
+data/triage/
+secopsai/vendor/**/__pycache__/
+secopsai/vendor/**/logs/

@@ -1,29 +1,29 @@
 # secopsai
 
-Local-first security operations for OpenClaw, macOS, Linux, and Windows.
+Local-first cross-platform SecOps for OpenClaw, macOS, Linux, and Windows.
 
 ## Why secopsai
 
-secopsai turns telemetry from OpenClaw and host platforms into repeatable, explainable security findings.
+secopsai turns OpenClaw and host OS telemetry into repeatable, explainable security findings and now includes a native analyst workflow for investigation, disposition, and queued policy actions.
 
 - Unified collection across **OpenClaw**, **macOS**, **Linux**, and **Windows**
-- **Supply Chain Security** — Detect malicious npm/PyPI packages and editor exploits
-- Local-first findings pipeline with SQLite-backed storage
-- Cross-platform correlation by IP, user, time window, and artifacts
-- Threat-intel / IOC workflows for local matching and enrichment
-- **Adaptive Intelligence** — Auto-generates detection rules from CVEs
-- Operator workflows through CLI, plugin, and related chat surfaces
+- Local-first pipeline with SQLite-backed findings storage
+- Cross-platform correlation by IP, user, time, and file hash
+- Native CLI triage and orchestrated review workflow
+- Threat intel pipeline and deployment paths for ongoing monitoring
 
 ## Start Here
 
 - [Getting Started](getting-started.md)
-- [🛡️ Supply Chain Security](supply-chain.md) — **NEW!** Protect against npm, PyPI, and editor exploits
-- [Beginner Quickstart](quickstart-beginner.md)
-- [Operator Runbook](operator-runbook.md)
+- [Findings Triage Guide](findings-triage-guide.md)
+- [Triage Orchestrator](triage-orchestrator.md)
+- [Universal Adapters](universal-adapters.md)
+- [Correlation Engine](correlation-engine.md)
+- [Rules Registry](rules-registry.md)
 - [Deployment Guide](deployment-guide.md)
-- [Threat Intel (IOCs)](threat-intel.md)
 - [API Reference](api-reference.md)
-- [OpenClaw Native Plugin](OpenClaw-Plugin.md)
+- [Threat Intel (IOCs)](threat-intel.md)
+- [OpenClaw Integration](OpenClaw-Integration.md)
 
 ## Quick Start
 
@@ -35,59 +35,43 @@ curl -fsSL https://secopsai.dev/install.sh | bash
 cd ~/secopsai
 source .venv/bin/activate
 
-# 3) Run the default pipeline
+# 3) Run the packaged OpenClaw pipeline
 secopsai refresh
 
-# 4) Check for supply chain attacks (NEW!)
-secopsai-supply-chain check --project-path .
-
-# 5) Try cross-platform collection + correlation
+# 4) Try the cross-platform adapter workflow
 secopsai refresh --platform macos,openclaw
 secopsai correlate
 
-# 6) Review findings
+# 5) List high-severity findings
 secopsai list --severity high
+
+# 6) Run the native triage orchestrator
+secopsai triage orchestrate --search-root ~/secopsai
 ```
+
+## Platform Support
+
+| Platform | Source | Status | Notes |
+|---|---|---:|---|
+| OpenClaw | Audit logs | ✅ Production | Primary native telemetry integration |
+| macOS | Unified logs | ✅ Production | Host telemetry collection |
+| Linux | journalctl / auditd | ✅ Beta | Ready for Linux deployment |
+| Windows | Event Logs / Sysmon | ✅ Beta | Ready for Windows deployment |
 
 ## What You Get
 
-- Multi-platform telemetry collection
-- **Supply chain attack detection** (npm, PyPI, Vim, Emacs)
-- **100+ detection rules** (auto-growing via adaptive intelligence)
-- Local findings storage and triage workflows
-- Cross-platform correlation
-- Threat-intel matching
+- Unified security event schema
+- Local findings store with triage workflow
+- Native triage orchestrator with queued human-reviewed actions
+- Cross-platform correlation engine
 - CLI and OpenClaw plugin workflows
-- Deployment paths for ongoing monitoring
-
-## 🛡️ Supply Chain Security
-
-Protect your dependencies from supply chain attacks:
-
-```bash
-# Check your project for malicious packages
-secopsai-supply-chain check --project-path .
-
-# Check a specific package
-secopsai-supply-chain check --package axios --version 1.14.1
-
-# Export results
-secopsai-supply-chain check --output report.json
-```
-
-**Detects:**
-- Malicious npm packages (axios@1.14.1, plain-crypto-js@4.2.1)
-- PyPI backdoors (litellm@1.82.7)
-- Editor exploits (Vim CVE-2025-27423, Emacs CVE-2025-1244)
-- Runtime droppers and RATs
-- Typosquatting attacks
-
-[Learn more about Supply Chain Security →](supply-chain.md)
+- Optional notification workflows for notable findings
 
 ## Operator Guides
 
-- [Beginner Quickstart](quickstart-beginner.md)
-- [Operator Runbook](operator-runbook.md)
+- [Beginner Live Guide](BEGINNER-LIVE-GUIDE.md)
+- [Findings Triage Guide](findings-triage-guide.md)
+- [Triage Orchestrator](triage-orchestrator.md)
 - [OpenClaw Integration](OpenClaw-Integration.md)
-- [OpenClaw Native Plugin](OpenClaw-Plugin.md)
-- [Supply Chain Security](supply-chain.md)
+- [Universal Adapters](universal-adapters.md)
+- [Correlation Engine](correlation-engine.md)

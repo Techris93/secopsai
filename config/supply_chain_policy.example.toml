@@ -1,0 +1,43 @@
+[thresholds]
+malicious_score = 6
+
+[ecosystem_thresholds]
+pypi = 6
+npm = 7
+
+[package_thresholds]
+"pypi:requests" = 8
+"npm:@your-org/*" = 10
+
+[allow]
+packages = [
+  "pypi:internal-build-helper",
+  "npm:@your-org/safe-package*",
+]
+
+[deny]
+packages = [
+  "pypi:known-bad-package",
+  "npm:@bad/loader",
+]
+
+[rules]
+"new install hook" = true
+"install hook executes remote or inline code" = true
+"install hook reaches remote URL" = true
+"wheel/sdist artifact divergence" = true
+"suspicious code present only in one PyPI artifact" = true
+"ast-aware semantic findings" = true
+"semantic dynamic execution" = true
+"semantic outbound network behavior" = true
+"semantic subprocess behavior" = true
+"manifest lifecycle hook policy" = true
+"manifest remote dependency source" = true
+"manifest executable entrypoints" = true
+"manifest install-time build customization" = true
+
+[rule_weights]
+"obfuscated eval" = 3
+"new install hook" = 3
+"manifest lifecycle hook policy" = 3
+"wheel/sdist artifact divergence" = 2

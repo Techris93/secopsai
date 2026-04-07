@@ -22,6 +22,7 @@ from detect import DETECTION_RULES, minutes_between, run_detection
 from openclaw_adapters.common import redact_text, secure_write_json
 import soc_store
 from openclaw_plugin import _mitigations_for_finding
+from secopsai.alerts import alert_new_openclaw_findings
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -53,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", default=DEFAULT_INPUT, help="Replay JSON file to analyze")
     parser.add_argument("--output-dir", default=output_dir, help="Directory for findings bundle")
     parser.add_argument("--db-path", default=default_db_path(output_dir), help="SQLite database path for persisted findings")
+    parser.add_argument("--slack", action="store_true", help="Send Slack alerts for new high-severity findings")
     return parser.parse_args()
 
 
@@ -372,6 +374,11 @@ def main() -> int:
     print(f"total_candidate_findings={bundle['total_candidate_findings']}")
     print(f"total_findings={bundle['total_findings']}")
     print(f"total_detections={bundle['total_detections']}")
+    if args.slack:
+        meta = alert_new_openclaw_findings(bundle["findings"])
+        print(f"slack_eligible={meta['eligible']}")
+        print(f"slack_new_findings={meta['new_findings']}")
+        print(f"slack_sent={meta['sent']}")
     maybe_sync_findings_to_supabase(
         db_path=db_path,
         findings_dir=args.output_dir,

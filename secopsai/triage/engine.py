@@ -9,8 +9,7 @@ import soc_store
 from .disposition import VALID_DISPOSITIONS, require_closure_note, validate_disposition, validate_status
 from .host import investigate_host
 from .reporting import write_report
-from .supply_chain import investigate_supply_chain, suggest_fp_action_for_supply_chain
-from secopsai.supply_chain import allowlist_add, reconcile_history
+from .supply_chain import investigate_supply_chain
 
 
 def infer_category(finding: Dict[str, Any]) -> str:
@@ -103,112 +102,6 @@ def investigate_finding(
             result["finding"] = refreshed
 
     return result
-
-
-def suggest_supply_chain_fp_action(
-    finding_id: str,
-    *,
-    db_path: Optional[str] = None,
-    search_root: Optional[str] = None,
-) -> Dict[str, Any]:
-    finding = soc_store.get_finding(finding_id, db_path)
-    if not finding:
-        raise ValueError(f"finding not found: {finding_id}")
-    if infer_category(finding) != "supply_chain":
-        raise ValueError(f"finding is not a supply-chain finding: {finding_id}")
-
-    search_path = Path(search_root or os.getcwd()).resolve()
-    suggestion = suggest_fp_action_for_supply_chain(finding, search_root=search_path)
-    return {
-        "finding_id": finding_id,
-        "category": "supply_chain",
-        "finding": finding,
-        "suggestion": suggestion,
-    }
-
-
-def auto_close_safe_supply_chain_fp(
-    finding_id: str,
-    *,
-    db_path: Optional[str] = None,
-    search_root: Optional[str] = None,
-    author: Optional[str] = None,
-    allow_allowlist: bool = False,
-    reconcile: bool = False,
-) -> Dict[str, Any]:
-    payload = suggest_supply_chain_fp_action(
-        finding_id,
-        db_path=db_path,
-        search_root=search_root,
-    )
-    finding = payload["finding"]
-    suggestion = payload["suggestion"]
-    action = suggestion["action"]
-
-    if action == "close_expected_behavior":
-        note = "Package not referenced in local dependency manifests; treating as ecosystem intelligence outside current risk boundary."
-        closed = close_finding(
-            finding_id,
-            disposition="expected_behavior",
-            note=note,
-            author=author,
-            status="closed",
-            db_path=db_path,
-        )
-        return {
-            "finding_id": finding_id,
-            "executed": True,
-            "action": action,
-            "closed": closed,
-            "allowlisted": False,
-            "reconciled": False,
-        }
-
-    if action == "close_false_positive":
-        note = "Package already matches local allowlist; verified safe."
-        closed = close_finding(
-            finding_id,
-            disposition="false_positive",
-            note=note,
-            author=author,
-            status="closed",
-            db_path=db_path,
-        )
-        return {
-            "finding_id": finding_id,
-            "executed": True,
-            "action": action,
-            "closed": closed,
-            "allowlisted": False,
-            "reconciled": False,
-        }
-
-    if action == "allowlist_package" and allow_allowlist:
-        ecosystem = str(finding.get("ecosystem") or "")
-        package = str(finding.get("package") or "")
-        allowlist_payload = allowlist_add(ecosystem, package)
-        reconcile_payload = reconcile_history() if reconcile else None
-        note = "Verified legitimate package; added to allowlist."
-        closed = close_finding(
-            finding_id,
-            disposition="false_positive",
-            note=note,
-            author=author,
-            status="closed",
-            db_path=db_path,
-        )
-        return {
-            "finding_id": finding_id,
-            "executed": True,
-            "action": action,
-            "closed": closed,
-            "allowlisted": allowlist_payload,
-            "reconciled": reconcile_payload if reconcile_payload is not None else False,
-        }
-
-    raise ValueError(
-        "finding does not meet the safe auto-close threshold; run 'secopsai supply-chain suggest-fp-action' first or pass --allow-allowlist for allowlist-backed closure"
-    )
 
 
 def close_finding(

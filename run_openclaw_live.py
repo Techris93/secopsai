@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run local OpenClaw live pipeline")
     parser.add_argument("--skip-export", action="store_true", help="Skip native export from ~/.openclaw")
     parser.add_argument("--verbose", action="store_true", help="Pass --verbose to evaluate_openclaw.py")
+    parser.add_argument("--slack", action="store_true", help="Send Slack alerts for new high-severity findings")
     parser.add_argument(
         "--timeout-seconds",
         type=int,
@@ -106,7 +107,10 @@ def main() -> int:
         eval_cmd.append("--verbose")
     run_step(eval_cmd, args.timeout_seconds)
 
-    run_step([sys.executable, "openclaw_findings.py", "--input", LABELED_OUT], args.timeout_seconds)
+    findings_cmd = [sys.executable, "openclaw_findings.py", "--input", LABELED_OUT]
+    if args.slack:
+        findings_cmd.append("--slack")
+    run_step(findings_cmd, args.timeout_seconds)
 
     print("\nLive OpenClaw pipeline completed.")
     print(f"Replay input: {LABELED_OUT}")

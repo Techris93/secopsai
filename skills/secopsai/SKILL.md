@@ -12,6 +12,7 @@ This skill lets an OpenClaw agent:
 - Triage findings by ID (disposition + status + note)
 - Get structured mitigation steps for any finding
 - Run a local-first threat intelligence (IOC) pipeline and match IOCs against OpenClaw replay
+- Review PyPI and npm package releases for supply-chain compromise
 
 ## Assumptions
 
@@ -251,6 +252,48 @@ cd "$HOME/secopsai" && source .venv/bin/activate && \
 
 - Parse `matched_findings`.
 - If matches exist, list the top 3 `TI-...` finding IDs and titles and offer `show TI-...`.
+
+## Supply Chain Monitoring
+
+### 9. Scan a package release
+
+**User phrases:**
+
+- "scan this PyPI package release"
+- "check this npm package version"
+- "review package diff"
+
+**Exec command:**
+
+```bash
+cd "$HOME/secopsai" && source .venv/bin/activate && \
+  secopsai supply-chain scan --ecosystem pypi --package requests --version 2.32.0 --json
+```
+
+**Agent behaviour:**
+
+- Parse `result.verdict`, `result.finding_id`, and `result.report_path`.
+- If verdict is `malicious`, offer `show <finding_id>`.
+
+### 10. Scan recent top-package releases
+
+**User phrases:**
+
+- "check recent package releases"
+- "run supply chain monitor"
+- "scan recent PyPI and npm releases"
+
+**Exec command:**
+
+```bash
+cd "$HOME/secopsai" && source .venv/bin/activate && \
+  secopsai supply-chain once --top 1000 --lookback 600 --json
+```
+
+**Agent behaviour:**
+
+- Parse `total_scanned`, `malicious`, `benign`, `errors`, and `results`.
+- If malicious findings exist, list the `SCM-...` IDs and package versions.
 
 ## Daily Summary (OpenClaw cron)
 

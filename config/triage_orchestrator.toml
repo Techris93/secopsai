@@ -1,0 +1,8 @@
+[safety]
+auto_close_expected_behavior = true
+auto_close_allowlisted_false_positive = true
+auto_start_in_review = true
+reconcile_on_policy_change = true
+
+[limits]
+max_findings_per_run = 20

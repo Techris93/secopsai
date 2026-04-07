@@ -20,6 +20,134 @@ secopsai list --severity high --json
 
 ## Command overview
 
+## Triage commands
+
+### `secopsai triage list`
+
+List findings from the SOC store by triage status.
+
+```bash
+secopsai triage list --status open --limit 20
+secopsai triage list --status in_review --json
+```
+
+Options:
+
+- `--status open|in_review|closed|triaged`
+- `--limit <n>` — default `50`
+- `--json`
+
+### `secopsai triage start <finding_id>`
+
+Mark a finding as actively under analyst review.
+
+```bash
+secopsai triage start SCM-XXXX --note "Initial analyst review started"
+```
+
+Options:
+
+- `--note <text>` — analyst note stored with the finding
+- `--json`
+
+### `secopsai triage investigate <finding_id>`
+
+Gather evidence, classify the finding type, and write case files.
+
+```bash
+secopsai triage investigate SCM-XXXX --search-root ~/secopsai --json
+```
+
+Options:
+
+- `--search-root <path>` — where local dependency or repo references are checked
+- `--json`
+
+Writes:
+
+- `reports/triage/<finding_id>.json`
+- `reports/triage/<finding_id>.md`
+
+### `secopsai triage close <finding_id>`
+
+Close or disposition a finding with a required note.
+
+```bash
+secopsai triage close SCM-XXXX --disposition false_positive --note "Verified safe internal package."
+```
+
+Options:
+
+- `--disposition true_positive|false_positive|expected_behavior|accepted_risk|exception_granted|needs_review|tune_policy|remediated`
+- `--note <text>` — required analyst rationale
+- `--json`
+
+### `secopsai triage orchestrate`
+
+Run the guarded triage orchestrator across open findings.
+
+```bash
+secopsai triage orchestrate --search-root ~/secopsai
+secopsai triage orchestrate --limit 10 --json
+```
+
+Options:
+
+- `--search-root <path>` — repository root for dependency presence checks
+- `--limit <n>` — maximum findings to process
+- `--queue-file <path>` — override queue path
+- `--json`
+
+Behavior:
+
+- auto-starts findings into `in_review`
+- auto-investigates findings
+- auto-closes low-risk `expected_behavior` and allowlisted false positives
+- queues higher-risk actions for analyst application
+
+### `secopsai triage queue`
+
+Show queued orchestrator actions awaiting analyst application.
+
+```bash
+secopsai triage queue
+secopsai triage queue --json
+```
+
+Options:
+
+- `--queue-file <path>` — override queue path
+- `--json`
+
+### `secopsai triage apply-action <action_id>`
+
+Apply one queued action after analyst review.
+
+```bash
+secopsai triage apply-action ACT-0001 --yes
+```
+
+Options:
+
+- `--queue-file <path>` — override queue path
+- `--yes` — skip interactive confirmation
+- `--json`
+
+### `secopsai triage summary`
+
+Generate a compact summary of current triage and queue state.
+
+```bash
+secopsai triage summary
+secopsai triage summary --json
+```
+
+Options:
+
+- `--limit <n>` — how many recent summary entries to include
+- `--queue-file <path>` — override queue path
+- `--json`
+
 ### `secopsai refresh`
 
 Run the full OpenClaw live pipeline and persist findings into the local SOC store.
@@ -183,6 +311,58 @@ Options:
 
 ---
 
+## Supply-chain policy commands
+
+### `secopsai supply-chain allowlist add|remove`
+
+Manage package allowlist entries in the active policy file.
+
+```bash
+secopsai supply-chain allowlist add --ecosystem pypi --package textual
+secopsai supply-chain allowlist remove --ecosystem pypi --package textual
+```
+
+Options:
+
+- `--ecosystem pypi|npm`
+- `--package <name-or-wildcard>`
+
+### `secopsai supply-chain tune rule`
+
+Change a rule weight or enabled state.
+
+```bash
+secopsai supply-chain tune rule "wheel/sdist artifact divergence" --weight 1
+secopsai supply-chain tune rule "manifest executable entrypoints" --disable
+```
+
+Options:
+
+- `<rule_name>` — exact rule name
+- `--weight <n>`
+- `--disable`
+- `--enable`
+
+### `secopsai supply-chain tune threshold`
+
+Set a global, ecosystem, or package threshold.
+
+```bash
+secopsai supply-chain tune threshold --global-threshold --value 12
+secopsai supply-chain tune threshold --ecosystem pypi --value 12
+secopsai supply-chain tune threshold --package textual --package-ecosystem pypi --value 14
+```
+
+Options:
+
+- `--global-threshold`
+- `--ecosystem pypi|npm`
+- `--package <name>`
+- `--package-ecosystem pypi|npm`
+- `--value <n>`
+
+---
+
 ## Auto-refresh behavior
 
 These commands can auto-refresh the pipeline before reading findings:
@@ -236,6 +416,16 @@ secopsai intel match --limit-iocs 500 --json
 secopsai list --severity medium --json --no-refresh
 ```
 
+### Native triage workflow
+
+```bash
+secopsai triage list --status open
+secopsai triage investigate SCM-XXXX --search-root ~/secopsai --json
+secopsai triage orchestrate --search-root ~/secopsai
+secopsai triage queue
+secopsai triage apply-action ACT-0001 --yes
+```
+
 ## Installer/runtime notes
 
 - Recommended installation path:
@@ -251,5 +441,7 @@ curl -fsSL https://secopsai.dev/install.sh | bash
 
 - [Getting Started](getting-started.md)
 - [Threat Intel (IOCs)](threat-intel.md)
+- [Findings Triage Guide](findings-triage-guide.md)
+- [Triage Orchestrator](triage-orchestrator.md)
 - [OpenClaw Integration](OpenClaw-Integration.md)
 - [Threat Model](threat-model.md)
