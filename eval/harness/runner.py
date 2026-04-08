@@ -106,6 +106,9 @@ class EvaluationRunner:
         
         if not self.scenarios_dir.exists():
             print(f"⚠️  Scenarios directory not found: {self.scenarios_dir}")
+            scenarios = self._load_fallback_scenarios()
+            if category:
+                scenarios = [s for s in scenarios if s.get("_category") == category]
             return scenarios
         
         scenario_files = list(self.scenarios_dir.glob("*.json"))
@@ -136,48 +139,84 @@ class EvaluationRunner:
         
         if category:
             scenarios = [s for s in scenarios if s.get("_category") == category]
-        
+
+        return scenarios
+
+    def _fallback_scenario_specs(self) -> List[tuple[Path, str, str]]:
+        """Return runnable labeled datasets when the v2 scenario tree is absent."""
+        return [
+            (self.project_root / "data" / "events.json", "synthetic", "synthetic_full"),
+            (self.project_root / "data" / "fixtures" / "openclaw" / "attack_mix.json", "openclaw", "openclaw_fixture_attack_mix"),
+            (self.project_root / "data" / "openclaw" / "replay" / "labeled" / "attack_mix.json", "openclaw", "openclaw_replay_attack_mix"),
+            (self.project_root / "data" / "openclaw" / "replay" / "labeled" / "current.json", "openclaw", "openclaw_replay_current"),
+        ]
+
+    def _load_fallback_scenarios(self) -> List[Dict[str, Any]]:
+        """Build scenarios from the labeled datasets already present in the repo."""
+        scenarios: List[Dict[str, Any]] = []
+        for path, category, name in self._fallback_scenario_specs():
+            if not path.exists():
+                continue
+            try:
+                with open(path) as handle:
+                    events = json.load(handle)
+            except Exception as exc:
+                print(f"⚠️  Failed to load fallback dataset {path}: {exc}")
+                continue
+            if not isinstance(events, list) or not events:
+                continue
+            scenarios.append(
+                {
+                    "_source_file": path.name,
+                    "_category": category,
+                    "name": name,
+                    "events": events,
+                }
+            )
         return scenarios
     
     def run_detection_with_profiling(self, events: List[Dict]) -> tuple:
         """Run detection and collect performance metrics."""
         latencies = []
         results = []
-        
+
         process = psutil.Process()
         memory_samples = []
         cpu_samples = []
-        
+
         start_time = time.time()
-        
-        for event in events:
-            event_start = time.perf_counter()
-            
-            # Sample resources before
-            memory_samples.append(process.memory_info().rss / 1024 / 1024)  # MB
-            cpu_samples.append(process.cpu_percent())
-            
-            # Run detection
-            detection_result = run_detection(event)
-            
-            # Record latency
-            latency_ms = (time.perf_counter() - event_start) * 1000
-            latencies.append(latency_ms)
-            
-            # Record results
-            if detection_result:
-                results.append(DetectionResult(
-                    event_id=event.get("event_id", "unknown"),
-                    rule_id=detection_result.get("rule_id", "unknown"),
-                    severity=detection_result.get("severity", "unknown"),
-                    confidence=detection_result.get("confidence", 0.0),
-                    timestamp=datetime.now(),
-                    evidence=detection_result.get("evidence", {}),
-                    matched=event.get("label") == "malicious"
-                ))
-        
+        memory_samples.append(process.memory_info().rss / 1024 / 1024)
+        cpu_samples.append(process.cpu_percent())
+
+        detect_start = time.perf_counter()
+        detection_result = run_detection(events)
+        total_latency_ms = (time.perf_counter() - detect_start) * 1000
+        if events:
+            latencies = [total_latency_ms / len(events)] * len(events)
+
+        memory_samples.append(process.memory_info().rss / 1024 / 1024)
+        cpu_samples.append(process.cpu_percent())
+
+        detected_ids = set(detection_result.get("detected_event_ids", []))
+        rule_results = detection_result.get("rule_results", {})
+        event_lookup = {event.get("event_id", "unknown"): event for event in events}
+        for rule_id, event_ids in rule_results.items():
+            for event_id in event_ids:
+                event = event_lookup.get(event_id, {})
+                results.append(
+                    DetectionResult(
+                        event_id=event_id,
+                        rule_id=rule_id,
+                        severity="unknown",
+                        confidence=0.0,
+                        timestamp=datetime.now(),
+                        evidence={},
+                        matched=event.get("label") == "malicious",
+                    )
+                )
+
         duration = time.time() - start_time
-        
+
         performance = MetricsCalculator.compute_performance_metrics(
             latencies_ms=latencies,
             event_count=len(events),
@@ -185,7 +224,7 @@ class EvaluationRunner:
             memory_samples_mb=memory_samples,
             cpu_samples=cpu_samples,
         )
-        
+
         return results, performance
     
     def evaluate_accuracy(self, scenarios: List[Dict]) -> tuple:

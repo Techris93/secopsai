@@ -10,8 +10,6 @@ from eval.harness.metrics import (
     MetricsCalculator,
 )
 
-from eval.harness.runner import EvaluationRunner
-
 __version__ = "2.0.0"
 __all__ = [
     "ConfusionMatrix",
@@ -23,3 +21,10 @@ __all__ = [
     "MetricsCalculator",
     "EvaluationRunner",
 ]
+
+
+def __getattr__(name: str):
+    if name == "EvaluationRunner":
+        from eval.harness.runner import EvaluationRunner
+        return EvaluationRunner
+    raise AttributeError(name)

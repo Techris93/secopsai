@@ -30,8 +30,9 @@ from detect import run_detection
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(ROOT_DIR, "data", "openclaw", "replay")
-DEFAULT_LABELED = os.path.join(DATA_DIR, "labeled", "sample_events.json")
-DEFAULT_UNLABELED = os.path.join(DATA_DIR, "unlabeled", "sample_events.json")
+FIXTURE_DIR = os.path.join(ROOT_DIR, "data", "fixtures", "openclaw")
+DEFAULT_LABELED = os.path.join(DATA_DIR, "labeled", "attack_mix.json")
+DEFAULT_UNLABELED = os.path.join(DATA_DIR, "unlabeled", "attack_mix.json")
 
 
 def utc_now() -> str:
@@ -49,7 +50,24 @@ def parse_args() -> argparse.Namespace:
         help="Evaluation mode: benchmark uses labels/F1, live emphasizes detections without score gating",
     )
     parser.add_argument("--verbose", action="store_true", help="Show per-rule breakdown")
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.labeled = resolve_default_path(
+        args.labeled,
+        [
+            os.path.join(DATA_DIR, "labeled", "current.json"),
+            os.path.join(FIXTURE_DIR, "attack_mix.json"),
+            os.path.join(DATA_DIR, "labeled", "sample_events.json"),
+        ],
+    )
+    args.unlabeled = resolve_default_path(
+        args.unlabeled,
+        [
+            os.path.join(FIXTURE_DIR, "attack_mix_unlabeled.json"),
+            os.path.join(DATA_DIR, "unlabeled", "current.json"),
+            os.path.join(DATA_DIR, "unlabeled", "sample_events.json"),
+        ],
+    )
+    return args
 
 
 def load_events(path: str) -> List[Dict[str, Any]]:
@@ -62,6 +80,15 @@ def load_events(path: str) -> List[Dict[str, Any]]:
     if not isinstance(loaded, list):
         raise ValueError(f"event file must contain a JSON array: {path}")
     return loaded
+
+
+def resolve_default_path(path: str, alternatives: List[str]) -> str:
+    if os.path.exists(path):
+        return path
+    for candidate in alternatives:
+        if os.path.exists(candidate):
+            return candidate
+    return path
 
 
 def compute_metrics(detected_ids: List[str], events: List[Dict[str, Any]]) -> Dict[str, Any]:
