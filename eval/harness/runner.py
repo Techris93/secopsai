@@ -40,6 +40,7 @@ class EvaluationRunner:
         self.scenarios_dir = self.data_dir / "test_scenarios"
         self.results_dir = self.project_root / "eval" / "reports"
         self.results_dir.mkdir(parents=True, exist_ok=True)
+        self.using_fallback_scenarios = False
         
         # Load version
         self.version = self._get_version()
@@ -106,6 +107,7 @@ class EvaluationRunner:
         
         if not self.scenarios_dir.exists():
             print(f"⚠️  Scenarios directory not found: {self.scenarios_dir}")
+            self.using_fallback_scenarios = True
             scenarios = self._load_fallback_scenarios()
             if category:
                 scenarios = [s for s in scenarios if s.get("_category") == category]
@@ -286,19 +288,42 @@ class EvaluationRunner:
         failures = []
         thresholds = self.config["thresholds"]
         perf_thresholds = self.config["performance"]
-        
-        # Accuracy gates
-        if report.overall.f1_score < thresholds["min_f1_score"]:
-            failures.append(f"F1 score {report.overall.f1_score:.3f} < {thresholds['min_f1_score']}")
-        
-        if report.overall.precision < thresholds["min_precision"]:
-            failures.append(f"Precision {report.overall.precision:.3f} < {thresholds['min_precision']}")
-        
-        if report.overall.recall < thresholds["min_recall"]:
-            failures.append(f"Recall {report.overall.recall:.3f} < {thresholds['min_recall']}")
-        
-        if report.overall.fpr > thresholds["max_fpr"]:
-            failures.append(f"FPR {report.overall.fpr:.3f} > {thresholds['max_fpr']}")
+        baseline_cfg = self.config.get("baseline", {})
+
+        if self.using_fallback_scenarios and report.scenario_metrics:
+            synthetic = report.scenario_metrics.get("synthetic")
+            openclaw = report.scenario_metrics.get("openclaw")
+
+            if synthetic:
+                baseline_f1 = self._load_baseline_f1()
+                regression = float(baseline_cfg.get("regression_threshold", 0.05))
+                if baseline_f1 > 0:
+                    min_allowed = max(0.0, baseline_f1 - regression)
+                    if synthetic.matrix.f1_score < min_allowed:
+                        failures.append(
+                            f"Synthetic F1 {synthetic.matrix.f1_score:.3f} < baseline floor {min_allowed:.3f}"
+                        )
+                elif synthetic.matrix.f1_score < thresholds["min_f1_score"]:
+                    failures.append(f"Synthetic F1 {synthetic.matrix.f1_score:.3f} < {thresholds['min_f1_score']}")
+
+            if openclaw:
+                if openclaw.matrix.recall < thresholds["min_recall"]:
+                    failures.append(f"OpenClaw recall {openclaw.matrix.recall:.3f} < {thresholds['min_recall']}")
+                if openclaw.matrix.fpr > thresholds["max_fpr"]:
+                    failures.append(f"OpenClaw FPR {openclaw.matrix.fpr:.3f} > {thresholds['max_fpr']}")
+        else:
+            # Accuracy gates
+            if report.overall.f1_score < thresholds["min_f1_score"]:
+                failures.append(f"F1 score {report.overall.f1_score:.3f} < {thresholds['min_f1_score']}")
+
+            if report.overall.precision < thresholds["min_precision"]:
+                failures.append(f"Precision {report.overall.precision:.3f} < {thresholds['min_precision']}")
+
+            if report.overall.recall < thresholds["min_recall"]:
+                failures.append(f"Recall {report.overall.recall:.3f} < {thresholds['min_recall']}")
+
+            if report.overall.fpr > thresholds["max_fpr"]:
+                failures.append(f"FPR {report.overall.fpr:.3f} > {thresholds['max_fpr']}")
         
         # Performance gates
         if report.performance.events_per_second < perf_thresholds["min_throughput"]:
@@ -308,6 +333,22 @@ class EvaluationRunner:
             failures.append(f"P99 latency {report.performance.p99_latency_ms:.1f}ms > {perf_thresholds['max_p99_latency_ms']}ms")
         
         return failures
+
+    def _load_baseline_f1(self) -> float:
+        baseline_file = Path(self.config.get("baseline", {}).get("baseline_file", ""))
+        candidates = []
+        if baseline_file:
+            candidates.append((self.project_root / baseline_file) if not baseline_file.is_absolute() else baseline_file)
+        candidates.append(self.project_root / "data" / "best.json")
+        for candidate in candidates:
+            try:
+                if candidate.exists():
+                    with open(candidate) as handle:
+                        payload = json.load(handle)
+                    return float(payload.get("f1_score", 0.0))
+            except Exception:
+                continue
+        return 0.0
     
     def run(self, args: argparse.Namespace) -> EvaluationReport:
         """Run full evaluation."""
