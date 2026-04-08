@@ -130,7 +130,9 @@ class AdaptiveIntelligencePipeline:
             
             for line in result.stdout.split('\n'):
                 if 'F1_SCORE=' in line:
-                    self.results['f1_baseline'] = float(line.split('=')[1].strip())
+                    f1_part = line.split('=', 1)[1].strip()
+                    f1_str = f1_part.split()[0]
+                    self.results['f1_baseline'] = float(f1_str)
                     self.log(f"[BASELINE] F1 Score: {self.results['f1_baseline']:.6f}")
                     break
             
@@ -168,10 +170,12 @@ class AdaptiveIntelligencePipeline:
                 if 'F1_SCORE=' in line or 'New:' in line:
                     try:
                         if 'New:' in line:
-                            f1_str = line.split('New:')[1].strip()
+                            f1_part = line.split('New:', 1)[1].strip()
+                            f1_str = f1_part.split()[0]
                             self.results['f1_new'] = float(f1_str)
                         elif 'new rules:' in line.lower():
-                            f1_str = line.split(':')[-1].strip()
+                            f1_part = line.split(':')[-1].strip()
+                            f1_str = f1_part.split()[0]
                             self.results['f1_new'] = float(f1_str)
                     except:
                         pass

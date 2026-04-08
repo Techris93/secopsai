@@ -629,12 +629,12 @@ def correlate_by_file_hash(findings: List[Dict]) -> List[Dict]:
     return correlations
 
 
-def run_correlation(findings: List[Dict]) -> Dict[str, Any]:
+def run_correlation(findings: List[Dict], time_window_minutes: int = 60) -> Dict[str, Any]:
     """Run all correlation rules."""
     results = {
         "cross_platform_ip": correlate_by_ip(findings),
         "cross_platform_user": correlate_by_user(findings),
-        "time_cluster": correlate_by_time(findings),
+        "time_cluster": correlate_by_time(findings, time_window_minutes=time_window_minutes),
         "cross_platform_file": correlate_by_file_hash(findings),
         "total_correlations": 0
     }
