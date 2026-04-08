@@ -102,6 +102,16 @@ class OpenClawEvaluationTests(unittest.TestCase):
         self.assertGreaterEqual(len(result["rule_results"].get("RULE-109", [])), 1)
         self.assertGreaterEqual(len(result["rule_results"].get("RULE-110", [])), 1)
 
+    def test_openclaw_current_replay_avoids_known_policy_and_exfil_noise(self):
+        current_path = REPO_ROOT / "data" / "openclaw" / "replay" / "labeled" / "current.json"
+        self.assertTrue(current_path.exists())
+        current_events = json.loads(current_path.read_text(encoding="utf-8"))
+
+        result = run_detection(current_events)
+
+        self.assertEqual(len(result["rule_results"].get("RULE-104", [])), 0)
+        self.assertEqual(len(result["rule_results"].get("RULE-109", [])), 0)
+
 
 class OpenClawFindingsTests(unittest.TestCase):
     @classmethod

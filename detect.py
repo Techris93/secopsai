@@ -1242,7 +1242,8 @@ def detect_openclaw_dangerous_exec(events: List[Dict]) -> List[str]:
         if is_openclaw_event(event, "tool") and tool_name not in DANGEROUS_TOOL_NAMES:
             continue
 
-        command = extract_command_text(event)
+        raw_command = event.get("command")
+        command = raw_command.strip() if isinstance(raw_command, str) else ""
         if not command:
             continue
 
@@ -1313,12 +1314,25 @@ def detect_openclaw_repeated_policy_denials(events: List[Dict]) -> List[str]:
     for event in events:
         if not is_openclaw_event(event):
             continue
-        is_denied = (
+        status = str(event.get("status") or "").lower()
+        approval_state = str(event.get("approval_state") or "").lower()
+        message = str(event.get("message") or "")
+        raw_command = event.get("command")
+        command = raw_command.strip() if isinstance(raw_command, str) else ""
+        is_explicit_block = (
             bool(event.get("denied"))
-            or event.get("status") in {"blocked", "approval-unavailable"}
-            or event.get("approval_state") in {"denied", "blocked", "approval-unavailable"}
+            or status in {"blocked", "approval-unavailable"}
+            or approval_state in {"blocked", "approval-unavailable"}
+            or (
+                approval_state == "denied"
+                and (
+                    status == "blocked"
+                    or bool(command)
+                    or re.search(r"(?i)\b(blocked|denied|approval[- ]unavailable)\b", message)
+                )
+            )
         )
-        if not is_denied:
+        if not is_explicit_block:
             continue
 
         session_key = openclaw_session_key(event)
@@ -1546,7 +1560,6 @@ def detect_openclaw_data_exfiltration(events: List[Dict]) -> List[str]:
         r"(?i)nc\s+[^\s]+\s+\d+\s*<\s*[^\s]+",
         r"(?i)(tar|zip)\s+.*&&\s*(curl|wget)\s+",
         r"(?i)python\s+-c\s+.*(requests|httpx).*post",
-        r"(?i)exfil(trat(e|ion))?",
     ]
 
     detected = []
