@@ -9,10 +9,12 @@ This skill lets an OpenClaw agent:
 
 - Run the secopsai OpenClaw detection pipeline
 - List and summarise findings from the local SOC store
-- Triage findings by ID (disposition + status + note)
+- Investigate and close findings by ID with the native triage workflow
+- Run the native triage orchestrator, inspect queued actions, and apply approved actions
 - Get structured mitigation steps for any finding
 - Run a local-first threat intelligence (IOC) pipeline and match IOCs against OpenClaw replay
 - Review PyPI and npm package releases for supply-chain compromise
+- Suggest false-positive actions for suspicious supply-chain findings
 
 ## Assumptions
 
@@ -32,7 +34,7 @@ If installation guidance is needed, prefer pointing users to the GitHub repo/man
 This skill can run shell commands and can modify the local SOC store when performing triage.
 
 - Prefer **read-only** operations by default (`list/show/check`).
-- Before any write/triage action (`set-status`, `set-disposition`, `add-note`), require explicit user confirmation.
+- Before any write/triage action (`triage close`, `triage orchestrate`, `triage apply-action`), require explicit user confirmation.
 - If you enable scheduled jobs, ensure they run under a controlled account and that automated writes are intended.
 - Backup the SOC DB (`data/openclaw/findings/openclaw_soc.db`) before enabling unattended automation.
 
@@ -101,33 +103,61 @@ Example reply:
 
 ---
 
-### 3. Triage a finding (WRITE)
+### 3. Investigate a finding
+
+**User phrases:**
+
+- `investigate SCM-<ID>`
+- `triage OCF-<ID>`
+- `investigate EXFIL-<ID>`
+
+**Exec command:**
+
+```bash
+cd "$HOME/secopsai" && source .venv/bin/activate && \
+  secopsai triage investigate <FINDING_ID> --search-root "$HOME/secopsai" --json
+```
+
+**Agent behaviour:**
+
+- Summarise:
+  - recommended disposition
+  - dependency presence
+  - policy matches
+  - verdict explanation
+  - next actions
+- For supply-chain findings, if helpful, follow with:
+
+```bash
+cd "$HOME/secopsai" && source .venv/bin/activate && \
+  secopsai supply-chain suggest-fp-action <FINDING_ID> --search-root "$HOME/secopsai" --json
+```
+
+---
+
+### 4. Close a finding (WRITE)
 
 Important: this modifies the local SOC store. Confirm with the user before running.
 
 **User phrases:**
 
-- `triage OCF-<ID>`
-- `triage OCF-<ID> note "your note here"`
+- `close SCM-<ID> as expected_behavior`
+- `close OCF-<ID> as needs_review note "..."`
 
 **Exec command pattern:**
 
 ```bash
 cd "$HOME/secopsai" && source .venv/bin/activate && \
-python soc_store.py set-disposition OCF-<ID> true_positive && \
-python soc_store.py set-status OCF-<ID> triaged && \
-python soc_store.py add-note OCF-<ID> analyst "<note text or 'validated via chat'>"
+  secopsai triage close <FINDING_ID> --disposition <TYPE> --note "<analyst note>" --json
 ```
 
 **Agent behaviour:**
 
-Run all three commands in sequence. Confirm back:
-
-> Triage complete: OCF-<ID> → disposition=true_positive, status=triaged.
+Confirm back with the final status and disposition.
 
 ---
 
-### 4. Show a single finding in detail
+### 5. Show a single finding in detail
 
 **User phrases:**
 
@@ -149,7 +179,47 @@ number of events, first/last seen. Prefer the structured fields from
 
 ---
 
-### 5. Check for malware or exfil
+### 6. Run the triage orchestrator (WRITE)
+
+Important: this can auto-close clearly safe findings. Confirm with the user before running.
+
+**User phrases:**
+
+- `run triage orchestrator`
+- `orchestrate findings`
+- `process open findings`
+
+**Exec command:**
+
+```bash
+cd "$HOME/secopsai" && source .venv/bin/activate && \
+  secopsai triage orchestrate --search-root "$HOME/secopsai" --limit 20 --json
+```
+
+**Agent behaviour:**
+
+- Summarise:
+  - `processed`
+  - `auto_applied`
+  - `queued`
+  - top per-finding outcomes
+- If queued actions exist, offer:
+
+```bash
+cd "$HOME/secopsai" && source .venv/bin/activate && \
+  secopsai triage queue --json
+```
+
+and, after approval:
+
+```bash
+cd "$HOME/secopsai" && source .venv/bin/activate && \
+  secopsai triage apply-action ACT-0001 --yes --json
+```
+
+---
+
+### 7. Check for malware or exfil
 
 **User phrases:**
 
@@ -175,7 +245,7 @@ Parse the JSON (`check` payload: `findings_total`, `matched_count`,
 
 ---
 
-### 6. Mitigate a finding (recommended actions)
+### 8. Mitigate a finding (recommended actions)
 
 **User phrases:**
 
