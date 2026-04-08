@@ -11,6 +11,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import soc_store
 from secopsai.triage import close_finding, investigate_finding, list_triage_findings, start_finding
+from secopsai.triage.host import investigate_host
 
 
 def _write_findings(db_path: str, findings):
@@ -18,6 +19,30 @@ def _write_findings(db_path: str, findings):
 
 
 class TriageTests(unittest.TestCase):
+    def test_exfil_investigation_downgrades_local_approved_reporting_activity(self):
+        finding = {
+            "finding_id": "OCF-LOCAL001",
+            "title": "OpenClaw Data Exfiltration",
+            "events": [
+                {
+                    "event_type": "tool",
+                    "status": "running",
+                    "approval_state": "",
+                    "command": "python3 - <<'PY'\\nprint('local report')\\nPY",
+                },
+                {
+                    "event_type": "exec",
+                    "status": "completed",
+                    "approval_state": "approved",
+                    "command": "brv curate \"daily brief\"",
+                },
+            ],
+        }
+
+        result = investigate_host(finding)
+        self.assertEqual(result["recommended_disposition"], "tune_policy")
+        self.assertIn("approved local OpenClaw reporting", result["summary"])
+
     def test_supply_chain_investigation_writes_reports(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

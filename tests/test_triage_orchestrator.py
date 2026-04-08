@@ -200,6 +200,59 @@ class TriageOrchestratorTests(unittest.TestCase):
             self.assertTrue(Path(summary["summary_json"]).exists())
             self.assertTrue(Path(summary["summary_markdown"]).exists())
 
+    def test_generate_summary_counts_open_findings_beyond_display_limit(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            db_path = str(temp_path / "soc.db")
+            findings = []
+            for idx in range(25):
+                findings.append(
+                    {
+                        "finding_id": f"SCM-SUM{idx:03d}",
+                        "title": f"Closed finding {idx}",
+                        "summary": "Closed finding.",
+                        "severity": "critical",
+                        "severity_score": 90 - idx,
+                        "status": "closed",
+                        "disposition": "expected_behavior",
+                        "source": "secopsai-test",
+                        "first_seen": "2026-04-08T00:00:00Z",
+                        "last_seen": "2026-04-08T00:00:00Z",
+                    }
+                )
+            findings.extend(
+                [
+                    {
+                        "finding_id": "OCF-SUMOPEN1",
+                        "title": "OpenClaw Policy Denials",
+                        "summary": "Open finding.",
+                        "severity": "low",
+                        "severity_score": 20,
+                        "status": "open",
+                        "disposition": "unreviewed",
+                        "source": "secopsai-test",
+                        "first_seen": "2026-04-08T00:00:00Z",
+                        "last_seen": "2026-04-08T00:00:00Z",
+                    },
+                    {
+                        "finding_id": "OCF-SUMOPEN2",
+                        "title": "OpenClaw Data Exfiltration",
+                        "summary": "Open finding.",
+                        "severity": "low",
+                        "severity_score": 20,
+                        "status": "open",
+                        "disposition": "unreviewed",
+                        "source": "secopsai-test",
+                        "first_seen": "2026-04-08T00:00:00Z",
+                        "last_seen": "2026-04-08T00:00:00Z",
+                    },
+                ]
+            )
+            _write_findings(db_path, findings)
+            summary = generate_summary(db_path=db_path, summary_dir=str(temp_path / "summaries"), limit=20)
+            self.assertEqual(summary["open_findings"], 2)
+            self.assertEqual(len(summary["findings"]), 20)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -314,7 +314,7 @@ def generate_summary(
     summary_dir: Optional[str] = None,
     limit: int = 20,
 ) -> Dict[str, Any]:
-    findings = list_triage_findings(db_path=db_path, limit=limit)
+    findings = list_triage_findings(db_path=db_path, limit=1_000_000)
     queued = list_actions(path=queue_file, status="pending", limit=1000)
     applied = list_actions(path=queue_file, status="applied", limit=1000)
     severity_counts: Dict[str, int] = {}

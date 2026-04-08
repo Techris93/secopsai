@@ -55,27 +55,66 @@ def _policy_denial_summary(finding: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _exfil_summary(finding: Dict[str, Any]) -> Dict[str, Any]:
+    events = finding.get("events") or []
     destination_ip = finding.get("destination_ip")
     bytes_transferred = finding.get("bytes_transferred")
     suspicious_dest = bool(destination_ip) and destination_ip not in {"127.0.0.1", "::1"}
     large_transfer = isinstance(bytes_transferred, (int, float)) and float(bytes_transferred) >= 100_000_000
+    statuses = _sample_counts([str(event.get("status") or "") for event in events if isinstance(event, dict)])
+    approvals = _sample_counts([str(event.get("approval_state") or "") for event in events if isinstance(event, dict)])
+    event_types = _sample_counts([str(event.get("event_type") or "") for event in events if isinstance(event, dict)])
+    all_local_exec = bool(events) and set(event_types.keys()).issubset({"tool", "exec"})
+    all_approved_or_running = bool(events) and set(statuses.keys()).issubset({"running", "completed"})
+    approved_activity = approvals.get("approved", 0) > 0 and approvals.get("denied", 0) == 0
+    command_text = " ".join(
+        str(event.get("command") or "")
+        for event in events
+        if isinstance(event, dict)
+    ).lower()
+    known_local_patterns = (
+        "brv curate",
+        "openclaw-findings",
+        "/users/chrixchange/secopsai/",
+        "python3 - <<'py'",
+        "grep telemetry",
+    )
+    local_analysis_pattern = any(pattern in command_text for pattern in known_local_patterns)
+    likely_local_reporting = (
+        not suspicious_dest
+        and not large_transfer
+        and all_local_exec
+        and all_approved_or_running
+        and approved_activity
+        and local_analysis_pattern
+    )
     escalated = suspicious_dest or large_transfer
+    recommended_disposition = "needs_review"
+    confidence = "high" if escalated else "medium"
+    summary = "Potential exfiltration needs urgent review." if escalated else "Exfiltration-like behavior needs context before closure."
+    next_actions = [
+        "Confirm the initiating process, destination, and user context.",
+        "Escalate immediately if the destination is unknown or sensitive data was accessed.",
+    ]
+    if likely_local_reporting:
+        recommended_disposition = "tune_policy"
+        confidence = "medium"
+        summary = "Exfiltration-like behavior matches approved local OpenClaw reporting or repo-analysis workflows and is better handled as detector tuning."
+        next_actions = [
+            "Tune the heuristic so approved local reporting and repo-analysis commands do not trigger exfiltration findings.",
+            "Keep reviewing future findings if a non-local destination or large transfer appears.",
+        ]
     return {
-        "summary": (
-            "Potential exfiltration needs urgent review."
-            if escalated
-            else "Exfiltration-like behavior needs context before closure."
-        ),
-        "recommended_disposition": "needs_review",
-        "confidence": "high" if escalated else "medium",
+        "summary": summary,
+        "recommended_disposition": recommended_disposition,
+        "confidence": confidence,
         "evidence": [
             f"Destination IP: {destination_ip}" if destination_ip else "",
             f"Bytes transferred: {bytes_transferred}" if bytes_transferred is not None else "",
+            f"Statuses: {statuses}" if statuses else "",
+            f"Approval states: {approvals}" if approvals else "",
+            f"Event types: {event_types}" if event_types else "",
         ],
-        "next_actions": [
-            "Confirm the initiating process, destination, and user context.",
-            "Escalate immediately if the destination is unknown or sensitive data was accessed.",
-        ],
+        "next_actions": next_actions,
         "external_links": {
             "ipinfo": f"https://ipinfo.io/{destination_ip}" if destination_ip else "",
             "virustotal": f"https://www.virustotal.com/gui/ip-address/{destination_ip}" if destination_ip else "",
