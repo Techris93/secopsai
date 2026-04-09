@@ -18,8 +18,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-# Add secopsai to path
-sys.path.insert(0, os.path.expanduser("~/.openclaw/workspace/secopsai"))
+BASE_DIR = Path(__file__).resolve().parent
+WORKSPACE_DIR = Path.home() / ".openclaw" / "workspace"
+
+# Import from the repo that owns this script, not a stale workspace checkout.
+sys.path.insert(0, str(BASE_DIR))
 
 from threat_intel_ingestor import ThreatIntelIngestor
 from adaptive_rule_generator import AdaptiveRuleGenerator
@@ -29,8 +32,8 @@ class AdaptiveIntelligencePipeline:
     """Master pipeline orchestrator"""
     
     def __init__(self):
-        self.workspace = os.path.expanduser("~/.openclaw/workspace")
-        self.secopsai_dir = os.path.join(self.workspace, 'secopsai')
+        self.workspace = str(WORKSPACE_DIR)
+        self.secopsai_dir = str(BASE_DIR)
         self.log_file = os.path.join(self.workspace, 'logs', f'adaptive_intel_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.log')
         self.results = {
             'started_at': datetime.utcnow().isoformat(),
