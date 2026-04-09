@@ -144,6 +144,78 @@ class TriageTests(unittest.TestCase):
             self.assertEqual(closed["status"], "triaged")
             self.assertEqual(closed["disposition"], "tune_policy")
             self.assertEqual(closed["notes"][-1]["author"], "analyst")
+            self.assertEqual(list_triage_findings(db_path=db_path, status="open"), [])
+            triaged_rows = list_triage_findings(db_path=db_path, status="triaged")
+            self.assertEqual(len(triaged_rows), 1)
+            self.assertEqual(triaged_rows[0]["finding_id"], "OCF-TEST123")
+
+    def test_supply_chain_close_is_excluded_from_open_list_for_db_override(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = str(Path(temp_dir) / "soc.db")
+            findings = [
+                {
+                    "finding_id": "SCM-TEST001",
+                    "title": "Suspicious pypi package release: demo@1.2.3",
+                    "summary": "Deterministic rules flagged: network egress, startup persistence",
+                    "severity": "critical",
+                    "severity_score": 90,
+                    "status": "open",
+                    "disposition": "unreviewed",
+                    "source": "secopsai-supply-chain",
+                    "first_seen": "2026-04-09T10:00:00Z",
+                    "last_seen": "2026-04-09T10:00:00Z",
+                    "event_ids": ["evt-1"],
+                    "rule_ids": ["SUPPLY-CHAIN-NATIVE"],
+                    "platform": "supply_chain",
+                    "package": "demo",
+                    "ecosystem": "pypi",
+                    "new_version": "1.2.3",
+                    "old_version": "1.2.2",
+                    "report_path": "/tmp/demo.md",
+                    "analysis": "demo analysis",
+                    "verdict": "malicious",
+                    "rank": 42,
+                },
+                {
+                    "finding_id": "SCM-TEST002",
+                    "title": "Suspicious npm package release: other@9.9.9",
+                    "summary": "Deterministic rules flagged: shell downloader",
+                    "severity": "critical",
+                    "severity_score": 90,
+                    "status": "open",
+                    "disposition": "unreviewed",
+                    "source": "secopsai-supply-chain",
+                    "first_seen": "2026-04-09T10:10:00Z",
+                    "last_seen": "2026-04-09T10:10:00Z",
+                    "event_ids": ["evt-2"],
+                    "rule_ids": ["SUPPLY-CHAIN-NATIVE"],
+                    "platform": "supply_chain",
+                    "package": "other",
+                    "ecosystem": "npm",
+                    "new_version": "9.9.9",
+                    "old_version": "9.9.8",
+                    "report_path": "/tmp/other.md",
+                    "analysis": "other analysis",
+                    "verdict": "malicious",
+                    "rank": 43,
+                },
+            ]
+            _write_findings(db_path, findings)
+
+            close_finding(
+                "SCM-TEST001",
+                db_path=db_path,
+                disposition="needs_review",
+                status="closed",
+                author="analyst",
+                note="Regression test note for db override filtering.",
+            )
+
+            open_rows = list_triage_findings(db_path=db_path, status="open")
+            self.assertEqual([row["finding_id"] for row in open_rows], ["SCM-TEST002"])
+
+            closed_rows = list_triage_findings(db_path=db_path, status="closed")
+            self.assertEqual([row["finding_id"] for row in closed_rows], ["SCM-TEST001"])
 
 
 if __name__ == "__main__":
