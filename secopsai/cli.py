@@ -237,7 +237,7 @@ def _run_correlate(time_window: int = 60, json_output: bool = False) -> int:
     print(f"Time window: {time_window} minutes")
     print(f"Total findings: {len(findings)}")
 
-    results = run_correlation(findings, time_window)
+    results = run_correlation(findings, time_window_minutes=time_window)
 
     if results["total_correlations"] > 0:
         message = f"""🚨 SecOpsAI Cross-Platform Alert

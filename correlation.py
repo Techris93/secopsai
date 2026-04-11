@@ -631,9 +631,15 @@ def correlate_by_file_hash(findings: List[Dict]) -> List[Dict]:
 
 def run_correlation(findings: List[Dict], time_window_minutes: int = 60) -> Dict[str, Any]:
     """Run all correlation rules."""
+    if not isinstance(time_window_minutes, int):
+        try:
+            time_window_minutes = int(time_window_minutes)
+        except (TypeError, ValueError):
+            time_window_minutes = 60
+
     results = {
-        "cross_platform_ip": correlate_by_ip(findings),
-        "cross_platform_user": correlate_by_user(findings),
+        "cross_platform_ip": correlate_by_ip(findings, time_window_minutes=time_window_minutes),
+        "cross_platform_user": correlate_by_user(findings, time_window_minutes=time_window_minutes),
         "time_cluster": correlate_by_time(findings, time_window_minutes=time_window_minutes),
         "cross_platform_file": correlate_by_file_hash(findings),
         "total_correlations": 0
