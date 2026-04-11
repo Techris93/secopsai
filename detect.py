@@ -2331,3 +2331,11 @@ def run_detection(events: List[Dict]) -> Dict[str, Any]:
     }
 
 # ═══ Additional Web Attack Detection Rules ════════════════════════════════════
+
+
+
+
+
+
+
+
