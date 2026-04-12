@@ -10,14 +10,16 @@ import json
 import re
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-THREAT_INTEL_DIR = os.path.expanduser("~/.openclaw/workspace/secopsai/threat_intel")
-RULES_OUTPUT_DIR = os.path.expanduser("~/.openclaw/workspace/secopsai/auto_rules")
+BASE_DIR = Path(__file__).resolve().parent
+THREAT_INTEL_DIR = str(BASE_DIR / 'threat_intel')
+RULES_OUTPUT_DIR = str(BASE_DIR / 'auto_rules')
 
 os.makedirs(RULES_OUTPUT_DIR, exist_ok=True)
 

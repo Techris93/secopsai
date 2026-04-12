@@ -11,13 +11,14 @@ import json
 import subprocess
 import shutil
 from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from adaptive_rule_generator import GeneratedRule, RULES_OUTPUT_DIR
 
-SECOPSAI_DIR = os.path.expanduser("~/.openclaw/workspace/secopsai")
+SECOPSAI_DIR = str(Path(__file__).resolve().parent)
 AUTO_RULES_DIR = os.path.join(SECOPSAI_DIR, 'auto_rules')
 DETECT_PY_PATH = os.path.join(SECOPSAI_DIR, 'detect.py')
 
@@ -30,6 +31,7 @@ class RuleValidator:
         self.new_f1 = 0.0
         self.validated_rules: List[GeneratedRule] = []
         self.rejected_rules: List[GeneratedRule] = []
+        self._original_detect_content: str | None = None
     
     def get_baseline_f1(self) -> float:
         """Get current F1 score without new rules"""
@@ -76,8 +78,9 @@ class RuleValidator:
             return False
         
         # Read current detect.py
-        with open(DETECT_PY_PATH, 'r') as f:
+        with open(DETECT_PY_PATH, 'r', encoding='utf-8') as f:
             detect_content = f.read()
+        self._original_detect_content = detect_content
         
         # Check if already injected
         if '# === AUTO-GENERATED RULES ===' in detect_content:
@@ -123,7 +126,7 @@ class RuleValidator:
                       '\n' + detect_content[injection_point:])
         
         # Write back
-        with open(DETECT_PY_PATH, 'w') as f:
+        with open(DETECT_PY_PATH, 'w', encoding='utf-8') as f:
             f.write(new_content)
         
         print(f"[INJECT] Injected {len(rule_files)} auto-generated rules into detect.py")
@@ -158,26 +161,12 @@ class RuleValidator:
     
     def rollback_detect_py(self):
         """Remove auto-generated rules from detect.py"""
-        with open(DETECT_PY_PATH, 'r') as f:
-            detect_content = f.read()
-        
-        # Remove auto-generated section
-        lines = detect_content.split('\n')
-        new_lines = []
-        in_auto_section = False
-        
-        for line in lines:
-            if '# === AUTO-GENERATED RULES ===' in line:
-                in_auto_section = True
-                continue
-            if '# === END AUTO-GENERATED RULES ===' in line:
-                in_auto_section = False
-                continue
-            if not in_auto_section:
-                new_lines.append(line)
-        
-        with open(DETECT_PY_PATH, 'w') as f:
-            f.write('\n'.join(new_lines))
+        if self._original_detect_content is None:
+            with open(DETECT_PY_PATH, 'r', encoding='utf-8') as f:
+                self._original_detect_content = f.read()
+
+        with open(DETECT_PY_PATH, 'w', encoding='utf-8') as f:
+            f.write(self._original_detect_content)
         
         print("[ROLLBACK] Removed auto-generated rules from detect.py")
     
