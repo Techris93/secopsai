@@ -1,6 +1,7 @@
 import sys
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from unittest import mock
 
@@ -99,6 +100,64 @@ class TriageTests(unittest.TestCase):
             self.assertTrue(Path(result["json_report"]).exists())
             self.assertTrue(Path(result["markdown_report"]).exists())
             self.assertTrue(result["investigation"]["dependency_presence"]["present"])
+
+    def test_supply_chain_dependency_presence_ignores_irrelevant_package_json_scripts_in_venv(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            db_path = str(temp_path / "soc.db")
+            report_path = temp_path / "pypi-build-1.4.2-to-1.4.3.md"
+            report_path.write_text("fake report", encoding="utf-8")
+            findings = [
+                {
+                    "finding_id": "SCM-BUILD001",
+                    "title": "Suspicious pypi package release: build@1.4.3",
+                    "summary": "Deterministic rules flagged: subprocess spawn",
+                    "severity": "critical",
+                    "severity_score": 90,
+                    "status": "open",
+                    "disposition": "unreviewed",
+                    "source": "secopsai-supply-chain",
+                    "first_seen": "2026-04-06T00:00:00Z",
+                    "last_seen": "2026-04-06T00:00:00Z",
+                    "event_ids": ["evt-1"],
+                    "rule_ids": ["SUPPLY-CHAIN-NATIVE"],
+                    "platform": "supply_chain",
+                    "package": "build",
+                    "ecosystem": "pypi",
+                    "new_version": "1.4.3",
+                    "old_version": "1.4.2",
+                    "report_path": str(report_path),
+                    "analysis": "strong signal test",
+                    "verdict": "malicious",
+                    "rank": 9,
+                }
+            ]
+            _write_findings(db_path, findings)
+
+            pyright_package_json = temp_path / ".venv/lib/python3.14/site-packages/pyright/dist/package.json"
+            pyright_package_json.parent.mkdir(parents=True, exist_ok=True)
+            pyright_package_json.write_text(
+                json.dumps({"scripts": {"build": "webpack --mode production"}}),
+                encoding="utf-8",
+            )
+
+            with mock.patch("secopsai.triage.supply_chain.supply_chain.explain_policy", return_value={"allow_matches": [], "deny_matches": []}), \
+                 mock.patch("secopsai.triage.supply_chain.supply_chain.explain_verdict", return_value={
+                     "score": 17,
+                     "effective_threshold": 10,
+                     "matched_rules": [
+                         {"rule": "subprocess spawn"},
+                     ],
+                 }), \
+                 mock.patch("secopsai.triage.supply_chain._reputation_summary", return_value={"release_count": 20}):
+                result = investigate_finding(
+                    "SCM-BUILD001",
+                    db_path=db_path,
+                    search_root=str(temp_path),
+                    report_dir=str(temp_path / "triage"),
+                )
+
+            self.assertFalse(result["investigation"]["dependency_presence"]["present"])
 
     def test_start_close_and_list_triage_findings(self):
         with tempfile.TemporaryDirectory() as temp_dir:

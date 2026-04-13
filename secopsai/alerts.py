@@ -11,6 +11,7 @@ DEFAULT_SLACK_CONFIG = REPO_ROOT / "config" / "slack.json"
 ALERTS_DIR = REPO_ROOT / "data" / "alerts"
 SLACK_STATE_PATH = ALERTS_DIR / "slack_alert_state.json"
 SUPPLY_CHAIN_SLACK_STATE_PATH = ALERTS_DIR / "supply_chain_slack_state.json"
+TRIAGE_SUMMARY_SLACK_STATE_PATH = ALERTS_DIR / "triage_summary_slack_state.json"
 
 
 def _load_json(path: Path, default: Any) -> Any:
@@ -160,4 +161,66 @@ def alert_new_supply_chain_findings(findings: Iterable[Dict[str, Any]]) -> Dict[
         "eligible": len(findings),
         "new_findings": len(new_findings),
         "sent": sent,
+    }
+
+
+def _format_triage_summary_message(findings: List[Dict[str, Any]], *, open_count: int, in_review_count: int) -> str:
+    lines = ["🚨 SecOpsAI Triage Alert", ""]
+    lines.append(f"Open findings: {open_count}")
+    lines.append(f"In review findings: {in_review_count}")
+    lines.append("")
+    lines.append(f"New triage items requiring attention: {len(findings)}")
+    lines.append("")
+    for finding in findings[:10]:
+        lines.append(
+            "- {fid} | {status} | {sev} | {title}".format(
+                fid=finding.get("finding_id", ""),
+                status=str(finding.get("status", "")).lower(),
+                sev=str(finding.get("severity", "")).upper(),
+                title=finding.get("title", ""),
+            )
+        )
+    if len(findings) > 10:
+        lines.append("")
+        lines.append(f"... plus {len(findings) - 10} more findings")
+    return "\n".join(lines)
+
+
+def alert_new_triage_findings(
+    findings: Iterable[Dict[str, Any]],
+    *,
+    open_count: int,
+    in_review_count: int,
+    path: Path | None = None,
+) -> Dict[str, Any]:
+    path = path or TRIAGE_SUMMARY_SLACK_STATE_PATH
+    state = load_slack_state(path)
+    active_findings = [
+        finding for finding in findings
+        if str(finding.get("status", "")).lower() in {"open", "in_review"}
+    ]
+    active_ids = {str(finding.get("finding_id", "")) for finding in active_findings if finding.get("finding_id")}
+    already_sent = set(state["finding_ids"])
+    new_findings = [
+        finding for finding in active_findings
+        if str(finding.get("finding_id", "")) not in already_sent
+    ]
+
+    sent = False
+    if new_findings:
+        sent = send_slack_message(
+            _format_triage_summary_message(
+                new_findings,
+                open_count=open_count,
+                in_review_count=in_review_count,
+            )
+        )
+    if sent or not new_findings:
+        save_slack_state({"finding_ids": sorted(active_ids)}, path)
+
+    return {
+        "eligible": len(active_findings),
+        "new_findings": len(new_findings),
+        "sent": sent,
+        "active_findings": len(active_ids),
     }

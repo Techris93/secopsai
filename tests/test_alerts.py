@@ -31,6 +31,28 @@ class AlertsTests(unittest.TestCase):
         self.assertFalse(second["sent"])
         send_mock.assert_called_once()
 
+    def test_alert_new_triage_findings_only_pages_new_active_findings(self):
+        findings = [
+            {"finding_id": "SCM-1", "status": "open", "severity": "critical", "title": "A"},
+            {"finding_id": "SCM-2", "status": "in_review", "severity": "high", "title": "B"},
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "triage_summary_slack_state.json"
+            with mock.patch.object(alerts, "send_slack_message", return_value=True) as send_mock:
+                first = alerts.alert_new_triage_findings(findings, open_count=1, in_review_count=1, path=state_path)
+                second = alerts.alert_new_triage_findings(findings, open_count=1, in_review_count=1, path=state_path)
+                third = alerts.alert_new_triage_findings([], open_count=0, in_review_count=0, path=state_path)
+                fourth = alerts.alert_new_triage_findings(findings[:1], open_count=1, in_review_count=0, path=state_path)
+
+        self.assertTrue(first["sent"])
+        self.assertEqual(first["new_findings"], 2)
+        self.assertFalse(second["sent"])
+        self.assertEqual(second["new_findings"], 0)
+        self.assertFalse(third["sent"])
+        self.assertEqual(third["active_findings"], 0)
+        self.assertTrue(fourth["sent"])
+        self.assertEqual(send_mock.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

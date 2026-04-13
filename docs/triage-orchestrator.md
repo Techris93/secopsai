@@ -82,11 +82,15 @@ Use the provided helpers for unattended runs:
 ```bash
 bash scripts/run_triage_orchestrator.sh
 bash scripts/install_triage_orchestrator_launchd.sh
+bash scripts/run_triage_summary_notify.sh
+bash scripts/install_triage_summary_launchd.sh
 ```
 
 The runner executes the orchestrator, writes queue state, and emits reports under:
 
 - `reports/triage/orchestrator/`
+
+The summary notifier runs `secopsai --json triage summary`, tracks only currently active `open` and `in_review` finding IDs, and sends Slack only when new active findings appear.
 
 ## Recommended Workflow
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -41,20 +42,147 @@ DEPENDENCY_FILE_GLOBS = (
     "poetry.lock",
 )
 
+IGNORED_PATH_PARTS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "venv",
+    "env",
+    "node_modules",
+    "site-packages",
+    "dist",
+    "build",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+}
+
+
+def _normalize_package_name(name: str) -> str:
+    return str(name or "").strip().lower()
+
+
+def _should_ignore_path(path: Path, search_root: Path) -> bool:
+    try:
+        relative_parts = path.resolve().relative_to(search_root.resolve()).parts
+    except Exception:
+        relative_parts = path.parts
+    return any(part in IGNORED_PATH_PARTS for part in relative_parts)
+
+
+def _manifest_contains_package(path: Path, package: str) -> bool:
+    package_name = _normalize_package_name(package)
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return False
+
+    if path.name == "package.json":
+        try:
+            payload = json.loads(text)
+        except Exception:
+            return False
+        for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies", "overrides"):
+            section = payload.get(key) or {}
+            if isinstance(section, dict) and package_name in {_normalize_package_name(name) for name in section.keys()}:
+                return True
+        bundle = payload.get("bundleDependencies") or payload.get("bundledDependencies") or []
+        if isinstance(bundle, list) and package_name in {_normalize_package_name(item) for item in bundle}:
+            return True
+        return False
+
+    if path.name == "package-lock.json":
+        try:
+            payload = json.loads(text)
+        except Exception:
+            return False
+        dependencies = payload.get("dependencies") or {}
+        if isinstance(dependencies, dict) and package_name in {_normalize_package_name(name) for name in dependencies.keys()}:
+            return True
+        packages = payload.get("packages") or {}
+        if isinstance(packages, dict):
+            for package_path, meta in packages.items():
+                if _normalize_package_name(str(meta.get("name") or "")) == package_name:
+                    return True
+                if f"node_modules/{package_name}" in str(package_path).lower():
+                    return True
+        return False
+
+    if path.name == "pnpm-lock.yaml":
+        pattern = re.compile(rf"(^|\n)\s{{2,}}(?:['\"])?{re.escape(package)}(?:['\"])?\s*:", re.IGNORECASE)
+        return bool(pattern.search(text))
+
+    if path.name == "yarn.lock":
+        pattern = re.compile(rf"(^|\n)(?:['\"])?{re.escape(package)}@", re.IGNORECASE)
+        return bool(pattern.search(text))
+
+    if path.name.startswith("requirements") and path.suffix == ".txt":
+        for raw_line in text.splitlines():
+            line = raw_line.split("#", 1)[0].strip()
+            if not line or line.startswith(("-r", "--")):
+                continue
+            candidate = re.split(r"[<>=!~\[; ]", line, maxsplit=1)[0].strip()
+            if _normalize_package_name(candidate) == package_name:
+                return True
+        return False
+
+    if path.name in {"pyproject.toml", "Pipfile"}:
+        try:
+            payload = tomllib.loads(text)
+        except Exception:
+            return False
+        candidates: set[str] = set()
+
+        project = payload.get("project") or {}
+        for item in project.get("dependencies") or []:
+            if isinstance(item, str):
+                candidates.add(_normalize_package_name(re.split(r"[<>=!~\[; ]", item, maxsplit=1)[0]))
+        for deps in (project.get("optional-dependencies") or {}).values():
+            for item in deps or []:
+                if isinstance(item, str):
+                    candidates.add(_normalize_package_name(re.split(r"[<>=!~\[; ]", item, maxsplit=1)[0]))
+        for deps in (payload.get("dependency-groups") or {}).values():
+            for item in deps or []:
+                if isinstance(item, str):
+                    candidates.add(_normalize_package_name(re.split(r"[<>=!~\[; ]", item, maxsplit=1)[0]))
+
+        tool = payload.get("tool") or {}
+        poetry = tool.get("poetry") or {}
+        for key in (poetry.get("dependencies") or {}).keys():
+            if _normalize_package_name(str(key)) != "python":
+                candidates.add(_normalize_package_name(str(key)))
+        for group in (poetry.get("group") or {}).values():
+            for key in ((group or {}).get("dependencies") or {}).keys():
+                if _normalize_package_name(str(key)) != "python":
+                    candidates.add(_normalize_package_name(str(key)))
+
+        pipfile_sections = [payload.get("packages") or {}, payload.get("dev-packages") or {}]
+        for section in pipfile_sections:
+            for key in section.keys():
+                candidates.add(_normalize_package_name(str(key)))
+        return package_name in candidates
+
+    if path.name == "poetry.lock":
+        pattern = re.compile(rf'(^|\n)name\s*=\s*"{re.escape(package)}"', re.IGNORECASE)
+        return bool(pattern.search(text))
+
+    pattern = re.compile(rf"(?<![A-Za-z0-9_.-]){re.escape(package)}(?![A-Za-z0-9_.-])", re.IGNORECASE)
+    return bool(pattern.search(text))
+
 
 def _package_reference_paths(package: str, search_root: Path) -> List[str]:
     hits: List[str] = []
     needle = str(package or "").strip()
     if not needle:
         return hits
-    pattern = re.compile(rf"(?<![A-Za-z0-9_.-]){re.escape(needle)}(?![A-Za-z0-9_.-])", re.IGNORECASE)
     for glob in DEPENDENCY_FILE_GLOBS:
         for path in search_root.rglob(glob):
-            try:
-                if pattern.search(path.read_text(encoding="utf-8", errors="ignore")):
-                    hits.append(str(path.resolve()))
-            except Exception:
+            if _should_ignore_path(path, search_root):
                 continue
+            if _manifest_contains_package(path, needle):
+                hits.append(str(path.resolve()))
     return sorted(set(hits))
 
 
