@@ -9,6 +9,8 @@ description = "Local-first cross-platform SecOps for OpenClaw, macOS, Linux, and
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "psutil>=6,<7",
+  "PyYAML>=6,<7",
   "requests>=2.33.1,<3",
 ]
 

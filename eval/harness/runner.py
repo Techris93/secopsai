@@ -9,11 +9,19 @@ import json
 import os
 import sys
 import time
-import psutil
-import yaml
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -76,14 +84,30 @@ class EvaluationRunner:
                 "formats": ["json", "html"],
                 "output_dir": "eval/reports",
             },
+            "baseline": {
+                "enabled": True,
+                "baseline_file": "eval/baselines/known_good/baseline_v1.json",
+                "regression_threshold": 0.05,
+            },
         }
-        
+
         if config_path and os.path.exists(config_path):
-            with open(config_path) as f:
-                user_config = yaml.safe_load(f)
-                default_config.update(user_config)
-        
+            if yaml is None:
+                print(f"⚠️  PyYAML not installed; using built-in defaults instead of {config_path}")
+                return default_config
+            with open(config_path, encoding="utf-8") as f:
+                user_config = yaml.safe_load(f) or {}
+                self._merge_nested_config(default_config, user_config)
+
         return default_config
+
+    def _merge_nested_config(self, base: Dict[str, Any], overrides: Dict[str, Any]) -> None:
+        """Recursively merge user config into the default config."""
+        for key, value in overrides.items():
+            if isinstance(value, dict) and isinstance(base.get(key), dict):
+                self._merge_nested_config(base[key], value)
+            else:
+                base[key] = value
     
     def _get_version(self) -> str:
         """Get current version from git or package."""
@@ -182,13 +206,14 @@ class EvaluationRunner:
         latencies = []
         results = []
 
-        process = psutil.Process()
+        process = psutil.Process() if psutil is not None else None
         memory_samples = []
         cpu_samples = []
 
         start_time = time.time()
-        memory_samples.append(process.memory_info().rss / 1024 / 1024)
-        cpu_samples.append(process.cpu_percent())
+        if process is not None:
+            memory_samples.append(process.memory_info().rss / 1024 / 1024)
+            cpu_samples.append(process.cpu_percent())
 
         detect_start = time.perf_counter()
         detection_result = run_detection(events)
@@ -196,8 +221,9 @@ class EvaluationRunner:
         if events:
             latencies = [total_latency_ms / len(events)] * len(events)
 
-        memory_samples.append(process.memory_info().rss / 1024 / 1024)
-        cpu_samples.append(process.cpu_percent())
+        if process is not None:
+            memory_samples.append(process.memory_info().rss / 1024 / 1024)
+            cpu_samples.append(process.cpu_percent())
 
         detected_ids = set(detection_result.get("detected_event_ids", []))
         rule_results = detection_result.get("rule_results", {})
@@ -353,6 +379,10 @@ class EvaluationRunner:
     def run(self, args: argparse.Namespace) -> EvaluationReport:
         """Run full evaluation."""
         start_time = time.time()
+
+        if args.output:
+            self.results_dir = Path(args.output)
+            self.results_dir.mkdir(parents=True, exist_ok=True)
         
         print("🔬 SecOpsAI Evaluation Harness v2")
         print(f"Version: {self.version}")

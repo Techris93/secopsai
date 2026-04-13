@@ -19,12 +19,12 @@ SecOpsAI is a local-first security monitoring, investigation, and triage platfor
 
 ## Platform Support
 
-| Platform | Source | Status | Notes |
-|---|---|---:|---|
-| OpenClaw | Audit logs | ✅ Production | Native telemetry source |
-| macOS | Unified logging | ✅ Production | Auth, process, and host activity |
-| Linux | journalctl / auditd | ✅ Beta | Ready for Linux deployment |
-| Windows | Event Logs / Sysmon | ✅ Beta | Ready for Windows deployment |
+| Platform | Source              |        Status | Notes                            |
+| -------- | ------------------- | ------------: | -------------------------------- |
+| OpenClaw | Audit logs          | ✅ Production | Native telemetry source          |
+| macOS    | Unified logging     | ✅ Production | Auth, process, and host activity |
+| Linux    | journalctl / auditd |       ✅ Beta | Ready for Linux deployment       |
+| Windows  | Event Logs / Sysmon |       ✅ Beta | Ready for Windows deployment     |
 
 ## Cross-Platform Correlation
 
@@ -79,6 +79,7 @@ secopsai triage investigate SCM-XXXX
 secopsai triage close SCM-XXXX --disposition false_positive --note "Verified safe internal package"
 secopsai triage orchestrate --search-root ~/secopsai
 secopsai triage queue
+secopsai --json triage summary
 ```
 
 ## Operator Surfaces
@@ -125,16 +126,16 @@ openclaw plugins install secopsai
 
 Available plugin tools:
 
-| Tool | Description |
-|------|-------------|
-| `secopsai_list_findings` | List findings with optional severity filter |
-| `secopsai_refresh` | Run the detection pipeline to refresh findings |
-| `secopsai_show_finding` | Get detailed information about a specific finding |
-| `secopsai_triage` | Set disposition, status, and add analyst notes |
-| `secopsai_check_threats` | Check for malware or exfiltration indicators |
-| `secopsai_mitigate` | Get recommended mitigation steps for a finding |
-| `secopsai_search` | Search findings by keyword or pattern |
-| `secopsai_stats` | Get statistics about the SOC database |
+| Tool                     | Description                                       |
+| ------------------------ | ------------------------------------------------- |
+| `secopsai_list_findings` | List findings with optional severity filter       |
+| `secopsai_refresh`       | Run the detection pipeline to refresh findings    |
+| `secopsai_show_finding`  | Get detailed information about a specific finding |
+| `secopsai_triage`        | Set disposition, status, and add analyst notes    |
+| `secopsai_check_threats` | Check for malware or exfiltration indicators      |
+| `secopsai_mitigate`      | Get recommended mitigation steps for a finding    |
+| `secopsai_search`        | Search findings by keyword or pattern             |
+| `secopsai_stats`         | Get statistics about the SOC database             |
 
 See [docs/OpenClaw-Integration.md](docs/OpenClaw-Integration.md) for detailed usage.
 
@@ -160,6 +161,27 @@ Core layers:
 - **Correlation**: IP/user/time/hash correlation across platforms
 - **Triage**: investigation, case-file generation, dispositions, queueable actions
 - **Operator surfaces**: CLI-first, plugin optional, notifications optional
+
+## Evaluation
+
+SecOpsAI currently ships two evaluation paths with different purposes:
+
+- `python evaluate.py` is the canonical detector benchmark used by regression tests, tuning work, and adaptive score tracking.
+- `python -m eval.harness.runner` is the broader v2 evaluation harness for scenario-oriented gates and report generation.
+
+Examples:
+
+```bash
+# Canonical detector benchmark
+python evaluate.py
+python evaluate.py --verbose
+
+# Scenario/performance harness
+./scripts/run_eval_harness.sh --full
+./scripts/run_eval_harness.sh --category openclaw
+```
+
+Recommendation: use `evaluate.py` when modifying `detect.py` or tracking benchmark changes. Treat `eval.harness.runner` as a supplementary scenario/performance harness, not the primary tuning path.
 
 ## Threat Intelligence (IOC) pipeline
 
@@ -220,6 +242,7 @@ OpenClaw/host monitoring can also send Slack alerts for new high-severity findin
 ```bash
 python run_openclaw_live.py --slack
 bash scripts/install_openclaw_launchd.sh
+bash scripts/install_triage_summary_launchd.sh
 ```
 
 You can tune supply-chain scoring and package exceptions by copying:
