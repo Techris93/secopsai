@@ -40,6 +40,68 @@ class DetectionRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(metrics["recall"], 0.85)
         self.assertLessEqual(metrics["false_negatives"], 250)
 
+    def test_dns_exfiltration_skips_known_analytics_domains(self):
+        results = run_detection(self.labeled_events)
+        rule_two_hits = set(results["rule_results"].get("RULE-002", []))
+
+        analytics_group = {
+            event["event_id"]
+            for event in self.labeled_events
+            if event.get("sourcetype") == "dns"
+            and str(event.get("query", "")).endswith(".datadoghq.com")
+        }
+        malicious_group = {
+            event["event_id"]
+            for event in self.labeled_events
+            if event.get("sourcetype") == "dns"
+            and str(event.get("query", "")).endswith(".exfil-dns.ru")
+        }
+
+        self.assertTrue(analytics_group)
+        self.assertTrue(malicious_group)
+        self.assertTrue(rule_two_hits.isdisjoint(analytics_group))
+        self.assertTrue(malicious_group.issubset(rule_two_hits))
+
+    def test_c2_beaconing_skips_monitoring_heartbeat_traffic(self):
+        results = run_detection(self.labeled_events)
+        rule_three_hits = set(results["rule_results"].get("RULE-003", []))
+
+        heartbeat_group = {
+            event["event_id"]
+            for event in self.labeled_events
+            if event.get("message") == "Monitoring heartbeat 10.0.1.14 -> 203.0.113.43:443"
+        }
+        malicious_beacon_group = {
+            event["event_id"]
+            for event in self.labeled_events
+            if event.get("src_ip") == "10.0.5.11" and event.get("dest_ip") == "203.0.113.30"
+        }
+
+        self.assertTrue(heartbeat_group)
+        self.assertTrue(malicious_beacon_group)
+        self.assertTrue(rule_three_hits.isdisjoint(heartbeat_group))
+        self.assertTrue(malicious_beacon_group.issubset(rule_three_hits))
+
+    def test_lateral_movement_skips_backup_metadata_scans(self):
+        results = run_detection(self.labeled_events)
+        rule_four_hits = set(results["rule_results"].get("RULE-004", []))
+
+        backup_scan_group = {
+            event["event_id"]
+            for event in self.labeled_events
+            if event.get("message", "").startswith("Backup metadata scan 10.0.1.10")
+        }
+        malicious_smb_group = {
+            event["event_id"]
+            for event in self.labeled_events
+            if event.get("src_ip") == "10.0.5.23" and event.get("dest_port") == 445
+        }
+
+        self.assertTrue(backup_scan_group)
+        self.assertTrue(malicious_smb_group)
+        self.assertTrue(rule_four_hits.isdisjoint(backup_scan_group))
+        self.assertTrue(malicious_smb_group.issubset(rule_four_hits))
+
 
 class SwarmSafetyTests(unittest.TestCase):
     def test_adopt_branch_refuses_dirty_worktree(self):

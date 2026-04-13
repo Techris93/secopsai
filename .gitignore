@@ -1,7 +1,9 @@
-data/
+data/*
 !data/.gitkeep
 !data/fixtures/
 !data/fixtures/**
+!data/feedback.jsonl
+!data/golden_set.json
 __pycache__/
 *.pyc
 site/

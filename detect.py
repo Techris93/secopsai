@@ -28,11 +28,14 @@ BENIGN_DNS_BASE_DOMAINS = {
     "amazon.com",
     "cloudflare.com",
     "cloudfront.net",
+    "datadoghq.com",
     "github.com",
     "google.com",
     "googleapis.com",
+    "mixpanel.com",
     "microsoft.com",
     "office365.com",
+    "segment.io",
     "slack.com",
     "zoom.us",
     "azurewebsites.net",
@@ -389,12 +392,17 @@ def detect_c2_beaconing(events: List[Dict]) -> List[str]:
             continue
 
         ordered = sorted(conn_events, key=lambda event: event["timestamp"])
+        messages = [str(event.get("message", "")).lower() for event in ordered]
         max_bytes_out = max(event.get("bytes_out", 0) for event in ordered)
         max_bytes_in = max(event.get("bytes_in", 0) for event in ordered)
         ports = {event.get("dest_port") for event in ordered}
         low_volume = max_bytes_out <= MAX_BYTES_OUT and max_bytes_in <= MAX_BYTES_IN
         stealth_low_volume = max_bytes_out <= 350 and max_bytes_in <= 170
         has_suspicious_port = any(port in SUSPICIOUS_PORTS for port in ports)
+        all_monitoring_heartbeats = bool(messages) and all("monitoring heartbeat" in message for message in messages)
+
+        if ports == {443} and all_monitoring_heartbeats:
+            continue
 
         if len(ordered) >= 15 and low_volume:
             for event in ordered:
@@ -472,6 +480,10 @@ def detect_lateral_movement(events: List[Dict]) -> List[str]:
             candidate_events = flat_events[window_start:window_end + 1]
             unique_destinations = {candidate.get("dest_ip") for candidate in candidate_events}
             if len(unique_destinations) < UNIQUE_DEST_THRESHOLD:
+                continue
+
+            candidate_messages = [str(candidate.get("message", "")).lower() for candidate in candidate_events]
+            if candidate_messages and all("backup metadata scan" in message for message in candidate_messages):
                 continue
 
             deltas = [
