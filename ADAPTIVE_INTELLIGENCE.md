@@ -52,18 +52,18 @@ Daily at 11:00 PM UTC (2:00 AM Istanbul)
 
 ## Threat Intelligence Sources
 
-| Source | Type | Frequency |
-|--------|------|-----------|
-| NVD (CVE Database) | Vulnerabilities | Daily |
-| Bleeping Computer | News | Daily |
-| Krebs on Security | Analysis | Daily |
-| The Hacker News | News | Daily |
-| Microsoft Security | Alerts | Daily |
-| Google TAG | Reports | Daily |
-| GitHub (PoCs) | Exploits | Daily |
-| Ars Technica | News | Daily |
-| Wired Security | News | Daily |
-| Bruce Schneier | Analysis | Daily |
+| Source             | Type            | Frequency |
+| ------------------ | --------------- | --------- |
+| NVD (CVE Database) | Vulnerabilities | Daily     |
+| Bleeping Computer  | News            | Daily     |
+| Krebs on Security  | Analysis        | Daily     |
+| The Hacker News    | News            | Daily     |
+| Microsoft Security | Alerts          | Daily     |
+| Google TAG         | Reports         | Daily     |
+| GitHub (PoCs)      | Exploits        | Daily     |
+| Ars Technica       | News            | Daily     |
+| Wired Security     | News            | Daily     |
+| Bruce Schneier     | Analysis        | Daily     |
 
 ## Auto-Generated Detection Rules
 
@@ -107,16 +107,18 @@ workspace/
 ### On MacBook
 
 ```bash
-# 1. Copy plist to LaunchAgents
-cp com.openclaw.secopsai.adaptive-intel.plist \
-   ~/Library/LaunchAgents/
+# First-time install: provide Telegram values explicitly
+TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... \
+        bash scripts/install_adaptive_intel_launchd.sh
 
-# 2. Load the service
-launchctl load ~/Library/LaunchAgents/com.openclaw.secopsai.adaptive-intel.plist
+# Reinstall after repo updates: existing local Telegram values are preserved
+bash scripts/install_adaptive_intel_launchd.sh
 
-# 3. Verify it's loaded
-launchctl list | grep adaptive-intel
+# Verify the loaded job
+launchctl print gui/$(id -u)/com.openclaw.secopsai.adaptive-intel
 ```
+
+Do not copy the tracked plist into `~/Library/LaunchAgents` manually. The repo copy intentionally keeps `TELEGRAM_BOT_TOKEN` as `SET_ME_LOCALLY`, and the installer is what preserves your local secret on reinstall.
 
 ### Manual Run (Testing)
 
@@ -193,6 +195,7 @@ STEP 4: Testing Rule Performance
 ## Monitoring
 
 Check logs:
+
 ```bash
 # Latest run
 tail -f ~/.openclaw/workspace/logs/adaptive-intel-out.log
@@ -224,6 +227,7 @@ launchctl print gui/$(id -u)/com.openclaw.secopsai.adaptive-intel
 ## Troubleshooting
 
 ### No indicators fetched
+
 ```bash
 # Check network connectivity
 curl -I https://services.nvd.nist.gov/rest/json/cves/2.0
@@ -233,6 +237,7 @@ python3 -c "import feedparser; print(feedparser.parse('https://...'))"
 ```
 
 ### Rules not generating
+
 ```bash
 # Check Python dependencies
 pip3 install feedparser requests
@@ -242,6 +247,7 @@ ls -la ~/.openclaw/workspace/secopsai/threat_intel/
 ```
 
 ### F1 not improving
+
 - Generated rules may not match your synthetic data patterns
 - Consider expanding synthetic data generation
 - Check if new attack types are represented in test data
