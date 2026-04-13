@@ -16,9 +16,9 @@ def detect_auto_023(events):
     Generated: 2026-04-12T23:36:43.498952
     """
     bypass_patterns = [
-        r"admin['"]?\s*:\s*['"]?admin",
-        r"['"]or['"]?\s*[=1]+",
-        r"['"]\s*or\s*['"]1['"]\s*=\s*['"]1",
+    r'admin[\'\"]?\s*:\s*[\'\"]?admin',
+        r'[\'\"]or[\'\"]?\s*[=1]+',
+        r'[\'\"]\s*or\s*[\'\"]1[\'\"]\s*=\s*[\'\"]1',
         r"X-Forwarded-For:\s*127\.0\.0\.1",
         r"X-Real-IP:\s*127\.0\.0\.1",
         r"X-Originating-IP:\s*127\.0\.0\.1",

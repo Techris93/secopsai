@@ -259,7 +259,7 @@ class AdaptiveRuleGenerator:
         r"\\|\\s*perl\\s+-e",
         r"\\|\\s*nc\\s+-[el]",
         r"bash\\s+-i\\s+\>&\\s+/dev/tcp/",
-        r"python\\d*\\s+-c\\s+['\"]import\\s+socket",
+        r'python\\d*\\s+-c\\s+[\'\"]import\\s+socket',
         r"ruby\\s+-rsocket",
     ]
     
@@ -305,9 +305,9 @@ class AdaptiveRuleGenerator:
     Generated: {datetime.utcnow().isoformat()}
     """
     bypass_patterns = [
-        r"admin['\"]?\\s*:\\s*['\"]?admin",
-        r"['\"]or['\"]?\\s*[=1]+",
-        r"['\"]\\s*or\\s*['\"]1['\"]\\s*=\\s*['\"]1",
+        r'admin[\'\"]?\\s*:\\s*[\'\"]?admin',
+        r'[\'\"]or[\'\"]?\\s*[=1]+',
+        r'[\'\"]\\s*or\\s*[\'\"]1[\'\"]\\s*=\\s*[\'\"]1',
         r"X-Forwarded-For:\\s*127\\.0\\.0\\.1",
         r"X-Real-IP:\\s*127\\.0\\.0\\.1",
         r"X-Originating-IP:\\s*127\\.0\\.0\\.1",
