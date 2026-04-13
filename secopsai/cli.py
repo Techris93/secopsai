@@ -13,6 +13,7 @@ import soc_store
 from adapters import AdapterRegistry
 from correlation import run_correlation
 from detect import run_detection
+from scripts.sync_findings_to_supabase import execute_sync as execute_findings_sync
 
 from secopsai.formatters import fmt_finding, fmt_list, to_json
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
@@ -585,6 +586,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     triage_summary.add_argument("--summary-dir", default=None, help="Directory to write summary reports")
     triage_summary.add_argument("--limit", type=int, default=20)
 
+    sync_findings = sub.add_parser("sync-findings", help="Sync local findings into the dashboard Supabase table")
+    sync_findings.add_argument("--db-path", default=None, help="Path to local SOC SQLite DB")
+    sync_findings.add_argument("--findings-dir", default=None, help="Directory containing openclaw findings bundles")
+    sync_findings.add_argument("--dashboard-env", default=None, help="Optional dashboard .env file for Supabase credentials")
+    sync_findings.add_argument("--supabase-url", default=None, help="Override Supabase URL")
+    sync_findings.add_argument("--supabase-key", default=None, help="Override Supabase API key")
+    sync_findings.add_argument("--table", default=None, help="Override Supabase table name")
+    sync_findings.add_argument("--schema-sql", default=None, help="Schema SQL/migration file to validate mapping against")
+    sync_findings.add_argument("--skip-schema-check", action="store_true", help="Skip local schema/mapping validation")
+    sync_findings.add_argument("--dry-run", action="store_true", help="Print payload summary without writing")
+
     return p.parse_args(argv)
 
 
@@ -647,6 +659,23 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.cmd == "correlate":
         return _run_correlate(time_window=args.window, json_output=args.json)
+
+    if args.cmd == "sync-findings":
+        try:
+            summary = execute_findings_sync(args)
+        except SystemExit as exc:
+            if args.json:
+                print(to_json({"error": str(exc)}))
+            else:
+                print(str(exc))
+            return 1
+        payload = summary.__dict__
+        if args.json:
+            print(to_json(payload))
+        else:
+            for key, value in payload.items():
+                print(f"{key}={value}")
+        return 0
 
     refresh_meta = maybe_refresh(args)
 
@@ -1127,7 +1156,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if payload["disabled_rules"]:
                     print(f"disabled_rules={payload['disabled_rules']}")
                 if payload["rule_weight_overrides"]:
-                        print(f"rule_weight_overrides={payload['rule_weight_overrides']}")
+                    print(f"rule_weight_overrides={payload['rule_weight_overrides']}")
             return 0
 
         if args.supply_chain_cmd == "allowlist":

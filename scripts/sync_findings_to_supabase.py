@@ -21,18 +21,17 @@ import argparse
 import json
 import os
 import sqlite3
-import sys
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable
 from urllib import error, request
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_FINDINGS_DIR = ROOT_DIR / "data" / "openclaw" / "findings"
-DEFAULT_SOC_DB = DEFAULT_FINDINGS_DIR / "openclaw_soc.db"
-DEFAULT_DASHBOARD_ENV = ROOT_DIR.parent / "secopsai-dashboard" / ".env"
-DEFAULT_SCHEMA_SQL = ROOT_DIR.parent / "secopsai-dashboard" / "supabase_migrations" / "2026-03-28_findings.sql"
+ROOT_DIR: Path = Path(__file__).resolve().parent.parent
+DEFAULT_FINDINGS_DIR: Path = ROOT_DIR / "data" / "openclaw" / "findings"
+DEFAULT_SOC_DB: Path = DEFAULT_FINDINGS_DIR / "openclaw_soc.db"
+DEFAULT_DASHBOARD_ENV: Path = ROOT_DIR.parent / "secopsai-dashboard" / ".env"
+DEFAULT_SCHEMA_SQL: Path = ROOT_DIR.parent / "secopsai-dashboard" / "supabase_migrations" / "2026-03-28_findings.sql"
 REQUIRED_TABLE = "findings"
 EXPECTED_COLUMNS = {
     "external_finding_id",
@@ -338,8 +337,20 @@ def chunked(values: Iterable[dict[str, Any]], size: int) -> Iterable[list[dict[s
         yield batch
 
 
+def _is_default_schema_path(schema_path: Path) -> bool:
+    return schema_path.resolve() == DEFAULT_SCHEMA_SQL.resolve()
+
+
+def _fallback_schema_columns(table_name: str) -> set[str]:
+    if table_name != REQUIRED_TABLE:
+        raise SchemaValidationError(f"Schema file does not exist: {DEFAULT_SCHEMA_SQL}")
+    return set(EXPECTED_COLUMNS)
+
+
 def parse_schema_columns(schema_path: Path, table_name: str = REQUIRED_TABLE) -> set[str]:
     if not schema_path.exists():
+        if _is_default_schema_path(schema_path):
+            return _fallback_schema_columns(table_name)
         raise SchemaValidationError(f"Schema file does not exist: {schema_path}")
 
     content = schema_path.read_text(encoding="utf-8")
