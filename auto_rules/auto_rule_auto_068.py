@@ -6,14 +6,14 @@ Description: Detects remote code execution from github.com/kasem545/CVE-2025-541
 Severity: critical
 MITRE: T1059, T1203
 Source: a4c508ad78b23676
-Generated: 2026-03-29T20:16:54.445324
+Generated: 2026-04-12T23:36:43.525317
 """
 
 def detect_auto_068(events):
     """
     Threat Intel: github.com/kasem545/CVE-2025-54123-Poc
     Description: Remote Code Execution detection
-    Generated: 2026-03-29T20:16:54.439500
+    Generated: 2026-04-12T23:36:43.500748
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution
@@ -26,7 +26,7 @@ def detect_auto_068(events):
         r"\|\s*perl\s+-e",
         r"\|\s*nc\s+-[el]",
         r"bash\s+-i\s+\>&\s+/dev/tcp/",
-        r"python\d*\s+-c\s+['\"]import\s+socket",
+        r"python\d*\s+-c\s+['"]import\s+socket",
         r"ruby\s+-rsocket",
     ]
     

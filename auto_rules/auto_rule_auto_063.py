@@ -6,14 +6,14 @@ Description: Detects remote code execution from github.com/4nuxd/CVE-2025-66034
 Severity: critical
 MITRE: T1059, T1203
 Source: 82abe646c0ffc3cc
-Generated: 2026-03-29T20:16:54.445056
+Generated: 2026-04-12T23:36:43.524174
 """
 
 def detect_auto_063(events):
     """
     Threat Intel: github.com/4nuxd/CVE-2025-66034
     Description: Remote Code Execution detection
-    Generated: 2026-03-29T20:16:54.439308
+    Generated: 2026-04-12T23:36:43.500510
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution
@@ -26,7 +26,7 @@ def detect_auto_063(events):
         r"\|\s*perl\s+-e",
         r"\|\s*nc\s+-[el]",
         r"bash\s+-i\s+\>&\s+/dev/tcp/",
-        r"python\d*\s+-c\s+['\"]import\s+socket",
+        r"python\d*\s+-c\s+['"]import\s+socket",
         r"ruby\s+-rsocket",
     ]
     
