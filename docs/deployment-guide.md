@@ -244,6 +244,42 @@ SecOpsAI also ships a helper installer:
 bash scripts/install_openclaw_launchd.sh
 ```
 
+### Managed launchd installers (macOS)
+
+Use the repo-managed installer scripts instead of hand-editing plist files in `~/Library/LaunchAgents`.
+
+- `bash scripts/install_secopsai_agent_launchd.sh`
+  - refreshes `secopsai refresh --platform macos,openclaw`
+  - default cadence: every 300 seconds
+  - logs: `logs/agent.log`, `logs/agent.error.log`
+- `bash scripts/install_openclaw_launchd.sh`
+  - runs the OpenClaw daily workflow wrapper
+  - default cadence: every day at 09:00 local time
+  - logs: `data/openclaw/logs/launchd.out.log`, `data/openclaw/logs/launchd.err.log`
+- `bash scripts/install_supply_chain_launchd.sh`
+  - runs the continuous supply-chain monitor
+  - behavior: `RunAtLoad` plus `KeepAlive`
+  - logs: `data/supply_chain/launchd.out.log`, `data/supply_chain/launchd.err.log`
+- `bash scripts/install_triage_orchestrator_launchd.sh`
+  - runs the guarded triage orchestrator
+  - default cadence: every day at 03:20 local time
+  - logs: `reports/triage/orchestrator/launchd.out.log`, `reports/triage/orchestrator/launchd.err.log`
+- `bash scripts/install_triage_summary_launchd.sh`
+  - sends Slack notifications only for newly active triage findings
+  - default cadence: every 600 seconds
+  - logs: `reports/triage/summary/launchd.out.log`, `reports/triage/summary/launchd.err.log`
+- `bash scripts/install_adaptive_intel_launchd.sh`
+  - runs the adaptive-intelligence daily pipeline
+  - default cadence: every day at 23:00 local time
+  - preserves an existing local Telegram token and chat ID on reinstall
+  - logs: `~/.openclaw/workspace/logs/adaptive-intel-out.log`, `~/.openclaw/workspace/logs/adaptive-intel-err.log`
+
+Quick verification after installing any job:
+
+```bash
+launchctl print gui/$(id -u)/LABEL
+```
+
 ## 2.1 Supply-Chain Monitor Scheduling
 
 Use the built-in helper to schedule continuous package monitoring:
