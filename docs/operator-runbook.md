@@ -309,6 +309,22 @@ secopsai show OCF-XXXX --json
 secopsai intel match --limit-iocs 500 --json
 ```
 
+To keep the local refresh pipeline running on a Mac every 5 minutes with the repo virtual environment:
+
+```bash
+bash scripts/install_secopsai_agent_launchd.sh
+```
+
+Optional overrides:
+
+```bash
+SECOPSAI_REFRESH_PLATFORMS=macos,linux,openclaw \
+SECOPSAI_REFRESH_INTERVAL_SECONDS=600 \
+	bash scripts/install_secopsai_agent_launchd.sh
+```
+
+The installer writes `~/Library/LaunchAgents/com.secopsai.agent.plist`, reloads the job, and sends output to `logs/agent.log` and `logs/agent.error.log` inside the repo.
+
 ---
 
 ## 9. Repo-local development wrapper
