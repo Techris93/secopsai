@@ -208,8 +208,21 @@ class ThreatIntelIngestor:
                     'order': 'desc',
                     'per_page': 20
                 }
-                resp = self.session.get(GITHUB_SEARCH_URL, params=params, 
-                                       headers=headers, timeout=30)
+                resp = self.session.get(
+                    GITHUB_SEARCH_URL,
+                    params=params,
+                    headers=headers,
+                    timeout=30,
+                )
+
+                if resp.status_code == 401 and headers:
+                    print("[WARN] GitHub token unauthorized, retrying search without token")
+                    resp = self.session.get(
+                        GITHUB_SEARCH_URL,
+                        params=params,
+                        headers={},
+                        timeout=30,
+                    )
                 
                 if resp.status_code == 403:  # Rate limited
                     print(f"[WARN] GitHub rate limited, skipping")

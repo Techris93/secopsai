@@ -71,13 +71,7 @@ EXIT_CODE=$?
 
 if [ $EXIT_CODE -eq 0 ]; then
     log "✅ Pipeline completed successfully"
-    
-    # Check if new rules were deployed
-    if grep -q "Rules DEPLOYED" "$LOG_FILE" 2>/dev/null; then
-        send_telegram "🧠 *SecOpsAI Adapted!*\n\nNew threat intelligence processed and rules deployed.\n\n📁 Log: \`$LOG_FILE\`"
-    else
-        send_telegram "🧠 *SecOpsAI Intelligence Check*\n\nNo improvement from new rules. System is current.\n\n📁 Log: \`$LOG_FILE\`"
-    fi
+    # Success notification is owned by adaptive_intelligence_pipeline.py to avoid duplicates.
 else
     log "❌ Pipeline failed with exit code $EXIT_CODE"
     send_telegram "❌ *Adaptive Intel Failed*\n\nExit code: $EXIT_CODE\n\n📁 Log: \`$LOG_FILE\`"

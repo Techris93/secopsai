@@ -46,16 +46,8 @@ class AdaptiveRuleGenerator:
         self.next_rule_id = self._get_next_rule_id()
     
     def _get_next_rule_id(self) -> int:
-        """Find the next available rule ID"""
-        existing_rules = []
-        if os.path.exists(RULES_OUTPUT_DIR):
-            for f in os.listdir(RULES_OUTPUT_DIR):
-                if f.startswith('auto_rule_') and f.endswith('.py'):
-                    match = re.search(r'AUTO-(\d+)', f)
-                    if match:
-                        existing_rules.append(int(match.group(1)))
-        
-        return max(existing_rules, default=0) + 1
+        """Start each generation run from a clean AUTO-001 numbering scheme."""
+        return 1
     
     def load_threat_intel(self, filepath: Optional[str] = None) -> List[Dict[str, Any]]:
         """Load threat intelligence from JSON file"""
@@ -259,7 +251,7 @@ class AdaptiveRuleGenerator:
         r"\\|\\s*perl\\s+-e",
         r"\\|\\s*nc\\s+-[el]",
         r"bash\\s+-i\\s+\>&\\s+/dev/tcp/",
-        r'python\\d*\\s+-c\\s+[\'\"]import\\s+socket',
+        r"python\\d*\\s+-c\\s+['\\\"]import\\s+socket",
         r"ruby\\s+-rsocket",
     ]
     
@@ -305,9 +297,9 @@ class AdaptiveRuleGenerator:
     Generated: {datetime.utcnow().isoformat()}
     """
     bypass_patterns = [
-        r'admin[\'\"]?\\s*:\\s*[\'\"]?admin',
-        r'[\'\"]or[\'\"]?\\s*[=1]+',
-        r'[\'\"]\\s*or\\s*[\'\"]1[\'\"]\\s*=\\s*[\'\"]1',
+        r"admin['\\\"]?\\s*:\\s*['\\\"]?admin",
+        r"['\\\"]or['\\\"]?\\s*[=1]+",
+        r"['\\\"]\\s*or\\s*['\\\"]1['\\\"]\\s*=\\s*['\\\"]1",
         r"X-Forwarded-For:\\s*127\\.0\\.0\\.1",
         r"X-Real-IP:\\s*127\\.0\\.0\\.1",
         r"X-Originating-IP:\\s*127\\.0\\.0\\.1",
@@ -565,6 +557,9 @@ class AdaptiveRuleGenerator:
     
     def save_rules(self):
         """Save generated rules to Python files"""
+        for existing in Path(RULES_OUTPUT_DIR).glob("auto_rule_*.py"):
+            existing.unlink()
+
         for rule in self.rules:
             filename = f"auto_rule_{rule.rule_id.lower().replace('-', '_')}.py"
             filepath = os.path.join(RULES_OUTPUT_DIR, filename)

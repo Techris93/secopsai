@@ -15,6 +15,7 @@ import os
 import sys
 import subprocess
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -47,6 +48,27 @@ class AdaptiveIntelligencePipeline:
         
         # Ensure log directory exists
         os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
+
+    @staticmethod
+    def _extract_f1_scores(text: str) -> list[float]:
+        """Extract all F1-like numeric values from command output."""
+        scores: list[float] = []
+        if not text:
+            return scores
+
+        patterns = [
+            r"F1_SCORE\s*=\s*([0-9]*\.?[0-9]+)",
+            r"\bNew:\s*([0-9]*\.?[0-9]+)",
+            r"F1 Score with new rules:\s*([0-9]*\.?[0-9]+)",
+            r"F1 Score:\s*([0-9]*\.?[0-9]+)",
+        ]
+        for pattern in patterns:
+            for match in re.findall(pattern, text):
+                try:
+                    scores.append(float(match))
+                except Exception:
+                    continue
+        return scores
     
     def log(self, message: str):
         """Log to console and file"""
@@ -130,14 +152,21 @@ class AdaptiveIntelligencePipeline:
                 capture_output=True,
                 text=True
             )
-            
-            for line in result.stdout.split('\n'):
-                if 'F1_SCORE=' in line:
-                    f1_part = line.split('=', 1)[1].strip()
-                    f1_str = f1_part.split()[0]
-                    self.results['f1_baseline'] = float(f1_str)
-                    self.log(f"[BASELINE] F1 Score: {self.results['f1_baseline']:.6f}")
-                    break
+
+            combined = "\n".join([result.stdout or "", result.stderr or ""])
+            scores = self._extract_f1_scores(combined)
+            if scores:
+                self.results['f1_baseline'] = scores[0]
+                self.log(f"[BASELINE] F1 Score: {self.results['f1_baseline']:.6f}")
+            else:
+                self.log("[WARN] Could not parse baseline F1 from evaluate.py output")
+                self.results['errors'].append("Validation: could not parse baseline F1")
+
+            if result.returncode != 0:
+                self.log(f"[WARN] evaluate.py exited non-zero: {result.returncode}")
+                if result.stderr:
+                    for line in result.stderr.splitlines()[-20:]:
+                        self.log(f"[EVAL_STDERR] {line}")
             
             return True
         except Exception as e:
@@ -159,29 +188,46 @@ class AdaptiveIntelligencePipeline:
                 capture_output=True,
                 text=True
             )
+
+            if result.stdout:
+                for line in result.stdout.splitlines()[-80:]:
+                    self.log(f"[VALIDATOR_STDOUT] {line}")
+            if result.stderr:
+                for line in result.stderr.splitlines()[-80:]:
+                    self.log(f"[VALIDATOR_STDERR] {line}")
             
             # Check if it succeeded
             if result.returncode == 0:
                 self.results['deployed'] = True
                 self.log("[SUCCESS] Rules improved F1 and were deployed")
-            else:
+            elif result.returncode == 1:
                 self.results['deployed'] = False
                 self.log("[INFO] Rules did not improve F1 - skipped deployment")
-            
-            # Get new F1 from output
-            for line in result.stdout.split('\n'):
-                if 'F1_SCORE=' in line or 'New:' in line:
-                    try:
-                        if 'New:' in line:
-                            f1_part = line.split('New:', 1)[1].strip()
-                            f1_str = f1_part.split()[0]
-                            self.results['f1_new'] = float(f1_str)
-                        elif 'new rules:' in line.lower():
-                            f1_part = line.split(':')[-1].strip()
-                            f1_str = f1_part.split()[0]
-                            self.results['f1_new'] = float(f1_str)
-                    except:
-                        pass
+            else:
+                self.results['deployed'] = False
+                self.results['errors'].append(f"Testing: validator failed with exit {result.returncode}")
+                self.log(f"[ERROR] Adaptive rule validator failed with exit {result.returncode}")
+                return False
+
+            # Get new F1 from output (prefer "New:" line, fallback to last parsed score)
+            combined = "\n".join([result.stdout or "", result.stderr or ""])
+            explicit_new = re.findall(r"\bNew:\s*([0-9]*\.?[0-9]+)", combined)
+            if explicit_new:
+                try:
+                    self.results['f1_new'] = float(explicit_new[-1])
+                except Exception:
+                    explicit_new = []
+
+            if not explicit_new:
+                scores = self._extract_f1_scores(combined)
+                if scores:
+                    self.results['f1_new'] = scores[-1]
+
+            if self.results['f1_new'] == 0.0 and self.results['f1_baseline'] > 0.0 and not explicit_new:
+                # Avoid misleading zero when parser can't recover a "new" score.
+                self.results['f1_new'] = self.results['f1_baseline']
+                self.results['errors'].append("Testing: could not parse new F1; defaulted to baseline")
+                self.log("[WARN] Could not parse new F1, defaulting to baseline value")
             
             return True
         except Exception as e:
@@ -196,7 +242,14 @@ class AdaptiveIntelligencePipeline:
         self.log("=" * 60)
         
         # Build summary message
-        status_emoji = "✅" if self.results['deployed'] else "⚠️"
+        validation_failed = any("validator failed" in str(err).lower() for err in self.results['errors'])
+        status_emoji = "✅" if self.results['deployed'] else ("❌" if validation_failed else "⚠️")
+        if self.results['deployed']:
+            outcome_line = "✅ Rules DEPLOYED"
+        elif validation_failed:
+            outcome_line = "❌ Validation failed - rules not deployed"
+        else:
+            outcome_line = "⚠️ No improvement - rules skipped"
         
         message = f"""{status_emoji} *SecOpsAI Adaptive Intelligence Complete*
 
@@ -208,7 +261,7 @@ class AdaptiveIntelligencePipeline:
 
 📈 *Improvement:* `{self.results['f1_new'] - self.results['f1_baseline']:+.6f}`
 
-{"✅ Rules DEPLOYED" if self.results['deployed'] else "⚠️ No improvement - rules skipped"}
+{outcome_line}
 
 📁 *Log:* `{self.log_file}`
 
