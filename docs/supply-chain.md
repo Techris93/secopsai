@@ -277,9 +277,9 @@ The Supply Chain Security Module consists of:
 
 ## Further Reading
 
-- [User Workbook](../USER_WORKBOOK.md) - Complete user guide
-- [Research Report](../research/supply-chain-exploits-report.md) - Technical details
-- [SecOpsAI Integration](../SECOPSAI_INTEGRATION.md) - Integration guide
+- [User Workbook](https://github.com/Techris93/secopsai/blob/main/USER_WORKBOOK.md) - Complete user guide
+- [Research Report](https://github.com/Techris93/secopsai/blob/main/research/supply-chain-exploits-report.md) - Technical details
+- [SecOpsAI Integration](https://github.com/Techris93/secopsai/blob/main/supply-chain/SECOPSAI_INTEGRATION.md) - Integration guide
 
 ## References
 

@@ -1,3 +1,12 @@
+---
+title: Home
+template: home.html
+hide:
+  - navigation
+  - toc
+description: Local-first cross-platform SecOps docs for OpenClaw, macOS, Linux, and Windows.
+---
+
 # secopsai
 
 Local-first cross-platform SecOps for OpenClaw, macOS, Linux, and Windows.
@@ -15,15 +24,16 @@ secopsai turns OpenClaw and host OS telemetry into repeatable, explainable secur
 ## Start Here
 
 - [Getting Started](getting-started.md)
+- [Operator Runbook](operator-runbook.md)
 - [Findings Triage Guide](findings-triage-guide.md)
 - [Triage Orchestrator](triage-orchestrator.md)
-- [Universal Adapters](universal-adapters.md)
-- [Correlation Engine](correlation-engine.md)
 - [Rules Registry](rules-registry.md)
 - [Deployment Guide](deployment-guide.md)
 - [API Reference](api-reference.md)
 - [Threat Intel (IOCs)](threat-intel.md)
 - [OpenClaw Integration](OpenClaw-Integration.md)
+- [Supply Chain Security](supply-chain.md)
+- [OpenClaw Plugin](OpenClaw-Plugin.md)
 
 ## Quick Start
 
@@ -70,8 +80,8 @@ secopsai triage orchestrate --search-root ~/secopsai
 ## Operator Guides
 
 - [Beginner Live Guide](BEGINNER-LIVE-GUIDE.md)
+- [Operator Runbook](operator-runbook.md)
 - [Findings Triage Guide](findings-triage-guide.md)
 - [Triage Orchestrator](triage-orchestrator.md)
 - [OpenClaw Integration](OpenClaw-Integration.md)
-- [Universal Adapters](universal-adapters.md)
-- [Correlation Engine](correlation-engine.md)
+- [Supply Chain Security](supply-chain.md)

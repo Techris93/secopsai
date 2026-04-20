@@ -9,26 +9,34 @@ theme:
   custom_dir: overrides
   favicon: assets/favicon.svg
   logo: assets/favicon.svg
+  font:
+    text: Inter
+    code: JetBrains Mono
   palette:
     - scheme: slate
-      primary: pink
-      accent: pink
+      primary: green
+      accent: green
   features:
     - navigation.top
     - navigation.instant
     - search.highlight
+    - content.code.copy
+
+extra_css:
+  - assets/stylesheets/extra.css
 
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Operator Runbook: operator-runbook.md
   - Findings Triage Guide: findings-triage-guide.md
   - Triage Orchestrator: triage-orchestrator.md
-  - Universal Adapters: universal-adapters.md
-  - Correlation Engine: correlation-engine.md
   - Rules Registry: rules-registry.md
   - Deployment Guide: deployment-guide.md
   - API Reference: api-reference.md
   - Threat Intel (IOCs): threat-intel.md
   - Threat Model: threat-model.md
+  - Supply Chain Security: supply-chain.md
   - Beginner Live Guide: BEGINNER-LIVE-GUIDE.md
   - OpenClaw Integration: OpenClaw-Integration.md
+  - OpenClaw Plugin: OpenClaw-Plugin.md

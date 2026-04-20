@@ -1,0 +1,340 @@
+{% extends "main.html" %}
+
+{% block hero %}
+  <section class="secops-home__hero">
+    <div class="secops-home__hero-grid secops-home__inner">
+      <div class="secops-home__hero-copy">
+        <div class="secops-home__eyebrow">
+          <span class="secops-home__dot"></span>
+          Terminal-native docs for local-first SecOps
+        </div>
+        <h1>Security operations docs for teams that keep telemetry close.</h1>
+        <p class="secops-home__lead">
+          Use SecOpsAI to collect from OpenClaw and host systems, correlate
+          findings, orchestrate triage, and deploy monitoring workflows without
+          giving up operator control.
+        </p>
+        <div class="secops-home__actions">
+          <a class="secops-home__button" href="{{ 'getting-started/' | url }}">
+            Get Started
+          </a>
+          <a
+            class="secops-home__button secops-home__button--ghost"
+            href="{{ config.repo_url }}"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            GitHub
+          </a>
+          <a
+            class="secops-home__button secops-home__button--ghost"
+            href="{{ 'deployment-guide/' | url }}"
+          >
+            Deployment Guide
+          </a>
+        </div>
+        <div class="secops-home__pills">
+          <span class="secops-home__pill">OpenClaw</span>
+          <span class="secops-home__pill">macOS</span>
+          <span class="secops-home__pill">Linux</span>
+          <span class="secops-home__pill">Windows</span>
+          <span class="secops-home__pill">Triage orchestration</span>
+          <span class="secops-home__pill">Threat intel</span>
+        </div>
+      </div>
+
+      <div class="secops-home__terminal">
+        <div class="secops-home__terminal-bar">
+          <div class="secops-home__terminal-lights">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <span class="secops-home__terminal-label">docs.secopsai.dev</span>
+        </div>
+        <pre class="secops-home__terminal-body"><code><span class="secops-home__prompt">$</span> secopsai refresh --platform macos,openclaw
+<span class="secops-home__ok">[OK]</span> host + OpenClaw telemetry collected
+<span class="secops-home__ok">[OK]</span> findings persisted to local SOC store
+
+<span class="secops-home__prompt">$</span> secopsai correlate
+<span class="secops-home__ok">[OK]</span> cross-platform correlation complete
+
+<span class="secops-home__prompt">$</span> secopsai triage orchestrate --search-root ~/secopsai
+<span class="secops-home__warn">QUEUED</span> review ACT-0001 (tune_policy)</code></pre>
+      </div>
+    </div>
+  </section>
+{% endblock %}
+
+{% block site_nav %}{% endblock %}
+
+{% block content %}
+  <div class="secops-home">
+    <section class="secops-home__section secops-home__section--manifesto">
+      <div class="secops-home__inner">
+        <p class="secops-home__section-kicker">Manifesto</p>
+        <p class="secops-home__manifesto-copy">
+          Modern threats move across
+          <span>OpenClaw</span>,
+          <span>macOS</span>,
+          <span>Linux</span>, and
+          <span>Windows</span>.
+          These docs are organized around the workflows that close the gap:
+          <span>collection</span>,
+          <span>correlation</span>,
+          <span>triage</span>, and
+          <span>human review</span>.
+        </p>
+      </div>
+    </section>
+
+    <section class="secops-home__section">
+      <div class="secops-home__inner">
+        <div class="secops-home__section-header">
+          <p class="secops-home__section-kicker">Core guides</p>
+          <h2>Open the docs like an operator console.</h2>
+          <p>
+            Start with the install path, move into investigation workflows, and
+            keep the deployment and API references nearby as you scale out.
+          </p>
+        </div>
+
+        <div class="secops-home__grid">
+          <a class="secops-home__card" href="{{ 'getting-started/' | url }}">
+            <span class="secops-home__card-label">Guide 01</span>
+            <h3>Getting Started</h3>
+            <p>
+              Install SecOpsAI, activate the virtual environment, and run the
+              first local pipeline.
+            </p>
+          </a>
+          <a class="secops-home__card" href="{{ 'findings-triage-guide/' | url }}">
+            <span class="secops-home__card-label">Guide 02</span>
+            <h3>Findings Triage Guide</h3>
+            <p>
+              Work through finding states, review decisions, and disposition
+              outcomes with a repeatable analyst flow.
+            </p>
+          </a>
+          <a class="secops-home__card" href="{{ 'triage-orchestrator/' | url }}">
+            <span class="secops-home__card-label">Guide 03</span>
+            <h3>Triage Orchestrator</h3>
+            <p>
+              Learn how queued actions, search roots, and human review connect
+              inside the native CLI workflow.
+            </p>
+          </a>
+          <a class="secops-home__card" href="{{ 'operator-runbook/' | url }}">
+            <span class="secops-home__card-label">Guide 04</span>
+            <h3>Operator Runbook</h3>
+            <p>
+              Keep the day-to-day command surface nearby, from refresh and
+              correlate through list, show, mitigate, and intel workflows.
+            </p>
+          </a>
+          <a class="secops-home__card" href="{{ 'threat-intel/' | url }}">
+            <span class="secops-home__card-label">Guide 05</span>
+            <h3>Threat Intel</h3>
+            <p>
+              Understand IOC ingestion, matching behavior, and the operational
+              meaning of stale intel or telemetry.
+            </p>
+          </a>
+          <a class="secops-home__card" href="{{ 'api-reference/' | url }}">
+            <span class="secops-home__card-label">Guide 06</span>
+            <h3>API Reference</h3>
+            <p>
+              Jump straight to command surfaces, programmatic touchpoints, and
+              integration details.
+            </p>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="secops-home__section secops-home__section--stack">
+      <div class="secops-home__inner">
+        <div class="secops-home__section-header">
+          <p class="secops-home__section-kicker">Capabilities</p>
+          <h2>The stack behind the docs.</h2>
+          <p>
+            These guides map to the core operating surfaces in SecOpsAI, so you
+            can move from first install to mature operations without changing
+            mental models.
+          </p>
+        </div>
+
+        <div class="secops-home__grid secops-home__grid--stack">
+          <article class="secops-home__card secops-home__card--rich">
+            <span class="secops-home__card-label">Surface 01</span>
+            <h3>Collect everywhere</h3>
+            <p>
+              Bring OpenClaw and host telemetry into one local-first pipeline.
+            </p>
+            <ul class="secops-home__link-list">
+              <li><a href="{{ 'OpenClaw-Integration/' | url }}">OpenClaw Integration</a></li>
+              <li><a href="{{ 'OpenClaw-Plugin/' | url }}">OpenClaw Plugin</a></li>
+              <li><a href="{{ 'BEGINNER-LIVE-GUIDE/' | url }}">Beginner Live Guide</a></li>
+            </ul>
+          </article>
+
+          <article class="secops-home__card secops-home__card--rich">
+            <span class="secops-home__card-label">Surface 02</span>
+            <h3>Investigate clearly</h3>
+            <p>
+              Move findings through review with explainable operator steps and
+              queued actions.
+            </p>
+            <ul class="secops-home__link-list">
+              <li><a href="{{ 'findings-triage-guide/' | url }}">Findings Triage Guide</a></li>
+              <li><a href="{{ 'triage-orchestrator/' | url }}">Triage Orchestrator</a></li>
+              <li><a href="{{ 'threat-model/' | url }}">Threat Model</a></li>
+            </ul>
+          </article>
+
+          <article class="secops-home__card secops-home__card--rich">
+            <span class="secops-home__card-label">Surface 03</span>
+            <h3>Operate and deploy</h3>
+            <p>
+              Wire policy, rules, deployment, and APIs into a production-ready
+              workflow.
+            </p>
+            <ul class="secops-home__link-list">
+              <li><a href="{{ 'deployment-guide/' | url }}">Deployment Guide</a></li>
+              <li><a href="{{ 'rules-registry/' | url }}">Rules Registry</a></li>
+              <li><a href="{{ 'supply-chain/' | url }}">Supply Chain Security</a></li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="secops-home__section">
+      <div class="secops-home__inner">
+        <div class="secops-home__quickstart">
+          <div class="secops-home__panel">
+            <div class="secops-home__section-header secops-home__section-header--compact">
+              <p class="secops-home__section-kicker">Quick Start</p>
+              <h2>Deploy in minutes.</h2>
+              <p>
+                Install the environment, refresh telemetry, correlate findings,
+                and run triage from one straightforward command flow.
+              </p>
+            </div>
+
+            <button
+              class="secops-home__copy"
+              data-secops-copy-target="secops-home-copy-target"
+              type="button"
+            >
+              <span data-secops-copy-label>Copy commands</span>
+            </button>
+
+            <div class="secops-home__terminal secops-home__terminal--wide">
+              <div class="secops-home__terminal-bar">
+                <div class="secops-home__terminal-lights">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <span class="secops-home__terminal-label">bash</span>
+              </div>
+              <pre
+                class="secops-home__terminal-body secops-home__terminal-body--commands"
+                id="secops-home-copy-target"
+              ><code># Install and initialize
+curl -fsSL https://secopsai.dev/install.sh | bash
+cd ~/secopsai
+source .venv/bin/activate
+secopsai refresh
+secopsai refresh --platform macos,openclaw
+secopsai correlate
+secopsai triage orchestrate --search-root ~/secopsai</code></pre>
+            </div>
+          </div>
+
+          <div class="secops-home__status-list">
+            <article class="secops-home__status">
+              <div class="secops-home__status-label">
+                <span class="secops-home__status-pill secops-home__status-pill--prod">Production</span>
+              </div>
+              <h3>OpenClaw</h3>
+              <p>Primary native telemetry integration and reference workflow.</p>
+            </article>
+            <article class="secops-home__status">
+              <div class="secops-home__status-label">
+                <span class="secops-home__status-pill secops-home__status-pill--prod">Production</span>
+              </div>
+              <h3>macOS</h3>
+              <p>Host telemetry collection and local findings generation.</p>
+            </article>
+            <article class="secops-home__status">
+              <div class="secops-home__status-label">
+                <span class="secops-home__status-pill secops-home__status-pill--beta">Beta</span>
+              </div>
+              <h3>Linux</h3>
+              <p>Ready for deployment with journalctl and auditd-backed sources.</p>
+            </article>
+            <article class="secops-home__status">
+              <div class="secops-home__status-label">
+                <span class="secops-home__status-pill secops-home__status-pill--beta">Beta</span>
+              </div>
+              <h3>Windows</h3>
+              <p>Ready for deployment with Event Logs and Sysmon workflows.</p>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    (() => {
+      const button = document.querySelector("[data-secops-copy-target]");
+      if (!button) return;
+
+      const label = button.querySelector("[data-secops-copy-label]");
+      const targetId = button.getAttribute("data-secops-copy-target");
+      const target = targetId ? document.getElementById(targetId) : null;
+      const originalLabel = label ? label.textContent : "";
+
+      if (!target) return;
+
+      const copyText = async () => {
+        const text = target.textContent.trim();
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          return;
+        }
+
+        const field = document.createElement("textarea");
+        field.value = text;
+        field.style.position = "fixed";
+        field.style.opacity = "0";
+        document.body.appendChild(field);
+        field.focus();
+        field.select();
+        document.execCommand("copy");
+        document.body.removeChild(field);
+      };
+
+      button.addEventListener("click", async () => {
+        try {
+          await copyText();
+          button.dataset.copied = "true";
+          if (label) label.textContent = "Copied";
+        } catch (error) {
+          if (label) label.textContent = "Copy failed";
+        }
+
+        window.setTimeout(() => {
+          button.dataset.copied = "false";
+          if (label) label.textContent = originalLabel;
+        }, 1800);
+      });
+    })();
+  </script>
+{% endblock %}
