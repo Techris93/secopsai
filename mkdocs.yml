@@ -7,8 +7,8 @@ repo_name: Techris93/secopsai
 theme:
   name: material
   custom_dir: overrides
-  favicon: assets/favicon.svg
-  logo: assets/favicon.svg
+  favicon: assets/favicon-512.png
+  logo: assets/header-mark.png
   font:
     text: Inter
     code: JetBrains Mono

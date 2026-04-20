@@ -169,6 +169,57 @@
         background: rgba(45, 212, 168, 0.12);
       }
 
+      .quickstart-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        border-radius: 9999px;
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        background: rgba(255, 255, 255, 0.03);
+        padding: 0.6rem 0.95rem;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.75rem;
+        line-height: 1;
+        color: #c8d5e3;
+      }
+
+      .quickstart-chip.beta-chip {
+        border-color: rgba(245, 158, 11, 0.24);
+        background: rgba(245, 158, 11, 0.1);
+        color: #f7c979;
+      }
+
+      .quickstart-tab {
+        border-radius: 9999px;
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        background: rgba(255, 255, 255, 0.03);
+        padding: 0.7rem 1rem;
+        font-size: 0.92rem;
+        font-weight: 600;
+        color: #dbe7f2;
+        transition:
+          border-color 180ms ease,
+          background-color 180ms ease,
+          color 180ms ease,
+          transform 180ms ease;
+      }
+
+      .quickstart-tab:hover {
+        border-color: rgba(45, 212, 168, 0.2);
+        color: #6ee7c8;
+      }
+
+      .quickstart-tab[aria-pressed="true"] {
+        border-color: rgba(45, 212, 168, 0.28);
+        background: rgba(45, 212, 168, 0.12);
+        color: #dffdf4;
+      }
+
+      .quickstart-summary {
+        background: linear-gradient(180deg, rgba(16, 23, 34, 0.88), rgba(10, 16, 23, 0.88));
+        border: 1px solid rgba(148, 163, 184, 0.14);
+      }
+
       .mobile-menu[hidden] {
         display: none;
       }
@@ -186,10 +237,9 @@
         id="site-header"
         class="nav-shell mx-auto flex max-w-[1240px] items-center justify-between rounded-2xl px-4 py-3 md:px-6"
       >
-        <a class="flex items-center gap-2.5 text-white" href="#top">
-          <span class="h-2.5 w-2.5 rounded-full bg-accent shadow-[0_0_18px_rgba(45,212,168,0.65)]"></span>
-          <span class="font-display text-lg font-bold tracking-tight">SecOps</span>
-          <span class="font-mono text-lg font-bold tracking-tight">AI</span>
+        <a class="flex items-center gap-3 text-white" href="#top">
+          <img src="/assets/header-mark.jpg?v=1" alt="SecOpsAI logo" class="h-10 w-auto" />
+          <span class="font-display text-lg font-bold tracking-tight">SecOpsAI</span>
         </a>
 
         <div class="hidden items-center gap-8 md:flex">
@@ -479,51 +529,87 @@
 
       <section id="quickstart" class="scroll-mt-28 px-6 py-20 md:px-8 md:py-28">
         <div class="mx-auto max-w-[1240px]">
-          <div class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div class="grid gap-8 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] xl:items-start">
             <div class="max-w-2xl">
               <span class="font-mono text-xs uppercase tracking-[0.22em] text-accent-soft">Quick Start</span>
               <h2 class="mt-4 font-display text-3xl font-bold tracking-[-0.03em] text-white md:text-5xl">
                 Zero to findings in minutes
               </h2>
               <p class="mt-5 text-base leading-8 text-muted md:text-lg">
-                Install the environment, refresh telemetry, correlate findings, and run triage from one straightforward
-                command flow. The commands below are ready to copy as a single block.
+                Bring back the fast install paths without bringing back the clutter. The one-liner stays front and
+                center, npm remains available, the manual path is hackable, and Windows keeps a clear beta lane.
               </p>
+
+              <div class="mt-8 flex flex-wrap gap-3">
+                <span class="quickstart-chip">One-liner</span>
+                <span class="quickstart-chip">npm</span>
+                <span class="quickstart-chip">Hackable</span>
+                <span class="quickstart-chip">macOS</span>
+                <span class="quickstart-chip">macOS &amp; Linux</span>
+                <span class="quickstart-chip">Windows</span>
+                <span class="quickstart-chip beta-chip"><span class="text-sm leading-none">β</span> Beta</span>
+              </div>
             </div>
 
-            <button
-              id="copy-quickstart"
-              class="copy-button inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-semibold text-white transition-colors hover:border-accent-border hover:text-accent-soft"
-              data-copied="false"
-              type="button"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-                <path d="M8 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2V7Z" stroke-linecap="round" stroke-linejoin="round" />
-                <path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-              <span id="copy-label">Copy commands</span>
-            </button>
+            <div class="quickstart-summary rounded-[1.5rem] p-5 shadow-glow md:p-6">
+              <div class="flex flex-wrap gap-2" aria-label="Quick start profiles">
+                <button class="quickstart-tab" data-quickstart-profile="oneliner" aria-pressed="true" type="button">One-liner</button>
+                <button class="quickstart-tab" data-quickstart-profile="npm" aria-pressed="false" type="button">npm</button>
+                <button class="quickstart-tab" data-quickstart-profile="hackable" aria-pressed="false" type="button">Hackable</button>
+                <button class="quickstart-tab" data-quickstart-profile="windows" aria-pressed="false" type="button">Windows β</button>
+              </div>
+
+              <div class="mt-6 flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+                <div class="max-w-2xl">
+                  <div class="flex flex-wrap items-center gap-3">
+                    <span id="quickstart-support-pill" class="status-pill production">
+                      <span class="h-2 w-2 rounded-full bg-accent"></span>
+                      macOS &amp; Linux
+                    </span>
+                    <span id="quickstart-mode-pill" class="quickstart-chip">Quick Start</span>
+                  </div>
+
+                  <p id="quickstart-eyebrow" class="mt-5 font-mono text-xs uppercase tracking-[0.22em] text-accent-soft">One-liner</p>
+                  <h3 id="quickstart-title" class="mt-3 font-display text-2xl font-bold tracking-[-0.03em] text-white">
+                    Recommended install for most operators
+                  </h3>
+                  <p id="quickstart-description" class="mt-4 text-sm leading-7 text-muted md:text-base">
+                    Use the bootstrap script when you want the fastest local path from zero to SecOpsAI on a fresh
+                    machine.
+                  </p>
+                  <p id="quickstart-support" class="mt-3 font-mono text-xs uppercase tracking-[0.2em] text-muted">
+                    macOS is the smoothest path today. Windows teams can use the same installer from WSL2.
+                  </p>
+                </div>
+
+                <button
+                  id="copy-quickstart"
+                  class="copy-button inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-semibold text-white transition-colors hover:border-accent-border hover:text-accent-soft"
+                  data-copied="false"
+                  type="button"
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                    <path d="M8 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2V7Z" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  <span id="copy-label">Copy commands</span>
+                </button>
+              </div>
+            </div>
           </div>
 
-          <div class="terminal-panel mt-10 overflow-hidden rounded-[1.5rem] shadow-glow">
+          <div class="terminal-panel mt-8 overflow-hidden rounded-[1.5rem] shadow-glow">
             <div class="flex items-center justify-between border-b border-white/10 bg-white/[0.03] px-5 py-4">
               <div class="flex items-center gap-2">
                 <span class="h-3 w-3 rounded-full bg-rose-500/90"></span>
                 <span class="h-3 w-3 rounded-full bg-amber-400/90"></span>
                 <span class="h-3 w-3 rounded-full bg-accent/90"></span>
-                <span class="ml-3 font-mono text-[11px] uppercase tracking-[0.22em] text-muted">bash</span>
+                <span id="quickstart-shell-label" class="ml-3 font-mono text-[11px] uppercase tracking-[0.22em] text-muted">bash</span>
               </div>
-              <span class="font-mono text-[11px] uppercase tracking-[0.2em] text-muted">local install path</span>
+              <span id="quickstart-terminal-label" class="font-mono text-[11px] uppercase tracking-[0.2em] text-muted">local install path</span>
             </div>
 
-            <pre id="quickstart-code" class="overflow-x-auto px-5 py-6 font-mono text-[13px] leading-8 text-slate-300 md:px-6"><span class="text-muted"># Install and initialize</span>
-<span class="text-muted">$ </span><span class="text-accent-soft">curl</span> -fsSL https://secopsai.dev/install.sh | bash
-<span class="text-muted">$ </span><span class="text-accent-soft">cd</span> ~/secopsai &amp;&amp; source .venv/bin/activate
-<span class="text-muted">$ </span><span class="text-accent-soft">secopsai</span> refresh
-<span class="text-muted">$ </span><span class="text-accent-soft">secopsai</span> refresh --platform macos,openclaw
-<span class="text-muted">$ </span><span class="text-accent-soft">secopsai</span> correlate
-<span class="text-muted">$ </span><span class="text-accent-soft">secopsai</span> triage orchestrate --search-root ~/secopsai
-<span class="text-muted">$ </span><span class="text-accent-soft">secopsai</span> triage queue</pre>
+            <pre id="quickstart-code" class="overflow-x-auto px-5 py-6 font-mono text-[13px] leading-8 text-slate-300 md:px-6"></pre>
           </div>
         </div>
       </section>
@@ -532,10 +618,9 @@
     <footer class="border-t border-white/10 px-6 py-10 md:px-8">
       <div class="mx-auto flex max-w-[1240px] flex-col gap-6 md:flex-row md:items-center md:justify-between">
         <div>
-          <div class="flex items-center gap-2.5 text-white">
-            <span class="h-2.5 w-2.5 rounded-full bg-accent"></span>
-            <span class="font-display text-lg font-bold tracking-tight">SecOps</span>
-            <span class="font-mono text-lg font-bold tracking-tight">AI</span>
+          <div class="flex items-center gap-3 text-white">
+            <img src="/assets/header-mark.jpg?v=1" alt="SecOpsAI logo" class="h-9 w-auto" />
+            <span class="font-display text-lg font-bold tracking-tight">SecOpsAI</span>
           </div>
           <p class="mt-2 font-mono text-xs uppercase tracking-[0.22em] text-muted">
             Local-first. Open source. Cross-platform.
@@ -561,6 +646,149 @@
       const copyButton = document.getElementById("copy-quickstart");
       const copyLabel = document.getElementById("copy-label");
       const quickstartCode = document.getElementById("quickstart-code");
+      const quickstartTabs = document.querySelectorAll("[data-quickstart-profile]");
+      const quickstartEyebrow = document.getElementById("quickstart-eyebrow");
+      const quickstartTitle = document.getElementById("quickstart-title");
+      const quickstartDescription = document.getElementById("quickstart-description");
+      const quickstartSupport = document.getElementById("quickstart-support");
+      const quickstartSupportPill = document.getElementById("quickstart-support-pill");
+      const quickstartModePill = document.getElementById("quickstart-mode-pill");
+      const quickstartShellLabel = document.getElementById("quickstart-shell-label");
+      const quickstartTerminalLabel = document.getElementById("quickstart-terminal-label");
+      const quickstartProfiles = {
+        oneliner: {
+          eyebrow: "One-liner",
+          title: "Recommended install for most operators",
+          description: "Use the bootstrap script when you want the fastest local path from zero to SecOpsAI on a fresh machine.",
+          support: "macOS is the smoothest path today. Windows teams can use the same installer from WSL2.",
+          supportLabel: "macOS & Linux",
+          supportTone: "production",
+          modeLabel: "Quick Start",
+          shellLabel: "bash",
+          terminalLabel: "bootstrap installer",
+          lines: [
+            { type: "comment", text: "Quick Start" },
+            { type: "command", text: "curl -fsSL https://secopsai.dev/install.sh | bash" },
+            { type: "command", text: "cd ~/secopsai && source .venv/bin/activate" },
+            { type: "command", text: "secopsai refresh" },
+            { type: "command", text: "secopsai correlate" },
+          ],
+        },
+        npm: {
+          eyebrow: "npm",
+          title: "Package-manager path for JavaScript-heavy teams",
+          description: "Keep the install familiar for Node users while still landing in the same SecOpsAI workflow once the CLI is available.",
+          support: "Great when your workstation already centers around npm and you want a lighter-weight entry path.",
+          supportLabel: "Hackable",
+          supportTone: "production",
+          modeLabel: "Node.js",
+          shellLabel: "npm",
+          terminalLabel: "global cli install",
+          lines: [
+            { type: "comment", text: "npm install" },
+            { type: "command", text: "npm install -g secopsai" },
+            { type: "command", text: "secopsai refresh" },
+            { type: "command", text: "secopsai refresh --platform macos,openclaw" },
+            { type: "command", text: "secopsai correlate" },
+          ],
+        },
+        hackable: {
+          eyebrow: "Hackable",
+          title: "Manual install you can inspect, tweak, and extend",
+          description: "Clone the repo, create a local virtualenv, and install in editable mode when you want maximum transparency or a development-friendly setup.",
+          support: "Best for teams that want to inspect installer behavior first or patch the local stack directly.",
+          supportLabel: "macOS & Linux",
+          supportTone: "production",
+          modeLabel: "Manual",
+          shellLabel: "bash",
+          terminalLabel: "editable install",
+          lines: [
+            { type: "comment", text: "Manual install" },
+            { type: "command", text: "git clone https://github.com/Techris93/secopsai.git" },
+            { type: "command", text: "cd secopsai" },
+            { type: "command", text: "python3 -m venv .venv" },
+            { type: "command", text: "source .venv/bin/activate" },
+            { type: "command", text: "pip install -e ." },
+          ],
+        },
+        windows: {
+          eyebrow: "Windows",
+          title: "WSL-first install path while Windows stays in beta",
+          description: "Windows support is improving, but today the cleanest route is still to enable WSL2 and run the same SecOpsAI bootstrap from Ubuntu.",
+          support: "Install WSL2 first, then continue with the Linux installer inside Ubuntu.",
+          supportLabel: "Beta",
+          supportTone: "beta",
+          modeLabel: "Windows",
+          shellLabel: "powershell + bash",
+          terminalLabel: "wsl + ubuntu",
+          lines: [
+            { type: "comment", text: "Windows beta path" },
+            { type: "command", text: "wsl --install -d Ubuntu" },
+            { type: "blank", text: "" },
+            { type: "comment", text: "Then inside Ubuntu" },
+            { type: "command", text: "curl -fsSL https://secopsai.dev/install.sh | bash" },
+            { type: "command", text: "cd ~/secopsai && source .venv/bin/activate" },
+          ],
+        },
+      };
+      let activeQuickstartProfile = "oneliner";
+
+      const escapeHtml = (value) =>
+        value
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+
+      const renderQuickstartCode = (profile) =>
+        profile.lines
+          .map((line) => {
+            if (line.type === "blank") {
+              return "";
+            }
+            if (line.type === "comment") {
+              return `<span class="text-muted"># ${escapeHtml(line.text)}</span>`;
+            }
+
+            const command = line.text.trim();
+            const firstSpace = command.indexOf(" ");
+            const lead = firstSpace === -1 ? command : command.slice(0, firstSpace);
+            const tail = firstSpace === -1 ? "" : command.slice(firstSpace);
+            return `<span class="text-muted">$ </span><span class="text-accent-soft">${escapeHtml(lead)}</span>${escapeHtml(tail)}`;
+          })
+          .join("\n");
+
+      const updateQuickstart = (profileKey) => {
+        const profile = quickstartProfiles[profileKey];
+        if (!profile) return;
+
+        activeQuickstartProfile = profileKey;
+        quickstartEyebrow.textContent = profile.eyebrow;
+        quickstartTitle.textContent = profile.title;
+        quickstartDescription.textContent = profile.description;
+        quickstartSupport.textContent = profile.support;
+        quickstartModePill.textContent = profile.modeLabel;
+        quickstartShellLabel.textContent = profile.shellLabel;
+        quickstartTerminalLabel.textContent = profile.terminalLabel;
+        quickstartSupportPill.className = `status-pill ${profile.supportTone}`;
+        quickstartSupportPill.innerHTML =
+          profile.supportTone === "beta"
+            ? '<span class="h-2 w-2 rounded-full bg-amber"></span>Beta'
+            : `<span class="h-2 w-2 rounded-full bg-accent"></span>${profile.supportLabel}`;
+        quickstartCode.innerHTML = renderQuickstartCode(profile);
+
+        quickstartTabs.forEach((tab) => {
+          tab.setAttribute("aria-pressed", String(tab.dataset.quickstartProfile === profileKey));
+        });
+
+        if (copyButton) {
+          copyButton.dataset.copied = "false";
+        }
+        if (copyLabel) {
+          copyLabel.textContent = "Copy commands";
+        }
+      };
 
       const syncHeaderState = () => {
         if (!header) return;
@@ -596,25 +824,29 @@
       window.addEventListener("scroll", syncHeaderState, { passive: true });
       syncHeaderState();
 
+      updateQuickstart(activeQuickstartProfile);
+      quickstartTabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+          updateQuickstart(tab.dataset.quickstartProfile);
+        });
+      });
+
       if (copyButton && copyLabel && quickstartCode) {
-        const quickstartText = [
-          "# Install and initialize",
-          "curl -fsSL https://secopsai.dev/install.sh | bash",
-          "cd ~/secopsai && source .venv/bin/activate",
-          "secopsai refresh",
-          "secopsai refresh --platform macos,openclaw",
-          "secopsai correlate",
-          "secopsai triage orchestrate --search-root ~/secopsai",
-          "secopsai triage queue",
-        ].join("\n");
+        const getQuickstartText = () =>
+          quickstartProfiles[activeQuickstartProfile].lines
+            .map((line) => {
+              if (line.type === "comment") return `# ${line.text}`;
+              return line.text;
+            })
+            .join("\n");
 
         copyButton.addEventListener("click", async () => {
           try {
             if (navigator.clipboard && navigator.clipboard.writeText) {
-              await navigator.clipboard.writeText(quickstartText);
+              await navigator.clipboard.writeText(getQuickstartText());
             } else {
               const input = document.createElement("textarea");
-              input.value = quickstartText;
+              input.value = getQuickstartText();
               input.style.position = "fixed";
               input.style.opacity = "0";
               document.body.appendChild(input);
