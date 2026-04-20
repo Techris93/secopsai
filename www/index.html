@@ -19,7 +19,7 @@
     />
     <meta property="og:url" content="https://secopsai.dev/" />
     <meta property="og:image" content="https://secopsai.dev/assets/social-card.jpg" />
-    <meta property="og:image:alt" content="SecOpsAI — Local-first cross-platform SecOps" />
+    <meta property="og:image:alt" content="SecOpsAI - Local-first cross-platform SecOps" />
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="SecOpsAI | Local-first cross-platform SecOps" />
@@ -33,13 +33,9 @@
     <link rel="shortcut icon" href="/favicon.ico?v=4" />
     <link rel="apple-touch-icon" href="/assets/logo-full.jpg?v=4" />
 
-    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@300;400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;700&amp;family=Space+Grotesk:wght@500;700&amp;display=swap"
       rel="stylesheet"
     />
 
@@ -49,23 +45,26 @@
         theme: {
           extend: {
             colors: {
-              primary: "#57df91",
-              background: "#131313",
-              surface: "#131313",
-              "surface-container": "#201f1f",
-              "surface-container-low": "#1c1b1b",
-              "surface-container-lowest": "#0e0e0e",
-              "surface-container-high": "#2a2a2a",
-              "on-surface": "#e5e2e1",
-              "on-surface-variant": "#bccabd",
-              "outline-variant": "#3d4a40",
-              "primary-container": "#17b26a",
-              error: "#ffb4ab",
+              near: "#05070a",
+              ink: "#dbe7f2",
+              muted: "#8ea0b5",
+              panel: "#0c1117",
+              "panel-strong": "#101722",
+              line: "rgba(148, 163, 184, 0.18)",
+              accent: "#2dd4a8",
+              "accent-soft": "#6ee7c8",
+              "accent-dim": "rgba(45, 212, 168, 0.12)",
+              "accent-border": "rgba(45, 212, 168, 0.2)",
+              amber: "#f59e0b",
             },
             fontFamily: {
-              headline: ["Inter"],
-              body: ["Inter"],
-              label: ["Space Grotesk"],
+              display: ['"Space Grotesk"', "sans-serif"],
+              body: ["Inter", "sans-serif"],
+              mono: ['"JetBrains Mono"', "monospace"],
+            },
+            boxShadow: {
+              card: "0 28px 80px rgba(0, 0, 0, 0.35)",
+              glow: "0 0 0 1px rgba(45, 212, 168, 0.08), 0 32px 90px rgba(0, 0, 0, 0.42)",
             },
           },
         },
@@ -73,156 +72,572 @@
     </script>
 
     <style>
-      .terminal-glow {
-        box-shadow: 0px 0px 12px rgba(87, 223, 145, 0.08);
+      :root {
+        color-scheme: dark;
       }
-      html { scroll-behavior: smooth; }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top left, rgba(45, 212, 168, 0.16), transparent 34%),
+          radial-gradient(circle at top right, rgba(59, 130, 246, 0.12), transparent 30%),
+          linear-gradient(180deg, #06090d 0%, #05070a 48%, #040608 100%);
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(148, 163, 184, 0.05) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(148, 163, 184, 0.05) 1px, transparent 1px);
+        background-size: 120px 120px;
+        mask-image: radial-gradient(circle at top center, black 30%, transparent 80%);
+        opacity: 0.45;
+      }
+
+      .nav-shell {
+        background: rgba(5, 8, 12, 0.7);
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        backdrop-filter: blur(18px);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+        transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease;
+      }
+
+      .nav-shell.is-scrolled {
+        background: rgba(5, 8, 12, 0.9);
+        border-color: rgba(45, 212, 168, 0.16);
+      }
+
+      .halo {
+        position: absolute;
+        border-radius: 9999px;
+        filter: blur(18px);
+        opacity: 0.55;
+        pointer-events: none;
+      }
+
+      .feature-card,
+      .terminal-panel,
+      .table-shell {
+        background: linear-gradient(180deg, rgba(16, 23, 34, 0.96), rgba(11, 16, 24, 0.96));
+        border: 1px solid rgba(148, 163, 184, 0.14);
+      }
+
+      .feature-card {
+        transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
+      }
+
+      .feature-card:hover {
+        transform: translateY(-4px);
+        border-color: rgba(45, 212, 168, 0.22);
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+      }
+
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        border-radius: 9999px;
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        padding: 0.4rem 0.75rem;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.72rem;
+        line-height: 1;
+      }
+
+      .status-pill.production {
+        color: #7ef0cf;
+        background: rgba(45, 212, 168, 0.1);
+        border-color: rgba(45, 212, 168, 0.22);
+      }
+
+      .status-pill.beta {
+        color: #f4bd55;
+        background: rgba(245, 158, 11, 0.12);
+        border-color: rgba(245, 158, 11, 0.22);
+      }
+
+      .copy-button[data-copied="true"] {
+        color: #dffdf4;
+        border-color: rgba(45, 212, 168, 0.3);
+        background: rgba(45, 212, 168, 0.12);
+      }
+
+      .mobile-menu[hidden] {
+        display: none;
+      }
+
+      @media (max-width: 767px) {
+        body::before {
+          background-size: 96px 96px;
+        }
+      }
     </style>
   </head>
-  <body class="bg-background text-on-surface font-body selection:bg-primary/30 selection:text-primary">
-    <header class="fixed top-0 w-full z-50 bg-surface/60 backdrop-blur-xl shadow-[0px_24px_48px_rgba(0,0,0,0.4)]">
-      <nav class="flex justify-between items-center px-8 h-16 w-full max-w-[1440px] mx-auto">
-        <div class="flex items-center gap-8">
-          <a class="flex items-center gap-3" href="#top">
-            <img src="/assets/social-card.jpg" alt="SecOpsAI" class="h-8 w-auto rounded-sm" />
-            <span class="text-xl font-bold tracking-tighter text-primary">SecOpsAI</span>
-          </a>
-          <div class="hidden md:flex items-center gap-6">
-            <a class="text-on-surface-variant hover:text-primary transition-colors text-sm" href="#features">Product</a>
-            <a class="text-on-surface-variant hover:text-primary transition-colors text-sm" href="#platforms">Platforms</a>
-            <a class="text-on-surface-variant hover:text-primary transition-colors text-sm" href="#quickstart">Quick Start</a>
-            <a class="text-on-surface-variant hover:text-primary transition-colors text-sm" href="https://docs.secopsai.dev" target="_blank" rel="noopener">Docs</a>
-            <a class="text-on-surface-variant hover:text-primary transition-colors text-sm" href="https://github.com/Techris93/secopsai" target="_blank" rel="noopener">GitHub</a>
-          </div>
+  <body class="bg-near text-ink font-body selection:bg-accent/25 selection:text-white">
+    <header class="fixed inset-x-0 top-0 z-50 px-4 pt-4 md:px-6">
+      <nav
+        id="site-header"
+        class="nav-shell mx-auto flex max-w-[1240px] items-center justify-between rounded-2xl px-4 py-3 md:px-6"
+      >
+        <a class="flex items-center gap-2.5 text-white" href="#top">
+          <span class="h-2.5 w-2.5 rounded-full bg-accent shadow-[0_0_18px_rgba(45,212,168,0.65)]"></span>
+          <span class="font-display text-lg font-bold tracking-tight">SecOps</span>
+          <span class="font-mono text-lg font-bold tracking-tight">AI</span>
+        </a>
+
+        <div class="hidden items-center gap-8 md:flex">
+          <a class="text-sm font-medium text-muted transition-colors hover:text-accent-soft" href="#capabilities">Product</a>
+          <a class="text-sm font-medium text-muted transition-colors hover:text-accent-soft" href="#platforms">Platforms</a>
+          <a class="text-sm font-medium text-muted transition-colors hover:text-accent-soft" href="#quickstart">Quick Start</a>
+          <a
+            class="text-sm font-medium text-muted transition-colors hover:text-accent-soft"
+            href="https://docs.secopsai.dev"
+            rel="noopener noreferrer"
+            target="_blank"
+            >Docs</a
+          >
+          <a
+            class="text-sm font-medium text-muted transition-colors hover:text-accent-soft"
+            href="https://github.com/Techris93/secopsai"
+            rel="noopener noreferrer"
+            target="_blank"
+            >GitHub</a
+          >
         </div>
-        <a class="bg-gradient-to-br from-primary to-primary-container text-black font-semibold text-sm px-5 py-2.5 rounded-md" href="#quickstart">Install & Run</a>
+
+        <div class="flex items-center gap-3">
+          <a
+            class="hidden rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-slate-950 transition-transform hover:scale-[1.02] hover:bg-accent-soft md:inline-flex"
+            href="#quickstart"
+            >Install &amp; Run</a
+          >
+          <button
+            id="menu-toggle"
+            aria-controls="mobile-menu"
+            aria-expanded="false"
+            aria-label="Toggle navigation"
+            class="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-white transition-colors hover:border-accent-border hover:text-accent md:hidden"
+            type="button"
+          >
+            <svg id="menu-open-icon" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round" />
+            </svg>
+            <svg id="menu-close-icon" class="hidden h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
       </nav>
+
+      <div
+        id="mobile-menu"
+        class="mobile-menu mx-auto mt-3 hidden max-w-[1240px] rounded-2xl border border-white/10 bg-[rgba(5,8,12,0.96)] px-5 py-5 shadow-card backdrop-blur-xl md:hidden"
+        hidden
+      >
+        <div class="flex flex-col gap-2">
+          <a class="rounded-xl px-3 py-3 text-base font-medium text-ink transition-colors hover:bg-white/[0.04] hover:text-accent-soft" href="#capabilities">Product</a>
+          <a class="rounded-xl px-3 py-3 text-base font-medium text-ink transition-colors hover:bg-white/[0.04] hover:text-accent-soft" href="#platforms">Platforms</a>
+          <a class="rounded-xl px-3 py-3 text-base font-medium text-ink transition-colors hover:bg-white/[0.04] hover:text-accent-soft" href="#quickstart">Quick Start</a>
+          <a
+            class="rounded-xl px-3 py-3 text-base font-medium text-ink transition-colors hover:bg-white/[0.04] hover:text-accent-soft"
+            href="https://docs.secopsai.dev"
+            rel="noopener noreferrer"
+            target="_blank"
+            >Docs</a
+          >
+          <a
+            class="rounded-xl px-3 py-3 text-base font-medium text-ink transition-colors hover:bg-white/[0.04] hover:text-accent-soft"
+            href="https://github.com/Techris93/secopsai"
+            rel="noopener noreferrer"
+            target="_blank"
+            >GitHub</a
+          >
+          <a class="mt-3 inline-flex items-center justify-center rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-slate-950" href="#quickstart">Install &amp; Run</a>
+        </div>
+      </div>
     </header>
 
-    <main id="top" class="pt-16">
-      <section class="relative min-h-[820px] flex flex-col items-center justify-center px-6 overflow-hidden">
-        <div class="max-w-[1440px] w-full grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-          <div class="space-y-8 z-10">
-            <div class="inline-flex items-center gap-2 px-3 py-1 bg-surface-container-low border border-outline-variant/15 rounded-full">
-              <span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
-              <span class="font-label text-xs uppercase tracking-widest text-primary">Local-first • OpenClaw + Host Telemetry</span>
+    <main id="top" class="overflow-hidden">
+      <section class="relative px-6 pb-20 pt-32 md:px-8 md:pb-28 md:pt-36">
+        <span class="halo left-[-9rem] top-24 h-72 w-72 bg-accent/20"></span>
+        <span class="halo right-[-6rem] top-40 h-64 w-64 bg-cyan-400/12"></span>
+
+        <div class="mx-auto grid max-w-[1240px] items-center gap-14 lg:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)]">
+          <div class="relative z-10">
+            <div class="inline-flex items-center gap-2 rounded-full border border-accent-border bg-accent-dim px-3.5 py-1.5 text-[11px] uppercase tracking-[0.24em] text-accent-soft">
+              <span class="h-2 w-2 rounded-full bg-accent shadow-[0_0_12px_rgba(45,212,168,0.6)]"></span>
+              Local-first telemetry orchestration
             </div>
 
-            <h1 class="text-5xl lg:text-7xl font-headline font-extrabold tracking-tighter leading-tight">
-              Cross-platform SecOps, <br />
-              <span class="text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary-container">with everything staying local.</span>
+            <h1 class="mt-7 max-w-3xl font-display text-5xl font-bold leading-[0.95] tracking-[-0.04em] text-white md:text-6xl lg:text-7xl">
+              Cross-platform SecOps
+              <span class="block bg-gradient-to-r from-accent-soft via-white to-slate-400 bg-clip-text text-transparent">
+                with telemetry, triage, and policy staying local.
+              </span>
             </h1>
 
-            <p class="text-lg text-on-surface-variant max-w-xl leading-relaxed">
-              SecOpsAI unifies telemetry from <span class="text-on-surface">OpenClaw, macOS, Linux, and Windows</span>,
-              detects threats, correlates findings across systems, and now includes native triage orchestration, queued analyst actions, and supply-chain policy controls.
+            <p class="mt-6 max-w-2xl text-lg leading-8 text-muted">
+              SecOpsAI unifies telemetry from <span class="text-white">OpenClaw, macOS, Linux, and Windows</span>,
+              detects threats, correlates findings across systems, and keeps analyst workflows grounded in a
+              local SOC store instead of a remote control plane.
             </p>
 
-            <div class="flex flex-wrap gap-4 pt-4">
-              <a class="bg-primary text-black font-bold px-8 py-4 rounded-md" href="#quickstart">Quick Start</a>
-              <a class="border border-outline-variant/20 text-on-surface font-medium px-8 py-4 rounded-md" href="https://docs.secopsai.dev" target="_blank" rel="noopener">View Documentation</a>
+            <div class="mt-8 flex flex-col gap-3 sm:flex-row">
+              <a
+                class="inline-flex items-center justify-center rounded-xl bg-accent px-6 py-3.5 text-sm font-semibold text-slate-950 transition-transform hover:scale-[1.02] hover:bg-accent-soft"
+                href="#quickstart"
+                >Quick Start</a
+              >
+              <a
+                class="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/[0.02] px-6 py-3.5 text-sm font-semibold text-white transition-colors hover:border-accent-border hover:text-accent-soft"
+                href="https://docs.secopsai.dev"
+                rel="noopener noreferrer"
+                target="_blank"
+                >View Documentation</a
+              >
             </div>
 
-            <div class="flex flex-wrap gap-3 text-xs text-on-surface-variant pt-2">
-              <span class="px-3 py-1 rounded-full border border-outline-variant/15 bg-surface-container-low">OpenClaw + host telemetry</span>
-              <span class="px-3 py-1 rounded-full border border-outline-variant/15 bg-surface-container-low">Unified schema</span>
-              <span class="px-3 py-1 rounded-full border border-outline-variant/15 bg-surface-container-low">SQLite SOC store</span>
-              <span class="px-3 py-1 rounded-full border border-outline-variant/15 bg-surface-container-low">Cross-platform correlation</span>
-              <span class="px-3 py-1 rounded-full border border-outline-variant/15 bg-surface-container-low">Native triage orchestrator</span>
+            <div class="mt-8 flex flex-wrap gap-3 text-xs text-muted">
+              <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">OpenClaw + host telemetry</span>
+              <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Unified schema</span>
+              <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">SQLite SOC store</span>
+              <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Cross-platform correlation</span>
+              <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Queued analyst actions</span>
             </div>
           </div>
 
           <div class="relative z-10">
-            <div class="surface-container-lowest p-1 rounded-xl bg-gradient-to-br from-outline-variant/20 to-transparent">
-              <div class="bg-surface-container-lowest rounded-lg overflow-hidden terminal-glow border border-outline-variant/10">
-                <div class="flex items-center justify-between px-4 py-3 bg-surface-container-low">
-                  <div class="font-label text-[10px] uppercase tracking-widest text-on-surface-variant/60">secopsai — universal detection</div>
+            <div class="terminal-panel overflow-hidden rounded-[1.5rem] shadow-glow">
+              <div class="flex items-center justify-between border-b border-white/10 bg-[rgba(255,255,255,0.02)] px-5 py-4">
+                <div class="flex items-center gap-2.5">
+                  <span class="h-3 w-3 rounded-full bg-rose-500/90"></span>
+                  <span class="h-3 w-3 rounded-full bg-amber-400/90"></span>
+                  <span class="h-3 w-3 rounded-full bg-accent/90"></span>
+                  <span class="ml-2 font-mono text-[11px] uppercase tracking-[0.22em] text-muted">secopsai / local ops</span>
                 </div>
-                <div class="p-6 font-mono text-sm space-y-2 text-on-surface-variant">
-                  <div><span class="text-primary">$</span> secopsai refresh --platform macos,openclaw</div>
-                  <div class="text-primary/80">[OK] Collected host + OpenClaw telemetry</div>
-                  <div class="text-primary/80">[OK] Findings persisted to local SOC store</div>
-                  <div class="pt-3"><span class="text-primary">$</span> secopsai correlate</div>
-                  <div class="text-primary/80">[OK] Cross-platform correlation complete</div>
-                  <div class="pt-3"><span class="text-primary">$</span> secopsai triage orchestrate --search-root ~/secopsai</div>
-                  <div class="text-primary/80">[OK] Low-risk findings auto-triaged</div>
-                  <div class="text-error">QUEUED: Review ACT-0001 (tune_policy)</div>
-                </div>
+                <span class="rounded-full border border-accent-border bg-accent-dim px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-accent-soft">
+                  findings stay on-box
+                </span>
+              </div>
+
+              <div class="space-y-3 px-5 py-6 font-mono text-sm leading-7 text-slate-300 md:px-6">
+                <div><span class="text-accent">$</span> secopsai refresh --platform macos,openclaw</div>
+                <div class="text-accent-soft">[OK] Collected host + OpenClaw telemetry</div>
+                <div class="text-accent-soft">[OK] Findings persisted to local SOC store</div>
+                <div class="pt-3"><span class="text-accent">$</span> secopsai correlate</div>
+                <div class="text-accent-soft">[OK] Cross-platform correlation complete</div>
+                <div class="pt-3"><span class="text-accent">$</span> secopsai triage orchestrate --search-root ~/secopsai</div>
+                <div class="text-accent-soft">[OK] Low-risk findings auto-triaged</div>
+                <div class="text-amber">QUEUED: Review ACT-0001 (tune_policy)</div>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section id="features" class="py-24 px-8 max-w-[1440px] mx-auto">
-        <div class="mb-16">
-          <span class="font-label text-xs uppercase tracking-[0.2em] text-primary">Capabilities</span>
-          <h2 class="text-4xl font-headline font-bold mt-4">Detect, investigate, and triage — locally</h2>
-          <p class="text-on-surface-variant mt-4 max-w-3xl">
-            SecOpsAI is a local-first security monitoring and triage platform. It combines OpenClaw telemetry with host OS events, correlates findings, investigates supply-chain and host alerts, and keeps policy decisions on your machine by default.
-          </p>
-        </div>
+      <section id="capabilities" class="scroll-mt-28 px-6 py-20 md:px-8 md:py-28">
+        <div class="mx-auto max-w-[1240px]">
+          <div class="max-w-3xl">
+            <span class="font-mono text-xs uppercase tracking-[0.22em] text-accent-soft">Capabilities</span>
+            <h2 class="mt-4 font-display text-3xl font-bold tracking-[-0.03em] text-white md:text-5xl">
+              Detect, investigate, and triage without shipping your context away.
+            </h2>
+            <p class="mt-5 text-base leading-8 text-muted md:text-lg">
+              SecOpsAI keeps collection, correlation, triage, and policy decisions close to the operator. That makes
+              the workflow easier to inspect, faster to iterate on, and a better fit for teams that care about local
+              control over telemetry and analyst actions.
+            </p>
+          </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div class="bg-surface-container p-8 rounded-xl border border-outline-variant/10">
-            <h3 class="text-xl font-semibold mb-3">Universal adapters</h3>
-            <p class="text-on-surface-variant">Collect from OpenClaw, macOS, Linux, and Windows using a shared adapter model and normalize events into one schema.</p>
-          </div>
-          <div class="bg-surface-container p-8 rounded-xl border border-outline-variant/10">
-            <h3 class="text-xl font-semibold mb-3">Cross-platform correlation</h3>
-            <p class="text-on-surface-variant">Correlate findings by IP, user, time window, and file hash to identify multi-system attack patterns.</p>
-          </div>
-          <div class="bg-surface-container p-8 rounded-xl border border-outline-variant/10">
-            <h3 class="text-xl font-semibold mb-3">Native triage orchestration</h3>
-            <p class="text-on-surface-variant">Investigate findings, auto-close low-risk cases, queue higher-risk analyst actions, and keep the full review trail in the local SOC store.</p>
-          </div>
-          <div class="bg-surface-container p-8 rounded-xl border border-outline-variant/10">
-            <h3 class="text-xl font-semibold mb-3">Local-first policy control</h3>
-            <p class="text-on-surface-variant">Tune supply-chain thresholds, rules, and allowlists locally instead of depending on a remote control plane.</p>
+          <div class="mt-14 grid gap-6 md:grid-cols-2">
+            <article class="feature-card rounded-[1.5rem] p-8 shadow-card">
+              <div class="mb-5 inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-accent-border bg-accent-dim">
+                <svg fill="none" height="30" stroke="#2DD4A8" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 32 32" width="30" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M10 16H6C4.89543 16 4 16.8954 4 18V24C4 25.1046 4.89543 26 6 26H10C11.1046 26 12 25.1046 12 24V18C12 16.8954 11.1046 16 10 16Z" />
+                  <path d="M26 16H22C20.8954 16 20 16.8954 20 18V24C20 25.1046 20.8954 26 22 26H26C27.1046 26 28 25.1046 28 24V18C28 16.8954 27.1046 16 26 16Z" />
+                  <path d="M18 6H14C12.8954 6 12 6.89543 12 8V14C12 15.1046 12.8954 16 14 16H18C19.1046 16 20 15.1046 20 14V8C20 6.89543 19.1046 6 18 6Z" />
+                  <path d="M12 12H8C6.89543 12 6 12.8954 6 14V16" />
+                  <path d="M20 12H24C25.1046 12 26 12.8954 26 14V16" />
+                  <path d="M16 16V20" />
+                </svg>
+              </div>
+              <h3 class="font-display text-2xl font-bold text-white">Universal adapters</h3>
+              <p class="mt-3 text-base leading-8 text-muted">
+                Collect from OpenClaw, macOS, Linux, and Windows with a shared adapter model and normalize events
+                into one schema that is easier to reason about.
+              </p>
+            </article>
+
+            <article class="feature-card rounded-[1.5rem] p-8 shadow-card">
+              <div class="mb-5 inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-accent-border bg-accent-dim">
+                <svg fill="none" height="30" stroke="#2DD4A8" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 32 32" width="30" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 8C12 10.2091 10.2091 12 8 12C5.79086 12 4 10.2091 4 8C4 5.79086 5.79086 4 8 4C10.2091 4 12 5.79086 12 8Z" />
+                  <path d="M28 8C28 10.2091 26.2091 12 24 12C21.7909 12 20 10.2091 20 8C20 5.79086 21.7909 4 24 4C26.2091 4 28 5.79086 28 8Z" />
+                  <path d="M12 24C12 26.2091 10.2091 28 8 28C5.79086 28 4 26.2091 4 24C4 21.7909 5.79086 20 8 20C10.2091 20 12 21.7909 12 24Z" />
+                  <path d="M28 24C28 26.2091 26.2091 28 24 28C21.7909 28 20 26.2091 20 24C20 21.7909 21.7909 20 24 20C26.2091 20 28 21.7909 28 24Z" />
+                  <path d="M11.5 10.5L20.5 21.5" />
+                  <path d="M20.5 10.5L11.5 21.5" />
+                </svg>
+              </div>
+              <h3 class="font-display text-2xl font-bold text-white">Cross-platform correlation</h3>
+              <p class="mt-3 text-base leading-8 text-muted">
+                Correlate findings by IP, user, time window, and file hash so attack patterns stand out even when
+                the raw telemetry came from different systems.
+              </p>
+            </article>
+
+            <article class="feature-card rounded-[1.5rem] p-8 shadow-card">
+              <div class="mb-5 inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-accent-border bg-accent-dim">
+                <svg fill="none" height="30" stroke="#2DD4A8" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 32 32" width="30" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M16 28C22.6274 28 28 22.6274 28 16C28 9.37258 22.6274 4 16 4C9.37258 4 4 9.37258 4 16C4 22.6274 9.37258 28 16 28Z" />
+                  <path d="M10 16L14 20L22 12" />
+                </svg>
+              </div>
+              <h3 class="font-display text-2xl font-bold text-white">Native triage orchestration</h3>
+              <p class="mt-3 text-base leading-8 text-muted">
+                Investigate findings, auto-close low-risk cases, queue higher-risk analyst actions, and keep the
+                review trail in your local SOC store.
+              </p>
+            </article>
+
+            <article class="feature-card rounded-[1.5rem] p-8 shadow-card">
+              <div class="mb-5 inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-accent-border bg-accent-dim">
+                <svg fill="none" height="30" stroke="#2DD4A8" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 32 32" width="30" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M16 4L6 9V15C6 21.6274 10.4772 27.8378 16 30C21.5228 27.8378 26 21.6274 26 15V9L16 4Z" />
+                  <path d="M11 16L14 19L21 12" />
+                </svg>
+              </div>
+              <h3 class="font-display text-2xl font-bold text-white">Local-first policy control</h3>
+              <p class="mt-3 text-base leading-8 text-muted">
+                Tune supply-chain thresholds, rules, and allowlists locally instead of depending on a remote
+                service to approve the last mile of security decisions.
+              </p>
+            </article>
           </div>
         </div>
       </section>
 
-      <section id="platforms" class="py-24 px-8 max-w-[1440px] mx-auto">
-        <div class="mb-10">
-          <span class="font-label text-xs uppercase tracking-[0.2em] text-primary">Platform support</span>
-          <h2 class="text-4xl font-headline font-bold mt-4">Available now</h2>
-        </div>
-        <div class="overflow-x-auto rounded-xl border border-outline-variant/10 bg-surface-container">
-          <table class="w-full text-left">
-            <thead class="bg-surface-container-high">
-              <tr>
-                <th class="p-4">Platform</th>
-                <th class="p-4">Source</th>
-                <th class="p-4">Status</th>
-                <th class="p-4">Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-t border-outline-variant/10"><td class="p-4">OpenClaw</td><td class="p-4">Audit logs</td><td class="p-4">✅ Production</td><td class="p-4">Native telemetry source</td></tr>
-              <tr class="border-t border-outline-variant/10"><td class="p-4">macOS</td><td class="p-4">Unified logging</td><td class="p-4">✅ Production</td><td class="p-4">Host activity and security events</td></tr>
-              <tr class="border-t border-outline-variant/10"><td class="p-4">Linux</td><td class="p-4">journalctl / auditd</td><td class="p-4">✅ Beta</td><td class="p-4">Ready for Linux deployment</td></tr>
-              <tr class="border-t border-outline-variant/10"><td class="p-4">Windows</td><td class="p-4">Event Logs / Sysmon</td><td class="p-4">✅ Beta</td><td class="p-4">Ready for Windows deployment</td></tr>
-            </tbody>
-          </table>
+      <section id="platforms" class="scroll-mt-28 px-6 py-20 md:px-8 md:py-28">
+        <div class="mx-auto max-w-[1240px]">
+          <div class="max-w-2xl">
+            <span class="font-mono text-xs uppercase tracking-[0.22em] text-accent-soft">Platform support</span>
+            <h2 class="mt-4 font-display text-3xl font-bold tracking-[-0.03em] text-white md:text-5xl">Available now</h2>
+            <p class="mt-5 text-base leading-8 text-muted md:text-lg">
+              OpenClaw and macOS are production-ready today, while Linux and Windows adapters are in active beta.
+              The support matrix keeps deployment posture obvious at a glance without dropping users into documentation
+              too early.
+            </p>
+          </div>
+
+          <div class="table-shell mt-12 overflow-hidden rounded-[1.5rem] shadow-card">
+            <div class="hidden grid-cols-[1.2fr_1.35fr_0.95fr_1.2fr] gap-6 border-b border-white/10 bg-white/[0.03] px-6 py-4 md:grid">
+              <div class="text-sm font-semibold text-slate-300">Platform</div>
+              <div class="text-sm font-semibold text-slate-300">Source</div>
+              <div class="text-sm font-semibold text-slate-300">Status</div>
+              <div class="text-sm font-semibold text-slate-300">Notes</div>
+            </div>
+
+            <div class="grid gap-0">
+              <article class="grid gap-3 border-b border-white/10 px-6 py-5 md:grid-cols-[1.2fr_1.35fr_0.95fr_1.2fr] md:items-center md:gap-6">
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Platform</span><span class="text-white">OpenClaw</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Source</span><span class="text-muted">Audit logs</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Status</span><span class="status-pill production"><span class="h-2 w-2 rounded-full bg-accent"></span>Production</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Notes</span><span class="text-muted">Native telemetry source</span></div>
+              </article>
+
+              <article class="grid gap-3 border-b border-white/10 px-6 py-5 md:grid-cols-[1.2fr_1.35fr_0.95fr_1.2fr] md:items-center md:gap-6">
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Platform</span><span class="text-white">macOS</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Source</span><span class="text-muted">Unified logging</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Status</span><span class="status-pill production"><span class="h-2 w-2 rounded-full bg-accent"></span>Production</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Notes</span><span class="text-muted">Host activity and security events</span></div>
+              </article>
+
+              <article class="grid gap-3 border-b border-white/10 px-6 py-5 md:grid-cols-[1.2fr_1.35fr_0.95fr_1.2fr] md:items-center md:gap-6">
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Platform</span><span class="text-white">Linux</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Source</span><span class="text-muted">journalctl / auditd</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Status</span><span class="status-pill beta"><span class="h-2 w-2 rounded-full bg-amber"></span>Beta</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Notes</span><span class="text-muted">Ready for Linux deployment</span></div>
+              </article>
+
+              <article class="grid gap-3 px-6 py-5 md:grid-cols-[1.2fr_1.35fr_0.95fr_1.2fr] md:items-center md:gap-6">
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Platform</span><span class="text-white">Windows</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Source</span><span class="text-muted">Event Logs / Sysmon</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Status</span><span class="status-pill beta"><span class="h-2 w-2 rounded-full bg-amber"></span>Beta</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Notes</span><span class="text-muted">Ready for Windows deployment</span></div>
+              </article>
+            </div>
+          </div>
         </div>
       </section>
 
-      <section id="quickstart" class="py-24 px-8 max-w-[1440px] mx-auto">
-        <div class="mb-10">
-          <span class="font-label text-xs uppercase tracking-[0.2em] text-primary">Quick Start</span>
-          <h2 class="text-4xl font-headline font-bold mt-4">Zero to findings in minutes</h2>
-        </div>
-        <div class="bg-surface-container p-8 rounded-xl border border-outline-variant/10 font-mono text-sm text-on-surface-variant space-y-2">
-          <div>curl -fsSL https://secopsai.dev/install.sh | bash</div>
-          <div>cd ~/secopsai &amp;&amp; source .venv/bin/activate</div>
-          <div>secopsai refresh</div>
-          <div>secopsai refresh --platform macos,openclaw</div>
-          <div>secopsai correlate</div>
-          <div>secopsai triage orchestrate --search-root ~/secopsai</div>
-          <div>secopsai triage queue</div>
+      <section id="quickstart" class="scroll-mt-28 px-6 py-20 md:px-8 md:py-28">
+        <div class="mx-auto max-w-[1240px]">
+          <div class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div class="max-w-2xl">
+              <span class="font-mono text-xs uppercase tracking-[0.22em] text-accent-soft">Quick Start</span>
+              <h2 class="mt-4 font-display text-3xl font-bold tracking-[-0.03em] text-white md:text-5xl">
+                Zero to findings in minutes
+              </h2>
+              <p class="mt-5 text-base leading-8 text-muted md:text-lg">
+                Install the environment, refresh telemetry, correlate findings, and run triage from one straightforward
+                command flow. The commands below are ready to copy as a single block.
+              </p>
+            </div>
+
+            <button
+              id="copy-quickstart"
+              class="copy-button inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-semibold text-white transition-colors hover:border-accent-border hover:text-accent-soft"
+              data-copied="false"
+              type="button"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path d="M8 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2V7Z" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <span id="copy-label">Copy commands</span>
+            </button>
+          </div>
+
+          <div class="terminal-panel mt-10 overflow-hidden rounded-[1.5rem] shadow-glow">
+            <div class="flex items-center justify-between border-b border-white/10 bg-white/[0.03] px-5 py-4">
+              <div class="flex items-center gap-2">
+                <span class="h-3 w-3 rounded-full bg-rose-500/90"></span>
+                <span class="h-3 w-3 rounded-full bg-amber-400/90"></span>
+                <span class="h-3 w-3 rounded-full bg-accent/90"></span>
+                <span class="ml-3 font-mono text-[11px] uppercase tracking-[0.22em] text-muted">bash</span>
+              </div>
+              <span class="font-mono text-[11px] uppercase tracking-[0.2em] text-muted">local install path</span>
+            </div>
+
+            <pre id="quickstart-code" class="overflow-x-auto px-5 py-6 font-mono text-[13px] leading-8 text-slate-300 md:px-6"><span class="text-muted"># Install and initialize</span>
+<span class="text-muted">$ </span><span class="text-accent-soft">curl</span> -fsSL https://secopsai.dev/install.sh | bash
+<span class="text-muted">$ </span><span class="text-accent-soft">cd</span> ~/secopsai &amp;&amp; source .venv/bin/activate
+<span class="text-muted">$ </span><span class="text-accent-soft">secopsai</span> refresh
+<span class="text-muted">$ </span><span class="text-accent-soft">secopsai</span> refresh --platform macos,openclaw
+<span class="text-muted">$ </span><span class="text-accent-soft">secopsai</span> correlate
+<span class="text-muted">$ </span><span class="text-accent-soft">secopsai</span> triage orchestrate --search-root ~/secopsai
+<span class="text-muted">$ </span><span class="text-accent-soft">secopsai</span> triage queue</pre>
+          </div>
         </div>
       </section>
     </main>
+
+    <footer class="border-t border-white/10 px-6 py-10 md:px-8">
+      <div class="mx-auto flex max-w-[1240px] flex-col gap-6 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div class="flex items-center gap-2.5 text-white">
+            <span class="h-2.5 w-2.5 rounded-full bg-accent"></span>
+            <span class="font-display text-lg font-bold tracking-tight">SecOps</span>
+            <span class="font-mono text-lg font-bold tracking-tight">AI</span>
+          </div>
+          <p class="mt-2 font-mono text-xs uppercase tracking-[0.22em] text-muted">
+            Local-first. Open source. Cross-platform.
+          </p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-muted">
+          <a class="transition-colors hover:text-accent-soft" href="#quickstart">Install</a>
+          <a class="transition-colors hover:text-accent-soft" href="https://docs.secopsai.dev" rel="noopener noreferrer" target="_blank">Docs</a>
+          <a class="transition-colors hover:text-accent-soft" href="https://github.com/Techris93/secopsai" rel="noopener noreferrer" target="_blank">GitHub</a>
+          <span>&copy; 2026 SecOpsAI</span>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      const header = document.getElementById("site-header");
+      const menuToggle = document.getElementById("menu-toggle");
+      const mobileMenu = document.getElementById("mobile-menu");
+      const openIcon = document.getElementById("menu-open-icon");
+      const closeIcon = document.getElementById("menu-close-icon");
+      const mobileLinks = mobileMenu ? mobileMenu.querySelectorAll("a") : [];
+      const copyButton = document.getElementById("copy-quickstart");
+      const copyLabel = document.getElementById("copy-label");
+      const quickstartCode = document.getElementById("quickstart-code");
+
+      const syncHeaderState = () => {
+        if (!header) return;
+        if (window.scrollY > 20 || (mobileMenu && !mobileMenu.hidden)) {
+          header.classList.add("is-scrolled");
+        } else {
+          header.classList.remove("is-scrolled");
+        }
+      };
+
+      const setMenuState = (isOpen) => {
+        if (!menuToggle || !mobileMenu || !openIcon || !closeIcon) return;
+        mobileMenu.hidden = !isOpen;
+        mobileMenu.classList.toggle("hidden", !isOpen);
+        menuToggle.setAttribute("aria-expanded", String(isOpen));
+        openIcon.classList.toggle("hidden", isOpen);
+        closeIcon.classList.toggle("hidden", !isOpen);
+        syncHeaderState();
+      };
+
+      if (menuToggle) {
+        menuToggle.addEventListener("click", () => {
+          setMenuState(mobileMenu.hidden);
+        });
+      }
+
+      mobileLinks.forEach((link) => {
+        link.addEventListener("click", () => {
+          setMenuState(false);
+        });
+      });
+
+      window.addEventListener("scroll", syncHeaderState, { passive: true });
+      syncHeaderState();
+
+      if (copyButton && copyLabel && quickstartCode) {
+        const quickstartText = [
+          "# Install and initialize",
+          "curl -fsSL https://secopsai.dev/install.sh | bash",
+          "cd ~/secopsai && source .venv/bin/activate",
+          "secopsai refresh",
+          "secopsai refresh --platform macos,openclaw",
+          "secopsai correlate",
+          "secopsai triage orchestrate --search-root ~/secopsai",
+          "secopsai triage queue",
+        ].join("\n");
+
+        copyButton.addEventListener("click", async () => {
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              await navigator.clipboard.writeText(quickstartText);
+            } else {
+              const input = document.createElement("textarea");
+              input.value = quickstartText;
+              input.style.position = "fixed";
+              input.style.opacity = "0";
+              document.body.appendChild(input);
+              input.focus();
+              input.select();
+              document.execCommand("copy");
+              document.body.removeChild(input);
+            }
+
+            copyButton.dataset.copied = "true";
+            copyLabel.textContent = "Copied";
+            window.setTimeout(() => {
+              copyButton.dataset.copied = "false";
+              copyLabel.textContent = "Copy commands";
+            }, 1800);
+          } catch (error) {
+            copyLabel.textContent = "Copy failed";
+            window.setTimeout(() => {
+              copyLabel.textContent = "Copy commands";
+            }, 1800);
+          }
+        });
+      }
+    </script>
   </body>
 </html>
