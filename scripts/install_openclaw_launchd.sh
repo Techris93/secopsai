@@ -4,6 +4,21 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$PLIST_DIR/com.secops.autoresearch.openclaw.daily.plist"
+RUN_HOUR="${SECOPSAI_OPENCLAW_HOUR:-5}"
+RUN_MINUTE="${SECOPSAI_OPENCLAW_MINUTE:-45}"
+SKIP_EXPORT="${SECOPSAI_OPENCLAW_SKIP_EXPORT:-0}"
+PROGRAM_ARGS=$(cat <<EOF
+  <array>
+    <string>/bin/bash</string>
+    <string>$ROOT_DIR/scripts/openclaw_daily.sh</string>
+EOF
+)
+
+if [[ "$SKIP_EXPORT" == "1" ]]; then
+PROGRAM_ARGS+=$'\n    <string>--skip-export</string>'
+fi
+
+PROGRAM_ARGS+=$'\n  </array>'
 
 mkdir -p "$PLIST_DIR"
 mkdir -p "$ROOT_DIR/data/openclaw/logs"
@@ -21,20 +36,15 @@ cat > "$PLIST_PATH" <<EOF
   <string>$ROOT_DIR</string>
 
   <key>ProgramArguments</key>
-  <array>
-    <string>/bin/bash</string>
-    <string>$ROOT_DIR/scripts/openclaw_daily.sh</string>
-    <string>--skip-export</string>
-    <string>--slack</string>
-  </array>
+${PROGRAM_ARGS}
 
   <key>Umask</key>
   <integer>63</integer>
 
   <key>StartCalendarInterval</key>
   <dict>
-    <key>Hour</key><integer>9</integer>
-    <key>Minute</key><integer>0</integer>
+    <key>Hour</key><integer>$RUN_HOUR</integer>
+    <key>Minute</key><integer>$RUN_MINUTE</integer>
   </dict>
 
   <key>RunAtLoad</key>
@@ -56,7 +66,10 @@ Installed daily scheduler:
   $PLIST_PATH
 
 Default schedule:
-  Every day at 09:00 local time
+  Every day at $(printf "%02d:%02d" "$RUN_HOUR" "$RUN_MINUTE") local time
+
+Export mode:
+  $([[ "$SKIP_EXPORT" == "1" ]] && echo "reuse previously exported native logs" || echo "export fresh native logs from ~/.openclaw")
 
 Quick checks:
   launchctl list | grep secops.autoresearch.openclaw.daily

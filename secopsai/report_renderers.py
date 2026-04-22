@@ -158,13 +158,19 @@ def _recommended_actions(
     staleness_flags = _nested(snapshot, "staleness_flags") or []
     replay_age = _nested(snapshot, "telemetry", "labeled_replay", "age_hours_since_latest_event")
     latest_event_ts = _nested(snapshot, "telemetry", "labeled_replay", "latest_event_ts")
+    latest_source_activity_ts = _nested(snapshot, "telemetry", "openclaw_source", "latest_activity_at")
     intel_age = _nested(snapshot, "intel", "age_hours")
     matched_findings = _nested(command_status or {}, "match_metrics", "matched_findings")
     soc_open = _nested(snapshot, "findings", "soc_store", "open_or_in_review")
 
     if "telemetry_older_than_24h" in staleness_flags:
-        actions.append("Refresh or ingest newer OpenClaw replay telemetry first, current visibility is limited by stale data")
-        if latest_event_ts:
+        if "telemetry_export_bridge_stale" in staleness_flags:
+            actions.append("OpenClaw source logs are fresh, but the replay export pipeline is stale; rerun secopsai refresh or repair the scheduled refresh bridge")
+            if latest_source_activity_ts:
+                actions.append(f"OpenClaw source activity is current through {latest_source_activity_ts}; refresh the replay artifacts so reports use it")
+        else:
+            actions.append("Refresh or ingest newer OpenClaw replay telemetry first, current visibility is limited by stale data")
+        if latest_event_ts and "telemetry_export_bridge_stale" not in staleness_flags:
             actions.append(f"Investigate why telemetry stopped updating after {latest_event_ts}")
     elif replay_age is not None:
         try:
@@ -203,6 +209,7 @@ def render_status_summary(snapshot: Mapping[str, Any], *, tz_name: str = DEFAULT
     soc_store = _nested(snapshot, "findings", "soc_store") or {}
     replay = _nested(snapshot, "telemetry", "labeled_replay") or {}
     replay_bundle = _nested(snapshot, "telemetry", "openclaw_latest_bundle") or {}
+    replay_source = _nested(snapshot, "telemetry", "openclaw_source") or {}
     intel = _nested(snapshot, "intel") or {}
     adaptive = _nested(snapshot, "adaptive_intel", "latest_results") or {}
     pipeline_log = _nested(snapshot, "adaptive_intel", "latest_pipeline_log") or {}
@@ -246,6 +253,12 @@ def render_status_summary(snapshot: Mapping[str, Any], *, tz_name: str = DEFAULT
             f"- Total findings: {format_value(replay_bundle.get('total_findings'))}",
             f"- Total candidate findings: {format_value(replay_bundle.get('total_candidate_findings'))}",
             f"- Age hours: {format_value(replay_bundle.get('age_hours'))}",
+            "",
+            "OpenClaw source activity",
+            f"- OpenClaw home: {format_value(replay_source.get('home'))}",
+            f"- Source latest activity at: {format_value(replay_source.get('latest_activity_at'))}",
+            f"- Source latest activity age hours: {format_value(replay_source.get('age_hours_since_latest_activity'))}",
+            f"- Source latest activity path: {format_value(replay_source.get('latest_activity_path'))}",
             "",
             "Telemetry replay status",
             f"- Labeled replay exists: {format_value(replay.get('exists'))}",
@@ -378,6 +391,7 @@ def render_daily_intel(
     intel = _nested(snapshot, "intel") or {}
     replay = _nested(snapshot, "telemetry", "labeled_replay") or {}
     replay_bundle = _nested(snapshot, "telemetry", "openclaw_latest_bundle") or {}
+    replay_source = _nested(snapshot, "telemetry", "openclaw_source") or {}
     soc_store = _nested(snapshot, "findings", "soc_store") or {}
     correlation = _nested(snapshot, "correlation") or {}
     failed_count = _nested(replay, "status_counts", "failed")
@@ -394,6 +408,7 @@ def render_daily_intel(
         "Freshness",
         f"• Snapshot generated_at: {format_value(snapshot.get('generated_at'))}",
         f"• Intel generated_at: {format_value(intel.get('generated_at'))}",
+        f"• Latest OpenClaw source activity: {format_value(replay_source.get('latest_activity_at'))}",
         f"• Latest labeled replay event: {format_value(replay.get('latest_event_ts'))}",
         f"• Latest findings bundle generated_at: {format_value(replay_bundle.get('generated_at'))}",
         "",
@@ -436,6 +451,8 @@ def render_daily_intel(
         lines.append("• Telemetry is stale, flagged older than 24h")
     else:
         lines.append("• Telemetry freshness is within the last 24h")
+    if "telemetry_export_bridge_stale" in (snapshot.get("staleness_flags") or []):
+        lines.append("• OpenClaw source logs are fresher than the replay bundle, so the export bridge likely needs attention")
     lines.append(f"• Latest replay event is about {_hours_phrase(replay.get('age_hours_since_latest_event'))} hours old")
     lines.append(
         "• Status mix in replay includes {failed} failed and {error} error events, but there are no new replay detections or IOC hits in the current bundle".format(

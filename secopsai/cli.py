@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - unavailable on Windows
+    fcntl = None  # type: ignore[assignment]
 
 import openclaw_plugin
 import soc_store
@@ -46,6 +52,7 @@ from secopsai.triage import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE_FILE = ROOT / "data" / ".last_refresh"
+REFRESH_LOCK_FILE = ROOT / "data" / ".refresh.lock"
 DEFAULT_TTL_SECONDS = 60
 
 
@@ -96,6 +103,40 @@ def _maybe_skip_refresh(ttl: int, json_mode: bool) -> Optional[Dict[str, Any]]:
     return meta
 
 
+@contextlib.contextmanager
+def _refresh_lock(json_mode: bool):
+    if fcntl is None:
+        yield True
+        return
+
+    REFRESH_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    handle = REFRESH_LOCK_FILE.open("w", encoding="utf-8")
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            payload = {
+                "skipped": True,
+                "reason": "refresh_already_running",
+            }
+            if json_mode:
+                print(to_json(payload))
+            else:
+                print("Skipped refresh: another SecOpsAI refresh is already running.")
+            yield False
+            return
+
+        handle.write(str(int(time.time())))
+        handle.flush()
+        yield True
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        handle.close()
+
+
 def _normalize_global_flags(argv: Optional[List[str]] = None) -> List[str]:
     args = list(sys.argv[1:] if argv is None else argv)
     if "--json" in args and (not args or args[0] != "--json"):
@@ -117,8 +158,50 @@ def _run_adapter_refresh(platforms: Optional[str], **kwargs: Any) -> Dict[str, A
     selected = _parse_platforms(platforms)
     all_findings: List[Dict[str, Any]] = []
     platform_results: List[Dict[str, Any]] = []
+    findings_db: Optional[str] = None
+    total_findings = 0
+
+    if "openclaw" in selected:
+        print(f"\n[SecOpsAI] Refreshing OPENCLAW replay pipeline")
+        try:
+            pipeline_result = refresh_pipeline(
+                skip_export=bool(kwargs.get("skip_export", False)),
+                openclaw_home=kwargs.get("openclaw_home"),
+                verbose=bool(kwargs.get("verbose", False)),
+            )
+            findings_db = pipeline_result.findings_db
+            total_findings += int(pipeline_result.total_findings)
+            print(f"  ✓ Exported native logs: {'yes' if pipeline_result.exported else 'no'}")
+            print(f"  ✓ Wrote replay bundle: {pipeline_result.wrote_labeled}")
+            print(f"  ✓ Found {pipeline_result.total_findings} threats")
+            platform_results.append(
+                {
+                    "platform": "openclaw",
+                    "mode": "pipeline_refresh",
+                    "exported": pipeline_result.exported,
+                    "findings": pipeline_result.total_findings,
+                    "detections": pipeline_result.total_detections,
+                    "findings_file": pipeline_result.findings_file,
+                    "findings_db": pipeline_result.findings_db,
+                    "wrote_labeled": pipeline_result.wrote_labeled,
+                    "wrote_unlabeled": pipeline_result.wrote_unlabeled,
+                    "sync_attempted": pipeline_result.sync_attempted,
+                    "sync_succeeded": pipeline_result.sync_succeeded,
+                }
+            )
+        except Exception as exc:
+            print(f"  ✗ Error: {exc}")
+            platform_results.append(
+                {
+                    "platform": "openclaw",
+                    "mode": "pipeline_refresh",
+                    "error": str(exc),
+                }
+            )
 
     for platform_name in selected:
+        if platform_name == "openclaw":
+            continue
         print(f"\n[SecOpsAI] Collecting from {platform_name.upper()}")
         try:
             adapter = AdapterRegistry.create(platform_name)
@@ -148,19 +231,22 @@ def _run_adapter_refresh(platforms: Optional[str], **kwargs: Any) -> Dict[str, A
 
     db_path = None
     if all_findings:
-        db_path = persist_findings(all_findings, source="secopsai_cli")
+        db_path = persist_findings(all_findings, source="secopsai_cli", db_path=findings_db)
         print(f"  ✓ Saved to {db_path}")
+        total_findings += len(all_findings)
+    else:
+        db_path = findings_db
 
     _write_last_refresh()
     summary = {
         "mode": "adapter_refresh",
         "platforms": selected,
         "platform_results": platform_results,
-        "total_findings": len(all_findings),
+        "total_findings": total_findings,
         "findings_db": db_path,
     }
     print(f"\n{'=' * 60}")
-    print(f"TOTAL: {len(all_findings)} findings from {len(selected)} platform(s)")
+    print(f"TOTAL: {total_findings} findings from {len(selected)} platform(s)")
     print(f"{'=' * 60}")
     return summary
 
@@ -625,34 +711,38 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
 
     if args.cmd == "refresh":
-        if args.platform:
-            res = _run_adapter_refresh(
-                args.platform,
+        with _refresh_lock(args.json) as acquired:
+            if not acquired:
+                return 0
+
+            if args.platform:
+                res = _run_adapter_refresh(
+                    args.platform,
+                    skip_export=args.skip_export,
+                    cache_ttl=args.cache_ttl,
+                    openclaw_home=args.openclaw_home,
+                    verbose=args.verbose,
+                )
+                if args.json:
+                    print(to_json(res))
+                return 0
+
+            res = refresh_pipeline(
                 skip_export=args.skip_export,
-                cache_ttl=args.cache_ttl,
                 openclaw_home=args.openclaw_home,
                 verbose=args.verbose,
             )
+            _write_last_refresh()
             if args.json:
-                print(to_json(res))
+                print(to_json(res.__dict__))
+            else:
+                print("secopsai refresh complete")
+                print(f"exported={res.exported}")
+                print(f"findings_db={res.findings_db}")
+                print(f"findings_file={res.findings_file}")
+                print(f"total_findings={res.total_findings}")
+                print(f"total_detections={res.total_detections}")
             return 0
-
-        res = refresh_pipeline(
-            skip_export=args.skip_export,
-            openclaw_home=args.openclaw_home,
-            verbose=args.verbose,
-        )
-        _write_last_refresh()
-        if args.json:
-            print(to_json(res.__dict__))
-        else:
-            print("secopsai refresh complete")
-            print(f"exported={res.exported}")
-            print(f"findings_db={res.findings_db}")
-            print(f"findings_file={res.findings_file}")
-            print(f"total_findings={res.total_findings}")
-            print(f"total_detections={res.total_detections}")
-        return 0
 
     if args.cmd == "live":
         return _run_live(args.platform, args.duration)

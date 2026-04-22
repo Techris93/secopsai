@@ -139,3 +139,28 @@ def test_render_daily_intel_keeps_soc_and_replay_findings_separate() -> None:
     assert "Replay findings, kept separate from SOC findings" in rendered
     assert "• intel refresh: succeeded" in rendered
     assert "• Replay events scanned: 2533" in rendered
+
+
+def test_render_daily_intel_highlights_export_bridge_staleness() -> None:
+    snapshot = _sample_snapshot()
+    snapshot["telemetry"]["openclaw_source"] = {
+        "home": "/Users/chrixchange/.openclaw",
+        "latest_activity_at": "2026-04-20T08:55:00Z",
+        "age_hours_since_latest_activity": 0.1,
+        "latest_activity_path": "/Users/chrixchange/.openclaw/agents/main/sessions/latest.jsonl",
+    }
+    snapshot["staleness_flags"] = ["telemetry_older_than_24h", "telemetry_export_bridge_stale"]
+
+    rendered = render_daily_intel(
+        snapshot,
+        command_status={
+            "refresh": "succeeded",
+            "match": "succeeded",
+            "refresh_metrics": {"refresh": {"total": 11991}},
+            "match_metrics": {"events_total": 2533, "iocs_considered": 500, "matched_findings": 0},
+        },
+    )
+
+    assert "• Latest OpenClaw source activity: 2026-04-20T08:55:00Z" in rendered
+    assert "• OpenClaw source logs are fresher than the replay bundle, so the export bridge likely needs attention" in rendered
+    assert "• OpenClaw source logs are fresh, but the replay export pipeline is stale; rerun secopsai refresh or repair the scheduled refresh bridge" in rendered
