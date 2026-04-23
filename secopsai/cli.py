@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import signal
 import subprocess
 import sys
@@ -24,6 +25,24 @@ from scripts.sync_findings_to_supabase import execute_sync as execute_findings_s
 from secopsai.formatters import fmt_finding, fmt_list, to_json
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
 from secopsai.pipeline import refresh as refresh_pipeline
+from secopsai.research import (
+    build_preflight_report,
+    research_finding as research_finding_report,
+    research_package as research_package_report,
+)
+from secopsai.sessions import (
+    add_artifact as add_session_artifact,
+    add_event as add_session_event,
+    add_note as add_session_note,
+    create_session,
+    list_sessions,
+    load_session,
+    request_approval as request_session_approval,
+    resolve_approval as resolve_session_approval,
+    session_path,
+    set_session_status,
+    update_step as update_session_step,
+)
 
 from secopsai.supply_chain import (
     allowlist_add,
@@ -43,6 +62,7 @@ from secopsai.triage import (
     close_finding,
     generate_summary,
     get_action,
+    infer_category,
     investigate_finding,
     list_actions,
     list_triage_findings,
@@ -441,6 +461,248 @@ def _resolve_supply_chain_report(
     raise FileNotFoundError(f"No stored report found for {ecosystem}:{package}{version_hint}")
 
 
+def _triage_session_plan() -> List[Dict[str, str]]:
+    return [
+        {"title": "Review finding context", "status": "pending"},
+        {"title": "Investigate locally", "status": "pending"},
+        {"title": "Decide disposition", "status": "pending"},
+        {"title": "Apply or queue next action", "status": "pending"},
+    ]
+
+
+def _json_object(raw: Optional[str], *, label: str) -> Dict[str, Any]:
+    if raw is None:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} must be valid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return payload
+
+
+def _session_subject_for_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
+    subject = {
+        "finding_id": finding.get("finding_id"),
+        "title": finding.get("title"),
+        "severity": finding.get("severity"),
+        "status": finding.get("status"),
+        "category": infer_category(finding),
+    }
+    for key in ("source", "platform", "package", "ecosystem"):
+        value = finding.get(key)
+        if value:
+            subject[key] = value
+    return subject
+
+
+def _default_session_title(
+    *,
+    kind: str,
+    title: Optional[str] = None,
+    finding: Optional[Dict[str, Any]] = None,
+    finding_id: Optional[str] = None,
+) -> str:
+    if title:
+        return title.strip()
+    if finding:
+        return f"{str(kind).title()} {finding.get('finding_id')}: {finding.get('title')}"
+    if finding_id:
+        return f"{str(kind).title()} {finding_id}"
+    return ""
+
+
+def _fmt_session_list(rows: List[Dict[str, Any]]) -> str:
+    if not rows:
+        return "No sessions found."
+    lines: List[str] = []
+    for row in rows:
+        subject = row.get("subject") or {}
+        finding_id = str(subject.get("finding_id") or "")
+        suffix = f" | finding={finding_id}" if finding_id else ""
+        lines.append(
+            "{session_id} | {kind} | {status} | {title}{suffix}".format(
+                session_id=row.get("session_id"),
+                kind=row.get("kind"),
+                status=row.get("status"),
+                title=row.get("title"),
+                suffix=suffix,
+            )
+        )
+    return "\n".join(lines)
+
+
+def _fmt_session_detail(session: Dict[str, Any]) -> str:
+    subject = session.get("subject") or {}
+    metadata = session.get("metadata") or {}
+    plan = session.get("plan") or []
+    approvals = session.get("approvals") or []
+    artifacts = session.get("artifacts") or []
+    events = session.get("events") or []
+
+    lines = [
+        f"SESSION: {session.get('session_id')}",
+        f"KIND: {session.get('kind')}",
+        f"STATUS: {session.get('status')}",
+        f"TITLE: {session.get('title')}",
+        f"CREATED_AT: {session.get('created_at')}",
+        f"UPDATED_AT: {session.get('updated_at')}",
+    ]
+    if subject:
+        lines.append(f"SUBJECT: {to_json(subject)}")
+    if metadata:
+        lines.append(f"METADATA: {to_json(metadata)}")
+    if plan:
+        lines.append("PLAN:")
+        for item in plan:
+            note = f" | {item.get('note')}" if item.get("note") else ""
+            lines.append(f"- {item.get('title')} [{item.get('status')}] {item.get('step_id')}{note}")
+    if approvals:
+        lines.append("APPROVALS:")
+        for item in approvals:
+            lines.append(
+                f"- {item.get('approval_id')} | {item.get('state')} | {item.get('type')} | {item.get('summary')}"
+            )
+    if artifacts:
+        lines.append("ARTIFACTS:")
+        for item in artifacts:
+            label = f" ({item.get('label')})" if item.get("label") else ""
+            lines.append(f"- {item.get('kind')}{label}: {item.get('path')}")
+    if events:
+        lines.append("RECENT_EVENTS:")
+        for item in events[-10:]:
+            lines.append(
+                f"- {item.get('ts')} | {item.get('type')} | {item.get('message')}"
+            )
+    return "\n".join(lines)
+
+
+def _find_approval(session: Dict[str, Any], approval_id: str) -> Dict[str, Any]:
+    for item in session.get("approvals", []):
+        if str(item.get("approval_id") or "") == approval_id:
+            return item
+    raise ValueError(f"approval not found: {approval_id}")
+
+
+def _preflight_is_blocking(preflight: Dict[str, Any]) -> bool:
+    return str(preflight.get("status") or "").lower() == "block"
+
+
+def _preflight_text(preflight: Dict[str, Any]) -> str:
+    status = str(preflight.get("status") or "unknown").upper()
+    issues = preflight.get("issues") or []
+    if issues:
+        lead = str(issues[0].get("message") or preflight.get("summary") or "preflight issue")
+    else:
+        lead = str(preflight.get("summary") or "Preflight checks passed.")
+    return f"PRE-FLIGHT: {status} | {lead}"
+
+
+def _apply_session_approval(
+    session_id: str,
+    approval_id: str,
+    *,
+    session_dir: Optional[str] = None,
+    queue_file: Optional[str] = None,
+    db_path: Optional[str] = None,
+    author: Optional[str] = None,
+) -> Dict[str, Any]:
+    session = load_session(session_id, session_dir)
+    approval = _find_approval(session, approval_id)
+    if str(approval.get("state") or "") != "approved":
+        raise ValueError(f"approval is not approved: {approval_id}")
+
+    payload = approval.get("payload") or {}
+    payload_kind = str(payload.get("kind") or "")
+    if payload_kind == "triage_action":
+        action_id = str(payload.get("action_id") or "")
+        if not action_id:
+            raise ValueError("approval payload missing action_id")
+        resolved_queue_file = str(payload.get("queue_file") or queue_file or "") or None
+        result = apply_action(
+            action_id,
+            queue_file=resolved_queue_file,
+            db_path=db_path,
+            author=author,
+            yes=True,
+        )
+        add_session_event(
+            session_id,
+            event_type="approval_applied",
+            message=f"Applied approved triage action {action_id}.",
+            data={"approval_id": approval_id, "action_id": action_id},
+            author=author,
+            path=session_dir,
+        )
+        update_session_step(
+            session_id,
+            step="Apply or queue next action",
+            status="completed",
+            note=f"Applied queued action {action_id}.",
+            path=session_dir,
+        )
+        nested = result.get("result")
+        if isinstance(nested, dict) and str(nested.get("status") or "").lower() == "closed":
+            set_session_status(
+                session_id,
+                status="closed",
+                message=f"Session closed after applying approved action {action_id}.",
+                path=session_dir,
+            )
+        return {"kind": payload_kind, "result": result}
+
+    if payload_kind == "triage_close":
+        finding_id = str(payload.get("finding_id") or "")
+        if not finding_id:
+            raise ValueError("approval payload missing finding_id")
+        result = close_finding(
+            finding_id,
+            disposition=str(payload.get("disposition") or "needs_review"),
+            note=str(payload.get("note") or approval.get("summary") or "Applied approved triage closure."),
+            status=str(payload.get("status") or "triaged"),
+            author=author,
+            db_path=db_path,
+        )
+        add_session_event(
+            session_id,
+            event_type="approval_applied",
+            message=f"Applied approved disposition for {finding_id}.",
+            data={
+                "approval_id": approval_id,
+                "finding_id": finding_id,
+                "disposition": result.get("disposition"),
+                "status": result.get("status"),
+            },
+            author=author,
+            path=session_dir,
+        )
+        update_session_step(
+            session_id,
+            step="Decide disposition",
+            status="completed",
+            note=f"{result.get('disposition')} / {result.get('status')}",
+            path=session_dir,
+        )
+        update_session_step(
+            session_id,
+            step="Apply or queue next action",
+            status="completed",
+            note=f"Applied approved disposition for {finding_id}.",
+            path=session_dir,
+        )
+        if str(result.get("status") or "").lower() == "closed":
+            set_session_status(
+                session_id,
+                status="closed",
+                message=f"Session closed after approved disposition for {finding_id}.",
+                path=session_dir,
+            )
+        return {"kind": payload_kind, "result": result}
+
+    raise ValueError(f"unsupported approval payload kind: {payload_kind}")
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     argv = _normalize_global_flags(argv)
     p = argparse.ArgumentParser(
@@ -514,6 +776,35 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     correlate = sub.add_parser("correlate", help="Run cross-platform correlation on stored findings")
     correlate.add_argument("--window", "-w", type=int, default=60, help="Time window in minutes (default: 60)")
+    correlate.add_argument(
+        "--enforce-preflight",
+        action="store_true",
+        help="Block correlation when telemetry or intel freshness checks fail",
+    )
+
+    research = sub.add_parser("research", help="Generate source-backed research reports and preflight checks")
+    research_sub = research.add_subparsers(dest="research_cmd", required=True)
+
+    research_preflight = research_sub.add_parser("preflight", help="Run telemetry and intel preflight checks")
+    research_preflight.add_argument("--workspace-logs", default=None, help="Override adaptive-intel logs directory")
+    research_preflight.add_argument("--openclaw-home", default=None, help="Override OpenClaw home directory")
+
+    research_finding_cmd = research_sub.add_parser("finding", help="Generate a source-backed research report for one finding")
+    research_finding_cmd.add_argument("finding_id")
+    research_finding_cmd.add_argument("--db-path", default=None, help="Override SQLite database path")
+    research_finding_cmd.add_argument("--search-root", default=None, help="Root path to scan for local references")
+    research_finding_cmd.add_argument("--report-dir", default=None, help="Directory to write research reports")
+    research_finding_cmd.add_argument("--session-id", default=None, help="Attach the report to an existing session")
+    research_finding_cmd.add_argument("--session-dir", default=None, help="Override session storage directory")
+
+    research_package_cmd = research_sub.add_parser("package", help="Generate a source-backed research report for one package")
+    research_package_cmd.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    research_package_cmd.add_argument("--package", required=True, help="Package name")
+    research_package_cmd.add_argument("--version", default=None, help="Optional version hint")
+    research_package_cmd.add_argument("--search-root", default=None, help="Root path to scan for local references")
+    research_package_cmd.add_argument("--report-dir", default=None, help="Directory to write research reports")
+    research_package_cmd.add_argument("--session-id", default=None, help="Attach the report to an existing session")
+    research_package_cmd.add_argument("--session-dir", default=None, help="Override session storage directory")
 
     intel = sub.add_parser("intel", help="Threat intelligence (IOC) pipeline")
     intel_sub = intel.add_subparsers(dest="intel_cmd", required=True)
@@ -634,6 +925,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     triage_investigate.add_argument("--author", default=None)
     triage_investigate.add_argument("--note", default=None)
     triage_investigate.add_argument("--db-path", default=None, help="Override SQLite database path")
+    triage_investigate.add_argument("--session-id", default=None, help="Attach investigation output to an existing session")
+    triage_investigate.add_argument("--open-session", action="store_true", help="Create a triage session automatically when investigating")
+    triage_investigate.add_argument("--session-dir", default=None, help="Override session storage directory")
+    triage_investigate.add_argument("--with-research", action="store_true", help="Generate and attach a source-backed research report")
+    triage_investigate.add_argument("--enforce-preflight", action="store_true", help="Block investigation when freshness checks fail")
 
     triage_close = triage_sub.add_parser("close", help="Close a finding with analyst disposition and note")
     triage_close.add_argument("finding_id")
@@ -642,6 +938,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     triage_close.add_argument("--author", default=None)
     triage_close.add_argument("--status", default="closed", choices=["triaged", "closed"])
     triage_close.add_argument("--db-path", default=None, help="Override SQLite database path")
+    triage_close.add_argument("--session-id", default=None, help="Attach the closure decision to an existing session")
+    triage_close.add_argument("--session-dir", default=None, help="Override session storage directory")
 
     triage_orchestrate = triage_sub.add_parser("orchestrate", help="Run native triage orchestration across findings")
     triage_orchestrate.add_argument("finding_ids", nargs="*", help="Optional explicit finding IDs to orchestrate")
@@ -653,6 +951,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     triage_orchestrate.add_argument("--db-path", default=None, help="Override SQLite database path")
     triage_orchestrate.add_argument("--limit", type=int, default=None, help="Cap findings processed in one run")
     triage_orchestrate.add_argument("--no-auto-apply-safe", action="store_true", help="Do not auto-close low-risk findings")
+    triage_orchestrate.add_argument("--enforce-preflight", action="store_true", help="Block orchestration when freshness checks fail")
 
     triage_queue = triage_sub.add_parser("queue", help="List queued triage actions")
     triage_queue.add_argument("--status", choices=["pending", "applied"])
@@ -665,12 +964,77 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     triage_apply.add_argument("--db-path", default=None, help="Override SQLite database path")
     triage_apply.add_argument("--author", default=None)
     triage_apply.add_argument("--yes", action="store_true", help="Execute the action without prompting")
+    triage_apply.add_argument("--session-id", default=None, help="Attach the applied action to an existing session")
+    triage_apply.add_argument("--session-dir", default=None, help="Override session storage directory")
 
     triage_summary = triage_sub.add_parser("summary", help="Generate a triage queue and finding summary")
     triage_summary.add_argument("--db-path", default=None, help="Override SQLite database path")
     triage_summary.add_argument("--queue-file", default=None, help="Override triage action queue JSON path")
     triage_summary.add_argument("--summary-dir", default=None, help="Directory to write summary reports")
     triage_summary.add_argument("--limit", type=int, default=20)
+
+    session_cmd = sub.add_parser("session", help="Persist local investigation sessions, plans, and approvals")
+    session_sub = session_cmd.add_subparsers(dest="session_cmd", required=True)
+
+    session_create = session_sub.add_parser("create", help="Create a local session")
+    session_create.add_argument("--kind", default="general", help="Session kind, for example general or triage")
+    session_create.add_argument("--title", default=None, help="Session title")
+    session_create.add_argument("--finding-id", default=None, help="Seed a triage session from an existing finding")
+    session_create.add_argument("--metadata", default=None, help="Optional JSON object of session metadata")
+    session_create.add_argument("--db-path", default=None, help="Override SQLite database path for finding lookups")
+    session_create.add_argument("--session-dir", default=None, help="Override session storage directory")
+
+    session_list_cmd = session_sub.add_parser("list", help="List stored sessions")
+    session_list_cmd.add_argument("--kind", default=None)
+    session_list_cmd.add_argument("--status", choices=["open", "closed"])
+    session_list_cmd.add_argument("--finding-id", default=None)
+    session_list_cmd.add_argument("--limit", type=int, default=50)
+    session_list_cmd.add_argument("--session-dir", default=None, help="Override session storage directory")
+
+    session_show = session_sub.add_parser("show", help="Show one stored session")
+    session_show.add_argument("session_id")
+    session_show.add_argument("--session-dir", default=None, help="Override session storage directory")
+
+    session_note = session_sub.add_parser("note", help="Append a note to a session")
+    session_note.add_argument("session_id")
+    session_note.add_argument("--message", required=True)
+    session_note.add_argument("--author", default=None)
+    session_note.add_argument("--session-dir", default=None, help="Override session storage directory")
+
+    session_step = session_sub.add_parser("step", help="Update a plan step in a session")
+    session_step.add_argument("session_id")
+    session_step.add_argument("--step", required=True, help="Step title or step_id")
+    session_step.add_argument("--status", required=True, choices=["pending", "in_progress", "completed", "blocked"])
+    session_step.add_argument("--note", default=None)
+    session_step.add_argument("--session-dir", default=None, help="Override session storage directory")
+
+    session_request = session_sub.add_parser("request-approval", help="Request an approval inside a session")
+    session_request.add_argument("session_id")
+    session_request.add_argument("--type", required=True, choices=["triage_action", "triage_close", "custom"])
+    session_request.add_argument("--summary", default=None, help="Human-readable approval summary")
+    session_request.add_argument("--action-id", default=None, help="Queued triage action ID for triage_action approvals")
+    session_request.add_argument("--finding-id", default=None, help="Finding ID for triage_close approvals")
+    session_request.add_argument("--disposition", choices=sorted(VALID_DISPOSITIONS))
+    session_request.add_argument("--note", default=None, help="Closure note or approval rationale")
+    session_request.add_argument("--status", default="triaged", choices=["triaged", "closed"])
+    session_request.add_argument("--payload", default=None, help="Custom approval payload as a JSON object")
+    session_request.add_argument("--requested-by", default=None)
+    session_request.add_argument("--queue-file", default=None, help="Override triage action queue JSON path")
+    session_request.add_argument("--db-path", default=None, help="Override SQLite database path for finding lookups")
+    session_request.add_argument("--session-dir", default=None, help="Override session storage directory")
+
+    session_resolve = session_sub.add_parser("resolve-approval", help="Resolve an approval inside a session")
+    session_resolve.add_argument("session_id")
+    session_resolve.add_argument("approval_id")
+    session_resolve.add_argument("--note", default=None)
+    session_resolve.add_argument("--decided-by", default=None)
+    session_resolve.add_argument("--apply", action="store_true", help="Apply the approved payload immediately")
+    session_resolve.add_argument("--queue-file", default=None, help="Override triage action queue JSON path")
+    session_resolve.add_argument("--db-path", default=None, help="Override SQLite database path")
+    session_resolve.add_argument("--session-dir", default=None, help="Override session storage directory")
+    decision_group = session_resolve.add_mutually_exclusive_group(required=True)
+    decision_group.add_argument("--approve", action="store_true")
+    decision_group.add_argument("--reject", action="store_true")
 
     sync_findings = sub.add_parser("sync-findings", help="Sync local findings into the dashboard Supabase table")
     sync_findings.add_argument("--db-path", default=None, help="Path to local SOC SQLite DB")
@@ -748,7 +1112,120 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _run_live(args.platform, args.duration)
 
     if args.cmd == "correlate":
+        preflight = build_preflight_report(
+            workspace_logs=getattr(args, "workspace_logs", None),
+            openclaw_home=getattr(args, "openclaw_home", None),
+        )
+        if args.enforce_preflight and _preflight_is_blocking(preflight):
+            if args.json:
+                print(to_json({"error": "preflight_blocked", "preflight": preflight}))
+            else:
+                print(_preflight_text(preflight))
+            return 1
         return _run_correlate(time_window=args.window, json_output=args.json)
+
+    if args.cmd == "research":
+        if args.research_cmd == "preflight":
+            payload = build_preflight_report(
+                workspace_logs=args.workspace_logs,
+                openclaw_home=args.openclaw_home,
+            )
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(_preflight_text(payload))
+                if payload.get("recommendations"):
+                    print("RECOMMENDATIONS:")
+                    for item in payload["recommendations"]:
+                        print(f"- {item}")
+            return 0 if not _preflight_is_blocking(payload) else 1
+
+        try:
+            if args.research_cmd == "finding":
+                payload = research_finding_report(
+                    finding_id=args.finding_id,
+                    db_path=args.db_path,
+                    search_root=args.search_root,
+                    report_dir=args.report_dir,
+                )
+                if args.session_id:
+                    add_session_artifact(
+                        args.session_id,
+                        kind="research_json_report",
+                        artifact_path=payload["json_report"],
+                        label="Research JSON report",
+                        metadata={"finding_id": args.finding_id},
+                        path=args.session_dir,
+                    )
+                    add_session_artifact(
+                        args.session_id,
+                        kind="research_markdown_report",
+                        artifact_path=payload["markdown_report"],
+                        label="Research Markdown report",
+                        metadata={"finding_id": args.finding_id},
+                        path=args.session_dir,
+                    )
+                    add_session_event(
+                        args.session_id,
+                        event_type="research_report_added",
+                        message=f"Attached source-backed research for {args.finding_id}.",
+                        data={"finding_id": args.finding_id},
+                        path=args.session_dir,
+                    )
+                    payload["session_id"] = args.session_id
+            else:
+                payload = research_package_report(
+                    ecosystem=args.ecosystem,
+                    package=args.package,
+                    version=args.version,
+                    search_root=args.search_root,
+                    report_dir=args.report_dir,
+                )
+                if args.session_id:
+                    add_session_artifact(
+                        args.session_id,
+                        kind="research_json_report",
+                        artifact_path=payload["json_report"],
+                        label="Research JSON report",
+                        metadata={"package": args.package, "ecosystem": args.ecosystem},
+                        path=args.session_dir,
+                    )
+                    add_session_artifact(
+                        args.session_id,
+                        kind="research_markdown_report",
+                        artifact_path=payload["markdown_report"],
+                        label="Research Markdown report",
+                        metadata={"package": args.package, "ecosystem": args.ecosystem},
+                        path=args.session_dir,
+                    )
+                    add_session_event(
+                        args.session_id,
+                        event_type="research_report_added",
+                        message=f"Attached source-backed package research for {args.ecosystem}:{args.package}.",
+                        data={"package": args.package, "ecosystem": args.ecosystem},
+                        path=args.session_dir,
+                    )
+                    payload["session_id"] = args.session_id
+        except Exception as exc:
+            if args.json:
+                print(to_json({"error": str(exc)}))
+            else:
+                print(f"error: {exc}")
+            return 1
+
+        if args.json:
+            print(to_json(payload))
+        else:
+            print(f"SUMMARY: {payload.get('summary')}")
+            print(f"JSON_REPORT: {payload['json_report']}")
+            print(f"MARKDOWN_REPORT: {payload['markdown_report']}")
+            if payload.get("session_id"):
+                print(f"SESSION_ID: {payload['session_id']}")
+            if payload.get("observations"):
+                print("OBSERVATIONS:")
+                for item in payload["observations"]:
+                    print(f"- {item}")
+        return 0
 
     if args.cmd == "sync-findings":
         try:
@@ -766,6 +1243,248 @@ def main(argv: Optional[List[str]] = None) -> int:
             for key, value in payload.items():
                 print(f"{key}={value}")
         return 0
+
+    if args.cmd == "session":
+        if args.session_cmd == "create":
+            try:
+                finding = None
+                kind = args.kind
+                subject: Dict[str, Any] = {}
+                initial_plan: List[Dict[str, Any]] = []
+                if args.finding_id:
+                    finding = soc_store.get_finding(args.finding_id, args.db_path)
+                    if not finding:
+                        raise ValueError(f"finding not found: {args.finding_id}")
+                    if kind == "general":
+                        kind = "triage"
+                    subject = _session_subject_for_finding(finding)
+                    if kind == "triage":
+                        initial_plan = _triage_session_plan()
+                elif kind == "triage":
+                    initial_plan = _triage_session_plan()
+
+                title = _default_session_title(
+                    kind=kind,
+                    title=args.title,
+                    finding=finding,
+                    finding_id=args.finding_id,
+                )
+                if not title:
+                    raise ValueError("--title is required when --finding-id is not supplied")
+
+                session = create_session(
+                    kind=kind,
+                    title=title,
+                    subject=subject,
+                    metadata=_json_object(args.metadata, label="metadata"),
+                    initial_plan=initial_plan,
+                    path=args.session_dir,
+                )
+                payload = {
+                    "session": session,
+                    "path": str(session_path(session["session_id"], args.session_dir)),
+                }
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc)}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(_fmt_session_detail(payload["session"]))
+                print(f"PATH: {payload['path']}")
+            return 0
+
+        if args.session_cmd == "list":
+            rows = list_sessions(
+                kind=args.kind,
+                status=args.status,
+                finding_id=args.finding_id,
+                limit=args.limit,
+                path=args.session_dir,
+            )
+            if args.json:
+                print(to_json({"sessions": rows}))
+            else:
+                print(_fmt_session_list(rows))
+            return 0
+
+        if args.session_cmd == "show":
+            try:
+                session = load_session(args.session_id, args.session_dir)
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc), "session_id": args.session_id}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json({"session": session}))
+            else:
+                print(_fmt_session_detail(session))
+                print(f"PATH: {session_path(args.session_id, args.session_dir)}")
+            return 0
+
+        if args.session_cmd == "note":
+            try:
+                session = add_session_note(
+                    args.session_id,
+                    message=args.message,
+                    author=args.author,
+                    path=args.session_dir,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc), "session_id": args.session_id}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json({"session": session}))
+            else:
+                print(_fmt_session_detail(session))
+            return 0
+
+        if args.session_cmd == "step":
+            try:
+                session = update_session_step(
+                    args.session_id,
+                    step=args.step,
+                    status=args.status,
+                    note=args.note,
+                    path=args.session_dir,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc), "session_id": args.session_id, "step": args.step}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json({"session": session}))
+            else:
+                print(_fmt_session_detail(session))
+            return 0
+
+        if args.session_cmd == "request-approval":
+            try:
+                payload: Dict[str, Any]
+                summary = str(args.summary or "").strip()
+                if args.type == "triage_action":
+                    if not args.action_id:
+                        raise ValueError("--action-id is required for triage_action approvals")
+                    action = get_action(args.action_id, args.queue_file)
+                    if not action:
+                        raise ValueError(f"action not found: {args.action_id}")
+                    payload = {"kind": "triage_action", "action_id": args.action_id}
+                    if args.queue_file:
+                        payload["queue_file"] = str(Path(args.queue_file).expanduser().resolve())
+                    if not summary:
+                        summary = f"Approve queued triage action {args.action_id}: {action.get('summary')}"
+                elif args.type == "triage_close":
+                    if not args.finding_id:
+                        raise ValueError("--finding-id is required for triage_close approvals")
+                    finding = soc_store.get_finding(args.finding_id, args.db_path)
+                    if not finding:
+                        raise ValueError(f"finding not found: {args.finding_id}")
+                    if not args.disposition:
+                        raise ValueError("--disposition is required for triage_close approvals")
+                    if not args.note:
+                        raise ValueError("--note is required for triage_close approvals")
+                    payload = {
+                        "kind": "triage_close",
+                        "finding_id": args.finding_id,
+                        "disposition": args.disposition,
+                        "status": args.status,
+                        "note": args.note,
+                    }
+                    if not summary:
+                        summary = f"Approve disposition {args.disposition} for {args.finding_id}"
+                else:
+                    payload = _json_object(args.payload, label="payload")
+                    if not payload:
+                        raise ValueError("--payload is required for custom approvals")
+                    if "kind" not in payload:
+                        payload["kind"] = "custom"
+                    if not summary:
+                        raise ValueError("--summary is required for custom approvals")
+
+                approval = request_session_approval(
+                    args.session_id,
+                    approval_type=args.type,
+                    summary=summary,
+                    payload=payload,
+                    requested_by=args.requested_by,
+                    path=args.session_dir,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc), "session_id": args.session_id}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+
+            if args.json:
+                print(to_json({"approval": approval}))
+            else:
+                print(
+                    "{aid} | {state} | {atype} | {summary}".format(
+                        aid=approval.get("approval_id"),
+                        state=approval.get("state"),
+                        atype=approval.get("type"),
+                        summary=approval.get("summary"),
+                    )
+                )
+            return 0
+
+        if args.session_cmd == "resolve-approval":
+            try:
+                if args.apply and not args.approve:
+                    raise ValueError("--apply requires --approve")
+                decision = "approved" if args.approve else "rejected"
+                approval = resolve_session_approval(
+                    args.session_id,
+                    args.approval_id,
+                    decision=decision,
+                    note=args.note,
+                    decided_by=args.decided_by,
+                    path=args.session_dir,
+                )
+                applied = None
+                if args.apply:
+                    applied = _apply_session_approval(
+                        args.session_id,
+                        args.approval_id,
+                        session_dir=args.session_dir,
+                        queue_file=args.queue_file,
+                        db_path=args.db_path,
+                        author=args.decided_by,
+                    )
+                payload = {"approval": approval, "applied": applied}
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc), "session_id": args.session_id, "approval_id": args.approval_id}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(
+                    "{aid} | {state} | {atype} | {summary}".format(
+                        aid=payload["approval"].get("approval_id"),
+                        state=payload["approval"].get("state"),
+                        atype=payload["approval"].get("type"),
+                        summary=payload["approval"].get("summary"),
+                    )
+                )
+                if payload["applied"]:
+                    print(f"APPLIED_KIND: {payload['applied'].get('kind')}")
+            return 0
 
     refresh_meta = maybe_refresh(args)
 
@@ -940,7 +1659,47 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0
 
         if args.triage_cmd == "investigate":
+            session_id = args.session_id
             try:
+                preflight = build_preflight_report()
+                if args.enforce_preflight and _preflight_is_blocking(preflight):
+                    raise ValueError(f"preflight_blocked: {preflight['summary']}")
+                if args.open_session and not session_id:
+                    finding = soc_store.get_finding(args.finding_id, args.db_path)
+                    if not finding:
+                        raise ValueError(f"finding not found: {args.finding_id}")
+                    session = create_session(
+                        kind="triage",
+                        title=_default_session_title(kind="triage", finding=finding),
+                        subject=_session_subject_for_finding(finding),
+                        metadata={"origin": "triage_investigate"},
+                        initial_plan=_triage_session_plan(),
+                        path=args.session_dir,
+                    )
+                    session_id = str(session["session_id"])
+                if session_id:
+                    add_session_event(
+                        session_id,
+                        event_type="triage_investigation_started",
+                        message=f"Started investigation for {args.finding_id}.",
+                        data={"finding_id": args.finding_id},
+                        author=args.author,
+                        path=args.session_dir,
+                    )
+                    update_session_step(
+                        session_id,
+                        step="Review finding context",
+                        status="completed",
+                        note=f"Loaded {args.finding_id} for investigation.",
+                        path=args.session_dir,
+                    )
+                    update_session_step(
+                        session_id,
+                        step="Investigate locally",
+                        status="in_progress",
+                        note="Collecting local evidence and generating reports.",
+                        path=args.session_dir,
+                    )
                 payload = investigate_finding(
                     args.finding_id,
                     db_path=args.db_path,
@@ -949,9 +1708,101 @@ def main(argv: Optional[List[str]] = None) -> int:
                     author=args.author,
                     note=args.note,
                 )
+                payload["preflight"] = preflight
+                if args.with_research:
+                    research_payload = research_finding_report(
+                        finding_id=args.finding_id,
+                        db_path=args.db_path,
+                        search_root=args.search_root,
+                        report_dir=args.report_dir,
+                    )
+                    payload["research"] = research_payload
+                if session_id:
+                    add_session_artifact(
+                        session_id,
+                        kind="triage_json_report",
+                        artifact_path=payload["json_report"],
+                        label="Investigation JSON report",
+                        metadata={"finding_id": args.finding_id},
+                        path=args.session_dir,
+                    )
+                    add_session_artifact(
+                        session_id,
+                        kind="triage_markdown_report",
+                        artifact_path=payload["markdown_report"],
+                        label="Investigation Markdown report",
+                        metadata={"finding_id": args.finding_id},
+                        path=args.session_dir,
+                    )
+                    if payload.get("research"):
+                        add_session_artifact(
+                            session_id,
+                            kind="research_json_report",
+                            artifact_path=payload["research"]["json_report"],
+                            label="Research JSON report",
+                            metadata={"finding_id": args.finding_id},
+                            path=args.session_dir,
+                        )
+                        add_session_artifact(
+                            session_id,
+                            kind="research_markdown_report",
+                            artifact_path=payload["research"]["markdown_report"],
+                            label="Research Markdown report",
+                            metadata={"finding_id": args.finding_id},
+                            path=args.session_dir,
+                        )
+                    add_session_event(
+                        session_id,
+                        event_type="triage_investigation_completed",
+                        message=f"Completed investigation for {args.finding_id}.",
+                        data={
+                            "finding_id": args.finding_id,
+                            "recommended_disposition": payload["investigation"].get("recommended_disposition"),
+                            "confidence": payload["investigation"].get("confidence"),
+                        },
+                        author=args.author,
+                        path=args.session_dir,
+                    )
+                    update_session_step(
+                        session_id,
+                        step="Investigate locally",
+                        status="completed",
+                        note=payload["investigation"].get("summary"),
+                        path=args.session_dir,
+                    )
+                    update_session_step(
+                        session_id,
+                        step="Decide disposition",
+                        status="in_progress",
+                        note="Review the recommendation and choose the final disposition.",
+                        path=args.session_dir,
+                    )
+                    payload["session_id"] = session_id
             except Exception as exc:
+                if session_id:
+                    try:
+                        add_session_event(
+                            session_id,
+                            event_type="triage_investigation_failed",
+                            message=f"Investigation failed for {args.finding_id}: {exc}",
+                            data={"finding_id": args.finding_id},
+                            author=args.author,
+                            path=args.session_dir,
+                        )
+                        update_session_step(
+                            session_id,
+                            step="Investigate locally",
+                            status="blocked",
+                            note=str(exc),
+                            path=args.session_dir,
+                        )
+                    except Exception:
+                        pass
                 if args.json:
-                    print(to_json({"error": str(exc), "finding_id": args.finding_id}))
+                    error_payload = {"error": str(exc), "finding_id": args.finding_id}
+                    if session_id:
+                        error_payload["session_id"] = session_id
+                    print(to_json(error_payload))
                 else:
                     print(f"error: {exc}")
                 return 1
@@ -959,6 +1810,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(to_json(payload))
             else:
                 investigation = payload["investigation"]
+                if payload.get("preflight") and payload["preflight"].get("status") != "pass":
+                    print(_preflight_text(payload["preflight"]))
+                    print("")
                 print(fmt_finding(payload["finding"]))
                 print("")
                 print(f"CATEGORY: {payload['category']}")
@@ -967,6 +1821,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"SUMMARY: {investigation['summary']}")
                 print(f"JSON_REPORT: {payload['json_report']}")
                 print(f"MARKDOWN_REPORT: {payload['markdown_report']}")
+                if payload.get("research"):
+                    print(f"RESEARCH_JSON_REPORT: {payload['research']['json_report']}")
+                    print(f"RESEARCH_MARKDOWN_REPORT: {payload['research']['markdown_report']}")
+                if payload.get("session_id"):
+                    print(f"SESSION_ID: {payload['session_id']}")
                 if investigation.get("next_actions"):
                     print("NEXT_ACTIONS:")
                     for action in investigation["next_actions"]:
@@ -983,20 +1842,65 @@ def main(argv: Optional[List[str]] = None) -> int:
                     status=args.status,
                     db_path=args.db_path,
                 )
+                if args.session_id:
+                    add_session_event(
+                        args.session_id,
+                        event_type="triage_disposition_recorded",
+                        message=f"Recorded {args.disposition} for {args.finding_id}.",
+                        data={
+                            "finding_id": args.finding_id,
+                            "disposition": payload.get("disposition"),
+                            "status": payload.get("status"),
+                        },
+                        author=args.author,
+                        path=args.session_dir,
+                    )
+                    update_session_step(
+                        args.session_id,
+                        step="Decide disposition",
+                        status="completed",
+                        note=f"{payload.get('disposition')} / {payload.get('status')}",
+                        path=args.session_dir,
+                    )
+                    update_session_step(
+                        args.session_id,
+                        step="Apply or queue next action",
+                        status="completed",
+                        note=f"Closed {args.finding_id} with disposition {payload.get('disposition')}.",
+                        path=args.session_dir,
+                    )
+                    if str(payload.get("status") or "").lower() == "closed":
+                        set_session_status(
+                            args.session_id,
+                            status="closed",
+                            message=f"Session closed after final disposition for {args.finding_id}.",
+                            path=args.session_dir,
+                        )
             except Exception as exc:
                 if args.json:
-                    print(to_json({"error": str(exc), "finding_id": args.finding_id}))
+                    error_payload = {"error": str(exc), "finding_id": args.finding_id}
+                    if args.session_id:
+                        error_payload["session_id"] = args.session_id
+                    print(to_json(error_payload))
                 else:
                     print(f"error: {exc}")
                 return 1
+            if args.session_id:
+                payload = {"finding": payload, "session_id": args.session_id}
             if args.json:
-                print(to_json({"finding": payload}))
+                print(to_json(payload if isinstance(payload, dict) and "finding" in payload else {"finding": payload}))
             else:
-                print(fmt_finding(payload))
+                finding_payload = payload["finding"] if isinstance(payload, dict) and "finding" in payload else payload
+                print(fmt_finding(finding_payload))
+                if isinstance(payload, dict) and payload.get("session_id"):
+                    print(f"\nSESSION_ID: {payload['session_id']}")
             return 0
 
         if args.triage_cmd == "orchestrate":
             try:
+                preflight = build_preflight_report()
+                if args.enforce_preflight and _preflight_is_blocking(preflight):
+                    raise ValueError(f"preflight_blocked: {preflight['summary']}")
                 payload = orchestrate_findings(
                     finding_ids=args.finding_ids or None,
                     db_path=args.db_path,
@@ -1018,6 +1922,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(
                     to_json(
                         {
+                            "preflight": preflight,
                             "processed": payload.processed,
                             "auto_applied": payload.auto_applied,
                             "queued": payload.queued,
@@ -1029,6 +1934,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     )
                 )
             else:
+                if preflight.get("status") != "pass":
+                    print(_preflight_text(preflight))
                 print(f"processed={payload.processed}")
                 print(f"auto_applied={payload.auto_applied}")
                 print(f"queued={payload.queued}")
@@ -1075,14 +1982,48 @@ def main(argv: Optional[List[str]] = None) -> int:
                     author=args.author,
                     yes=args.yes,
                 )
+                if args.session_id:
+                    add_session_event(
+                        args.session_id,
+                        event_type="triage_action_applied",
+                        message=f"Applied queued action {args.action_id}.",
+                        data={
+                            "action_id": args.action_id,
+                            "action_type": payload.get("action_type"),
+                            "finding_id": payload.get("finding_id"),
+                        },
+                        author=args.author,
+                        path=args.session_dir,
+                    )
+                    update_session_step(
+                        args.session_id,
+                        step="Apply or queue next action",
+                        status="completed",
+                        note=f"Applied queued action {args.action_id}.",
+                        path=args.session_dir,
+                    )
+                    nested = payload.get("result")
+                    if isinstance(nested, dict) and str(nested.get("status") or "").lower() == "closed":
+                        set_session_status(
+                            args.session_id,
+                            status="closed",
+                            message=f"Session closed after queued action {args.action_id}.",
+                            path=args.session_dir,
+                        )
             except Exception as exc:
                 if args.json:
-                    print(to_json({"error": str(exc), "action_id": args.action_id}))
+                    error_payload = {"error": str(exc), "action_id": args.action_id}
+                    if args.session_id:
+                        error_payload["session_id"] = args.session_id
+                    print(to_json(error_payload))
                 else:
                     print(f"error: {exc}")
                 return 1
             if args.json:
-                print(to_json({"action": payload}))
+                response_payload: Dict[str, Any] = {"action": payload}
+                if args.session_id:
+                    response_payload["session_id"] = args.session_id
+                print(to_json(response_payload))
             else:
                 print(
                     "{aid} | status={status} | type={atype} | finding_id={fid}".format(
@@ -1092,6 +2033,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                         fid=payload.get("finding_id"),
                     )
                 )
+                if args.session_id:
+                    print(f"SESSION_ID: {args.session_id}")
             return 0
 
         if args.triage_cmd == "summary":
