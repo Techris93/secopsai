@@ -14,6 +14,7 @@ SecOpsAI is a local-first security monitoring, investigation, and triage platfor
 - Detects suspicious behavior and stores findings in a local **SQLite SOC store**
 - Correlates findings across platforms by **IP**, **user**, **time window**, and **file hash**
 - Investigates and triages findings through a native **CLI workflow** and **triage orchestrator**
+- Provides a local **agent runtime** for tool routing, context compaction, loop detection, and isolated jobs
 - Supports supply-chain policy management with **allowlists**, **rule tuning**, and **threshold tuning**
 - Keeps data **local-first by default**
 
@@ -101,6 +102,9 @@ secopsai triage queue
 secopsai triage apply-action ACT-0001 --yes
 secopsai triage summary
 secopsai intel refresh
+secopsai agent route --task "investigate this supply-chain finding with sources"
+secopsai agent compact SES-1234567890ab --json
+secopsai agent run-job --name docs-qa -- python scripts/docs_source_agent.py --build
 
 # Cross-platform adapter workflow
 secopsai refresh --platform macos

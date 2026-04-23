@@ -55,12 +55,33 @@ python scripts/verify_docs_examples.py
 
 Use this in CI or a daily docs QA check so the site stays aligned with the actual CLI and plugin surface.
 
+## Agent runtime
+
+The local agent runtime adds routing, compaction, repeated-loop checks, and isolated job records:
+
+```bash
+secopsai agent route --task "investigate stale replay telemetry before triage"
+secopsai agent compact <SESSION_ID> --json
+secopsai agent run-job --name docs-qa -- python scripts/docs_source_agent.py --build
+secopsai agent jobs --limit 10
+```
+
+Use `agent route` before an autonomous workflow to see which tools are read-only, write-gated, or expensive. Use `agent compact` before resuming a long investigation session. Use `agent run-job` for adaptive-intel, replay, docs, or regression work that should leave an auditable job record under `data/agent_jobs/`.
+
+## Docs QA agent
+
+The docs QA agent wraps the verifier and optionally runs a docs build, then writes JSON and Markdown reports under `reports/docs/`:
+
+```bash
+python scripts/docs_source_agent.py --build
+```
+
 ## Recommended automation
 
 To keep things fresh:
 
 1. Keep your regular SecOpsAI refresh scheduler running.
-2. Run `python scripts/verify_docs_examples.py` after CLI or plugin changes.
+2. Run `secopsai agent run-job --name docs-qa -- python scripts/docs_source_agent.py --build` after CLI or plugin changes.
 3. Rebuild docs after successful verification:
 
 ```bash

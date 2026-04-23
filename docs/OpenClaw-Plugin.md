@@ -94,13 +94,20 @@ Recommended pattern:
 3. request approval for risky action or close
 4. resolve the approval and apply it
 
+The plugin write-facing tools are intentionally approval-gated:
+
+- `secopsai_close_finding` requests a `triage_close` approval instead of closing directly.
+- `secopsai_triage_apply_action` requests a `triage_action` approval instead of applying directly.
+- `secopsai_triage_orchestrate` runs with auto-apply disabled so resulting actions stay reviewable.
+- `secopsai_session_resolve_approval` is the only tool that can apply an approved session payload.
+
 ## Example flow
 
 ```text
 secopsai_list_findings status=open limit=20
 secopsai_investigate_with_sources findingId=SCM-FA4BAE45589358A2
 secopsai_session_list status=open limit=10
-secopsai_session_request_close_approval sessionId=SES-3f6a12bc45de findingId=SCM-FA4BAE45589358A2 disposition=expected_behavior note="Package not referenced locally."
+secopsai_close_finding findingId=SCM-FA4BAE45589358A2 sessionId=SES-3f6a12bc45de disposition=expected_behavior note="Package not referenced locally."
 secopsai_session_resolve_approval sessionId=SES-3f6a12bc45de approvalId=APR-3f6a12bc45de decision=approved apply=true
 ```
 

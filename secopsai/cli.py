@@ -22,6 +22,12 @@ from correlation import run_correlation
 from detect import run_detection
 from scripts.sync_findings_to_supabase import execute_sync as execute_findings_sync
 
+from secopsai.agent_core import (
+    ToolRouter,
+    compact_session_context,
+    list_jobs as list_agent_jobs,
+    run_isolated_job,
+)
 from secopsai.formatters import fmt_finding, fmt_list, to_json
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
 from secopsai.pipeline import refresh as refresh_pipeline
@@ -1036,6 +1042,31 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     decision_group.add_argument("--approve", action="store_true")
     decision_group.add_argument("--reject", action="store_true")
 
+    agent = sub.add_parser("agent", help="Local agent runtime: tool routing, compaction, loop checks, and isolated jobs")
+    agent_sub = agent.add_subparsers(dest="agent_cmd", required=True)
+
+    agent_route = agent_sub.add_parser("route", help="Route an operator task to read/write/expensive tools")
+    agent_route.add_argument("--task", required=True)
+    agent_route.add_argument("--allow-writes", action="store_true")
+    agent_route.add_argument("--allow-expensive", action="store_true")
+
+    agent_compact = agent_sub.add_parser("compact", help="Compact a session into resumable context")
+    agent_compact.add_argument("session_id")
+    agent_compact.add_argument("--session-dir", default=None, help="Override session storage directory")
+    agent_compact.add_argument("--max-events", type=int, default=12)
+    agent_compact.add_argument("--max-artifacts", type=int, default=12)
+
+    agent_jobs = agent_sub.add_parser("jobs", help="List isolated agent jobs")
+    agent_jobs.add_argument("--job-dir", default=None, help="Override job storage directory")
+    agent_jobs.add_argument("--limit", type=int, default=20)
+
+    agent_run_job = agent_sub.add_parser("run-job", help="Run an isolated SecOpsAI experiment job")
+    agent_run_job.add_argument("--name", required=True)
+    agent_run_job.add_argument("--job-dir", default=None, help="Override job storage directory")
+    agent_run_job.add_argument("--cwd", default=None)
+    agent_run_job.add_argument("--timeout", type=int, default=900)
+    agent_run_job.add_argument("command", nargs=argparse.REMAINDER, help="Command after --, for example -- secopsai research preflight")
+
     sync_findings = sub.add_parser("sync-findings", help="Sync local findings into the dashboard Supabase table")
     sync_findings.add_argument("--db-path", default=None, help="Path to local SOC SQLite DB")
     sync_findings.add_argument("--findings-dir", default=None, help="Directory containing openclaw findings bundles")
@@ -1226,6 +1257,96 @@ def main(argv: Optional[List[str]] = None) -> int:
                 for item in payload["observations"]:
                     print(f"- {item}")
         return 0
+
+    if args.cmd == "agent":
+        if args.agent_cmd == "route":
+            payload = ToolRouter().route(
+                args.task,
+                allow_writes=args.allow_writes,
+                allow_expensive=args.allow_expensive,
+            )
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(f"TASK: {payload['task']}")
+                print("SELECTED:")
+                for item in payload["selected"]:
+                    tool = item["tool"]
+                    print(f"- {tool['name']} ({tool['mode']}): {tool['description']}")
+                if payload["blocked"]:
+                    print("BLOCKED:")
+                    for item in payload["blocked"]:
+                        tool = item["tool"]
+                        print(f"- {tool['name']} ({item['reason']}): {tool['description']}")
+            return 0
+
+        if args.agent_cmd == "compact":
+            try:
+                payload = compact_session_context(
+                    args.session_id,
+                    session_dir=args.session_dir,
+                    max_events=args.max_events,
+                    max_artifacts=args.max_artifacts,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc), "session_id": args.session_id}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            else:
+                progress = payload["progress"]
+                print(f"SESSION: {payload['session_id']}")
+                print(f"STATUS: {payload['status']}")
+                print(
+                    "PROGRESS: {done}/{total} steps, {approvals} pending approvals, {artifacts} artifacts".format(
+                        done=progress["plan_completed"],
+                        total=progress["plan_total"],
+                        approvals=progress["pending_approvals"],
+                        artifacts=progress["artifact_count"],
+                    )
+                )
+                print(f"DOOM_LOOP: {payload['doom_loop']['summary']}")
+            return 0
+
+        if args.agent_cmd == "jobs":
+            rows = list_agent_jobs(path=args.job_dir, limit=args.limit)
+            if args.json:
+                print(to_json({"jobs": rows}))
+            elif not rows:
+                print("No agent jobs found.")
+            else:
+                for item in rows:
+                    print(f"{item.get('job_id')} | {item.get('status')} | {item.get('name')} | {item.get('started_at')}")
+            return 0
+
+        if args.agent_cmd == "run-job":
+            command = list(args.command or [])
+            if command and command[0] == "--":
+                command = command[1:]
+            try:
+                payload = run_isolated_job(
+                    name=args.name,
+                    command=command,
+                    cwd=args.cwd,
+                    timeout=args.timeout,
+                    path=args.job_dir,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc), "name": args.name}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(f"JOB: {payload['job_id']}")
+                print(f"STATUS: {payload['status']}")
+                print(f"PATH: {payload['path']}")
+            return 0
 
     if args.cmd == "sync-findings":
         try:
