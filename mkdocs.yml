@@ -30,6 +30,7 @@ nav:
   - Getting Started: getting-started.md
   - Operator Runbook: operator-runbook.md
   - Findings Triage Guide: findings-triage-guide.md
+  - Research And Verification: research-and-verification.md
   - Triage Orchestrator: triage-orchestrator.md
   - Rules Registry: rules-registry.md
   - Deployment Guide: deployment-guide.md

@@ -121,23 +121,25 @@ python3 cli.py correlate
 Install SecOpsAI directly as an OpenClaw plugin for seamless integration:
 
 ```bash
-openclaw plugins install secopsai
+openclaw plugins install clawhub:@techris93/secopsai
 ```
 
 Available plugin tools:
 
-| Tool                     | Description                                       |
-| ------------------------ | ------------------------------------------------- |
-| `secopsai_list_findings` | List findings with optional severity filter       |
-| `secopsai_refresh`       | Run the detection pipeline to refresh findings    |
-| `secopsai_show_finding`  | Get detailed information about a specific finding |
-| `secopsai_triage`        | Set disposition, status, and add analyst notes    |
-| `secopsai_check_threats` | Check for malware or exfiltration indicators      |
-| `secopsai_mitigate`      | Get recommended mitigation steps for a finding    |
-| `secopsai_search`        | Search findings by keyword or pattern             |
-| `secopsai_stats`         | Get statistics about the SOC database             |
+| Tool family | Examples |
+| ----------- | -------- |
+| Read-only research | `secopsai_investigate_finding`, `secopsai_investigate_with_sources`, `secopsai_research_finding`, `secopsai_review_release_with_sources` |
+| Session state | `secopsai_session_list`, `secopsai_session_show` |
+| Guarded writes | `secopsai_session_request_close_approval`, `secopsai_session_request_action_approval`, `secopsai_session_resolve_approval`, `secopsai_triage_apply_action`, `secopsai_close_finding` |
 
-See [docs/OpenClaw-Integration.md](docs/OpenClaw-Integration.md) for detailed usage.
+Use the plugin in the same order as the CLI:
+
+1. investigate or research first
+2. keep the evidence in a session
+3. request approval for risky close or action changes
+4. resolve and apply the approved change
+
+See [docs/OpenClaw-Plugin.md](docs/OpenClaw-Plugin.md) for the current tool surface and [docs/OpenClaw-Integration.md](docs/OpenClaw-Integration.md) for the Python CLI workflow.
 
 ### 3. Optional Notification Workflows
 

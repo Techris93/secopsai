@@ -27,13 +27,15 @@ secopsai triage start <FINDING_ID> --note "Initial analyst review started"
 3. Gather evidence and generate case files:
 
 ```bash
-secopsai triage investigate <FINDING_ID> --json
+secopsai triage investigate <FINDING_ID> --open-session --with-research --json
 ```
 
 Generated artifacts:
 
 - `reports/triage/<finding_id>.json`
 - `reports/triage/<finding_id>.md`
+- timestamped research reports under `reports/research/`
+- investigation session artifacts under `data/sessions/`
 
 4. Close with analyst-confirmed disposition:
 
@@ -79,6 +81,7 @@ The orchestrator will:
 - local dependency references under the chosen search root
 - stored verdict explanation and matched rules
 - reputation signals from registry metadata when available
+- optional source-backed research artifacts with `--with-research`
 - suggested disposition and next actions
 
 Use it to quickly decide whether a package is:
@@ -135,4 +138,6 @@ Use allowlisting when one known-safe package keeps firing. Use rule or threshold
 - Always add a meaningful closure note.
 - Use `triage start` before deep analysis so the SOC store reflects active analyst review.
 - Treat `triage investigate` as evidence gathering, not auto-closure.
+- Prefer `--open-session --with-research` for higher-risk findings so the dashboard, CLI, and plugin all point to the same case trail.
 - Keep the generated case files for audit trail and rule tuning.
+- Run `secopsai research preflight` before large correlation or orchestrator runs when freshness is in doubt.

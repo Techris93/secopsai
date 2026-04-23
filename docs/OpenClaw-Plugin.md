@@ -1,25 +1,31 @@
 # OpenClaw Native Plugin
 
-SecOpsAI is available as a first-class OpenClaw plugin, providing native TypeScript-based tools that integrate directly with OpenClaw's plugin system. This offers a more seamless experience than the Python CLI approach.
+SecOpsAI is available as a native OpenClaw plugin with a read-first workflow:
+
+- source-backed finding investigation
+- source-backed package and release review
+- local investigation sessions with plans, artifacts, and approvals
+- guarded write helpers for closes, queued actions, and orchestration
+
+The plugin lives in the separate repository at `Techris93/openclaw-secopsai-plugin`, but its tools map directly to the local `secopsai` CLI in your SecOpsAI install.
 
 ## Installation
 
-Install from npm/ClawHub:
+Install from ClawHub:
 
 ```bash
-openclaw plugins install secopsai
+openclaw plugins install clawhub:@techris93/secopsai
 ```
 
-Or install directly from npm:
+Or install from local source:
 
 ```bash
-npm install -g secopsai
-openclaw plugins install -l /path/to/secopsai
+openclaw plugins install -l /path/to/openclaw-secopsai-plugin
 ```
 
 ## Configuration
 
-Add to your `openclaw.json`:
+Add to your OpenClaw config:
 
 ```json
 {
@@ -29,176 +35,109 @@ Add to your `openclaw.json`:
         "enabled": true,
         "config": {
           "secopsaiPath": "~/secopsai",
-          "socDbPath": "~/secopsai/data/openclaw/findings/openclaw_soc.db"
+          "socDbPath": "~/secopsai/data/openclaw/findings/openclaw_soc.db",
+          "sessionDir": "~/secopsai/data/sessions"
         }
       }
     }
   },
   "tools": {
-    "allow": ["secopsai_triage"]
+    "allow": [
+      "secopsai_close_finding",
+      "secopsai_triage_orchestrate",
+      "secopsai_triage_apply_action",
+      "secopsai_session_request_close_approval",
+      "secopsai_session_request_action_approval",
+      "secopsai_session_resolve_approval"
+    ]
   }
 }
 ```
 
-### Configuration Options
+### Config keys
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `secopsaiPath` | `~/secopsai` | Path to secopsai installation |
-| `socDbPath` | `~/secopsai/data/openclaw/findings/openclaw_soc.db` | Path to SOC SQLite database |
+| Key | Default | Description |
+|---|---|---|
+| `secopsaiPath` | `~/secopsai` | Path to the SecOpsAI repo / install |
+| `socDbPath` | `~/secopsai/data/openclaw/findings/openclaw_soc.db` | SOC findings SQLite DB |
+| `sessionDir` | `~/secopsai/data/sessions` | Investigation session storage |
 
-**Note:** The `secopsai_triage` tool is marked as optional and requires explicit opt-in via `tools.allow` because it performs write operations on the SOC database.
+## Tool families
 
-## Available Tools
+### Read-only investigation and research
 
-### secopsai_list_findings
+- `secopsai_list_findings`
+- `secopsai_investigate_finding`
+- `secopsai_investigate_with_sources`
+- `secopsai_research_finding`
+- `secopsai_research_package`
+- `secopsai_review_release_with_sources`
+- `secopsai_supply_chain_suggest_fp_action`
+- `secopsai_session_list`
+- `secopsai_session_show`
+- `secopsai_triage_queue`
+- `secopsai_triage_summary`
 
-List SecOps findings with optional severity filter.
+### Guarded write helpers
 
-**Parameters:**
-- `severity` (optional): Filter by severity (`info`, `low`, `medium`, `high`, `critical`)
-- `cacheTtl` (optional): Cache time-to-live in seconds (default: 60)
+- `secopsai_close_finding`
+- `secopsai_triage_orchestrate`
+- `secopsai_triage_apply_action`
+- `secopsai_session_request_close_approval`
+- `secopsai_session_request_action_approval`
+- `secopsai_session_resolve_approval`
 
-**Example:**
-```
-secopsai_list_findings severity=high
-```
+Recommended pattern:
 
-### secopsai_refresh
+1. investigate or research first
+2. open or reuse a session
+3. request approval for risky action or close
+4. resolve the approval and apply it
 
-Run the SecOpsAI detection pipeline to refresh findings.
+## Example flow
 
-**Parameters:** None
-
-**Example:**
-```
-secopsai_refresh
-```
-
-### secopsai_show_finding
-
-Get detailed information about a specific finding.
-
-**Parameters:**
-- `findingId`: The finding ID (e.g., `OCF-A1B2C3D4`)
-
-**Example:**
-```
-secopsai_show_finding findingId=OCF-A1B2C3D4
-```
-
-### secopsai_triage
-
-Triage a finding by setting disposition, status, and adding notes.
-
-**Parameters:**
-- `findingId`: The finding ID (e.g., `OCF-A1B2C3D4`)
-- `disposition`: Classification (`true_positive`, `false_positive`, `benign`)
-- `status`: New status (`open`, `triaged`, `closed`)
-- `note` (optional): Analyst note
-
-**Example:**
-```
-secopsai_triage findingId=OCF-A1B2C3D4 disposition=false_positive status=closed note="Benign misconfiguration"
+```text
+secopsai_list_findings status=open limit=20
+secopsai_investigate_with_sources findingId=SCM-FA4BAE45589358A2
+secopsai_session_list status=open limit=10
+secopsai_session_request_close_approval sessionId=SES-3f6a12bc45de findingId=SCM-FA4BAE45589358A2 disposition=expected_behavior note="Package not referenced locally."
+secopsai_session_resolve_approval sessionId=SES-3f6a12bc45de approvalId=APR-3f6a12bc45de decision=approved apply=true
 ```
 
-**Safety:** This tool requires explicit opt-in via `tools.allow` configuration.
+### Source-backed package review
 
-### secopsai_check_threats
-
-Check for malware or exfiltration indicators.
-
-**Parameters:**
-- `type`: Type of check (`malware`, `exfil`, `both`)
-- `severity` (optional): Minimum severity threshold (`info`, `low`, `medium`, `high`)
-
-**Example:**
-```
-secopsai_check_threats type=exfil severity=high
+```text
+secopsai_review_release_with_sources ecosystem=pypi packageName=litellm version=1.83.10
+secopsai_research_package ecosystem=npm packageName=@ant-design/x-skill version=2.6.0
 ```
 
-### secopsai_mitigate
+### Guarded queued-action flow
 
-Get recommended mitigation steps for a finding.
-
-**Parameters:**
-- `findingId`: The finding ID (e.g., `OCF-A1B2C3D4`)
-
-**Example:**
-```
-secopsai_mitigate findingId=OCF-A1B2C3D4
+```text
+secopsai_triage_queue
+secopsai_session_request_action_approval sessionId=SES-3f6a12bc45de actionId=ACT-0001 summary="Approve allowlist action for this package."
+secopsai_session_resolve_approval sessionId=SES-3f6a12bc45de approvalId=APR-3f6a12bc45de decision=approved apply=true
 ```
 
-### secopsai_search
+## Operational notes
 
-Search findings by keyword or pattern.
+- Read tools are the safest default for agent use.
+- Write tools should stay explicitly allowed and approval-gated.
+- Session artifacts let the dashboard, CLI, and plugin point at the same investigation trail.
+- `secopsai_investigate_with_sources` is the easiest way to get a single session containing both the investigation report and the source-backed research report.
 
-**Parameters:**
-- `query`: Search query string
-- `severity` (optional): Filter by severity
+## Verify the docs against the real tool surface
 
-**Example:**
-```
-secopsai_search query="unauthorized" severity=high
-```
+Run the docs check from the SecOpsAI repo:
 
-### secopsai_stats
-
-Get statistics about the SOC database.
-
-**Parameters:** None
-
-**Example:**
-```
-secopsai_stats
-```
-
-## Prerequisites
-
-The plugin requires a working secopsai installation:
-
-1. Install secopsai first:
-   ```bash
-   curl -fsSL https://secopsai.dev/install.sh | bash
-   ```
-
-2. Ensure the virtual environment is set up at `~/secopsai/.venv/`
-
-3. The plugin will automatically activate the virtualenv when running commands.
-
-## Comparison: Plugin vs CLI
-
-| Feature | Native Plugin | Python CLI |
-|---------|--------------|------------|
-| Installation | `openclaw plugins install` | `curl \| bash` + virtualenv |
-| Tool discovery | Automatic | Manual wrapper scripts |
-| Configuration | `openclaw.json` | Environment variables |
-| Output format | Native OpenClaw format | Pretty + JSON |
-| Write safety | Optional tool opt-in | Manual confirmation |
-| Automation | Cron-friendly | Script-friendly |
-
-## Troubleshooting
-
-### "secopsai command not found"
-
-Ensure secopsai is installed and the path in `openclaw.json` is correct:
 ```bash
-ls -la ~/secopsai/.venv/bin/secopsai
+python scripts/verify_docs_examples.py
 ```
 
-### "Permission denied" on triage
+That command validates the documented `secopsai` CLI examples and compares this page’s plugin tool names with the actual tool registry in the plugin repo.
 
-Add `secopsai_triage` to `tools.allow` in `openclaw.json`.
+## See also
 
-### Database not found
-
-Verify the `socDbPath` configuration matches your actual database location:
-```bash
-find ~/secopsai -name "*.db" 2>/dev/null
-```
-
-## See Also
-
-- [OpenClaw Integration Guide](OpenClaw-Integration.md) — Python CLI approach
-- [API Reference](api-reference.md) — Complete API documentation
-- [Deployment Guide](deployment-guide.md) — Production deployment
+- [Findings Triage Guide](findings-triage-guide.md)
+- [OpenClaw Integration](OpenClaw-Integration.md)
+- [API Reference](api-reference.md)
