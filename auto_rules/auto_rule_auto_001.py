@@ -1,45 +1,50 @@
 """
-SQL Injection: CVE-2026-2580
-============================
+Threat Intel: Microsoft Xbox One Hacked
+=======================================
 
-Description: Detects SQL injection patterns from NVD-CVE-2026-2580
+Description: Detects IOCs from www.schneier.com
 Severity: high
-MITRE: T1190, T1190
-Source: a1bd12b1a43e3e93
-Generated: 2026-04-12T23:36:43.503843
+MITRE: 
+Source: d00b267de7cfd9e7
+Generated: 2026-04-27T20:00:57.743711
 """
 
 def detect_auto_001(events):
     """
-    Threat Intel: NVD-CVE-2026-2580
-    Description: SQL Injection detection
-    Generated: 2026-04-12T23:36:43.498030
+    Threat Intel: www.schneier.com
+    Description: <p>It&#8217;s an <a href="https://www.tomshardware.com/video-games/console-gaming/microsofts-unhacka...
+    Generated: 2026-04-27T20:00:57.727424
     """
-    sqli_patterns = [
-        r"(%27)|(')|(--)|(%23)|(#)",
-        r"((%3D)|(=))[^\n]*((%27)|(')|(--)|(%3B)|(;))",
-        r"\w*((%27)|('))((%6F)|o|(%4F))((%72)|r|(%52))",
-        r"((%27)|('))union",
-        r"exec(\s|\+)+(s|x)p\w+",
-        r"UNION\s+SELECT",
-        r"INSERT\s+INTO",
-        r"DELETE\s+FROM",
-        r"DROP\s+TABLE",
-    ]
+    malicious_ips = []
+    malicious_domains = ['www.tomshardware.com', 'www.tomshardware.com']
+    malicious_hashes = []
     
-    import re
     detected = []
-    
     for event in events:
-        # Check URL and request body
-        url = event.get("url") or ""
-        request = event.get("request") or event.get("http_request") or ""
-        body = event.get("body") or event.get("data") or ""
+        # Check IP-based indicators
+        dest_ip = event.get("dest_ip") or event.get("dst_ip") or ""
+        src_ip = event.get("src_ip") or event.get("source_ip") or ""
         
-        content = url + " " + request + " " + body
+        if dest_ip in malicious_ips or src_ip in malicious_ips:
+            detected.append(event["event_id"])
+            continue
         
-        for pattern in sqli_patterns:
-            if re.search(pattern, content, re.IGNORECASE):
+        # Check domain indicators
+        domain = event.get("dns_query") or event.get("hostname") or ""
+        if domain in malicious_domains:
+            detected.append(event["event_id"])
+            continue
+        
+        # Check hash indicators (in process/file events)
+        file_hash = event.get("file_hash") or event.get("hash") or ""
+        if file_hash in malicious_hashes:
+            detected.append(event["event_id"])
+            continue
+        
+        # Check URL patterns for domains
+        url = event.get("url") or event.get("request") or ""
+        for bad_domain in malicious_domains:
+            if bad_domain in url:
                 detected.append(event["event_id"])
                 break
     

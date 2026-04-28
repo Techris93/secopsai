@@ -1,44 +1,47 @@
 """
-SQL Injection: CVE-2026-4571
-============================
+RCE Detection: CVE-2026-23744-POC
+=================================
 
-Description: Detects SQL injection patterns from NVD-CVE-2026-4571
-Severity: high
-MITRE: T1190, T1190
-Source: a37995e0a2a51b02
-Generated: 2026-04-12T23:36:43.506272
+Description: Detects remote code execution from github.com/fcjaviergarcia/CVE-2026-23744-POC
+Severity: critical
+MITRE: T1059, T1203
+Source: 18a25452f10ea8b7
+Generated: 2026-04-27T20:00:57.749341
 """
 
 def detect_auto_007(events):
     """
-    Threat Intel: NVD-CVE-2026-4571
-    Description: SQL Injection detection
-    Generated: 2026-04-12T23:36:43.498386
+    Threat Intel: github.com/fcjaviergarcia/CVE-2026-23744-POC
+    Description: Remote Code Execution detection
+    Generated: 2026-04-27T20:00:57.728759
     """
-    sqli_patterns = [
-        r"(%27)|(')|(--)|(%23)|(#)",
-        r"((%3D)|(=))[^\n]*((%27)|(')|(--)|(%3B)|(;))",
-        r"\w*((%27)|('))((%6F)|o|(%4F))((%72)|r|(%52))",
-        r"((%27)|('))union",
-        r"exec(\s|\+)+(s|x)p\w+",
-        r"UNION\s+SELECT",
-        r"INSERT\s+INTO",
-        r"DELETE\s+FROM",
-        r"DROP\s+TABLE",
+    rce_patterns = [
+        r"\$\(.*?\)",  # Command substitution
+        r"`.*?`",  # Backtick execution
+        r"\b(eval|exec|system|passthru|shell_exec)\s*\(",
+        r";\s*bash\s+-c",
+        r";\s*sh\s+-c",
+        r"\|\s*bash",
+        r"\|\s*python\d*\s+-c",
+        r"\|\s*perl\s+-e",
+        r"\|\s*nc\s+-[el]",
+        r"bash\s+-i\s+\>&\s+/dev/tcp/",
+        r"python\d*\s+-c\s+['\"]import\s+socket",
+        r"ruby\s+-rsocket",
     ]
     
     import re
     detected = []
     
     for event in events:
-        # Check URL and request body
         url = event.get("url") or ""
-        request = event.get("request") or event.get("http_request") or ""
+        request = event.get("request") or ""
         body = event.get("body") or event.get("data") or ""
+        command = event.get("command") or event.get("cmd") or ""
         
-        content = url + " " + request + " " + body
+        content = url + " " + request + " " + body + " " + command
         
-        for pattern in sqli_patterns:
+        for pattern in rce_patterns:
             if re.search(pattern, content, re.IGNORECASE):
                 detected.append(event["event_id"])
                 break

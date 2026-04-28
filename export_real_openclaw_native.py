@@ -22,8 +22,16 @@ GATEWAY_LOG_PATTERNS = [
     "logs/gateway.log",
     "logs/gateway.log.*",
 ]
-GATEWAY_SIGNAL_TERMS = ("handshake timeout", "closed before connect")
-TIMESTAMP_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)")
+MAX_GATEWAY_SENTINELS = 500
+GATEWAY_SIGNAL_TERMS = (
+    "handshake timeout",
+    "closed before connect",
+    "http server listening",
+    "starting channels and sidecars",
+    "starting provider",
+    "[gateway] ready",
+)
+TIMESTAMP_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))")
 KNOWN_PAIRING_TOOL_NAMES = {
     "pairing_request",
     "pairing_approve",
@@ -74,6 +82,13 @@ def iso(value: Any) -> str:
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def row_timestamp(*values: Any) -> Any | None:
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return None
+
+
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if not path.exists():
@@ -108,6 +123,14 @@ def discover_paths(base_dir: Path, patterns: list[str]) -> list[Path]:
     return discovered
 
 
+def gateway_row_message(row: dict[str, Any]) -> str:
+    for key in ("message", "1", "0"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return json.dumps(row, sort_keys=True)
+
+
 def iter_gateway_rows(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if not path.exists():
@@ -137,8 +160,7 @@ def iter_gateway_rows(path: Path) -> list[dict[str, Any]]:
             if not isinstance(value, dict):
                 continue
 
-            line_text = json.dumps(value)
-            lowered = line_text.lower()
+            lowered = gateway_row_message(value).lower()
             if not any(term in lowered for term in GATEWAY_SIGNAL_TERMS):
                 continue
             rows.append(value)
@@ -259,38 +281,45 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
 
         file_agent_id = infer_agent_id(path)
 
-        first_ts = rows[0].get("timestamp")
-        last_ts = rows[-1].get("timestamp")
+        timestamps = [row_timestamp(row.get("timestamp"), row.get("ts")) for row in rows]
+        timestamps = [ts for ts in timestamps if ts not in (None, "")]
+        first_ts = timestamps[0] if timestamps else None
+        last_ts = timestamps[-1] if timestamps else None
 
         session_key = f"agent:{file_agent_id}:{sid}"
-        session_hooks.append(
-            {
-                "hook": "session_start",
-                "ts": iso(first_ts),
-                "sessionKey": session_key,
-                "sessionId": sid,
-                "agentId": file_agent_id,
-                "channel": "openclaw.session",
-                "status": "ok",
-            }
-        )
-        session_hooks.append(
-            {
-                "hook": "session_end",
-                "ts": iso(last_ts),
-                "sessionKey": session_key,
-                "sessionId": sid,
-                "agentId": file_agent_id,
-                "channel": "openclaw.session",
-                "status": "completed",
-            }
-        )
+        if first_ts is not None:
+            session_hooks.append(
+                {
+                    "hook": "session_start",
+                    "ts": iso(first_ts),
+                    "sessionKey": session_key,
+                    "sessionId": sid,
+                    "agentId": file_agent_id,
+                    "channel": "openclaw.session",
+                    "status": "ok",
+                }
+            )
+        if last_ts is not None:
+            session_hooks.append(
+                {
+                    "hook": "session_end",
+                    "ts": iso(last_ts),
+                    "sessionKey": session_key,
+                    "sessionId": sid,
+                    "agentId": file_agent_id,
+                    "channel": "openclaw.session",
+                    "status": "completed",
+                }
+            )
 
         for row in rows:
             if row.get("type") != "message":
                 continue
             message = row.get("message")
             if not isinstance(message, dict):
+                continue
+            event_ts = row_timestamp(message.get("timestamp"), row.get("timestamp"), row.get("ts"))
+            if event_ts is None:
                 continue
             role = message.get("role")
 
@@ -316,7 +345,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                         subagent_hooks.append(
                             {
                                 "hook": "subagent_spawned",
-                                "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                                "ts": iso(event_ts),
                                 "runId": f"session-{event_agent_id}-{sid}",
                                 "sessionKey": session_key,
                                 "sessionId": sid,
@@ -332,7 +361,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                         pairing_events.append(
                             {
                                 "kind": "pairing.request",
-                                "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                                "ts": iso(event_ts),
                                 "action": "request",
                                 "status": "ok",
                                 "sessionKey": session_key,
@@ -349,7 +378,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                         skills_events.append(
                             {
                                 "kind": "skills.install",
-                                "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                                "ts": iso(event_ts),
                                 "action": "install",
                                 "status": "ok",
                                 "sessionKey": session_key,
@@ -364,7 +393,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                     agent_events.append(
                         {
                             "stream": "toolExecution",
-                            "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                            "ts": iso(event_ts),
                             "runId": f"session-{event_agent_id}-{sid}",
                             "sessionKey": session_key,
                             "sessionId": sid,
@@ -385,7 +414,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                         exec_events.append(
                             {
                                 "kind": "exec_start",
-                                "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                                "ts": iso(event_ts),
                                 "runId": f"session-{sid}",
                                 "sessionKey": session_key,
                                 "sessionId": sid,
@@ -413,7 +442,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                 agent_events.append(
                     {
                         "stream": "toolExecution",
-                        "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                        "ts": iso(event_ts),
                         "runId": f"session-{sid}",
                         "sessionKey": session_key,
                         "sessionId": sid,
@@ -440,7 +469,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                     exec_events.append(
                         {
                             "kind": "exec_end",
-                            "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                            "ts": iso(event_ts),
                             "runId": f"session-{sid}",
                             "sessionKey": session_key,
                             "sessionId": sid,
@@ -471,7 +500,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                     subagent_hooks.append(
                         {
                             "hook": "subagent_completed",
-                            "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                            "ts": iso(event_ts),
                             "runId": f"session-{event_agent_id}-{sid}",
                             "sessionKey": session_key,
                             "sessionId": sid,
@@ -487,7 +516,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                     pairing_events.append(
                         {
                             "kind": "pairing.result",
-                            "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                            "ts": iso(event_ts),
                             "action": "approve" if not message.get("isError") else "deny",
                             "status": str(details.get("status") or ("blocked" if message.get("isError") else "accepted")),
                             "sessionKey": session_key,
@@ -503,7 +532,7 @@ def export_agent_and_session_hooks() -> tuple[list[dict[str, Any]], list[dict[st
                     skills_events.append(
                         {
                             "kind": "skills.result",
-                            "ts": iso(message.get("timestamp") or row.get("timestamp")),
+                            "ts": iso(event_ts),
                             "action": "enable" if not message.get("isError") else "disable",
                             "status": str(details.get("status") or ("failed" if message.get("isError") else "ok")),
                             "sessionKey": session_key,
@@ -601,7 +630,7 @@ def export_restart_sentinels() -> list[dict[str, Any]]:
     gateway_paths = discover_paths(OPENCLAW_HOME, GATEWAY_LOG_PATTERNS)
     for log_file in gateway_paths:
         for row in iter_gateway_rows(log_file):
-            message = str(row.get("message") or row.get("1") or row.get("0") or "gateway reconnect event")
+            message = gateway_row_message(row) or "gateway lifecycle event"
             sentinels.append(
                 {
                     "kind": "restart_sentinel",
@@ -616,7 +645,9 @@ def export_restart_sentinels() -> list[dict[str, Any]]:
                     "doctorHint": "check_gateway_connectivity",
                 }
             )
-    return dedupe(sentinels, ("ts", "message"))
+    deduped = dedupe(sentinels, ("ts", "message"))
+    deduped.sort(key=lambda row: str(row.get("ts") or ""))
+    return deduped[-MAX_GATEWAY_SENTINELS:]
 
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:

@@ -1,19 +1,19 @@
 """
-RCE Detection: CVE-2025-10731
+RCE Detection: CVE-2025-54123
 =============================
 
-Description: Detects remote code execution from NVD-CVE-2025-10731
+Description: Detects remote code execution from github.com/0xzap/CVE-2025-54123
 Severity: critical
 MITRE: T1059, T1203
-Source: 497c5dc865a58244
-Generated: 2026-04-12T23:36:43.507145
+Source: fb18dcd89a33005c
+Generated: 2026-04-27T20:00:57.750875
 """
 
 def detect_auto_010(events):
     """
-    Threat Intel: NVD-CVE-2025-10731
+    Threat Intel: github.com/0xzap/CVE-2025-54123
     Description: Remote Code Execution detection
-    Generated: 2026-04-12T23:36:43.498456
+    Generated: 2026-04-27T20:00:57.729683
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution
@@ -26,7 +26,7 @@ def detect_auto_010(events):
         r"\|\s*perl\s+-e",
         r"\|\s*nc\s+-[el]",
         r"bash\s+-i\s+\>&\s+/dev/tcp/",
-        r'python\d*\s+-c\s+[\'\"]import\s+socket',
+        r"python\d*\s+-c\s+['\"]import\s+socket",
         r"ruby\s+-rsocket",
     ]
     

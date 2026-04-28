@@ -1,33 +1,34 @@
 """
-RCE Detection: CVE-2025-10679
-=============================
+XSS: xss-coding-challenge
+=========================
 
-Description: Detects remote code execution from NVD-CVE-2025-10679
-Severity: critical
-MITRE: T1059, T1203
-Source: 1f2a507b768653df
-Generated: 2026-04-12T23:36:43.506899
+Description: Detects XSS from github.com/PXL-Security-Essentials/xss-coding-challenge
+Severity: medium
+MITRE: T1189, T1189
+Source: 1b5f5099ef97cc2a
+Generated: 2026-04-27T20:00:57.750381
 """
 
 def detect_auto_009(events):
     """
-    Threat Intel: NVD-CVE-2025-10679
-    Description: Remote Code Execution detection
-    Generated: 2026-04-12T23:36:43.498431
+    Threat Intel: github.com/PXL-Security-Essentials/xss-coding-challenge
+    Description: XSS detection
+    Generated: 2026-04-27T20:00:57.729488
     """
-    rce_patterns = [
-        r"\$\(.*?\)",  # Command substitution
-        r"`.*?`",  # Backtick execution
-        r"\b(eval|exec|system|passthru|shell_exec)\s*\(",
-        r";\s*bash\s+-c",
-        r";\s*sh\s+-c",
-        r"\|\s*bash",
-        r"\|\s*python\d*\s+-c",
-        r"\|\s*perl\s+-e",
-        r"\|\s*nc\s+-[el]",
-        r"bash\s+-i\s+\>&\s+/dev/tcp/",
-        r'python\d*\s+-c\s+[\'\"]import\s+socket',
-        r"ruby\s+-rsocket",
+    xss_patterns = [
+        r"<script[^>]*>[\s\S]*?</script>",
+        r"javascript:",
+        r"on\w+\s*=",
+        r"<iframe",
+        r"<object",
+        r"<embed",
+        r"expression\s*\(",
+        r"alert\s*\(",
+        r"confirm\s*\(",
+        r"prompt\s*\(",
+        r"document\.cookie",
+        r"document\.location",
+        r"window\.location",
     ]
     
     import re
@@ -35,13 +36,12 @@ def detect_auto_009(events):
     
     for event in events:
         url = event.get("url") or ""
+        body = event.get("body") or ""
         request = event.get("request") or ""
-        body = event.get("body") or event.get("data") or ""
-        command = event.get("command") or event.get("cmd") or ""
         
-        content = url + " " + request + " " + body + " " + command
+        content = url + " " + body + " " + request
         
-        for pattern in rce_patterns:
+        for pattern in xss_patterns:
             if re.search(pattern, content, re.IGNORECASE):
                 detected.append(event["event_id"])
                 break

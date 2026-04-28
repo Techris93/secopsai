@@ -1,19 +1,19 @@
 """
-RCE Detection: CVE-2026-4603
+RCE Detection: huntframework
 ============================
 
-Description: Detects remote code execution from NVD-CVE-2026-4603
+Description: Detects remote code execution from github.com/osnolanarf/huntframework
 Severity: critical
-MITRE: T1059, T1203
-Source: 128df6f993aa2e13
-Generated: 2026-04-12T23:36:43.508320
+MITRE: T1059, T1203, T1204
+Source: 5f9f0ce8e66f2610
+Generated: 2026-04-27T20:00:57.760602
 """
 
 def detect_auto_015(events):
     """
-    Threat Intel: NVD-CVE-2026-4603
+    Threat Intel: github.com/osnolanarf/huntframework
     Description: Remote Code Execution detection
-    Generated: 2026-04-12T23:36:43.498666
+    Generated: 2026-04-27T20:00:57.732010
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution
@@ -26,7 +26,7 @@ def detect_auto_015(events):
         r"\|\s*perl\s+-e",
         r"\|\s*nc\s+-[el]",
         r"bash\s+-i\s+\>&\s+/dev/tcp/",
-        r'python\d*\s+-c\s+[\'\"]import\s+socket',
+        r"python\d*\s+-c\s+['\"]import\s+socket",
         r"ruby\s+-rsocket",
     ]
     

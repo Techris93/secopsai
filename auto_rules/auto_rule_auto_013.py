@@ -1,19 +1,19 @@
 """
-SQL Injection: CVE-2026-4574
-============================
+SQL Injection: CVE_2026_2576_PoC
+================================
 
-Description: Detects SQL injection patterns from NVD-CVE-2026-4574
+Description: Detects SQL injection patterns from github.com/SowatKheang/CVE_2026_2576_PoC
 Severity: high
 MITRE: T1190, T1190
-Source: ea2dcf319b8817c0
-Generated: 2026-04-12T23:36:43.507865
+Source: 2434ede2199b01c0
+Generated: 2026-04-27T20:00:57.759712
 """
 
 def detect_auto_013(events):
     """
-    Threat Intel: NVD-CVE-2026-4574
+    Threat Intel: github.com/SowatKheang/CVE_2026_2576_PoC
     Description: SQL Injection detection
-    Generated: 2026-04-12T23:36:43.498525
+    Generated: 2026-04-27T20:00:57.731672
     """
     sqli_patterns = [
         r"(%27)|(')|(--)|(%23)|(#)",

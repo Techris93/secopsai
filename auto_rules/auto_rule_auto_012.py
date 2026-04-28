@@ -1,19 +1,19 @@
 """
-SQL Injection: CVE-2026-4573
-============================
+SQL Injection: CVE-2026-21643
+=============================
 
-Description: Detects SQL injection patterns from NVD-CVE-2026-4573
+Description: Detects SQL injection patterns from github.com/alirezac0/CVE-2026-21643
 Severity: high
 MITRE: T1190, T1190
-Source: 1bdd877d55b7ff4d
-Generated: 2026-04-12T23:36:43.507627
+Source: 8be91a3b737b043c
+Generated: 2026-04-27T20:00:57.751801
 """
 
 def detect_auto_012(events):
     """
-    Threat Intel: NVD-CVE-2026-4573
+    Threat Intel: github.com/alirezac0/CVE-2026-21643
     Description: SQL Injection detection
-    Generated: 2026-04-12T23:36:43.498509
+    Generated: 2026-04-27T20:00:57.730996
     """
     sqli_patterns = [
         r"(%27)|(')|(--)|(%23)|(#)",

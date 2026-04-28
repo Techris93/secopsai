@@ -1,44 +1,44 @@
 """
-SQL Injection: CVE-2026-4569
-============================
+Path Traversal: CVE-2026-31802
+==============================
 
-Description: Detects SQL injection patterns from NVD-CVE-2026-4569
+Description: Detects path traversal from github.com/Recorded-texteditor120/CVE-2026-31802
 Severity: high
-MITRE: T1190, T1190
-Source: 889569e3c160cc2b
-Generated: 2026-04-12T23:36:43.505272
+MITRE: T1083
+Source: fc9c217abe76d064
+Generated: 2026-04-27T20:00:57.747963
 """
 
 def detect_auto_004(events):
     """
-    Threat Intel: NVD-CVE-2026-4569
-    Description: SQL Injection detection
-    Generated: 2026-04-12T23:36:43.498316
+    Threat Intel: github.com/Recorded-texteditor120/CVE-2026-31802
+    Description: Path Traversal detection
+    Generated: 2026-04-27T20:00:57.728454
     """
-    sqli_patterns = [
-        r"(%27)|(')|(--)|(%23)|(#)",
-        r"((%3D)|(=))[^\n]*((%27)|(')|(--)|(%3B)|(;))",
-        r"\w*((%27)|('))((%6F)|o|(%4F))((%72)|r|(%52))",
-        r"((%27)|('))union",
-        r"exec(\s|\+)+(s|x)p\w+",
-        r"UNION\s+SELECT",
-        r"INSERT\s+INTO",
-        r"DELETE\s+FROM",
-        r"DROP\s+TABLE",
+    traversal_patterns = [
+        r"\.\./",
+        r"\.\.\\",
+        r"%2e%2e%2f",
+        r"%252e%252e%252f",
+        r"..%252f",
+        r"%252e%252e/",
+        r"..%c0%af",
+        r"%c0%ae%c0%ae/",
+        r"....//",
+        r"....\\",
     ]
     
     import re
     detected = []
     
     for event in events:
-        # Check URL and request body
         url = event.get("url") or ""
-        request = event.get("request") or event.get("http_request") or ""
-        body = event.get("body") or event.get("data") or ""
+        request = event.get("request") or ""
+        filepath = event.get("filepath") or event.get("path") or ""
         
-        content = url + " " + request + " " + body
+        content = url + " " + request + " " + filepath
         
-        for pattern in sqli_patterns:
+        for pattern in traversal_patterns:
             if re.search(pattern, content, re.IGNORECASE):
                 detected.append(event["event_id"])
                 break

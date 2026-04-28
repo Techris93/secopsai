@@ -1,19 +1,19 @@
 """
-RCE Detection: CVE-2025-10736
+RCE Detection: cve-2026-33937
 =============================
 
-Description: Detects remote code execution from NVD-CVE-2025-10736
+Description: Detects remote code execution from github.com/dinhvaren/cve-2026-33937
 Severity: critical
 MITRE: T1059, T1203
-Source: dd6f5539f09b830f
-Generated: 2026-04-12T23:36:43.505510
+Source: 03ff36761e76ad21
+Generated: 2026-04-27T20:00:57.748472
 """
 
 def detect_auto_005(events):
     """
-    Threat Intel: NVD-CVE-2025-10736
+    Threat Intel: github.com/dinhvaren/cve-2026-33937
     Description: Remote Code Execution detection
-    Generated: 2026-04-12T23:36:43.498347
+    Generated: 2026-04-27T20:00:57.728576
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution
@@ -26,7 +26,7 @@ def detect_auto_005(events):
         r"\|\s*perl\s+-e",
         r"\|\s*nc\s+-[el]",
         r"bash\s+-i\s+\>&\s+/dev/tcp/",
-        r'python\d*\s+-c\s+[\'\"]import\s+socket',
+        r"python\d*\s+-c\s+['\"]import\s+socket",
         r"ruby\s+-rsocket",
     ]
     
