@@ -19,7 +19,6 @@ import sys
 import tarfile
 import tempfile
 import textwrap
-import tomllib
 import urllib.parse
 import urllib.request
 import xmlrpc.client
@@ -29,6 +28,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 import soc_store
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 compatibility.
+    import tomli as tomllib
 
 from secopsai.alerts import (
     SUPPLY_CHAIN_SLACK_STATE_PATH,

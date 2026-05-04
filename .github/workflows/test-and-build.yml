@@ -49,7 +49,10 @@ jobs:
             cp data/fixtures/openclaw/sample_audit.jsonl data/openclaw/raw/audit.jsonl
           fi
           if [ -f "data/fixtures/openclaw/attack_mix.json" ]; then
-            cp data/fixtures/openclaw/attack_mix.json data/openclaw/replay/labeled/current.json
+            cp data/fixtures/openclaw/attack_mix.json data/openclaw/replay/labeled/attack_mix.json
+          fi
+          if [ -f "data/fixtures/openclaw/current_replay.json" ]; then
+            cp data/fixtures/openclaw/current_replay.json data/openclaw/replay/labeled/current.json
           fi
           # Create mock schema file for tests (at parent directory level)
           mkdir -p ../secopsai-dashboard/supabase_migrations

@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 import re
-import tomllib
 from pathlib import Path
 from typing import Any, Dict, List
 
 from secopsai import supply_chain
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 compatibility.
+    import tomli as tomllib
 
 
 STRONG_RULE_MARKERS = {
