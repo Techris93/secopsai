@@ -6,14 +6,14 @@ Description: Detects remote code execution from github.com/dinhvaren/cve-2026-33
 Severity: critical
 MITRE: T1059, T1203
 Source: 03ff36761e76ad21
-Generated: 2026-04-27T20:00:57.748472
+Generated: 2026-05-03T20:00:32.755081
 """
 
 def detect_auto_005(events):
     """
     Threat Intel: github.com/dinhvaren/cve-2026-33937
     Description: Remote Code Execution detection
-    Generated: 2026-04-27T20:00:57.728576
+    Generated: 2026-05-03T20:00:32.742674
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution

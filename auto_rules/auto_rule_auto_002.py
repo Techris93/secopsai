@@ -6,14 +6,14 @@ Description: Detects remote code execution from thehackernews.com
 Severity: critical
 MITRE: T1059, T1203
 Source: 71f42c47584eb718
-Generated: 2026-04-27T20:00:57.744337
+Generated: 2026-05-03T20:00:32.754019
 """
 
 def detect_auto_002(events):
     """
     Threat Intel: thehackernews.com
     Description: Remote Code Execution detection
-    Generated: 2026-04-27T20:00:57.727816
+    Generated: 2026-05-03T20:00:32.742364
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution

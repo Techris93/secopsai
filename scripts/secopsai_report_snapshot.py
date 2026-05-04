@@ -82,6 +82,41 @@ def _git(repo: Path, *args: str) -> str:
         return ""
 
 
+def _status_path(line: str) -> str:
+    path = line[3:].strip()
+    if " -> " in path:
+        path = path.rsplit(" -> ", 1)[-1].strip()
+    return path.strip('"')
+
+
+def _auto_rule_timestamp_only_diff(repo: Path, path: str) -> bool:
+    if not path.startswith("auto_rules/"):
+        return False
+    if not (path.endswith(".py") or path.endswith("metadata.json")):
+        return False
+
+    diff = _git(repo, "diff", "--", path)
+    if not diff:
+        return False
+
+    changed_lines = [
+        line
+        for line in diff.splitlines()
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+    ]
+    if not changed_lines:
+        return False
+
+    for line in changed_lines:
+        body = line[1:].strip()
+        if body.startswith("Generated:"):
+            continue
+        if body.startswith('"generated_at":'):
+            continue
+        return False
+    return True
+
+
 def _git_count_since(repo: Path, since_dt: datetime) -> int:
     since = since_dt.isoformat()
     out = _git(repo, "rev-list", "--count", f"--since={since}", "HEAD")
@@ -99,11 +134,14 @@ def _git_metrics(repo: Path) -> Dict[str, Any]:
     status_porcelain = _git(repo, "status", "--porcelain")
     tracked = 0
     untracked = 0
+    ignored_generated = 0
     for line in status_porcelain.splitlines():
         if not line.strip():
             continue
         if line.startswith("??"):
             untracked += 1
+        elif _auto_rule_timestamp_only_diff(repo, _status_path(line)):
+            ignored_generated += 1
         else:
             tracked += 1
 
@@ -124,10 +162,12 @@ def _git_metrics(repo: Path) -> Dict[str, Any]:
             "last_24h": _git_count_since(repo, since_24h),
         },
         "worktree": {
-            "dirty": bool(status_porcelain.strip()),
+            "dirty": bool(tracked or untracked),
             "tracked_changes": tracked,
             "untracked_changes": untracked,
             "total_changes": tracked + untracked,
+            "ignored_generated_changes": ignored_generated,
+            "raw_dirty": bool(status_porcelain.strip()),
         },
     }
 

@@ -24,6 +24,27 @@ RULES_OUTPUT_DIR = str(BASE_DIR / 'auto_rules')
 os.makedirs(RULES_OUTPUT_DIR, exist_ok=True)
 
 
+def _normalize_generated_markers(text: str) -> str:
+    """Normalize volatile generated timestamps so no-op rule refreshes stay clean."""
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Generated:"):
+            indent = line[: len(line) - len(line.lstrip())]
+            lines.append(f"{indent}Generated: <generated-at>")
+        else:
+            lines.append(line)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _metadata_equivalent(existing: dict, candidate: dict) -> bool:
+    existing_stable = dict(existing)
+    candidate_stable = dict(candidate)
+    existing_stable.pop("generated_at", None)
+    candidate_stable.pop("generated_at", None)
+    return existing_stable == candidate_stable
+
+
 @dataclass
 class GeneratedRule:
     """A generated detection rule"""
@@ -557,26 +578,50 @@ class AdaptiveRuleGenerator:
     
     def save_rules(self):
         """Save generated rules to Python files"""
-        for existing in Path(RULES_OUTPUT_DIR).glob("auto_rule_*.py"):
-            existing.unlink()
+        output_dir = Path(RULES_OUTPUT_DIR)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        existing_rule_paths = set(output_dir.glob("auto_rule_*.py"))
+        written_paths = set()
+        meaningful_changes = False
 
         for rule in self.rules:
             filename = f"auto_rule_{rule.rule_id.lower().replace('-', '_')}.py"
-            filepath = os.path.join(RULES_OUTPUT_DIR, filename)
-            
-            with open(filepath, 'w') as f:
-                f.write(f'"""\n')
-                f.write(f'{rule.name}\n')
-                f.write(f'{"=" * len(rule.name)}\n\n')
-                f.write(f'Description: {rule.description}\n')
-                f.write(f'Severity: {rule.severity}\n')
-                f.write(f'MITRE: {", ".join(rule.mitre_techniques)}\n')
-                f.write(f'Source: {rule.source_intel}\n')
-                f.write(f'Generated: {datetime.utcnow().isoformat()}\n')
-                f.write(f'"""\n\n')
-                f.write(rule.python_code)
-            
+            filepath = output_dir / filename
+            written_paths.add(filepath)
+
+            content = "\n".join(
+                [
+                    '"""',
+                    rule.name,
+                    "=" * len(rule.name),
+                    "",
+                    f"Description: {rule.description}",
+                    f"Severity: {rule.severity}",
+                    f"MITRE: {', '.join(rule.mitre_techniques)}",
+                    f"Source: {rule.source_intel}",
+                    f"Generated: {datetime.utcnow().isoformat()}",
+                    '"""',
+                    "",
+                    rule.python_code,
+                ]
+            )
+            if not content.endswith("\n"):
+                content += "\n"
+
+            if filepath.exists():
+                existing_content = filepath.read_text(encoding="utf-8")
+                if _normalize_generated_markers(existing_content) == _normalize_generated_markers(content):
+                    print(f"[SAVE] unchanged {filepath}")
+                    continue
+
+            filepath.write_text(content, encoding="utf-8")
+            meaningful_changes = True
             print(f"[SAVE] {filepath}")
+
+        for stale_path in sorted(existing_rule_paths - written_paths):
+            stale_path.unlink()
+            meaningful_changes = True
+            print(f"[SAVE] removed stale {stale_path}")
         
         # Save metadata
         metadata = {
@@ -591,8 +636,21 @@ class AdaptiveRuleGenerator:
             } for r in self.rules]
         }
         
-        with open(os.path.join(RULES_OUTPUT_DIR, 'metadata.json'), 'w') as f:
-            json.dump(metadata, f, indent=2)
+        metadata_path = output_dir / 'metadata.json'
+        if metadata_path.exists():
+            try:
+                existing_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except Exception:
+                existing_metadata = {}
+            if (
+                isinstance(existing_metadata, dict)
+                and _metadata_equivalent(existing_metadata, metadata)
+                and not meaningful_changes
+            ):
+                print(f"[SAVE] unchanged {metadata_path}")
+                return
+
+        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
 
 if __name__ == '__main__':

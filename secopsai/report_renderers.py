@@ -228,6 +228,7 @@ def render_status_summary(snapshot: Mapping[str, Any], *, tz_name: str = DEFAULT
         f"- Total changes: {format_value(repo_worktree.get('total_changes'))}",
         f"- Tracked changes: {format_value(repo_worktree.get('tracked_changes'))}",
         f"- Untracked changes: {format_value(repo_worktree.get('untracked_changes'))}",
+        f"- Ignored generated-only changes: {format_value(repo_worktree.get('ignored_generated_changes'), unavailable='0')}",
         "",
         "SOC store findings",
         f"- DB path: {format_value(soc_store.get('db_path'))}",
@@ -333,10 +334,18 @@ def render_daily_brief(snapshot: Mapping[str, Any], *, tz_name: str = DEFAULT_TI
                 )
             ),
             (
-                "- Worktree hygiene: {state}, {tracked} tracked changes, {untracked} untracked changes.".format(
+                "- Worktree hygiene: {state}, {tracked} tracked changes, {untracked} untracked changes"
+                "{ignored}.".format(
                     state=_bool_label(repo_worktree.get("dirty")),
                     tracked=format_value(repo_worktree.get("tracked_changes")),
                     untracked=format_value(repo_worktree.get("untracked_changes")),
+                    ignored=(
+                        ", "
+                        + format_value(repo_worktree.get("ignored_generated_changes"), unavailable="0")
+                        + " generated-only changes ignored"
+                        if repo_worktree.get("ignored_generated_changes")
+                        else ""
+                    ),
                 )
             ),
             (
@@ -454,12 +463,26 @@ def render_daily_intel(
     if "telemetry_export_bridge_stale" in (snapshot.get("staleness_flags") or []):
         lines.append("• OpenClaw source logs are fresher than the replay bundle, so the export bridge likely needs attention")
     lines.append(f"• Latest replay event is about {_hours_phrase(replay.get('age_hours_since_latest_event'))} hours old")
-    lines.append(
-        "• Status mix in replay includes {failed} failed and {error} error events, but there are no new replay detections or IOC hits in the current bundle".format(
-            failed=format_value(failed_count),
-            error=format_value(error_count),
+    try:
+        failed_number = int(failed_count or 0)
+    except (TypeError, ValueError):
+        failed_number = 0
+    try:
+        error_number = int(error_count or 0)
+    except (TypeError, ValueError):
+        error_number = 0
+    if failed_number or error_number:
+        if failed_number and error_number:
+            status_phrase = f"{failed_number} failed and {error_number} error events"
+        elif failed_number:
+            status_phrase = f"{failed_number} failed events and no error events"
+        else:
+            status_phrase = f"{error_number} error events and no failed events"
+        lines.append(
+            f"• Status mix in replay includes {status_phrase}, but there are no new replay detections or IOC hits in the current bundle"
         )
-    )
+    else:
+        lines.append("• Replay status mix has no failed/error events reported, and there are no new replay detections or IOC hits in the current bundle")
     lines.append(f"• Correlation summary is {format_value(correlation.get('total_correlations'), unavailable='0')} total correlations")
     lines.extend(["", "Recommended actions"])
     for action in actions:

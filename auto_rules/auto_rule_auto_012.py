@@ -6,14 +6,14 @@ Description: Detects SQL injection patterns from github.com/alirezac0/CVE-2026-2
 Severity: high
 MITRE: T1190, T1190
 Source: 8be91a3b737b043c
-Generated: 2026-04-27T20:00:57.751801
+Generated: 2026-05-03T20:00:32.757399
 """
 
 def detect_auto_012(events):
     """
     Threat Intel: github.com/alirezac0/CVE-2026-21643
     Description: SQL Injection detection
-    Generated: 2026-04-27T20:00:57.730996
+    Generated: 2026-05-03T20:00:32.746870
     """
     sqli_patterns = [
         r"(%27)|(')|(--)|(%23)|(#)",

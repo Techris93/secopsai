@@ -6,14 +6,14 @@ Description: Detects XSS from github.com/PXL-Security-Essentials/xss-coding-chal
 Severity: medium
 MITRE: T1189, T1189
 Source: 1b5f5099ef97cc2a
-Generated: 2026-04-27T20:00:57.750381
+Generated: 2026-05-03T20:00:32.756395
 """
 
 def detect_auto_009(events):
     """
     Threat Intel: github.com/PXL-Security-Essentials/xss-coding-challenge
     Description: XSS detection
-    Generated: 2026-04-27T20:00:57.729488
+    Generated: 2026-05-03T20:00:32.743045
     """
     xss_patterns = [
         r"<script[^>]*>[\s\S]*?</script>",

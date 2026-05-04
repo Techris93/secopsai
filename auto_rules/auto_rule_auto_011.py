@@ -6,14 +6,14 @@ Description: Detects remote code execution from github.com/kasem545/CVE-2025-541
 Severity: critical
 MITRE: T1059, T1203
 Source: a4c508ad78b23676
-Generated: 2026-04-27T20:00:57.751352
+Generated: 2026-05-03T20:00:32.757068
 """
 
 def detect_auto_011(events):
     """
     Threat Intel: github.com/kasem545/CVE-2025-54123-Poc
     Description: Remote Code Execution detection
-    Generated: 2026-04-27T20:00:57.729775
+    Generated: 2026-05-03T20:00:32.743177
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution

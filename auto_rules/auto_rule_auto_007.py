@@ -6,14 +6,14 @@ Description: Detects remote code execution from github.com/fcjaviergarcia/CVE-20
 Severity: critical
 MITRE: T1059, T1203
 Source: 18a25452f10ea8b7
-Generated: 2026-04-27T20:00:57.749341
+Generated: 2026-05-03T20:00:32.755745
 """
 
 def detect_auto_007(events):
     """
     Threat Intel: github.com/fcjaviergarcia/CVE-2026-23744-POC
     Description: Remote Code Execution detection
-    Generated: 2026-04-27T20:00:57.728759
+    Generated: 2026-05-03T20:00:32.742804
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution

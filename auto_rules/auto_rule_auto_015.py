@@ -6,14 +6,14 @@ Description: Detects remote code execution from github.com/osnolanarf/huntframew
 Severity: critical
 MITRE: T1059, T1203, T1204
 Source: 5f9f0ce8e66f2610
-Generated: 2026-04-27T20:00:57.760602
+Generated: 2026-05-03T20:00:32.758381
 """
 
 def detect_auto_015(events):
     """
     Threat Intel: github.com/osnolanarf/huntframework
     Description: Remote Code Execution detection
-    Generated: 2026-04-27T20:00:57.732010
+    Generated: 2026-05-03T20:00:32.747214
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution

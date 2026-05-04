@@ -6,14 +6,14 @@ Description: Detects remote code execution from github.com/0xzap/CVE-2025-54123
 Severity: critical
 MITRE: T1059, T1203
 Source: fb18dcd89a33005c
-Generated: 2026-04-27T20:00:57.750875
+Generated: 2026-05-03T20:00:32.756712
 """
 
 def detect_auto_010(events):
     """
     Threat Intel: github.com/0xzap/CVE-2025-54123
     Description: Remote Code Execution detection
-    Generated: 2026-04-27T20:00:57.729683
+    Generated: 2026-05-03T20:00:32.743130
     """
     rce_patterns = [
         r"\$\(.*?\)",  # Command substitution

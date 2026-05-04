@@ -19,6 +19,7 @@ def _sample_snapshot() -> dict:
                 "total_changes": 73,
                 "tracked_changes": 73,
                 "untracked_changes": 0,
+                "ignored_generated_changes": 0,
             },
         },
         "findings": {
@@ -111,6 +112,7 @@ def test_render_status_summary_formats_empty_mappings_without_recipient_noise() 
 
     assert "Open severity counts: none" in rendered
     assert "Top open findings: none" in rendered
+    assert "Ignored generated-only changes: 0" in rendered
     assert "Send to Telegram chat" not in rendered
     assert "Target:" not in rendered
 
@@ -139,6 +141,28 @@ def test_render_daily_intel_keeps_soc_and_replay_findings_separate() -> None:
     assert "Replay findings, kept separate from SOC findings" in rendered
     assert "• intel refresh: succeeded" in rendered
     assert "• Replay events scanned: 2533" in rendered
+
+
+def test_render_daily_intel_handles_absent_failed_error_counts_as_zero() -> None:
+    snapshot = _sample_snapshot()
+    snapshot["telemetry"]["labeled_replay"]["status_counts"] = {
+        "ok": 1083,
+        "completed": 74,
+        "running": 66,
+    }
+
+    rendered = render_daily_intel(
+        snapshot,
+        command_status={
+            "refresh": "succeeded",
+            "match": "succeeded",
+            "match_metrics": {"events_total": 1233, "iocs_considered": 500, "matched_findings": 0},
+        },
+    )
+
+    assert "unavailable failed" not in rendered
+    assert "unavailable error" not in rendered
+    assert "Replay status mix has no failed/error events reported" in rendered
 
 
 def test_render_daily_intel_highlights_export_bridge_staleness() -> None:
