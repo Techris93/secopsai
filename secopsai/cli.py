@@ -28,6 +28,7 @@ from secopsai.agent_core import (
     list_jobs as list_agent_jobs,
     run_isolated_job,
 )
+from secopsai.biological_intelligence import evaluate_security_biology
 from secopsai.formatters import fmt_finding, fmt_list, to_json
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
 from secopsai.pipeline import refresh as refresh_pipeline
@@ -1078,6 +1079,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     sync_findings.add_argument("--skip-schema-check", action="store_true", help="Skip local schema/mapping validation")
     sync_findings.add_argument("--dry-run", action="store_true", help="Print payload summary without writing")
 
+    bio_intel = sub.add_parser("bio-intel", help="Run the Biological Intelligence Layer across stored findings")
+    bio_intel.add_argument("--db-path", default=None, help="Override SQLite database path")
+    bio_intel.add_argument("--memory-path", default=None, help="Override biological threat memory path")
+    bio_intel.add_argument("--limit", type=int, default=200, help="Maximum findings to analyze")
+    bio_intel.add_argument("--persist-memory", action="store_true", help="Persist updated threat memory and pheromone trails")
+
     return p.parse_args(argv)
 
 
@@ -1363,6 +1370,44 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             for key, value in payload.items():
                 print(f"{key}={value}")
+        return 0
+
+    if args.cmd == "bio-intel":
+        rows = list_triage_findings(db_path=args.db_path, limit=args.limit)
+        payload = evaluate_security_biology(
+            rows,
+            memory_path=args.memory_path,
+            persist_memory=args.persist_memory,
+        )
+        if args.json:
+            print(to_json(payload))
+        else:
+            immune = payload["immune_system"]
+            sensing = payload["sensing"]
+            print(f"BIOLOGICAL_INTELLIGENCE: {payload['design_principle']}")
+            print(
+                "IMMUNE_MODE: {mode} sensitivity={sensitivity} findings={findings} clustered_traits={clusters}".format(
+                    mode=immune["mode"],
+                    sensitivity=immune["sensitivity_multiplier"],
+                    findings=sensing["findings"],
+                    clusters=sensing["clustered_traits"],
+                )
+            )
+            if payload.get("memory_path"):
+                print(f"MEMORY_PATH: {payload['memory_path']}")
+            print("TOP_FINDINGS:")
+            for item in payload["findings"][:10]:
+                print(
+                    "- {fid} | adaptive_score={score} | state={state} | {title}".format(
+                        fid=item.get("finding_id"),
+                        score=item.get("adaptive_score"),
+                        state=item.get("recommended_state"),
+                        title=item.get("title"),
+                    )
+                )
+            print("SAFE_PROBES:")
+            for item in payload["echolocation"]["safe_probes"][:5]:
+                print(f"- {item['trait']}: {item['probe']}")
         return 0
 
     if args.cmd == "session":
