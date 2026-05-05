@@ -19,7 +19,7 @@ secopsai turns OpenClaw and host OS telemetry into repeatable, explainable secur
 - Local-first pipeline with SQLite-backed findings storage
 - Cross-platform correlation by IP, user, time, and file hash
 - Native CLI triage and orchestrated review workflow
-- Biological Intelligence Layer with immune response, decaying threat memory, weak-signal routing, safe probes, and deception recommendations
+- Adaptive Response Layer with decaying threat memory, weak-signal routing, response posture, safe probes, and deception recommendations
 - Threat intel pipeline and deployment paths for ongoing monitoring
 
 ## Start Here
@@ -29,7 +29,7 @@ secopsai turns OpenClaw and host OS telemetry into repeatable, explainable secur
 - [Findings Triage Guide](findings-triage-guide.md)
 - [Research And Verification](research-and-verification.md)
 - [Triage Orchestrator](triage-orchestrator.md)
-- [Biological Intelligence Layer](biological-intelligence.md)
+- [Adaptive Response Layer](adaptive-response.md)
 - [Rules Registry](rules-registry.md)
 - [Deployment Guide](deployment-guide.md)
 - [API Reference](api-reference.md)
@@ -61,8 +61,8 @@ secopsai list --severity high
 # 6) Run the native triage orchestrator
 secopsai triage orchestrate --search-root ~/secopsai
 
-# 7) Run the Biological Intelligence Layer
-secopsai bio-intel --persist-memory
+# 7) Run adaptive response analysis
+secopsai adaptive-response --persist-memory
 ```
 
 ## Platform Support
@@ -79,7 +79,7 @@ secopsai bio-intel --persist-memory
 - Unified security event schema
 - Local findings store with triage workflow
 - Native triage orchestrator with queued human-reviewed actions
-- Biological Intelligence Layer for adaptive threat memory, timing-aware anomalies, prioritization, safe probing, and deception
+- Adaptive Response Layer for threat memory, timing-aware anomalies, prioritization, safe probing, and deception
 - Cross-platform correlation engine
 - CLI and OpenClaw plugin workflows
 - Optional notification workflows for notable findings

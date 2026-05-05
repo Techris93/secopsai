@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MEMORY_PATH = ROOT / "data" / "biological_intelligence" / "threat_memory.json"
+DEFAULT_MEMORY_PATH = ROOT / "data" / "adaptive_response" / "threat_memory.json"
 
 SEVERITY_SCORE = {
     "info": 5,
@@ -20,55 +20,55 @@ SEVERITY_SCORE = {
     "critical": 95,
 }
 
-NATURE_MODELS = [
+ADAPTIVE_CAPABILITIES = [
     {
-        "model": "immune_system",
-        "principle": "detect_isolate_remember",
-        "implementation": "Innate rules flag obvious threats, adaptive memory raises sensitivity for recurring patterns, and high-risk entities receive containment actions.",
+        "capability": "baseline_detection",
+        "principle": "detect, contain, and remember",
+        "implementation": "Baseline rules flag obvious threats, adaptive memory raises sensitivity for recurring patterns, and high-risk entities receive containment actions.",
     },
     {
-        "model": "ant_colonies",
-        "principle": "swarm_intelligence_pheromone_trails",
+        "capability": "confidence_memory",
+        "principle": "decaying evidence from repeated traits",
         "implementation": "Repeated incident traits leave decaying confidence trails that influence future prioritization.",
     },
     {
-        "model": "mycelium_networks",
-        "principle": "distributed_sensing_resource_routing",
+        "capability": "signal_routing",
+        "principle": "distributed sensing and resource routing",
         "implementation": "Weak signals across users, hosts, packages, sessions, rules, and sources are clustered into shared risk corridors.",
     },
     {
-        "model": "flocking_birds",
-        "principle": "local_rules_coordinated_behavior",
+        "capability": "triage_coordination",
+        "principle": "local rules for coordinated behavior",
         "implementation": "Simple alert-agent heuristics coordinate triage without requiring a monolithic global decision.",
     },
     {
-        "model": "predator_prey_cycles",
+        "capability": "adversarial_simulation",
         "principle": "adversarial_adaptation",
-        "implementation": "Top attacker traits generate red-team/blue-team simulation scenarios for vaccination.",
+        "implementation": "Top attacker traits generate red-team/blue-team simulation scenarios for pre-incident hardening.",
     },
     {
-        "model": "skin",
-        "principle": "layered_defense_self_healing",
-        "implementation": "Blast containment, access tightening, logging escalation, and patch checks form a regenerating defense barrier.",
+        "capability": "layered_defense",
+        "principle": "barriers, blast containment, and repair",
+        "implementation": "Blast containment, access tightening, logging escalation, and patch checks form a resilient defense barrier.",
     },
     {
-        "model": "circadian_rhythm",
-        "principle": "timing_matters",
+        "capability": "time_aware_detection",
+        "principle": "timing-aware anomaly scoring",
         "implementation": "Off-hours, weekend, and clustered timing patterns raise anomaly sensitivity.",
     },
     {
-        "model": "tree_roots",
-        "principle": "resource_prioritization",
+        "capability": "priority_routing",
+        "principle": "resource prioritization",
         "implementation": "Attention is allocated to the highest-risk assets and recurring shared roots first.",
     },
     {
-        "model": "echolocation",
-        "principle": "active_probing",
+        "capability": "validation_probes",
+        "principle": "safe active validation",
         "implementation": "Safe probes are recommended to validate suspected weak points without destructive testing.",
     },
     {
-        "model": "octopus_camouflage",
-        "principle": "context_aware_deception",
+        "capability": "deception_controls",
+        "principle": "context-aware deception",
         "implementation": "High-interest assets receive honeypot and deception recommendations tuned to attacker behavior.",
     },
 ]
@@ -154,7 +154,7 @@ def _load_json(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def load_threat_memory(path: str | Path | None = None) -> Dict[str, Any]:
-    return _load_json(Path(path or DEFAULT_MEMORY_PATH), {"memory_cells": {}, "pheromone_trails": {}})
+    return _load_json(Path(path or DEFAULT_MEMORY_PATH), {"memory_cells": {}, "confidence_trails": {}})
 
 
 def save_threat_memory(memory: Dict[str, Any], path: str | Path | None = None) -> str:
@@ -166,7 +166,7 @@ def save_threat_memory(memory: Dict[str, Any], path: str | Path | None = None) -
 
 def _decay_trails(memory: Dict[str, Any], half_life_days: float = 14.0) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
-    trails = memory.get("pheromone_trails") if isinstance(memory.get("pheromone_trails"), dict) else {}
+    trails = memory.get("confidence_trails") if isinstance(memory.get("confidence_trails"), dict) else {}
     decayed: Dict[str, Any] = {}
     for key, trail in trails.items():
         if not isinstance(trail, dict):
@@ -184,18 +184,18 @@ def _update_memory(findings: List[Dict[str, Any]], memory: Dict[str, Any]) -> Di
     updated = {
         "generated_at": _utc_now(),
         "memory_cells": dict(memory.get("memory_cells") or {}),
-        "pheromone_trails": _decay_trails(memory),
+        "confidence_trails": _decay_trails(memory),
     }
     for finding in findings:
         finding_id = str(finding.get("finding_id") or finding.get("id") or "")
         score = _severity_value(finding)
         observed_at = str(finding.get("last_seen") or finding.get("first_seen") or _utc_now())
         for trait in _finding_trait_keys(finding):
-            trail = updated["pheromone_trails"].get(trait, {"strength": 0.0, "hits": 0})
+            trail = updated["confidence_trails"].get(trait, {"strength": 0.0, "hits": 0})
             trail["strength"] = round(float(trail.get("strength") or 0.0) + score / 100.0, 4)
             trail["hits"] = int(trail.get("hits") or 0) + 1
             trail["last_seen"] = observed_at
-            updated["pheromone_trails"][trait] = trail
+            updated["confidence_trails"][trait] = trail
 
             cell = updated["memory_cells"].get(trait, {"hits": 0, "finding_ids": []})
             cell["hits"] = int(cell.get("hits") or 0) + 1
@@ -251,7 +251,7 @@ def _recommend_containment(finding: Dict[str, Any], score: int, clustered: bool)
     return actions
 
 
-def evaluate_security_biology(
+def evaluate_adaptive_response(
     findings: Iterable[Dict[str, Any]],
     *,
     memory: Optional[Dict[str, Any]] = None,
@@ -266,7 +266,7 @@ def evaluate_security_biology(
     severity_counts = Counter(str(row.get("severity") or "unknown").lower() for row in rows)
     critical_or_high = sum(1 for row in rows if _severity_value(row) >= 75)
     cluster_risk = sum(len(value) for value in clusters.values())
-    immune_active = critical_or_high >= 2 or any(_severity_value(row) >= 90 for row in rows) or cluster_risk >= 4
+    response_active = critical_or_high >= 2 or any(_severity_value(row) >= 90 for row in rows) or cluster_risk >= 4
     sensitivity_multiplier = 1.0 + min(1.5, critical_or_high * 0.15 + cluster_risk * 0.04)
 
     cluster_keys = set(clusters)
@@ -274,13 +274,13 @@ def evaluate_security_biology(
     for finding in rows:
         traits = _finding_trait_keys(finding)
         clustered = any(trait in cluster_keys for trait in traits)
-        circadian = _off_hours_signal(finding)
+        timing_signal = _off_hours_signal(finding)
         score = _severity_value(finding)
-        trail_strength = sum(
-            float(updated_memory.get("pheromone_trails", {}).get(trait, {}).get("strength") or 0.0)
+        confidence_strength = sum(
+            float(updated_memory.get("confidence_trails", {}).get(trait, {}).get("strength") or 0.0)
             for trait in traits
         )
-        adaptive_score = min(100, round(score + min(20, trail_strength * 2) + (circadian or {}).get("risk_lift", 0)))
+        adaptive_score = min(100, round(score + min(20, confidence_strength * 2) + (timing_signal or {}).get("risk_lift", 0)))
         containment = _recommend_containment(finding, score, clustered)
         finding_assessments.append(
             {
@@ -291,16 +291,16 @@ def evaluate_security_biology(
                 "adaptive_score": adaptive_score,
                 "clustered": clustered,
                 "memory_traits": traits[:10],
-                "recommended_state": "immune_response" if adaptive_score >= 85 else "watch" if adaptive_score >= 55 else "baseline",
+                "recommended_state": "heightened_response" if adaptive_score >= 85 else "watch" if adaptive_score >= 55 else "baseline",
                 "containment_actions": containment,
-                "circadian_signal": circadian,
+                "timing_signal": timing_signal,
             }
         )
 
     high_interest_traits = [
         key
         for key, trail in sorted(
-            updated_memory.get("pheromone_trails", {}).items(),
+            updated_memory.get("confidence_trails", {}).items(),
             key=lambda item: float(item[1].get("strength") or 0.0),
             reverse=True,
         )
@@ -330,7 +330,7 @@ def evaluate_security_biology(
         key=lambda item: item["priority_score"],
         reverse=True,
     )
-    circadian_signals = [item["circadian_signal"] for item in finding_assessments if item["circadian_signal"]]
+    timing_signals = [item["timing_signal"] for item in finding_assessments if item["timing_signal"]]
     red_team_traits = [
         trait
         for trait in high_interest_traits
@@ -339,36 +339,36 @@ def evaluate_security_biology(
 
     payload = {
         "generated_at": _utc_now(),
-        "design_principle": "Biological Intelligence Layer",
+        "design_principle": "Adaptive Response Layer",
         "loop": ["observe", "detect_pattern", "adapt_response", "remember_outcome"],
-        "nature_models": NATURE_MODELS,
+        "capabilities": ADAPTIVE_CAPABILITIES,
         "sensing": {
             "findings": len(rows),
             "severity_counts": dict(severity_counts),
             "clustered_traits": len(clusters),
         },
-        "immune_system": {
-            "mode": "active" if immune_active else "baseline",
+        "response_posture": {
+            "mode": "active" if response_active else "baseline",
             "sensitivity_multiplier": round(sensitivity_multiplier, 2),
-            "innate_immunity": "severity, policy, and known rule scoring",
-            "adaptive_immunity": "decaying threat memory and repeated trait reinforcement",
+            "baseline_rules": "severity, policy, and known rule scoring",
+            "adaptive_memory": "decaying threat memory and repeated trait reinforcement",
             "memory_cells": len(updated_memory.get("memory_cells", {})),
-            "inflammation_response": "cluster sensitivity raised" if cluster_risk else "normal sensitivity",
-            "apoptosis": "auto-isolate critical clustered entities" if immune_active else "manual containment only",
-            "vaccination": [f"simulate attacker path around {trait}" for trait in red_team_traits],
+            "sensitivity_state": "cluster sensitivity raised" if cluster_risk else "normal sensitivity",
+            "containment_mode": "auto-isolate critical clustered entities" if response_active else "manual containment only",
+            "preincident_simulations": [f"simulate attacker path around {trait}" for trait in red_team_traits],
         },
-        "ant_colonies": {
-            "pheromone_trails": [
+        "confidence_memory": {
+            "confidence_trails": [
                 {"trait": trait, **trail}
                 for trait, trail in sorted(
-                    updated_memory.get("pheromone_trails", {}).items(),
+                    updated_memory.get("confidence_trails", {}).items(),
                     key=lambda item: float(item[1].get("strength") or 0.0),
                     reverse=True,
                 )[:10]
             ]
         },
-        "mycelium_networks": {"weak_signal_clusters": top_clusters},
-        "flocking_birds": {
+        "signal_routing": {"weak_signal_clusters": top_clusters},
+        "triage_coordination": {
             "agent_rules": [
                 "critical clustered finding -> isolate first, investigate second",
                 "repeated benign low-risk pattern -> tune policy instead of escalating",
@@ -376,27 +376,27 @@ def evaluate_security_biology(
                 "multiple off-hours events -> raise queue priority for analyst review",
             ]
         },
-        "predator_prey_cycles": {
+        "adversarial_simulation": {
             "red_blue_simulations": [
                 {
                     "scenario": f"adversary adapts around {trait}",
-                    "blue_team_response": "tighten detection, run safe replay, preserve evidence, and update memory trails",
+                    "blue_team_response": "tighten detection, run safe replay, preserve evidence, and update response memory",
                 }
                 for trait in red_team_traits
             ]
         },
-        "skin": {
+        "layered_defense": {
             "layered_defense": [
                 "least-privilege access tightening",
                 "blast-radius scoped isolation",
-                "extra audit logging while immune mode is active",
+                "extra audit logging while heightened response is active",
                 "dependency pinning and provenance checks for supply-chain findings",
             ],
             "self_healing": "close expected behavior with notes, queue risky changes, and keep memory for recurrence",
         },
-        "circadian_rhythm": {"time_aware_anomalies": circadian_signals},
-        "tree_roots": {"asset_priorities": root_priorities},
-        "echolocation": {
+        "time_aware_detection": {"time_aware_anomalies": timing_signals},
+        "priority_routing": {"asset_priorities": root_priorities},
+        "validation_probes": {
             "safe_probes": [
                 {
                     "trait": trait,
@@ -405,7 +405,7 @@ def evaluate_security_biology(
                 for trait in high_interest_traits[:6]
             ]
         },
-        "octopus_camouflage": {
+        "deception_controls": {
             "deception_recommendations": [
                 {
                     "trait": trait,

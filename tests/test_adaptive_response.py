@@ -9,14 +9,14 @@ from pathlib import Path
 
 import soc_store
 from secopsai import cli
-from secopsai.biological_intelligence import evaluate_security_biology
+from secopsai.adaptive_response import evaluate_adaptive_response
 from secopsai.triage import generate_summary
 
 
 def _sample_findings():
     return [
         {
-            "finding_id": "OCF-BIO001",
+            "finding_id": "OCF-ADAPT001",
             "title": "OpenClaw Credential Exfiltration",
             "summary": "Credential access and exfiltration observed.",
             "severity": "critical",
@@ -32,7 +32,7 @@ def _sample_findings():
             ],
         },
         {
-            "finding_id": "OCF-BIO002",
+            "finding_id": "OCF-ADAPT002",
             "title": "OpenClaw Policy Denials",
             "summary": "Repeated policy denials on the same host.",
             "severity": "high",
@@ -50,25 +50,25 @@ def _sample_findings():
     ]
 
 
-class BiologicalIntelligenceTests(unittest.TestCase):
-    def test_evaluate_security_biology_activates_immune_mode_and_all_nature_models(self):
-        payload = evaluate_security_biology(_sample_findings())
+class AdaptiveResponseTests(unittest.TestCase):
+    def test_evaluate_adaptive_response_activates_response_posture_and_capabilities(self):
+        payload = evaluate_adaptive_response(_sample_findings())
 
-        self.assertEqual(payload["design_principle"], "Biological Intelligence Layer")
+        self.assertEqual(payload["design_principle"], "Adaptive Response Layer")
         self.assertEqual(payload["loop"], ["observe", "detect_pattern", "adapt_response", "remember_outcome"])
-        self.assertEqual(payload["immune_system"]["mode"], "active")
-        self.assertTrue(payload["ant_colonies"]["pheromone_trails"])
-        self.assertTrue(payload["mycelium_networks"]["weak_signal_clusters"])
-        self.assertTrue(payload["flocking_birds"]["agent_rules"])
-        self.assertTrue(payload["predator_prey_cycles"]["red_blue_simulations"])
-        self.assertTrue(payload["skin"]["layered_defense"])
-        self.assertTrue(payload["circadian_rhythm"]["time_aware_anomalies"])
-        self.assertTrue(payload["tree_roots"]["asset_priorities"])
-        self.assertTrue(payload["echolocation"]["safe_probes"])
-        self.assertTrue(payload["octopus_camouflage"]["deception_recommendations"])
-        self.assertEqual(payload["findings"][0]["recommended_state"], "immune_response")
+        self.assertEqual(payload["response_posture"]["mode"], "active")
+        self.assertTrue(payload["confidence_memory"]["confidence_trails"])
+        self.assertTrue(payload["signal_routing"]["weak_signal_clusters"])
+        self.assertTrue(payload["triage_coordination"]["agent_rules"])
+        self.assertTrue(payload["adversarial_simulation"]["red_blue_simulations"])
+        self.assertTrue(payload["layered_defense"]["layered_defense"])
+        self.assertTrue(payload["time_aware_detection"]["time_aware_anomalies"])
+        self.assertTrue(payload["priority_routing"]["asset_priorities"])
+        self.assertTrue(payload["validation_probes"]["safe_probes"])
+        self.assertTrue(payload["deception_controls"]["deception_recommendations"])
+        self.assertEqual(payload["findings"][0]["recommended_state"], "heightened_response")
 
-    def test_triage_summary_embeds_biological_intelligence_layer(self):
+    def test_triage_summary_embeds_adaptive_response_layer(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             db_path = str(temp_path / "soc.db")
@@ -79,14 +79,14 @@ class BiologicalIntelligenceTests(unittest.TestCase):
                 summary_dir=str(temp_path / "summaries"),
             )
 
-            bio = summary["biological_intelligence"]
-            self.assertEqual(bio["design_principle"], "Biological Intelligence Layer")
-            self.assertEqual(bio["immune_system"]["mode"], "active")
+            adaptive = summary["adaptive_response"]
+            self.assertEqual(adaptive["design_principle"], "Adaptive Response Layer")
+            self.assertEqual(adaptive["response_posture"]["mode"], "active")
             markdown = Path(summary["summary_markdown"]).read_text(encoding="utf-8")
-            self.assertIn("## Biological Intelligence", markdown)
-            self.assertIn("Immune Mode: active", markdown)
+            self.assertIn("## Adaptive Response", markdown)
+            self.assertIn("Response Posture: active", markdown)
 
-    def test_cli_bio_intel_outputs_json_and_persists_memory(self):
+    def test_cli_adaptive_response_outputs_json_and_persists_memory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             db_path = str(temp_path / "soc.db")
@@ -98,7 +98,7 @@ class BiologicalIntelligenceTests(unittest.TestCase):
                 rc = cli.main(
                     [
                         "--json",
-                        "bio-intel",
+                        "adaptive-response",
                         "--db-path",
                         db_path,
                         "--memory-path",
@@ -109,7 +109,7 @@ class BiologicalIntelligenceTests(unittest.TestCase):
 
             self.assertEqual(rc, 0)
             payload = json.loads(stdout.getvalue())
-            self.assertEqual(payload["immune_system"]["mode"], "active")
+            self.assertEqual(payload["response_posture"]["mode"], "active")
             self.assertTrue(memory_path.exists())
 
 

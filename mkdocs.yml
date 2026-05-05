@@ -32,7 +32,7 @@ nav:
   - Findings Triage Guide: findings-triage-guide.md
   - Research And Verification: research-and-verification.md
   - Triage Orchestrator: triage-orchestrator.md
-  - Biological Intelligence Layer: biological-intelligence.md
+  - Adaptive Response Layer: adaptive-response.md
   - Rules Registry: rules-registry.md
   - Deployment Guide: deployment-guide.md
   - API Reference: api-reference.md

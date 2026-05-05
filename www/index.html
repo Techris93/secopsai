@@ -359,7 +359,7 @@
               <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Unified schema</span>
               <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">SQLite SOC store</span>
               <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Cross-platform correlation</span>
-              <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Biological intelligence layer</span>
+              <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Adaptive response layer</span>
               <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Queued analyst actions</span>
             </div>
           </div>
@@ -384,7 +384,7 @@
                 <div class="text-accent-soft">[OK] Findings persisted to local SOC store</div>
                 <div class="pt-3"><span class="text-accent">$</span> secopsai correlate</div>
                 <div class="text-accent-soft">[OK] Cross-platform correlation complete</div>
-                <div class="pt-3"><span class="text-accent">$</span> secopsai bio-intel --persist-memory</div>
+                <div class="pt-3"><span class="text-accent">$</span> secopsai adaptive-response --persist-memory</div>
                 <div class="text-accent-soft">[OK] Immune response mode evaluated</div>
                 <div class="pt-3"><span class="text-accent">$</span> secopsai triage orchestrate --search-root ~/secopsai</div>
                 <div class="text-accent-soft">[OK] Low-risk findings auto-triaged</div>
@@ -485,10 +485,10 @@
                   <path d="M8 21C12.5 19.5 19.5 19.5 24 21" />
                 </svg>
               </div>
-              <h3 class="font-display text-2xl font-bold text-white">Biological Intelligence Layer</h3>
+              <h3 class="font-display text-2xl font-bold text-white">Adaptive Response Layer</h3>
               <p class="mt-3 text-base leading-8 text-muted">
-                Copy immune response, ant trails, mycelium routing, flocking heuristics, circadian timing,
-                safe probing, and camouflage to prioritize threats and recommend containment locally.
+                Combine threat memory, confidence scoring, signal routing, time-aware detection,
+                safe probing, and deception controls to prioritize threats and recommend containment locally.
               </p>
             </article>
           </div>
@@ -693,7 +693,7 @@
             { type: "command", text: "cd ~/secopsai && source .venv/bin/activate" },
             { type: "command", text: "secopsai refresh" },
             { type: "command", text: "secopsai correlate" },
-            { type: "command", text: "secopsai bio-intel --persist-memory" },
+            { type: "command", text: "secopsai adaptive-response --persist-memory" },
           ],
         },
         npm: {
@@ -712,7 +712,7 @@
             { type: "command", text: "secopsai refresh" },
             { type: "command", text: "secopsai refresh --platform macos,openclaw" },
             { type: "command", text: "secopsai correlate" },
-            { type: "command", text: "secopsai bio-intel --persist-memory" },
+            { type: "command", text: "secopsai adaptive-response --persist-memory" },
           ],
         },
         hackable: {
@@ -732,7 +732,7 @@
             { type: "command", text: "python3 -m venv .venv" },
             { type: "command", text: "source .venv/bin/activate" },
             { type: "command", text: "pip install -e ." },
-            { type: "command", text: "secopsai bio-intel --persist-memory" },
+            { type: "command", text: "secopsai adaptive-response --persist-memory" },
           ],
         },
         windows: {
@@ -752,7 +752,7 @@
             { type: "comment", text: "Then inside Ubuntu" },
             { type: "command", text: "curl -fsSL https://secopsai.dev/install.sh | bash" },
             { type: "command", text: "cd ~/secopsai && source .venv/bin/activate" },
-            { type: "command", text: "secopsai bio-intel --persist-memory" },
+            { type: "command", text: "secopsai adaptive-response --persist-memory" },
           ],
         },
       };

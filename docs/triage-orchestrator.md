@@ -12,7 +12,7 @@ The orchestrator can:
 - auto-close low-risk cases such as `expected_behavior`
 - auto-close already-allowlisted false positives
 - queue actions that require human approval
-- embed Biological Intelligence Layer context for immune mode, priority roots, safe probes, and deception recommendations
+- embed Adaptive Response Layer context for response posture, priority roots, safe probes, and deception recommendations
 - write JSON and Markdown run summaries
 
 It does **not** silently change broad policy by default.
@@ -43,10 +43,10 @@ Generate a compact current-state summary:
 secopsai triage summary
 ```
 
-Run the biological layer directly when you want the adaptive view without changing triage state:
+Run the adaptive response layer directly when you want the adaptive view without changing triage state:
 
 ```bash
-secopsai bio-intel --persist-memory
+secopsai adaptive-response --persist-memory
 ```
 
 ## Action Model
@@ -97,9 +97,9 @@ The runner executes the orchestrator, writes queue state, and emits reports unde
 
 - `reports/triage/orchestrator/`
 
-Each summary report now includes a **Biological Intelligence** section with:
+Each summary report now includes an **Adaptive Response** section with:
 
-- immune mode and sensitivity multiplier
+- response posture and sensitivity multiplier
 - `observe -> detect_pattern -> adapt_response -> remember_outcome`
 - priority roots for analyst attention
 - safe active probes

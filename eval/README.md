@@ -4,7 +4,7 @@ SecOpsAI currently has two evaluation entrypoints:
 
 - `python evaluate.py` is the canonical detector benchmark used for rule tuning, regression checks, and score tracking under `data/`.
 - `python -m eval.harness.runner` is the v2 scenario/performance harness that writes report artifacts under `eval/reports/`.
-- `python -m pytest tests/test_biological_intelligence.py` verifies the Biological Intelligence Layer coverage for immune response, ant trails, mycelium routing, flocking heuristics, predator-prey simulation, skin barriers, circadian timing, tree-root prioritization, echolocation probes, and camouflage recommendations.
+- `python -m pytest tests/test_adaptive_response.py` verifies Adaptive Response Layer coverage for response posture, confidence memory, signal routing, triage coordination, adversarial simulation, layered defense, time-aware detection, priority routing, validation probes, and deception controls.
 
 Use `evaluate.py` when changing detection logic in `detect.py` or tracking benchmark changes. Treat the v2 harness as supplementary: use it when you need scenario-level gates or a report-oriented run across fallback datasets or future scenario suites.
 
@@ -61,12 +61,12 @@ When `data/test_scenarios/` is absent, the v2 runner automatically falls back to
 - **Context Richness**: Evidence quality
 - **Actionability**: Mitigation recommendations
 
-### 6. Biological Intelligence
+### 6. Adaptive Response
 
 - **Threat memory**: repeated traits increase adaptive confidence and decay over time
-- **Containment guidance**: immune response mode recommends access tightening, quarantine, and logging changes
+- **Containment guidance**: heightened response mode recommends access tightening, quarantine, and logging changes
 - **Weak-signal routing**: related users, hosts, packages, sessions, and rules are grouped for analyst attention
-- **Safe probing**: echolocation-style checks verify suspicious entities without destructive actions
+- **Safe probing**: validation checks verify suspicious entities without destructive actions
 
 ## Usage
 
@@ -97,8 +97,8 @@ python -m eval.harness.runner --compare-baseline
 # CI mode (non-interactive, strict gates)
 python -m eval.harness.runner --ci
 
-# Biological Intelligence Layer regression coverage
-python -m pytest tests/test_biological_intelligence.py
+# Adaptive Response Layer regression coverage
+python -m pytest tests/test_adaptive_response.py
 ```
 
 ## Dependencies

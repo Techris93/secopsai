@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from secopsai.biological_intelligence import evaluate_security_biology
+from secopsai.adaptive_response import evaluate_adaptive_response
 from secopsai import supply_chain as supply_chain_mod
 
 from .engine import close_finding, investigate_finding, list_triage_findings, start_finding
@@ -288,11 +288,11 @@ def _write_summary(payload: Dict[str, Any], summary_dir: Optional[str] = None) -
         f"- Queued: {payload.get('queued')}",
         f"- Queue Path: {payload.get('queue_path')}",
         "",
-        "## Biological Intelligence",
+        "## Adaptive Response",
         "",
-        f"- Immune Mode: {(payload.get('biological_intelligence') or {}).get('immune_system', {}).get('mode')}",
-        f"- Sensitivity Multiplier: {(payload.get('biological_intelligence') or {}).get('immune_system', {}).get('sensitivity_multiplier')}",
-        f"- Loop: {' -> '.join((payload.get('biological_intelligence') or {}).get('loop', []))}",
+        f"- Response Posture: {(payload.get('adaptive_response') or {}).get('response_posture', {}).get('mode')}",
+        f"- Sensitivity Multiplier: {(payload.get('adaptive_response') or {}).get('response_posture', {}).get('sensitivity_multiplier')}",
+        f"- Loop: {' -> '.join((payload.get('adaptive_response') or {}).get('loop', []))}",
         "",
         "## Findings",
         "",
@@ -328,7 +328,7 @@ def generate_summary(
     for finding in findings:
         severity = str(finding.get("severity") or "unknown").lower()
         severity_counts[severity] = severity_counts.get(severity, 0) + 1
-    bio_intel = evaluate_security_biology(findings)
+    response_layer = evaluate_adaptive_response(findings)
     payload = {
         "generated_at": _utc_now(),
         "open_findings": len([f for f in findings if str(f.get("status") or "").lower() == "open"]),
@@ -337,13 +337,13 @@ def generate_summary(
         "pending_actions": len(queued),
         "applied_actions": len(applied),
         "queue_path": str(queue_path(queue_file)),
-        "biological_intelligence": {
-            "design_principle": bio_intel["design_principle"],
-            "loop": bio_intel["loop"],
-            "immune_system": bio_intel["immune_system"],
-            "tree_roots": bio_intel["tree_roots"],
-            "echolocation": bio_intel["echolocation"],
-            "octopus_camouflage": bio_intel["octopus_camouflage"],
+        "adaptive_response": {
+            "design_principle": response_layer["design_principle"],
+            "loop": response_layer["loop"],
+            "response_posture": response_layer["response_posture"],
+            "priority_routing": response_layer["priority_routing"],
+            "validation_probes": response_layer["validation_probes"],
+            "deception_controls": response_layer["deception_controls"],
         },
         "findings": findings[:limit],
     }
@@ -456,7 +456,7 @@ def orchestrate_findings(
         "findings": processed,
         "queue_path": str(queue_path(queue_file)),
     }
-    payload["biological_intelligence"] = evaluate_security_biology(
+    payload["adaptive_response"] = evaluate_adaptive_response(
         [item.get("finding", item) for item in processed]
     )
     payload.update(_write_summary(payload, summary_dir))
