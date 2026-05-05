@@ -14,6 +14,7 @@ SecOpsAI is a local-first security monitoring, investigation, and triage platfor
 - Detects suspicious behavior and stores findings in a local **SQLite SOC store**
 - Correlates findings across platforms by **IP**, **user**, **time window**, and **file hash**
 - Investigates and triages findings through a native **CLI workflow** and **triage orchestrator**
+- Adds a **Biological Intelligence Layer** that copies immune systems, ant trails, mycelium, flocking rules, predator-prey adaptation, skin barriers, circadian timing, roots, echolocation, and camouflage for adaptive security response
 - Provides a local **agent runtime** for tool routing, context compaction, loop detection, and isolated jobs
 - Supports supply-chain policy management with **allowlists**, **rule tuning**, and **threshold tuning**
 - Keeps data **local-first by default**
@@ -83,6 +84,31 @@ secopsai triage queue
 secopsai --json triage summary
 ```
 
+### Biological Intelligence Layer
+
+Use the new nature-inspired layer when you want the SOC view to behave more like an adaptive organism:
+
+```bash
+# Analyze stored findings and print immune mode, top adaptive scores, and safe probes
+secopsai bio-intel
+
+# Persist decaying threat memory and pheromone trails for future runs
+secopsai --json bio-intel --persist-memory
+```
+
+What it implements:
+
+- **Immune system**: innate severity checks, adaptive threat memory, inflammation, and containment guidance
+- **Ant colonies**: decaying confidence trails for repeated finding traits
+- **Mycelium networks**: weak-signal clustering across users, hosts, packages, rules, sessions, and sources
+- **Flocking birds**: simple local triage-agent rules that coordinate action
+- **Predator-prey cycles**: red-team/blue-team simulation prompts for attacker adaptation
+- **Skin**: layered defense, blast containment, access tightening, and self-healing triage notes
+- **Circadian rhythm**: off-hours and weekend anomaly sensitivity
+- **Tree roots**: priority routing to the highest-risk shared roots
+- **Echolocation**: safe active probes for suspicious entities
+- **Octopus camouflage**: honeypot, canary, and deception recommendations
+
 ## Operator Surfaces
 
 ### 1. CLI
@@ -102,6 +128,7 @@ secopsai triage queue
 secopsai triage apply-action ACT-0001 --yes
 secopsai triage summary
 secopsai intel refresh
+secopsai bio-intel --persist-memory
 secopsai agent route --task "investigate this supply-chain finding with sources"
 secopsai agent compact SES-1234567890ab --json
 secopsai agent run-job --name docs-qa -- python scripts/docs_source_agent.py --build
@@ -165,6 +192,7 @@ Core layers:
 - **Normalization**: unified event schema for shared logic
 - **Detection**: rules and findings generation
 - **Correlation**: IP/user/time/hash correlation across platforms
+- **Biological intelligence**: threat memory, confidence trails, weak-signal routing, timing-aware anomaly scoring, safe probes, and deception recommendations
 - **Triage**: investigation, case-file generation, dispositions, queueable actions
 - **Operator surfaces**: CLI-first, plugin optional, notifications optional
 
@@ -359,6 +387,7 @@ What is implemented now:
 - ✅ Unified event schema
 - ✅ CLI `--platform` support in universal adapter flow
 - ✅ Cross-platform correlation engine
+- ✅ Biological Intelligence Layer with immune response mode, pheromone memory, safe probes, and deception recommendations
 - ✅ Background monitoring / scheduled operation
 - ✅ Native analyst triage workflow
 - ✅ Supply-chain allowlist and tuning controls

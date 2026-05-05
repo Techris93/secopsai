@@ -12,6 +12,7 @@ The orchestrator can:
 - auto-close low-risk cases such as `expected_behavior`
 - auto-close already-allowlisted false positives
 - queue actions that require human approval
+- embed Biological Intelligence Layer context for immune mode, priority roots, safe probes, and deception recommendations
 - write JSON and Markdown run summaries
 
 It does **not** silently change broad policy by default.
@@ -40,6 +41,12 @@ Generate a compact current-state summary:
 
 ```bash
 secopsai triage summary
+```
+
+Run the biological layer directly when you want the adaptive view without changing triage state:
+
+```bash
+secopsai bio-intel --persist-memory
 ```
 
 ## Action Model
@@ -89,6 +96,14 @@ bash scripts/install_triage_summary_launchd.sh
 The runner executes the orchestrator, writes queue state, and emits reports under:
 
 - `reports/triage/orchestrator/`
+
+Each summary report now includes a **Biological Intelligence** section with:
+
+- immune mode and sensitivity multiplier
+- `observe -> detect_pattern -> adapt_response -> remember_outcome`
+- priority roots for analyst attention
+- safe active probes
+- deception recommendations
 
 The summary notifier runs `secopsai --json triage summary`, tracks only currently active `open` and `in_review` finding IDs, and sends Slack only when new active findings appear.
 

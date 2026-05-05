@@ -52,6 +52,9 @@ secopsai-supply-chain check --project-path /path/to/project
 
 # Export findings
 secopsai-supply-chain check -o supply_chain_findings.json
+
+# Let SecOpsAI's Biological Intelligence Layer prioritize response
+secopsai bio-intel --persist-memory
 ```
 
 ## Commands
@@ -105,6 +108,8 @@ secopsai mitigate SCF-20260331123456-abc123
 ```
 
 Supply chain findings use the `SCF-` prefix (Supply Chain Finding) and are stored in the same SQLite database as native SecOpsAI findings (`OCF-` prefix).
+
+The Biological Intelligence Layer consumes these same findings. Repeated package traits create ant-trail style confidence memory, related package/user/host signals are grouped through mycelium-style routing, and high-risk clusters can trigger immune response guidance such as tighter logging, access containment, safe probes, and deception recommendations.
 
 ## Architecture
 
