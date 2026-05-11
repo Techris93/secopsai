@@ -11,7 +11,7 @@ import json
 import subprocess
 import shutil
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -26,6 +26,11 @@ AUTO_RULES_START = "# === AUTO-GENERATED RULES ==="
 AUTO_RULES_END = "# === END AUTO-GENERATED RULES ==="
 AUTO_RULE_REGISTRY_START = "# === AUTO-GENERATED RULE REGISTRY ==="
 AUTO_RULE_REGISTRY_END = "# === END AUTO-GENERATED RULE REGISTRY ==="
+
+
+def _utc_now() -> datetime:
+    """Return naive UTC to preserve existing timestamp serialization."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class RuleValidator:
@@ -132,7 +137,7 @@ class RuleValidator:
         auto_section = [
             "",
             AUTO_RULES_START,
-            f'# Generated: {datetime.utcnow().isoformat()}',
+            f'# Generated: {_utc_now().isoformat()}',
             "",
         ]
 
@@ -271,7 +276,7 @@ class RuleValidator:
         """Full validation pipeline"""
         print("=" * 60)
         print("SecOpsAI Adaptive Rule Validator")
-        print(f"Started: {datetime.utcnow().isoformat()}")
+        print(f"Started: {_utc_now().isoformat()}")
         print("=" * 60)
         
         # Step 1: Get baseline

@@ -9,6 +9,20 @@ import adaptive_rule_validator as validator_mod
 
 
 class AdaptiveRuleGeneratorTests(unittest.TestCase):
+    def test_generated_sqli_rule_parses_as_python(self):
+        generator = generator_mod.AdaptiveRuleGenerator()
+        rule = generator._generate_sqli_rule(
+            {
+                "title": "CVE-2026-11223",
+                "source": "unit-test",
+                "hash_id": "def456",
+                "mitre_techniques": [],
+            }
+        )
+
+        ast.parse(rule.python_code)
+        self.assertIn(r"""exec(\s|\+)+(s|x)p\w+""", rule.python_code)
+
     def test_generated_rce_rule_parses_as_python(self):
         generator = generator_mod.AdaptiveRuleGenerator()
         rule = generator._generate_rce_rule(
@@ -21,6 +35,7 @@ class AdaptiveRuleGeneratorTests(unittest.TestCase):
         )
 
         ast.parse(rule.python_code)
+        self.assertIn(r"""bash\s+-i\s+\>&\s+/dev/tcp/""", rule.python_code)
         self.assertIn(r"""python\d*\s+-c\s+['\"]import\s+socket""", rule.python_code)
 
 

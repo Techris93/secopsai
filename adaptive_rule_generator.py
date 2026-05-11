@@ -9,7 +9,7 @@ import os
 import json
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
@@ -22,6 +22,11 @@ THREAT_INTEL_DIR = str(BASE_DIR / 'threat_intel')
 RULES_OUTPUT_DIR = str(BASE_DIR / 'auto_rules')
 
 os.makedirs(RULES_OUTPUT_DIR, exist_ok=True)
+
+
+def _utc_now() -> datetime:
+    """Return naive UTC to preserve existing timestamp serialization."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _normalize_generated_markers(text: str) -> str:
@@ -145,7 +150,7 @@ class AdaptiveRuleGenerator:
     """
     Threat Intel: {indicator.get('source', 'Unknown')}
     Description: {indicator.get('description', '')[:100]}...
-    Generated: {datetime.utcnow().isoformat()}
+    Generated: {_utc_now().isoformat()}
     """
     malicious_ips = {malicious_ips}
     malicious_domains = {malicious_domains}
@@ -203,18 +208,18 @@ class AdaptiveRuleGenerator:
     """
     Threat Intel: {indicator.get('source', 'Unknown')}
     Description: SQL Injection detection
-    Generated: {datetime.utcnow().isoformat()}
+    Generated: {_utc_now().isoformat()}
     """
     sqli_patterns = [
         r"(%27)|(')|(--)|(%23)|(#)",
         r"((%3D)|(=))[^\\n]*((%27)|(')|(--)|(%3B)|(;))",
-        r"\w*((%27)|('))((%6F)|o|(%4F))((%72)|r|(%52))",
+        r"\\w*((%27)|('))((%6F)|o|(%4F))((%72)|r|(%52))",
         r"((%27)|('))union",
-        r"exec(\s|\+)+(s|x)p\w+",
-        r"UNION\s+SELECT",
-        r"INSERT\s+INTO",
-        r"DELETE\s+FROM",
-        r"DROP\s+TABLE",
+        r"exec(\\s|\\+)+(s|x)p\\w+",
+        r"UNION\\s+SELECT",
+        r"INSERT\\s+INTO",
+        r"DELETE\\s+FROM",
+        r"DROP\\s+TABLE",
     ]
     
     import re
@@ -259,7 +264,7 @@ class AdaptiveRuleGenerator:
     """
     Threat Intel: {indicator.get('source', 'Unknown')}
     Description: Remote Code Execution detection
-    Generated: {datetime.utcnow().isoformat()}
+    Generated: {_utc_now().isoformat()}
     """
     rce_patterns = [
         r"\\$\\(.*?\\)",  # Command substitution
@@ -271,7 +276,7 @@ class AdaptiveRuleGenerator:
         r"\\|\\s*python\\d*\\s+-c",
         r"\\|\\s*perl\\s+-e",
         r"\\|\\s*nc\\s+-[el]",
-        r"bash\\s+-i\\s+\>&\\s+/dev/tcp/",
+        r"bash\\s+-i\\s+\\>&\\s+/dev/tcp/",
         r"python\\d*\\s+-c\\s+['\\\"]import\\s+socket",
         r"ruby\\s+-rsocket",
     ]
@@ -315,7 +320,7 @@ class AdaptiveRuleGenerator:
     """
     Threat Intel: {indicator.get('source', 'Unknown')}
     Description: Authentication Bypass detection
-    Generated: {datetime.utcnow().isoformat()}
+    Generated: {_utc_now().isoformat()}
     """
     bypass_patterns = [
         r"admin['\\\"]?\\s*:\\s*['\\\"]?admin",
@@ -374,7 +379,7 @@ class AdaptiveRuleGenerator:
     """
     Threat Intel: {indicator.get('source', 'Unknown')}
     Description: Path Traversal detection
-    Generated: {datetime.utcnow().isoformat()}
+    Generated: {_utc_now().isoformat()}
     """
     traversal_patterns = [
         r"\\.\\./",
@@ -431,7 +436,7 @@ class AdaptiveRuleGenerator:
     """
     Threat Intel: {indicator.get('source', 'Unknown')}
     Description: XSS detection
-    Generated: {datetime.utcnow().isoformat()}
+    Generated: {_utc_now().isoformat()}
     """
     xss_patterns = [
         r"<script[^>]*>[\\s\\S]*?</script>",
@@ -491,7 +496,7 @@ class AdaptiveRuleGenerator:
     """
     Threat Intel: {indicator.get('source', 'Unknown')}
     Description: Privilege Escalation detection
-    Generated: {datetime.utcnow().isoformat()}
+    Generated: {_utc_now().isoformat()}
     """
     privesc_indicators = [
         r"sudo\\s+-l",
@@ -551,7 +556,7 @@ class AdaptiveRuleGenerator:
                 pub_date = indicator.get('published_date', '')
                 if pub_date:
                     date = datetime.fromisoformat(pub_date.replace('Z', '+00:00'))
-                    if (datetime.utcnow() - date).days > 30:
+                    if (_utc_now() - date).days > 30:
                         continue
             except:
                 pass
@@ -599,7 +604,7 @@ class AdaptiveRuleGenerator:
                     f"Severity: {rule.severity}",
                     f"MITRE: {', '.join(rule.mitre_techniques)}",
                     f"Source: {rule.source_intel}",
-                    f"Generated: {datetime.utcnow().isoformat()}",
+                    f"Generated: {_utc_now().isoformat()}",
                     '"""',
                     "",
                     rule.python_code,
@@ -625,7 +630,7 @@ class AdaptiveRuleGenerator:
         
         # Save metadata
         metadata = {
-            'generated_at': datetime.utcnow().isoformat(),
+            'generated_at': _utc_now().isoformat(),
             'count': len(self.rules),
             'rules': [{
                 'rule_id': r.rule_id,

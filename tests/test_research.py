@@ -16,7 +16,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import soc_store
 from secopsai import cli
-from secopsai.research import build_preflight_report, research_package
+from secopsai.research import build_preflight_report, research_finding, research_package
 from secopsai.sessions import create_session, load_session
 
 
@@ -89,12 +89,25 @@ class ResearchTests(unittest.TestCase):
     def test_research_package_writes_reports_and_detects_local_presence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
+            report_path = temp_path / "diff-report.md"
+            report_path.write_text("# Diff\n", encoding="utf-8")
             (temp_path / "package.json").write_text(
                 json.dumps({"dependencies": {"widget": "1.0.1"}}),
                 encoding="utf-8",
             )
 
-            with mock.patch("secopsai.research.load_recent_results", return_value=[]), mock.patch(
+            with mock.patch(
+                "secopsai.research.load_recent_results",
+                return_value=[
+                    {
+                        "ecosystem": "npm",
+                        "package": "widget",
+                        "new_version": "1.0.1",
+                        "verdict": "suspicious",
+                        "report_path": str(report_path),
+                    }
+                ],
+            ), mock.patch(
                 "secopsai.research.explain_policy",
                 return_value={"effective_threshold": 10, "allow_matches": [], "deny_matches": [], "precedence": ["global"]},
             ):
@@ -109,7 +122,60 @@ class ResearchTests(unittest.TestCase):
             self.assertTrue(payload["local_presence"]["present"])
             self.assertTrue(Path(payload["json_report"]).exists())
             self.assertTrue(Path(payload["markdown_report"]).exists())
+            self.assertIn(str(report_path), Path(payload["markdown_report"]).read_text(encoding="utf-8"))
             self.assertIn("inside the current code boundary", " ".join(payload["observations"]))
+
+    def test_research_finding_supply_chain_sources_accept_local_report_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            db_path = str(temp_path / "soc.db")
+            report_path = temp_path / "diff-report.md"
+            report_path.write_text("# Diff\n", encoding="utf-8")
+            _write_findings(
+                db_path,
+                [
+                    {
+                        "finding_id": "SCM-LOCALREPORT",
+                        "title": "Suspicious npm package release: widget@1.0.1",
+                        "summary": "Deterministic rules flagged widget.",
+                        "severity": "critical",
+                        "severity_score": 90,
+                        "status": "open",
+                        "disposition": "unreviewed",
+                        "source": "secopsai-supply-chain",
+                        "first_seen": "2026-04-06T00:00:00Z",
+                        "last_seen": "2026-04-06T00:00:00Z",
+                        "platform": "supply_chain",
+                        "package": "widget",
+                        "ecosystem": "npm",
+                        "new_version": "1.0.1",
+                    }
+                ],
+            )
+
+            with mock.patch(
+                "secopsai.research.load_recent_results",
+                return_value=[
+                    {
+                        "ecosystem": "npm",
+                        "package": "widget",
+                        "new_version": "1.0.1",
+                        "verdict": "suspicious",
+                        "report_path": str(report_path),
+                    }
+                ],
+            ), mock.patch(
+                "secopsai.research.explain_policy",
+                return_value={"effective_threshold": 10, "allow_matches": [], "deny_matches": [], "precedence": ["global"]},
+            ):
+                payload = research_finding(
+                    finding_id="SCM-LOCALREPORT",
+                    db_path=db_path,
+                    search_root=str(temp_path),
+                    report_dir=str(temp_path / "reports"),
+                )
+
+            self.assertIn(str(report_path), Path(payload["markdown_report"]).read_text(encoding="utf-8"))
 
     def test_research_finding_cli_attaches_reports_to_session(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

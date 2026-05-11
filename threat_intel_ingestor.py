@@ -10,7 +10,7 @@ import re
 import hashlib
 import feedparser
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 from urllib.parse import urlparse
@@ -32,6 +32,11 @@ RSS_FEEDS = [
 ]
 
 os.makedirs(THREAT_INTEL_DIR, exist_ok=True)
+
+
+def _utc_now() -> datetime:
+    """Return naive UTC to preserve existing timestamp serialization."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 @dataclass
@@ -69,7 +74,7 @@ class ThreatIntelIngestor:
         indicators = []
         
         # Calculate date range
-        end_date = datetime.utcnow()
+        end_date = _utc_now()
         start_date = end_date - timedelta(days=days_back)
         
         params = {
@@ -145,7 +150,7 @@ class ThreatIntelIngestor:
                     published = entry.get('published_parsed') or entry.get('updated_parsed')
                     if published:
                         pub_date = datetime(*published[:6])
-                        if datetime.utcnow() - pub_date > timedelta(days=7):
+                        if _utc_now() - pub_date > timedelta(days=7):
                             continue
                     
                     title = entry.get('title', '')
@@ -170,7 +175,7 @@ class ThreatIntelIngestor:
                         source_type='rss',
                         title=title,
                         description=summary[:500] + '...' if len(summary) > 500 else summary,
-                        published_date=entry.get('published', datetime.utcnow().isoformat()),
+                        published_date=entry.get('published', _utc_now().isoformat()),
                         iocs=iocs,
                         mitre_techniques=techniques,
                         severity=severity,
@@ -195,9 +200,9 @@ class ThreatIntelIngestor:
         headers = {'Authorization': f'token {github_token}'} if github_token else {}
         
         search_queries = [
-            'exploit poc created:>' + (datetime.utcnow() - timedelta(days=days_back)).strftime('%Y-%m-%d'),
-            'cve poc created:>' + (datetime.utcnow() - timedelta(days=days_back)).strftime('%Y-%m-%d'),
-            'malware analysis created:>' + (datetime.utcnow() - timedelta(days=days_back)).strftime('%Y-%m-%d'),
+            'exploit poc created:>' + (_utc_now() - timedelta(days=days_back)).strftime('%Y-%m-%d'),
+            'cve poc created:>' + (_utc_now() - timedelta(days=days_back)).strftime('%Y-%m-%d'),
+            'malware analysis created:>' + (_utc_now() - timedelta(days=days_back)).strftime('%Y-%m-%d'),
         ]
         
         for query in search_queries:
@@ -370,7 +375,7 @@ class ThreatIntelIngestor:
         """Run full ingestion cycle"""
         print("=" * 60)
         print("SecOpsAI Threat Intelligence Ingestor")
-        print(f"Started: {datetime.utcnow().isoformat()}")
+        print(f"Started: {_utc_now().isoformat()}")
         print("=" * 60)
         
         all_indicators = []
@@ -403,11 +408,11 @@ class ThreatIntelIngestor:
     
     def _save_indicators(self):
         """Save indicators to JSON for rule generator"""
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        timestamp = _utc_now().strftime('%Y%m%d_%H%M%S')
         filepath = os.path.join(THREAT_INTEL_DIR, f'indicators_{timestamp}.json')
         
         data = {
-            'generated_at': datetime.utcnow().isoformat(),
+            'generated_at': _utc_now().isoformat(),
             'count': len(self.indicators),
             'indicators': [asdict(ind) for ind in self.indicators]
         }

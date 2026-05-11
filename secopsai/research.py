@@ -346,6 +346,14 @@ def _write_report(
     }
 
 
+def _format_source_item(item: Dict[str, Any]) -> str:
+    label = str(item.get("label") or item.get("type") or "Source")
+    target = item.get("url") or item.get("path") or item.get("reference")
+    if target:
+        return f"- {label}: {target}"
+    return f"- {label}"
+
+
 def _package_markdown(payload: Dict[str, Any]) -> str:
     lines = [
         f"# Supply-Chain Research: {payload['ecosystem']}:{payload['package']}",
@@ -375,7 +383,7 @@ def _package_markdown(payload: Dict[str, Any]) -> str:
         lines.append("- No additional local repo matches found.")
     lines.extend(["", "## External Sources", ""])
     for item in payload.get("sources") or []:
-        lines.append(f"- {item['label']}: {item['url']}")
+        lines.append(_format_source_item(item))
     return "\n".join(lines) + "\n"
 
 
@@ -403,7 +411,7 @@ def _finding_markdown(payload: Dict[str, Any]) -> str:
         lines.append("- No relevant local matches found.")
     lines.extend(["", "## External Sources", ""])
     for item in payload.get("sources") or []:
-        lines.append(f"- {item['label']}: {item['url']}")
+        lines.append(_format_source_item(item))
     return "\n".join(lines) + "\n"
 
 
