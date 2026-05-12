@@ -11,7 +11,7 @@ Scope:
 
 Branding note:
 
-- The canonical public icon was restored to the previous `www.secopsai.dev` PNG asset. The same hash is now used for website, docs, and blog favicon/apple-touch assets, and the blog header brand mark uses that icon.
+- The canonical public icon was restored from the preferred dark-green `www.secopsai.dev` header logo (`www/assets/header-logo.jpg`). A cropped square PNG derivative is now used for website, docs, and blog favicon/apple-touch assets, and the blog header brand mark uses that icon.
 
 ## 1. Vulnerability Summary
 
@@ -154,7 +154,7 @@ Local checks passed:
 - Blog verifier passed.
 - Blog worker syntax passed.
 - Blog Pages Function syntax passed.
-- Canonical previous `www.secopsai.dev` favicon hashes match copied website/docs/blog assets.
+- Canonical cropped `www/assets/header-logo.jpg` favicon hashes match copied website/docs/blog assets.
 
 Live checks after redeploy:
 
@@ -166,9 +166,9 @@ Live checks after redeploy:
 - `https://blog.secopsai.dev/feed.xml` includes an RSS stylesheet and populated item description.
 - Browser-style requests to `https://blog.secopsai.dev/feed.json` return the human-readable JSON feed landing page.
 - Feed/API clients requesting JSON still receive the raw JSON feed.
-- `https://secopsai.dev/` includes the Blog navigation link, local `site-tailwind.css`, local `site.js`, and the canonical previous `www` favicon reference.
-- `https://docs.secopsai.dev/` includes the canonical previous `www` favicon and header mark.
-- `https://blog.secopsai.dev/` includes the canonical previous `www` favicon, brand mark, local blog script, and JSON Feed links.
+- `https://secopsai.dev/` includes the Blog navigation link, local `site-tailwind.css`, local `site.js`, the visible `header-logo.jpg` brand image, and the canonical cropped dark-green header-logo favicon reference.
+- `https://docs.secopsai.dev/` includes the canonical cropped dark-green header-logo favicon and header mark.
+- `https://blog.secopsai.dev/` includes the canonical cropped dark-green header-logo favicon, brand mark, local blog script, and JSON Feed links.
 
 Remaining manual/future steps:
 
