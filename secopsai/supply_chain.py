@@ -43,6 +43,7 @@ from secopsai.alerts import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SUPPLY_CHAIN_DIR = REPO_ROOT / "data" / "supply_chain"
+ADVISORIES_DIR = REPO_ROOT / "data" / "advisories"
 REPORTS_DIR = SUPPLY_CHAIN_DIR / "reports"
 RESULTS_PATH = SUPPLY_CHAIN_DIR / "results.jsonl"
 STATE_PATH = SUPPLY_CHAIN_DIR / "state.json"
@@ -149,9 +150,10 @@ class ScanResult:
     rank: Optional[int]
     finding_id: Optional[str]
     error: Optional[str] = None
+    advisory_matches: Optional[List[Dict[str, Any]]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "ecosystem": self.ecosystem,
             "package": self.package,
             "old_version": self.old_version,
@@ -164,6 +166,9 @@ class ScanResult:
             "error": self.error,
             "recorded_at": _utc_now(),
         }
+        if self.advisory_matches:
+            payload["advisory_matches"] = self.advisory_matches
+        return payload
 
 
 def _utc_now() -> str:
@@ -172,6 +177,7 @@ def _utc_now() -> str:
 
 def _ensure_dirs() -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    ADVISORIES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _http_json(url: str, timeout: int = 30) -> Any:
@@ -663,6 +669,176 @@ def _scan_event_id(ecosystem: str, package: str, version: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()[:32]
 
 
+def _advisory_slug(advisory: Dict[str, Any]) -> str:
+    raw = str(advisory.get("advisory_id") or advisory.get("campaign_id") or "advisory")
+    return re.sub(r"[^a-zA-Z0-9_.-]+", "-", raw).strip("-").lower() or "advisory"
+
+
+def _canonical_package_name(ecosystem: str, package: str) -> str:
+    package = package.strip()
+    return package.lower() if ecosystem.lower() in {"npm", "pypi"} else package
+
+
+def _version_key(version: str) -> tuple:
+    parts: List[Any] = []
+    for part in re.split(r"[.\-+_]", str(version)):
+        if not part:
+            continue
+        parts.append(int(part) if part.isdigit() else part.lower())
+    return tuple(parts)
+
+
+def _compare_versions(left: str, right: str) -> int:
+    left_parts = list(_version_key(left))
+    right_parts = list(_version_key(right))
+    max_len = max(len(left_parts), len(right_parts))
+    left_parts.extend([0] * (max_len - len(left_parts)))
+    right_parts.extend([0] * (max_len - len(right_parts)))
+    for left_part, right_part in zip(left_parts, right_parts):
+        if type(left_part) is not type(right_part):
+            left_part = str(left_part)
+            right_part = str(right_part)
+        if left_part < right_part:
+            return -1
+        if left_part > right_part:
+            return 1
+    return 0
+
+
+def _version_in_range(version: str, spec: Dict[str, Any]) -> bool:
+    introduced = spec.get("introduced") or spec.get("min_version")
+    fixed = spec.get("fixed") or spec.get("fixed_version")
+    last_affected = spec.get("last_affected") or spec.get("max_version")
+    if introduced and _compare_versions(version, str(introduced)) < 0:
+        return False
+    if fixed and _compare_versions(version, str(fixed)) >= 0:
+        return False
+    if last_affected and _compare_versions(version, str(last_affected)) > 0:
+        return False
+    return True
+
+
+def _read_json_source(path_or_url: str) -> Any:
+    if urllib.parse.urlparse(path_or_url).scheme in {"http", "https"}:
+        with urllib.request.urlopen(path_or_url, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+    return json.loads(Path(path_or_url).read_text(encoding="utf-8"))
+
+
+def load_advisories(path: Optional[Path] = None) -> List[Dict[str, Any]]:
+    advisory_root = path or ADVISORIES_DIR
+    if not advisory_root.exists():
+        return []
+    files = [advisory_root] if advisory_root.is_file() else sorted(advisory_root.glob("*.json"))
+    advisories: List[Dict[str, Any]] = []
+    for advisory_file in files:
+        try:
+            payload = json.loads(advisory_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(payload, list):
+            advisories.extend(item for item in payload if isinstance(item, dict))
+        elif isinstance(payload, dict):
+            advisories.append(payload)
+    return advisories
+
+
+def ingest_advisory(path_or_url: str) -> Dict[str, Any]:
+    payload = _read_json_source(path_or_url)
+    advisories = payload if isinstance(payload, list) else [payload]
+    if not all(isinstance(item, dict) for item in advisories):
+        raise ValueError("advisory source must contain a JSON object or list of objects")
+    _ensure_dirs()
+    written: List[str] = []
+    for advisory in advisories:
+        if not advisory.get("advisory_id") and not advisory.get("campaign_id"):
+            raise ValueError("advisory requires advisory_id or campaign_id")
+        if not advisory.get("affected"):
+            raise ValueError("advisory requires affected package entries")
+        target = ADVISORIES_DIR / f"{_advisory_slug(advisory)}.json"
+        target.write_text(json.dumps(advisory, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        written.append(str(target))
+    return {"ingested": len(written), "paths": written}
+
+
+def _normalize_advisory_match(advisory: Dict[str, Any], affected: Dict[str, Any], version: str) -> Dict[str, Any]:
+    return {
+        "advisory_id": advisory.get("advisory_id"),
+        "campaign_id": advisory.get("campaign_id"),
+        "title": advisory.get("title"),
+        "summary": advisory.get("summary"),
+        "severity": advisory.get("severity", "critical"),
+        "confidence": advisory.get("confidence", "high"),
+        "status": advisory.get("status", "active"),
+        "ecosystem": affected.get("ecosystem"),
+        "package": affected.get("package"),
+        "version": version,
+        "matched_versions": affected.get("versions", []),
+        "version_ranges": affected.get("version_ranges", []),
+        "source_urls": advisory.get("source_urls", []),
+        "source_names": advisory.get("source_names", []),
+        "iocs": advisory.get("iocs", {}),
+        "detection_rationale": advisory.get("detection_rationale", []),
+        "remediation": advisory.get("remediation", []),
+        "safe_versions": affected.get("safe_versions", advisory.get("safe_versions", [])),
+        "published_at": advisory.get("published_at"),
+        "updated_at": advisory.get("updated_at"),
+        "ingested_at": advisory.get("ingested_at"),
+    }
+
+
+def find_advisory_matches(ecosystem: str, package: str, version: str) -> List[Dict[str, Any]]:
+    target_ecosystem = ecosystem.lower()
+    target_package = _canonical_package_name(target_ecosystem, package)
+    matches: List[Dict[str, Any]] = []
+    for advisory in load_advisories():
+        if str(advisory.get("status", "active")).lower() != "active":
+            continue
+        for affected in advisory.get("affected", []):
+            if not isinstance(affected, dict):
+                continue
+            affected_ecosystem = str(affected.get("ecosystem", "")).lower()
+            affected_package = _canonical_package_name(affected_ecosystem, str(affected.get("package", "")))
+            if affected_ecosystem != target_ecosystem or affected_package != target_package:
+                continue
+            exact_versions = {str(item) for item in affected.get("versions", [])}
+            range_specs = [spec for spec in affected.get("version_ranges", []) if isinstance(spec, dict)]
+            if str(version) in exact_versions or any(_version_in_range(str(version), spec) for spec in range_specs):
+                matches.append(_normalize_advisory_match(advisory, affected, str(version)))
+    return matches
+
+
+def check_advisory(ecosystem: str, package: str, version: str) -> Dict[str, Any]:
+    matches = find_advisory_matches(ecosystem, package, version)
+    return {
+        "ecosystem": ecosystem,
+        "package": package,
+        "version": version,
+        "matched": bool(matches),
+        "matches": matches,
+    }
+
+
+def _advisory_analysis(matches: List[Dict[str, Any]], *, artifact_unavailable: bool = False) -> str:
+    ids = ", ".join(str(match.get("advisory_id") or match.get("campaign_id")) for match in matches)
+    titles = "; ".join(str(match.get("title") or "emergency advisory") for match in matches)
+    prefix = "Artifact unavailable but emergency advisory matched" if artifact_unavailable else "Emergency advisory matched"
+    rationale = []
+    for match in matches:
+        rationale.extend(str(item) for item in match.get("detection_rationale", [])[:3])
+    details = f" Rationale: {'; '.join(rationale)}" if rationale else ""
+    return f"{prefix}: {ids}. {titles}.{details}"
+
+
+def _attach_advisory_analysis(analysis: str, matches: List[Dict[str, Any]]) -> str:
+    advisory_text = _advisory_analysis(matches)
+    if not analysis:
+        return advisory_text
+    if advisory_text in analysis:
+        return analysis
+    return f"{analysis} {advisory_text}"
+
+
 def _report_filename(ecosystem: str, package: str, old_version: str, new_version: str) -> Path:
     safe = package.replace("/", "_").replace("@", "")
     return REPORTS_DIR / f"{ecosystem}-{safe}-{old_version}-to-{new_version}.md"
@@ -677,6 +853,10 @@ def _build_finding(result: ScanResult) -> Dict[str, Any]:
     assert result.old_version is not None
     assert result.finding_id is not None
     now = _utc_now()
+    advisory_matches = result.advisory_matches or []
+    rule_ids = ["SUPPLY-CHAIN-NATIVE"]
+    if advisory_matches:
+        rule_ids.append("SUPPLY-CHAIN-ADVISORY")
     return {
         "finding_id": result.finding_id,
         "title": f"Suspicious {result.ecosystem} package release: {result.package}@{result.new_version}",
@@ -685,13 +865,13 @@ def _build_finding(result: ScanResult) -> Dict[str, Any]:
             f"Native secopsai review marked {result.package}@{result.new_version} as malicious.",
         ),
         "severity": "critical",
-        "severity_score": 90,
+        "severity_score": 98 if advisory_matches else 90,
         "status": "open",
         "disposition": "unreviewed",
         "first_seen": now,
         "last_seen": now,
         "event_ids": [_scan_event_id(result.ecosystem, result.package, result.new_version)],
-        "rule_ids": ["SUPPLY-CHAIN-NATIVE"],
+        "rule_ids": rule_ids,
         "platform": "supply_chain",
         "source": "secopsai-supply-chain",
         "package": result.package,
@@ -702,6 +882,24 @@ def _build_finding(result: ScanResult) -> Dict[str, Any]:
         "verdict": result.verdict,
         "analysis": result.analysis,
         "report_path": result.report_path,
+        "confidence": "high" if advisory_matches else None,
+        "advisory_matches": advisory_matches,
+        "advisory_ids": sorted(
+            {
+                str(match.get("advisory_id"))
+                for match in advisory_matches
+                if match.get("advisory_id")
+            }
+        ),
+        "campaign_ids": sorted(
+            {
+                str(match.get("campaign_id"))
+                for match in advisory_matches
+                if match.get("campaign_id")
+            }
+        ),
+        "iocs": [match.get("iocs", {}) for match in advisory_matches if match.get("iocs")],
+        "remediation": [match.get("remediation", []) for match in advisory_matches if match.get("remediation")],
     }
 
 
@@ -710,6 +908,17 @@ def _upsert_findings(findings: Iterable[Dict[str, Any]]) -> str:
     soc_store.init_db(resolved)
     with soc_store.closing(soc_store.connect(resolved)) as connection:
         for finding in findings:
+            if finding.get("advisory_matches"):
+                connection.execute(
+                    """
+                    UPDATE findings
+                    SET status = 'open', disposition = 'unreviewed'
+                    WHERE finding_id = ?
+                      AND status = 'closed'
+                      AND disposition = 'expected_behavior'
+                    """,
+                    (finding["finding_id"],),
+                )
             soc_store.upsert_finding(connection, finding, source="secopsai-supply-chain")
         connection.commit()
     return resolved
@@ -1671,6 +1880,7 @@ def explain_verdict(
     *,
     ecosystem: Optional[str] = None,
     package: Optional[str] = None,
+    version: Optional[str] = None,
     policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     policy = policy or load_policy()
@@ -1885,6 +2095,35 @@ def explain_verdict(
 
     policy_context = explain_policy(ecosystem or "", package or "", policy=policy) if ecosystem and package else None
     malicious_threshold = _package_threshold(policy, ecosystem, package)
+    advisory_matches = find_advisory_matches(ecosystem, package, version) if ecosystem and package and version else []
+    if advisory_matches:
+        applied_weight = max(malicious_threshold, 10)
+        score += applied_weight
+        _record_rule_match(
+            matched_rules,
+            seen_rule_names,
+            "emergency advisory match",
+            applied_weight,
+            "Named package version matches a source-backed emergency advisory.",
+        )
+        return {
+            "target": {"ecosystem": ecosystem, "package": package},
+            "version": version,
+            "score": score,
+            "effective_threshold": malicious_threshold,
+            "verdict": "malicious",
+            "analysis": _attach_advisory_analysis(
+                "Deterministic rules flagged: " + ", ".join(match["rule"] for match in matched_rules)
+                if len(matched_rules) > 1
+                else "",
+                advisory_matches,
+            ),
+            "matched_rules": matched_rules,
+            "policy": policy_context,
+            "allow_matches": policy_context["allow_matches"] if policy_context else [],
+            "deny_matches": policy_context["deny_matches"] if policy_context else [],
+            "advisory_matches": advisory_matches,
+        }
 
     if _package_matches_policy(policy.get("deny", {}).get("packages", []), ecosystem, package):
         return {
@@ -1897,6 +2136,7 @@ def explain_verdict(
             "policy": policy_context,
             "allow_matches": policy_context["allow_matches"] if policy_context else [],
             "deny_matches": policy_context["deny_matches"] if policy_context else [],
+            "advisory_matches": [],
         }
 
     if _package_matches_policy(policy.get("allow", {}).get("packages", []), ecosystem, package):
@@ -1910,6 +2150,7 @@ def explain_verdict(
             "policy": policy_context,
             "allow_matches": policy_context["allow_matches"] if policy_context else [],
             "deny_matches": policy_context["deny_matches"] if policy_context else [],
+            "advisory_matches": [],
         }
 
     rule_names = [match["rule"] for match in matched_rules]
@@ -1939,6 +2180,7 @@ def explain_verdict(
         "policy": policy_context,
         "allow_matches": policy_context["allow_matches"] if policy_context else [],
         "deny_matches": policy_context["deny_matches"] if policy_context else [],
+        "advisory_matches": [],
     }
 
 
@@ -1998,9 +2240,10 @@ def _scan_release(
 ) -> ScanResult:
     _ensure_dirs()
     policy = load_policy()
+    advisory_matches = find_advisory_matches(ecosystem, package, new_version)
     
-    # Check if package is in allowlist first
-    if _package_matches_policy(policy.get("allow", {}).get("packages", []), ecosystem, package):
+    # Emergency advisories intentionally override local allow/reputation shortcuts.
+    if not advisory_matches and _package_matches_policy(policy.get("allow", {}).get("packages", []), ecosystem, package):
         return ScanResult(
             ecosystem, package, None, new_version,
             "benign",
@@ -2009,7 +2252,7 @@ def _scan_release(
         )
     
     # Check package reputation for PyPI
-    if ecosystem == "pypi":
+    if not advisory_matches and ecosystem == "pypi":
         reputation = _get_pypi_reputation_indicators(package)
         rep_score = _calculate_reputation_score(reputation)
         
@@ -2024,11 +2267,39 @@ def _scan_release(
     
     old_version = old_version or (_npm_get_previous_version(package, new_version) if ecosystem == "npm" else _get_previous_version(package, new_version))
     if not old_version:
+        if advisory_matches:
+            return ScanResult(
+                ecosystem,
+                package,
+                "unavailable",
+                new_version,
+                "malicious",
+                _advisory_analysis(advisory_matches, artifact_unavailable=True),
+                None,
+                rank,
+                _finding_id(ecosystem, package, new_version),
+                "artifact unavailable; advisory matched",
+                advisory_matches,
+            )
         return ScanResult(ecosystem, package, None, new_version, "skipped", "", None, rank, None, "no previous version found")
     
     report, tmp_dir = _diff_package(ecosystem, package, old_version, new_version)
     try:
         if not report:
+            if advisory_matches:
+                return ScanResult(
+                    ecosystem,
+                    package,
+                    old_version,
+                    new_version,
+                    "malicious",
+                    _advisory_analysis(advisory_matches, artifact_unavailable=True),
+                    None,
+                    rank,
+                    _finding_id(ecosystem, package, new_version),
+                    "artifact unavailable; advisory matched",
+                    advisory_matches,
+                )
             return ScanResult(ecosystem, package, old_version, new_version, "error", "", None, rank, None, "diff generation failed")
         report_path = None
         if keep_report:
@@ -2042,9 +2313,38 @@ def _scan_release(
             package=package,
             policy=policy,
         )
+        if advisory_matches:
+            verdict = "malicious"
+            analysis = _attach_advisory_analysis(analysis, advisory_matches)
         finding_id = _finding_id(ecosystem, package, new_version) if verdict == "malicious" else None
-        return ScanResult(ecosystem, package, old_version, new_version, verdict, analysis, report_path, rank, finding_id)
+        return ScanResult(
+            ecosystem,
+            package,
+            old_version,
+            new_version,
+            verdict,
+            analysis,
+            report_path,
+            rank,
+            finding_id,
+            None,
+            advisory_matches or None,
+        )
     except Exception as exc:
+        if advisory_matches:
+            return ScanResult(
+                ecosystem,
+                package,
+                old_version,
+                new_version,
+                "malicious",
+                _advisory_analysis(advisory_matches, artifact_unavailable=True),
+                None,
+                rank,
+                _finding_id(ecosystem, package, new_version),
+                str(exc),
+                advisory_matches,
+            )
         return ScanResult(ecosystem, package, old_version, new_version, "error", repr(exc), None, rank, None, str(exc))
     finally:
         if tmp_dir:
@@ -2279,7 +2579,7 @@ def run_recent_top_scan(
     }
 
 
-def reconcile_history(*, drop_benign: bool = False) -> Dict[str, Any]:
+def reconcile_history(*, drop_benign: bool = False, include_advisories: bool = False) -> Dict[str, Any]:
     rows = _load_all_results()
     if not rows:
         return {
@@ -2289,15 +2589,53 @@ def reconcile_history(*, drop_benign: bool = False) -> Dict[str, Any]:
             "removed_from_slack_state": 0,
             "removed_from_db": 0,
             "changed_finding_ids": [],
+            "advisory_finding_ids": [],
         }
 
     retained_rows: List[Dict[str, Any]] = []
     changed_finding_ids: List[str] = []
+    advisory_finding_ids: List[str] = []
     removed_finding_ids: List[str] = []
+    advisory_findings: List[Dict[str, Any]] = []
 
     for row in rows:
         report_path = row.get("report_path")
         finding_id = str(row.get("finding_id") or "")
+        ecosystem = str(row.get("ecosystem") or "")
+        package = str(row.get("package") or "")
+        new_version = str(row.get("new_version") or "")
+        advisory_matches = find_advisory_matches(ecosystem, package, new_version) if include_advisories else []
+        if advisory_matches and row.get("verdict") != "malicious":
+            finding_id = _finding_id(ecosystem, package, new_version)
+            row["verdict"] = "malicious"
+            row["finding_id"] = finding_id
+            row["analysis"] = _advisory_analysis(
+                advisory_matches,
+                artifact_unavailable=not bool(report_path),
+            )
+            row["advisory_matches"] = advisory_matches
+            if row.get("error"):
+                row["error"] = f"{row['error']}; advisory matched"
+            advisory_finding_ids.append(finding_id)
+            advisory_findings.append(
+                _build_finding(
+                    ScanResult(
+                        ecosystem,
+                        package,
+                        str(row.get("old_version") or "unavailable"),
+                        new_version,
+                        "malicious",
+                        str(row["analysis"]),
+                        str(report_path) if report_path else None,
+                        int(row["rank"]) if row.get("rank") is not None else None,
+                        finding_id,
+                        str(row.get("error") or "") or None,
+                        advisory_matches,
+                    )
+                )
+            )
+            retained_rows.append(row)
+            continue
         if row.get("verdict") not in {"malicious", "benign"} or not report_path:
             retained_rows.append(row)
             continue
@@ -2311,8 +2649,9 @@ def reconcile_history(*, drop_benign: bool = False) -> Dict[str, Any]:
             report = path.read_text(encoding="utf-8")
             explained = explain_verdict(
                 report,
-                ecosystem=str(row.get("ecosystem") or ""),
-                package=str(row.get("package") or ""),
+                ecosystem=ecosystem,
+                package=package,
+                version=new_version if include_advisories else None,
             )
         except Exception:
             retained_rows.append(row)
@@ -2322,9 +2661,14 @@ def reconcile_history(*, drop_benign: bool = False) -> Dict[str, Any]:
         new_verdict = str(explained.get("verdict") or old_verdict)
         row["verdict"] = new_verdict
         row["analysis"] = str(explained.get("analysis") or row.get("analysis") or "")
+        if explained.get("advisory_matches"):
+            row["advisory_matches"] = explained["advisory_matches"]
 
         if old_verdict != new_verdict and finding_id:
-            changed_finding_ids.append(finding_id)
+            if explained.get("advisory_matches"):
+                advisory_finding_ids.append(finding_id)
+            else:
+                changed_finding_ids.append(finding_id)
 
         if drop_benign and new_verdict == "benign":
             if finding_id:
@@ -2334,6 +2678,8 @@ def reconcile_history(*, drop_benign: bool = False) -> Dict[str, Any]:
         retained_rows.append(row)
 
     _save_all_results(retained_rows)
+    if advisory_findings:
+        _upsert_findings(advisory_findings)
 
     if changed_finding_ids or removed_finding_ids:
         state = load_slack_state(SUPPLY_CHAIN_SLACK_STATE_PATH)
@@ -2361,11 +2707,12 @@ def reconcile_history(*, drop_benign: bool = False) -> Dict[str, Any]:
 
     return {
         "total_rows": len(rows),
-        "reclassified": len(changed_finding_ids),
+        "reclassified": len(changed_finding_ids) + len(advisory_finding_ids),
         "dropped": len(removed_finding_ids),
         "removed_from_slack_state": removed_from_slack_state,
         "removed_from_db": removed_from_db,
-        "changed_finding_ids": sorted(set(changed_finding_ids)),
+        "changed_finding_ids": sorted(set(changed_finding_ids + advisory_finding_ids)),
+        "advisory_finding_ids": sorted(set(advisory_finding_ids)),
         "removed_finding_ids": sorted(set(removed_finding_ids)),
     }
 

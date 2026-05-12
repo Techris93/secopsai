@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SecOpsAI Security Blog</title>
+    <meta name="description" content="Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates." />
+    <link rel="canonical" href="https://blog.secopsai.dev/" />
+    <link rel="alternate" type="application/rss+xml" title="SecOpsAI Security Blog RSS" href="/feed.xml" />
+    <link rel="alternate" type="application/feed+json" title="SecOpsAI Security Blog JSON Feed" href="/feed.json" />
+    <link rel="stylesheet" href="/assets/blog.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <nav class="shell nav">
+        <a class="brand" href="/">
+          <span class="brand-mark">S</span>
+          <span class="brand-title"><span>SecOpsAI</span><span>Security Blog</span></span>
+        </a>
+        <div class="nav-links">
+          <a href="https://secopsai.dev/">Platform</a>
+          <a href="https://docs.secopsai.dev/">Docs</a>
+          <a href="/feed.xml">RSS</a>
+          <a href="/feed.json">JSON Feed</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Live advisories • detections • mitigation</p>
+        <h1>Security intelligence operators can act on quickly.</h1>
+        <p class="lede">
+          Fast incident posts from the SecOpsAI side of the console: affected packages, IOCs,
+          detection logic, mitigations, timelines, and source-backed updates.
+        </p>
+        <div class="feed-actions">
+          <a class="button" href="/posts/mini-shai-hulud-emergency-advisory.html">Read Latest Advisory</a>
+          <a class="button secondary" href="/feed.xml">Subscribe by RSS</a>
+        </div>
+      </section>
+
+      <section class="filters card" aria-label="Search posts">
+        <input id="post-search" type="search" placeholder="Search posts, tags, ecosystems, packages, or IOCs..." />
+        <div class="tags">
+          <span class="pill">Supply Chain</span>
+          <span class="pill">OpenClaw</span>
+          <span class="pill">Detection Engineering</span>
+          <span class="pill">Malware Analysis</span>
+          <span class="pill">Advisories</span>
+          <span class="pill">Mitigation</span>
+        </div>
+      </section>
+
+      <section class="grid" id="posts">
+        <a class="card post-card" href="/posts/mini-shai-hulud-emergency-advisory.html" data-search="mini shai-hulud supply chain npm pypi opensearch mistralai guardrails-ai squawk transformers.pyz advisory mitigation">
+          <div class="meta">
+            <span class="pill critical">Critical</span>
+            <span>2026-05-12</span>
+            <span>Supply Chain</span>
+            <span>npm / PyPI</span>
+          </div>
+          <h2>Mini Shai-Hulud crosses npm and PyPI: emergency advisory protection for removed artifacts</h2>
+          <p>
+            SecOpsAI now treats confirmed removed/yanked compromised versions as high-confidence
+            advisory findings instead of leaving them as artifact diff errors.
+          </p>
+          <div class="tags">
+            <span class="pill">@opensearch-project/opensearch</span>
+            <span class="pill">guardrails-ai</span>
+            <span class="pill">mistralai</span>
+            <span class="pill">@squawk/*</span>
+          </div>
+        </a>
+
+        <aside class="card">
+          <p class="eyebrow">Operator feed</p>
+          <h2>What appears here</h2>
+          <p>
+            New SecOpsAI detections, package advisories, OpenClaw telemetry learnings, malware
+            behavior cards, and practical response notes. Posts are static-first, with moderated
+            comments available through the Cloudflare Pages Functions setup.
+          </p>
+        </aside>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="shell">SecOpsAI Security Blog • Local-first intelligence, source-backed actions.</div>
+    </footer>
+
+    <script>
+      const search = document.querySelector("#post-search");
+      const cards = [...document.querySelectorAll("[data-search]")];
+      search?.addEventListener("input", () => {
+        const term = search.value.trim().toLowerCase();
+        for (const card of cards) {
+          card.style.display = card.dataset.search.includes(term) ? "" : "none";
+        }
+      });
+    </script>
+  </body>
+</html>

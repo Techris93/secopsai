@@ -1,4 +1,5 @@
 import os
+import json
 import sys
 import tempfile
 import unittest
@@ -581,6 +582,148 @@ name = "normalpkg"
         self.assertIn("allowlist", payload["analysis"])
         self.assertEqual(payload["allow_matches"], ["pypi:requests"])
         self.assertEqual(payload["policy"]["precedence"], ["allowlist"])
+
+    def test_advisory_exact_version_match(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            advisory_dir = Path(temp_dir) / "advisories"
+            advisory_dir.mkdir()
+            (advisory_dir / "test.json").write_text(json.dumps({
+                "advisory_id": "ADV-1",
+                "campaign_id": "unit-campaign",
+                "title": "Unit advisory",
+                "status": "active",
+                "affected": [{"ecosystem": "npm", "package": "@scope/pkg", "versions": ["1.2.3"]}],
+            }), encoding="utf-8")
+            with mock.patch.object(supply_chain, "ADVISORIES_DIR", advisory_dir):
+                payload = supply_chain.check_advisory("npm", "@scope/pkg", "1.2.3")
+
+        self.assertTrue(payload["matched"])
+        self.assertEqual(payload["matches"][0]["advisory_id"], "ADV-1")
+
+    def test_advisory_version_range_match(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            advisory_dir = Path(temp_dir) / "advisories"
+            advisory_dir.mkdir()
+            (advisory_dir / "test.json").write_text(json.dumps({
+                "advisory_id": "ADV-RANGE",
+                "title": "Range advisory",
+                "status": "active",
+                "affected": [{
+                    "ecosystem": "pypi",
+                    "package": "sample",
+                    "version_ranges": [{"introduced": "2.0.0", "fixed": "2.0.5"}],
+                }],
+            }), encoding="utf-8")
+            with mock.patch.object(supply_chain, "ADVISORIES_DIR", advisory_dir):
+                matched = supply_chain.check_advisory("pypi", "sample", "2.0.3")
+                not_matched = supply_chain.check_advisory("pypi", "sample", "2.0.5")
+
+        self.assertTrue(matched["matched"])
+        self.assertFalse(not_matched["matched"])
+
+    def test_removed_artifact_with_advisory_creates_malicious_finding(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            advisory_dir = temp_path / "advisories"
+            findings_dir = temp_path / "findings"
+            advisory_dir.mkdir()
+            (advisory_dir / "test.json").write_text(json.dumps({
+                "advisory_id": "ADV-REMOVED",
+                "title": "Removed artifact advisory",
+                "status": "active",
+                "affected": [{"ecosystem": "npm", "package": "@scope/removed", "versions": ["9.9.9"]}],
+                "detection_rationale": ["Registry artifact was removed after compromise."],
+            }), encoding="utf-8")
+            old_findings_dir = os.environ.get("SECOPS_FINDINGS_DIR")
+            os.environ["SECOPS_FINDINGS_DIR"] = str(findings_dir)
+            try:
+                with mock.patch.object(supply_chain, "ADVISORIES_DIR", advisory_dir), \
+                     mock.patch.object(supply_chain, "RESULTS_PATH", temp_path / "results.jsonl"), \
+                     mock.patch.object(supply_chain, "_npm_get_previous_version", return_value="9.9.8"), \
+                     mock.patch.object(supply_chain, "_diff_package", return_value=(None, None)):
+                    payload = supply_chain.run_scan(
+                        ecosystem="npm",
+                        package="@scope/removed",
+                        version="9.9.9",
+                        previous_version=None,
+                    )
+            finally:
+                if old_findings_dir is None:
+                    os.environ.pop("SECOPS_FINDINGS_DIR", None)
+                else:
+                    os.environ["SECOPS_FINDINGS_DIR"] = old_findings_dir
+
+        result = payload["result"]
+        self.assertEqual(result["verdict"], "malicious")
+        self.assertIn("advisory_matches", result)
+        self.assertIn("advisory matched", result["error"])
+        self.assertTrue(payload["db_path"].endswith("openclaw_soc.db"))
+
+    def test_explain_verdict_includes_advisory_evidence(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            advisory_dir = Path(temp_dir) / "advisories"
+            advisory_dir.mkdir()
+            (advisory_dir / "test.json").write_text(json.dumps({
+                "advisory_id": "ADV-EXPLAIN",
+                "title": "Explain advisory",
+                "status": "active",
+                "affected": [{"ecosystem": "pypi", "package": "guardrails-ai", "versions": ["0.10.1"]}],
+                "iocs": {"file_paths": ["/tmp/transformers.pyz"]},
+                "remediation": ["Remove version 0.10.1 and rotate exposed credentials."],
+            }), encoding="utf-8")
+            with mock.patch.object(supply_chain, "ADVISORIES_DIR", advisory_dir):
+                payload = supply_chain.explain_verdict(
+                    "",
+                    ecosystem="pypi",
+                    package="guardrails-ai",
+                    version="0.10.1",
+                )
+
+        self.assertEqual(payload["verdict"], "malicious")
+        self.assertEqual(payload["advisory_matches"][0]["advisory_id"], "ADV-EXPLAIN")
+        self.assertIn("emergency advisory match", [rule["rule"] for rule in payload["matched_rules"]])
+
+    def test_reconcile_history_upgrades_advisory_error(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            advisory_dir = temp_path / "advisories"
+            advisory_dir.mkdir()
+            results_path = temp_path / "results.jsonl"
+            findings_dir = temp_path / "findings"
+            results_path.write_text(json.dumps({
+                "ecosystem": "npm",
+                "package": "@scope/removed",
+                "old_version": "1.0.0",
+                "new_version": "1.0.1",
+                "verdict": "error",
+                "analysis": "",
+                "report_path": None,
+                "rank": None,
+                "finding_id": None,
+                "error": "diff generation failed",
+            }) + "\n", encoding="utf-8")
+            (advisory_dir / "test.json").write_text(json.dumps({
+                "advisory_id": "ADV-RECONCILE",
+                "title": "Reconcile advisory",
+                "status": "active",
+                "affected": [{"ecosystem": "npm", "package": "@scope/removed", "versions": ["1.0.1"]}],
+            }), encoding="utf-8")
+            old_findings_dir = os.environ.get("SECOPS_FINDINGS_DIR")
+            os.environ["SECOPS_FINDINGS_DIR"] = str(findings_dir)
+            try:
+                with mock.patch.object(supply_chain, "ADVISORIES_DIR", advisory_dir), \
+                     mock.patch.object(supply_chain, "RESULTS_PATH", results_path):
+                    payload = supply_chain.reconcile_history(include_advisories=True)
+                    rows = [json.loads(line) for line in results_path.read_text(encoding="utf-8").splitlines()]
+            finally:
+                if old_findings_dir is None:
+                    os.environ.pop("SECOPS_FINDINGS_DIR", None)
+                else:
+                    os.environ["SECOPS_FINDINGS_DIR"] = old_findings_dir
+
+        self.assertEqual(payload["reclassified"], 1)
+        self.assertEqual(rows[0]["verdict"], "malicious")
+        self.assertIn("ADV-RECONCILE", rows[0]["advisory_matches"][0]["advisory_id"])
 
     def test_cli_explain_verdict_resolves_stored_report(self):
         with tempfile.TemporaryDirectory() as temp_dir:

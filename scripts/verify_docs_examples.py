@@ -24,6 +24,7 @@ DEFAULT_DOCS = [
     Path("docs/getting-started.md"),
     Path("docs/findings-triage-guide.md"),
     Path("docs/research-and-verification.md"),
+    Path("docs/supply-chain-advisories.md"),
     Path("docs/OpenClaw-Plugin.md"),
 ]
 DEFAULT_PLUGIN_INDEX = ROOT.parent / "openclaw-secopsai-plugin" / "index.ts"

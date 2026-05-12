@@ -51,6 +51,23 @@ SecOpsAI maintains a database of known malicious packages:
 | plain-crypto-js | 4.2.1 | Supply chain RAT dropper | Mar 2026 |
 | litellm | 1.82.7, 1.82.8 | PyPI .pth backdoor | Mar 2026 |
 
+## Emergency Advisory Denylists
+
+Some registry compromises are cleaned up quickly, which means the malicious artifact may be removed before SecOpsAI can fetch both versions and generate a diff. Emergency advisories close that gap by turning source-backed package/version intelligence into high-confidence findings.
+
+```bash
+# Check a removed/yanked compromised version without needing the artifact.
+secopsai supply-chain advisory check --ecosystem npm --package @opensearch-project/opensearch --version 3.8.0
+
+# Explain the verdict, including source URLs, IOCs, confidence, and mitigation.
+secopsai supply-chain explain-verdict --ecosystem pypi --package guardrails-ai --version 0.10.1
+
+# Upgrade historical "diff generation failed" rows when a new advisory matches.
+secopsai supply-chain reconcile-history --include-advisories
+```
+
+See [Emergency Supply Chain Advisories](supply-chain-advisories.md) for the full operator workflow and JSON schema.
+
 ## Detection Capabilities
 
 ### 1. Static Analysis

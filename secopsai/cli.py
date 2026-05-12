@@ -54,8 +54,11 @@ from secopsai.sessions import (
 from secopsai.supply_chain import (
     allowlist_add,
     allowlist_remove,
+    check_advisory,
     explain_policy,
     explain_verdict,
+    ingest_advisory,
+    load_advisories,
     load_recent_results,
     reconcile_history,
     run_recent_top_scan,
@@ -870,10 +873,26 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Remove reclassified benign rows from local history instead of keeping them with updated verdicts",
     )
+    supply_chain_reconcile.add_argument(
+        "--include-advisories",
+        action="store_true",
+        help="Upgrade historical removed/yanked artifact errors when an emergency advisory matches",
+    )
 
     supply_chain_explain = supply_chain_sub.add_parser("explain-policy", help="Show the effective policy for a package")
     supply_chain_explain.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
     supply_chain_explain.add_argument("--package", required=True, help="Package name")
+
+    supply_chain_advisory = supply_chain_sub.add_parser("advisory", help="Manage emergency package advisories")
+    supply_chain_advisory_sub = supply_chain_advisory.add_subparsers(dest="supply_chain_advisory_cmd", required=True)
+    supply_chain_advisory_list = supply_chain_advisory_sub.add_parser("list", help="List emergency advisories")
+    supply_chain_advisory_list.add_argument("--status", default="active", help="Filter by status, or 'all'")
+    supply_chain_advisory_ingest = supply_chain_advisory_sub.add_parser("ingest", help="Ingest a JSON advisory file or URL")
+    supply_chain_advisory_ingest.add_argument("source", help="Path or HTTPS URL to an advisory JSON object/list")
+    supply_chain_advisory_check = supply_chain_advisory_sub.add_parser("check", help="Check one package version against advisories")
+    supply_chain_advisory_check.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    supply_chain_advisory_check.add_argument("--package", required=True, help="Package name")
+    supply_chain_advisory_check.add_argument("--version", required=True, help="Package version")
 
     supply_chain_allowlist = supply_chain_sub.add_parser("allowlist", help="Manage supply-chain allowlist entries")
     supply_chain_allowlist_sub = supply_chain_allowlist.add_subparsers(dest="supply_chain_allowlist_cmd", required=True)
@@ -2254,6 +2273,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
                 if result.get("finding_id"):
                     print(f"finding_id={result['finding_id']}")
+                if result.get("advisory_matches"):
+                    ids = [
+                        str(match.get("advisory_id") or match.get("campaign_id"))
+                        for match in result["advisory_matches"]
+                    ]
+                    print(f"advisory_matches={','.join(ids)}")
                 if result.get("report_path"):
                     print(f"report_path={result['report_path']}")
                 if payload.get("db_path"):
@@ -2321,7 +2346,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0
 
         if args.supply_chain_cmd == "reconcile-history":
-            payload = reconcile_history(drop_benign=args.drop_benign)
+            payload = reconcile_history(drop_benign=args.drop_benign, include_advisories=args.include_advisories)
             if args.json:
                 print(to_json(payload))
             else:
@@ -2332,8 +2357,48 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"removed_from_db={payload['removed_from_db']}")
                 if payload["changed_finding_ids"]:
                     print(f"changed_finding_ids={payload['changed_finding_ids']}")
+                if payload.get("advisory_finding_ids"):
+                    print(f"advisory_finding_ids={payload['advisory_finding_ids']}")
                 if payload["removed_finding_ids"]:
                     print(f"removed_finding_ids={payload['removed_finding_ids']}")
+            return 0
+
+        if args.supply_chain_cmd == "advisory":
+            try:
+                if args.supply_chain_advisory_cmd == "list":
+                    advisories = load_advisories()
+                    if args.status != "all":
+                        advisories = [
+                            item
+                            for item in advisories
+                            if str(item.get("status", "active")).lower() == args.status.lower()
+                        ]
+                    payload = {"total": len(advisories), "advisories": advisories}
+                elif args.supply_chain_advisory_cmd == "ingest":
+                    payload = ingest_advisory(args.source)
+                else:
+                    payload = check_advisory(args.ecosystem, args.package, args.version)
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc)}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            elif args.supply_chain_advisory_cmd == "list":
+                print(f"total={payload['total']}")
+                for advisory in payload["advisories"]:
+                    print(f"- {advisory.get('advisory_id') or advisory.get('campaign_id')}: {advisory.get('title')}")
+            elif args.supply_chain_advisory_cmd == "ingest":
+                print(f"ingested={payload['ingested']}")
+                for path in payload["paths"]:
+                    print(f"- {path}")
+            else:
+                print(f"target={payload['ecosystem']}:{payload['package']}@{payload['version']}")
+                print(f"matched={payload['matched']}")
+                for match in payload["matches"]:
+                    print(f"- {match.get('advisory_id') or match.get('campaign_id')}: {match.get('title')}")
             return 0
 
         if args.supply_chain_cmd == "explain-policy":
@@ -2416,6 +2481,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0
 
         if args.supply_chain_cmd == "explain-verdict":
+            report_path: Optional[Path] = None
+            report_text = ""
             try:
                 report_path = _resolve_supply_chain_report(
                     report_path=args.report,
@@ -2425,18 +2492,25 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
                 report_text = report_path.read_text(encoding="utf-8")
             except Exception as exc:
-                if args.json:
-                    print(to_json({"error": str(exc)}))
-                else:
-                    print(f"error: {exc}")
-                return 1
+                advisory_payload = (
+                    check_advisory(args.ecosystem, args.package, args.version)
+                    if args.version
+                    else {"matched": False}
+                )
+                if not advisory_payload.get("matched"):
+                    if args.json:
+                        print(to_json({"error": str(exc)}))
+                    else:
+                        print(f"error: {exc}")
+                    return 1
 
             payload = explain_verdict(
                 report_text,
                 ecosystem=args.ecosystem,
                 package=args.package,
+                version=args.version,
             )
-            payload["report_path"] = str(report_path)
+            payload["report_path"] = str(report_path) if report_path else None
             if args.version:
                 payload["version"] = args.version
 
@@ -2446,11 +2520,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"target={args.ecosystem}:{args.package}")
                 if args.version:
                     print(f"version={args.version}")
-                print(f"report_path={report_path}")
+                print(f"report_path={report_path or 'none'}")
                 print(f"verdict={payload['verdict']}")
                 print(f"score={payload['score']}")
                 print(f"effective_threshold={payload['effective_threshold']}")
                 print(f"analysis={payload['analysis']}")
+                if payload.get("advisory_matches"):
+                    print("advisory_matches:")
+                    for match in payload["advisory_matches"]:
+                        print(f"- {match.get('advisory_id') or match.get('campaign_id')} confidence={match.get('confidence')} severity={match.get('severity')}")
                 if payload["matched_rules"]:
                     print("matched_rules:")
                     for rule in payload["matched_rules"]:

@@ -1,5 +1,7 @@
 data/*
 !data/.gitkeep
+!data/advisories/
+!data/advisories/**
 !data/fixtures/
 !data/fixtures/**
 !data/feedback.jsonl
