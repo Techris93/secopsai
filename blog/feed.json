@@ -4,9 +4,23 @@
   "home_page_url": "https://blog.secopsai.dev/",
   "items": [
     {
+      "affected_packages": [
+        "@opensearch-project/opensearch",
+        "mistralai",
+        "guardrails-ai",
+        "@squawk/mcp",
+        "@squawk/airport-data"
+      ],
+      "authors": [
+        {
+          "name": "SecOpsAI Threat Research"
+        }
+      ],
       "date_modified": "2026-05-12T00:00:00Z",
       "date_published": "2026-05-12T00:00:00Z",
       "id": "https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html",
+      "reading_time_minutes": 4,
+      "severity": "critical",
       "summary": "Mini Shai-Hulud affected npm and PyPI packages, including removed artifacts that now receive source-backed SecOpsAI advisory detections.",
       "tags": [
         "Supply Chain",

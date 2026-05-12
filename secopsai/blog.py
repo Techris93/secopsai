@@ -28,6 +28,15 @@ POSTS_DIR = BLOG_DIR / "posts"
 DRAFTS_DIR = BLOG_DIR / "drafts"
 NEWS_CACHE_PATH = BLOG_DIR / "data" / "news-cache.json"
 BASE_URL = "https://blog.secopsai.dev"
+TOPIC_SECTIONS = [
+    "Threat Intelligence",
+    "Supply Chain",
+    "Detection Engineering",
+    "Mitigation",
+    "OpenClaw",
+    "Product Updates",
+]
+SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
 SENSITIVE_VALUE_RE = re.compile(
     r"(?i)\b(?:api[_-]?key|token|secret|password|credential|authorization|bearer|refresh[_-]?token)\b"
     r"\s*[:=]\s*['\"]?[^'\"\s,;]{8,}"
@@ -146,6 +155,60 @@ def _post_url(slug: str) -> str:
     return f"{BASE_URL}/posts/{slug}.html"
 
 
+def _post_author(post: Dict[str, Any]) -> str:
+    return str(post.get("author") or post.get("source_name") or "SecOpsAI Research")
+
+
+def _post_categories(post: Dict[str, Any]) -> List[str]:
+    categories = post.get("categories") or post.get("tags") or ["Detection Engineering"]
+    return _safe_list(categories, limit=12) or ["Detection Engineering"]
+
+
+def _post_reading_time(post: Dict[str, Any]) -> int:
+    explicit = post.get("reading_time")
+    try:
+        if explicit:
+            return max(1, int(explicit))
+    except (TypeError, ValueError):
+        pass
+    body = str(post.get("body_markdown") or "")
+    words = re.findall(r"\b[\w@./:-]+\b", f"{post.get('title', '')} {post.get('summary', '')} {body}")
+    return max(1, round(len(words) / 220))
+
+
+def _post_severity_rank(post: Dict[str, Any]) -> int:
+    return SEVERITY_RANK.get(str(post.get("severity") or "info").lower(), 0)
+
+
+def _post_date(value: Any) -> str:
+    text = str(value or "")
+    return text[:10] if len(text) >= 10 else text
+
+
+def _normalize_post(post: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(post)
+    categories = _post_categories(normalized)
+    normalized["categories"] = categories
+    normalized.setdefault("tags", categories)
+    normalized.setdefault("author", _post_author(normalized))
+    normalized["reading_time"] = _post_reading_time(normalized)
+    normalized.setdefault("featured", False)
+    normalized.setdefault("related_posts", [])
+    normalized.setdefault("references", normalized.get("sources", []))
+    normalized.setdefault("affected_ecosystems", [])
+    normalized.setdefault("affected_packages", [])
+    normalized.setdefault("affected_artifacts", [])
+    normalized.setdefault("iocs", [])
+    return normalized
+
+
+def _badge_class(severity: Any) -> str:
+    value = str(severity or "info").lower()
+    if value in {"critical", "high", "medium", "low", "info"}:
+        return value
+    return "info"
+
+
 def _draft_path(slug: str, paths: BlogPaths) -> Path:
     return paths.drafts / f"{slug}.json"
 
@@ -187,8 +250,14 @@ def _base_post(
         "tags": categories or ["Detection Engineering"],
         "published_at": now,
         "updated_at": now,
+        "author": "SecOpsAI Research",
+        "source_name": "SecOpsAI",
+        "reading_time": 1,
+        "featured": False,
+        "related_posts": [],
         "status": "draft",
         "sources": _safe_list(sources or [], limit=12),
+        "references": _safe_list(sources or [], limit=12),
         "affected_ecosystems": [],
         "affected_packages": [],
         "iocs": [],
@@ -270,10 +339,24 @@ def draft_advisory(campaign: str, *, paths: Optional[BlogPaths] = None) -> Dict[
         {
             "affected_ecosystems": ecosystems,
             "affected_packages": packages,
+            "affected_artifacts": [
+                {
+                    "ecosystem": item.get("ecosystem", ""),
+                    "package": item.get("package", ""),
+                    "versions": item.get("versions", []),
+                }
+                for item in affected
+                if isinstance(item, dict)
+            ],
             "iocs": _safe_list(ioc_values),
+            "featured": True,
+            "author": "SecOpsAI Threat Research",
+            "source_name": "SecOpsAI Advisory Engine",
+            "references": _safe_list(advisory.get("source_urls", []), limit=12),
             "body_markdown": redact(body),
         }
     )
+    post["reading_time"] = _post_reading_time(post)
     _write_json(_draft_path(post["slug"], paths), post)
     return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
 
@@ -344,9 +427,13 @@ def draft_finding(finding_id: str, *, db_path: Optional[str] = None, paths: Opti
             "affected_ecosystems": _safe_list([finding.get("ecosystem", "")]),
             "affected_packages": _safe_list([finding.get("package", "")]),
             "iocs": _safe_list(payload_iocs),
+            "author": "SecOpsAI SOC",
+            "source_name": str(finding.get("source") or "SecOpsAI SOC"),
+            "references": post.get("sources", []),
             "body_markdown": redact(body),
         }
     )
+    post["reading_time"] = _post_reading_time(post)
     _write_json(_draft_path(post["slug"], paths), post)
     return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
 
@@ -445,6 +532,9 @@ def draft_news(source: str, *, paths: Optional[BlogPaths] = None) -> Dict[str, A
         slug=slugify(f"news-{title}"),
     )
     post.update({"source_name": source_name, "body_markdown": redact(body)})
+    post["author"] = source_name
+    post["references"] = [link]
+    post["reading_time"] = _post_reading_time(post)
     _write_json(_draft_path(post["slug"], paths), post)
     return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
 
@@ -490,7 +580,7 @@ def draft_daily(*, limit: int = 5, paths: Optional[BlogPaths] = None) -> Dict[st
 def _load_posts(paths: BlogPaths) -> List[Dict[str, Any]]:
     posts = []
     for path in sorted(paths.posts.glob("*.json")):
-        post = _load_json(path)
+        post = _normalize_post(_load_json(path))
         if post.get("status") == "published":
             posts.append(post)
         elif "published_at" in post and "body_markdown" not in post:
@@ -499,13 +589,116 @@ def _load_posts(paths: BlogPaths) -> List[Dict[str, Any]]:
     return sorted(posts, key=lambda item: str(item.get("updated_at") or item.get("published_at") or ""), reverse=True)
 
 
+def _render_pills(values: Iterable[Any], *, limit: int = 8) -> str:
+    return " ".join(
+        f'<span class="pill">{html.escape(str(value))}</span>'
+        for value in _safe_list(values, limit=limit)
+    )
+
+
+def _render_command_blocks(post: Dict[str, Any]) -> str:
+    commands = post.get("operator_commands")
+    if not isinstance(commands, list) or not commands:
+        packages = _safe_list(post.get("affected_packages", []), limit=2)
+        commands = [
+            "secopsai blog rebuild-feeds",
+            "secopsai supply-chain reconcile-history --include-advisories",
+        ]
+        if packages:
+            commands.insert(0, f"secopsai supply-chain explain-verdict --package {packages[0]}")
+    safe_commands = _safe_list(commands, limit=6)
+    return "\n".join(
+        f'<button class="command-chip" type="button" data-copy="{html.escape(command)}"><code>{html.escape(command)}</code></button>'
+        for command in safe_commands
+    )
+
+
+def _render_reference_links(post: Dict[str, Any]) -> str:
+    references = _safe_list(post.get("references") or post.get("sources") or [], limit=8)
+    if not references:
+        return "<p>No external references attached yet. Add source URLs before publishing major incident updates.</p>"
+    links = []
+    for reference in references:
+        if urllib.parse.urlparse(reference).scheme not in {"http", "https"}:
+            continue
+        label = urllib.parse.urlparse(reference).netloc or reference
+        links.append(f'<li><a href="{html.escape(reference)}" rel="noopener noreferrer" target="_blank">{html.escape(label)}</a></li>')
+    if not links:
+        return "<p>No safe external references attached yet.</p>"
+    return "<ul>" + "".join(links) + "</ul>"
+
+
+def _render_related_links(post: Dict[str, Any], posts: Optional[List[Dict[str, Any]]] = None) -> str:
+    related = _safe_list(post.get("related_posts", []), limit=5)
+    if not related and posts:
+        own_categories = set(_post_categories(post))
+        for candidate in posts:
+            if candidate.get("slug") == post.get("slug"):
+                continue
+            if own_categories & set(_post_categories(candidate)):
+                related.append(str(candidate.get("slug")))
+            if len(related) >= 3:
+                break
+    if not related:
+        return "<p>No related posts yet.</p>"
+    items = []
+    by_slug = {str(item.get("slug")): item for item in posts or []}
+    for slug in related:
+        candidate = by_slug.get(slug)
+        title = candidate.get("title") if candidate else slug.replace("-", " ").title()
+        items.append(f'<li><a href="/posts/{html.escape(slug)}.html">{html.escape(redact(title))}</a></li>')
+    return "<ul>" + "".join(items) + "</ul>"
+
+
+def _render_artifact_table(post: Dict[str, Any]) -> str:
+    artifacts = post.get("affected_artifacts")
+    if isinstance(artifacts, list) and artifacts:
+        rows = []
+        for item in artifacts[:24]:
+            if not isinstance(item, dict):
+                continue
+            versions = ", ".join(_safe_list(item.get("versions", []), limit=8)) or "listed"
+            rows.append(
+                "<tr>"
+                f"<td>{html.escape(str(item.get('ecosystem') or 'unknown'))}</td>"
+                f"<td><code>{html.escape(str(item.get('package') or 'unknown'))}</code></td>"
+                f"<td>{html.escape(versions)}</td>"
+                "</tr>"
+            )
+        if rows:
+            return (
+                "<table><thead><tr><th>Ecosystem</th><th>Artifact</th><th>Versions</th></tr></thead><tbody>"
+                + "".join(rows)
+                + "</tbody></table>"
+            )
+    ecosystems = _safe_list(post.get("affected_ecosystems", []), limit=12)
+    packages = _safe_list(post.get("affected_packages", []), limit=24)
+    if not packages and not ecosystems:
+        return "<p>No structured affected artifacts attached yet.</p>"
+    rows = []
+    if packages:
+        for index, package in enumerate(packages):
+            ecosystem = ecosystems[index] if index < len(ecosystems) else (ecosystems[0] if ecosystems else "unknown")
+            rows.append(f"<tr><td>{html.escape(ecosystem)}</td><td><code>{html.escape(package)}</code></td></tr>")
+    else:
+        rows = [f"<tr><td>{html.escape(ecosystem)}</td><td>See post details</td></tr>" for ecosystem in ecosystems]
+    return "<table><thead><tr><th>Ecosystem</th><th>Artifact</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+
+
 def _render_post_html(post: Dict[str, Any]) -> str:
+    post = _normalize_post(post)
     slug = str(post["slug"])
     title = html.escape(redact(post["title"]))
     summary = html.escape(redact(post.get("summary", "")))
-    categories = post.get("categories") or post.get("tags") or []
-    pills = "\n".join(f'<span class="pill">{html.escape(str(item))}</span>' for item in categories)
+    categories = _post_categories(post)
+    pills = _render_pills(categories)
+    severity = html.escape(str(post.get("severity", "info")).title())
+    severity_class = _badge_class(post.get("severity"))
+    author = html.escape(_post_author(post))
+    reading_time = _post_reading_time(post)
     body_html = markdown_to_html(str(post.get("body_markdown") or ""))
+    iocs = _safe_list(post.get("iocs", []), limit=12)
+    ioc_items = "".join(f"<li><code>{html.escape(ioc)}</code></li>" for ioc in iocs) or "<li>No structured IOCs attached.</li>"
     return f"""<!doctype html>
 <html lang="en">
   <head>
@@ -534,14 +727,31 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     </header>
     <main class="shell post-layout">
       <article class="post-body">
-        <p class="eyebrow">{html.escape(str(post.get("severity", "info")))} • SecOpsAI intelligence</p>
+        <p class="eyebrow">{severity} • SecOpsAI intelligence</p>
         <h1>{title}</h1>
+        <p class="dek">{summary}</p>
         <div class="meta">
-          <span class="pill critical">{html.escape(str(post.get("severity", "info")).title())}</span>
-          <span>Published: {html.escape(str(post.get("published_at", "")))}</span>
-          <span>Updated: {html.escape(str(post.get("updated_at", "")))}</span>
+          <span class="pill {severity_class}">{severity}</span>
+          <span>By {author}</span>
+          <span>{reading_time} min read</span>
+          <span>Published: {html.escape(_post_date(post.get("published_at")))}</span>
+          <span>Updated: {html.escape(_post_date(post.get("updated_at")))}</span>
         </div>
         <div class="tags">{pills}</div>
+        <section class="intelligence-brief" aria-label="Post intelligence brief">
+          <div>
+            <p class="eyebrow">Executive summary</p>
+            <p>{summary}</p>
+          </div>
+          <div>
+            <p class="eyebrow">Affected artifacts</p>
+            {_render_artifact_table(post)}
+          </div>
+          <div>
+            <p class="eyebrow">IOCs</p>
+            <ul>{ioc_items}</ul>
+          </div>
+        </section>
         {body_html}
         <section class="comments" data-comments data-slug="{html.escape(slug)}">
           <h2>Comments</h2>
@@ -565,8 +775,21 @@ def _render_post_html(post: Dict[str, Any]) -> str:
           <p class="eyebrow">Operator note</p>
           <p>Source-backed posts are generated as drafts first and require explicit publishing.</p>
         </section>
+        <section class="card command-panel">
+          <p class="eyebrow">Operator commands</p>
+          {_render_command_blocks(post)}
+        </section>
+        <section class="card">
+          <p class="eyebrow">References</p>
+          {_render_reference_links(post)}
+        </section>
+        <section class="card">
+          <p class="eyebrow">Related posts</p>
+          {_render_related_links(post)}
+        </section>
       </aside>
     </main>
+    <script src="/assets/blog.js" defer></script>
     <script src="/assets/comments.js" defer></script>
   </body>
 </html>
@@ -589,6 +812,7 @@ def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPa
     post["status"] = "published"
     post["published_at"] = post.get("published_at") or _utc_now()
     post["updated_at"] = _utc_now()
+    post = _normalize_post(post)
     paths.posts.mkdir(parents=True, exist_ok=True)
     _write_json(_post_json_path(str(post["slug"]), paths), post)
     _post_html_path(str(post["slug"]), paths).write_text(
@@ -604,38 +828,78 @@ def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPa
 
 
 def _render_index(posts: List[Dict[str, Any]]) -> str:
+    posts = [_normalize_post(post) for post in posts]
+    featured = next((post for post in posts if post.get("featured")), posts[0] if posts else None)
     cards = []
     for post in posts:
         slug = html.escape(str(post["slug"]))
         title = html.escape(redact(post["title"]))
         summary = html.escape(redact(post.get("summary", "")))
         severity = html.escape(str(post.get("severity", "info")).title())
-        tags = " ".join(
-            f'<span class="pill">{html.escape(str(tag))}</span>'
-            for tag in post.get("categories", [])[:5]
-        )
+        severity_class = _badge_class(post.get("severity"))
+        categories = _post_categories(post)
+        tags = _render_pills(categories[:5])
+        topics = " ".join(categories).lower()
+        packages = " ".join(post.get("affected_packages", []))
+        iocs = " ".join(post.get("iocs", []))
+        sources = " ".join(post.get("sources", []))
+        reading_time = _post_reading_time(post)
+        updated = str(post.get("updated_at") or post.get("published_at") or "")
         search = html.escape(
-            " ".join(
-                [
-                    title,
-                    summary,
-                    " ".join(post.get("affected_packages", [])),
-                    " ".join(post.get("iocs", [])),
-                ]
-            ).lower()
+            " ".join([title, summary, packages, iocs, sources, topics]).lower()
         )
         cards.append(
-            f"""<a class="card post-card" href="/posts/{slug}.html" data-search="{search}">
+            f"""<a class="card post-card" href="/posts/{slug}.html"
+          data-search="{search}"
+          data-topic="{html.escape(topics)}"
+          data-severity="{_post_severity_rank(post)}"
+          data-date="{html.escape(updated)}"
+          data-reading="{reading_time}">
           <div class="meta">
-            <span class="pill critical">{severity}</span>
-            <span>{html.escape(str(post.get("updated_at", "")))}</span>
+            <span class="pill {severity_class}">{severity}</span>
+            <span>{html.escape(_post_author(post))}</span>
+            <span>{reading_time} min read</span>
+            <span>{html.escape(_post_date(updated))}</span>
           </div>
           <h2>{title}</h2>
           <p>{summary}</p>
+          <p class="artifact-line">{html.escape(packages[:140])}</p>
           <div class="tags">{tags}</div>
         </a>"""
         )
     cards_html = "\n".join(cards)
+    topic_buttons = "\n".join(
+        f'<button class="topic-filter" type="button" data-topic-filter="{html.escape(topic.lower())}">{html.escape(topic)}</button>'
+        for topic in TOPIC_SECTIONS
+    )
+    section_cards = "\n".join(
+        f"""<article class="topic-card">
+          <p class="eyebrow">{html.escape(topic)}</p>
+          <p>{sum(1 for post in posts if topic in _post_categories(post))} posts with SecOpsAI context, detections, or operator guidance.</p>
+        </article>"""
+        for topic in TOPIC_SECTIONS
+    )
+    if featured:
+        featured_slug = html.escape(str(featured["slug"]))
+        featured_html = f"""<section class="featured-grid" aria-label="Featured security research">
+        <a class="featured-card" href="/posts/{featured_slug}.html">
+          <p class="eyebrow">Featured research</p>
+          <h2>{html.escape(redact(featured.get("title", "")))}</h2>
+          <p>{html.escape(_post_summary(featured))}</p>
+          <div class="meta">
+            <span class="pill {_badge_class(featured.get("severity"))}">{html.escape(str(featured.get("severity", "info")).title())}</span>
+            <span>{html.escape(_post_author(featured))}</span>
+            <span>{_post_reading_time(featured)} min read</span>
+          </div>
+        </a>
+        <aside class="card intelligence-card">
+          <p class="eyebrow">Operator intelligence model</p>
+          <h2>Source-backed. Detection-aware. Mitigation-first.</h2>
+          <p>Every published post is designed to connect external reporting, SecOpsAI detections, IOCs, and concrete response commands.</p>
+        </aside>
+      </section>"""
+    else:
+        featured_html = ""
     return f"""<!doctype html>
 <html lang="en">
   <head>
@@ -667,7 +931,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
     </header>
     <main class="shell">
       <section class="hero">
-        <p class="eyebrow">Live advisories • detections • mitigation</p>
+        <p class="eyebrow">Security Research & Advisories</p>
         <h1>Security intelligence operators can act on quickly.</h1>
         <p class="lede">Fast incident posts from the SecOpsAI side of the console:
           affected packages, IOCs, detection logic, mitigations, timelines,
@@ -677,15 +941,31 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
           <a class="button secondary" href="/json-feed">JSON Feed</a>
         </div>
       </section>
-      <section class="filters card" aria-label="Search posts">
+      {featured_html}
+      <section class="topic-strip" aria-label="Security topics">
+        {section_cards}
+      </section>
+      <section class="filters card" aria-label="Search and filter posts">
         <input id="post-search" type="search" placeholder="Search posts, tags, ecosystems, packages, or IOCs..." />
-        <div class="tags">
-          <span class="pill">Supply Chain</span><span class="pill">OpenClaw</span>
-          <span class="pill">Detection Engineering</span><span class="pill">Malware Analysis</span>
-          <span class="pill">Advisories</span><span class="pill">Mitigation</span>
+        <div class="filter-row">
+          <button class="topic-filter active" type="button" data-topic-filter="all">All</button>
+          {topic_buttons}
+        </div>
+        <div class="filter-row">
+          <label for="post-sort">Sort</label>
+          <select id="post-sort">
+            <option value="latest">Latest</option>
+            <option value="oldest">Oldest</option>
+            <option value="severity">Severity</option>
+            <option value="reading">Reading Time</option>
+          </select>
         </div>
       </section>
-      <section class="grid" id="posts">
+      <section class="section-heading">
+        <p class="eyebrow">Latest posts</p>
+        <h2>Research, advisories, detections, and mitigation notes</h2>
+      </section>
+      <section class="post-list" id="posts" aria-live="polite">
         {cards_html}
         <aside class="card">
           <p class="eyebrow">Operator feed</p>
@@ -784,10 +1064,12 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     feed_items = []
     rss_items = []
     for post in posts:
+        post = _normalize_post(post)
         slug = str(post["slug"])
         url = _post_url(slug)
         if post.get("body_markdown"):
             _post_html_path(slug, paths).write_text(_render_post_html(post), encoding="utf-8")
+            _write_json(_post_json_path(slug, paths), post)
         summary = _post_summary(post)
         feed_items.append(
             {
@@ -798,6 +1080,10 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
                 "date_published": post.get("published_at"),
                 "date_modified": post.get("updated_at"),
                 "tags": post.get("tags") or post.get("categories") or [],
+                "authors": [{"name": _post_author(post)}],
+                "reading_time_minutes": _post_reading_time(post),
+                "severity": post.get("severity"),
+                "affected_packages": post.get("affected_packages", []),
             }
         )
         rss_items.append(

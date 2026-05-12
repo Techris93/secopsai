@@ -37,8 +37,14 @@ def main() -> int:
 
     if "mini-shai-hulud-emergency-advisory.html" not in index:
         raise AssertionError("index does not link the Mini Shai-Hulud post")
+    for marker in ["Security Research & Advisories", "Featured research", "Latest posts", "data-topic-filter", "post-sort"]:
+        if marker not in index:
+            raise AssertionError(f"blog index missing advanced blog marker: {marker}")
     if "data-comments" not in post:
         raise AssertionError("post does not include comments scaffold")
+    for marker in ["Operator commands", "Affected artifacts", "References", "Executive summary"]:
+        if marker not in post:
+            raise AssertionError(f"post page missing intelligence section: {marker}")
     if "data-turnstile" not in post:
         raise AssertionError("post comments form must include the Turnstile mount point")
     if not feed_json.get("items"):
@@ -47,6 +53,10 @@ def main() -> int:
         raise AssertionError("RSS feed must include a browser-readable stylesheet")
     if not feed_json["items"][0].get("summary"):
         raise AssertionError("JSON feed items must include summaries")
+    if not feed_json["items"][0].get("authors"):
+        raise AssertionError("JSON feed items must include author metadata")
+    if not feed_json["items"][0].get("reading_time_minutes"):
+        raise AssertionError("JSON feed items must include reading-time metadata")
     if "Raw JSON" not in json_landing:
         raise AssertionError("JSON feed landing page must link to the raw JSON endpoint")
     if "post-search" not in blog_js:

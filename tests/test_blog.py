@@ -40,6 +40,17 @@ class BlogPublishingTests(unittest.TestCase):
             self.assertTrue((paths.root / "feed.xml").exists())
             feed = json.loads((paths.root / "feed.json").read_text(encoding="utf-8"))
             self.assertEqual(feed["items"][0]["title"], "Unit supply-chain campaign")
+            self.assertEqual(feed["items"][0]["authors"][0]["name"], "SecOpsAI Threat Research")
+            self.assertEqual(feed["items"][0]["severity"], "critical")
+            self.assertGreaterEqual(feed["items"][0]["reading_time_minutes"], 1)
+            index = (paths.root / "index.html").read_text(encoding="utf-8")
+            post_html = Path(published["post_path"]).read_text(encoding="utf-8")
+            self.assertIn("Featured research", index)
+            self.assertIn("data-topic-filter", index)
+            self.assertIn("post-sort", index)
+            self.assertIn("Operator commands", post_html)
+            self.assertIn("Affected artifacts", post_html)
+            self.assertIn("References", post_html)
 
     def test_draft_finding_redacts_token_like_values(self):
         with tempfile.TemporaryDirectory() as temp_dir:

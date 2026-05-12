@@ -29,7 +29,7 @@
     </header>
     <main class="shell">
       <section class="hero">
-        <p class="eyebrow">Live advisories • detections • mitigation</p>
+        <p class="eyebrow">Security Research & Advisories</p>
         <h1>Security intelligence operators can act on quickly.</h1>
         <p class="lede">Fast incident posts from the SecOpsAI side of the console:
           affected packages, IOCs, detection logic, mitigations, timelines,
@@ -39,22 +39,90 @@
           <a class="button secondary" href="/json-feed">JSON Feed</a>
         </div>
       </section>
-      <section class="filters card" aria-label="Search posts">
-        <input id="post-search" type="search" placeholder="Search posts, tags, ecosystems, packages, or IOCs..." />
-        <div class="tags">
-          <span class="pill">Supply Chain</span><span class="pill">OpenClaw</span>
-          <span class="pill">Detection Engineering</span><span class="pill">Malware Analysis</span>
-          <span class="pill">Advisories</span><span class="pill">Mitigation</span>
-        </div>
-      </section>
-      <section class="grid" id="posts">
-        <a class="card post-card" href="/posts/mini-shai-hulud-emergency-advisory.html" data-search="mini shai-hulud crosses npm and pypi: advisory protection for removed artifacts mini shai-hulud affected npm and pypi packages, including removed artifacts that now receive source-backed secopsai advisory detections. @opensearch-project/opensearch mistralai guardrails-ai @squawk/mcp @squawk/airport-data git-tanstack.com/transformers.pyz 83.142.209.194/transformers.pyz /tmp/transformers.pyz router_init.js setup.mjs">
+      <section class="featured-grid" aria-label="Featured security research">
+        <a class="featured-card" href="/posts/mini-shai-hulud-emergency-advisory.html">
+          <p class="eyebrow">Featured research</p>
+          <h2>Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts</h2>
+          <p>Mini Shai-Hulud affected npm and PyPI packages, including removed artifacts that now receive source-backed SecOpsAI advisory detections.</p>
           <div class="meta">
             <span class="pill critical">Critical</span>
-            <span>2026-05-12T00:00:00Z</span>
+            <span>SecOpsAI Threat Research</span>
+            <span>4 min read</span>
+          </div>
+        </a>
+        <aside class="card intelligence-card">
+          <p class="eyebrow">Operator intelligence model</p>
+          <h2>Source-backed. Detection-aware. Mitigation-first.</h2>
+          <p>Every published post is designed to connect external reporting, SecOpsAI detections, IOCs, and concrete response commands.</p>
+        </aside>
+      </section>
+      <section class="topic-strip" aria-label="Security topics">
+        <article class="topic-card">
+          <p class="eyebrow">Threat Intelligence</p>
+          <p>0 posts with SecOpsAI context, detections, or operator guidance.</p>
+        </article>
+<article class="topic-card">
+          <p class="eyebrow">Supply Chain</p>
+          <p>1 posts with SecOpsAI context, detections, or operator guidance.</p>
+        </article>
+<article class="topic-card">
+          <p class="eyebrow">Detection Engineering</p>
+          <p>1 posts with SecOpsAI context, detections, or operator guidance.</p>
+        </article>
+<article class="topic-card">
+          <p class="eyebrow">Mitigation</p>
+          <p>1 posts with SecOpsAI context, detections, or operator guidance.</p>
+        </article>
+<article class="topic-card">
+          <p class="eyebrow">OpenClaw</p>
+          <p>0 posts with SecOpsAI context, detections, or operator guidance.</p>
+        </article>
+<article class="topic-card">
+          <p class="eyebrow">Product Updates</p>
+          <p>0 posts with SecOpsAI context, detections, or operator guidance.</p>
+        </article>
+      </section>
+      <section class="filters card" aria-label="Search and filter posts">
+        <input id="post-search" type="search" placeholder="Search posts, tags, ecosystems, packages, or IOCs..." />
+        <div class="filter-row">
+          <button class="topic-filter active" type="button" data-topic-filter="all">All</button>
+          <button class="topic-filter" type="button" data-topic-filter="threat intelligence">Threat Intelligence</button>
+<button class="topic-filter" type="button" data-topic-filter="supply chain">Supply Chain</button>
+<button class="topic-filter" type="button" data-topic-filter="detection engineering">Detection Engineering</button>
+<button class="topic-filter" type="button" data-topic-filter="mitigation">Mitigation</button>
+<button class="topic-filter" type="button" data-topic-filter="openclaw">OpenClaw</button>
+<button class="topic-filter" type="button" data-topic-filter="product updates">Product Updates</button>
+        </div>
+        <div class="filter-row">
+          <label for="post-sort">Sort</label>
+          <select id="post-sort">
+            <option value="latest">Latest</option>
+            <option value="oldest">Oldest</option>
+            <option value="severity">Severity</option>
+            <option value="reading">Reading Time</option>
+          </select>
+        </div>
+      </section>
+      <section class="section-heading">
+        <p class="eyebrow">Latest posts</p>
+        <h2>Research, advisories, detections, and mitigation notes</h2>
+      </section>
+      <section class="post-list" id="posts" aria-live="polite">
+        <a class="card post-card" href="/posts/mini-shai-hulud-emergency-advisory.html"
+          data-search="mini shai-hulud crosses npm and pypi: advisory protection for removed artifacts mini shai-hulud affected npm and pypi packages, including removed artifacts that now receive source-backed secopsai advisory detections. @opensearch-project/opensearch mistralai guardrails-ai @squawk/mcp @squawk/airport-data git-tanstack.com/transformers.pyz 83.142.209.194/transformers.pyz /tmp/transformers.pyz router_init.js setup.mjs https://www.ox.security/blog/shai-hulud-here-we-go-again-170-packages-hit-across-npm-pypi/ https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack supply chain advisories detection engineering mitigation"
+          data-topic="supply chain advisories detection engineering mitigation"
+          data-severity="4"
+          data-date="2026-05-12T00:00:00Z"
+          data-reading="4">
+          <div class="meta">
+            <span class="pill critical">Critical</span>
+            <span>SecOpsAI Threat Research</span>
+            <span>4 min read</span>
+            <span>2026-05-12</span>
           </div>
           <h2>Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts</h2>
           <p>Mini Shai-Hulud affected npm and PyPI packages, including removed artifacts that now receive source-backed SecOpsAI advisory detections.</p>
+          <p class="artifact-line">@opensearch-project/opensearch mistralai guardrails-ai @squawk/mcp @squawk/airport-data</p>
           <div class="tags"><span class="pill">Supply Chain</span> <span class="pill">Advisories</span> <span class="pill">Detection Engineering</span> <span class="pill">Mitigation</span></div>
         </a>
         <aside class="card">
