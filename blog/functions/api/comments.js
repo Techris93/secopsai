@@ -69,6 +69,12 @@ export async function onRequestGet({request, env}) {
 }
 
 export async function onRequestPost({request, env}) {
+  const contentLength = Number(request.headers.get("content-length") || "0");
+  if (contentLength > 16384) return json({ok: false, error: "payload too large"}, {status: 413});
+  const contentType = request.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    return json({ok: false, error: "content-type must be application/json"}, {status: 415});
+  }
   let payload;
   try {
     payload = await request.json();

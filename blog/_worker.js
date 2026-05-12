@@ -4,6 +4,10 @@ const json = (payload, init = {}) =>
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "strict-origin-when-cross-origin",
+      "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
       ...(init.headers || {}),
     },
   });
@@ -66,6 +70,12 @@ const commentsGet = async (request, env) => {
 };
 
 const commentsPost = async (request, env) => {
+  const contentLength = Number(request.headers.get("content-length") || "0");
+  if (contentLength > 16384) return json({ok: false, error: "payload too large"}, {status: 413});
+  const contentType = request.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    return json({ok: false, error: "content-type must be application/json"}, {status: 415});
+  }
   let payload;
   try {
     payload = await request.json();
@@ -112,9 +122,23 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/comments") {
+      if (request.method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: {
+            "cache-control": "no-store",
+            "content-type": "application/json; charset=utf-8",
+            "x-content-type-options": "nosniff",
+          },
+        });
+      }
       if (request.method === "GET") return commentsGet(request, env);
       if (request.method === "POST") return commentsPost(request, env);
       return json({ok: false, error: "method not allowed"}, {status: 405});
+    }
+    if (url.pathname === "/feed.json" && request.headers.get("accept")?.includes("text/html")) {
+      const landing = new URL("/json-feed", request.url);
+      return env.ASSETS.fetch(new Request(landing, request));
     }
     return env.ASSETS.fetch(request);
   },

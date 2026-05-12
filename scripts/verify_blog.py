@@ -25,7 +25,9 @@ def main() -> int:
     index = require(BLOG / "index.html")
     post = require(BLOG / "posts" / "mini-shai-hulud-emergency-advisory.html")
     feed_json = json.loads(require(BLOG / "feed.json"))
-    ET.fromstring(require(BLOG / "feed.xml"))
+    feed_xml = require(BLOG / "feed.xml")
+    ET.fromstring(feed_xml.split("?>", 2)[-1] if "<?xml-stylesheet" in feed_xml else feed_xml)
+    json_landing = require(BLOG / "json-feed.html")
     require(BLOG / "assets" / "blog.css")
     comments_js = require(BLOG / "assets" / "comments.js")
     comments_api = require(BLOG / "functions" / "api" / "comments.js")
@@ -38,14 +40,24 @@ def main() -> int:
         raise AssertionError("post does not include comments scaffold")
     if not feed_json.get("items"):
         raise AssertionError("JSON feed has no items")
+    if "<?xml-stylesheet" not in feed_xml:
+        raise AssertionError("RSS feed must include a browser-readable stylesheet")
+    if not feed_json["items"][0].get("summary"):
+        raise AssertionError("JSON feed items must include summaries")
+    if "Raw JSON" not in json_landing:
+        raise AssertionError("JSON feed landing page must link to the raw JSON endpoint")
     if "textContent" not in comments_js:
         raise AssertionError("comments client must render text safely")
     if "status=eq.approved" not in comments_api or "status: \"pending\"" not in comments_api:
         raise AssertionError("comments API must enforce pending writes and approved reads")
     if "SUPABASE_SERVICE_ROLE_KEY" not in comments_api:
         raise AssertionError("comments API must require the service-role secret")
-    if "/api/comments" not in worker or "env.ASSETS.fetch" not in worker:
+    if "/api/comments" not in worker or "env.ASSETS.fetch" not in worker or "/json-feed" not in worker:
         raise AssertionError("Pages worker must route comments API and static assets")
+    if "payload too large" not in worker or "content-type must be application/json" not in worker:
+        raise AssertionError("comments worker must reject oversized and non-JSON submissions")
+    if "default-src 'none'" not in worker:
+        raise AssertionError("comments worker JSON responses must include defensive security headers")
     print("blog verification passed")
     return 0
 

@@ -514,14 +514,16 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     <title>{title} | SecOpsAI Security Blog</title>
     <meta name="description" content="{summary}" />
     <link rel="canonical" href="{_post_url(slug)}" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
     <header class="topbar">
       <nav class="shell nav">
         <a class="brand" href="/">
-          <span class="brand-mark">S</span>
+          <img class="brand-mark" src="/assets/favicon.svg" alt="SecOpsAI shield icon" />
           <span class="brand-title"><span>SecOpsAI</span><span>Security Blog</span></span>
         </a>
         <div class="nav-links">
@@ -644,21 +646,23 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
     <link rel="canonical" href="{BASE_URL}/" />
     <link rel="alternate" type="application/rss+xml" title="SecOpsAI Security Blog RSS" href="/feed.xml" />
     <link rel="alternate" type="application/feed+json" title="SecOpsAI Security Blog JSON Feed" href="/feed.json" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
     <header class="topbar">
       <nav class="shell nav">
         <a class="brand" href="/">
-          <span class="brand-mark">S</span>
+          <img class="brand-mark" src="/assets/favicon.svg" alt="SecOpsAI shield icon" />
           <span class="brand-title"><span>SecOpsAI</span><span>Security Blog</span></span>
         </a>
         <div class="nav-links">
           <a href="https://secopsai.dev/">Platform</a>
           <a href="https://docs.secopsai.dev/">Docs</a>
           <a href="/feed.xml">RSS</a>
-          <a href="/feed.json">JSON Feed</a>
+          <a href="/json-feed">JSON Feed</a>
         </div>
       </nav>
     </header>
@@ -671,7 +675,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
           and source-backed updates.</p>
         <div class="feed-actions">
           <a class="button" href="/feed.xml">Subscribe by RSS</a>
-          <a class="button secondary" href="/feed.json">JSON Feed</a>
+          <a class="button secondary" href="/json-feed">JSON Feed</a>
         </div>
       </section>
       <section class="filters card" aria-label="Search posts">
@@ -718,6 +722,72 @@ def _rss_date(value: str) -> str:
         return email.utils.formatdate(time.time(), usegmt=True)
 
 
+def _post_summary(post: Dict[str, Any]) -> str:
+    summary = str(post.get("summary") or "").strip()
+    if summary:
+        return redact(summary)
+    body = str(post.get("body_markdown") or "")
+    body = re.sub(r"```.*?```", " ", body, flags=re.DOTALL)
+    body = re.sub(r"^#+\s*", "", body, flags=re.MULTILINE)
+    body = re.sub(r"\s+", " ", body).strip()
+    return redact(body[:220])
+
+
+def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
+    items = "\n".join(
+        f"""<article class="card">
+          <p class="eyebrow">{html.escape(str(post.get("updated_at", "")))}</p>
+          <h2><a href="/posts/{html.escape(str(post["slug"]))}.html">{html.escape(redact(post.get("title", "")))}</a></h2>
+          <p>{html.escape(_post_summary(post))}</p>
+        </article>"""
+        for post in posts
+    )
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SecOpsAI JSON Feed</title>
+    <meta name="description" content="Human-readable overview of the SecOpsAI JSON Feed." />
+    <link rel="canonical" href="{BASE_URL}/json-feed" />
+    <link rel="alternate" type="application/feed+json" title="SecOpsAI Security Blog JSON Feed" href="/feed.json" />
+    <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="stylesheet" href="/assets/blog.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <nav class="shell nav">
+        <a class="brand" href="/">
+          <img class="brand-mark" src="/assets/favicon.svg" alt="SecOpsAI shield icon" />
+          <span class="brand-title"><span>SecOpsAI</span><span>JSON Feed</span></span>
+        </a>
+        <div class="nav-links">
+          <a href="/">Blog Home</a>
+          <a href="/feed.json">Raw JSON</a>
+          <a href="/feed.xml">RSS</a>
+        </div>
+      </nav>
+    </header>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Programmatic feed</p>
+        <h1>SecOpsAI JSON Feed</h1>
+        <p class="lede">This page makes the JSON feed readable in a browser.
+          Feed readers and API clients can use the raw JSON endpoint.</p>
+        <div class="feed-actions">
+          <a class="button" href="/feed.json">Open raw JSON</a>
+          <a class="button secondary" href="/feed.xml">Open RSS</a>
+        </div>
+      </section>
+      <section class="grid">{items}</section>
+    </main>
+  </body>
+</html>
+"""
+
+
 def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     paths = paths or BlogPaths()
     posts = _load_posts(paths)
@@ -729,12 +799,13 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
         url = _post_url(slug)
         if post.get("body_markdown"):
             _post_html_path(slug, paths).write_text(_render_post_html(post), encoding="utf-8")
+        summary = _post_summary(post)
         feed_items.append(
             {
                 "id": url,
                 "url": url,
                 "title": redact(post.get("title", "")),
-                "summary": redact(post.get("summary", "")),
+                "summary": summary,
                 "date_published": post.get("published_at"),
                 "date_modified": post.get("updated_at"),
                 "tags": post.get("tags") or post.get("categories") or [],
@@ -746,9 +817,10 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
       <link>{url}</link>
       <guid>{url}</guid>
       <pubDate>{_rss_date(str(post.get('published_at') or post.get('updated_at') or ''))}</pubDate>
-      <description>{html.escape(redact(post.get('summary', '')))}</description>
+      <description>{html.escape(summary)}</description>
     </item>"""
         )
+    (paths.root / "json-feed.html").write_text(_render_json_feed_landing(posts), encoding="utf-8")
     _write_json(
         paths.root / "feed.json",
         {
@@ -763,6 +835,7 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     rss_body = "\n".join(rss_items)
     rss_xml = (
         '<?xml version="1.0" encoding="UTF-8" ?>\n'
+        '<?xml-stylesheet type="text/xsl" href="/rss.xsl" ?>\n'
         '<rss version="2.0">\n'
         '  <channel>\n'
         '    <title>SecOpsAI Security Blog</title>\n'
@@ -780,6 +853,7 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
         "posts": len(posts),
         "paths": [
             str(paths.root / "index.html"),
+            str(paths.root / "json-feed.html"),
             str(paths.root / "feed.json"),
             str(paths.root / "feed.xml"),
         ],

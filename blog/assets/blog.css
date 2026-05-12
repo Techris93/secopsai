@@ -63,15 +63,12 @@ a {
 }
 
 .brand-mark {
-  display: grid;
-  place-items: center;
   width: 42px;
   height: 42px;
   border-radius: 14px;
-  background: linear-gradient(135deg, rgba(45, 212, 168, 0.24), rgba(103, 232, 249, 0.12));
-  border: 1px solid rgba(45, 212, 168, 0.32);
-  font-weight: 900;
-  letter-spacing: -0.08em;
+  display: block;
+  object-fit: contain;
+  box-shadow: 0 12px 32px rgba(216, 27, 96, 0.22);
 }
 
 .brand-title {
