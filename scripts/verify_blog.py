@@ -29,6 +29,7 @@ def main() -> int:
     require(BLOG / "assets" / "blog.css")
     comments_js = require(BLOG / "assets" / "comments.js")
     comments_api = require(BLOG / "functions" / "api" / "comments.js")
+    worker = require(BLOG / "_worker.js")
     require(BLOG / "favicon.svg")
 
     if "mini-shai-hulud-emergency-advisory.html" not in index:
@@ -43,6 +44,8 @@ def main() -> int:
         raise AssertionError("comments API must enforce pending writes and approved reads")
     if "SUPABASE_SERVICE_ROLE_KEY" not in comments_api:
         raise AssertionError("comments API must require the service-role secret")
+    if "/api/comments" not in worker or "env.ASSETS.fetch" not in worker:
+        raise AssertionError("Pages worker must route comments API and static assets")
     print("blog verification passed")
     return 0
 
