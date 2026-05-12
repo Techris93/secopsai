@@ -9,8 +9,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title><xsl:value-of select="/rss/channel/title" /></title>
         <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-        <style>
+                <style>
           :root { color-scheme: dark; }
           body {
             margin: 0;
@@ -49,7 +48,7 @@
       <body>
         <main>
           <div class="brand">
-            <img src="/assets/favicon.svg" alt="SecOpsAI shield icon" />
+            <img src="/assets/favicon-512.png" alt="SecOpsAI icon" />
             <span class="eyebrow">RSS Feed</span>
           </div>
           <h1><xsl:value-of select="/rss/channel/title" /></h1>

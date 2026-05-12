@@ -515,7 +515,6 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     <meta name="description" content="{summary}" />
     <link rel="canonical" href="{_post_url(slug)}" />
     <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
@@ -523,7 +522,7 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     <header class="topbar">
       <nav class="shell nav">
         <a class="brand" href="/">
-          <img class="brand-mark" src="/assets/favicon.svg" alt="SecOpsAI shield icon" />
+          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
           <span class="brand-title"><span>SecOpsAI</span><span>Security Blog</span></span>
         </a>
         <div class="nav-links">
@@ -555,6 +554,7 @@ def _render_post_html(post: Dict[str, Any]) -> str:
             <textarea name="body" maxlength="2000"
               placeholder="Add source-backed context, a mitigation note, or a question..."
               required></textarea>
+            <div class="turnstile-slot" data-turnstile></div>
             <button type="submit">Submit for moderation</button>
             <p data-comment-status></p>
           </form>
@@ -647,7 +647,6 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
     <link rel="alternate" type="application/rss+xml" title="SecOpsAI Security Blog RSS" href="/feed.xml" />
     <link rel="alternate" type="application/feed+json" title="SecOpsAI Security Blog JSON Feed" href="/feed.json" />
     <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
@@ -655,7 +654,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
     <header class="topbar">
       <nav class="shell nav">
         <a class="brand" href="/">
-          <img class="brand-mark" src="/assets/favicon.svg" alt="SecOpsAI shield icon" />
+          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
           <span class="brand-title"><span>SecOpsAI</span><span>Security Blog</span></span>
         </a>
         <div class="nav-links">
@@ -699,16 +698,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
     <footer class="footer">
       <div class="shell">SecOpsAI Security Blog • Local-first intelligence, source-backed actions.</div>
     </footer>
-    <script>
-      const search = document.querySelector("#post-search");
-      const cards = [...document.querySelectorAll("[data-search]")];
-      search?.addEventListener("input", () => {{
-        const term = search.value.trim().toLowerCase();
-        for (const card of cards) {{
-          card.style.display = card.dataset.search.includes(term) ? "" : "none";
-        }}
-      }});
-    </script>
+    <script src="/assets/blog.js" defer></script>
   </body>
 </html>
 """
@@ -752,7 +742,6 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
     <link rel="canonical" href="{BASE_URL}/json-feed" />
     <link rel="alternate" type="application/feed+json" title="SecOpsAI Security Blog JSON Feed" href="/feed.json" />
     <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
@@ -760,7 +749,7 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
     <header class="topbar">
       <nav class="shell nav">
         <a class="brand" href="/">
-          <img class="brand-mark" src="/assets/favicon.svg" alt="SecOpsAI shield icon" />
+          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
           <span class="brand-title"><span>SecOpsAI</span><span>JSON Feed</span></span>
         </a>
         <div class="nav-links">

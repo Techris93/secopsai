@@ -7,7 +7,6 @@
     <meta name="description" content="Mini Shai-Hulud affected npm and PyPI packages, including removed artifacts that now receive source-backed SecOpsAI advisory detections." />
     <link rel="canonical" href="https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html" />
     <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
@@ -15,7 +14,7 @@
     <header class="topbar">
       <nav class="shell nav">
         <a class="brand" href="/">
-          <img class="brand-mark" src="/assets/favicon.svg" alt="SecOpsAI shield icon" />
+          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
           <span class="brand-title"><span>SecOpsAI</span><span>Security Blog</span></span>
         </a>
         <div class="nav-links">
@@ -98,6 +97,7 @@ secopsai supply-chain reconcile-history --include-advisories</code></pre>
             <textarea name="body" maxlength="2000"
               placeholder="Add source-backed context, a mitigation note, or a question..."
               required></textarea>
+            <div class="turnstile-slot" data-turnstile></div>
             <button type="submit">Submit for moderation</button>
             <p data-comment-status></p>
           </form>

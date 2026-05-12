@@ -45,8 +45,10 @@ Comments are handled by a Cloudflare Pages Function and Supabase. Required Cloud
 - `SUPABASE_SERVICE_ROLE_KEY`
 - Optional `BLOG_COMMENTS_TABLE`, default `blog_comments`
 - Optional `BLOG_COMMENT_IP_SALT`
+- Optional `TURNSTILE_SITE_KEY`
+- Optional `TURNSTILE_SECRET_KEY`
 
-The comments API stores new comments as `pending`, returns only `approved` comments, hashes IP hints, and renders text safely in the browser.
+The comments API stores new comments as `pending`, returns only `approved` comments, hashes IP hints, and renders text safely in the browser. When `TURNSTILE_SECRET_KEY` is configured, comment POSTs must pass Cloudflare Turnstile verification before they are written to Supabase.
 
 Health check:
 

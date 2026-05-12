@@ -6,6 +6,9 @@
   const list = root.querySelector("[data-comment-list]");
   const form = root.querySelector("[data-comment-form]");
   const status = root.querySelector("[data-comment-status]");
+  const turnstileSlot = root.querySelector("[data-turnstile]");
+  let turnstileSiteKey = "";
+  let turnstileWidgetId = null;
 
   const renderComment = (comment) => {
     const item = document.createElement("article");
@@ -39,12 +42,56 @@
     }
   };
 
+  const loadScript = (src) =>
+    new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[src="${src}"]`);
+      if (existing) {
+        existing.addEventListener("load", resolve, {once: true});
+        if (window.turnstile) resolve();
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = src;
+      script.async = true;
+      script.defer = true;
+      script.addEventListener("load", resolve, {once: true});
+      script.addEventListener("error", reject, {once: true});
+      document.head.appendChild(script);
+    });
+
+  const configureTurnstile = async () => {
+    if (!turnstileSlot) return;
+    try {
+      const response = await fetch("/api/comments?config=1");
+      const config = await response.json();
+      turnstileSiteKey = config.turnstile_site_key || "";
+      if (!turnstileSiteKey) {
+        turnstileSlot.hidden = true;
+        return;
+      }
+      await loadScript("https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit");
+      if (window.turnstile) {
+        turnstileWidgetId = window.turnstile.render(turnstileSlot, {sitekey: turnstileSiteKey});
+      }
+    } catch {
+      turnstileSlot.textContent = "Comment spam check is temporarily unavailable.";
+    }
+  };
+
   form?.addEventListener("submit", async (event) => {
     event.preventDefault();
     status.textContent = "Submitting...";
     const data = new FormData(form);
     const body = Object.fromEntries(data.entries());
     body.slug = slug;
+    if (turnstileSiteKey) {
+      const token = window.turnstile?.getResponse(turnstileWidgetId);
+      if (!token) {
+        status.textContent = "Please complete the anti-spam check.";
+        return;
+      }
+      body.turnstileToken = token;
+    }
     try {
       const response = await fetch("/api/comments", {
         method: "POST",
@@ -54,11 +101,13 @@
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw new Error(payload.error || "comment rejected");
       form.reset();
+      if (turnstileWidgetId !== null) window.turnstile?.reset(turnstileWidgetId);
       status.textContent = "Thanks. Your comment is queued for moderation.";
     } catch (error) {
       status.textContent = `Could not submit comment: ${error.message}`;
     }
   });
 
+  await configureTurnstile();
   await loadComments();
 })();

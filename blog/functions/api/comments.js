@@ -11,6 +11,7 @@ const json = (payload, init = {}) =>
 const clean = (value, max) => String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
 const validSlug = (value) => /^[a-z0-9][a-z0-9-]{1,158}[a-z0-9]$/.test(value);
 const configured = (env) => Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY);
+const turnstileRequired = (env) => Boolean(env.TURNSTILE_SECRET_KEY);
 
 const sha256 = async (value) => {
   const bytes = new TextEncoder().encode(value);
@@ -36,6 +37,28 @@ const supabaseRequest = async (env, path, init = {}) => {
   });
 };
 
+const verifyTurnstile = async (request, env, token) => {
+  if (!turnstileRequired(env)) return true;
+  const responseToken = clean(token, 2048);
+  if (!responseToken) return false;
+  const form = new FormData();
+  form.append("secret", env.TURNSTILE_SECRET_KEY);
+  form.append("response", responseToken);
+  const ip = clean(request.headers.get("cf-connecting-ip"), 80);
+  if (ip) form.append("remoteip", ip);
+  try {
+    const response = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      body: form,
+    });
+    if (!response.ok) return false;
+    const result = await response.json();
+    return Boolean(result.success);
+  } catch {
+    return false;
+  }
+};
+
 export async function onRequestGet({request, env}) {
   const url = new URL(request.url);
   if (url.searchParams.get("health") === "1") {
@@ -49,7 +72,17 @@ export async function onRequestGet({request, env}) {
       optional_missing: [
         ...(!env.BLOG_COMMENTS_TABLE ? ["BLOG_COMMENTS_TABLE"] : []),
         ...(!env.BLOG_COMMENT_IP_SALT ? ["BLOG_COMMENT_IP_SALT"] : []),
+        ...(!env.TURNSTILE_SITE_KEY ? ["TURNSTILE_SITE_KEY"] : []),
+        ...(!env.TURNSTILE_SECRET_KEY ? ["TURNSTILE_SECRET_KEY"] : []),
       ],
+      turnstile_required: turnstileRequired(env),
+    });
+  }
+  if (url.searchParams.get("config") === "1") {
+    return json({
+      ok: true,
+      turnstile_site_key: clean(env.TURNSTILE_SITE_KEY, 200),
+      turnstile_required: turnstileRequired(env),
     });
   }
   const slug = clean(url.searchParams.get("slug"), 160);
@@ -95,6 +128,9 @@ export async function onRequestPost({request, env}) {
   }
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     return json({ok: false, error: "invalid email"}, {status: 400});
+  }
+  if (!(await verifyTurnstile(request, env, payload.turnstileToken))) {
+    return json({ok: false, error: "turnstile verification failed"}, {status: 403});
   }
 
   try {

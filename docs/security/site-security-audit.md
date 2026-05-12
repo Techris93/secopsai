@@ -9,6 +9,10 @@ Scope:
 - Blog site: `https://blog.secopsai.dev/`
 - Local code: `www/`, `website/`, `docs/`, `blog/`, `secopsai/blog.py`, `scripts/verify_blog.py`
 
+Branding note:
+
+- The canonical public icon was restored to the previous `www.secopsai.dev` PNG asset. The same hash is now used for website, docs, and blog favicon/apple-touch assets, and the blog header brand mark uses that icon.
+
 ## 1. Vulnerability Summary
 
 - Critical: 0
@@ -36,7 +40,7 @@ Scope:
 - Exploitation scenario: An anonymous user sends oversized request bodies or non-JSON payloads repeatedly to increase worker/Supabase pressure.
 - Impact: Low-cost resource abuse against the comments endpoint.
 - Recommended fix: Enforce a small content length limit, require `application/json`, keep strict field length checks, and add rate limiting/Turnstile for public scale.
-- Fix status: Partially fixed now. Content length and content type checks were added. Rate limiting/Turnstile remains recommended if the blog receives public comment spam.
+- Fix status: Fixed now. Content length and content type checks were added, and optional Cloudflare Turnstile verification is enforced whenever `TURNSTILE_SECRET_KEY` is configured.
 
 ### Main website depends on runtime Tailwind CDN and inline scripts/styles
 
@@ -46,7 +50,7 @@ Scope:
 - Exploitation scenario: If the CDN script is compromised, blocked, or maliciously modified upstream, the site trusts it at runtime. Inline script allowance also makes future XSS mistakes more dangerous.
 - Impact: Broader script execution surface on the main marketing site.
 - Recommended fix: Build Tailwind at deploy time, serve static CSS from `self`, move inline JavaScript to a static file, and replace `unsafe-inline` with nonces or hashes.
-- Fix status: Documented. Not changed in this pass to avoid a larger frontend build migration.
+- Fix status: Fixed now for runtime script risk. Tailwind is compiled into `www/assets/site-tailwind.css`, the runtime Tailwind CDN script was removed, page JavaScript was moved to `www/assets/site.js`, and `www/_headers` no longer allows CDN script/connect sources or `unsafe-inline` scripts. A small residual `style-src 'unsafe-inline'` allowance remains because the page still carries local inline custom CSS; removing that is a lower-risk follow-up because no inline script execution is allowed.
 
 ### Blog comments endpoint returned 405 to HEAD health checks
 
@@ -86,7 +90,7 @@ Scope:
 - Exploitation scenario: A bot submits many pending comments. They are not public, but they can create moderation load and Supabase write volume.
 - Impact: Moderation/operational load.
 - Recommended fix: Add Cloudflare Turnstile or a Workers KV/Durable Object/IP-rate limit if public comment volume increases.
-- Fix status: Documented. Existing mitigations remain pending-only comments, honeypot, strict validation, and body-size limits.
+- Fix status: Fixed now with staged Turnstile. The comments client fetches public Turnstile config, renders the widget when configured, and both Pages handlers verify the token against Cloudflare before writing pending comments when `TURNSTILE_SECRET_KEY` exists. Existing mitigations remain pending-only comments, honeypot, strict validation, and body-size limits.
 
 ## 3. Attack Chains
 
@@ -97,7 +101,7 @@ Scope:
 3. Comments stay `pending`, so there is no public XSS or content injection.
 4. Without edge rate limiting, the attacker can still create moderation and Supabase write pressure.
 
-Mitigations now in place: content-type checks, payload-size cap, field limits, honeypot, safe text rendering, pending-only writes, approved-only reads. Recommended next step: Turnstile or edge rate limiting.
+Mitigations now in place: content-type checks, payload-size cap, field limits, honeypot, safe text rendering, pending-only writes, approved-only reads, and optional Cloudflare Turnstile enforcement.
 
 ### Third-party script trust on main website
 
@@ -106,13 +110,13 @@ Mitigations now in place: content-type checks, payload-size cap, field limits, h
 3. If an upstream CDN or supply-chain path is compromised, injected JavaScript runs in the page context.
 4. Because the site is static and does not store credentials, impact is mainly visitor-side phishing/content manipulation.
 
-Recommended next step: build CSS locally and tighten CSP.
+Mitigations now in place: CSS is built locally, JavaScript is local, runtime CDN trust was removed, and `script-src` is restricted to `self`.
 
 ## 4. Secure Design Recommendations
 
 - Keep the blog comments API server-side only; never expose `SUPABASE_SERVICE_ROLE_KEY` to client code.
-- Add Turnstile or an edge rate limiter before enabling high-volume public comments.
-- Move the main website off runtime Tailwind CDN and into static compiled CSS.
+- Keep Turnstile configured for public comments, or add a Cloudflare edge rate limit if comment traffic grows.
+- Continue moving remaining main-site inline custom CSS into static files when convenient so `style-src 'unsafe-inline'` can also be removed.
 - Continue using `textContent` for comments and generated HTML escaping for posts/feeds.
 - Keep RSS/JSON feed generation deterministic and source-backed.
 - Keep public site headers aligned across `www`, `docs`, and `blog`.
@@ -126,9 +130,14 @@ Commands run:
 shasum -a 256 docs/assets/favicon.svg www/assets/favicon.svg blog/favicon.svg blog/assets/favicon.svg website/favicon.svg
 shasum -a 256 docs/assets/favicon-512.png www/assets/favicon-512.png blog/assets/favicon-512.png website/assets/favicon-512.png
 python3 -m secopsai.cli blog rebuild-feeds
+python3 scripts/verify_docs_examples.py
 node --check blog/_worker.js
 node --check blog/functions/api/comments.js
+node --check blog/assets/blog.js
+node --check blog/assets/comments.js
+node --check www/assets/site.js
 python3 scripts/verify_blog.py
+git diff --check
 curl -sS 'https://blog.secopsai.dev/api/comments?health=1'
 curl -sS -I https://secopsai.dev/
 curl -sS -I https://www.secopsai.dev/
@@ -158,5 +167,5 @@ Live checks after redeploy:
 
 Remaining manual/future steps:
 
-- Consider replacing runtime Tailwind CDN on `secopsai.dev` with build-time CSS.
-- Consider Turnstile or explicit edge rate limiting for comments if spam starts.
+- Configure `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` in the `secopsai-blog` Pages project to activate the widget and server-side challenge enforcement.
+- Consider moving the remaining inline custom CSS in `www/index.html` into a static CSS file so `style-src 'unsafe-inline'` can be removed too.

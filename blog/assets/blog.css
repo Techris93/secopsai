@@ -347,6 +347,15 @@ pre {
   background: rgba(255, 255, 255, 0.035);
 }
 
+.turnstile-slot {
+  min-height: 0;
+  margin: 10px 0;
+}
+
+.turnstile-slot:not([hidden]) {
+  display: block;
+}
+
 .footer {
   padding: 36px 0;
   color: var(--muted);

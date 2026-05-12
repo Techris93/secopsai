@@ -37,6 +37,8 @@ Required variables/secrets:
 - `SUPABASE_SERVICE_ROLE_KEY`: secret used only by the Pages Function
 - `BLOG_COMMENTS_TABLE`: optional, defaults to `blog_comments`
 - `BLOG_COMMENT_IP_SALT`: optional secret salt for one-way IP hashing
+- `TURNSTILE_SITE_KEY`: optional public Cloudflare Turnstile site key
+- `TURNSTILE_SECRET_KEY`: optional secret Turnstile key; when present, comment POSTs must pass Turnstile verification
 
 Wrangler setup:
 
@@ -47,6 +49,8 @@ wrangler pages secret put SUPABASE_URL --project-name secopsai-blog
 wrangler pages secret put SUPABASE_SERVICE_ROLE_KEY --project-name secopsai-blog
 wrangler pages secret put BLOG_COMMENT_IP_SALT --project-name secopsai-blog
 wrangler pages secret put BLOG_COMMENTS_TABLE --project-name secopsai-blog
+wrangler pages secret put TURNSTILE_SITE_KEY --project-name secopsai-blog
+wrangler pages secret put TURNSTILE_SECRET_KEY --project-name secopsai-blog
 ```
 
 Cloudflare UI setup:
@@ -55,7 +59,8 @@ Cloudflare UI setup:
 2. Add `SUPABASE_URL` as a variable or encrypted secret.
 3. Add encrypted secrets for `SUPABASE_SERVICE_ROLE_KEY` and `BLOG_COMMENT_IP_SALT`.
 4. Add `BLOG_COMMENTS_TABLE` only if you do not want the default `blog_comments`.
-5. Redeploy the latest Pages deployment.
+5. Optional but recommended: add Turnstile keys as encrypted secrets named `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`.
+6. Redeploy the latest Pages deployment.
 
 Suggested Supabase table:
 
@@ -84,7 +89,7 @@ Moderation workflow:
 3. Set safe comments to `approved`.
 4. Set rejected comments to `rejected`.
 
-The page renders comments with `textContent`, not raw HTML. The Pages Function stores a salted one-way IP hash hint rather than a raw IP address. For stronger rate limiting, add a Cloudflare Turnstile widget or a Workers KV/Durable Object counter before approving public traffic at scale.
+The page renders comments with `textContent`, not raw HTML. The Pages Function stores a salted one-way IP hash hint rather than a raw IP address. If `TURNSTILE_SECRET_KEY` is configured, the server verifies Cloudflare Turnstile before writing pending comments. If Turnstile is not configured, comments still work with moderation, honeypot, strict field limits, and payload-size checks.
 
 Health check:
 
