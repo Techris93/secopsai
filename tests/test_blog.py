@@ -48,7 +48,7 @@ class BlogPublishingTests(unittest.TestCase):
             finding = {
                 "finding_id": "SCM-UNIT",
                 "title": "Suspicious package",
-                "summary": "token=abc12345678901234567890 should be redacted",
+                "summary": "credential=UNIT_TEST_PLACEHOLDER_VALUE should be redacted",
                 "severity": "critical",
                 "severity_score": 98,
                 "status": "open",
@@ -57,14 +57,14 @@ class BlogPublishingTests(unittest.TestCase):
                 "first_seen": "2026-05-12T00:00:00Z",
                 "last_seen": "2026-05-12T00:00:00Z",
                 "event_ids": ["evt-1"],
-                "analysis": "api_key=abcdef1234567890abcdef should not render",
+                "analysis": "secret=UNIT_TEST_PLACEHOLDER_VALUE should not render",
             }
             soc_store.persist_findings([finding], "secopsai-supply-chain", db_path=db_path)
             payload = blog.draft_finding("SCM-UNIT", db_path=db_path, paths=paths)
             draft_text = Path(payload["draft_path"]).read_text(encoding="utf-8")
 
         self.assertIn("[REDACTED]", draft_text)
-        self.assertNotIn("abcdef1234567890abcdef", draft_text)
+        self.assertNotIn("UNIT_TEST_PLACEHOLDER_VALUE", draft_text)
 
     def test_comments_setup_status_reports_missing_without_values(self):
         payload = blog.comments_setup_status(["SUPABASE_URL"])
