@@ -154,16 +154,21 @@ Local checks passed:
 - Blog verifier passed.
 - Blog worker syntax passed.
 - Blog Pages Function syntax passed.
-- Canonical docs favicon hashes match copied website/blog assets.
+- Canonical previous `www.secopsai.dev` favicon hashes match copied website/docs/blog assets.
 
 Live checks after redeploy:
 
-- `https://blog.secopsai.dev/api/comments?health=1` returned JSON with `configured: true`.
+- Website redeployed to `https://d7eab1e0.website-bks.pages.dev`.
+- Docs redeployed to `https://55b40532.secopsai.pages.dev`.
+- Blog redeployed to `https://fcda3d4f.secopsai-blog.pages.dev`.
+- `https://blog.secopsai.dev/api/comments?health=1` returned JSON with `configured: true`, `turnstile_required: false`, and optional Turnstile keys missing until configured.
 - `HEAD /api/comments?health=1` returned `200`.
 - `https://blog.secopsai.dev/feed.xml` includes an RSS stylesheet and populated item description.
 - Browser-style requests to `https://blog.secopsai.dev/feed.json` return the human-readable JSON feed landing page.
 - Feed/API clients requesting JSON still receive the raw JSON feed.
-- `https://secopsai.dev/` includes the Blog navigation link and canonical docs favicon references.
+- `https://secopsai.dev/` includes the Blog navigation link, local `site-tailwind.css`, local `site.js`, and the canonical previous `www` favicon reference.
+- `https://docs.secopsai.dev/` includes the canonical previous `www` favicon and header mark.
+- `https://blog.secopsai.dev/` includes the canonical previous `www` favicon, brand mark, local blog script, and JSON Feed links.
 
 Remaining manual/future steps:
 
