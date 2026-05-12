@@ -29,6 +29,15 @@ from secopsai.agent_core import (
     run_isolated_job,
 )
 from secopsai.adaptive_response import evaluate_adaptive_response
+from secopsai.blog import (
+    comments_setup_status,
+    draft_advisory as draft_blog_advisory,
+    draft_daily as draft_blog_daily,
+    draft_finding as draft_blog_finding,
+    draft_news as draft_blog_news,
+    publish as publish_blog_post,
+    rebuild as rebuild_blog,
+)
 from secopsai.formatters import fmt_finding, fmt_list, to_json
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
 from secopsai.pipeline import refresh as refresh_pipeline
@@ -816,6 +825,29 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     research_package_cmd.add_argument("--session-id", default=None, help="Attach the report to an existing session")
     research_package_cmd.add_argument("--session-dir", default=None, help="Override session storage directory")
 
+    blog = sub.add_parser("blog", help="Draft, publish, and verify SecOpsAI security blog posts")
+    blog_sub = blog.add_subparsers(dest="blog_cmd", required=True)
+
+    blog_finding = blog_sub.add_parser("draft-finding", help="Create a moderated blog draft from one SOC finding")
+    blog_finding.add_argument("finding_id")
+    blog_finding.add_argument("--db-path", default=None, help="Override SQLite findings DB path")
+
+    blog_advisory = blog_sub.add_parser("draft-advisory", help="Create a moderated blog draft from an advisory")
+    blog_advisory.add_argument("--campaign", required=True, help="Campaign id or advisory id")
+
+    blog_news = blog_sub.add_parser("draft-news", help="Create a review-only blog draft from a URL or RSS feed")
+    blog_news.add_argument("--source", required=True, help="Source URL or feed URL")
+
+    blog_daily = blog_sub.add_parser("draft-daily", help="Automation-ready draft generation without autopublishing")
+    blog_daily.add_argument("--limit", type=int, default=5, help="Maximum advisory drafts to create")
+
+    blog_publish = blog_sub.add_parser("publish", help="Publish a reviewed draft and rebuild feeds")
+    blog_publish.add_argument("draft_or_slug", help="Path to draft JSON or draft slug")
+    blog_publish.add_argument("--publish", action="store_true", help="Required confirmation to write public files")
+
+    blog_sub.add_parser("rebuild-feeds", help="Rebuild blog index, RSS feed, and JSON feed from published metadata")
+    blog_sub.add_parser("comments-status", help="Report required comment env/secret names without printing values")
+
     intel = sub.add_parser("intel", help="Threat intelligence (IOC) pipeline")
     intel_sub = intel.add_subparsers(dest="intel_cmd", required=True)
 
@@ -1282,6 +1314,57 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print("OBSERVATIONS:")
                 for item in payload["observations"]:
                     print(f"- {item}")
+        return 0
+
+    if args.cmd == "blog":
+        try:
+            if args.blog_cmd == "draft-finding":
+                payload = draft_blog_finding(args.finding_id, db_path=args.db_path)
+            elif args.blog_cmd == "draft-advisory":
+                payload = draft_blog_advisory(args.campaign)
+            elif args.blog_cmd == "draft-news":
+                payload = draft_blog_news(args.source)
+            elif args.blog_cmd == "draft-daily":
+                payload = draft_blog_daily(limit=args.limit)
+            elif args.blog_cmd == "publish":
+                payload = publish_blog_post(args.draft_or_slug, confirm=args.publish)
+            elif args.blog_cmd == "rebuild-feeds":
+                payload = rebuild_blog()
+            else:
+                import os
+
+                payload = comments_setup_status(os.environ.keys())
+        except Exception as exc:
+            if args.json:
+                print(to_json({"error": str(exc)}))
+            else:
+                print(f"error: {exc}")
+            return 1
+
+        if args.json:
+            print(to_json(payload))
+        elif args.blog_cmd.startswith("draft"):
+            print(f"draft_path={payload.get('draft_path')}")
+            if payload.get("total") is not None:
+                print(f"total={payload['total']}")
+                for path in payload.get("created", []):
+                    print(f"- {path}")
+        elif args.blog_cmd == "publish":
+            print(f"published={payload['published']}")
+            if payload.get("message"):
+                print(payload["message"])
+            if payload.get("url"):
+                print(f"url={payload['url']}")
+        elif args.blog_cmd == "rebuild-feeds":
+            print(f"posts={payload['posts']}")
+            for path in payload["paths"]:
+                print(f"- {path}")
+        else:
+            print(f"configured={payload['configured']}")
+            if payload["required_missing"]:
+                print(f"required_missing={','.join(payload['required_missing'])}")
+            if payload["optional_missing"]:
+                print(f"optional_missing={','.join(payload['optional_missing'])}")
         return 0
 
     if args.cmd == "agent":
@@ -2528,7 +2611,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if payload.get("advisory_matches"):
                     print("advisory_matches:")
                     for match in payload["advisory_matches"]:
-                        print(f"- {match.get('advisory_id') or match.get('campaign_id')} confidence={match.get('confidence')} severity={match.get('severity')}")
+                        advisory_id = match.get("advisory_id") or match.get("campaign_id")
+                        print(
+                            f"- {advisory_id} confidence={match.get('confidence')} "
+                            f"severity={match.get('severity')}"
+                        )
                 if payload["matched_rules"]:
                     print("matched_rules:")
                     for rule in payload["matched_rules"]:

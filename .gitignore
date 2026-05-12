@@ -12,6 +12,9 @@ site/
 .venv/
 *.code-workspace
 .pytest_cache/
+.coverage
+coverage.xml
+.wrangler/
 .DS_Store
 
 # Local OpenClaw findings artifacts

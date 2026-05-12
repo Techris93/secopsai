@@ -27,8 +27,9 @@ def main() -> int:
     feed_json = json.loads(require(BLOG / "feed.json"))
     ET.fromstring(require(BLOG / "feed.xml"))
     require(BLOG / "assets" / "blog.css")
-    require(BLOG / "assets" / "comments.js")
-    require(BLOG / "functions" / "api" / "comments.js")
+    comments_js = require(BLOG / "assets" / "comments.js")
+    comments_api = require(BLOG / "functions" / "api" / "comments.js")
+    require(BLOG / "favicon.svg")
 
     if "mini-shai-hulud-emergency-advisory.html" not in index:
         raise AssertionError("index does not link the Mini Shai-Hulud post")
@@ -36,6 +37,12 @@ def main() -> int:
         raise AssertionError("post does not include comments scaffold")
     if not feed_json.get("items"):
         raise AssertionError("JSON feed has no items")
+    if "textContent" not in comments_js:
+        raise AssertionError("comments client must render text safely")
+    if "status=eq.approved" not in comments_api or "status: \"pending\"" not in comments_api:
+        raise AssertionError("comments API must enforce pending writes and approved reads")
+    if "SUPABASE_SERVICE_ROLE_KEY" not in comments_api:
+        raise AssertionError("comments API must require the service-role secret")
     print("blog verification passed")
     return 0
 

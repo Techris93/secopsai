@@ -38,6 +38,25 @@ Required variables/secrets:
 - `BLOG_COMMENTS_TABLE`: optional, defaults to `blog_comments`
 - `BLOG_COMMENT_IP_SALT`: optional secret salt for one-way IP hashing
 
+Wrangler setup:
+
+```bash
+# Wrangler stores these as encrypted Pages secrets. Paste values only into prompts;
+# do not echo them into shell history or commit them.
+wrangler pages secret put SUPABASE_URL --project-name secopsai-blog
+wrangler pages secret put SUPABASE_SERVICE_ROLE_KEY --project-name secopsai-blog
+wrangler pages secret put BLOG_COMMENT_IP_SALT --project-name secopsai-blog
+wrangler pages secret put BLOG_COMMENTS_TABLE --project-name secopsai-blog
+```
+
+Cloudflare UI setup:
+
+1. Open `Workers & Pages -> secopsai-blog -> Settings -> Variables and Secrets`.
+2. Add `SUPABASE_URL` as a variable or encrypted secret.
+3. Add encrypted secrets for `SUPABASE_SERVICE_ROLE_KEY` and `BLOG_COMMENT_IP_SALT`.
+4. Add `BLOG_COMMENTS_TABLE` only if you do not want the default `blog_comments`.
+5. Redeploy the latest Pages deployment.
+
 Suggested Supabase table:
 
 ```sql
@@ -67,12 +86,47 @@ Moderation workflow:
 
 The page renders comments with `textContent`, not raw HTML. The Pages Function stores a salted one-way IP hash hint rather than a raw IP address. For stronger rate limiting, add a Cloudflare Turnstile widget or a Workers KV/Durable Object counter before approving public traffic at scale.
 
+Health check:
+
+```bash
+curl https://blog.secopsai.dev/api/comments?health=1
+```
+
+`configured` must be `true` before public comment submission works.
+
+## Publishing Automation
+
+Blog publishing is draft-first. External news and generated finding/advisory posts require explicit publish confirmation.
+
+```bash
+# Create drafts.
+secopsai blog draft-finding <FINDING_ID>
+secopsai blog draft-advisory --campaign mini-shai-hulud
+secopsai blog draft-news --source https://example.com/security-feed.xml
+
+# Automation-friendly daily draft generation from local advisories.
+secopsai blog draft-daily --limit 5
+
+# Publish only after review.
+secopsai blog publish blog/drafts/<slug>.json --publish
+
+# Rebuild index, RSS, and JSON feeds from published post metadata.
+secopsai blog rebuild-feeds
+```
+
+Safety gates:
+
+- Drafts are JSON files under `blog/drafts/`.
+- `publish` does nothing public unless `--publish` is present.
+- Sensitive token-like values are redacted before rendering.
+- External news drafts store source URLs and require human review; they are not autopublished.
+
 ## Publishing From Advisories
 
 Generate a draft from an advisory campaign:
 
 ```bash
-python3 ../scripts/blog_draft_advisory.py --campaign mini-shai-hulud
+secopsai blog draft-advisory --campaign mini-shai-hulud
 ```
 
-Review the draft, convert it into `posts/<slug>.html`, then update `feed.xml`, `feed.json`, and `index.html`.
+Review the draft, then publish it with `secopsai blog publish blog/drafts/<slug>.json --publish`.

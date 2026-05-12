@@ -3,9 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Mini Shai-Hulud Emergency Advisory | SecOpsAI Security Blog</title>
-    <meta name="description" content="SecOpsAI emergency advisory coverage for Mini Shai-Hulud compromised npm and PyPI package versions." />
+    <title>Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts | SecOpsAI Security Blog</title>
+    <meta name="description" content="" />
     <link rel="canonical" href="https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
@@ -22,109 +23,68 @@
         </div>
       </nav>
     </header>
-
     <main class="shell post-layout">
       <article class="post-body">
-        <p class="eyebrow">Critical advisory • Mini Shai-Hulud • npm / PyPI</p>
+        <p class="eyebrow">critical • SecOpsAI intelligence</p>
         <h1>Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts</h1>
         <div class="meta">
           <span class="pill critical">Critical</span>
-          <span>First seen: 2026-05-11</span>
-          <span>Updated: 2026-05-12</span>
-          <span>Campaign: mini-shai-hulud</span>
+          <span>Published: 2026-05-12T00:00:00Z</span>
+          <span>Updated: 2026-05-12T00:00:00Z</span>
         </div>
-
-        <h2>Executive Summary</h2>
-        <p>
-          Mini Shai-Hulud is a confirmed software supply-chain campaign affecting npm and PyPI packages.
-          Some compromised versions were removed from public registries quickly, which is good for users
-          but creates a scanner blind spot: artifact diffing can fail after takedown.
-        </p>
-        <p>
-          SecOpsAI now ships an emergency advisory ingestion path. Named compromised versions can produce
-          high-confidence SOC findings even when the malicious artifact is no longer fetchable.
-        </p>
-
-        <h2>Affected Artifacts</h2>
-        <table>
-          <thead>
-            <tr><th>Ecosystem</th><th>Package</th><th>Versions</th><th>SecOpsAI coverage</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>npm</td><td>@opensearch-project/opensearch</td><td>3.5.3, 3.6.2, 3.7.0, 3.8.0</td><td>Advisory-backed malicious finding, even after removal.</td></tr>
-            <tr><td>PyPI</td><td>mistralai</td><td>2.4.6</td><td>Diff-based detection plus advisory enrichment.</td></tr>
-            <tr><td>PyPI</td><td>guardrails-ai</td><td>0.10.1</td><td>Advisory-backed malicious finding for import-time execution behavior.</td></tr>
-            <tr><td>npm</td><td>@squawk/*</td><td>Multiple confirmed versions, including @squawk/mcp 0.9.5 and @squawk/airport-data 0.7.8</td><td>Emergency denylist entries for representative confirmed versions.</td></tr>
-          </tbody>
-        </table>
-
-        <h2>What SecOpsAI Detected</h2>
-        <p>
-          Local SecOpsAI findings already identified suspicious behavior in <code>mistralai@2.4.6</code>,
-          including subprocess execution, shell downloader behavior, network egress, artifact divergence,
-          and suspicious code present in only one PyPI artifact path.
-        </p>
-
-        <h2>What Was Missed Before Advisory Ingestion</h2>
-        <p>
-          Removed npm/PyPI artifacts such as some <code>@opensearch-project/opensearch</code>,
-          <code>guardrails-ai</code>, and <code>@squawk/*</code> versions could previously end as
-          <code>diff generation failed</code>. That error was technically true, but operationally weak:
-          the version was still confirmed compromised by external reporting.
-        </p>
-
-        <h2>New Protection</h2>
-        <p>
-          Emergency advisories are stored as source-backed JSON under <code>data/advisories/</code>.
-          The scanner now checks advisories before allowlist or reputation shortcuts. If a diff succeeds,
-          the advisory enriches the finding. If artifact fetch or diff generation fails, the advisory still
-          creates a malicious high-confidence SOC finding.
-        </p>
-
-        <h2>IOCs And Behaviors</h2>
-        <table>
-          <thead>
-            <tr><th>Type</th><th>Indicator</th><th>Why it matters</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>URL</td><td>git-tanstack[.]com/transformers.pyz</td><td>Reported payload hosting path.</td></tr>
-            <tr><td>URL</td><td>83[.]142[.]209[.]194/transformers.pyz</td><td>Reported PyPI downloader target.</td></tr>
-            <tr><td>Path</td><td>/tmp/transformers.pyz</td><td>Linux payload write path before execution.</td></tr>
-            <tr><td>Files</td><td>setup.mjs, router_init.js</td><td>npm lifecycle/staged JavaScript artifacts reported in campaign analysis.</td></tr>
-            <tr><td>Behavior</td><td>npm preinstall / prepare hooks</td><td>Install-time execution path for npm packages.</td></tr>
-            <tr><td>Behavior</td><td>import-time Python execution</td><td>PyPI import path used to download and execute a payload.</td></tr>
-          </tbody>
-        </table>
-
-        <h2>Detection Logic</h2>
-        <pre><code>secopsai supply-chain advisory check --ecosystem npm --package @opensearch-project/opensearch --version 3.8.0
+        <div class="tags"><span class="pill">Supply Chain</span>
+<span class="pill">Advisories</span>
+<span class="pill">Detection Engineering</span>
+<span class="pill">Mitigation</span></div>
+        <h1>Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts</h1>
+<h2>Executive Summary</h2>
+<p>Mini Shai-Hulud is a confirmed software supply-chain campaign affecting npm and PyPI packages. Some compromised versions were removed from public registries quickly, which is good for users but creates a scanner blind spot: artifact diffing can fail after takedown.</p>
+<p>SecOpsAI now ships an emergency advisory ingestion path. Named compromised versions can produce high-confidence SOC findings even when the malicious artifact is no longer fetchable.</p>
+<h2>Affected Artifacts</h2>
+<ul>
+<li>npm: <code>@opensearch-project/opensearch</code> versions <code>3.5.3</code>, <code>3.6.2</code>, <code>3.7.0</code>, <code>3.8.0</code></li>
+<li>PyPI: <code>mistralai</code> version <code>2.4.6</code></li>
+<li>PyPI: <code>guardrails-ai</code> version <code>0.10.1</code></li>
+<li>npm: <code>@squawk/*</code> representative confirmed versions, including <code>@squawk/mcp@0.9.5</code> and <code>@squawk/airport-data@0.7.8</code></li>
+</ul>
+<h2>What SecOpsAI Detected</h2>
+<p>Local SecOpsAI findings already identified suspicious behavior in <code>mistralai@2.4.6</code>, including subprocess execution, shell downloader behavior, network egress, artifact divergence, and suspicious code present in only one PyPI artifact path.</p>
+<h2>What Was Missed Before Advisory Ingestion</h2>
+<p>Removed npm/PyPI artifacts such as some <code>@opensearch-project/opensearch</code>, <code>guardrails-ai</code>, and <code>@squawk/*</code> versions could previously end as <code>diff generation failed</code>. That error was technically true, but operationally weak: the version was still confirmed compromised by external reporting.</p>
+<h2>New Protection</h2>
+<p>Emergency advisories are stored as source-backed JSON under <code>data/advisories/</code>. The scanner checks advisories before allowlist or reputation shortcuts. If a diff succeeds, the advisory enriches the finding. If artifact fetch or diff generation fails, the advisory still creates a malicious high-confidence SOC finding.</p>
+<h2>IOCs And Behaviors</h2>
+<ul>
+<li><code>git-tanstack[.]com/transformers.pyz</code>: reported payload hosting path.</li>
+<li><code>83[.]142[.]209[.]194/transformers.pyz</code>: reported PyPI downloader target.</li>
+<li><code>/tmp/transformers.pyz</code>: Linux payload write path before execution.</li>
+<li><code>setup.mjs</code> and <code>router_init.js</code>: npm lifecycle/staged JavaScript artifacts reported in campaign analysis.</li>
+<li>npm <code>preinstall</code> and <code>prepare</code> hooks: install-time execution path for npm packages.</li>
+<li>import-time Python execution: PyPI import path used to download and execute a payload.</li>
+</ul>
+<h2>Detection Logic</h2>
+<pre><code>secopsai supply-chain advisory check --ecosystem npm --package @opensearch-project/opensearch --version 3.8.0
 secopsai supply-chain explain-verdict --ecosystem pypi --package guardrails-ai --version 0.10.1
 secopsai supply-chain reconcile-history --include-advisories</code></pre>
-
-        <h2>Recommended Actions</h2>
-        <ol>
-          <li>Block listed versions in package manager policy, dependency proxies, lockfile checks, and CI admission controls.</li>
-          <li>Purge caches that may contain the affected artifacts.</li>
-          <li>Search developer machines and CI hosts for <code>/tmp/transformers.pyz</code> and outbound traffic to listed IOCs.</li>
-          <li>Rotate package registry tokens, GitHub tokens, cloud credentials, and OIDC-trusted secrets exposed to affected build contexts.</li>
-          <li>Rebuild from clean lockfiles after verifying maintainer guidance and known-good versions.</li>
-        </ol>
-
-        <h2>Timeline</h2>
-        <table>
-          <tbody>
-            <tr><th>2026-05-11</th><td>Public reporting confirmed Mini Shai-Hulud impact across npm and PyPI.</td></tr>
-            <tr><th>2026-05-12</th><td>SecOpsAI advisory data seeded for confirmed package versions and removed-artifact handling.</td></tr>
-          </tbody>
-        </table>
-
-        <h2>References</h2>
-        <ul>
-          <li><a href="https://www.ox.security/blog/shai-hulud-here-we-go-again-170-packages-hit-across-npm-pypi/">OX Security: Shai-Hulud, Here We Go Again</a></li>
-          <li><a href="https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack">Socket: TanStack npm packages compromised, Mini Shai-Hulud supply-chain attack</a></li>
-          <li><a href="https://docs.secopsai.dev/supply-chain-advisories/">SecOpsAI emergency advisory operator workflow</a></li>
-        </ul>
-
+<h2>Recommended Actions</h2>
+<ul>
+<li>Block listed versions in package manager policy, dependency proxies, lockfile checks, and CI admission controls.</li>
+<li>Purge caches that may contain the affected artifacts.</li>
+<li>Search developer machines and CI hosts for <code>/tmp/transformers.pyz</code> and outbound traffic to listed IOCs.</li>
+<li>Rotate package registry tokens, GitHub tokens, cloud credentials, and OIDC-trusted secrets exposed to affected build contexts.</li>
+<li>Rebuild from clean lockfiles after verifying maintainer guidance and known-good versions.</li>
+</ul>
+<h2>Timeline</h2>
+<ul>
+<li>2026-05-11: public reporting confirmed Mini Shai-Hulud impact across npm and PyPI.</li>
+<li>2026-05-12: SecOpsAI advisory data seeded for confirmed package versions and removed-artifact handling.</li>
+</ul>
+<h2>References</h2>
+<ul>
+<li>https://www.ox.security/blog/shai-hulud-here-we-go-again-170-packages-hit-across-npm-pypi/</li>
+<li>https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack</li>
+<li>https://docs.secopsai.dev/supply-chain-advisories/</li>
+</ul>
         <section class="comments" data-comments data-slug="mini-shai-hulud-emergency-advisory">
           <h2>Comments</h2>
           <p>Comments are moderated before publication. Do not post secrets, tokens, customer data, or exploit payloads.</p>
@@ -133,27 +93,21 @@ secopsai supply-chain reconcile-history --include-advisories</code></pre>
             <input name="name" maxlength="80" placeholder="Name or handle" required />
             <input name="email" type="email" maxlength="160" placeholder="Email for moderation only" required />
             <input name="website" tabindex="-1" autocomplete="off" style="display:none" />
-            <textarea name="body" maxlength="2000" placeholder="Add source-backed context, a mitigation note, or a question..." required></textarea>
+            <textarea name="body" maxlength="2000"
+              placeholder="Add source-backed context, a mitigation note, or a question..."
+              required></textarea>
             <button type="submit">Submit for moderation</button>
             <p data-comment-status></p>
           </form>
         </section>
       </article>
-
       <aside class="side">
         <section class="card">
-          <p class="eyebrow">Detection status</p>
-          <h2>Protected now</h2>
-          <p>Advisory-backed matches are high-confidence malicious verdicts, including removed or yanked artifacts.</p>
-        </section>
-        <section class="card">
-          <p class="eyebrow">Feeds</p>
-          <p><a href="/feed.xml">RSS feed</a></p>
-          <p><a href="/feed.json">JSON feed</a></p>
+          <p class="eyebrow">Operator note</p>
+          <p>Source-backed posts are generated as drafts first and require explicit publishing.</p>
         </section>
       </aside>
     </main>
-
     <script src="/assets/comments.js" defer></script>
   </body>
 </html>

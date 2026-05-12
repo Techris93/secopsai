@@ -37,6 +37,7 @@ secopsai turns OpenClaw and host OS telemetry into repeatable, explainable secur
 - [OpenClaw Integration](OpenClaw-Integration.md)
 - [Supply Chain Security](supply-chain.md)
 - [Emergency Supply Chain Advisories](supply-chain-advisories.md)
+- [Security Blog Publishing](blog-publishing.md)
 - [OpenClaw Plugin](OpenClaw-Plugin.md)
 
 ## Quick Start
@@ -95,3 +96,4 @@ secopsai adaptive-response --persist-memory
 - [OpenClaw Integration](OpenClaw-Integration.md)
 - [Supply Chain Security](supply-chain.md)
 - [Emergency Supply Chain Advisories](supply-chain-advisories.md)
+- [Security Blog Publishing](blog-publishing.md)
