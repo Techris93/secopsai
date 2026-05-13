@@ -114,13 +114,17 @@ secopsai blog news-sources list
 secopsai blog news-fetch --limit 20
 secopsai blog news-draft --limit 5
 secopsai blog news-run --limit 5
+scripts/blog_newsroom.sh 5
 
 # Automation-friendly daily draft generation from local advisories.
 secopsai blog draft-daily --limit 5
 
 # Publish only after review.
 secopsai blog publish blog/drafts/<slug>.json --publish
-secopsai blog news-publish-approved
+secopsai blog news-review list
+secopsai blog news-review show <draft-slug-or-path>
+secopsai blog news-review approve <draft-slug-or-path> --note "Reviewed sources"
+secopsai blog news-publish-approved --rebuild
 
 # Rebuild index, RSS, and JSON feeds from published post metadata.
 secopsai blog rebuild-feeds
@@ -133,6 +137,7 @@ Safety gates:
 - Sensitive token-like values are redacted before rendering.
 - External news drafts store source URLs and require human review; they are not autopublished.
 - Curated source metadata lives in `blog/data/news-sources.json`; fetched cache entries and generated drafts are operational artifacts unless intentionally reviewed and published.
+- `scripts/blog_newsroom.sh` is the one-command daily helper: it fetches news, creates review-only drafts, and prints the review queue.
 
 ## Publishing From Advisories
 

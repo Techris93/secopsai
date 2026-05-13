@@ -777,6 +777,79 @@ def news_publish_approved(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any
     return {"published": published, "total": len(published)}
 
 
+def _resolve_draft(identifier: str, paths: BlogPaths) -> Path:
+    candidate = Path(identifier)
+    if candidate.exists():
+        return candidate
+    slug = identifier.removesuffix(".json")
+    path = _draft_path(slug, paths)
+    if path.exists():
+        return path
+    matches = sorted(paths.drafts.glob(f"*{slug}*.json"))
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(f"multiple drafts match {identifier}: {', '.join(path.name for path in matches[:5])}")
+    raise ValueError(f"draft not found: {identifier}")
+
+
+def _draft_review_summary(path: Path) -> Dict[str, Any]:
+    post = _load_json(path)
+    return {
+        "path": str(path),
+        "slug": str(post.get("slug") or path.stem),
+        "title": str(post.get("title") or path.stem),
+        "summary": str(post.get("summary") or "")[:240],
+        "review_status": str(post.get("review_status") or "needs_review"),
+        "severity": str(post.get("severity") or "info"),
+        "source_name": str(post.get("source_name") or post.get("author") or "SecOpsAI"),
+        "sources": _safe_list(post.get("sources") or post.get("references") or [], limit=5),
+        "categories": _safe_list(post.get("categories") or [], limit=8),
+        "external_news": bool(post.get("external_news")),
+        "updated_at": str(post.get("updated_at") or post.get("fetched_at") or ""),
+    }
+
+
+def news_review_list(*, status: Optional[str] = None, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+    paths = paths or BlogPaths()
+    drafts = []
+    for path in sorted(paths.drafts.glob("*.json")):
+        summary = _draft_review_summary(path)
+        if status and summary["review_status"] != status:
+            continue
+        drafts.append(summary)
+    return {"drafts": drafts, "total": len(drafts)}
+
+
+def news_review_show(identifier: str, *, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+    paths = paths or BlogPaths()
+    path = _resolve_draft(identifier, paths)
+    post = _load_json(path)
+    summary = _draft_review_summary(path)
+    summary["body_markdown"] = str(post.get("body_markdown") or "")
+    return summary
+
+
+def news_review_update(
+    identifier: str,
+    *,
+    status: str,
+    note: Optional[str] = None,
+    paths: Optional[BlogPaths] = None,
+) -> Dict[str, Any]:
+    if status not in {"needs_review", "approved", "reviewed", "rejected"}:
+        raise ValueError("status must be one of: needs_review, approved, reviewed, rejected")
+    paths = paths or BlogPaths()
+    path = _resolve_draft(identifier, paths)
+    post = _load_json(path)
+    post["review_status"] = status
+    post["reviewed_at"] = _utc_now()
+    if note:
+        post["review_note"] = redact(note)
+    _write_json(path, post)
+    return _draft_review_summary(path)
+
+
 def draft_news(source: str, *, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     paths = paths or BlogPaths()
     source_config = {

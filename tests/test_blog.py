@@ -157,6 +157,34 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertEqual(blocked["total"], 0)
         self.assertEqual(approved["total"], 1)
 
+    def test_news_review_commands_update_status_without_json_hand_editing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.drafts.mkdir(parents=True)
+            draft = blog._base_post(
+                title="Review me",
+                summary="Review summary.",
+                categories=["Security News"],
+                sources=["https://example.com/review"],
+                slug="review-me",
+            )
+            draft.update({
+                "external_news": True,
+                "review_status": "needs_review",
+                "body_markdown": "# Review me\n\nNeeds review.",
+            })
+            draft_path = paths.drafts / "review-me.json"
+            draft_path.write_text(json.dumps(draft), encoding="utf-8")
+
+            queue = blog.news_review_list(paths=paths)
+            shown = blog.news_review_show("review-me", paths=paths)
+            approved = blog.news_review_update("review-me", status="approved", note="looks good", paths=paths)
+
+        self.assertEqual(queue["total"], 1)
+        self.assertEqual(shown["title"], "Review me")
+        self.assertIn("Needs review", shown["body_markdown"])
+        self.assertEqual(approved["review_status"], "approved")
+
 
 if __name__ == "__main__":
     unittest.main()

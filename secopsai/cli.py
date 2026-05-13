@@ -38,6 +38,9 @@ from secopsai.blog import (
     news_draft as draft_blog_news_batch,
     news_fetch as fetch_blog_news,
     news_publish_approved as publish_approved_blog_news,
+    news_review_list as list_blog_news_reviews,
+    news_review_show as show_blog_news_review,
+    news_review_update as update_blog_news_review,
     news_run as run_blog_news,
     news_sources_list as list_blog_news_sources,
     publish as publish_blog_post,
@@ -856,7 +859,24 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     blog_news_run = blog_sub.add_parser("news-run", help="Fetch news and create review-only drafts")
     blog_news_run.add_argument("--limit", type=int, default=5, help="Maximum items to fetch/draft")
 
-    blog_sub.add_parser("news-publish-approved", help="Publish only external-news drafts marked approved/reviewed")
+    blog_news_review = blog_sub.add_parser("news-review", help="Review, approve, or reject generated news drafts")
+    news_review_sub = blog_news_review.add_subparsers(dest="news_review_cmd", required=True)
+    news_review_list = news_review_sub.add_parser("list", help="List generated drafts waiting for review")
+    news_review_list.add_argument("--status", default=None, choices=["needs_review", "approved", "reviewed", "rejected"], help="Filter by review status")
+    news_review_show = news_review_sub.add_parser("show", help="Show one draft summary and body")
+    news_review_show.add_argument("draft", help="Draft path, slug, or unique slug fragment")
+    news_review_approve = news_review_sub.add_parser("approve", help="Approve one reviewed draft for publishing")
+    news_review_approve.add_argument("draft", help="Draft path, slug, or unique slug fragment")
+    news_review_approve.add_argument("--note", default=None, help="Optional reviewer note")
+    news_review_reject = news_review_sub.add_parser("reject", help="Reject one draft so it will not publish")
+    news_review_reject.add_argument("draft", help="Draft path, slug, or unique slug fragment")
+    news_review_reject.add_argument("--note", default=None, help="Optional reviewer note")
+    news_review_reset = news_review_sub.add_parser("needs-review", help="Move one draft back to needs_review")
+    news_review_reset.add_argument("draft", help="Draft path, slug, or unique slug fragment")
+    news_review_reset.add_argument("--note", default=None, help="Optional reviewer note")
+
+    blog_news_publish = blog_sub.add_parser("news-publish-approved", help="Publish only external-news drafts marked approved/reviewed")
+    blog_news_publish.add_argument("--rebuild", action="store_true", help="Rebuild index, RSS, and JSON feeds after publishing")
 
     blog_daily = blog_sub.add_parser("draft-daily", help="Automation-ready draft generation without autopublishing")
     blog_daily.add_argument("--limit", type=int, default=5, help="Maximum advisory drafts to create")
@@ -1352,8 +1372,21 @@ def main(argv: Optional[List[str]] = None) -> int:
                 payload = draft_blog_news_batch(limit=args.limit)
             elif args.blog_cmd == "news-run":
                 payload = run_blog_news(limit=args.limit)
+            elif args.blog_cmd == "news-review":
+                if args.news_review_cmd == "list":
+                    payload = list_blog_news_reviews(status=args.status)
+                elif args.news_review_cmd == "show":
+                    payload = show_blog_news_review(args.draft)
+                elif args.news_review_cmd == "approve":
+                    payload = update_blog_news_review(args.draft, status="approved", note=args.note)
+                elif args.news_review_cmd == "reject":
+                    payload = update_blog_news_review(args.draft, status="rejected", note=args.note)
+                else:
+                    payload = update_blog_news_review(args.draft, status="needs_review", note=args.note)
             elif args.blog_cmd == "news-publish-approved":
                 payload = publish_approved_blog_news()
+                if args.rebuild:
+                    payload["rebuild"] = rebuild_blog()
             elif args.blog_cmd == "draft-daily":
                 payload = draft_blog_daily(limit=args.limit)
             elif args.blog_cmd == "publish":
@@ -1393,6 +1426,29 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"drafted={payload['drafted']['total']}")
             for path in payload["drafted"].get("created", []):
                 print(f"- {path}")
+        elif args.blog_cmd == "news-review":
+            if args.news_review_cmd == "list":
+                print(f"total={payload['total']}")
+                for draft in payload.get("drafts", []):
+                    print(f"- {draft['review_status']} | {draft['severity']} | {draft['slug']}")
+                    print(f"  title={draft['title']}")
+                    print(f"  source={draft['source_name']}")
+                    print(f"  path={draft['path']}")
+            elif args.news_review_cmd == "show":
+                print(f"title={payload['title']}")
+                print(f"slug={payload['slug']}")
+                print(f"status={payload['review_status']}")
+                print(f"severity={payload['severity']}")
+                print(f"source={payload['source_name']}")
+                print("sources:")
+                for source in payload.get("sources", []):
+                    print(f"- {source}")
+                print("\nbody_markdown:\n")
+                print(payload.get("body_markdown", ""))
+            else:
+                print(f"status={payload['review_status']}")
+                print(f"title={payload['title']}")
+                print(f"path={payload['path']}")
         elif args.blog_cmd.startswith("draft"):
             print(f"draft_path={payload.get('draft_path')}")
             if payload.get("total") is not None:

@@ -45,22 +45,47 @@ Run both steps together for cron, launchd, GitHub Actions, or a local scheduled 
 secopsai blog news-run --limit 5
 ```
 
-External-news posts are not public until reviewed. To publish through the guarded helper, edit the draft JSON and set:
+For the friendliest local operator flow, run:
 
-```json
-{
-  "review_status": "approved"
-}
+```bash
+scripts/blog_newsroom.sh 5
+```
+
+That fetches news, drafts new items, and prints the review queue plus next-step commands.
+
+External-news posts are not public until reviewed. You can review without editing JSON by hand:
+
+```bash
+secopsai blog news-review list
+secopsai blog news-review show <draft-slug-or-path>
+secopsai blog news-review approve <draft-slug-or-path> --note "Reviewed sources and SecOpsAI guidance"
+secopsai blog news-review reject <draft-slug-or-path> --note "Not relevant or insufficiently sourced"
 ```
 
 Then run:
 
 ```bash
-secopsai blog news-publish-approved
-secopsai blog rebuild-feeds
+secopsai blog news-publish-approved --rebuild
 ```
 
 The pipeline stores fetched metadata in `blog/data/news-cache.json`, deduplicates by canonical URL/title hash, and keeps external claims source-linked. Do not commit generated cache entries or generated drafts unless the post has been reviewed and intentionally published.
+
+### Suggested Daily Automation
+
+On macOS, a simple `cron` or `launchd` job can run draft creation every morning without publishing anything:
+
+```bash
+cd /Users/chrixchange/secopsai
+scripts/blog_newsroom.sh 5 >> logs/blog-newsroom.log 2>&1
+```
+
+The safe daily rhythm is:
+
+1. Automation runs `scripts/blog_newsroom.sh 5` and creates drafts only.
+2. You run `secopsai blog news-review list` and inspect candidates.
+3. You approve only source-backed posts you are comfortable publishing.
+4. You run `secopsai blog news-publish-approved --rebuild`.
+5. You deploy the blog with `npx --yes wrangler@latest pages deploy blog --project-name secopsai-blog --branch main`.
 
 ## Publish
 
