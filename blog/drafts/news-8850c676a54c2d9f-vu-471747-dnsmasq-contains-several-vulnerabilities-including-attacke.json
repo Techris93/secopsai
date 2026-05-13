@@ -1,0 +1,40 @@
+{
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "author": "CERT/CC Vulnerability Notes",
+  "body_markdown": "# VU#471747: dnsmasq contains several vulnerabilities, including attacker DNS redirect, privilege escalation, and heap manipulation\n\n## Executive Summary\n\nOverview dnsmasq is affected by multiple memory safety and input validation vulnerabilities, including heap buffer overflows, heap corruption, and code execution flaws. Collectively, these vulnerabilities enable attackers to poison cached DNS records, bypass security controls, crash the dnsmasq process, or under certain conditions, achieve local privilege escalation. dnsmasq has released version 2.92rel2 to fix the vulnerabilities. Description dnsmasq is an open-source networking tool that provi\n\n## Why It Matters\n\n- This external security-news item was imported automatically from `CERT/CC Vulnerability Notes`.\n- It is a draft and requires human review before publishing.\n- Confirm claims against the linked source and any primary references before publication.\n\n## What SecOpsAI Can Detect\n\n- Add matching SecOpsAI advisories, package verdicts, detections, or OpenClaw findings here after review.\n\n## IOCs\n\n- No structured IOCs were extracted automatically. Add source-backed IOCs manually if present.\n\n## Affected Packages Or Products\n\n- Review the source and add affected products, packages, versions, or ecosystems if applicable.\n\n## Recommended Actions\n\n- Review the source.\n- Validate affected assets in your environment.\n- Add SecOpsAI detection or mitigation commands before publishing.\n\n## References\n\n- https://kb.cert.org/vuls/id/471747\n",
+  "categories": [
+    "Security News",
+    "Threat Intelligence",
+    "CERT/CC",
+    "Vulnerability"
+  ],
+  "external_news": true,
+  "featured": false,
+  "fetched_at": "2026-05-13T21:17:58Z",
+  "iocs": [],
+  "news_key": "8850c676a54c2d9f",
+  "published_at": "2026-05-13T21:18:05Z",
+  "reading_time": 1,
+  "references": [
+    "https://kb.cert.org/vuls/id/471747"
+  ],
+  "related_posts": [],
+  "review_status": "needs_review",
+  "severity": "info",
+  "slug": "news-8850c676a54c2d9f-vu-471747-dnsmasq-contains-several-vulnerabilities-including-attacke",
+  "source_name": "CERT/CC Vulnerability Notes",
+  "sources": [
+    "https://kb.cert.org/vuls/id/471747"
+  ],
+  "status": "draft",
+  "summary": "Overview dnsmasq is affected by multiple memory safety and input validation vulnerabilities, including heap buffer overflows, heap corruption, and code execution flaws. Collectively, these vulnerabilities enable attackers to poison cached DNS records, bypass security controls, crash the dnsmasq process, or under certain conditions, achieve local privilege escalation. dnsmasq has released version 2.92rel2 to fix the vulnerabilities. Description dnsmasq is an open-source networking tool that provi",
+  "tags": [
+    "Security News",
+    "Threat Intelligence",
+    "CERT/CC",
+    "Vulnerability"
+  ],
+  "title": "VU#471747: dnsmasq contains several vulnerabilities, including attacker DNS redirect, privilege escalation, and heap manipulation",
+  "updated_at": "2026-05-13T21:18:05Z"
+}

@@ -1,0 +1,38 @@
+{
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "author": "Cloudflare Security Blog",
+  "body_markdown": "# Securing non-human identities: automated revocation, OAuth, and scoped permissions\n\n## Executive Summary\n\nCloudflare is introducing scannable API tokens, enhanced OAuth visibility, and GA for resource-scoped permissions. These tools help developers implement a true least-privilege architecture while protecting against credential leakage.\n\n## Why It Matters\n\n- This external security-news item was imported automatically from `Cloudflare Security Blog`.\n- It is a draft and requires human review before publishing.\n- Confirm claims against the linked source and any primary references before publication.\n\n## What SecOpsAI Can Detect\n\n- Add matching SecOpsAI advisories, package verdicts, detections, or OpenClaw findings here after review.\n\n## IOCs\n\n- No structured IOCs were extracted automatically. Add source-backed IOCs manually if present.\n\n## Affected Packages Or Products\n\n- Review the source and add affected products, packages, versions, or ecosystems if applicable.\n\n## Recommended Actions\n\n- Review the source.\n- Validate affected assets in your environment.\n- Add SecOpsAI detection or mitigation commands before publishing.\n\n## References\n\n- https://blog.cloudflare.com/improved-developer-security/\n",
+  "categories": [
+    "Security News",
+    "Threat Intelligence",
+    "Cloudflare"
+  ],
+  "external_news": true,
+  "featured": false,
+  "fetched_at": "2026-05-13T21:18:04Z",
+  "iocs": [],
+  "news_key": "915acd3636d9fc5c",
+  "published_at": "2026-05-13T21:18:05Z",
+  "reading_time": 1,
+  "references": [
+    "https://blog.cloudflare.com/improved-developer-security/"
+  ],
+  "related_posts": [],
+  "review_status": "needs_review",
+  "severity": "info",
+  "slug": "news-915acd3636d9fc5c-securing-non-human-identities-automated-revocation-oauth-and-scoped",
+  "source_name": "Cloudflare Security Blog",
+  "sources": [
+    "https://blog.cloudflare.com/improved-developer-security/"
+  ],
+  "status": "draft",
+  "summary": "Cloudflare is introducing scannable API tokens, enhanced OAuth visibility, and GA for resource-scoped permissions. These tools help developers implement a true least-privilege architecture while protecting against credential leakage.",
+  "tags": [
+    "Security News",
+    "Threat Intelligence",
+    "Cloudflare"
+  ],
+  "title": "Securing non-human identities: automated revocation, OAuth, and scoped permissions",
+  "updated_at": "2026-05-13T21:18:05Z"
+}

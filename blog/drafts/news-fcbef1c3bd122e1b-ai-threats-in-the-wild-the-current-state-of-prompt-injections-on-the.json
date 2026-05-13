@@ -1,0 +1,38 @@
+{
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "author": "Google Online Security Blog",
+  "body_markdown": "# AI threats in the wild: The current state of prompt injections on the web\n\n## Executive Summary\n\nAI threats in the wild: The current state of prompt injections on the web\n\n## Why It Matters\n\n- This external security-news item was imported automatically from `Google Online Security Blog`.\n- It is a draft and requires human review before publishing.\n- Confirm claims against the linked source and any primary references before publication.\n\n## What SecOpsAI Can Detect\n\n- Add matching SecOpsAI advisories, package verdicts, detections, or OpenClaw findings here after review.\n\n## IOCs\n\n- No structured IOCs were extracted automatically. Add source-backed IOCs manually if present.\n\n## Affected Packages Or Products\n\n- Review the source and add affected products, packages, versions, or ecosystems if applicable.\n\n## Recommended Actions\n\n- Review the source.\n- Validate affected assets in your environment.\n- Add SecOpsAI detection or mitigation commands before publishing.\n\n## References\n\n- http://security.googleblog.com/feeds/820776653483778595/comments/default\n",
+  "categories": [
+    "Security News",
+    "Threat Intelligence",
+    "Google"
+  ],
+  "external_news": true,
+  "featured": false,
+  "fetched_at": "2026-05-13T21:18:03Z",
+  "iocs": [],
+  "news_key": "fcbef1c3bd122e1b",
+  "published_at": "2026-05-13T21:18:05Z",
+  "reading_time": 1,
+  "references": [
+    "http://security.googleblog.com/feeds/820776653483778595/comments/default"
+  ],
+  "related_posts": [],
+  "review_status": "needs_review",
+  "severity": "info",
+  "slug": "news-fcbef1c3bd122e1b-ai-threats-in-the-wild-the-current-state-of-prompt-injections-on-the",
+  "source_name": "Google Online Security Blog",
+  "sources": [
+    "http://security.googleblog.com/feeds/820776653483778595/comments/default"
+  ],
+  "status": "draft",
+  "summary": "AI threats in the wild: The current state of prompt injections on the web",
+  "tags": [
+    "Security News",
+    "Threat Intelligence",
+    "Google"
+  ],
+  "title": "AI threats in the wild: The current state of prompt injections on the web",
+  "updated_at": "2026-05-13T21:18:05Z"
+}

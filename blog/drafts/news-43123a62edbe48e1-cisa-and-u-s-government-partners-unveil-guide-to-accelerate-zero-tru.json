@@ -1,0 +1,38 @@
+{
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "author": "CISA News",
+  "body_markdown": "# CISA and U.S. Government Partners Unveil Guide to Accelerate Zero Trust Adoption in Operational Technology\n\n## Executive Summary\n\nCISA and U.S. Government Partners Unveil Guide to Accelerate Zero Trust Adoption in Operational Technology\n\n## Why It Matters\n\n- This external security-news item was imported automatically from `CISA News`.\n- It is a draft and requires human review before publishing.\n- Confirm claims against the linked source and any primary references before publication.\n\n## What SecOpsAI Can Detect\n\n- Add matching SecOpsAI advisories, package verdicts, detections, or OpenClaw findings here after review.\n\n## IOCs\n\n- No structured IOCs were extracted automatically. Add source-backed IOCs manually if present.\n\n## Affected Packages Or Products\n\n- Review the source and add affected products, packages, versions, or ecosystems if applicable.\n\n## Recommended Actions\n\n- Review the source.\n- Validate affected assets in your environment.\n- Add SecOpsAI detection or mitigation commands before publishing.\n\n## References\n\n- https://www.cisa.gov/news-events/news/cisa-and-us-government-partners-unveil-guide-accelerate-zero-trust-adoption-operational-technology\n",
+  "categories": [
+    "Security News",
+    "Threat Intelligence",
+    "CISA"
+  ],
+  "external_news": true,
+  "featured": false,
+  "fetched_at": "2026-05-13T21:17:57Z",
+  "iocs": [],
+  "news_key": "43123a62edbe48e1",
+  "published_at": "2026-05-13T21:18:05Z",
+  "reading_time": 1,
+  "references": [
+    "https://www.cisa.gov/news-events/news/cisa-and-us-government-partners-unveil-guide-accelerate-zero-trust-adoption-operational-technology"
+  ],
+  "related_posts": [],
+  "review_status": "needs_review",
+  "severity": "info",
+  "slug": "news-43123a62edbe48e1-cisa-and-u-s-government-partners-unveil-guide-to-accelerate-zero-tru",
+  "source_name": "CISA News",
+  "sources": [
+    "https://www.cisa.gov/news-events/news/cisa-and-us-government-partners-unveil-guide-accelerate-zero-trust-adoption-operational-technology"
+  ],
+  "status": "draft",
+  "summary": "CISA and U.S. Government Partners Unveil Guide to Accelerate Zero Trust Adoption in Operational Technology",
+  "tags": [
+    "Security News",
+    "Threat Intelligence",
+    "CISA"
+  ],
+  "title": "CISA and U.S. Government Partners Unveil Guide to Accelerate Zero Trust Adoption in Operational Technology",
+  "updated_at": "2026-05-13T21:18:05Z"
+}
