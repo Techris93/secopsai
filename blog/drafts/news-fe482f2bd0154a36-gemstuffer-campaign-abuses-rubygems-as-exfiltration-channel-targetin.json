@@ -19,7 +19,9 @@
     "https://socket.dev/blog/gemstuffer"
   ],
   "related_posts": [],
-  "review_status": "needs_review",
+  "review_note": "Rejected from Blog Ops dashboard",
+  "review_status": "rejected",
+  "reviewed_at": "2026-05-13T18:33:21Z",
   "severity": "info",
   "slug": "news-fe482f2bd0154a36-gemstuffer-campaign-abuses-rubygems-as-exfiltration-channel-targetin",
   "source_name": "Socket Blog",
