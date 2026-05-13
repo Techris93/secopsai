@@ -4,6 +4,27 @@
   "home_page_url": "https://blog.secopsai.dev/",
   "items": [
     {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "CISA News"
+        }
+      ],
+      "date_modified": "2026-05-13T21:42:28Z",
+      "date_published": "2026-05-13T21:18:05Z",
+      "id": "https://blog.secopsai.dev/posts/news-43123a62edbe48e1-cisa-and-u-s-government-partners-unveil-guide-to-accelerate-zero-tru.html",
+      "reading_time_minutes": 1,
+      "severity": "info",
+      "summary": "CISA and U.S. Government Partners Unveil Guide to Accelerate Zero Trust Adoption in Operational Technology",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "CISA"
+      ],
+      "title": "CISA and U.S. Government Partners Unveil Guide to Accelerate Zero Trust Adoption in Operational Technology",
+      "url": "https://blog.secopsai.dev/posts/news-43123a62edbe48e1-cisa-and-u-s-government-partners-unveil-guide-to-accelerate-zero-tru.html"
+    },
+    {
       "affected_packages": [
         "@opensearch-project/opensearch",
         "mistralai",

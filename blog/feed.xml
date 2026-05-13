@@ -6,12 +6,19 @@
     <link>https://blog.secopsai.dev/</link>
     <description>Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.</description>
     <language>en-us</language>
-    <lastBuildDate>Wed, 13 May 2026 16:20:06 GMT</lastBuildDate>
+    <lastBuildDate>Wed, 13 May 2026 21:42:28 GMT</lastBuildDate>
+    <item>
+      <title>CISA and U.S. Government Partners Unveil Guide to Accelerate Zero Trust Adoption in Operational Technology</title>
+      <link>https://blog.secopsai.dev/posts/news-43123a62edbe48e1-cisa-and-u-s-government-partners-unveil-guide-to-accelerate-zero-tru.html</link>
+      <guid>https://blog.secopsai.dev/posts/news-43123a62edbe48e1-cisa-and-u-s-government-partners-unveil-guide-to-accelerate-zero-tru.html</guid>
+      <pubDate>Wed, 13 May 2026 21:18:05 GMT</pubDate>
+      <description>CISA and U.S. Government Partners Unveil Guide to Accelerate Zero Trust Adoption in Operational Technology</description>
+    </item>
     <item>
       <title>Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts</title>
       <link>https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html</link>
       <guid>https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html</guid>
-      <pubDate>Mon, 11 May 2026 21:00:00 GMT</pubDate>
+      <pubDate>Tue, 12 May 2026 00:00:00 GMT</pubDate>
       <description>Mini Shai-Hulud affected npm and PyPI packages, including removed artifacts that now receive source-backed SecOpsAI advisory detections.</description>
     </item>
   </channel>
