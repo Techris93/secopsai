@@ -740,6 +740,18 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     sub = p.add_subparsers(dest="cmd", required=True)
 
+    status = sub.add_parser("status", help="Build the canonical SecOpsAI status/freshness snapshot")
+    status.add_argument(
+        "--workspace-logs",
+        default=None,
+        help="Override adaptive-intel logs directory (default: ~/.openclaw/workspace/logs)",
+    )
+    status.add_argument(
+        "--openclaw-home",
+        default=None,
+        help="Override OpenClaw home directory (default: ~/.openclaw)",
+    )
+
     refresh = sub.add_parser(
         "refresh",
         help="Run the OpenClaw pipeline or adapter refresh when --platform is supplied",
@@ -1202,6 +1214,37 @@ def maybe_refresh(args: argparse.Namespace) -> Optional[Dict[str, Any]]:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
+
+    if args.cmd == "status":
+        from scripts.secopsai_report_snapshot import build_snapshot
+
+        workspace_logs = (
+            Path(args.workspace_logs).expanduser().resolve()
+            if args.workspace_logs
+            else Path.home() / ".openclaw" / "workspace" / "logs"
+        )
+        openclaw_home = (
+            Path(args.openclaw_home).expanduser().resolve()
+            if args.openclaw_home
+            else Path.home() / ".openclaw"
+        )
+        payload = build_snapshot(ROOT, workspace_logs, openclaw_home)
+        if args.json:
+            print(to_json(payload))
+        else:
+            repo = payload.get("repo", {})
+            intel = payload.get("intel", {})
+            telemetry = payload.get("telemetry", {})
+            replay = telemetry.get("labeled_replay", {}) if isinstance(telemetry, dict) else {}
+            findings = payload.get("findings", {}).get("soc_store", {})
+            print(f"generated_at={payload.get('generated_at')}")
+            print(f"branch={repo.get('branch')}")
+            print(f"worktree_dirty={repo.get('worktree', {}).get('dirty')}")
+            print(f"intel_total_iocs={intel.get('total_iocs')}")
+            print(f"latest_replay_event={replay.get('latest_event_ts')}")
+            print(f"open_or_in_review={findings.get('open_or_in_review')}")
+            print(f"staleness_flags={','.join(payload.get('staleness_flags') or []) or 'none'}")
+        return 0
 
     if args.cmd == "refresh":
         with _refresh_lock(args.json) as acquired:

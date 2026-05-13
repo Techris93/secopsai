@@ -621,6 +621,32 @@ name = "normalpkg"
         self.assertTrue(matched["matched"])
         self.assertFalse(not_matched["matched"])
 
+    def test_advisory_index_refreshes_when_files_change(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            advisory_dir = Path(temp_dir) / "advisories"
+            advisory_dir.mkdir()
+            advisory_path = advisory_dir / "test.json"
+            advisory_path.write_text(json.dumps({
+                "advisory_id": "ADV-CACHE",
+                "title": "Cached advisory",
+                "status": "active",
+                "affected": [{"ecosystem": "npm", "package": "cached-pkg", "versions": ["1.0.0"]}],
+            }), encoding="utf-8")
+            with mock.patch.object(supply_chain, "ADVISORIES_DIR", advisory_dir):
+                first = supply_chain.check_advisory("npm", "cached-pkg", "1.0.0")
+                advisory_path.write_text(json.dumps({
+                    "advisory_id": "ADV-CACHE",
+                    "title": "Cached advisory",
+                    "status": "active",
+                    "affected": [{"ecosystem": "npm", "package": "cached-pkg", "versions": ["2.0.0"]}],
+                }), encoding="utf-8")
+                second = supply_chain.check_advisory("npm", "cached-pkg", "2.0.0")
+                stale = supply_chain.check_advisory("npm", "cached-pkg", "1.0.0")
+
+        self.assertTrue(first["matched"])
+        self.assertTrue(second["matched"])
+        self.assertFalse(stale["matched"])
+
     def test_removed_artifact_with_advisory_creates_malicious_finding(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

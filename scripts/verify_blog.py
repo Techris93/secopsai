@@ -59,6 +59,15 @@ def main() -> int:
         raise AssertionError("JSON feed items must include reading-time metadata")
     if not (BLOG / "data" / "news-sources.json").exists():
         raise AssertionError("news ingestion source registry is missing")
+    news_sources = json.loads(require(BLOG / "data" / "news-sources.json")).get("sources", [])
+    enabled_sources = [source for source in news_sources if source.get("enabled", True)]
+    source_names = {str(source.get("name") or "") for source in enabled_sources}
+    trust_levels = {str(source.get("trust_level") or "") for source in enabled_sources}
+    for required in {"CISA Known Exploited Vulnerabilities", "CERT/CC Vulnerability Notes", "Socket Blog"}:
+        if required not in source_names:
+            raise AssertionError(f"news source registry missing required source: {required}")
+    if not ({"government", "vendor", "project"} & trust_levels):
+        raise AssertionError("news source registry must include direct government/vendor/project sources")
     if "Raw JSON" not in json_landing:
         raise AssertionError("JSON feed landing page must link to the raw JSON endpoint")
     if "post-search" not in blog_js:

@@ -25,7 +25,7 @@ import xmlrpc.client
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import soc_store
 
@@ -95,6 +95,11 @@ COMMON_BUILD_BACKENDS = {
 
 # Package reputation cache to avoid repeated API calls
 _reputation_cache: Dict[str, Dict[str, Any]] = {}
+_advisory_cache: Dict[Tuple[str, Tuple[Tuple[str, int, int], ...]], List[Dict[str, Any]]] = {}
+_advisory_index_cache: Dict[
+    Tuple[str, Tuple[Tuple[str, int, int], ...]],
+    Dict[Tuple[str, str], List[Tuple[Dict[str, Any], Dict[str, Any]]]],
+] = {}
 
 NPM_INSTALL_HOOK_RE = re.compile(
     r'^\+\s+"(?P<hook>preinstall|install|postinstall|prepare)"\s*:\s*"(?P<cmd>.+)"',
@@ -725,10 +730,34 @@ def _read_json_source(path_or_url: str) -> Any:
     return json.loads(Path(path_or_url).read_text(encoding="utf-8"))
 
 
+def _advisory_signature(advisory_root: Path) -> Tuple[str, Tuple[Tuple[str, int, int], ...]]:
+    root = advisory_root.expanduser().resolve()
+    if not root.exists():
+        return (str(root), ())
+    files = [root] if root.is_file() else sorted(root.glob("*.json"))
+    signature: List[Tuple[str, int, int]] = []
+    for file_path in files:
+        try:
+            stat = file_path.stat()
+        except OSError:
+            continue
+        signature.append((str(file_path.resolve()), int(stat.st_mtime_ns), int(stat.st_size)))
+    return (str(root), tuple(signature))
+
+
+def clear_advisory_cache() -> None:
+    _advisory_cache.clear()
+    _advisory_index_cache.clear()
+
+
 def load_advisories(path: Optional[Path] = None) -> List[Dict[str, Any]]:
     advisory_root = path or ADVISORIES_DIR
     if not advisory_root.exists():
         return []
+    cache_key = _advisory_signature(advisory_root)
+    cached = _advisory_cache.get(cache_key)
+    if cached is not None:
+        return cached
     files = [advisory_root] if advisory_root.is_file() else sorted(advisory_root.glob("*.json"))
     advisories: List[Dict[str, Any]] = []
     for advisory_file in files:
@@ -740,6 +769,8 @@ def load_advisories(path: Optional[Path] = None) -> List[Dict[str, Any]]:
             advisories.extend(item for item in payload if isinstance(item, dict))
         elif isinstance(payload, dict):
             advisories.append(payload)
+    _advisory_cache.clear()
+    _advisory_cache[cache_key] = advisories
     return advisories
 
 
@@ -758,6 +789,7 @@ def ingest_advisory(path_or_url: str) -> Dict[str, Any]:
         target = ADVISORIES_DIR / f"{_advisory_slug(advisory)}.json"
         target.write_text(json.dumps(advisory, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         written.append(str(target))
+    clear_advisory_cache()
     return {"ingested": len(written), "paths": written}
 
 
@@ -787,11 +819,14 @@ def _normalize_advisory_match(advisory: Dict[str, Any], affected: Dict[str, Any]
     }
 
 
-def find_advisory_matches(ecosystem: str, package: str, version: str) -> List[Dict[str, Any]]:
-    target_ecosystem = ecosystem.lower()
-    target_package = _canonical_package_name(target_ecosystem, package)
-    matches: List[Dict[str, Any]] = []
-    for advisory in load_advisories():
+def _advisory_index(path: Optional[Path] = None) -> Dict[Tuple[str, str], List[Tuple[Dict[str, Any], Dict[str, Any]]]]:
+    advisory_root = path or ADVISORIES_DIR
+    cache_key = _advisory_signature(advisory_root)
+    cached = _advisory_index_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    index: Dict[Tuple[str, str], List[Tuple[Dict[str, Any], Dict[str, Any]]]] = {}
+    for advisory in load_advisories(path):
         if str(advisory.get("status", "active")).lower() != "active":
             continue
         for affected in advisory.get("affected", []):
@@ -799,12 +834,22 @@ def find_advisory_matches(ecosystem: str, package: str, version: str) -> List[Di
                 continue
             affected_ecosystem = str(affected.get("ecosystem", "")).lower()
             affected_package = _canonical_package_name(affected_ecosystem, str(affected.get("package", "")))
-            if affected_ecosystem != target_ecosystem or affected_package != target_package:
-                continue
-            exact_versions = {str(item) for item in affected.get("versions", [])}
-            range_specs = [spec for spec in affected.get("version_ranges", []) if isinstance(spec, dict)]
-            if str(version) in exact_versions or any(_version_in_range(str(version), spec) for spec in range_specs):
-                matches.append(_normalize_advisory_match(advisory, affected, str(version)))
+            if affected_ecosystem and affected_package:
+                index.setdefault((affected_ecosystem, affected_package), []).append((advisory, affected))
+    _advisory_index_cache.clear()
+    _advisory_index_cache[cache_key] = index
+    return index
+
+
+def find_advisory_matches(ecosystem: str, package: str, version: str) -> List[Dict[str, Any]]:
+    target_ecosystem = ecosystem.lower()
+    target_package = _canonical_package_name(target_ecosystem, package)
+    matches: List[Dict[str, Any]] = []
+    for advisory, affected in _advisory_index().get((target_ecosystem, target_package), []):
+        exact_versions = {str(item) for item in affected.get("versions", [])}
+        range_specs = [spec for spec in affected.get("version_ranges", []) if isinstance(spec, dict)]
+        if str(version) in exact_versions or any(_version_in_range(str(version), spec) for spec in range_specs):
+            matches.append(_normalize_advisory_match(advisory, affected, str(version)))
     return matches
 
 
