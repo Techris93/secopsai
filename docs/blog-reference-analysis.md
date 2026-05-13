@@ -37,6 +37,7 @@ Scope:
 - Topic cards added for Threat Intelligence, Supply Chain, Detection Engineering, Mitigation, OpenClaw, and Product Updates.
 - Post pages now render structured intelligence panels for executive summary, affected artifacts, IOCs, commands, references, and related posts.
 - Blog JSON feed now carries author, severity, reading-time, and affected-package metadata.
+- News ingestion now uses a Socket-inspired source registry and cache flow: fetch sources, normalize security-news items, deduplicate by URL/title hash, create review-only drafts, and publish only drafts explicitly marked approved.
 
 ## Deferred Ideas
 

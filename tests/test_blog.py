@@ -84,21 +84,78 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertEqual(payload["required_present"], ["SUPABASE_URL"])
         self.assertEqual(payload["required_missing"], ["SUPABASE_SERVICE_ROLE_KEY"])
 
-    def test_draft_news_deduplicates_sources(self):
+    def test_news_ingestion_fetches_deduplicates_and_drafts(self):
         feed_text = (
             '<?xml version="1.0"?><rss version="2.0"><channel><title>News</title>'
             "<item><title>Example security news</title><link>https://example.com/a</link>"
-            "<description>Short summary.</description></item></channel></rss>"
+            "<description>Short summary.</description><pubDate>Wed, 13 May 2026 10:00:00 GMT</pubDate></item>"
+            "<item><title>Second security news</title><link>https://example.com/b</link>"
+            "<description>Another summary.</description></item></channel></rss>"
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             feed_path = Path(temp_dir) / "feed.xml"
             feed_path.write_text(feed_text, encoding="utf-8")
             paths = blog.BlogPaths(Path(temp_dir) / "blog")
-            first = blog.draft_news(str(feed_path), paths=paths)
-            with self.assertRaises(ValueError):
-                blog.draft_news(str(feed_path), paths=paths)
+            paths.data.mkdir(parents=True)
+            paths.news_sources.write_text(
+                json.dumps({
+                    "sources": [
+                        {
+                            "name": "Fixture Feed",
+                            "feed_url": str(feed_path),
+                            "type": "rss",
+                            "category": "Security News",
+                            "enabled": True,
+                            "default_tags": ["Fixture"],
+                        },
+                        {
+                            "name": "Broken Feed",
+                            "feed_url": str(Path(temp_dir) / "missing.xml"),
+                            "type": "rss",
+                            "category": "Security News",
+                            "enabled": True,
+                        },
+                    ]
+                }),
+                encoding="utf-8",
+            )
+            sources = blog.news_sources_list(paths=paths)
+            first_fetch = blog.news_fetch(limit=5, paths=paths)
+            second_fetch = blog.news_fetch(limit=5, paths=paths)
+            drafts = blog.news_draft(limit=1, paths=paths)
+            draft_text = Path(drafts["created"][0]).read_text(encoding="utf-8")
 
-        self.assertTrue(Path(first["draft_path"]).name.endswith(".json"))
+            self.assertEqual(sources["enabled"], 2)
+            self.assertEqual(first_fetch["created"], 2)
+            self.assertEqual(second_fetch["created"], 0)
+            self.assertTrue(first_fetch["errors"])
+            self.assertEqual(drafts["total"], 1)
+            self.assertIn("requires human review", draft_text)
+
+    def test_news_publish_approved_is_gated(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.drafts.mkdir(parents=True)
+            draft = blog._base_post(
+                title="External story",
+                summary="External summary.",
+                categories=["Security News"],
+                sources=["https://example.com/story"],
+            )
+            draft.update({
+                "external_news": True,
+                "review_status": "needs_review",
+                "body_markdown": "# External story\n\nNeeds review.",
+            })
+            draft_path = paths.drafts / "external-story.json"
+            draft_path.write_text(json.dumps(draft), encoding="utf-8")
+            blocked = blog.news_publish_approved(paths=paths)
+            draft["review_status"] = "approved"
+            draft_path.write_text(json.dumps(draft), encoding="utf-8")
+            approved = blog.news_publish_approved(paths=paths)
+
+        self.assertEqual(blocked["total"], 0)
+        self.assertEqual(approved["total"], 1)
 
 
 if __name__ == "__main__":

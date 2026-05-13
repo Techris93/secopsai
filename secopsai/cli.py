@@ -35,6 +35,11 @@ from secopsai.blog import (
     draft_daily as draft_blog_daily,
     draft_finding as draft_blog_finding,
     draft_news as draft_blog_news,
+    news_draft as draft_blog_news_batch,
+    news_fetch as fetch_blog_news,
+    news_publish_approved as publish_approved_blog_news,
+    news_run as run_blog_news,
+    news_sources_list as list_blog_news_sources,
     publish as publish_blog_post,
     rebuild as rebuild_blog,
 )
@@ -838,6 +843,21 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     blog_news = blog_sub.add_parser("draft-news", help="Create a review-only blog draft from a URL or RSS feed")
     blog_news.add_argument("--source", required=True, help="Source URL or feed URL")
 
+    blog_news_sources = blog_sub.add_parser("news-sources", help="Manage curated security-news sources")
+    news_sources_sub = blog_news_sources.add_subparsers(dest="news_sources_cmd", required=True)
+    news_sources_sub.add_parser("list", help="List configured news sources")
+
+    blog_news_fetch = blog_sub.add_parser("news-fetch", help="Fetch and cache security-news items from configured sources")
+    blog_news_fetch.add_argument("--limit", type=int, default=20, help="Maximum new items to cache")
+
+    blog_news_draft = blog_sub.add_parser("news-draft", help="Create review-only drafts from cached news items")
+    blog_news_draft.add_argument("--limit", type=int, default=5, help="Maximum news drafts to create")
+
+    blog_news_run = blog_sub.add_parser("news-run", help="Fetch news and create review-only drafts")
+    blog_news_run.add_argument("--limit", type=int, default=5, help="Maximum items to fetch/draft")
+
+    blog_sub.add_parser("news-publish-approved", help="Publish only external-news drafts marked approved/reviewed")
+
     blog_daily = blog_sub.add_parser("draft-daily", help="Automation-ready draft generation without autopublishing")
     blog_daily.add_argument("--limit", type=int, default=5, help="Maximum advisory drafts to create")
 
@@ -1324,6 +1344,16 @@ def main(argv: Optional[List[str]] = None) -> int:
                 payload = draft_blog_advisory(args.campaign)
             elif args.blog_cmd == "draft-news":
                 payload = draft_blog_news(args.source)
+            elif args.blog_cmd == "news-sources":
+                payload = list_blog_news_sources()
+            elif args.blog_cmd == "news-fetch":
+                payload = fetch_blog_news(limit=args.limit)
+            elif args.blog_cmd == "news-draft":
+                payload = draft_blog_news_batch(limit=args.limit)
+            elif args.blog_cmd == "news-run":
+                payload = run_blog_news(limit=args.limit)
+            elif args.blog_cmd == "news-publish-approved":
+                payload = publish_approved_blog_news()
             elif args.blog_cmd == "draft-daily":
                 payload = draft_blog_daily(limit=args.limit)
             elif args.blog_cmd == "publish":
@@ -1343,6 +1373,26 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         if args.json:
             print(to_json(payload))
+        elif args.blog_cmd == "news-sources":
+            print(f"total={payload['total']}")
+            print(f"enabled={payload['enabled']}")
+            for source in payload.get("sources", []):
+                state = "enabled" if source.get("enabled", True) else "disabled"
+                print(f"- {source.get('name')} ({state}, {source.get('type', 'rss')}): {source.get('feed_url') or source.get('url')}")
+        elif args.blog_cmd == "news-fetch":
+            print(f"created={payload['created']}")
+            print(f"cached={payload['cached']}")
+            for error in payload.get("errors", []):
+                print(f"error={error.get('source')}: {error.get('error')}")
+        elif args.blog_cmd in {"news-draft", "news-publish-approved"}:
+            print(f"total={payload['total']}")
+            for path in payload.get("created", payload.get("published", [])):
+                print(f"- {path}")
+        elif args.blog_cmd == "news-run":
+            print(f"fetched={payload['fetched']['created']}")
+            print(f"drafted={payload['drafted']['total']}")
+            for path in payload["drafted"].get("created", []):
+                print(f"- {path}")
         elif args.blog_cmd.startswith("draft"):
             print(f"draft_path={payload.get('draft_path')}")
             if payload.get("total") is not None:

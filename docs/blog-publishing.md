@@ -22,6 +22,46 @@ secopsai blog draft-daily --limit 5
 
 Drafts are written to `blog/drafts/*.json`. External-news drafts are review-only and must not be published until an analyst verifies the source, adds SecOpsAI relevance, and confirms no copied article text, secrets, private logs, or raw exploit payloads are present.
 
+## Automated Security-News Ingestion
+
+Curated sources live in `blog/data/news-sources.json`. Each source declares a name, URL or feed URL, type (`rss`, `html`, or `json`), category, trust level, enabled flag, default tags, and a polling-frequency hint. The default registry includes Socket Blog, CISA News, CISA KEV, GitHub Security Lab, and Microsoft Security Blog.
+
+Fetch and cache new items:
+
+```bash
+secopsai blog news-sources list
+secopsai blog news-fetch --limit 20
+```
+
+Create review-only drafts from cached news:
+
+```bash
+secopsai blog news-draft --limit 5
+```
+
+Run both steps together for cron, launchd, GitHub Actions, or a local scheduled task:
+
+```bash
+secopsai blog news-run --limit 5
+```
+
+External-news posts are not public until reviewed. To publish through the guarded helper, edit the draft JSON and set:
+
+```json
+{
+  "review_status": "approved"
+}
+```
+
+Then run:
+
+```bash
+secopsai blog news-publish-approved
+secopsai blog rebuild-feeds
+```
+
+The pipeline stores fetched metadata in `blog/data/news-cache.json`, deduplicates by canonical URL/title hash, and keeps external claims source-linked. Do not commit generated cache entries or generated drafts unless the post has been reviewed and intentionally published.
+
 ## Publish
 
 ```bash

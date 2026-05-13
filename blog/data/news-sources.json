@@ -1,0 +1,60 @@
+{
+  "sources": [
+    {
+      "name": "Socket Blog",
+      "url": "https://socket.dev/blog",
+      "feed_url": "https://socket.dev/blog",
+      "type": "html",
+      "category": "Supply Chain",
+      "trust_level": "external_research",
+      "enabled": true,
+      "default_tags": ["Security News", "Supply Chain", "Research"],
+      "poll_frequency_hint": "hourly"
+    },
+    {
+      "name": "CISA News",
+      "url": "https://www.cisa.gov/news-events",
+      "feed_url": "https://www.cisa.gov/news.xml",
+      "type": "rss",
+      "category": "Threat Intelligence",
+      "trust_level": "government",
+      "enabled": true,
+      "default_tags": ["Security News", "CISA"],
+      "poll_frequency_hint": "daily"
+    },
+    {
+      "name": "CISA Known Exploited Vulnerabilities",
+      "url": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "feed_url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+      "type": "json",
+      "category": "Threat Intelligence",
+      "trust_level": "government",
+      "enabled": true,
+      "default_tags": ["Security News", "CISA KEV", "Vulnerability"],
+      "default_severity": "high",
+      "poll_frequency_hint": "daily"
+    },
+    {
+      "name": "GitHub Security Lab",
+      "url": "https://github.blog/security/vulnerability-research/",
+      "feed_url": "https://github.blog/security/vulnerability-research/feed/",
+      "type": "rss",
+      "category": "Detection Engineering",
+      "trust_level": "external_research",
+      "enabled": true,
+      "default_tags": ["Security News", "Vulnerability Research"],
+      "poll_frequency_hint": "daily"
+    },
+    {
+      "name": "Microsoft Security Blog",
+      "url": "https://www.microsoft.com/en-us/security/blog/",
+      "feed_url": "https://www.microsoft.com/en-us/security/blog/feed/",
+      "type": "rss",
+      "category": "Threat Intelligence",
+      "trust_level": "vendor",
+      "enabled": true,
+      "default_tags": ["Security News", "Threat Intelligence"],
+      "poll_frequency_hint": "daily"
+    }
+  ]
+}

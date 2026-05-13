@@ -39,3 +39,7 @@ config/supply_chain_policy.toml
 data/triage/
 secopsai/vendor/**/__pycache__/
 secopsai/vendor/**/logs/
+
+# Generated blog news-ingestion artifacts
+blog/data/news-cache.json
+blog/drafts/*.json

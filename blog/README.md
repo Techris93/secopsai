@@ -109,11 +109,18 @@ secopsai blog draft-finding <FINDING_ID>
 secopsai blog draft-advisory --campaign mini-shai-hulud
 secopsai blog draft-news --source https://example.com/security-feed.xml
 
+# Fetch curated world-security news and create review-only drafts.
+secopsai blog news-sources list
+secopsai blog news-fetch --limit 20
+secopsai blog news-draft --limit 5
+secopsai blog news-run --limit 5
+
 # Automation-friendly daily draft generation from local advisories.
 secopsai blog draft-daily --limit 5
 
 # Publish only after review.
 secopsai blog publish blog/drafts/<slug>.json --publish
+secopsai blog news-publish-approved
 
 # Rebuild index, RSS, and JSON feeds from published post metadata.
 secopsai blog rebuild-feeds
@@ -125,6 +132,7 @@ Safety gates:
 - `publish` does nothing public unless `--publish` is present.
 - Sensitive token-like values are redacted before rendering.
 - External news drafts store source URLs and require human review; they are not autopublished.
+- Curated source metadata lives in `blog/data/news-sources.json`; fetched cache entries and generated drafts are operational artifacts unless intentionally reviewed and published.
 
 ## Publishing From Advisories
 

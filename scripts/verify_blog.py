@@ -37,7 +37,7 @@ def main() -> int:
 
     if "mini-shai-hulud-emergency-advisory.html" not in index:
         raise AssertionError("index does not link the Mini Shai-Hulud post")
-    for marker in ["Security Research & Advisories", "Featured research", "Latest posts", "data-topic-filter", "post-sort"]:
+    for marker in ["Security Research & Advisories", "Security News", "Featured research", "Latest posts", "data-topic-filter", "post-sort"]:
         if marker not in index:
             raise AssertionError(f"blog index missing advanced blog marker: {marker}")
     if "data-comments" not in post:
@@ -57,6 +57,8 @@ def main() -> int:
         raise AssertionError("JSON feed items must include author metadata")
     if not feed_json["items"][0].get("reading_time_minutes"):
         raise AssertionError("JSON feed items must include reading-time metadata")
+    if not (BLOG / "data" / "news-sources.json").exists():
+        raise AssertionError("news ingestion source registry is missing")
     if "Raw JSON" not in json_landing:
         raise AssertionError("JSON feed landing page must link to the raw JSON endpoint")
     if "post-search" not in blog_js:

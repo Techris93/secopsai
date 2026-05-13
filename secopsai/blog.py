@@ -8,6 +8,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -27,8 +28,10 @@ BLOG_DIR = ROOT / "blog"
 POSTS_DIR = BLOG_DIR / "posts"
 DRAFTS_DIR = BLOG_DIR / "drafts"
 NEWS_CACHE_PATH = BLOG_DIR / "data" / "news-cache.json"
+NEWS_SOURCES_PATH = BLOG_DIR / "data" / "news-sources.json"
 BASE_URL = "https://blog.secopsai.dev"
 TOPIC_SECTIONS = [
+    "Security News",
     "Threat Intelligence",
     "Supply Chain",
     "Detection Engineering",
@@ -63,6 +66,10 @@ class BlogPaths:
     @property
     def news_cache(self) -> Path:
         return self.data / "news-cache.json"
+
+    @property
+    def news_sources(self) -> Path:
+        return self.data / "news-sources.json"
 
 
 def _utc_now() -> str:
@@ -460,49 +467,220 @@ def _fetch_text(url: str) -> str:
         return response.read().decode("utf-8", errors="replace")
 
 
-def draft_news(source: str, *, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+def _strip_markup(value: Any) -> str:
+    text = html.unescape(str(value or ""))
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def load_news_sources(*, paths: Optional[BlogPaths] = None) -> List[Dict[str, Any]]:
     paths = paths or BlogPaths()
-    parsed = feedparser.parse(source) if feedparser else None
-    entries = getattr(parsed, "entries", []) if parsed else []
-    if entries:
-        entry = entries[0]
-        title = str(entry.get("title") or "Security news item")
-        link = str(entry.get("link") or source)
-        summary = re.sub(r"<[^>]+>", " ", str(entry.get("summary") or title))
-        source_name = str(parsed.feed.get("title") or urllib.parse.urlparse(link).netloc or "External source")
-    else:
-        text = _fetch_text(source)
-        item_match = re.search(r"<item\b.*?</item>", text, re.IGNORECASE | re.DOTALL)
-        if item_match:
-            item_text = item_match.group(0)
-            item_title = re.search(r"<title[^>]*>(.*?)</title>", item_text, re.IGNORECASE | re.DOTALL)
-            item_link = re.search(r"<link[^>]*>(.*?)</link>", item_text, re.IGNORECASE | re.DOTALL)
-            item_summary = re.search(r"<description[^>]*>(.*?)</description>", item_text, re.IGNORECASE | re.DOTALL)
-            title = html.unescape(re.sub(r"\s+", " ", item_title.group(1)).strip()) if item_title else "Security news item"
-            link = html.unescape(re.sub(r"\s+", " ", item_link.group(1)).strip()) if item_link else source
-            summary = (
-                html.unescape(re.sub(r"<[^>]+>", " ", item_summary.group(1))).strip()
-                if item_summary
-                else "External security-news source queued for analyst review."
-            )
-            source_name = urllib.parse.urlparse(link).netloc or "External source"
-        else:
-            title_match = re.search(r"<title[^>]*>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
-            title = html.unescape(re.sub(r"\s+", " ", title_match.group(1)).strip()) if title_match else source
-            link = source
-            summary = (
-                "External security-news source queued for analyst review. "
-                "Summarize only after reading and citing the source."
-            )
-            source_name = urllib.parse.urlparse(source).netloc or "External source"
+    if not paths.news_sources.exists():
+        return []
+    payload = _load_json(paths.news_sources)
+    sources = payload.get("sources", payload if isinstance(payload, list) else [])
+    if not isinstance(sources, list):
+        return []
+    return [source for source in sources if isinstance(source, dict)]
 
+
+def _normalise_news_item(raw: Dict[str, Any], source: Dict[str, Any]) -> Dict[str, Any]:
+    title = redact(_strip_markup(raw.get("title") or "Security news item"))
+    url = str(raw.get("url") or raw.get("link") or source.get("url") or source.get("feed_url") or "").strip()
+    if url.startswith("/"):
+        parsed_source = urllib.parse.urlparse(str(source.get("url") or source.get("feed_url") or ""))
+        url = f"{parsed_source.scheme}://{parsed_source.netloc}{url}" if parsed_source.netloc else url
+    summary = redact(_strip_markup(raw.get("summary") or raw.get("description") or title))
+    source_name = str(source.get("name") or raw.get("source_name") or urllib.parse.urlparse(url).netloc or "External source")
+    category = str(raw.get("category") or source.get("category") or "Security News")
+    source_tags = source.get("default_tags", []) if isinstance(source.get("default_tags", []), list) else []
+    raw_tags = raw.get("tags", []) if isinstance(raw.get("tags", []), list) else []
+    tags = _safe_list([category, *source_tags, *raw_tags], limit=12)
+    key = _source_key(url, title)
+    return {
+        "key": key,
+        "title": title,
+        "url": url,
+        "canonical_url": url,
+        "source_name": source_name,
+        "source_url": str(source.get("url") or source.get("feed_url") or url),
+        "source_type": str(source.get("type") or "rss"),
+        "category": category,
+        "tags": tags,
+        "summary": summary[:500],
+        "published_at": str(raw.get("published_at") or raw.get("published") or raw.get("date") or ""),
+        "fetched_at": _utc_now(),
+        "severity": str(raw.get("severity") or source.get("default_severity") or "info"),
+        "trust_level": str(source.get("trust_level") or "external"),
+        "review_status": "new",
+    }
+
+
+def _parse_rss_items(text: str, source: Dict[str, Any], *, limit: int) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    try:
+        root = ET.fromstring(text.encode("utf-8"))
+    except ET.ParseError:
+        return items
+    channel_items = root.findall(".//item") or root.findall(".//{http://www.w3.org/2005/Atom}entry")
+    for item in channel_items[:limit]:
+        def first_text(*names: str) -> str:
+            for name in names:
+                found = item.find(name)
+                if found is not None and found.text:
+                    return found.text
+            return ""
+        atom_link = item.find("{http://www.w3.org/2005/Atom}link")
+        link = first_text("link", "{http://www.w3.org/2005/Atom}id")
+        if atom_link is not None and atom_link.get("href"):
+            link = atom_link.get("href", "")
+        items.append(_normalise_news_item({
+            "title": first_text("title", "{http://www.w3.org/2005/Atom}title"),
+            "url": link,
+            "summary": first_text("description", "summary", "{http://www.w3.org/2005/Atom}summary"),
+            "published_at": first_text("pubDate", "published", "{http://www.w3.org/2005/Atom}published", "{http://www.w3.org/2005/Atom}updated"),
+        }, source))
+    return items
+
+
+def _walk_dicts(value: Any) -> Iterable[Dict[str, Any]]:
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _walk_dicts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_dicts(child)
+
+
+def _parse_html_items(text: str, source: Dict[str, Any], *, limit: int) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    next_data = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', text, re.DOTALL)
+    if next_data:
+        try:
+            payload = json.loads(html.unescape(next_data.group(1)))
+            seen: set[str] = set()
+            for node in _walk_dicts(payload):
+                if not {"slug", "title"} <= set(node):
+                    continue
+                if not node.get("publishedAt"):
+                    continue
+                slug = str(node.get("slug") or "")
+                title = str(node.get("title") or "")
+                if not slug or not title or slug in seen:
+                    continue
+                seen.add(slug)
+                categories = [
+                    category.get("title", "")
+                    for category in node.get("categories", [])
+                    if isinstance(category, dict)
+                ]
+                authors = [
+                    author.get("name", "")
+                    for author in node.get("authors", [])
+                    if isinstance(author, dict)
+                ]
+                items.append(_normalise_news_item({
+                    "title": title,
+                    "url": f"https://socket.dev/blog/{slug}" if "socket.dev" in str(source.get("url")) else slug,
+                    "summary": node.get("description") or title,
+                    "published_at": node.get("publishedAt", ""),
+                    "tags": categories,
+                    "source_name": ", ".join(_safe_list(authors, limit=3)),
+                    "category": categories[0] if categories else source.get("category", "Security News"),
+                }, source))
+                if len(items) >= limit:
+                    return items
+        except Exception:
+            pass
+    for match in re.finditer(r'href="([^"]*/blog/[^"]+)".{0,900}?>([^<>]{12,180})<', text, re.DOTALL):
+        if len(items) >= limit:
+            break
+        items.append(_normalise_news_item({
+            "title": match.group(2),
+            "url": match.group(1),
+            "summary": "External security-news item queued for analyst review.",
+        }, source))
+    return items
+
+
+def _parse_json_items(text: str, source: Dict[str, Any], *, limit: int) -> List[Dict[str, Any]]:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(payload, dict) and isinstance(payload.get("vulnerabilities"), list):
+        return [
+            _normalise_news_item({
+                "title": f"CISA KEV: {item.get('vendorProject', '')} {item.get('product', '')} {item.get('cveID', '')}".strip(),
+                "url": item.get("notes") or "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+                "summary": item.get("shortDescription") or item.get("vulnerabilityName") or "",
+                "published_at": item.get("dateAdded") or "",
+                "tags": ["CISA KEV", item.get("cveID", "")],
+                "severity": "high",
+            }, source)
+            for item in payload["vulnerabilities"][:limit]
+            if isinstance(item, dict)
+        ]
+    return []
+
+
+def _parse_news_items(text: str, source: Dict[str, Any], *, limit: int) -> List[Dict[str, Any]]:
+    source_type = str(source.get("type") or "rss").lower()
+    stripped = text.lstrip()
+    if source_type == "json" or stripped.startswith("{"):
+        return _parse_json_items(text, source, limit=limit)
+    if source_type == "html" or "<html" in stripped[:500].lower():
+        return _parse_html_items(text, source, limit=limit)
+    return _parse_rss_items(text, source, limit=limit)
+
+
+def news_sources_list(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+    sources = load_news_sources(paths=paths)
+    return {
+        "sources": sources,
+        "total": len(sources),
+        "enabled": sum(1 for source in sources if source.get("enabled", True)),
+    }
+
+
+def news_fetch(*, limit: int = 20, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+    paths = paths or BlogPaths()
     cache = _read_news_cache(paths)
-    key = _source_key(link, title)
-    if key in {item.get("key") for item in cache.get("items", [])}:
-        raise ValueError(f"news source already drafted: {link}")
-    cache.setdefault("items", []).append({"key": key, "url": link, "title": title, "fetched_at": _utc_now()})
+    cached_by_key = {item.get("key"): item for item in cache.get("items", []) if isinstance(item, dict)}
+    created: List[Dict[str, Any]] = []
+    errors: List[Dict[str, str]] = []
+    for source in load_news_sources(paths=paths):
+        if not source.get("enabled", True):
+            continue
+        if len(created) >= limit:
+            break
+        source_url = str(source.get("feed_url") or source.get("url") or "")
+        if not source_url:
+            continue
+        try:
+            text = _fetch_text(source_url)
+            parsed_items = _parse_news_items(text, source, limit=max(limit - len(created), 1))
+            for item in parsed_items:
+                if item["key"] in cached_by_key:
+                    continue
+                cached_by_key[item["key"]] = item
+                created.append(item)
+                if len(created) >= limit:
+                    break
+        except Exception as exc:
+            errors.append({"source": str(source.get("name") or source_url), "error": str(exc)})
+    cache["items"] = sorted(cached_by_key.values(), key=lambda item: str(item.get("published_at") or item.get("fetched_at") or ""), reverse=True)
+    cache["updated_at"] = _utc_now()
     _write_news_cache(paths, cache)
+    return {"created": len(created), "cached": len(cache["items"]), "errors": errors, "items": created}
 
+
+def _draft_from_news_item(item: Dict[str, Any], *, paths: BlogPaths) -> Dict[str, Any]:
+    title = str(item.get("title") or "Security news item")
+    link = str(item.get("canonical_url") or item.get("url") or "")
+    summary = str(item.get("summary") or title)
+    category = str(item.get("category") or "Security News")
     body = f"""# {title}
 
 ## Executive Summary
@@ -511,13 +689,27 @@ def draft_news(source: str, *, paths: Optional[BlogPaths] = None) -> Dict[str, A
 
 ## Why It Matters
 
-- This external news item is a draft and requires human review before publishing.
-- Confirm claims against the linked source and any primary references.
-- Add SecOpsAI detection or mitigation context before publishing.
+- This external security-news item was imported automatically from `{item.get('source_name', 'external source')}`.
+- It is a draft and requires human review before publishing.
+- Confirm claims against the linked source and any primary references before publication.
 
-## SecOpsAI Relevance
+## What SecOpsAI Can Detect
 
-- Add related detections, IOCs, affected products, or mitigation steps.
+- Add matching SecOpsAI advisories, package verdicts, detections, or OpenClaw findings here after review.
+
+## IOCs
+
+- No structured IOCs were extracted automatically. Add source-backed IOCs manually if present.
+
+## Affected Packages Or Products
+
+- Review the source and add affected products, packages, versions, or ecosystems if applicable.
+
+## Recommended Actions
+
+- Review the source.
+- Validate affected assets in your environment.
+- Add SecOpsAI detection or mitigation commands before publishing.
 
 ## References
 
@@ -526,17 +718,85 @@ def draft_news(source: str, *, paths: Optional[BlogPaths] = None) -> Dict[str, A
     post = _base_post(
         title=title,
         summary=summary,
-        severity="info",
-        categories=["Security News"],
+        severity=str(item.get("severity") or "info"),
+        categories=_safe_list(["Security News", category, *item.get("tags", [])], limit=8),
         sources=[link],
-        slug=slugify(f"news-{title}"),
+        slug=slugify(f"news-{item.get('key', '')}-{title}"),
     )
-    post.update({"source_name": source_name, "body_markdown": redact(body)})
-    post["author"] = source_name
+    post.update({
+        "source_name": item.get("source_name") or "External source",
+        "author": item.get("source_name") or "External source",
+        "body_markdown": redact(body),
+        "external_news": True,
+        "review_status": "needs_review",
+        "news_key": item.get("key"),
+        "fetched_at": item.get("fetched_at"),
+    })
     post["references"] = [link]
     post["reading_time"] = _post_reading_time(post)
     _write_json(_draft_path(post["slug"], paths), post)
     return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
+
+
+def news_draft(*, limit: int = 5, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+    paths = paths or BlogPaths()
+    cache = _read_news_cache(paths)
+    created: List[str] = []
+    for item in cache.get("items", []):
+        if len(created) >= limit:
+            break
+        if not isinstance(item, dict) or item.get("draft_path") or item.get("review_status") == "published":
+            continue
+        payload = _draft_from_news_item(item, paths=paths)
+        item["draft_path"] = payload["draft_path"]
+        item["drafted_at"] = _utc_now()
+        item["review_status"] = "drafted"
+        created.append(payload["draft_path"])
+    _write_news_cache(paths, cache)
+    return {"created": created, "total": len(created)}
+
+
+def news_run(*, limit: int = 5, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+    paths = paths or BlogPaths()
+    fetched = news_fetch(limit=limit, paths=paths)
+    drafted = news_draft(limit=limit, paths=paths)
+    return {"fetched": fetched, "drafted": drafted}
+
+
+def news_publish_approved(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+    paths = paths or BlogPaths()
+    published: List[str] = []
+    for path in sorted(paths.drafts.glob("*.json")):
+        post = _load_json(path)
+        if post.get("external_news") and post.get("review_status") not in {"approved", "reviewed"}:
+            continue
+        if post.get("external_news"):
+            payload = publish(str(path), confirm=True, paths=paths)
+            if payload.get("url"):
+                published.append(str(payload["url"]))
+    return {"published": published, "total": len(published)}
+
+
+def draft_news(source: str, *, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+    paths = paths or BlogPaths()
+    source_config = {
+        "name": urllib.parse.urlparse(source).netloc or "External source",
+        "url": source,
+        "feed_url": source,
+        "type": "rss",
+        "category": "Security News",
+        "trust_level": "external",
+        "default_tags": ["Security News"],
+    }
+    text = _fetch_text(source)
+    items = _parse_news_items(text, source_config, limit=1)
+    if not items:
+        items = [_normalise_news_item({
+            "title": source,
+            "url": source,
+            "summary": "External security-news source queued for analyst review.",
+        }, source_config)]
+    return _draft_from_news_item(items[0], paths=paths)
 
 
 def _draft_advisory_batch(limit: int, paths: BlogPaths) -> List[str]:
