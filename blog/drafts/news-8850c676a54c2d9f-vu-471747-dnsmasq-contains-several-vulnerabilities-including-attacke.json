@@ -20,7 +20,9 @@
     "https://kb.cert.org/vuls/id/471747"
   ],
   "related_posts": [],
+  "review_note": "Returned to review from Blog Ops dashboard",
   "review_status": "needs_review",
+  "reviewed_at": "2026-05-13T21:41:57Z",
   "severity": "info",
   "slug": "news-8850c676a54c2d9f-vu-471747-dnsmasq-contains-several-vulnerabilities-including-attacke",
   "source_name": "CERT/CC Vulnerability Notes",
