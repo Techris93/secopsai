@@ -20,7 +20,9 @@
     "https://socket.dev/blog/rising-in-cyber-2026"
   ],
   "related_posts": [],
-  "review_status": "needs_review",
+  "review_note": "Rejected from Blog Ops dashboard",
+  "review_status": "rejected",
+  "reviewed_at": "2026-05-13T18:34:30Z",
   "severity": "info",
   "slug": "news-cfb43cbb1014b64e-socket-named-to-rising-in-cyber-2026-list-of-top-cybersecurity-start",
   "source_name": "Socket Blog",
