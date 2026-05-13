@@ -1,0 +1,38 @@
+{
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "author": "Socket Blog",
+  "body_markdown": "# GemStuffer Campaign Abuses RubyGems as Exfiltration Channel Targeting UK Local Government\n\n## Executive Summary\n\nGemStuffer abuses RubyGems as an exfiltration channel, packaging scraped UK council portal data into junk gems published from new accounts.\n\n## Why It Matters\n\n- This external security-news item was imported automatically from `Socket Blog`.\n- It is a draft and requires human review before publishing.\n- Confirm claims against the linked source and any primary references before publication.\n\n## What SecOpsAI Can Detect\n\n- Add matching SecOpsAI advisories, package verdicts, detections, or OpenClaw findings here after review.\n\n## IOCs\n\n- No structured IOCs were extracted automatically. Add source-backed IOCs manually if present.\n\n## Affected Packages Or Products\n\n- Review the source and add affected products, packages, versions, or ecosystems if applicable.\n\n## Recommended Actions\n\n- Review the source.\n- Validate affected assets in your environment.\n- Add SecOpsAI detection or mitigation commands before publishing.\n\n## References\n\n- https://socket.dev/blog/gemstuffer\n",
+  "categories": [
+    "Security News",
+    "Research",
+    "Supply Chain"
+  ],
+  "external_news": true,
+  "featured": false,
+  "fetched_at": "2026-05-13T18:12:33Z",
+  "iocs": [],
+  "news_key": "fe482f2bd0154a36",
+  "published_at": "2026-05-13T18:12:33Z",
+  "reading_time": 1,
+  "references": [
+    "https://socket.dev/blog/gemstuffer"
+  ],
+  "related_posts": [],
+  "review_status": "needs_review",
+  "severity": "info",
+  "slug": "news-fe482f2bd0154a36-gemstuffer-campaign-abuses-rubygems-as-exfiltration-channel-targetin",
+  "source_name": "Socket Blog",
+  "sources": [
+    "https://socket.dev/blog/gemstuffer"
+  ],
+  "status": "draft",
+  "summary": "GemStuffer abuses RubyGems as an exfiltration channel, packaging scraped UK council portal data into junk gems published from new accounts.",
+  "tags": [
+    "Security News",
+    "Research",
+    "Supply Chain"
+  ],
+  "title": "GemStuffer Campaign Abuses RubyGems as Exfiltration Channel Targeting UK Local Government",
+  "updated_at": "2026-05-13T18:12:33Z"
+}

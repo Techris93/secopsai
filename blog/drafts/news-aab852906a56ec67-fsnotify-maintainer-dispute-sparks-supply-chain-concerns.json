@@ -1,0 +1,38 @@
+{
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "author": "Socket Blog",
+  "body_markdown": "# fsnotify Maintainer Dispute Sparks Supply Chain Concerns\n\n## Executive Summary\n\nA dispute over fsnotify maintainer access set off supply chain alarms around one of Go\u2019s most widely used filesystem libraries.\n\n## Why It Matters\n\n- This external security-news item was imported automatically from `Socket Blog`.\n- It is a draft and requires human review before publishing.\n- Confirm claims against the linked source and any primary references before publication.\n\n## What SecOpsAI Can Detect\n\n- Add matching SecOpsAI advisories, package verdicts, detections, or OpenClaw findings here after review.\n\n## IOCs\n\n- No structured IOCs were extracted automatically. Add source-backed IOCs manually if present.\n\n## Affected Packages Or Products\n\n- Review the source and add affected products, packages, versions, or ecosystems if applicable.\n\n## Recommended Actions\n\n- Review the source.\n- Validate affected assets in your environment.\n- Add SecOpsAI detection or mitigation commands before publishing.\n\n## References\n\n- https://socket.dev/blog/fsnotify-maintainer-dispute-sparks-supply-chain-concerns\n",
+  "categories": [
+    "Security News",
+    "Supply Chain",
+    "Research"
+  ],
+  "external_news": true,
+  "featured": false,
+  "fetched_at": "2026-05-13T18:12:33Z",
+  "iocs": [],
+  "news_key": "aab852906a56ec67",
+  "published_at": "2026-05-13T18:12:33Z",
+  "reading_time": 1,
+  "references": [
+    "https://socket.dev/blog/fsnotify-maintainer-dispute-sparks-supply-chain-concerns"
+  ],
+  "related_posts": [],
+  "review_status": "needs_review",
+  "severity": "info",
+  "slug": "news-aab852906a56ec67-fsnotify-maintainer-dispute-sparks-supply-chain-concerns",
+  "source_name": "Socket Blog",
+  "sources": [
+    "https://socket.dev/blog/fsnotify-maintainer-dispute-sparks-supply-chain-concerns"
+  ],
+  "status": "draft",
+  "summary": "A dispute over fsnotify maintainer access set off supply chain alarms around one of Go\u2019s most widely used filesystem libraries.",
+  "tags": [
+    "Security News",
+    "Supply Chain",
+    "Research"
+  ],
+  "title": "fsnotify Maintainer Dispute Sparks Supply Chain Concerns",
+  "updated_at": "2026-05-13T18:12:33Z"
+}
