@@ -644,32 +644,73 @@ def news_sources_list(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     }
 
 
+def _news_source_rank(source: Dict[str, Any]) -> int:
+    trust = str(source.get("trust_level") or source.get("source_kind") or "").lower()
+    name = str(source.get("name") or "").lower()
+    if "secopsai" in name or trust in {"first_party", "internal"}:
+        return 0
+    if trust in {"government", "standards"}:
+        return 1
+    if trust in {"vendor", "primary", "project"}:
+        return 2
+    if trust in {"external_research", "research"}:
+        return 3
+    if trust in {"aggregator", "news"}:
+        return 4
+    return 5
+
+
 def news_fetch(*, limit: int = 20, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     paths = paths or BlogPaths()
     cache = _read_news_cache(paths)
     cached_by_key = {item.get("key"): item for item in cache.get("items", []) if isinstance(item, dict)}
-    created: List[Dict[str, Any]] = []
+    enabled_sources = [source for source in load_news_sources(paths=paths) if source.get("enabled", True)]
+    per_source_limit = max(3, min(max(limit, 1), 8))
+    candidates_by_key: Dict[str, Dict[str, Any]] = {}
     errors: List[Dict[str, str]] = []
-    for source in load_news_sources(paths=paths):
-        if not source.get("enabled", True):
-            continue
-        if len(created) >= limit:
-            break
+    for source in enabled_sources:
         source_url = str(source.get("feed_url") or source.get("url") or "")
         if not source_url:
             continue
         try:
             text = _fetch_text(source_url)
-            parsed_items = _parse_news_items(text, source, limit=max(limit - len(created), 1))
+            parsed_items = _parse_news_items(text, source, limit=per_source_limit)
             for item in parsed_items:
-                if item["key"] in cached_by_key:
+                if item["key"] in cached_by_key or item["key"] in candidates_by_key:
                     continue
-                cached_by_key[item["key"]] = item
-                created.append(item)
-                if len(created) >= limit:
-                    break
+                item["_source_rank"] = _news_source_rank(source)
+                item["_source_group"] = str(source.get("name") or item.get("source_name") or source_url)
+                candidates_by_key[item["key"]] = item
         except Exception as exc:
             errors.append({"source": str(source.get("name") or source_url), "error": str(exc)})
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for item in candidates_by_key.values():
+        groups.setdefault(str(item.get("_source_group") or item.get("source_name") or item.get("source_url") or "unknown"), []).append(item)
+    for values in groups.values():
+        values.sort(key=lambda item: str(item.get("published_at") or item.get("fetched_at") or ""), reverse=True)
+    ordered_sources = sorted(
+        groups,
+        key=lambda name: (
+            min(int(item.get("_source_rank", 5)) for item in groups[name]),
+            name.lower(),
+        ),
+    )
+    created = []
+    while len(created) < limit and ordered_sources:
+        progressed = False
+        for source_name in ordered_sources:
+            if len(created) >= limit:
+                break
+            if groups[source_name]:
+                created.append(groups[source_name].pop(0))
+                progressed = True
+        ordered_sources = [name for name in ordered_sources if groups[name]]
+        if not progressed:
+            break
+    for item in created:
+        item.pop("_source_rank", None)
+        item.pop("_source_group", None)
+        cached_by_key[item["key"]] = item
     cache["items"] = sorted(cached_by_key.values(), key=lambda item: str(item.get("published_at") or item.get("fetched_at") or ""), reverse=True)
     cache["updated_at"] = _utc_now()
     _write_news_cache(paths, cache)

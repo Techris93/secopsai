@@ -132,6 +132,57 @@ class BlogPublishingTests(unittest.TestCase):
             self.assertEqual(drafts["total"], 1)
             self.assertIn("requires human review", draft_text)
 
+    def test_news_fetch_balances_primary_sources_before_aggregators(self):
+        external_feed = (
+            '<?xml version="1.0"?><rss version="2.0"><channel>'
+            "<item><title>Aggregator story one</title><link>https://aggregator.example/a</link>"
+            "<description>Aggregator summary.</description><pubDate>Wed, 13 May 2026 12:00:00 GMT</pubDate></item>"
+            "<item><title>Aggregator story two</title><link>https://aggregator.example/b</link>"
+            "<description>Aggregator summary.</description><pubDate>Wed, 13 May 2026 11:00:00 GMT</pubDate></item>"
+            "</channel></rss>"
+        )
+        primary_feed = (
+            '<?xml version="1.0"?><rss version="2.0"><channel>'
+            "<item><title>Primary advisory</title><link>https://primary.example/advisory</link>"
+            "<description>Primary source summary.</description><pubDate>Wed, 13 May 2026 09:00:00 GMT</pubDate></item>"
+            "</channel></rss>"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            external_path = Path(temp_dir) / "external.xml"
+            primary_path = Path(temp_dir) / "primary.xml"
+            external_path.write_text(external_feed, encoding="utf-8")
+            primary_path.write_text(primary_feed, encoding="utf-8")
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.data.mkdir(parents=True)
+            paths.news_sources.write_text(
+                json.dumps({
+                    "sources": [
+                        {
+                            "name": "Aggregator",
+                            "feed_url": str(external_path),
+                            "type": "rss",
+                            "category": "Security News",
+                            "trust_level": "external_research",
+                            "enabled": True,
+                        },
+                        {
+                            "name": "Primary Source",
+                            "feed_url": str(primary_path),
+                            "type": "rss",
+                            "category": "Threat Intelligence",
+                            "trust_level": "government",
+                            "enabled": True,
+                        },
+                    ]
+                }),
+                encoding="utf-8",
+            )
+            fetched = blog.news_fetch(limit=2, paths=paths)
+
+        titles = {item["title"] for item in fetched["items"]}
+        self.assertIn("Primary advisory", titles)
+        self.assertEqual(fetched["created"], 2)
+
     def test_news_publish_approved_is_gated(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = blog.BlogPaths(Path(temp_dir) / "blog")

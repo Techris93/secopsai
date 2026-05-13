@@ -1,15 +1,16 @@
 {
   "sources": [
     {
-      "name": "Socket Blog",
-      "url": "https://socket.dev/blog",
-      "feed_url": "https://socket.dev/blog",
-      "type": "html",
-      "category": "Supply Chain",
-      "trust_level": "external_research",
+      "name": "CISA Known Exploited Vulnerabilities",
+      "url": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "feed_url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+      "type": "json",
+      "category": "Threat Intelligence",
+      "trust_level": "government",
       "enabled": true,
-      "default_tags": ["Security News", "Supply Chain", "Research"],
-      "poll_frequency_hint": "hourly"
+      "default_tags": ["Security News", "CISA KEV", "Vulnerability"],
+      "default_severity": "high",
+      "poll_frequency_hint": "daily"
     },
     {
       "name": "CISA News",
@@ -23,15 +24,25 @@
       "poll_frequency_hint": "daily"
     },
     {
-      "name": "CISA Known Exploited Vulnerabilities",
-      "url": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
-      "feed_url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
-      "type": "json",
+      "name": "CERT/CC Vulnerability Notes",
+      "url": "https://kb.cert.org/vuls/",
+      "feed_url": "https://www.kb.cert.org/vuls/atomfeed/",
+      "type": "rss",
       "category": "Threat Intelligence",
       "trust_level": "government",
       "enabled": true,
-      "default_tags": ["Security News", "CISA KEV", "Vulnerability"],
-      "default_severity": "high",
+      "default_tags": ["Security News", "CERT/CC", "Vulnerability"],
+      "poll_frequency_hint": "daily"
+    },
+    {
+      "name": "Microsoft Security Response Center",
+      "url": "https://msrc.microsoft.com/blog",
+      "feed_url": "https://msrc.microsoft.com/blog/feed",
+      "type": "rss",
+      "category": "Threat Intelligence",
+      "trust_level": "vendor",
+      "enabled": true,
+      "default_tags": ["Security News", "MSRC", "Vulnerability"],
       "poll_frequency_hint": "daily"
     },
     {
@@ -46,6 +57,39 @@
       "poll_frequency_hint": "daily"
     },
     {
+      "name": "OpenSSF Blog",
+      "url": "https://openssf.org/blog/",
+      "feed_url": "https://openssf.org/feed/",
+      "type": "rss",
+      "category": "Supply Chain",
+      "trust_level": "project",
+      "enabled": true,
+      "default_tags": ["Security News", "OpenSSF", "Supply Chain"],
+      "poll_frequency_hint": "daily"
+    },
+    {
+      "name": "Google Online Security Blog",
+      "url": "https://security.googleblog.com/",
+      "feed_url": "https://security.googleblog.com/feeds/posts/default",
+      "type": "rss",
+      "category": "Threat Intelligence",
+      "trust_level": "vendor",
+      "enabled": true,
+      "default_tags": ["Security News", "Google", "Threat Intelligence"],
+      "poll_frequency_hint": "daily"
+    },
+    {
+      "name": "Cloudflare Security Blog",
+      "url": "https://blog.cloudflare.com/tag/security/",
+      "feed_url": "https://blog.cloudflare.com/tag/security/rss/",
+      "type": "rss",
+      "category": "Threat Intelligence",
+      "trust_level": "vendor",
+      "enabled": true,
+      "default_tags": ["Security News", "Cloudflare", "Threat Intelligence"],
+      "poll_frequency_hint": "daily"
+    },
+    {
       "name": "Microsoft Security Blog",
       "url": "https://www.microsoft.com/en-us/security/blog/",
       "feed_url": "https://www.microsoft.com/en-us/security/blog/feed/",
@@ -55,6 +99,17 @@
       "enabled": true,
       "default_tags": ["Security News", "Threat Intelligence"],
       "poll_frequency_hint": "daily"
+    },
+    {
+      "name": "Socket Blog",
+      "url": "https://socket.dev/blog",
+      "feed_url": "https://socket.dev/blog",
+      "type": "html",
+      "category": "Supply Chain",
+      "trust_level": "external_research",
+      "enabled": true,
+      "default_tags": ["Security News", "Supply Chain", "Research"],
+      "poll_frequency_hint": "hourly"
     }
   ]
 }

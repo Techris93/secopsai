@@ -24,7 +24,15 @@ Drafts are written to `blog/drafts/*.json`. External-news drafts are review-only
 
 ## Automated Security-News Ingestion
 
-Curated sources live in `blog/data/news-sources.json`. Each source declares a name, URL or feed URL, type (`rss`, `html`, or `json`), category, trust level, enabled flag, default tags, and a polling-frequency hint. The default registry includes Socket Blog, CISA News, CISA KEV, GitHub Security Lab, and Microsoft Security Blog.
+Curated sources live in `blog/data/news-sources.json`. Each source declares a name, URL or feed URL, type (`rss`, `html`, or `json`), category, trust level, enabled flag, default tags, and a polling-frequency hint.
+
+The default registry now prioritizes direct/primary sources before commentary or aggregator-style sources:
+
+- Government/direct advisories: CISA KEV, CISA News, CERT/CC Vulnerability Notes.
+- Vendor/project primary sources: MSRC, GitHub Security Lab, OpenSSF, Google Online Security Blog, Cloudflare Security Blog, Microsoft Security Blog.
+- External research/context sources: Socket Blog.
+
+`news-fetch` fetches across all enabled sources before choosing items, so one busy source cannot consume the whole daily draft limit.
 
 Fetch and cache new items:
 
@@ -69,6 +77,28 @@ secopsai blog news-publish-approved --rebuild
 ```
 
 The pipeline stores fetched metadata in `blog/data/news-cache.json`, deduplicates by canonical URL/title hash, and keeps external claims source-linked. Do not commit generated cache entries or generated drafts unless the post has been reviewed and intentionally published.
+
+### Becoming The Originator
+
+Use external news as source context, but originate SecOpsAI-owned posts from your own evidence whenever possible:
+
+```bash
+# SecOpsAI-originated advisory post
+secopsai blog draft-advisory --campaign <campaign-id>
+
+# SecOpsAI-originated finding post
+secopsai blog draft-finding <FINDING_ID>
+```
+
+For a first-party post, include:
+
+- what SecOpsAI detected locally
+- affected packages, systems, or findings
+- IOCs and detection logic
+- mitigation commands/operators can run
+- references to primary sources only where they support the claim
+
+External-source drafts should become your own SecOpsAI analysis before approval. Do not publish article rewrites.
 
 ### Suggested Daily Automation
 

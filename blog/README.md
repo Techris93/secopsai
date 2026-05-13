@@ -137,6 +137,8 @@ Safety gates:
 - Sensitive token-like values are redacted before rendering.
 - External news drafts store source URLs and require human review; they are not autopublished.
 - Curated source metadata lives in `blog/data/news-sources.json`; fetched cache entries and generated drafts are operational artifacts unless intentionally reviewed and published.
+- News fetch balances across enabled sources and prefers direct government/vendor/project sources before commentary sources, so Socket cannot fill the whole queue by itself.
+- To originate SecOpsAI-owned posts, draft from local advisories or SOC findings with `secopsai blog draft-advisory` and `secopsai blog draft-finding`.
 - `scripts/blog_newsroom.sh` is the one-command daily helper: it fetches news, creates review-only drafts, and prints the review queue.
 
 ## Publishing From Advisories
