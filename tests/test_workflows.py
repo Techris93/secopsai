@@ -1,0 +1,50 @@
+import json
+import unittest
+from contextlib import redirect_stdout
+from io import StringIO
+
+from secopsai import cli
+from secopsai.workflows import get_workflow, list_workflows, render_workflow, workflow_names
+
+
+class WorkflowCommandTests(unittest.TestCase):
+    def test_workflow_catalog_has_expected_roles(self):
+        names = set(workflow_names())
+
+        self.assertIn("ship", names)
+        self.assertIn("cso", names)
+        self.assertIn("investigate", names)
+        self.assertEqual(len(list_workflows()), len(names))
+
+    def test_render_workflow_includes_commands_and_gates(self):
+        rendered = render_workflow(get_workflow("investigate"))
+
+        self.assertIn("No-fix-without-investigation".lower(), rendered.lower())
+        self.assertIn("Suggested commands:", rendered)
+        self.assertIn("Safety gates:", rendered)
+
+    def test_cli_workflow_list_json(self):
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            exit_code = cli.main(["--json", "workflow", "list"])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["workflows"])
+        self.assertIn("name", payload["workflows"][0])
+
+    def test_cli_top_level_alias_json(self):
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            exit_code = cli.main(["--json", "ship"])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["workflow"]["name"], "ship")
+        self.assertIn("commands", payload["workflow"])
+
+
+if __name__ == "__main__":
+    unittest.main()

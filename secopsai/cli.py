@@ -96,6 +96,7 @@ from secopsai.triage import (
     orchestrate_findings,
     start_finding,
 )
+from secopsai.workflows import get_workflow, list_workflows, render_workflow, workflow_names
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE_FILE = ROOT / "data" / ".last_refresh"
@@ -740,6 +741,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     sub = p.add_subparsers(dest="cmd", required=True)
 
+    workflow = sub.add_parser("workflow", help="List or show role-based SecOpsAI operator workflows")
+    workflow_sub = workflow.add_subparsers(dest="workflow_cmd", required=True)
+    workflow_sub.add_parser("list", help="List available workflows")
+    workflow_show = workflow_sub.add_parser("show", help="Show one workflow checklist")
+    workflow_show.add_argument("name", choices=workflow_names())
+
+    for workflow_name in workflow_names():
+        sub.add_parser(workflow_name, help=f"Show the {workflow_name} workflow checklist")
+
     status = sub.add_parser("status", help="Build the canonical SecOpsAI status/freshness snapshot")
     status.add_argument(
         "--workspace-logs",
@@ -1214,6 +1224,31 @@ def maybe_refresh(args: argparse.Namespace) -> Optional[Dict[str, Any]]:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
+
+    if args.cmd == "workflow":
+        if args.workflow_cmd == "list":
+            payload = {"workflows": list_workflows()}
+            if args.json:
+                print(to_json(payload))
+            else:
+                for workflow in payload["workflows"]:
+                    print(f"{workflow['name']}: {workflow['role']} - {workflow['purpose']}")
+            return 0
+        if args.workflow_cmd == "show":
+            payload = {"workflow": get_workflow(args.name)}
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(render_workflow(payload["workflow"]))
+            return 0
+
+    if args.cmd in workflow_names():
+        payload = {"workflow": get_workflow(args.cmd)}
+        if args.json:
+            print(to_json(payload))
+        else:
+            print(render_workflow(payload["workflow"]))
+        return 0
 
     if args.cmd == "status":
         from scripts.secopsai_report_snapshot import build_snapshot
