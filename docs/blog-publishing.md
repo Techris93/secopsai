@@ -87,6 +87,43 @@ The safe daily rhythm is:
 4. You run `secopsai blog news-publish-approved --rebuild`.
 5. You deploy the blog with `npx --yes wrangler@latest pages deploy blog --project-name secopsai-blog --branch main`.
 
+## Dashboard Blog Ops
+
+The hosted `secopsai-dashboard` can manage the same workflow from a protected **Blog Ops** tab. The dashboard browser does not run shell commands. It calls `/api/blog/*` on the dashboard Worker, and the Worker dispatches `.github/workflows/blog-ops.yml` in this repo.
+
+The workflow supports:
+
+```text
+news-run
+news-fetch
+news-draft
+approve
+reject
+needs-review
+publish-approved
+rebuild-feeds
+deploy
+```
+
+Draft persistence design:
+
+- Generated review drafts are stored under `blog/drafts/`.
+- `blog/drafts/*.json` remains ignored locally so routine operator runs do not dirty the worktree.
+- The GitHub Actions workflow intentionally uses `git add -f blog/drafts/*.json` so reviewed dashboard drafts persist in the repository and can be listed by the dashboard.
+- External-news drafts still cannot publish until their `review_status` is `approved` or `reviewed`.
+
+Required dashboard secrets:
+
+- `BLOG_OPS_GITHUB_TOKEN`: fine-grained GitHub token for `Techris93/secopsai` with Actions read/write and Contents read/write.
+- `BLOG_OPS_ADMIN_TOKEN`: operator secret pasted into the dashboard for write actions.
+
+Optional dashboard variables:
+
+- `BLOG_OPS_OWNER=Techris93`
+- `BLOG_OPS_REPO=secopsai`
+- `BLOG_OPS_WORKFLOW=blog-ops.yml`
+- `BLOG_OPS_REF=main`
+
 ## Publish
 
 ```bash

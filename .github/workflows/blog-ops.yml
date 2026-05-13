@@ -1,0 +1,152 @@
+name: Blog Ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Blog action to run"
+        required: true
+        type: choice
+        options:
+          - news-run
+          - news-fetch
+          - news-draft
+          - approve
+          - reject
+          - needs-review
+          - publish-approved
+          - rebuild-feeds
+          - deploy
+      draft:
+        description: "Draft slug, path, or unique fragment"
+        required: false
+        type: string
+      note:
+        description: "Reviewer note"
+        required: false
+        type: string
+      limit:
+        description: "Fetch/draft limit"
+        required: false
+        default: "5"
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: blog-ops-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  blog-ops:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      ACTION: ${{ inputs.action }}
+      DRAFT: ${{ inputs.draft }}
+      NOTE: ${{ inputs.note }}
+      LIMIT: ${{ inputs.limit || '5' }}
+
+    steps:
+      - name: Checkout SecOpsAI
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run requested Blog Ops command
+        run: |
+          set -euo pipefail
+          limit="${LIMIT:-5}"
+          case "$ACTION" in
+            news-fetch)
+              python -m secopsai.cli blog news-fetch --limit "$limit"
+              ;;
+            news-draft)
+              python -m secopsai.cli blog news-fetch --limit "$limit"
+              python -m secopsai.cli blog news-draft --limit "$limit"
+              ;;
+            news-run)
+              python -m secopsai.cli blog news-run --limit "$limit"
+              ;;
+            approve)
+              test -n "$DRAFT"
+              python -m secopsai.cli blog news-review approve "$DRAFT" --note "${NOTE:-Approved from Blog Ops dashboard}"
+              ;;
+            reject)
+              test -n "$DRAFT"
+              python -m secopsai.cli blog news-review reject "$DRAFT" --note "${NOTE:-Rejected from Blog Ops dashboard}"
+              ;;
+            needs-review)
+              test -n "$DRAFT"
+              python -m secopsai.cli blog news-review needs-review "$DRAFT" --note "${NOTE:-Returned to review from Blog Ops dashboard}"
+              ;;
+            publish-approved)
+              python -m secopsai.cli blog news-publish-approved --rebuild
+              ;;
+            rebuild-feeds)
+              python -m secopsai.cli blog rebuild-feeds
+              ;;
+            deploy)
+              echo "Deploy action selected; no local content mutation."
+              ;;
+            *)
+              echo "Unsupported Blog Ops action: $ACTION" >&2
+              exit 2
+              ;;
+          esac
+
+      - name: Verify blog outputs
+        if: ${{ inputs.action != 'deploy' }}
+        run: |
+          python scripts/verify_blog.py
+          node --check blog/_worker.js
+          node --check blog/functions/api/comments.js
+          node --check blog/assets/blog.js
+          node --check blog/assets/comments.js
+          python -m pytest tests/test_blog.py -q
+
+      - name: Commit intentional Blog Ops changes
+        if: ${{ inputs.action != 'deploy' }}
+        run: |
+          set -euo pipefail
+          git config user.name "secopsai-blog-ops[bot]"
+          git config user.email "115749095+Techris93@users.noreply.github.com"
+
+          git add blog/posts blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml
+          if [ -d blog/drafts ]; then
+            git add -f blog/drafts/*.json 2>/dev/null || true
+          fi
+
+          if git diff --cached --quiet; then
+            echo "No Blog Ops changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Run Blog Ops ${ACTION}"
+          git push
+
+      - name: Deploy blog to Cloudflare Pages
+        if: ${{ inputs.action == 'deploy' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "Cloudflare deploy secrets are not configured; skipping deploy."
+            exit 0
+          fi
+          npx --yes wrangler@latest pages deploy blog --project-name secopsai-blog --branch main
