@@ -19,7 +19,9 @@
     "https://socket.dev/blog/packagist-urges-immediate-composer-update"
   ],
   "related_posts": [],
-  "review_status": "needs_review",
+  "review_note": "Rejected from Blog Ops dashboard",
+  "review_status": "rejected",
+  "reviewed_at": "2026-05-13T18:32:30Z",
   "severity": "info",
   "slug": "news-09d4e2ad95bc4962-packagist-urges-immediate-composer-update-after-github-actions-token",
   "source_name": "Socket Blog",
