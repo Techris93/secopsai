@@ -54,6 +54,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: true
+          fetch-depth: 0
+
+      - name: Move to latest main
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout main
+          git reset --hard origin/main
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
@@ -137,7 +145,18 @@ jobs:
           fi
 
           git commit -m "Run Blog Ops ${ACTION}"
-          git push
+
+          for attempt in 1 2 3; do
+            git fetch origin main
+            if git rebase origin/main && git push origin HEAD:main; then
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep "$attempt"
+          done
+
+          echo "Unable to push Blog Ops changes after rebasing onto origin/main." >&2
+          exit 1
 
       - name: Deploy blog to Cloudflare Pages
         if: ${{ inputs.action == 'deploy' }}
