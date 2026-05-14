@@ -85,7 +85,7 @@
   ],
   "review_note": "Returned to review from Blog Ops dashboard",
   "review_status": "needs_review",
-  "reviewed_at": "2026-05-13T21:41:57Z",
+  "reviewed_at": "2026-05-14T13:40:06Z",
   "severity": "high",
   "severity_reason": "Remote code execution signal.",
   "slug": "news-8850c676a54c2d9f-vu-471747-dnsmasq-contains-several-vulnerabilities-including-attacke",
