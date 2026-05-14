@@ -165,7 +165,8 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
-            echo "Cloudflare deploy secrets are not configured; skipping deploy."
-            exit 0
+            echo "Cloudflare deploy secrets are not configured; cannot deploy blog." >&2
+            echo "Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to this repository's Actions secrets." >&2
+            exit 1
           fi
           npx --yes wrangler@latest pages deploy blog --project-name secopsai-blog --branch main
