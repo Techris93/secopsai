@@ -19,9 +19,9 @@
     "https://www.cisa.gov/news-events/news/cisa-and-us-government-partners-unveil-guide-accelerate-zero-trust-adoption-operational-technology"
   ],
   "related_posts": [],
-  "review_note": "Approved from Blog Ops dashboard",
-  "review_status": "approved",
-  "reviewed_at": "2026-05-13T21:39:33Z",
+  "review_note": "Removed from live blog because it was still a placeholder external-news draft.",
+  "review_status": "rejected",
+  "reviewed_at": "2026-05-14T10:56:46Z",
   "severity": "info",
   "slug": "news-43123a62edbe48e1-cisa-and-u-s-government-partners-unveil-guide-to-accelerate-zero-tru",
   "source_name": "CISA News",

@@ -788,6 +788,13 @@ def news_draft(*, limit: int = 5, paths: Optional[BlogPaths] = None) -> Dict[str
             break
         if not isinstance(item, dict) or item.get("draft_path") or item.get("review_status") == "published":
             continue
+        title = str(item.get("title") or "Security news item")
+        existing_slug = slugify(f"news-{item.get('key', '')}-{title}")
+        existing_draft = _draft_path(existing_slug, paths)
+        if existing_draft.exists():
+            item["draft_path"] = str(existing_draft)
+            item["review_status"] = "existing"
+            continue
         payload = _draft_from_news_item(item, paths=paths)
         item["draft_path"] = payload["draft_path"]
         item["drafted_at"] = _utc_now()
@@ -804,18 +811,64 @@ def news_run(*, limit: int = 5, paths: Optional[BlogPaths] = None) -> Dict[str, 
     return {"fetched": fetched, "drafted": drafted}
 
 
+_EXTERNAL_NEWS_PLACEHOLDERS = (
+    "requires human review before publishing",
+    "confirm claims against the linked source",
+    "add matching secopsai advisories",
+    "add source-backed iocs manually",
+    "review the source and add affected products",
+    "add secopsai detection or mitigation commands",
+    "this external security-news item was imported automatically",
+)
+
+
+def external_news_publish_blockers(post: Dict[str, Any]) -> List[str]:
+    if not post.get("external_news"):
+        return []
+
+    blockers: List[str] = []
+    body = str(post.get("body_markdown") or "")
+    body_lower = body.lower()
+    summary = " ".join(str(post.get("summary") or "").lower().split())
+    title = " ".join(str(post.get("title") or "").lower().split())
+    words = [word for word in body.split() if word.strip()]
+
+    if not post.get("sources") and not post.get("references"):
+        blockers.append("external-news posts must include at least one source URL")
+    if summary and title and summary == title:
+        blockers.append("summary still matches the title; add a real source-backed summary")
+    if len(words) < 180:
+        blockers.append("body_markdown is too thin; add analyst context, impact, and mitigations")
+
+    for phrase in _EXTERNAL_NEWS_PLACEHOLDERS:
+        if phrase in body_lower:
+            blockers.append(f"remove placeholder review text: {phrase}")
+
+    return blockers
+
+
 def news_publish_approved(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     paths = paths or BlogPaths()
     published: List[str] = []
+    blocked: List[Dict[str, Any]] = []
     for path in sorted(paths.drafts.glob("*.json")):
         post = _load_json(path)
         if post.get("external_news") and post.get("review_status") not in {"approved", "reviewed"}:
             continue
         if post.get("external_news"):
+            blockers = external_news_publish_blockers(post)
+            if blockers:
+                blocked.append({
+                    "path": str(path),
+                    "slug": post.get("slug") or path.stem,
+                    "title": post.get("title"),
+                    "reasons": blockers,
+                })
+                continue
             payload = publish(str(path), confirm=True, paths=paths)
             if payload.get("url"):
                 published.append(str(payload["url"]))
-    return {"published": published, "total": len(published)}
+    return {"published": published, "blocked": blocked, "total": len(published)}
 
 
 def _resolve_draft(identifier: str, paths: BlogPaths) -> Path:
@@ -1183,6 +1236,9 @@ def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPa
             "draft_path": str(draft_path),
             "message": "rerun with --publish to write public blog files",
         }
+    blockers = external_news_publish_blockers(post)
+    if blockers:
+        raise ValueError("external-news draft is not publication-ready: " + "; ".join(blockers))
     post["status"] = "published"
     post["published_at"] = post.get("published_at") or _utc_now()
     post["updated_at"] = _utc_now()

@@ -184,12 +184,38 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertEqual(fetched["created"], 2)
 
     def test_news_publish_approved_is_gated(self):
+        ready_body = (
+            "# External story\n\n"
+            "## Executive Summary\n\n"
+            "The source describes a confirmed security event with clear operator impact. "
+            "SecOpsAI should treat this as an awareness item for exposed build systems, "
+            "developer credentials, and dependency review queues. The draft summarizes the "
+            "source in original language and links back to the primary reference for the "
+            "claim details.\n\n"
+            "## Why It Matters\n\n"
+            "Security teams need to know whether the affected technology appears in their "
+            "environment, whether the exposure changes dependency policy, and whether any "
+            "credential rotation or monitoring action is required. This post keeps the "
+            "claim scoped to the cited source and avoids adding unsupported conclusions.\n\n"
+            "## What SecOpsAI Can Detect\n\n"
+            "SecOpsAI can help operators check supply-chain advisory records, review current "
+            "SOC findings, and create follow-up triage tasks for affected assets. Teams can "
+            "also add source-backed package, IOC, or telemetry rules if the referenced report "
+            "contains concrete indicators.\n\n"
+            "## Recommended Actions\n\n"
+            "Review the linked source, compare affected products against local inventories, "
+            "open a triage task for exposed systems, and document any compensating controls "
+            "or monitoring rules added after review. If the report is only informational, "
+            "operators should still record that no direct exposure was identified.\n\n"
+            "## References\n\n"
+            "- https://example.com/story\n"
+        )
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = blog.BlogPaths(Path(temp_dir) / "blog")
             paths.drafts.mkdir(parents=True)
             draft = blog._base_post(
                 title="External story",
-                summary="External summary.",
+                summary="External source reports a security event with operator impact.",
                 categories=["Security News"],
                 sources=["https://example.com/story"],
             )
@@ -203,10 +229,50 @@ class BlogPublishingTests(unittest.TestCase):
             blocked = blog.news_publish_approved(paths=paths)
             draft["review_status"] = "approved"
             draft_path.write_text(json.dumps(draft), encoding="utf-8")
+            placeholder_blocked = blog.news_publish_approved(paths=paths)
+            draft["body_markdown"] = ready_body
+            draft_path.write_text(json.dumps(draft), encoding="utf-8")
             approved = blog.news_publish_approved(paths=paths)
 
         self.assertEqual(blocked["total"], 0)
+        self.assertEqual(placeholder_blocked["total"], 0)
+        self.assertTrue(placeholder_blocked["blocked"])
         self.assertEqual(approved["total"], 1)
+
+    def test_news_draft_preserves_existing_rejected_draft(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.data.mkdir(parents=True)
+            paths.drafts.mkdir(parents=True)
+            item = {
+                "key": "abc123",
+                "title": "Rejected external story",
+                "canonical_url": "https://example.com/rejected",
+                "summary": "Rejected summary.",
+                "source_name": "Fixture",
+                "category": "Security News",
+            }
+            slug = blog.slugify(f"news-{item['key']}-{item['title']}")
+            existing = paths.drafts / f"{slug}.json"
+            existing.write_text(
+                json.dumps({
+                    "slug": slug,
+                    "title": item["title"],
+                    "external_news": True,
+                    "review_status": "rejected",
+                    "body_markdown": "Rejected draft should not be overwritten.",
+                }),
+                encoding="utf-8",
+            )
+            paths.news_cache.write_text(json.dumps({"items": [item]}), encoding="utf-8")
+
+            payload = blog.news_draft(limit=1, paths=paths)
+            preserved = json.loads(existing.read_text(encoding="utf-8"))
+            cache = json.loads(paths.news_cache.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["total"], 0)
+        self.assertEqual(preserved["review_status"], "rejected")
+        self.assertEqual(cache["items"][0]["review_status"], "existing")
 
     def test_news_review_commands_update_status_without_json_hand_editing(self):
         with tempfile.TemporaryDirectory() as temp_dir:

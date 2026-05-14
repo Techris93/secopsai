@@ -1499,6 +1499,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"total={payload['total']}")
             for path in payload.get("created", payload.get("published", [])):
                 print(f"- {path}")
+            for blocked in payload.get("blocked", []):
+                print(f"blocked={blocked.get('slug')}")
+                for reason in blocked.get("reasons", []):
+                    print(f"  - {reason}")
         elif args.blog_cmd == "news-run":
             print(f"fetched={payload['fetched']['created']}")
             print(f"drafted={payload['drafted']['total']}")
@@ -1549,6 +1553,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"required_missing={','.join(payload['required_missing'])}")
             if payload["optional_missing"]:
                 print(f"optional_missing={','.join(payload['optional_missing'])}")
+        if args.blog_cmd == "news-publish-approved" and payload.get("blocked"):
+            return 1
         return 0
 
     if args.cmd == "agent":
