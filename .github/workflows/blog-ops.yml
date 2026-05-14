@@ -14,6 +14,7 @@ on:
           - approve
           - reject
           - needs-review
+          - save-draft
           - publish-approved
           - rebuild-feeds
           - deploy
@@ -29,6 +30,30 @@ on:
         description: "Fetch/draft limit"
         required: false
         default: "5"
+        type: string
+      title:
+        description: "Edited draft title"
+        required: false
+        type: string
+      summary:
+        description: "Edited draft summary"
+        required: false
+        type: string
+      severity:
+        description: "Edited draft severity"
+        required: false
+        type: string
+      categories:
+        description: "Comma- or newline-separated categories"
+        required: false
+        type: string
+      references:
+        description: "Comma- or newline-separated references"
+        required: false
+        type: string
+      body_markdown:
+        description: "Edited body markdown"
+        required: false
         type: string
 
 permissions:
@@ -48,6 +73,12 @@ jobs:
       DRAFT: ${{ inputs.draft }}
       NOTE: ${{ inputs.note }}
       LIMIT: ${{ inputs.limit || '5' }}
+      TITLE: ${{ inputs.title }}
+      SUMMARY: ${{ inputs.summary }}
+      SEVERITY: ${{ inputs.severity }}
+      CATEGORIES: ${{ inputs.categories }}
+      REFERENCES: ${{ inputs.references }}
+      BODY_MARKDOWN: ${{ inputs.body_markdown }}
 
     steps:
       - name: Checkout SecOpsAI
@@ -101,6 +132,24 @@ jobs:
             needs-review)
               test -n "$DRAFT"
               python -m secopsai.cli blog news-review needs-review "$DRAFT" --note "${NOTE:-Returned to review from Blog Ops dashboard}"
+              ;;
+            save-draft)
+              test -n "$DRAFT"
+              body_file="$RUNNER_TEMP/secopsai-blog-draft.md"
+              BODY_FILE="$body_file" python - <<'PY'
+              import os
+              from pathlib import Path
+              Path(os.environ["BODY_FILE"]).write_text(os.environ.get("BODY_MARKDOWN", ""), encoding="utf-8")
+              PY
+              cmd=(python -m secopsai.cli blog news-review edit "$DRAFT")
+              [ -n "${TITLE:-}" ] && cmd+=(--title "$TITLE")
+              [ -n "${SUMMARY:-}" ] && cmd+=(--summary "$SUMMARY")
+              [ -n "${SEVERITY:-}" ] && cmd+=(--severity "$SEVERITY")
+              [ -n "${CATEGORIES:-}" ] && cmd+=(--categories "$CATEGORIES")
+              [ -n "${REFERENCES:-}" ] && cmd+=(--references "$REFERENCES")
+              [ -s "$body_file" ] && cmd+=(--body-file "$body_file")
+              [ -n "${NOTE:-}" ] && cmd+=(--note "$NOTE")
+              "${cmd[@]}"
               ;;
             publish-approved)
               python -m secopsai.cli blog news-publish-approved --rebuild

@@ -38,6 +38,7 @@ from secopsai.blog import (
     news_draft as draft_blog_news_batch,
     news_fetch as fetch_blog_news,
     news_publish_approved as publish_approved_blog_news,
+    news_review_edit as edit_blog_news_review,
     news_review_list as list_blog_news_reviews,
     news_review_show as show_blog_news_review,
     news_review_update as update_blog_news_review,
@@ -896,6 +897,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     news_review_reset = news_review_sub.add_parser("needs-review", help="Move one draft back to needs_review")
     news_review_reset.add_argument("draft", help="Draft path, slug, or unique slug fragment")
     news_review_reset.add_argument("--note", default=None, help="Optional reviewer note")
+    news_review_edit = news_review_sub.add_parser("edit", help="Edit draft title, summary, severity, tags, references, and body")
+    news_review_edit.add_argument("draft", help="Draft path, slug, or unique slug fragment")
+    news_review_edit.add_argument("--title", default=None, help="Replacement title")
+    news_review_edit.add_argument("--summary", default=None, help="Replacement summary")
+    news_review_edit.add_argument("--severity", default=None, choices=["critical", "high", "medium", "low", "info"], help="Replacement severity")
+    news_review_edit.add_argument("--categories", default=None, help="Comma- or newline-separated category/tag list")
+    news_review_edit.add_argument("--references", default=None, help="Comma- or newline-separated http(s) reference URLs")
+    news_review_edit.add_argument("--body", default=None, help="Replacement body markdown")
+    news_review_edit.add_argument("--body-file", default=None, help="Path to replacement body markdown")
+    news_review_edit.add_argument("--note", default=None, help="Optional edit note")
 
     blog_news_publish = blog_sub.add_parser("news-publish-approved", help="Publish only external-news drafts marked approved/reviewed")
     blog_news_publish.add_argument("--rebuild", action="store_true", help="Rebuild index, RSS, and JSON feeds after publishing")
@@ -1459,6 +1470,20 @@ def main(argv: Optional[List[str]] = None) -> int:
                     payload = update_blog_news_review(args.draft, status="approved", note=args.note)
                 elif args.news_review_cmd == "reject":
                     payload = update_blog_news_review(args.draft, status="rejected", note=args.note)
+                elif args.news_review_cmd == "edit":
+                    body_markdown = args.body
+                    if args.body_file:
+                        body_markdown = Path(args.body_file).read_text(encoding="utf-8")
+                    payload = edit_blog_news_review(
+                        args.draft,
+                        title=args.title,
+                        summary=args.summary,
+                        severity=args.severity,
+                        categories=args.categories,
+                        references=args.references,
+                        body_markdown=body_markdown,
+                        note=args.note,
+                    )
                 else:
                     payload = update_blog_news_review(args.draft, status="needs_review", note=args.note)
             elif args.blog_cmd == "news-publish-approved":

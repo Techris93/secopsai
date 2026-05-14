@@ -115,6 +115,15 @@ def _safe_list(values: Iterable[Any], *, limit: int = 24) -> List[str]:
     return output
 
 
+def _split_review_values(value: Any, *, limit: int = 24) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return _safe_list(value, limit=limit)
+    parts = re.split(r"[\n,]+", str(value or ""))
+    return _safe_list(parts, limit=limit)
+
+
 def _markdown_inline(text: str) -> str:
     escaped = html.escape(redact(text))
     escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
@@ -1358,6 +1367,98 @@ def news_review_update(
         post.update(score_external_news_readiness(post))
     _write_json(path, post)
     return _draft_review_summary(path)
+
+
+def news_review_edit(
+    identifier: str,
+    *,
+    title: Optional[str] = None,
+    summary: Optional[str] = None,
+    severity: Optional[str] = None,
+    categories: Optional[Any] = None,
+    references: Optional[Any] = None,
+    body_markdown: Optional[str] = None,
+    note: Optional[str] = None,
+    paths: Optional[BlogPaths] = None,
+) -> Dict[str, Any]:
+    paths = paths or BlogPaths()
+    path = _resolve_draft(identifier, paths)
+    post = _load_json(path)
+
+    if title is not None:
+        cleaned_title = redact(title).strip()
+        if not cleaned_title:
+            raise ValueError("title cannot be empty")
+        post["title"] = cleaned_title
+    if summary is not None:
+        cleaned_summary = redact(summary).strip()
+        if not cleaned_summary:
+            raise ValueError("summary cannot be empty")
+        post["summary"] = cleaned_summary
+    if severity is not None:
+        cleaned_severity = str(severity or "").strip().lower()
+        if cleaned_severity not in SEVERITY_RANK:
+            raise ValueError("severity must be one of: critical, high, medium, low, info")
+        post["severity"] = cleaned_severity
+    if categories is not None:
+        parsed_categories = _split_review_values(categories, limit=16)
+        if parsed_categories:
+            post["categories"] = parsed_categories
+            post["tags"] = parsed_categories
+    if references is not None:
+        parsed_references = _split_review_values(references, limit=16)
+        safe_references = [
+            value for value in parsed_references
+            if urllib.parse.urlparse(value).scheme in {"http", "https"}
+        ]
+        if parsed_references and not safe_references:
+            raise ValueError("references must include at least one http(s) URL")
+        if safe_references:
+            post["references"] = safe_references
+            post["sources"] = safe_references
+            post["source_links"] = safe_references
+            post["primary_references"] = safe_references[:5]
+    if body_markdown is not None:
+        cleaned_body = redact(body_markdown).strip()
+        if len(cleaned_body.split()) < 25:
+            raise ValueError("body_markdown is too short to save as a reviewed article draft")
+        post["body_markdown"] = cleaned_body
+
+    post["updated_at"] = _utc_now()
+    post["edited_at"] = post["updated_at"]
+    post["review_status"] = "needs_review"
+    if note:
+        post["edit_note"] = redact(note)
+
+    if post.get("external_news"):
+        extraction_item = {
+            "title": post.get("title"),
+            "summary": f"{post.get('summary', '')} {str(post.get('body_markdown') or '')[:5000]}",
+            "category": ", ".join(_safe_list(post.get("categories") or [], limit=12)),
+            "tags": post.get("categories") or post.get("tags") or [],
+            "source_name": post.get("source_name") or post.get("author"),
+            "canonical_url": post.get("canonical_url") or (post.get("references") or [""])[0],
+            "severity": post.get("severity"),
+        }
+        extracted = extract_news_security_fields(extraction_item)
+        post["extracted"] = extracted
+        post["iocs"] = _safe_list(
+            [
+                *extracted.get("urls", []),
+                *extracted.get("domains", []),
+                *extracted.get("ips", []),
+                *extracted.get("hashes", []),
+            ],
+            limit=24,
+        )
+        post["affected_packages"] = _safe_list(extracted.get("packages", []), limit=24)
+        post["affected_ecosystems"] = _safe_list(extracted.get("ecosystems", []), limit=12)
+        post["affected_products"] = _safe_list(extracted.get("products", []), limit=16)
+        post.update(score_external_news_readiness(post))
+
+    post["reading_time"] = _post_reading_time(post)
+    _write_json(path, post)
+    return news_review_show(str(path), paths=paths)
 
 
 def draft_news(source: str, *, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:

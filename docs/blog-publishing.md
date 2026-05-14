@@ -66,6 +66,7 @@ External-news posts are not public until reviewed. You can review without editin
 ```bash
 secopsai blog news-review list
 secopsai blog news-review show <draft-slug-or-path>
+secopsai blog news-review edit <draft-slug-or-path> --title "..." --summary "..." --severity high --categories "Security News,Threat Intelligence" --references "https://example.com/source" --body-file edited-post.md --note "Edited with source-backed analysis"
 secopsai blog news-review approve <draft-slug-or-path> --note "Reviewed sources and SecOpsAI guidance"
 secopsai blog news-review reject <draft-slug-or-path> --note "Not relevant or insufficiently sourced"
 ```
@@ -130,6 +131,7 @@ news-draft
 approve
 reject
 needs-review
+save-draft
 publish-approved
 rebuild-feeds
 deploy

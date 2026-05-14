@@ -356,6 +356,54 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertIn("Needs review", shown["body_markdown"])
         self.assertEqual(approved["review_status"], "approved")
 
+    def test_news_review_edit_updates_article_fields_and_resets_review(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.drafts.mkdir(parents=True)
+            draft = blog._base_post(
+                title="Old title",
+                summary="Old summary with useful context.",
+                categories=["Security News"],
+                sources=["https://example.com/original"],
+                slug="edit-me",
+            )
+            draft.update({
+                "external_news": True,
+                "review_status": "approved",
+                "body_markdown": "# Old title\n\nThis old body has enough words to pass the save guard but needs an analyst rewrite before publication.",
+            })
+            (paths.drafts / "edit-me.json").write_text(json.dumps(draft), encoding="utf-8")
+
+            updated = blog.news_review_edit(
+                "edit-me",
+                title="Edited CISA KEV CVE-2026-42208 analysis",
+                summary="Edited source-backed summary that is different from the title.",
+                severity="high",
+                categories="Security News, CISA KEV, Threat Intelligence",
+                references="https://example.com/source\nhttps://example.com/vendor",
+                body_markdown=(
+                    "# Edited CISA KEV CVE-2026-42208 analysis\n\n"
+                    "## Executive Summary\n\n"
+                    "This edited body adds SecOpsAI context for CVE-2026-42208 and LiteLLM exposure. "
+                    "It explains why operators should inventory affected services, check local findings, "
+                    "and verify source-backed mitigation steps before publishing.\n\n"
+                    "## What SecOpsAI Can Detect\n\n"
+                    "SecOpsAI can track CVE references, affected package mentions, advisory matches, and "
+                    "SOC findings related to LiteLLM.\n\n"
+                    "## Recommended Actions\n\n"
+                    "- Inventory affected services.\n- Patch or mitigate the component.\n- Review local telemetry."
+                ),
+                note="Edited in dashboard",
+                paths=paths,
+            )
+
+        self.assertEqual(updated["title"], "Edited CISA KEV CVE-2026-42208 analysis")
+        self.assertEqual(updated["review_status"], "needs_review")
+        self.assertEqual(updated["severity"], "high")
+        self.assertIn("CVE-2026-42208", updated["extracted"]["cves"])
+        self.assertIn("https://example.com/source", updated["references"])
+        self.assertGreaterEqual(updated["readiness_score"], 80)
+
 
 if __name__ == "__main__":
     unittest.main()
