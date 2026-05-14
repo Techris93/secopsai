@@ -130,7 +130,59 @@ class BlogPublishingTests(unittest.TestCase):
             self.assertEqual(second_fetch["created"], 0)
             self.assertTrue(first_fetch["errors"])
             self.assertEqual(drafts["total"], 1)
-            self.assertIn("requires human review", draft_text)
+            self.assertIn("Review Checklist", draft_text)
+            self.assertIn("Source Metadata", draft_text)
+
+    def test_news_security_extraction_and_severity_inference(self):
+        item = {
+            "title": "CISA KEV: BerriAI LiteLLM CVE-2026-42208 active exploitation",
+            "summary": "SQL injection in litellm@1.85.0 leaks credentials from 83.142.209.194 and https://evil.example/payload.py",
+            "category": "CISA KEV",
+            "source_name": "CISA Known Exploited Vulnerabilities",
+            "tags": ["Known Exploited Vulnerabilities", "PyPI"],
+        }
+
+        extracted = blog.extract_news_security_fields(item)
+        severity, reason = blog.infer_news_severity(item, extracted)
+
+        self.assertIn("CVE-2026-42208", extracted["cves"])
+        self.assertIn("litellm@1.85.0", extracted["packages"])
+        self.assertIn("83.142.209.194", extracted["ips"])
+        self.assertIn("evil.example", extracted["domains"])
+        self.assertIn("pypi", extracted["ecosystems"])
+        self.assertEqual(severity, "high")
+        self.assertIn("CISA KEV", reason)
+
+    def test_news_draft_includes_enrichment_and_readiness(self):
+        item = {
+            "key": "unit-news",
+            "title": "Compromised npm package @scope/pkg@1.2.3 steals GitHub Actions tokens",
+            "canonical_url": "https://research.example/compromise",
+            "summary": "Researchers report a compromised npm package that targets CI credentials.",
+            "source_name": "Research Lab",
+            "source_url": "https://research.example/feed",
+            "trust_level": "external_research",
+            "category": "Supply Chain",
+            "tags": ["npm", "credential theft"],
+            "published_at": "2026-05-14T00:00:00Z",
+            "fetched_at": "2026-05-14T01:00:00Z",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            payload = blog._draft_from_news_item(item, paths=paths)
+            draft = payload["post"]
+            body = Path(payload["draft_path"]).read_text(encoding="utf-8")
+
+        self.assertEqual(draft["source_trust_level"], "external_research")
+        self.assertIn("@scope/pkg@1.2.3", draft["extracted"]["packages"])
+        self.assertIn("npm", draft["affected_ecosystems"])
+        self.assertIn("credential theft", [signal.lower() for signal in draft["extracted"]["severity_signals"]])
+        self.assertGreaterEqual(draft["readiness_score"], 80)
+        self.assertEqual(draft["readiness_status"], "ready_to_review")
+        self.assertFalse(draft["readiness_blockers"])
+        self.assertIn("Review Checklist", body)
+        self.assertIn("What SecOpsAI Can Detect", body)
+        self.assertIn("Operator Commands", body)
 
     def test_news_fetch_balances_primary_sources_before_aggregators(self):
         external_feed = (
@@ -207,6 +259,8 @@ class BlogPublishingTests(unittest.TestCase):
             "open a triage task for exposed systems, and document any compensating controls "
             "or monitoring rules added after review. If the report is only informational, "
             "operators should still record that no direct exposure was identified.\n\n"
+            "## IOCs\n\n"
+            "None found deterministically; reviewer should add source-backed indicators if present.\n\n"
             "## References\n\n"
             "- https://example.com/story\n"
         )

@@ -45,6 +45,20 @@ SENSITIVE_VALUE_RE = re.compile(
     r"\s*[:=]\s*['\"]?[^'\"\s,;]{8,}"
 )
 LONG_HEX_RE = re.compile(r"\b[a-fA-F0-9]{32,}\b")
+CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
+URL_RE = re.compile(r"https?://[^\s<>)\"']+", re.IGNORECASE)
+DOMAIN_RE = re.compile(r"(?<!@)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b", re.IGNORECASE)
+IP_RE = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b")
+HASH_RE = re.compile(r"\b(?:[a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a-fA-F0-9]{64})\b")
+NPM_SCOPED_PACKAGE_RE = re.compile(r"(?<![\w.-])@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*(?:@[\w.-]+)?", re.IGNORECASE)
+VERSIONED_PACKAGE_RE = re.compile(r"\b([a-zA-Z][a-zA-Z0-9_.-]{1,80})@(\d+(?:\.\d+){1,3}(?:[a-zA-Z0-9_.-]+)?)\b")
+KNOWN_PACKAGE_RE = re.compile(
+    r"\b(?:mistralai|guardrails-ai|litellm|pydantic-ai(?:-slim)?|dnsmasq|composer|fsnotify|rubygems|npm|pypi)\b",
+    re.IGNORECASE,
+)
+GENERIC_RECOMMENDATION_RE = re.compile(
+    r"(?im)^-\s*(?:review the source|validate affected assets in your environment|add secopsai detection or mitigation commands before publishing)\.?\s*$"
+)
 
 
 @dataclass
@@ -204,8 +218,15 @@ def _normalize_post(post: Dict[str, Any]) -> Dict[str, Any]:
     normalized.setdefault("references", normalized.get("sources", []))
     normalized.setdefault("affected_ecosystems", [])
     normalized.setdefault("affected_packages", [])
+    normalized.setdefault("affected_products", [])
     normalized.setdefault("affected_artifacts", [])
     normalized.setdefault("iocs", [])
+    normalized.setdefault("extracted", {})
+    normalized.setdefault("review_checklist", [])
+    normalized.setdefault("readiness_score", 0)
+    normalized.setdefault("readiness_status", "needs_edits")
+    normalized.setdefault("readiness_blockers", [])
+    normalized.setdefault("readiness_warnings", [])
     return normalized
 
 
@@ -473,6 +494,255 @@ def _strip_markup(value: Any) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _news_text_blob(item: Dict[str, Any]) -> str:
+    tags = item.get("tags", [])
+    tag_text = " ".join(str(tag) for tag in tags) if isinstance(tags, list) else str(tags or "")
+    return " ".join(
+        str(value or "")
+        for value in (
+            item.get("title"),
+            item.get("summary"),
+            item.get("category"),
+            tag_text,
+            item.get("source_name"),
+        )
+    )
+
+
+def _domain_from_url(value: str) -> str:
+    try:
+        return urllib.parse.urlparse(value).netloc.lower().removeprefix("www.")
+    except Exception:
+        return ""
+
+
+def _extract_products(text: str) -> List[str]:
+    products: List[str] = []
+    kev_match = re.search(r"\bCISA KEV:\s*(.+?)(?:\s+CVE-\d{4}-\d{4,7}|$)", text, re.IGNORECASE)
+    if kev_match:
+        products.extend(part.strip(" ,:-") for part in re.split(r"\s{2,}|/", kev_match.group(1)) if part.strip(" ,:-"))
+    known_products = (
+        "GitHub Actions",
+        "Cloudflare",
+        "Composer",
+        "Packagist",
+        "RubyGems",
+        "Docker",
+        "OAuth",
+        "OpenSearch",
+        "LiteLLM",
+        "dnsmasq",
+        "TanStack",
+    )
+    lower = text.lower()
+    products.extend(product for product in known_products if product.lower() in lower)
+    return _safe_list(products, limit=16)
+
+
+def _infer_ecosystems(text: str, packages: List[str], domains: List[str]) -> List[str]:
+    lower = text.lower()
+    ecosystems: List[str] = []
+    checks = [
+        ("npm", ("npm", "node package", "javascript package")),
+        ("pypi", ("pypi", "python package", "pip ")),
+        ("github", ("github", "github actions", "github advisory")),
+        ("docker", ("docker", "container image", "oci image")),
+        ("rubygems", ("rubygems", "ruby gems", "gemstuffer", ".gem")),
+        ("composer", ("composer", "packagist", "php package")),
+        ("go", ("golang", "go module", "fsnotify")),
+    ]
+    for ecosystem, needles in checks:
+        if any(needle in lower for needle in needles):
+            ecosystems.append(ecosystem)
+    if any(package.startswith("@") for package in packages):
+        ecosystems.append("npm")
+    if any(domain in {"npmjs.com", "npmjs.org"} for domain in domains):
+        ecosystems.append("npm")
+    if any(domain in {"pypi.org", "python.org"} for domain in domains):
+        ecosystems.append("pypi")
+    return _safe_list(ecosystems, limit=12)
+
+
+def extract_news_security_fields(item: Dict[str, Any]) -> Dict[str, List[str]]:
+    text = _news_text_blob(item)
+    urls = _safe_list(URL_RE.findall(text), limit=16)
+    domains = _safe_list([_domain_from_url(url) for url in urls], limit=16)
+    domains = _safe_list([*domains, *DOMAIN_RE.findall(text)], limit=16)
+    ips = _safe_list(IP_RE.findall(text), limit=16)
+    hashes = _safe_list(HASH_RE.findall(text), limit=16)
+    scoped_packages = NPM_SCOPED_PACKAGE_RE.findall(text)
+    versioned_packages = [match.group(0) for match in VERSIONED_PACKAGE_RE.finditer(text)]
+    known_packages = KNOWN_PACKAGE_RE.findall(text)
+    packages = _safe_list([*scoped_packages, *versioned_packages, *known_packages], limit=24)
+    cves = _safe_list([match.upper() for match in CVE_RE.findall(text)], limit=16)
+    signals = _safe_list(_severity_signals(text), limit=16)
+    products = _extract_products(text)
+    ecosystems = _infer_ecosystems(text, packages, domains)
+    return {
+        "cves": cves,
+        "urls": urls,
+        "domains": domains,
+        "ips": ips,
+        "hashes": hashes,
+        "packages": packages,
+        "ecosystems": ecosystems,
+        "products": products,
+        "severity_signals": signals,
+    }
+
+
+def _severity_signals(text: str) -> List[str]:
+    lower = text.lower()
+    checks = [
+        ("CISA KEV", ("cisa kev", "known exploited vulnerabilities", "known exploited vulnerability")),
+        ("active exploitation", ("active exploitation", "exploited in the wild", "actively exploited")),
+        ("compromised package", ("compromised package", "package compromise", "compromised npm", "compromised pypi")),
+        ("credential theft", ("credential theft", "stealing credentials", "token leak", "credential leak", "secret leakage")),
+        ("RCE", ("remote code execution", " rce", "code execution")),
+        ("SQL injection", ("sql injection",)),
+        ("supply-chain attack", ("supply-chain attack", "supply chain attack", "supply chain concerns")),
+        ("malware", ("malware", "trojan", "backdoor")),
+        ("zero-day", ("zero-day", "0-day")),
+    ]
+    return [label for label, needles in checks if any(needle in lower for needle in needles)]
+
+
+def infer_news_severity(item: Dict[str, Any], extracted: Dict[str, List[str]]) -> tuple[str, str]:
+    current = str(item.get("severity") or "info").lower()
+    severity = current if current in SEVERITY_RANK else "info"
+    reason = "Default source severity."
+    signals = set(extracted.get("severity_signals", []))
+    text = _news_text_blob(item).lower()
+    source_name = str(item.get("source_name") or "").lower()
+    category = str(item.get("category") or "").lower()
+    if "CISA KEV" in signals or "active exploitation" in signals or "known exploited" in text:
+        severity, reason = "high", "CISA KEV or active exploitation signal."
+    elif {"compromised package", "credential theft", "malware", "supply-chain attack"} & signals:
+        severity, reason = "high", "Compromise, credential-theft, malware, or supply-chain signal."
+    elif "RCE" in signals:
+        severity, reason = "high", "Remote code execution signal."
+    elif "SQL injection" in signals and any(word in text for word in ("credential", "proxy", "admin", "database")):
+        severity, reason = "high", "SQL injection signal affects sensitive service or data."
+    elif "company news" in category or any(word in text for word in ("named to", "award", "funding", "startup")):
+        severity, reason = "info", "Company/news update without direct operator exposure."
+    elif extracted.get("cves") or "vulnerability" in text or "security" in source_name:
+        severity, reason = max(severity, "medium", key=lambda value: SEVERITY_RANK.get(value, 0)), "Security-relevant vulnerability/news signal."
+    return severity, reason
+
+
+def _news_context_kind(extracted: Dict[str, List[str]], item: Dict[str, Any]) -> str:
+    text = _news_text_blob(item).lower()
+    signals = set(extracted.get("severity_signals", []))
+    if any(needle in text for needle in ("oauth", "token", "credential", "non-human identit", "oidc")):
+        return "identity"
+    if extracted.get("packages") or extracted.get("ecosystems") or "supply-chain attack" in signals or "compromised package" in signals:
+        return "supply_chain"
+    if extracted.get("ips") or extracted.get("hashes") or extracted.get("urls") or "malware" in signals:
+        return "malware"
+    if extracted.get("cves") or "CISA KEV" in signals or "vulnerability" in text:
+        return "vulnerability"
+    return "general"
+
+
+def _secopsai_detection_context(kind: str) -> str:
+    contexts = {
+        "vulnerability": (
+            "SecOpsAI can track affected product names, related CVEs, local SOC findings, "
+            "advisory matches, and OpenClaw telemetry that mention this vulnerability or impacted component."
+        ),
+        "supply_chain": (
+            "SecOpsAI can compare affected package names and versions against emergency advisories, "
+            "lockfiles, package manifests, package registry changes, and supply-chain SOC findings."
+        ),
+        "malware": (
+            "SecOpsAI can track listed IOCs, suspicious URLs/domains/IPs, file paths, hashes, process "
+            "behavior, and matching OpenClaw replay telemetry."
+        ),
+        "identity": (
+            "SecOpsAI can help operators review token exposure, credential-rotation tasks, CI/CD workflow "
+            "risk, and SOC findings related to secret leakage or suspicious authentication activity."
+        ),
+        "general": (
+            "SecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, "
+            "and track any source-backed detections or mitigations added during review."
+        ),
+    }
+    return contexts.get(kind, contexts["general"])
+
+
+def _recommended_actions(kind: str, extracted: Dict[str, List[str]]) -> List[str]:
+    if kind == "vulnerability":
+        actions = [
+            "Inventory affected product or component names from the source.",
+            "Check whether exposed systems, dependencies, or services use the affected component.",
+            "Prioritize vendor mitigation or patch guidance and record the remediation deadline.",
+            "Add monitoring terms for extracted CVEs and product names.",
+        ]
+    elif kind == "supply_chain":
+        actions = [
+            "Block affected package names or versions when source-backed version details are available.",
+            "Inspect lockfiles, manifests, and CI dependency caches for affected package references.",
+            "Rotate package-manager, CI, and registry credentials if compromise or token theft is reported.",
+            "Run SecOpsAI supply-chain advisory checks for extracted package names.",
+        ]
+    elif kind == "malware":
+        actions = [
+            "Search telemetry for extracted domains, IPs, URLs, hashes, and file names.",
+            "Block source-backed indicators where appropriate for your environment.",
+            "Investigate matching endpoints and preserve relevant artifacts before cleanup.",
+            "Create a SecOpsAI/OpenClaw triage task for any local indicator match.",
+        ]
+    elif kind == "identity":
+        actions = [
+            "Rotate affected tokens or credentials if exposure is plausible.",
+            "Review GitHub Actions, OIDC trust relationships, OAuth grants, and cloud roles.",
+            "Check audit logs for suspicious use of impacted credentials or identities.",
+            "Tighten token scopes and remove stale non-human identities where possible.",
+        ]
+    else:
+        actions = [
+            "Compare the source-backed claim against local assets and current SOC findings.",
+            "Create a follow-up triage task if the affected technology is present.",
+            "Document whether this item requires a new advisory, detection, or mitigation note.",
+        ]
+    if extracted.get("cves"):
+        actions.append(f"Track extracted CVEs: {', '.join(extracted['cves'][:4])}.")
+    if extracted.get("packages"):
+        actions.append(f"Review extracted package references: {', '.join(extracted['packages'][:4])}.")
+    return _safe_list(actions, limit=8)
+
+
+def _review_checklist() -> List[Dict[str, str]]:
+    labels = [
+        "Main claim is supported by source",
+        "Affected product/package/CVE is named or explicitly marked not found",
+        "IOCs are present or explicitly marked none found",
+        "Recommended actions are specific",
+        "SecOpsAI detection/mitigation angle is added",
+        "No copied external article text",
+    ]
+    return [{"label": label, "status": "needs_review"} for label in labels]
+
+
+def _markdown_list(values: Iterable[Any], *, empty: str) -> str:
+    items = _safe_list(values, limit=24)
+    if not items:
+        return f"- {empty}"
+    return "\n".join(f"- {item}" for item in items)
+
+
+def _source_summary(item: Dict[str, Any], summary: str, title: str) -> str:
+    clean_summary = re.sub(r"\s+", " ", redact(summary)).strip()
+    clean_title = re.sub(r"\s+", " ", redact(title)).strip()
+    if clean_summary and clean_summary.lower() != clean_title.lower():
+        return clean_summary
+    source_name = str(item.get("source_name") or "external source")
+    return (
+        f"{source_name} reports a security-relevant update titled \"{clean_title}\". "
+        "Operators should validate the source details, map any affected assets, and add SecOpsAI-specific detections or mitigations before publication."
+    )
+
+
 def load_news_sources(*, paths: Optional[BlogPaths] = None) -> List[Dict[str, Any]]:
     paths = paths or BlogPaths()
     if not paths.news_sources.exists():
@@ -720,61 +990,129 @@ def news_fetch(*, limit: int = 20, paths: Optional[BlogPaths] = None) -> Dict[st
 def _draft_from_news_item(item: Dict[str, Any], *, paths: BlogPaths) -> Dict[str, Any]:
     title = str(item.get("title") or "Security news item")
     link = str(item.get("canonical_url") or item.get("url") or "")
-    summary = str(item.get("summary") or title)
+    summary = _source_summary(item, str(item.get("summary") or title), title)
     category = str(item.get("category") or "Security News")
+    extracted = extract_news_security_fields(item)
+    severity, severity_reason = infer_news_severity(item, extracted)
+    context_kind = _news_context_kind(extracted, item)
+    detection_context = _secopsai_detection_context(context_kind)
+    actions = _recommended_actions(context_kind, extracted)
+    references = _safe_list([link, *item.get("source_links", [])] if isinstance(item.get("source_links"), list) else [link], limit=12)
+    primary_references = _safe_list([link], limit=5)
+    source_trust_level = str(item.get("trust_level") or item.get("source_trust_level") or "external")
+    source_category = str(item.get("category") or "Security News")
+    slug_value = slugify(f"news-{item.get('key', '')}-{title}")
+    extracted_iocs = _safe_list(
+        [
+            *extracted.get("urls", []),
+            *extracted.get("domains", []),
+            *extracted.get("ips", []),
+            *extracted.get("hashes", []),
+        ],
+        limit=24,
+    )
+    affected_packages = _safe_list(extracted.get("packages", []), limit=24)
+    affected_ecosystems = _safe_list(extracted.get("ecosystems", []), limit=12)
+    affected_products = _safe_list(extracted.get("products", []), limit=16)
     body = f"""# {title}
 
 ## Executive Summary
 
 {summary}
 
+## Source Metadata
+
+- Source: {item.get('source_name', 'External source')}
+- Canonical URL: {link or 'not provided'}
+- Published at: {item.get('published_at') or 'not provided'}
+- Fetched at: {item.get('fetched_at') or _utc_now()}
+- Trust level: {source_trust_level}
+
+## Review Checklist
+
+{chr(10).join(f"- [ ] {entry['label']}" for entry in _review_checklist())}
+
 ## Why It Matters
 
-- This external security-news item was imported automatically from `{item.get('source_name', 'external source')}`.
-- It is a draft and requires human review before publishing.
-- Confirm claims against the linked source and any primary references before publication.
+- Source type: {source_category}
+- Severity hint: {severity} ({severity_reason})
+- Extracted signals: {', '.join(extracted.get('severity_signals', [])) or 'none detected deterministically'}
 
 ## What SecOpsAI Can Detect
 
-- Add matching SecOpsAI advisories, package verdicts, detections, or OpenClaw findings here after review.
+{detection_context}
+
+## Extracted Intelligence
+
+### CVEs
+
+{_markdown_list(extracted.get('cves', []), empty='None found deterministically; reviewer should confirm source details.')}
+
+### Affected Packages Or Products
+
+{_markdown_list([*affected_packages, *affected_products], empty='None found deterministically; reviewer should add source-backed affected assets if present.')}
 
 ## IOCs
 
-- No structured IOCs were extracted automatically. Add source-backed IOCs manually if present.
-
-## Affected Packages Or Products
-
-- Review the source and add affected products, packages, versions, or ecosystems if applicable.
+{_markdown_list(extracted_iocs, empty='None found deterministically; reviewer should add source-backed indicators if present.')}
 
 ## Recommended Actions
 
-- Review the source.
-- Validate affected assets in your environment.
-- Add SecOpsAI detection or mitigation commands before publishing.
+{chr(10).join(f'- {action}' for action in actions)}
+
+## Operator Commands
+
+```bash
+secopsai triage summary
+secopsai research preflight
+secopsai supply-chain advisory list
+secopsai blog news-review show {slug_value}
+```
 
 ## References
 
-- {link}
+{chr(10).join(f'- {reference}' for reference in references) or '- No source URL available; do not publish until a source is added.'}
 """
     post = _base_post(
         title=title,
         summary=summary,
-        severity=str(item.get("severity") or "info"),
-        categories=_safe_list(["Security News", category, *item.get("tags", [])], limit=8),
-        sources=[link],
-        slug=slugify(f"news-{item.get('key', '')}-{title}"),
+        severity=severity,
+        categories=_safe_list(["Security News", category, *item.get("tags", []), *affected_ecosystems, *extracted.get("severity_signals", [])], limit=12),
+        sources=references,
+        slug=slug_value,
     )
     post.update({
         "source_name": item.get("source_name") or "External source",
         "author": item.get("source_name") or "External source",
+        "canonical_url": link,
+        "source_url": item.get("source_url") or link,
+        "source_trust_level": source_trust_level,
+        "source_category": source_category,
+        "primary_references": primary_references,
+        "source_links": references,
+        "published_at": item.get("published_at") or post.get("published_at"),
         "body_markdown": redact(body),
         "external_news": True,
         "review_status": "needs_review",
+        "review_checklist": _review_checklist(),
         "news_key": item.get("key"),
         "fetched_at": item.get("fetched_at"),
+        "extracted": extracted,
+        "iocs": extracted_iocs,
+        "affected_packages": affected_packages,
+        "affected_ecosystems": affected_ecosystems,
+        "affected_products": affected_products,
+        "severity_reason": severity_reason,
+        "operator_commands": [
+            "secopsai triage summary",
+            "secopsai research preflight",
+            "secopsai supply-chain advisory list",
+            f"secopsai blog news-review show {slug_value}",
+        ],
     })
-    post["references"] = [link]
+    post["references"] = references
     post["reading_time"] = _post_reading_time(post)
+    post.update(score_external_news_readiness(post))
     _write_json(_draft_path(post["slug"], paths), post)
     return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
 
@@ -822,29 +1160,86 @@ _EXTERNAL_NEWS_PLACEHOLDERS = (
 )
 
 
-def external_news_publish_blockers(post: Dict[str, Any]) -> List[str]:
+def score_external_news_readiness(post: Dict[str, Any]) -> Dict[str, Any]:
     if not post.get("external_news"):
-        return []
+        return {"readiness_score": 100, "readiness_status": "ready_to_review", "readiness_blockers": [], "readiness_warnings": []}
 
+    score = 0
     blockers: List[str] = []
+    warnings: List[str] = []
     body = str(post.get("body_markdown") or "")
     body_lower = body.lower()
     summary = " ".join(str(post.get("summary") or "").lower().split())
     title = " ".join(str(post.get("title") or "").lower().split())
-    words = [word for word in body.split() if word.strip()]
+    sources = _safe_list(post.get("sources") or post.get("references") or [], limit=12)
+    references = _safe_list(post.get("references") or post.get("sources") or [], limit=12)
+    extracted = post.get("extracted") if isinstance(post.get("extracted"), dict) else {}
+    extracted_values = []
+    for key in ("cves", "packages", "products", "urls", "domains", "ips", "hashes", "ecosystems"):
+        values = extracted.get(key, [])
+        if isinstance(values, list):
+            extracted_values.extend(values)
+    body_words = [word for word in body.split() if word.strip()]
 
-    if not post.get("sources") and not post.get("references"):
-        blockers.append("external-news posts must include at least one source URL")
-    if summary and title and summary == title:
-        blockers.append("summary still matches the title; add a real source-backed summary")
-    if len(words) < 180:
-        blockers.append("body_markdown is too thin; add analyst context, impact, and mitigations")
+    if sources:
+        score += 20
+    else:
+        blockers.append("no source URL")
+    if summary and title and summary != title:
+        score += 15
+    else:
+        blockers.append("summary equals title")
+    if extracted_values:
+        score += 15
+    elif "none found deterministically" in body_lower:
+        score += 10
+        warnings.append("no CVEs, IOCs, packages, or products were extracted deterministically")
+    else:
+        blockers.append("affected product/package/CVE/IOC is missing and not explicitly marked none found")
+    if "## recommended actions" in body_lower and not GENERIC_RECOMMENDATION_RE.search(body):
+        score += 15
+    else:
+        blockers.append("recommended actions are generic or missing")
+    if "## what secopsai can detect" in body_lower:
+        score += 15
+    else:
+        blockers.append("no SecOpsAI detection/mitigation angle")
+    if references:
+        score += 10
+    else:
+        blockers.append("references are missing")
+    if len(body_words) >= 180:
+        score += 10
+    else:
+        blockers.append("body too thin")
 
     for phrase in _EXTERNAL_NEWS_PLACEHOLDERS:
         if phrase in body_lower:
-            blockers.append(f"remove placeholder review text: {phrase}")
+            blockers.append(f"placeholder text remains: {phrase}")
 
-    return blockers
+    raw_summary = str(post.get("summary") or "").strip()
+    if raw_summary and len(raw_summary) > 80 and body_lower.count(raw_summary.lower()) > 1:
+        warnings.append("source summary appears multiple times; check copied-text risk")
+    if title and body_lower.count(title) > 2:
+        warnings.append("title appears repeatedly; add more original analyst context")
+
+    unique_blockers = _safe_list(blockers, limit=20)
+    status = "ready_to_review" if not unique_blockers and score >= 80 else "needs_edits"
+    if unique_blockers:
+        status = "blocked"
+    return {
+        "readiness_score": min(score, 100),
+        "readiness_status": status,
+        "readiness_blockers": unique_blockers,
+        "readiness_warnings": _safe_list(warnings, limit=12),
+    }
+
+
+def external_news_publish_blockers(post: Dict[str, Any]) -> List[str]:
+    if not post.get("external_news"):
+        return []
+    readiness = score_external_news_readiness(post)
+    return list(readiness.get("readiness_blockers", []))
 
 
 def news_publish_approved(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
@@ -889,6 +1284,8 @@ def _resolve_draft(identifier: str, paths: BlogPaths) -> Path:
 
 def _draft_review_summary(path: Path) -> Dict[str, Any]:
     post = _load_json(path)
+    readiness = score_external_news_readiness(post) if post.get("external_news") else {}
+    extracted = post.get("extracted") if isinstance(post.get("extracted"), dict) else {}
     return {
         "path": str(path),
         "slug": str(post.get("slug") or path.stem),
@@ -901,6 +1298,20 @@ def _draft_review_summary(path: Path) -> Dict[str, Any]:
         "categories": _safe_list(post.get("categories") or [], limit=8),
         "external_news": bool(post.get("external_news")),
         "updated_at": str(post.get("updated_at") or post.get("fetched_at") or ""),
+        "readiness_score": readiness.get("readiness_score", post.get("readiness_score", 0)),
+        "readiness_status": readiness.get("readiness_status", post.get("readiness_status", "")),
+        "readiness_blockers": readiness.get("readiness_blockers", post.get("readiness_blockers", [])),
+        "readiness_warnings": readiness.get("readiness_warnings", post.get("readiness_warnings", [])),
+        "extracted": extracted,
+        "source_metadata": {
+            "canonical_url": post.get("canonical_url"),
+            "source_url": post.get("source_url"),
+            "source_trust_level": post.get("source_trust_level"),
+            "source_category": post.get("source_category"),
+            "fetched_at": post.get("fetched_at"),
+            "published_at": post.get("published_at"),
+        },
+        "review_checklist": post.get("review_checklist") if isinstance(post.get("review_checklist"), list) else [],
     }
 
 
@@ -921,6 +1332,9 @@ def news_review_show(identifier: str, *, paths: Optional[BlogPaths] = None) -> D
     post = _load_json(path)
     summary = _draft_review_summary(path)
     summary["body_markdown"] = str(post.get("body_markdown") or "")
+    summary["references"] = _safe_list(post.get("references") or post.get("sources") or [], limit=12)
+    summary["primary_references"] = _safe_list(post.get("primary_references") or [], limit=8)
+    summary["source_links"] = _safe_list(post.get("source_links") or [], limit=12)
     return summary
 
 
@@ -940,6 +1354,8 @@ def news_review_update(
     post["reviewed_at"] = _utc_now()
     if note:
         post["review_note"] = redact(note)
+    if post.get("external_news"):
+        post.update(score_external_news_readiness(post))
     _write_json(path, post)
     return _draft_review_summary(path)
 
@@ -1239,6 +1655,8 @@ def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPa
     blockers = external_news_publish_blockers(post)
     if blockers:
         raise ValueError("external-news draft is not publication-ready: " + "; ".join(blockers))
+    if post.get("external_news"):
+        post.update(score_external_news_readiness(post))
     post["status"] = "published"
     post["published_at"] = post.get("published_at") or _utc_now()
     post["updated_at"] = _utc_now()

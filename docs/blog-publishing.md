@@ -141,6 +141,69 @@ Draft persistence design:
 - `blog/drafts/*.json` remains ignored locally so routine operator runs do not dirty the worktree.
 - The GitHub Actions workflow intentionally uses `git add -f blog/drafts/*.json` so reviewed dashboard drafts persist in the repository and can be listed by the dashboard.
 - External-news drafts still cannot publish until their `review_status` is `approved` or `reviewed`.
+- External-news drafts also need a passing readiness gate. Approved drafts with
+  readiness blockers are skipped and reported by `news-publish-approved`.
+
+## External News Readiness
+
+`secopsai blog news-draft` now enriches each external-news draft before review.
+The generator is deterministic and does not use model calls. It extracts what it
+can from the source title, summary, category, tags, and URL metadata.
+
+Automatically attached fields include:
+
+- Source metadata: source name, canonical URL, source URL, trust level,
+  category, fetched time, published time, and references.
+- Extracted intelligence: CVEs, URLs, domains, IPs, hashes, package names,
+  ecosystems, products, and severity signals.
+- Review checklist: claim support, affected assets, IOCs, actions, SecOpsAI
+  detection angle, and copied-text check.
+- Readiness fields: `readiness_score`, `readiness_status`,
+  `readiness_blockers`, and `readiness_warnings`.
+
+Readiness statuses:
+
+- `ready_to_review`: the draft has enough structure for a human reviewer to
+  inspect and approve.
+- `needs_edits`: useful draft, but it needs analyst improvements before
+  approval.
+- `blocked`: do not publish. Fix blockers first.
+
+Common blockers:
+
+- Summary still matches the title.
+- No source URL or references.
+- Placeholder text remains.
+- Body is too thin.
+- Recommended actions are generic.
+- No SecOpsAI detection or mitigation angle.
+
+Good external-news drafts should include:
+
+- A real source-backed summary in SecOpsAI's own words.
+- Specific affected products, packages, CVEs, or an explicit note that none were
+  found deterministically.
+- Specific recommended actions based on the source type.
+- SecOpsAI detection or mitigation context.
+- References to the original source.
+
+Bad placeholder drafts look like:
+
+- Repeated title as summary.
+- "Review the source" as the main action.
+- "Add SecOpsAI detections here" still present.
+- Empty IOCs and affected assets with no explanation.
+
+Daily Blog Ops flow:
+
+1. Click **Run fetch + draft**.
+2. Open each draft preview.
+3. Check readiness score, blockers, extracted CVEs/IOCs/packages/products, and
+   source metadata.
+4. Edit weak drafts in the repo or reject them.
+5. Approve only drafts with no blockers and useful SecOpsAI context.
+6. Click **Publish approved**.
+7. Click **Deploy blog** after the publish workflow succeeds.
 
 Required dashboard secrets:
 
