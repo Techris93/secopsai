@@ -1,30 +1,102 @@
 {
-  "affected_ecosystems": [],
-  "affected_packages": [],
+  "affected_ecosystems": [
+    "rubygems"
+  ],
+  "affected_packages": [
+    "RubyGems"
+  ],
+  "affected_products": [
+    "RubyGems"
+  ],
   "author": "Socket Blog",
-  "body_markdown": "# GemStuffer Campaign Abuses RubyGems as Exfiltration Channel Targeting UK Local Government\n\n## Executive Summary\n\nGemStuffer abuses RubyGems as an exfiltration channel, packaging scraped UK council portal data into junk gems published from new accounts.\n\n## Why It Matters\n\n- This external security-news item was imported automatically from `Socket Blog`.\n- It is a draft and requires human review before publishing.\n- Confirm claims against the linked source and any primary references before publication.\n\n## What SecOpsAI Can Detect\n\n- Add matching SecOpsAI advisories, package verdicts, detections, or OpenClaw findings here after review.\n\n## IOCs\n\n- No structured IOCs were extracted automatically. Add source-backed IOCs manually if present.\n\n## Affected Packages Or Products\n\n- Review the source and add affected products, packages, versions, or ecosystems if applicable.\n\n## Recommended Actions\n\n- Review the source.\n- Validate affected assets in your environment.\n- Add SecOpsAI detection or mitigation commands before publishing.\n\n## References\n\n- https://socket.dev/blog/gemstuffer\n",
+  "body_markdown": "# GemStuffer Campaign Abuses RubyGems as Exfiltration Channel Targeting UK Local Government\n\n## Executive Summary\n\nGemStuffer abuses RubyGems as an exfiltration channel, packaging scraped UK council portal data into junk gems published from new accounts.\n\n## Source Metadata\n\n- Source: Socket Blog\n- Canonical URL: https://socket.dev/blog/gemstuffer\n- Published at: 2026-05-13T18:12:33Z\n- Fetched at: 2026-05-13T18:12:33Z\n- Trust level: research\n\n## Review Checklist\n\n- [ ] Main claim is supported by source\n- [ ] Affected product/package/CVE is named or explicitly marked not found\n- [ ] IOCs are present or explicitly marked none found\n- [ ] Recommended actions are specific\n- [ ] SecOpsAI detection/mitigation angle is added\n- [ ] No copied external article text\n\n## Why It Matters\n\n- Source type: Research\n- Severity hint: info (Default source severity.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can compare affected package names and versions against emergency advisories, lockfiles, package manifests, package registry changes, and supply-chain SOC findings.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- RubyGems\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Block affected package names or versions when source-backed version details are available.\n- Inspect lockfiles, manifests, and CI dependency caches for affected package references.\n- Rotate package-manager, CI, and registry credentials if compromise or token theft is reported.\n- Run SecOpsAI supply-chain advisory checks for extracted package names.\n- Review extracted package references: RubyGems.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-fe482f2bd0154a36-gemstuffer-campaign-abuses-rubygems-as-exfiltration-channel-targetin\n```\n\n## References\n\n- https://socket.dev/blog/gemstuffer\n",
+  "canonical_url": "https://socket.dev/blog/gemstuffer",
   "categories": [
     "Security News",
     "Research",
-    "Supply Chain"
+    "Supply Chain",
+    "rubygems"
   ],
   "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [
+      "rubygems"
+    ],
+    "hashes": [],
+    "ips": [],
+    "packages": [
+      "RubyGems"
+    ],
+    "products": [
+      "RubyGems"
+    ],
+    "severity_signals": [],
+    "urls": []
+  },
   "featured": false,
   "fetched_at": "2026-05-13T18:12:33Z",
   "iocs": [],
   "news_key": "fe482f2bd0154a36",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-fe482f2bd0154a36-gemstuffer-campaign-abuses-rubygems-as-exfiltration-channel-targetin"
+  ],
+  "primary_references": [
+    "https://socket.dev/blog/gemstuffer"
+  ],
   "published_at": "2026-05-13T18:12:33Z",
+  "readiness_blockers": [],
+  "readiness_score": 100,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [],
   "reading_time": 1,
   "references": [
     "https://socket.dev/blog/gemstuffer"
   ],
   "related_posts": [],
+  "review_checklist": [
+    {
+      "label": "Main claim is supported by source",
+      "status": "needs_review"
+    },
+    {
+      "label": "Affected product/package/CVE is named or explicitly marked not found",
+      "status": "needs_review"
+    },
+    {
+      "label": "IOCs are present or explicitly marked none found",
+      "status": "needs_review"
+    },
+    {
+      "label": "Recommended actions are specific",
+      "status": "needs_review"
+    },
+    {
+      "label": "SecOpsAI detection/mitigation angle is added",
+      "status": "needs_review"
+    },
+    {
+      "label": "No copied external article text",
+      "status": "needs_review"
+    }
+  ],
   "review_note": "Rejected from Blog Ops dashboard",
   "review_status": "rejected",
   "reviewed_at": "2026-05-13T18:33:21Z",
   "severity": "info",
+  "severity_reason": "Default source severity.",
   "slug": "news-fe482f2bd0154a36-gemstuffer-campaign-abuses-rubygems-as-exfiltration-channel-targetin",
+  "source_category": "Research",
+  "source_links": [
+    "https://socket.dev/blog/gemstuffer"
+  ],
   "source_name": "Socket Blog",
+  "source_trust_level": "research",
+  "source_url": "https://socket.dev/blog/gemstuffer",
   "sources": [
     "https://socket.dev/blog/gemstuffer"
   ],
@@ -33,8 +105,9 @@
   "tags": [
     "Security News",
     "Research",
-    "Supply Chain"
+    "Supply Chain",
+    "rubygems"
   ],
   "title": "GemStuffer Campaign Abuses RubyGems as Exfiltration Channel Targeting UK Local Government",
-  "updated_at": "2026-05-13T18:12:33Z"
+  "updated_at": "2026-05-14T13:21:44Z"
 }

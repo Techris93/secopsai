@@ -1,31 +1,101 @@
 {
   "affected_ecosystems": [],
-  "affected_packages": [],
+  "affected_packages": [
+    "dnsmasq"
+  ],
+  "affected_products": [
+    "dnsmasq"
+  ],
   "author": "CERT/CC Vulnerability Notes",
-  "body_markdown": "# VU#471747: dnsmasq contains several vulnerabilities, including attacker DNS redirect, privilege escalation, and heap manipulation\n\n## Executive Summary\n\nOverview dnsmasq is affected by multiple memory safety and input validation vulnerabilities, including heap buffer overflows, heap corruption, and code execution flaws. Collectively, these vulnerabilities enable attackers to poison cached DNS records, bypass security controls, crash the dnsmasq process, or under certain conditions, achieve local privilege escalation. dnsmasq has released version 2.92rel2 to fix the vulnerabilities. Description dnsmasq is an open-source networking tool that provi\n\n## Why It Matters\n\n- This external security-news item was imported automatically from `CERT/CC Vulnerability Notes`.\n- It is a draft and requires human review before publishing.\n- Confirm claims against the linked source and any primary references before publication.\n\n## What SecOpsAI Can Detect\n\n- Add matching SecOpsAI advisories, package verdicts, detections, or OpenClaw findings here after review.\n\n## IOCs\n\n- No structured IOCs were extracted automatically. Add source-backed IOCs manually if present.\n\n## Affected Packages Or Products\n\n- Review the source and add affected products, packages, versions, or ecosystems if applicable.\n\n## Recommended Actions\n\n- Review the source.\n- Validate affected assets in your environment.\n- Add SecOpsAI detection or mitigation commands before publishing.\n\n## References\n\n- https://kb.cert.org/vuls/id/471747\n",
+  "body_markdown": "# VU#471747: dnsmasq contains several vulnerabilities, including attacker DNS redirect, privilege escalation, and heap manipulation\n\n## Executive Summary\n\nOverview dnsmasq is affected by multiple memory safety and input validation vulnerabilities, including heap buffer overflows, heap corruption, and code execution flaws. Collectively, these vulnerabilities enable attackers to poison cached DNS records, bypass security controls, crash the dnsmasq process, or under certain conditions, achieve local privilege escalation. dnsmasq has released version 2.92rel2 to fix the vulnerabilities. Description dnsmasq is an open-source networking tool that provi\n\n## Source Metadata\n\n- Source: CERT/CC Vulnerability Notes\n- Canonical URL: https://kb.cert.org/vuls/id/471747\n- Published at: 2026-05-13T21:18:05Z\n- Fetched at: 2026-05-13T21:17:58Z\n- Trust level: government\n\n## Review Checklist\n\n- [ ] Main claim is supported by source\n- [ ] Affected product/package/CVE is named or explicitly marked not found\n- [ ] IOCs are present or explicitly marked none found\n- [ ] Recommended actions are specific\n- [ ] SecOpsAI detection/mitigation angle is added\n- [ ] No copied external article text\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: high (Remote code execution signal.)\n- Extracted signals: RCE\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can compare affected package names and versions against emergency advisories, lockfiles, package manifests, package registry changes, and supply-chain SOC findings.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- dnsmasq\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Block affected package names or versions when source-backed version details are available.\n- Inspect lockfiles, manifests, and CI dependency caches for affected package references.\n- Rotate package-manager, CI, and registry credentials if compromise or token theft is reported.\n- Run SecOpsAI supply-chain advisory checks for extracted package names.\n- Review extracted package references: dnsmasq.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-8850c676a54c2d9f-vu-471747-dnsmasq-contains-several-vulnerabilities-including-attacke\n```\n\n## References\n\n- https://kb.cert.org/vuls/id/471747\n",
+  "canonical_url": "https://kb.cert.org/vuls/id/471747",
   "categories": [
     "Security News",
     "Threat Intelligence",
     "CERT/CC",
-    "Vulnerability"
+    "Vulnerability",
+    "RCE"
   ],
   "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [
+      "dnsmasq"
+    ],
+    "products": [
+      "dnsmasq"
+    ],
+    "severity_signals": [
+      "RCE"
+    ],
+    "urls": []
+  },
   "featured": false,
   "fetched_at": "2026-05-13T21:17:58Z",
   "iocs": [],
   "news_key": "8850c676a54c2d9f",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-8850c676a54c2d9f-vu-471747-dnsmasq-contains-several-vulnerabilities-including-attacke"
+  ],
+  "primary_references": [
+    "https://kb.cert.org/vuls/id/471747"
+  ],
   "published_at": "2026-05-13T21:18:05Z",
+  "readiness_blockers": [],
+  "readiness_score": 100,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [],
   "reading_time": 1,
   "references": [
     "https://kb.cert.org/vuls/id/471747"
   ],
   "related_posts": [],
+  "review_checklist": [
+    {
+      "label": "Main claim is supported by source",
+      "status": "needs_review"
+    },
+    {
+      "label": "Affected product/package/CVE is named or explicitly marked not found",
+      "status": "needs_review"
+    },
+    {
+      "label": "IOCs are present or explicitly marked none found",
+      "status": "needs_review"
+    },
+    {
+      "label": "Recommended actions are specific",
+      "status": "needs_review"
+    },
+    {
+      "label": "SecOpsAI detection/mitigation angle is added",
+      "status": "needs_review"
+    },
+    {
+      "label": "No copied external article text",
+      "status": "needs_review"
+    }
+  ],
   "review_note": "Returned to review from Blog Ops dashboard",
   "review_status": "needs_review",
   "reviewed_at": "2026-05-13T21:41:57Z",
-  "severity": "info",
+  "severity": "high",
+  "severity_reason": "Remote code execution signal.",
   "slug": "news-8850c676a54c2d9f-vu-471747-dnsmasq-contains-several-vulnerabilities-including-attacke",
+  "source_category": "Threat Intelligence",
+  "source_links": [
+    "https://kb.cert.org/vuls/id/471747"
+  ],
   "source_name": "CERT/CC Vulnerability Notes",
+  "source_trust_level": "government",
+  "source_url": "https://kb.cert.org/vuls/id/471747",
   "sources": [
     "https://kb.cert.org/vuls/id/471747"
   ],
@@ -35,8 +105,9 @@
     "Security News",
     "Threat Intelligence",
     "CERT/CC",
-    "Vulnerability"
+    "Vulnerability",
+    "RCE"
   ],
   "title": "VU#471747: dnsmasq contains several vulnerabilities, including attacker DNS redirect, privilege escalation, and heap manipulation",
-  "updated_at": "2026-05-13T21:18:05Z"
+  "updated_at": "2026-05-14T13:21:44Z"
 }

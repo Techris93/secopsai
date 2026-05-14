@@ -1,38 +1,99 @@
 {
   "affected_ecosystems": [],
   "affected_packages": [],
+  "affected_products": [],
   "author": "Google Online Security Blog",
-  "body_markdown": "# AI threats in the wild: The current state of prompt injections on the web\n\n## Executive Summary\n\nAI threats in the wild: The current state of prompt injections on the web\n\n## Why It Matters\n\n- This external security-news item was imported automatically from `Google Online Security Blog`.\n- It is a draft and requires human review before publishing.\n- Confirm claims against the linked source and any primary references before publication.\n\n## What SecOpsAI Can Detect\n\n- Add matching SecOpsAI advisories, package verdicts, detections, or OpenClaw findings here after review.\n\n## IOCs\n\n- No structured IOCs were extracted automatically. Add source-backed IOCs manually if present.\n\n## Affected Packages Or Products\n\n- Review the source and add affected products, packages, versions, or ecosystems if applicable.\n\n## Recommended Actions\n\n- Review the source.\n- Validate affected assets in your environment.\n- Add SecOpsAI detection or mitigation commands before publishing.\n\n## References\n\n- http://security.googleblog.com/feeds/820776653483778595/comments/default\n",
+  "body_markdown": "# AI threats in the wild: The current state of prompt injections on the web\n\n## Executive Summary\n\nGoogle Online Security Blog reports a security-relevant update titled \"AI threats in the wild: The current state of prompt injections on the web\". Operators should validate the source details, map any affected assets, and add SecOpsAI-specific detections or mitigations before publication.\n\n## Source Metadata\n\n- Source: Google Online Security Blog\n- Canonical URL: http://security.googleblog.com/feeds/820776653483778595/comments/default\n- Published at: 2026-05-13T21:18:05Z\n- Fetched at: 2026-05-13T21:18:03Z\n- Trust level: vendor\n\n## Review Checklist\n\n- [ ] Main claim is supported by source\n- [ ] Affected product/package/CVE is named or explicitly marked not found\n- [ ] IOCs are present or explicitly marked none found\n- [ ] Recommended actions are specific\n- [ ] SecOpsAI detection/mitigation angle is added\n- [ ] No copied external article text\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, and track any source-backed detections or mitigations added during review.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- None found deterministically; reviewer should add source-backed affected assets if present.\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Compare the source-backed claim against local assets and current SOC findings.\n- Create a follow-up triage task if the affected technology is present.\n- Document whether this item requires a new advisory, detection, or mitigation note.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-fcbef1c3bd122e1b-ai-threats-in-the-wild-the-current-state-of-prompt-injections-on-the\n```\n\n## References\n\n- http://security.googleblog.com/feeds/820776653483778595/comments/default\n",
+  "canonical_url": "http://security.googleblog.com/feeds/820776653483778595/comments/default",
   "categories": [
     "Security News",
     "Threat Intelligence",
     "Google"
   ],
   "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [],
+    "products": [],
+    "severity_signals": [],
+    "urls": []
+  },
   "featured": false,
   "fetched_at": "2026-05-13T21:18:03Z",
   "iocs": [],
   "news_key": "fcbef1c3bd122e1b",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-fcbef1c3bd122e1b-ai-threats-in-the-wild-the-current-state-of-prompt-injections-on-the"
+  ],
+  "primary_references": [
+    "http://security.googleblog.com/feeds/820776653483778595/comments/default"
+  ],
   "published_at": "2026-05-13T21:18:05Z",
+  "readiness_blockers": [],
+  "readiness_score": 95,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [
+    "no CVEs, IOCs, packages, or products were extracted deterministically"
+  ],
   "reading_time": 1,
   "references": [
     "http://security.googleblog.com/feeds/820776653483778595/comments/default"
   ],
   "related_posts": [],
+  "review_checklist": [
+    {
+      "label": "Main claim is supported by source",
+      "status": "needs_review"
+    },
+    {
+      "label": "Affected product/package/CVE is named or explicitly marked not found",
+      "status": "needs_review"
+    },
+    {
+      "label": "IOCs are present or explicitly marked none found",
+      "status": "needs_review"
+    },
+    {
+      "label": "Recommended actions are specific",
+      "status": "needs_review"
+    },
+    {
+      "label": "SecOpsAI detection/mitigation angle is added",
+      "status": "needs_review"
+    },
+    {
+      "label": "No copied external article text",
+      "status": "needs_review"
+    }
+  ],
   "review_status": "needs_review",
-  "severity": "info",
+  "severity": "medium",
+  "severity_reason": "Security-relevant vulnerability/news signal.",
   "slug": "news-fcbef1c3bd122e1b-ai-threats-in-the-wild-the-current-state-of-prompt-injections-on-the",
+  "source_category": "Threat Intelligence",
+  "source_links": [
+    "http://security.googleblog.com/feeds/820776653483778595/comments/default"
+  ],
   "source_name": "Google Online Security Blog",
+  "source_trust_level": "vendor",
+  "source_url": "http://security.googleblog.com/feeds/820776653483778595/comments/default",
   "sources": [
     "http://security.googleblog.com/feeds/820776653483778595/comments/default"
   ],
   "status": "draft",
-  "summary": "AI threats in the wild: The current state of prompt injections on the web",
+  "summary": "Google Online Security Blog reports a security-relevant update titled \"AI threats in the wild: The current state of prompt injections on the web\". Operators should validate the source details, map any affected assets, and add SecOpsAI-specific detections or mitigations before publication.",
   "tags": [
     "Security News",
     "Threat Intelligence",
     "Google"
   ],
   "title": "AI threats in the wild: The current state of prompt injections on the web",
-  "updated_at": "2026-05-13T21:18:05Z"
+  "updated_at": "2026-05-14T13:21:44Z"
 }

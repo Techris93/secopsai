@@ -1,28 +1,105 @@
 {
-  "affected_ecosystems": [],
-  "affected_packages": [],
+  "affected_ecosystems": [
+    "npm"
+  ],
+  "affected_packages": [
+    "npm"
+  ],
+  "affected_products": [
+    "TanStack"
+  ],
   "author": "Socket Blog",
-  "body_markdown": "# TanStack npm Packages Compromised in Ongoing Mini Shai-Hulud Supply-Chain Attack\n\n## Executive Summary\n\nSocket detected 84 compromised TanStack npm package artifacts modified with suspected CI credential-stealing malware.\n\n## Why It Matters\n\n- This external security-news item was imported automatically from `Socket Blog`.\n- It is a draft and requires human review before publishing.\n- Confirm claims against the linked source and any primary references before publication.\n\n## What SecOpsAI Can Detect\n\n- Add matching SecOpsAI advisories, package verdicts, detections, or OpenClaw findings here after review.\n\n## IOCs\n\n- No structured IOCs were extracted automatically. Add source-backed IOCs manually if present.\n\n## Affected Packages Or Products\n\n- Review the source and add affected products, packages, versions, or ecosystems if applicable.\n\n## Recommended Actions\n\n- Review the source.\n- Validate affected assets in your environment.\n- Add SecOpsAI detection or mitigation commands before publishing.\n\n## References\n\n- https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack\n",
+  "body_markdown": "# TanStack npm Packages Compromised in Ongoing Mini Shai-Hulud Supply-Chain Attack\n\n## Executive Summary\n\nSocket detected 84 compromised TanStack npm package artifacts modified with suspected CI credential-stealing malware.\n\n## Source Metadata\n\n- Source: Socket Blog\n- Canonical URL: https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack\n- Published at: 2026-05-13T18:12:33Z\n- Fetched at: 2026-05-13T18:12:33Z\n- Trust level: research\n\n## Review Checklist\n\n- [ ] Main claim is supported by source\n- [ ] Affected product/package/CVE is named or explicitly marked not found\n- [ ] IOCs are present or explicitly marked none found\n- [ ] Recommended actions are specific\n- [ ] SecOpsAI detection/mitigation angle is added\n- [ ] No copied external article text\n\n## Why It Matters\n\n- Source type: Research\n- Severity hint: high (Compromise, credential-theft, malware, or supply-chain signal.)\n- Extracted signals: supply-chain attack, malware\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can help operators review token exposure, credential-rotation tasks, CI/CD workflow risk, and SOC findings related to secret leakage or suspicious authentication activity.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- npm\n- TanStack\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Rotate affected tokens or credentials if exposure is plausible.\n- Review GitHub Actions, OIDC trust relationships, OAuth grants, and cloud roles.\n- Check audit logs for suspicious use of impacted credentials or identities.\n- Tighten token scopes and remove stale non-human identities where possible.\n- Review extracted package references: npm.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-1a82913ba305f0bd-tanstack-npm-packages-compromised-in-ongoing-mini-shai-hulud-supply\n```\n\n## References\n\n- https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack\n",
+  "canonical_url": "https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack",
   "categories": [
     "Security News",
     "Research",
-    "Supply Chain"
+    "Supply Chain",
+    "npm",
+    "supply-chain attack",
+    "malware"
   ],
   "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [
+      "npm"
+    ],
+    "hashes": [],
+    "ips": [],
+    "packages": [
+      "npm"
+    ],
+    "products": [
+      "TanStack"
+    ],
+    "severity_signals": [
+      "supply-chain attack",
+      "malware"
+    ],
+    "urls": []
+  },
   "featured": false,
   "fetched_at": "2026-05-13T18:12:33Z",
   "iocs": [],
   "news_key": "1a82913ba305f0bd",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-1a82913ba305f0bd-tanstack-npm-packages-compromised-in-ongoing-mini-shai-hulud-supply"
+  ],
+  "primary_references": [
+    "https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack"
+  ],
   "published_at": "2026-05-13T18:12:33Z",
+  "readiness_blockers": [],
+  "readiness_score": 100,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [],
   "reading_time": 1,
   "references": [
     "https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack"
   ],
   "related_posts": [],
+  "review_checklist": [
+    {
+      "label": "Main claim is supported by source",
+      "status": "needs_review"
+    },
+    {
+      "label": "Affected product/package/CVE is named or explicitly marked not found",
+      "status": "needs_review"
+    },
+    {
+      "label": "IOCs are present or explicitly marked none found",
+      "status": "needs_review"
+    },
+    {
+      "label": "Recommended actions are specific",
+      "status": "needs_review"
+    },
+    {
+      "label": "SecOpsAI detection/mitigation angle is added",
+      "status": "needs_review"
+    },
+    {
+      "label": "No copied external article text",
+      "status": "needs_review"
+    }
+  ],
   "review_status": "needs_review",
-  "severity": "info",
+  "severity": "high",
+  "severity_reason": "Compromise, credential-theft, malware, or supply-chain signal.",
   "slug": "news-1a82913ba305f0bd-tanstack-npm-packages-compromised-in-ongoing-mini-shai-hulud-supply",
+  "source_category": "Research",
+  "source_links": [
+    "https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack"
+  ],
   "source_name": "Socket Blog",
+  "source_trust_level": "research",
+  "source_url": "https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack",
   "sources": [
     "https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack"
   ],
@@ -31,8 +108,11 @@
   "tags": [
     "Security News",
     "Research",
-    "Supply Chain"
+    "Supply Chain",
+    "npm",
+    "supply-chain attack",
+    "malware"
   ],
   "title": "TanStack npm Packages Compromised in Ongoing Mini Shai-Hulud Supply-Chain Attack",
-  "updated_at": "2026-05-13T18:12:33Z"
+  "updated_at": "2026-05-14T13:21:44Z"
 }

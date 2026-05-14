@@ -1,28 +1,96 @@
 {
   "affected_ecosystems": [],
   "affected_packages": [],
+  "affected_products": [
+    "Cloudflare",
+    "OAuth"
+  ],
   "author": "Cloudflare Security Blog",
-  "body_markdown": "# Securing non-human identities: automated revocation, OAuth, and scoped permissions\n\n## Executive Summary\n\nCloudflare is introducing scannable API tokens, enhanced OAuth visibility, and GA for resource-scoped permissions. These tools help developers implement a true least-privilege architecture while protecting against credential leakage.\n\n## Why It Matters\n\n- This external security-news item was imported automatically from `Cloudflare Security Blog`.\n- It is a draft and requires human review before publishing.\n- Confirm claims against the linked source and any primary references before publication.\n\n## What SecOpsAI Can Detect\n\n- Add matching SecOpsAI advisories, package verdicts, detections, or OpenClaw findings here after review.\n\n## IOCs\n\n- No structured IOCs were extracted automatically. Add source-backed IOCs manually if present.\n\n## Affected Packages Or Products\n\n- Review the source and add affected products, packages, versions, or ecosystems if applicable.\n\n## Recommended Actions\n\n- Review the source.\n- Validate affected assets in your environment.\n- Add SecOpsAI detection or mitigation commands before publishing.\n\n## References\n\n- https://blog.cloudflare.com/improved-developer-security/\n",
+  "body_markdown": "# Securing non-human identities: automated revocation, OAuth, and scoped permissions\n\n## Executive Summary\n\nCloudflare is introducing scannable API tokens, enhanced OAuth visibility, and GA for resource-scoped permissions. These tools help developers implement a true least-privilege architecture while protecting against credential leakage.\n\n## Source Metadata\n\n- Source: Cloudflare Security Blog\n- Canonical URL: https://blog.cloudflare.com/improved-developer-security/\n- Published at: 2026-05-13T21:18:05Z\n- Fetched at: 2026-05-13T21:18:04Z\n- Trust level: vendor\n\n## Review Checklist\n\n- [ ] Main claim is supported by source\n- [ ] Affected product/package/CVE is named or explicitly marked not found\n- [ ] IOCs are present or explicitly marked none found\n- [ ] Recommended actions are specific\n- [ ] SecOpsAI detection/mitigation angle is added\n- [ ] No copied external article text\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: high (Compromise, credential-theft, malware, or supply-chain signal.)\n- Extracted signals: credential theft\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can help operators review token exposure, credential-rotation tasks, CI/CD workflow risk, and SOC findings related to secret leakage or suspicious authentication activity.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- Cloudflare\n- OAuth\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Rotate affected tokens or credentials if exposure is plausible.\n- Review GitHub Actions, OIDC trust relationships, OAuth grants, and cloud roles.\n- Check audit logs for suspicious use of impacted credentials or identities.\n- Tighten token scopes and remove stale non-human identities where possible.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-915acd3636d9fc5c-securing-non-human-identities-automated-revocation-oauth-and-scoped\n```\n\n## References\n\n- https://blog.cloudflare.com/improved-developer-security/\n",
+  "canonical_url": "https://blog.cloudflare.com/improved-developer-security/",
   "categories": [
     "Security News",
     "Threat Intelligence",
-    "Cloudflare"
+    "Cloudflare",
+    "credential theft"
   ],
   "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [],
+    "products": [
+      "Cloudflare",
+      "OAuth"
+    ],
+    "severity_signals": [
+      "credential theft"
+    ],
+    "urls": []
+  },
   "featured": false,
   "fetched_at": "2026-05-13T21:18:04Z",
   "iocs": [],
   "news_key": "915acd3636d9fc5c",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-915acd3636d9fc5c-securing-non-human-identities-automated-revocation-oauth-and-scoped"
+  ],
+  "primary_references": [
+    "https://blog.cloudflare.com/improved-developer-security/"
+  ],
   "published_at": "2026-05-13T21:18:05Z",
+  "readiness_blockers": [],
+  "readiness_score": 100,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [],
   "reading_time": 1,
   "references": [
     "https://blog.cloudflare.com/improved-developer-security/"
   ],
   "related_posts": [],
+  "review_checklist": [
+    {
+      "label": "Main claim is supported by source",
+      "status": "needs_review"
+    },
+    {
+      "label": "Affected product/package/CVE is named or explicitly marked not found",
+      "status": "needs_review"
+    },
+    {
+      "label": "IOCs are present or explicitly marked none found",
+      "status": "needs_review"
+    },
+    {
+      "label": "Recommended actions are specific",
+      "status": "needs_review"
+    },
+    {
+      "label": "SecOpsAI detection/mitigation angle is added",
+      "status": "needs_review"
+    },
+    {
+      "label": "No copied external article text",
+      "status": "needs_review"
+    }
+  ],
   "review_status": "needs_review",
-  "severity": "info",
+  "severity": "high",
+  "severity_reason": "Compromise, credential-theft, malware, or supply-chain signal.",
   "slug": "news-915acd3636d9fc5c-securing-non-human-identities-automated-revocation-oauth-and-scoped",
+  "source_category": "Threat Intelligence",
+  "source_links": [
+    "https://blog.cloudflare.com/improved-developer-security/"
+  ],
   "source_name": "Cloudflare Security Blog",
+  "source_trust_level": "vendor",
+  "source_url": "https://blog.cloudflare.com/improved-developer-security/",
   "sources": [
     "https://blog.cloudflare.com/improved-developer-security/"
   ],
@@ -31,8 +99,9 @@
   "tags": [
     "Security News",
     "Threat Intelligence",
-    "Cloudflare"
+    "Cloudflare",
+    "credential theft"
   ],
   "title": "Securing non-human identities: automated revocation, OAuth, and scoped permissions",
-  "updated_at": "2026-05-13T21:18:05Z"
+  "updated_at": "2026-05-14T13:21:44Z"
 }
