@@ -100,6 +100,12 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
+      - name: Set up Node for Wrangler
+        if: ${{ inputs.action == 'deploy' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
