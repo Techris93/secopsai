@@ -506,7 +506,10 @@ def build_snapshot(repo: Path, workspace_logs: Path, openclaw_home: Optional[Pat
     replay_age = snapshot.get("telemetry", {}).get("labeled_replay", {}).get("age_hours_since_latest_event")
     source_age = snapshot.get("telemetry", {}).get("openclaw_source", {}).get("age_hours_since_latest_activity")
     if isinstance(replay_age, (int, float)) and replay_age > 24:
-        stale_flags.append("telemetry_older_than_24h")
+        if isinstance(source_age, (int, float)) and source_age > 24:
+            stale_flags.append("openclaw_source_idle")
+        else:
+            stale_flags.append("telemetry_older_than_24h")
         if isinstance(source_age, (int, float)) and source_age <= 24:
             stale_flags.append("telemetry_export_bridge_stale")
 

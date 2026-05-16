@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -85,6 +86,66 @@ class ResearchTests(unittest.TestCase):
             issue_codes = {item["code"] for item in preflight["issues"]}
             self.assertIn("telemetry_stale", issue_codes)
             self.assertIn("export_bridge_stale", issue_codes)
+
+    def test_build_preflight_report_warns_when_openclaw_source_is_idle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            repo = temp_path / "repo"
+            logs = temp_path / "logs"
+            openclaw_home = temp_path / "openclaw"
+            (repo / "data" / "intel").mkdir(parents=True, exist_ok=True)
+            (repo / "data" / "openclaw" / "replay" / "labeled").mkdir(parents=True, exist_ok=True)
+            (repo / "data" / "openclaw" / "replay" / "unlabeled").mkdir(parents=True, exist_ok=True)
+            (repo / "data" / "openclaw" / "findings").mkdir(parents=True, exist_ok=True)
+            logs.mkdir(parents=True, exist_ok=True)
+            (openclaw_home / "agents" / "main" / "sessions").mkdir(parents=True, exist_ok=True)
+
+            (repo / "data" / "intel" / "iocs.json").write_text(
+                json.dumps({"generated_at": "2026-04-22T01:00:00Z", "iocs": []}),
+                encoding="utf-8",
+            )
+            replay_payload = [{"timestamp": "2026-04-16T18:01:29Z", "event_type": "tool", "status": "ok"}]
+            (repo / "data" / "openclaw" / "replay" / "labeled" / "current.json").write_text(
+                json.dumps(replay_payload),
+                encoding="utf-8",
+            )
+            (repo / "data" / "openclaw" / "replay" / "unlabeled" / "current.json").write_text(
+                json.dumps(replay_payload),
+                encoding="utf-8",
+            )
+            (repo / "data" / "openclaw" / "findings" / "openclaw-findings-20260422-110000.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-04-22T11:00:00Z",
+                        "total_events": 1,
+                        "total_detections": 0,
+                        "total_candidate_findings": 0,
+                        "total_findings": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            session_file = openclaw_home / "agents" / "main" / "sessions" / "old.jsonl"
+            session_file.write_text("{}\n", encoding="utf-8")
+            old_epoch = 1776708000  # 2026-04-20T18:00:00Z
+            os.utime(session_file, (old_epoch, old_epoch))
+
+            with mock.patch("scripts.secopsai_report_snapshot._now_utc") as mocked_now:
+                from datetime import datetime, timezone
+
+                mocked_now.return_value = datetime(2026, 4, 22, 12, 0, 0, tzinfo=timezone.utc)
+                preflight = build_preflight_report(
+                    repo=str(repo),
+                    workspace_logs=str(logs),
+                    openclaw_home=str(openclaw_home),
+                )
+
+            self.assertEqual(preflight["status"], "warn")
+            issue_codes = {item["code"] for item in preflight["issues"]}
+            self.assertIn("openclaw_source_idle", issue_codes)
+            self.assertNotIn("telemetry_stale", issue_codes)
+            self.assertNotIn("export_bridge_stale", issue_codes)
+            self.assertIn("openclaw_source_idle", preflight["staleness_flags"])
 
     def test_research_package_writes_reports_and_detects_local_presence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

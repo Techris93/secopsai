@@ -238,14 +238,27 @@ def build_preflight_report(
         recommendations.append("Run secopsai refresh to rebuild replay telemetry before relying on triage output.")
 
     if isinstance(replay_age, (int, float)) and replay_age > 24:
-        issues.append(
-            {
-                "code": "telemetry_stale",
-                "severity": "critical",
-                "message": f"Latest replay event is {float(replay_age):.2f}h old, so telemetry-backed triage context is stale.",
-            }
-        )
-        recommendations.append("Refresh or ingest newer OpenClaw replay telemetry first.")
+        if isinstance(source_age, (int, float)) and source_age > 24:
+            issues.append(
+                {
+                    "code": "openclaw_source_idle",
+                    "severity": "warning",
+                    "message": (
+                        f"Latest replay event is {float(replay_age):.2f}h old, but OpenClaw source activity is "
+                        f"also idle at {float(source_age):.2f}h old; this looks like source inactivity, not an export failure."
+                    ),
+                }
+            )
+            recommendations.append("Resume or generate OpenClaw source activity if you need fresh telemetry-backed triage context.")
+        else:
+            issues.append(
+                {
+                    "code": "telemetry_stale",
+                    "severity": "critical",
+                    "message": f"Latest replay event is {float(replay_age):.2f}h old, so telemetry-backed triage context is stale.",
+                }
+            )
+            recommendations.append("Refresh or ingest newer OpenClaw replay telemetry first.")
 
     if isinstance(source_age, (int, float)) and source_age <= 24 and isinstance(replay_age, (int, float)) and replay_age > 24:
         issues.append(

@@ -172,6 +172,10 @@ def _recommended_actions(
             actions.append("Refresh or ingest newer OpenClaw replay telemetry first, current visibility is limited by stale data")
         if latest_event_ts and "telemetry_export_bridge_stale" not in staleness_flags:
             actions.append(f"Investigate why telemetry stopped updating after {latest_event_ts}")
+    elif "openclaw_source_idle" in staleness_flags:
+        actions.append("OpenClaw source activity is idle; replay timestamps are old because no newer source events are available")
+        if latest_source_activity_ts:
+            actions.append(f"Latest OpenClaw source activity was {latest_source_activity_ts}; resume OpenClaw activity before expecting fresher replay telemetry")
     elif replay_age is not None:
         try:
             if float(replay_age) >= 12:
@@ -458,6 +462,8 @@ def render_daily_intel(
     )
     if "telemetry_older_than_24h" in (snapshot.get("staleness_flags") or []):
         lines.append("• Telemetry is stale, flagged older than 24h")
+    elif "openclaw_source_idle" in (snapshot.get("staleness_flags") or []):
+        lines.append("• OpenClaw source activity is idle, so replay timestamps are older than 24h")
     else:
         lines.append("• Telemetry freshness is within the last 24h")
     if "telemetry_export_bridge_stale" in (snapshot.get("staleness_flags") or []):
