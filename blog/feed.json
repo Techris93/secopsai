@@ -4,6 +4,29 @@
   "home_page_url": "https://blog.secopsai.dev/",
   "items": [
     {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "CISA Known Exploited Vulnerabilities"
+        }
+      ],
+      "date_modified": "2026-05-16T18:56:57Z",
+      "date_published": "2026-05-15",
+      "id": "https://blog.secopsai.dev/posts/news-5752d8dcb4593420-cisa-kev-microsoft-microsoft-cve-2026-42897.html",
+      "reading_time_minutes": 1,
+      "severity": "high",
+      "summary": "Microsoft Exchange Server contains a cross-site scripting vulnerability during web page generation in Outlook Web Access and when certain interaction conditions are met, arbitrary JavaScript can be executed in the browser context.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "CISA KEV",
+        "Vulnerability",
+        "CVE-2026-42897"
+      ],
+      "title": "CISA KEV: Microsoft Microsoft CVE-2026-42897",
+      "url": "https://blog.secopsai.dev/posts/news-5752d8dcb4593420-cisa-kev-microsoft-microsoft-cve-2026-42897.html"
+    },
+    {
       "affected_packages": [
         "@opensearch-project/opensearch",
         "mistralai",
