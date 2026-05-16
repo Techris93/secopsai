@@ -59,6 +59,20 @@ KNOWN_PACKAGE_RE = re.compile(
 GENERIC_RECOMMENDATION_RE = re.compile(
     r"(?im)^-\s*(?:review the source|validate affected assets in your environment|add secopsai detection or mitigation commands before publishing)\.?\s*$"
 )
+REVIEW_CHECKLIST_SECTION_RE = re.compile(
+    r"(?:^|\n)## Review Checklist\s*\n.*?(?=\n## |\Z)",
+    re.DOTALL | re.IGNORECASE,
+)
+REVIEW_CHECKLIST_COMPLETE_STATUSES = {
+    "approved",
+    "checked",
+    "complete",
+    "completed",
+    "done",
+    "pass",
+    "passed",
+    "reviewed",
+}
 
 
 @dataclass
@@ -204,6 +218,20 @@ def _post_reading_time(post: Dict[str, Any]) -> int:
     body = str(post.get("body_markdown") or "")
     words = re.findall(r"\b[\w@./:-]+\b", f"{post.get('title', '')} {post.get('summary', '')} {body}")
     return max(1, round(len(words) / 220))
+
+
+def strip_review_checklist_section(markdown: Any) -> str:
+    """Keep review workflow notes out of public post bodies."""
+    cleaned = REVIEW_CHECKLIST_SECTION_RE.sub("\n", str(markdown or ""))
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _public_post(post: Dict[str, Any]) -> Dict[str, Any]:
+    public = _normalize_post(post)
+    public["body_markdown"] = strip_review_checklist_section(public.get("body_markdown") or "")
+    public.pop("review_checklist", None)
+    return public
 
 
 def _post_severity_rank(post: Dict[str, Any]) -> int:
@@ -733,6 +761,54 @@ def _review_checklist() -> List[Dict[str, str]]:
     return [{"label": label, "status": "needs_review"} for label in labels]
 
 
+def _normalise_review_checklist(checklist: Any) -> List[Dict[str, str]]:
+    if not isinstance(checklist, list) or not checklist:
+        return _review_checklist()
+    normalised: List[Dict[str, str]] = []
+    for item in checklist:
+        if isinstance(item, dict):
+            label = str(item.get("label") or "").strip()
+            status = str(item.get("status") or "needs_review").strip().lower()
+        else:
+            label = str(item or "").strip()
+            status = "needs_review"
+        if label:
+            normalised.append({"label": label, "status": status or "needs_review"})
+    return normalised or _review_checklist()
+
+
+def _set_review_checklist_status(post: Dict[str, Any], status: str) -> None:
+    if not post.get("external_news"):
+        return
+    if status in {"approved", "reviewed"}:
+        checklist_status = "completed"
+    elif status == "rejected":
+        checklist_status = "rejected"
+    else:
+        checklist_status = "needs_review"
+    post["review_checklist"] = [
+        {"label": item["label"], "status": checklist_status}
+        for item in _normalise_review_checklist(post.get("review_checklist"))
+    ]
+
+
+def review_checklist_publish_blockers(post: Dict[str, Any]) -> List[str]:
+    if not post.get("external_news"):
+        return []
+    checklist = _normalise_review_checklist(post.get("review_checklist"))
+    incomplete = [
+        item["label"]
+        for item in checklist
+        if item.get("status", "").lower() not in REVIEW_CHECKLIST_COMPLETE_STATUSES
+    ]
+    if not incomplete:
+        return []
+    shown = ", ".join(incomplete[:3])
+    if len(incomplete) > 3:
+        shown += f", and {len(incomplete) - 3} more"
+    return [f"review checklist incomplete: {shown}"]
+
+
 def _markdown_list(values: Iterable[Any], *, empty: str) -> str:
     items = _safe_list(values, limit=24)
     if not items:
@@ -1248,7 +1324,11 @@ def external_news_publish_blockers(post: Dict[str, Any]) -> List[str]:
     if not post.get("external_news"):
         return []
     readiness = score_external_news_readiness(post)
-    return list(readiness.get("readiness_blockers", []))
+    blockers = list(readiness.get("readiness_blockers", []))
+    if post.get("review_status") not in {"approved", "reviewed"}:
+        blockers.append("external-news draft has not been approved or reviewed")
+    blockers.extend(review_checklist_publish_blockers(post))
+    return _safe_list(blockers, limit=24)
 
 
 def news_publish_approved(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
@@ -1361,6 +1441,7 @@ def news_review_update(
     post = _load_json(path)
     post["review_status"] = status
     post["reviewed_at"] = _utc_now()
+    _set_review_checklist_status(post, status)
     if note:
         post["review_note"] = redact(note)
     if post.get("external_news"):
@@ -1427,6 +1508,7 @@ def news_review_edit(
     post["updated_at"] = _utc_now()
     post["edited_at"] = post["updated_at"]
     post["review_status"] = "needs_review"
+    _set_review_checklist_status(post, "needs_review")
     if note:
         post["edit_note"] = redact(note)
 
@@ -1630,7 +1712,7 @@ def _render_artifact_table(post: Dict[str, Any]) -> str:
 
 
 def _render_post_html(post: Dict[str, Any]) -> str:
-    post = _normalize_post(post)
+    post = _public_post(post)
     slug = str(post["slug"])
     title = html.escape(redact(post["title"]))
     summary = html.escape(redact(post.get("summary", "")))
@@ -1761,7 +1843,7 @@ def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPa
     post["status"] = "published"
     post["published_at"] = post.get("published_at") or _utc_now()
     post["updated_at"] = _utc_now()
-    post = _normalize_post(post)
+    post = _public_post(post)
     paths.posts.mkdir(parents=True, exist_ok=True)
     _write_json(_post_json_path(str(post["slug"]), paths), post)
     _post_html_path(str(post["slug"]), paths).write_text(
@@ -1945,7 +2027,7 @@ def _post_summary(post: Dict[str, Any]) -> str:
     summary = str(post.get("summary") or "").strip()
     if summary:
         return redact(summary)
-    body = str(post.get("body_markdown") or "")
+    body = strip_review_checklist_section(post.get("body_markdown") or "")
     body = re.sub(r"```.*?```", " ", body, flags=re.DOTALL)
     body = re.sub(r"^#+\s*", "", body, flags=re.MULTILINE)
     body = re.sub(r"\s+", " ", body).strip()
@@ -2013,7 +2095,7 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     feed_items = []
     rss_items = []
     for post in posts:
-        post = _normalize_post(post)
+        post = _public_post(post)
         slug = str(post["slug"])
         url = _post_url(slug)
         if post.get("body_markdown"):

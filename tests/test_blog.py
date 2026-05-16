@@ -276,6 +276,7 @@ class BlogPublishingTests(unittest.TestCase):
             draft.update({
                 "external_news": True,
                 "review_status": "needs_review",
+                "review_checklist": blog._review_checklist(),
                 "body_markdown": "# External story\n\nNeeds review.",
             })
             draft_path = paths.drafts / "external-story.json"
@@ -286,12 +287,23 @@ class BlogPublishingTests(unittest.TestCase):
             placeholder_blocked = blog.news_publish_approved(paths=paths)
             draft["body_markdown"] = ready_body
             draft_path.write_text(json.dumps(draft), encoding="utf-8")
+            checklist_blocked = blog.news_publish_approved(paths=paths)
+            blog.news_review_update("external-story", status="approved", note="reviewed source", paths=paths)
             approved = blog.news_publish_approved(paths=paths)
+            post_json = json.loads((paths.posts / "external-story.json").read_text(encoding="utf-8"))
+            post_html = (paths.posts / "external-story.html").read_text(encoding="utf-8")
 
         self.assertEqual(blocked["total"], 0)
         self.assertEqual(placeholder_blocked["total"], 0)
         self.assertTrue(placeholder_blocked["blocked"])
+        self.assertEqual(checklist_blocked["total"], 0)
+        self.assertTrue(
+            any("review checklist incomplete" in reason for item in checklist_blocked["blocked"] for reason in item["reasons"])
+        )
         self.assertEqual(approved["total"], 1)
+        self.assertNotIn("Review Checklist", post_json["body_markdown"])
+        self.assertNotIn("review_checklist", post_json)
+        self.assertNotIn("Review Checklist", post_html)
 
     def test_news_draft_preserves_existing_rejected_draft(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -342,6 +354,7 @@ class BlogPublishingTests(unittest.TestCase):
             draft.update({
                 "external_news": True,
                 "review_status": "needs_review",
+                "review_checklist": blog._review_checklist(),
                 "body_markdown": "# Review me\n\nNeeds review.",
             })
             draft_path = paths.drafts / "review-me.json"
@@ -355,6 +368,7 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertEqual(shown["title"], "Review me")
         self.assertIn("Needs review", shown["body_markdown"])
         self.assertEqual(approved["review_status"], "approved")
+        self.assertTrue(all(item["status"] == "completed" for item in approved["review_checklist"]))
 
     def test_news_review_edit_updates_article_fields_and_resets_review(self):
         with tempfile.TemporaryDirectory() as temp_dir:
