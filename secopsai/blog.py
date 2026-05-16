@@ -144,6 +144,26 @@ def _safe_list(values: Iterable[Any], *, limit: int = 24) -> List[str]:
     return output
 
 
+def _safe_reference_list(values: Any, *, limit: int = 24) -> List[str]:
+    """Normalize source/reference fields that feeds sometimes join into one string."""
+    raw_values = values if isinstance(values, list) else [values]
+    candidates: List[str] = []
+    for value in raw_values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        urls = re.findall(r"https?://[^\s<>\"]+", text)
+        if urls:
+            candidates.extend(url.rstrip(".,);") for url in urls)
+        else:
+            candidates.extend(part.strip() for part in re.split(r"[\n,;]+", text) if part.strip())
+    return [
+        item
+        for item in _safe_list(candidates, limit=limit)
+        if urllib.parse.urlparse(item).scheme in {"http", "https"}
+    ]
+
+
 def _safe_text(value: Any, *, fallback: str = "") -> str:
     cleaned = re.sub(r"\s+", " ", redact(value)).strip()
     return cleaned or fallback
@@ -154,12 +174,26 @@ def _split_review_values(value: Any, *, limit: int = 24) -> List[str]:
         return []
     if isinstance(value, list):
         return _safe_list(value, limit=limit)
-    parts = re.split(r"[\n,]+", str(value or ""))
+    parts = re.split(r"[\n,;]+", str(value or ""))
     return _safe_list(parts, limit=limit)
+
+
+def _collapse_adjacent_duplicate_words(value: Any) -> str:
+    text = str(value or "")
+    return re.sub(r"\b([A-Z][\w.-]+)\s+\1\b", r"\1", text)
 
 
 def _markdown_inline(text: str) -> str:
     escaped = html.escape(redact(text))
+    escaped = re.sub(
+        r"(https?://[^\s<]+)",
+        lambda match: (
+            f'<a class="inline-ref" href="{match.group(1).rstrip(".,);")}" '
+            f'rel="noopener noreferrer" target="_blank">{match.group(1).rstrip(".,);")}</a>'
+            + match.group(1)[len(match.group(1).rstrip(".,);")):]
+        ),
+        escaped,
+    )
     escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
     return escaped
 
@@ -399,9 +433,57 @@ def strip_review_checklist_section(markdown: Any) -> str:
     return cleaned.strip()
 
 
+def _strip_redundant_public_intro(markdown: Any, *, title: Any = "") -> str:
+    """Avoid repeating the rendered page title and summary inside generated posts."""
+    lines = str(markdown or "").splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    title_key = slugify(_collapse_adjacent_duplicate_words(title))
+    if (
+        lines
+        and lines[0].lstrip().startswith("# ")
+        and slugify(_collapse_adjacent_duplicate_words(lines[0].lstrip()[2:])) == title_key
+    ):
+        lines.pop(0)
+        while lines and not lines[0].strip():
+            lines.pop(0)
+    if lines and lines[0].strip().lower() == "## executive summary":
+        next_section = len(lines)
+        for index, line in enumerate(lines[1:], start=1):
+            stripped = line.strip()
+            if stripped.startswith("# ") or stripped.startswith("## "):
+                next_section = index
+                break
+        lines = lines[next_section:]
+        while lines and not lines[0].strip():
+            lines.pop(0)
+    cleaned_lines: List[str] = []
+    in_references = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            in_references = stripped.lower() == "## references"
+        if stripped.startswith("- Canonical URL:"):
+            urls = _safe_reference_list(stripped, limit=12)
+            if len(urls) > 1:
+                cleaned_lines.append(f"- Canonical URL: {urls[0]}")
+                cleaned_lines.append(f"- Additional references: {', '.join(urls[1:])}")
+                continue
+        if in_references and stripped.startswith("- "):
+            urls = _safe_reference_list(stripped, limit=12)
+            if len(urls) > 1:
+                cleaned_lines.extend(f"- {url}" for url in urls)
+                continue
+        cleaned_lines.append(_collapse_adjacent_duplicate_words(line))
+    return "\n".join(cleaned_lines).strip()
+
+
 def _public_post(post: Dict[str, Any]) -> Dict[str, Any]:
     public = _normalize_post(post)
-    public["body_markdown"] = strip_review_checklist_section(public.get("body_markdown") or "")
+    public["body_markdown"] = _strip_redundant_public_intro(
+        strip_review_checklist_section(public.get("body_markdown") or ""),
+        title=public.get("title"),
+    )
     public.pop("review_checklist", None)
     return public
 
@@ -417,6 +499,8 @@ def _post_date(value: Any) -> str:
 
 def _normalize_post(post: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(post)
+    if normalized.get("title"):
+        normalized["title"] = _collapse_adjacent_duplicate_words(normalized["title"])
     categories = _post_categories(normalized)
     normalized["categories"] = categories
     normalized.setdefault("tags", categories)
@@ -424,13 +508,27 @@ def _normalize_post(post: Dict[str, Any]) -> Dict[str, Any]:
     normalized["reading_time"] = _post_reading_time(normalized)
     normalized.setdefault("featured", False)
     normalized.setdefault("related_posts", [])
-    normalized.setdefault("references", normalized.get("sources", []))
+    references = _safe_reference_list(normalized.get("references") or normalized.get("sources") or [], limit=16)
+    normalized["references"] = references
+    normalized["sources"] = references or _safe_reference_list(normalized.get("sources", []), limit=16)
+    if normalized["references"]:
+        normalized["canonical_url"] = normalized["references"][0]
+        normalized["source_links"] = normalized["references"]
+        normalized["primary_references"] = normalized["references"][:5]
     normalized.setdefault("affected_ecosystems", [])
     normalized.setdefault("affected_packages", [])
-    normalized.setdefault("affected_products", [])
+    normalized["affected_products"] = _safe_list(
+        [_collapse_adjacent_duplicate_words(item) for item in normalized.get("affected_products", [])],
+        limit=24,
+    )
     normalized.setdefault("affected_artifacts", [])
     normalized.setdefault("iocs", [])
     normalized.setdefault("extracted", {})
+    if isinstance(normalized["extracted"], dict) and isinstance(normalized["extracted"].get("products"), list):
+        normalized["extracted"]["products"] = _safe_list(
+            [_collapse_adjacent_duplicate_words(item) for item in normalized["extracted"]["products"]],
+            limit=24,
+        )
     normalized["images"] = _normalize_media(normalized)
     if normalized["images"]:
         normalized["hero_image"] = normalized["images"][0]
@@ -1018,8 +1116,10 @@ def load_news_sources(*, paths: Optional[BlogPaths] = None) -> List[Dict[str, An
 
 
 def _normalise_news_item(raw: Dict[str, Any], source: Dict[str, Any]) -> Dict[str, Any]:
-    title = redact(_strip_markup(raw.get("title") or "Security news item"))
-    url = str(raw.get("url") or raw.get("link") or source.get("url") or source.get("feed_url") or "").strip()
+    title = _collapse_adjacent_duplicate_words(redact(_strip_markup(raw.get("title") or "Security news item")))
+    raw_url = str(raw.get("url") or raw.get("link") or source.get("url") or source.get("feed_url") or "").strip()
+    source_links = _safe_reference_list(raw.get("source_links") or [raw_url], limit=12)
+    url = source_links[0] if source_links else raw_url
     if url.startswith("/"):
         parsed_source = urllib.parse.urlparse(str(source.get("url") or source.get("feed_url") or ""))
         url = f"{parsed_source.scheme}://{parsed_source.netloc}{url}" if parsed_source.netloc else url
@@ -1040,6 +1140,7 @@ def _normalise_news_item(raw: Dict[str, Any], source: Dict[str, Any]) -> Dict[st
         "canonical_url": url,
         "source_name": source_name,
         "source_url": str(source.get("url") or source.get("feed_url") or url),
+        "source_links": source_links or ([url] if url else []),
         "source_type": str(source.get("type") or "rss"),
         "category": category,
         "tags": tags,
@@ -1175,18 +1276,24 @@ def _parse_json_items(text: str, source: Dict[str, Any], *, limit: int) -> List[
     except json.JSONDecodeError:
         return []
     if isinstance(payload, dict) and isinstance(payload.get("vulnerabilities"), list):
-        return [
-            _normalise_news_item({
-                "title": f"CISA KEV: {item.get('vendorProject', '')} {item.get('product', '')} {item.get('cveID', '')}".strip(),
-                "url": item.get("notes") or "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+        items = []
+        for item in payload["vulnerabilities"][:limit]:
+            if not isinstance(item, dict):
+                continue
+            vendor = str(item.get("vendorProject") or "").strip()
+            product = str(item.get("product") or "").strip()
+            product_label = vendor if vendor.lower() == product.lower() else " ".join(part for part in [vendor, product] if part)
+            notes = item.get("notes") or "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
+            items.append(_normalise_news_item({
+                "title": f"CISA KEV: {product_label} {item.get('cveID', '')}".strip(),
+                "url": (_safe_reference_list(notes, limit=1) or [str(notes)])[0],
+                "source_links": _safe_reference_list(notes, limit=8),
                 "summary": item.get("shortDescription") or item.get("vulnerabilityName") or "",
                 "published_at": item.get("dateAdded") or "",
                 "tags": ["CISA KEV", item.get("cveID", "")],
                 "severity": "high",
-            }, source)
-            for item in payload["vulnerabilities"][:limit]
-            if isinstance(item, dict)
-        ]
+            }, source))
+        return items
     return []
 
 
@@ -1292,8 +1399,9 @@ def _draft_from_news_item(item: Dict[str, Any], *, paths: BlogPaths) -> Dict[str
     context_kind = _news_context_kind(extracted, item)
     detection_context = _secopsai_detection_context(context_kind)
     actions = _recommended_actions(context_kind, extracted)
-    references = _safe_list([link, *item.get("source_links", [])] if isinstance(item.get("source_links"), list) else [link], limit=12)
-    primary_references = _safe_list([link], limit=5)
+    references = _safe_reference_list([link, *item.get("source_links", [])] if isinstance(item.get("source_links"), list) else [link], limit=12)
+    primary_references = _safe_reference_list([link], limit=5)
+    canonical_for_body = references[0] if references else link
     source_trust_level = str(item.get("trust_level") or item.get("source_trust_level") or "external")
     source_category = str(item.get("category") or "Security News")
     slug_value = slugify(f"news-{item.get('key', '')}-{title}")
@@ -1318,7 +1426,8 @@ def _draft_from_news_item(item: Dict[str, Any], *, paths: BlogPaths) -> Dict[str
 ## Source Metadata
 
 - Source: {item.get('source_name', 'External source')}
-- Canonical URL: {link or 'not provided'}
+- Canonical URL: {canonical_for_body or 'not provided'}
+- Additional references: {', '.join(references[1:]) if len(references) > 1 else 'none'}
 - Published at: {item.get('published_at') or 'not provided'}
 - Fetched at: {item.get('fetched_at') or _utc_now()}
 - Trust level: {source_trust_level}
@@ -1379,7 +1488,7 @@ secopsai blog news-review show {slug_value}
     post.update({
         "source_name": item.get("source_name") or "External source",
         "author": item.get("source_name") or "External source",
-        "canonical_url": link,
+        "canonical_url": canonical_for_body,
         "source_url": item.get("source_url") or link,
         "source_trust_level": source_trust_level,
         "source_category": source_category,
@@ -1467,8 +1576,8 @@ def score_external_news_readiness(post: Dict[str, Any]) -> Dict[str, Any]:
     body_lower = body.lower()
     summary = " ".join(str(post.get("summary") or "").lower().split())
     title = " ".join(str(post.get("title") or "").lower().split())
-    sources = _safe_list(post.get("sources") or post.get("references") or [], limit=12)
-    references = _safe_list(post.get("references") or post.get("sources") or [], limit=12)
+    sources = _safe_reference_list(post.get("sources") or post.get("references") or [], limit=12)
+    references = _safe_reference_list(post.get("references") or post.get("sources") or [], limit=12)
     extracted = post.get("extracted") if isinstance(post.get("extracted"), dict) else {}
     extracted_values = []
     for key in ("cves", "packages", "products", "urls", "domains", "ips", "hashes", "ecosystems"):
@@ -1910,14 +2019,15 @@ def _render_command_blocks(post: Dict[str, Any]) -> str:
 
 
 def _render_reference_links(post: Dict[str, Any]) -> str:
-    references = _safe_list(post.get("references") or post.get("sources") or [], limit=8)
+    references = _safe_reference_list(post.get("references") or post.get("sources") or [], limit=8)
     if not references:
         return "<p>No external references attached yet. Add source URLs before publishing major incident updates.</p>"
     links = []
     for reference in references:
         if urllib.parse.urlparse(reference).scheme not in {"http", "https"}:
             continue
-        label = urllib.parse.urlparse(reference).netloc or reference
+        parsed = urllib.parse.urlparse(reference)
+        label = parsed.netloc or reference
         links.append(f'<li><a href="{html.escape(reference)}" rel="noopener noreferrer" target="_blank">{html.escape(label)}</a></li>')
     if not links:
         return "<p>No safe external references attached yet.</p>"

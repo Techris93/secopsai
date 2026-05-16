@@ -6,12 +6,12 @@
     <link>https://blog.secopsai.dev/</link>
     <description>Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.</description>
     <language>en-us</language>
-    <lastBuildDate>Sat, 16 May 2026 20:06:02 GMT</lastBuildDate>
+    <lastBuildDate>Sat, 16 May 2026 21:32:32 GMT</lastBuildDate>
     <item>
-      <title>CISA KEV: Microsoft Microsoft CVE-2026-42897</title>
+      <title>CISA KEV: Microsoft CVE-2026-42897</title>
       <link>https://blog.secopsai.dev/posts/news-5752d8dcb4593420-cisa-kev-microsoft-microsoft-cve-2026-42897.html</link>
       <guid>https://blog.secopsai.dev/posts/news-5752d8dcb4593420-cisa-kev-microsoft-microsoft-cve-2026-42897.html</guid>
-      <pubDate>Sat, 16 May 2026 20:06:02 GMT</pubDate>
+      <pubDate>Sat, 16 May 2026 21:32:32 GMT</pubDate>
       <description>Microsoft Exchange Server contains a cross-site scripting vulnerability during web page generation in Outlook Web Access and when certain interaction conditions are met, arbitrary JavaScript can be executed in the browser context.</description>
     </item>
     <item>

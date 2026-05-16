@@ -349,6 +349,44 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertIn("https://blog.secopsai.dev/assets/posts/media-backed-alert/", post_html)
         self.assertEqual(post_json["social_image"], post_json["images"][0]["src"])
 
+    def test_public_posts_remove_redundant_intro_and_split_references(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.drafts.mkdir(parents=True)
+            draft = blog._base_post(
+                title="CISA KEV: Microsoft Microsoft CVE-2026-42897",
+                summary="Microsoft Exchange Server contains a cross-site scripting vulnerability.",
+                categories=["Security News", "CISA KEV"],
+                sources=[
+                    "https://msrc.microsoft.com/update-guide/en-US/vulnerability/CVE-2026-42897 ; "
+                    "https://nvd.nist.gov/vuln/detail/CVE-2026-42897"
+                ],
+                slug="mobile-reference-test",
+            )
+            draft["body_markdown"] = (
+                "# CISA KEV: Microsoft Microsoft CVE-2026-42897\n\n"
+                "## Executive Summary\n\n"
+                "Microsoft Exchange Server contains a cross-site scripting vulnerability.\n\n"
+                "## Source Metadata\n\n"
+                "- Canonical URL: https://msrc.microsoft.com/update-guide/en-US/vulnerability/CVE-2026-42897 ; "
+                "https://nvd.nist.gov/vuln/detail/CVE-2026-42897\n\n"
+                "## References\n\n"
+                "- https://msrc.microsoft.com/update-guide/en-US/vulnerability/CVE-2026-42897 ; "
+                "https://nvd.nist.gov/vuln/detail/CVE-2026-42897\n"
+            )
+            (paths.drafts / "mobile-reference-test.json").write_text(json.dumps(draft), encoding="utf-8")
+
+            published = blog.publish("mobile-reference-test", confirm=True, paths=paths)
+            post_html = Path(published["post_path"]).read_text(encoding="utf-8")
+            post_json = json.loads((paths.posts / "mobile-reference-test.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(post_json["title"], "CISA KEV: Microsoft CVE-2026-42897")
+        self.assertEqual(len(post_json["references"]), 2)
+        self.assertEqual(post_html.count("<h1>"), 1)
+        self.assertNotIn("<h2>Executive Summary</h2>", post_html)
+        self.assertIn("Additional references", post_html)
+        self.assertIn("class=\"inline-ref\"", post_html)
+
     def test_unsafe_media_paths_are_not_published(self):
         post = blog._base_post(
             title="Unsafe media",

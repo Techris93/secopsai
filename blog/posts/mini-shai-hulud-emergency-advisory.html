@@ -72,11 +72,7 @@
             <ul><li><code>git-tanstack.com/transformers.pyz</code></li><li><code>83.142.209.194/transformers.pyz</code></li><li><code>/tmp/transformers.pyz</code></li><li><code>router_init.js</code></li><li><code>setup.mjs</code></li></ul>
           </div>
         </section>
-        <h1>Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts</h1>
-<h2>Executive Summary</h2>
-<p>Mini Shai-Hulud is a confirmed software supply-chain campaign affecting npm and PyPI packages. Some compromised versions were removed from public registries quickly, which is good for users but creates a scanner blind spot: artifact diffing can fail after takedown.</p>
-<p>SecOpsAI now ships an emergency advisory ingestion path. Named compromised versions can produce high-confidence SOC findings even when the malicious artifact is no longer fetchable.</p>
-<h2>Affected Artifacts</h2>
+        <h2>Affected Artifacts</h2>
 <ul>
 <li>npm: <code>@opensearch-project/opensearch</code> versions <code>3.5.3</code>, <code>3.6.2</code>, <code>3.7.0</code>, <code>3.8.0</code></li>
 <li>PyPI: <code>mistralai</code> version <code>2.4.6</code></li>
@@ -117,9 +113,9 @@ secopsai supply-chain reconcile-history --include-advisories</code></pre>
 </ul>
 <h2>References</h2>
 <ul>
-<li>https://www.ox.security/blog/shai-hulud-here-we-go-again-170-packages-hit-across-npm-pypi/</li>
-<li>https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack</li>
-<li>https://docs.secopsai.dev/supply-chain-advisories/</li>
+<li><a class="inline-ref" href="https://www.ox.security/blog/shai-hulud-here-we-go-again-170-packages-hit-across-npm-pypi/" rel="noopener noreferrer" target="_blank">https://www.ox.security/blog/shai-hulud-here-we-go-again-170-packages-hit-across-npm-pypi/</a></li>
+<li><a class="inline-ref" href="https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack" rel="noopener noreferrer" target="_blank">https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack</a></li>
+<li><a class="inline-ref" href="https://docs.secopsai.dev/supply-chain-advisories/" rel="noopener noreferrer" target="_blank">https://docs.secopsai.dev/supply-chain-advisories/</a></li>
 </ul>
 
         <section class="comments" data-comments data-slug="mini-shai-hulud-emergency-advisory">

@@ -29,6 +29,16 @@ body {
     linear-gradient(180deg, #081018 0%, #05070a 54%, #030507 100%);
 }
 
+body,
+main,
+article,
+aside,
+section,
+.card,
+.post-body {
+  min-width: 0;
+}
+
 :focus-visible {
   outline: 3px solid rgba(45, 212, 168, 0.72);
   outline-offset: 4px;
@@ -281,18 +291,26 @@ button {
   align-items: center;
   color: var(--muted);
   font-size: 0.84rem;
+  min-width: 0;
+}
+
+.tags {
+  margin: 14px 0 4px;
 }
 
 .pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  max-width: 100%;
   padding: 6px 9px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.04);
   color: var(--soft);
   font-weight: 700;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .critical {
@@ -396,11 +414,13 @@ textarea {
 .post-body {
   padding: clamp(22px, 4vw, 46px);
   line-height: 1.78;
+  overflow: hidden;
 }
 
 .post-body h1 {
   font-size: clamp(2.15rem, 6vw, 5.6rem);
   margin-bottom: 18px;
+  overflow-wrap: anywhere;
 }
 
 .dek {
@@ -423,6 +443,17 @@ textarea {
 .post-body p,
 .post-body li {
   color: var(--soft);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.post-body a,
+.inline-ref {
+  color: #9af4dc;
+  text-decoration-color: rgba(45, 212, 168, 0.55);
+  text-underline-offset: 0.16em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .post-body table {
@@ -490,6 +521,11 @@ pre {
   background: rgba(0, 0, 0, 0.34);
 }
 
+pre code {
+  color: #e8fff7;
+  overflow-wrap: normal;
+}
+
 .hero-image,
 .media-card {
   margin: 24px 0;
@@ -534,6 +570,11 @@ pre {
 .comments {
   margin-top: 22px;
   padding: 22px;
+}
+
+.comments form {
+  display: grid;
+  gap: 12px;
 }
 
 .comment-list {
@@ -609,9 +650,26 @@ pre {
   .card {
     border-radius: 18px;
   }
+
+  .post-layout {
+    padding-top: 20px;
+  }
+
+  .post-body h1 {
+    font-size: clamp(2rem, 11vw, 3.4rem);
+    line-height: 0.98;
+  }
+
+  .post-body h2 {
+    font-size: clamp(1.35rem, 7vw, 2rem);
+  }
 }
 
 @media (max-width: 520px) {
+  .shell {
+    width: min(100% - 16px, 1180px);
+  }
+
   .brand-title span:first-child {
     font-size: 1rem;
   }
@@ -628,12 +686,49 @@ pre {
   }
 
   .post-body {
-    padding: 18px;
+    padding: 16px;
   }
 
   .meta,
   .tags {
     gap: 6px;
+    align-items: flex-start;
+  }
+
+  .meta {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .pill {
+    padding: 6px 8px;
+    font-size: 0.76rem;
+  }
+
+  .eyebrow {
+    max-width: 100%;
+    white-space: normal;
+    border-radius: 16px;
+    line-height: 1.35;
+  }
+
+  .dek {
+    font-size: 1rem;
+  }
+
+  pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    padding: 13px;
+  }
+
+  .comments {
+    padding: 16px;
+  }
+
+  input,
+  textarea {
+    font-size: 16px;
   }
 }
 
