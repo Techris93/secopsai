@@ -1,10 +1,31 @@
 (async () => {
+  const nav = document.querySelector("[data-site-nav]");
+  const navToggle = document.querySelector("[data-nav-toggle]");
+  const navMenu = document.querySelector("[data-nav-menu]");
   const search = document.querySelector("#post-search");
   const cards = [...document.querySelectorAll("[data-search]")];
   const sort = document.querySelector("#post-sort");
   const filters = [...document.querySelectorAll("[data-topic-filter]")];
   const postList = document.querySelector("#posts");
   let activeTopic = "all";
+
+  const setMenuOpen = (open) => {
+    if (!nav || !navToggle || !navMenu) return;
+    nav.classList.toggle("nav-open", open);
+    navToggle.setAttribute("aria-expanded", String(open));
+  };
+
+  navToggle?.addEventListener("click", () => {
+    setMenuOpen(navToggle.getAttribute("aria-expanded") !== "true");
+  });
+
+  navMenu?.addEventListener("click", (event) => {
+    if (event.target.closest("a")) setMenuOpen(false);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") setMenuOpen(false);
+  });
 
   const applyFilters = () => {
     const term = search?.value.trim().toLowerCase() || "";

@@ -28,13 +28,19 @@
   </head>
   <body>
     <header class="topbar">
-      <nav class="shell nav">
+      <nav class="shell nav" data-site-nav>
         <a class="brand" href="/">
           <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
           <span class="brand-title"><span>SecOpsAI</span><span>Security Blog</span></span>
         </a>
-        <div class="nav-links">
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-menu" data-nav-toggle>
+          <span class="nav-toggle-lines" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span class="nav-toggle-label">Menu</span>
+        </button>
+        <div class="nav-links" id="site-menu" data-nav-menu>
           <a href="https://secopsai.dev/">Platform</a>
+          <a href="#topics">Topics</a>
+          <a href="#posts">Latest</a>
           <a href="https://docs.secopsai.dev/">Docs</a>
           <a href="/feed.xml">RSS</a>
           <a href="/json-feed">JSON Feed</a>
@@ -70,7 +76,7 @@
           <p>Every published post is designed to connect external reporting, SecOpsAI detections, IOCs, and concrete response commands.</p>
         </aside>
       </section>
-      <section class="topic-strip" aria-label="Security topics">
+      <section class="topic-strip" id="topics" aria-label="Security topics">
         <article class="topic-card">
           <p class="eyebrow">Security News</p>
           <p>1 posts with SecOpsAI context, detections, or operator guidance.</p>

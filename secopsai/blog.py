@@ -2130,6 +2130,34 @@ def _render_meta_tags(
     return "\n    ".join(tags)
 
 
+def _render_site_header(*, subtitle: str = "Security Blog", links: Optional[List[tuple[str, str]]] = None) -> str:
+    nav_links = links or [
+        ("/", "Blog Home"),
+        ("https://docs.secopsai.dev/", "Docs"),
+        ("/feed.xml", "RSS"),
+        ("/json-feed", "JSON Feed"),
+    ]
+    link_html = "\n".join(
+        f'          <a href="{html.escape(href)}">{html.escape(label)}</a>'
+        for href, label in nav_links
+    )
+    return f"""<header class="topbar">
+      <nav class="shell nav" data-site-nav>
+        <a class="brand" href="/">
+          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
+          <span class="brand-title"><span>SecOpsAI</span><span>{html.escape(subtitle)}</span></span>
+        </a>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-menu" data-nav-toggle>
+          <span class="nav-toggle-lines" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span class="nav-toggle-label">Menu</span>
+        </button>
+        <div class="nav-links" id="site-menu" data-nav-menu>
+{link_html}
+        </div>
+      </nav>
+    </header>"""
+
+
 def _render_hero_media(post: Dict[str, Any]) -> str:
     media = _primary_media(post)
     if not media:
@@ -2223,19 +2251,7 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
-    <header class="topbar">
-      <nav class="shell nav">
-        <a class="brand" href="/">
-          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
-          <span class="brand-title"><span>SecOpsAI</span><span>Security Blog</span></span>
-        </a>
-        <div class="nav-links">
-          <a href="/">Blog Home</a>
-          <a href="https://docs.secopsai.dev/">Docs</a>
-          <a href="/feed.xml">RSS</a>
-        </div>
-      </nav>
-    </header>
+    {_render_site_header()}
     <main class="shell post-layout">
       <article class="post-body">
         <p class="eyebrow">{severity} • SecOpsAI intelligence</p>
@@ -2443,20 +2459,14 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
-    <header class="topbar">
-      <nav class="shell nav">
-        <a class="brand" href="/">
-          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
-          <span class="brand-title"><span>SecOpsAI</span><span>Security Blog</span></span>
-        </a>
-        <div class="nav-links">
-          <a href="https://secopsai.dev/">Platform</a>
-          <a href="https://docs.secopsai.dev/">Docs</a>
-          <a href="/feed.xml">RSS</a>
-          <a href="/json-feed">JSON Feed</a>
-        </div>
-      </nav>
-    </header>
+    {_render_site_header(links=[
+        ("https://secopsai.dev/", "Platform"),
+        ("#topics", "Topics"),
+        ("#posts", "Latest"),
+        ("https://docs.secopsai.dev/", "Docs"),
+        ("/feed.xml", "RSS"),
+        ("/json-feed", "JSON Feed"),
+    ])}
     <main class="shell">
       <section class="hero">
         <p class="eyebrow">Security Research & Advisories</p>
@@ -2470,7 +2480,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
         </div>
       </section>
       {featured_html}
-      <section class="topic-strip" aria-label="Security topics">
+      <section class="topic-strip" id="topics" aria-label="Security topics">
         {section_cards}
       </section>
       <section class="filters card" aria-label="Search and filter posts">
@@ -2554,19 +2564,12 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
-    <header class="topbar">
-      <nav class="shell nav">
-        <a class="brand" href="/">
-          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
-          <span class="brand-title"><span>SecOpsAI</span><span>JSON Feed</span></span>
-        </a>
-        <div class="nav-links">
-          <a href="/">Blog Home</a>
-          <a href="/feed.json">Raw JSON</a>
-          <a href="/feed.xml">RSS</a>
-        </div>
-      </nav>
-    </header>
+    {_render_site_header(subtitle="JSON Feed", links=[
+        ("/", "Blog Home"),
+        ("/feed.json", "Raw JSON"),
+        ("/feed.xml", "RSS"),
+        ("https://docs.secopsai.dev/", "Docs"),
+    ])}
     <main class="shell">
       <section class="hero">
         <p class="eyebrow">Programmatic feed</p>

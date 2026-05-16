@@ -43,9 +43,12 @@ def main() -> int:
     for marker in ["og:image", "twitter:card", "summary_large_image"]:
         if marker not in index:
             raise AssertionError(f"blog index missing social preview marker: {marker}")
+    for marker in ["data-nav-toggle", "aria-controls=\"site-menu\"", "data-nav-menu", "#topics"]:
+        if marker not in index:
+            raise AssertionError(f"blog index missing mobile navigation marker: {marker}")
     if "data-comments" not in post:
         raise AssertionError("post does not include comments scaffold")
-    for marker in ["Operator commands", "Affected artifacts", "References", "Executive summary", "article:published_time", "twitter:image"]:
+    for marker in ["Operator commands", "Affected artifacts", "References", "Executive summary", "article:published_time", "twitter:image", "data-nav-toggle"]:
         if marker not in post:
             raise AssertionError(f"post page missing intelligence section: {marker}")
     if "Review Checklist" in post or "review_checklist" in post:
@@ -79,6 +82,13 @@ def main() -> int:
         raise AssertionError("news source registry must include direct government/vendor/project sources")
     if "Raw JSON" not in json_landing:
         raise AssertionError("JSON feed landing page must link to the raw JSON endpoint")
+    for marker in ["post-search", "data-nav-toggle", "aria-expanded", "nav-open"]:
+        if marker not in blog_js:
+            raise AssertionError(f"blog script missing navigation/search marker: {marker}")
+    blog_css = require(BLOG / "assets" / "blog.css")
+    for marker in [".nav-toggle", ".nav.nav-open .nav-links", "@media (max-width: 840px)"]:
+        if marker not in blog_css:
+            raise AssertionError(f"blog stylesheet missing responsive navigation marker: {marker}")
     if "post-search" not in blog_js:
         raise AssertionError("blog search script must be served as a local asset")
     if "textContent" not in comments_js:
