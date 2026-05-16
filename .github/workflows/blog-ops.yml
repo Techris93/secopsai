@@ -109,39 +109,67 @@ jobs:
       - name: Run requested Blog Ops command
         run: |
           set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then
+            PYTHON_BIN=python3
+          else
+            PYTHON_BIN=python
+          fi
           limit="${LIMIT:-5}"
-          case "$ACTION" in
+          raw_action="${ACTION:-}"
+          normalized_action="$raw_action"
+          case "$raw_action" in
+            "fetch-news"|"Fetch news"|"fetch news")
+              normalized_action="news-fetch"
+              ;;
+            "create-drafts"|"Create drafts"|"create drafts")
+              normalized_action="news-draft"
+              ;;
+            "run-fetch-draft"|"fetch-draft"|"Run fetch + draft"|"run fetch + draft"|"news_run")
+              normalized_action="news-run"
+              ;;
+            "publish"|"publish_approved"|"Publish approved"|"publish approved")
+              normalized_action="publish-approved"
+              ;;
+            "rebuild"|"rebuild_feeds"|"Rebuild feeds"|"rebuild feeds")
+              normalized_action="rebuild-feeds"
+              ;;
+            "deploy-blog"|"Deploy blog"|"deploy blog")
+              normalized_action="deploy"
+              ;;
+          esac
+          echo "Blog Ops action: raw='${raw_action}' normalized='${normalized_action}' limit='${limit}'"
+          case "$normalized_action" in
             news-fetch)
-              python -m secopsai.cli blog news-fetch --limit "$limit"
+              "$PYTHON_BIN" -m secopsai.cli blog news-fetch --limit "$limit"
               ;;
             news-draft)
-              python -m secopsai.cli blog news-fetch --limit "$limit"
-              python -m secopsai.cli blog news-draft --limit "$limit"
+              "$PYTHON_BIN" -m secopsai.cli blog news-fetch --limit "$limit"
+              "$PYTHON_BIN" -m secopsai.cli blog news-draft --limit "$limit"
               ;;
             news-run)
-              python -m secopsai.cli blog news-run --limit "$limit"
+              "$PYTHON_BIN" -m secopsai.cli blog news-run --limit "$limit"
               ;;
             approve)
               test -n "$DRAFT"
-              python -m secopsai.cli blog news-review approve "$DRAFT" --note "${NOTE:-Approved from Blog Ops dashboard}"
+              "$PYTHON_BIN" -m secopsai.cli blog news-review approve "$DRAFT" --note "${NOTE:-Approved from Blog Ops dashboard}"
               ;;
             reject)
               test -n "$DRAFT"
-              python -m secopsai.cli blog news-review reject "$DRAFT" --note "${NOTE:-Rejected from Blog Ops dashboard}"
+              "$PYTHON_BIN" -m secopsai.cli blog news-review reject "$DRAFT" --note "${NOTE:-Rejected from Blog Ops dashboard}"
               ;;
             needs-review)
               test -n "$DRAFT"
-              python -m secopsai.cli blog news-review needs-review "$DRAFT" --note "${NOTE:-Returned to review from Blog Ops dashboard}"
+              "$PYTHON_BIN" -m secopsai.cli blog news-review needs-review "$DRAFT" --note "${NOTE:-Returned to review from Blog Ops dashboard}"
               ;;
             save-draft)
               test -n "$DRAFT"
               body_file="$RUNNER_TEMP/secopsai-blog-draft.md"
-              BODY_FILE="$body_file" python - <<'PY'
+              BODY_FILE="$body_file" "$PYTHON_BIN" - <<'PY'
               import os
               from pathlib import Path
               Path(os.environ["BODY_FILE"]).write_text(os.environ.get("BODY_MARKDOWN", ""), encoding="utf-8")
               PY
-              cmd=(python -m secopsai.cli blog news-review edit "$DRAFT")
+              cmd=("$PYTHON_BIN" -m secopsai.cli blog news-review edit "$DRAFT")
               [ -n "${TITLE:-}" ] && cmd+=(--title "$TITLE")
               [ -n "${SUMMARY:-}" ] && cmd+=(--summary "$SUMMARY")
               [ -n "${SEVERITY:-}" ] && cmd+=(--severity "$SEVERITY")
@@ -152,16 +180,17 @@ jobs:
               "${cmd[@]}"
               ;;
             publish-approved)
-              python -m secopsai.cli blog news-publish-approved --rebuild
+              "$PYTHON_BIN" -m secopsai.cli blog news-publish-approved --rebuild
               ;;
             rebuild-feeds)
-              python -m secopsai.cli blog rebuild-feeds
+              "$PYTHON_BIN" -m secopsai.cli blog rebuild-feeds
               ;;
             deploy)
               echo "Deploy action selected; no local content mutation."
               ;;
             *)
-              echo "Unsupported Blog Ops action: $ACTION" >&2
+              echo "Unsupported Blog Ops action: '${raw_action}' (normalized: '${normalized_action}')" >&2
+              echo "Supported actions: news-run, news-fetch, news-draft, approve, reject, needs-review, save-draft, publish-approved, rebuild-feeds, deploy" >&2
               exit 2
               ;;
           esac
