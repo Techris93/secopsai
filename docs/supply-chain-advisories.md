@@ -23,6 +23,10 @@ secopsai supply-chain advisory check --ecosystem pypi --package guardrails-ai --
 # Explain why a version is malicious, even without a stored diff report.
 secopsai supply-chain explain-verdict --ecosystem npm --package @squawk/mcp --version 0.9.5
 
+# Check the node-ipc stealer/backdoor advisory.
+secopsai supply-chain advisory check --ecosystem npm --package node-ipc --version 12.0.1
+secopsai supply-chain explain-verdict --ecosystem npm --package node-ipc --version 12.0.1
+
 # Reconcile historical scanner errors after adding an advisory.
 secopsai supply-chain reconcile-history --include-advisories
 ```
@@ -79,3 +83,29 @@ secopsai supply-chain advisory ingest https://example.com/secopsai/advisory.json
 Advisory matches produce source-backed `SUPPLY-CHAIN-ADVISORY` findings. If a normal diff report exists, the advisory enriches the scanner verdict. If the artifact is unavailable, SecOpsAI records the verdict as malicious and clearly marks the evidence path as `artifact unavailable; advisory matched`.
 
 Advisory-backed findings are not closed as `expected_behavior` just because a package is absent from local manifests. They remain actionable ecosystem intelligence until an analyst explicitly triages them.
+
+## node-ipc Stealer/Backdoor Workflow
+
+The `node-ipc` emergency advisory covers `node-ipc@9.1.6`,
+`node-ipc@9.2.3`, and `node-ipc@12.0.1`. These versions are treated as
+package-level malicious ecosystem intelligence even if no local lockfile
+currently references them.
+
+```bash
+secopsai supply-chain advisory check --ecosystem npm --package node-ipc --version 9.1.6 --json
+secopsai supply-chain advisory check --ecosystem npm --package node-ipc --version 9.2.3 --json
+secopsai supply-chain advisory check --ecosystem npm --package node-ipc --version 12.0.1 --json
+
+secopsai supply-chain explain-verdict --ecosystem npm --package node-ipc --version 12.0.1
+```
+
+Operator mitigation:
+
+- Block `node-ipc@9.1.6`, `node-ipc@9.2.3`, and `node-ipc@12.0.1`.
+- Audit `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`,
+  `npm-shrinkwrap.json`, `node_modules/node-ipc`, CI runner caches, and
+  container build layers.
+- Rotate npm tokens, GitHub/GitLab tokens, cloud keys, SSH keys, CI/CD
+  secrets, and developer-machine credentials only when an affected version was
+  installed or loaded in an environment with secrets.
+- Rebuild from clean lockfiles and purge compromised package-manager caches.

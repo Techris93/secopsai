@@ -83,6 +83,7 @@ from secopsai.supply_chain import (
     run_scan,
     tune_rule,
     tune_threshold,
+    watch_registry,
 )
 from secopsai.triage import (
     VALID_DISPOSITIONS,
@@ -965,6 +966,18 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_monitor.add_argument("--no-npm", action="store_true", help="Disable npm scanning")
     supply_chain_monitor.add_argument("--model", help="Override analysis model passed to Cursor Agent CLI")
     supply_chain_monitor.add_argument("--slack", action="store_true", help="Send Slack alert for malicious results")
+
+    supply_chain_watch = supply_chain_sub.add_parser(
+        "watch-registry",
+        help="Analyze recent package publishes from registry metadata without running package code",
+    )
+    supply_chain_watch.add_argument("--ecosystem", required=True, choices=["npm"])
+    supply_chain_watch.add_argument("--package", required=True, help="Package name to watch")
+    supply_chain_watch.add_argument("--since", default="10m", help="Look back duration, for example 10m, 2h, or 1d")
+    supply_chain_watch.add_argument("--limit", type=int, default=20, help="Maximum recent versions to analyze")
+    supply_chain_watch.add_argument("--dry-run", action="store_true", help="Analyze without persisting reports/findings")
+    supply_chain_watch.add_argument("--persist", action="store_true", help="Persist scan history and SOC findings")
+    supply_chain_watch.add_argument("--model", help="Override analysis model passed to Cursor Agent CLI")
 
     supply_chain_list = supply_chain_sub.add_parser("list", help="List recent supply-chain scan results")
     supply_chain_list.add_argument("--limit", type=int, default=20)
@@ -2626,6 +2639,52 @@ def main(argv: Optional[List[str]] = None) -> int:
                 json_output=args.json,
             )
 
+        if args.supply_chain_cmd == "watch-registry":
+            try:
+                if args.dry_run and args.persist:
+                    raise ValueError("--dry-run and --persist are mutually exclusive")
+                payload = watch_registry(
+                    ecosystem=args.ecosystem,
+                    package=args.package,
+                    since=args.since,
+                    dry_run=not args.persist,
+                    persist=args.persist,
+                    limit=args.limit,
+                    model=args.model,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc)}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(
+                    "supply-chain watch-registry: {eco} {pkg} scanned={scanned} malicious={malicious} errors={errors} dry_run={dry_run}".format(
+                        eco=payload["ecosystem"],
+                        pkg=payload["package"],
+                        scanned=payload["total_scanned"],
+                        malicious=payload["malicious"],
+                        errors=payload["errors"],
+                        dry_run=payload["dry_run"],
+                    )
+                )
+                for row in payload["scanned"]:
+                    result = row["result"]
+                    print(
+                        "- {pkg}@{ver} previous={prev} verdict={verdict}".format(
+                            pkg=row["package"],
+                            ver=row["version"],
+                            prev=row.get("previous_version") or "unknown",
+                            verdict=result.get("verdict"),
+                        )
+                    )
+                if payload.get("db_path"):
+                    print(f"db_path={payload['db_path']}")
+            return 0
+
         if args.supply_chain_cmd == "list":
             payload = {"results": load_recent_results(args.limit)}
             if args.json:
@@ -2837,6 +2896,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(f"- {rule['rule']} weight={rule['weight']} reason={rule['reason']}")
                 else:
                     print("matched_rules: none")
+                if payload.get("environment_impact"):
+                    impact = payload["environment_impact"]
+                    print(f"environment_impact={impact.get('status')}: {impact.get('guidance')}")
+                if payload.get("mitigation"):
+                    print("mitigation:")
+                    for step in payload["mitigation"]:
+                        print(f"- {step}")
                 if payload.get("policy"):
                     print(f"policy_precedence={','.join(payload['policy']['precedence'])}")
                     if payload["allow_matches"]:

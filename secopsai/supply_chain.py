@@ -19,11 +19,13 @@ import sys
 import tarfile
 import tempfile
 import textwrap
+import time
 import urllib.parse
 import urllib.request
 import xmlrpc.client
 import zipfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -78,6 +80,11 @@ SUSPICIOUS_RULES: list[tuple[str, str, int]] = [
     ("credential access", r"\b(api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password|credential|aws_access_key_id|BEGIN RSA PRIVATE KEY)\b", 2),
     ("startup persistence", r"\b(postinstall|preinstall|install|cron|LaunchAgents|systemd|Startup)\b", 3),
     ("suspicious archive extraction", r"\b(tarfile|zipfile|extractall)\b", 1),
+    ("module-load execution", r"\b(module-load execution|iife|self-executing|javascript module-load)\b", 4),
+    ("host fingerprinting", r"\b(host fingerprinting|os\.hostname|userInfo|homedir|networkInterfaces)\b", 3),
+    ("local file enumeration", r"\b(local file enumeration|readdirSync|readFileSync|\.ssh|\.npmrc|\.env|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)\b", 4),
+    ("environment credential harvesting", r"\b(environment credential|process\.env|GITHUB_TOKEN|NPM_TOKEN|AWS_|GOOGLE_|AZURE_|SSH_AUTH_SOCK)\b", 4),
+    ("payload wrapping or exfil staging", r"\b(payload wrapping|exfil staging|dns exfil|zlib|gzip|Buffer\.from)\b", 3),
 ]
 
 COMMON_BUILD_BACKENDS = {
@@ -1142,6 +1149,7 @@ def _python_semantic_findings(path: str, source: str) -> List[str]:
 
 def _javascript_semantic_findings(path: str, source: str) -> List[str]:
     findings: List[str] = []
+    lowered_path = path.lower()
     if re.search(r"\b(eval|Function)\s*\(", source):
         findings.append(f"{path}: javascript dynamic execution via eval/Function")
     if re.search(r"\bchild_process\b", source) or re.search(r"\b(execSync|spawnSync|execFileSync|spawn|execFile)\s*\(", source):
@@ -1150,6 +1158,36 @@ def _javascript_semantic_findings(path: str, source: str) -> List[str]:
         findings.append(f"{path}: javascript outbound network request")
     if re.search(r"\b(Buffer\.from|atob|btoa|fromCharCode)\b", source):
         findings.append(f"{path}: javascript encoded payload primitives")
+    if re.search(r"(^|\n)\s*(?:!function|\(function\s*\(|\(\s*\(\s*\)\s*=>|\(\s*async\s*\(\s*\)\s*=>)", source):
+        findings.append(f"{path}: javascript module-load execution via IIFE/self-executing payload")
+    if re.search(r"\bos\.(?:hostname|userInfo|homedir|networkInterfaces|platform|arch|tmpdir)\s*\(", source) or (
+        re.search(r"\brequire\s*\(\s*['\"]os['\"]\s*\)", source)
+        and re.search(r"\b(hostname|userInfo|homedir|networkInterfaces|platform|arch|tmpdir)\s*\(", source)
+    ):
+        findings.append(f"{path}: javascript host fingerprinting via os APIs")
+    if re.search(r"\bfs\.(?:readdirSync|readFileSync|statSync|existsSync|opendirSync)\s*\(", source) and re.search(
+        r"(\.ssh|\.npmrc|\.yarnrc|\.pnpm|\.env|\.aws|\.config|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|homedir|HOME)",
+        source,
+        re.IGNORECASE,
+    ):
+        findings.append(f"{path}: javascript local file enumeration of developer or credential paths")
+    if re.search(r"\bprocess\.env\b", source) and re.search(
+        r"(TOKEN|SECRET|PASSWORD|KEY|GITHUB|NPM|AWS|GOOGLE|AZURE|SSH|CI)",
+        source,
+        re.IGNORECASE,
+    ):
+        findings.append(f"{path}: javascript environment credential harvesting via process.env")
+    if re.search(r"\b(zlib|gzip|deflate|JSON\.stringify|Buffer\.from)\b", source) and re.search(
+        r"\b(fetch|axios|https?\.request|dns\.|resolveTxt|request|post)\b",
+        source,
+        re.IGNORECASE,
+    ):
+        findings.append(f"{path}: javascript payload wrapping or exfiltration staging")
+    if lowered_path.endswith("node-ipc.cjs") and any(
+        token in source
+        for token in ("process.env", "Buffer.from", "Function(", "eval(", "networkInterfaces", ".npmrc", ".ssh")
+    ):
+        findings.append(f"{path}: node-ipc CommonJS bundle contains high-risk appended payload indicators")
     return sorted(set(findings))
 
 
@@ -1833,6 +1871,13 @@ def _has_strong_malicious_indicators(matched_rules: List[Dict[str, Any]], score:
         "install hook executes remote or inline code",
         "manifest lifecycle hook policy",
         "semantic dynamic execution",
+        "semantic module-load execution",
+        "semantic credential harvesting",
+        "semantic exfiltration staging",
+        "node-ipc bundle payload indicators",
+        "environment credential harvesting",
+        "module-load execution",
+        "local file enumeration",
     }
     
     # Check if any strong indicator is present
@@ -1844,6 +1889,10 @@ def _has_strong_malicious_indicators(matched_rules: List[Dict[str, Any]], score:
         "semantic subprocess behavior",
         "manifest remote dependency source",
         "install hook reaches remote URL",
+        "semantic host fingerprinting",
+        "semantic local file enumeration",
+        "payload wrapping or exfil staging",
+        "host fingerprinting",
     }
     medium_count = len(rule_names & medium_indicators)
     
@@ -1898,6 +1947,9 @@ def _validate_malicious_verdict(
                 "obfuscated eval",
                 "shell downloader",
                 "install hook executes remote or inline code",
+                "semantic credential harvesting",
+                "semantic module-load execution",
+                "node-ipc bundle payload indicators",
             }
             if not (rule_names & ultra_strong):
                 return False, f"Very high reputation package (score: {rep_score}) - requires ultra-strong indicators"
@@ -2025,8 +2077,25 @@ def explain_verdict(
         semantic_entrypoint = any("console scripts" in finding or "entrypoints" in finding or "entrypoint" in finding for finding in semantic_findings)
         semantic_build_custom = any("custom build backend" in finding or "cmdclass" in finding for finding in semantic_findings)
         semantic_setup_exec = any("setup.py performs execution or network-capable actions" in finding for finding in semantic_findings)
+        semantic_module_load = any("module-load execution" in finding or "self-executing payload" in finding for finding in semantic_findings)
+        semantic_host_fingerprint = any("host fingerprinting" in finding for finding in semantic_findings)
+        semantic_file_enum = any("local file enumeration" in finding for finding in semantic_findings)
+        semantic_credential_harvest = any("credential harvesting" in finding for finding in semantic_findings)
+        semantic_exfil_staging = any("exfiltration staging" in finding or "payload wrapping" in finding for finding in semantic_findings)
+        semantic_node_ipc_bundle = any("node-ipc CommonJS bundle" in finding for finding in semantic_findings)
         raw_subprocess = bool(re.search(r"\b(child_process|subprocess|os\.system|popen|spawn|execFile)\b", _added_text_scope(report), re.IGNORECASE))
-        semantic_contextual = semantic_dynamic or semantic_lifecycle or semantic_remote_dep or semantic_build_custom or semantic_setup_exec or (semantic_subprocess and raw_subprocess)
+        semantic_contextual = (
+            semantic_dynamic
+            or semantic_lifecycle
+            or semantic_remote_dep
+            or semantic_build_custom
+            or semantic_setup_exec
+            or semantic_module_load
+            or semantic_credential_harvest
+            or semantic_exfil_staging
+            or semantic_node_ipc_bundle
+            or (semantic_subprocess and raw_subprocess)
+        )
 
         if semantic_contextual:
             semantic_weight = min(3, max(1, len(semantic_findings) // 2))
@@ -2068,6 +2137,66 @@ def explain_verdict(
                     "semantic subprocess behavior",
                     applied_weight,
                     "Semantic findings include subprocess-capable behavior.",
+                )
+            if semantic_module_load and _rule_enabled(policy, "semantic module-load execution"):
+                applied_weight = _rule_weight(policy, "semantic module-load execution", 3)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "semantic module-load execution",
+                    applied_weight,
+                    "Semantic findings include import/module-load execution.",
+                )
+            if semantic_credential_harvest and _rule_enabled(policy, "semantic credential harvesting"):
+                applied_weight = _rule_weight(policy, "semantic credential harvesting", 4)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "semantic credential harvesting",
+                    applied_weight,
+                    "Semantic findings include environment credential harvesting.",
+                )
+            if semantic_host_fingerprint and _rule_enabled(policy, "semantic host fingerprinting"):
+                applied_weight = _rule_weight(policy, "semantic host fingerprinting", 2)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "semantic host fingerprinting",
+                    applied_weight,
+                    "Semantic findings include host fingerprinting.",
+                )
+            if semantic_file_enum and _rule_enabled(policy, "semantic local file enumeration"):
+                applied_weight = _rule_weight(policy, "semantic local file enumeration", 3)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "semantic local file enumeration",
+                    applied_weight,
+                    "Semantic findings include local developer or credential file enumeration.",
+                )
+            if semantic_exfil_staging and _rule_enabled(policy, "semantic exfiltration staging"):
+                applied_weight = _rule_weight(policy, "semantic exfiltration staging", 3)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "semantic exfiltration staging",
+                    applied_weight,
+                    "Semantic findings include payload wrapping or exfiltration staging.",
+                )
+            if semantic_node_ipc_bundle and _rule_enabled(policy, "node-ipc bundle payload indicators"):
+                applied_weight = _rule_weight(policy, "node-ipc bundle payload indicators", 4)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "node-ipc bundle payload indicators",
+                    applied_weight,
+                    "node-ipc CommonJS bundle contains appended high-risk payload indicators.",
                 )
             if semantic_lifecycle and _rule_enabled(policy, "manifest lifecycle hook policy"):
                 applied_weight = _rule_weight(policy, "manifest lifecycle hook policy", 3)
@@ -2141,6 +2270,11 @@ def explain_verdict(
     policy_context = explain_policy(ecosystem or "", package or "", policy=policy) if ecosystem and package else None
     malicious_threshold = _package_threshold(policy, ecosystem, package)
     advisory_matches = find_advisory_matches(ecosystem, package, version) if ecosystem and package and version else []
+    mitigation = package_compromise_mitigation(ecosystem or "", package or "", version, advisory_matches)
+    environment_impact = {
+        "status": "unknown",
+        "guidance": "Check local manifests and lockfiles for exact package/version references before concluding local exposure.",
+    }
     if advisory_matches:
         applied_weight = max(malicious_threshold, 10)
         score += applied_weight
@@ -2168,6 +2302,8 @@ def explain_verdict(
             "allow_matches": policy_context["allow_matches"] if policy_context else [],
             "deny_matches": policy_context["deny_matches"] if policy_context else [],
             "advisory_matches": advisory_matches,
+            "environment_impact": environment_impact,
+            "mitigation": mitigation,
         }
 
     if _package_matches_policy(policy.get("deny", {}).get("packages", []), ecosystem, package):
@@ -2182,6 +2318,8 @@ def explain_verdict(
             "allow_matches": policy_context["allow_matches"] if policy_context else [],
             "deny_matches": policy_context["deny_matches"] if policy_context else [],
             "advisory_matches": [],
+            "environment_impact": environment_impact,
+            "mitigation": mitigation,
         }
 
     if _package_matches_policy(policy.get("allow", {}).get("packages", []), ecosystem, package):
@@ -2196,6 +2334,8 @@ def explain_verdict(
             "allow_matches": policy_context["allow_matches"] if policy_context else [],
             "deny_matches": policy_context["deny_matches"] if policy_context else [],
             "advisory_matches": [],
+            "environment_impact": environment_impact,
+            "mitigation": mitigation,
         }
 
     rule_names = [match["rule"] for match in matched_rules]
@@ -2226,6 +2366,8 @@ def explain_verdict(
         "allow_matches": policy_context["allow_matches"] if policy_context else [],
         "deny_matches": policy_context["deny_matches"] if policy_context else [],
         "advisory_matches": [],
+        "environment_impact": environment_impact,
+        "mitigation": mitigation,
     }
 
 
@@ -2512,6 +2654,151 @@ def _npm_get_previous_version(package: str, new_version: str) -> Optional[str]:
     return ordered[index - 1] if index > 0 else None
 
 
+def _parse_duration_seconds(value: str) -> int:
+    match = re.fullmatch(r"\s*(\d+)\s*([smhd])?\s*", value or "")
+    if not match:
+        raise ValueError(f"invalid duration: {value!r}; expected values like 10m, 2h, or 1d")
+    amount = int(match.group(1))
+    unit = match.group(2) or "s"
+    multipliers = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    return amount * multipliers[unit]
+
+
+def _parse_registry_timestamp(stamp: str) -> float:
+    normalized = stamp.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).timestamp()
+
+
+def _ordered_npm_versions(metadata: Dict[str, Any]) -> List[tuple[str, str, float]]:
+    rows: List[tuple[str, str, float]] = []
+    for version, stamp in (metadata.get("time", {}) or {}).items():
+        if version in {"created", "modified"} or not isinstance(stamp, str):
+            continue
+        try:
+            rows.append((version, stamp, _parse_registry_timestamp(stamp)))
+        except Exception:
+            continue
+    rows.sort(key=lambda item: item[2])
+    return rows
+
+
+def _node_ipc_mitigation(package: str, versions: Iterable[str]) -> List[str]:
+    version_list = ", ".join(f"{package}@{version}" for version in versions)
+    return [
+        f"Block affected versions: {version_list}.",
+        "Audit package-lock.json, pnpm-lock.yaml, yarn.lock, npm-shrinkwrap.json, node_modules/node-ipc, CI runner caches, and container build layers.",
+        "Rotate npm tokens, GitHub/GitLab tokens, cloud keys, SSH keys, CI/CD secrets, and developer-machine credentials if an affected version was installed or loaded.",
+        "Search dependency manifests with: rg -n \"node-ipc|9\\.1\\.6|9\\.2\\.3|12\\.0\\.1\" package-lock.json pnpm-lock.yaml yarn.lock npm-shrinkwrap.json package.json .",
+    ]
+
+
+def package_compromise_mitigation(
+    ecosystem: str,
+    package: str,
+    version: Optional[str] = None,
+    advisory_matches: Optional[List[Dict[str, Any]]] = None,
+) -> List[str]:
+    versions: List[str] = []
+    if version:
+        versions.append(version)
+    for match in advisory_matches or []:
+        versions.extend(str(item) for item in match.get("matched_versions", []) or [])
+        for affected in match.get("affected", []) or []:
+            if str(affected.get("ecosystem", "")).lower() == ecosystem.lower() and str(affected.get("package", "")).lower() == package.lower():
+                versions.extend(str(item) for item in affected.get("versions", []) or [])
+    if ecosystem == "npm" and package == "node-ipc":
+        detected_versions = {item for item in versions if re.fullmatch(r"\d+\.\d+\.\d+", item)}
+        canonical_order = ["9.1.6", "9.2.3", "12.0.1"]
+        affected_versions = [item for item in canonical_order if item in detected_versions] or canonical_order
+        return _node_ipc_mitigation(package, [item for item in affected_versions if item])
+    return [
+        f"Block {ecosystem}:{package}@{version or '<affected-version>'} in package-manager policy, CI allowlists, and artifact proxies.",
+        "Audit lockfiles, local package caches, build caches, and container layers for the affected version.",
+        "Rotate credentials only if the affected artifact was installed, imported, or executed in an environment with secrets.",
+    ]
+
+
+def watch_registry(
+    *,
+    ecosystem: str,
+    package: str,
+    since: str = "10m",
+    dry_run: bool = True,
+    persist: bool = False,
+    limit: int = 20,
+    model: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    if ecosystem != "npm":
+        raise ValueError("watch-registry currently supports npm package metadata")
+    if not package:
+        raise ValueError("--package is required for package-scoped registry watching")
+
+    metadata = metadata if metadata is not None else (_npm_get_package_info(package) or {})
+    seconds = _parse_duration_seconds(since)
+    now_epoch = float(now if now is not None else time.time())
+    cutoff = now_epoch - seconds
+    ordered = _ordered_npm_versions(metadata)
+    recent = [row for row in ordered if row[2] >= cutoff][:limit]
+    previous_by_version: Dict[str, Optional[str]] = {}
+    for index, (version, _stamp, _epoch) in enumerate(ordered):
+        previous_by_version[version] = ordered[index - 1][0] if index > 0 else None
+
+    results: List[ScanResult] = []
+    scanned: List[Dict[str, Any]] = []
+    for version, stamp, epoch in recent:
+        previous = previous_by_version.get(version)
+        result = _scan_release(
+            ecosystem,
+            package,
+            version,
+            old_version=previous,
+            model=model,
+            keep_report=not dry_run,
+        )
+        results.append(result)
+        scanned.append(
+            {
+                "package": package,
+                "version": version,
+                "published_at": stamp,
+                "published_epoch": epoch,
+                "previous_version": previous,
+                "result": result.to_dict(),
+            }
+        )
+
+    db_path = None
+    if persist and results:
+        _append_results(results)
+        findings = [_build_finding(result) for result in results if result.verdict == "malicious" and result.finding_id]
+        db_path = _upsert_findings(findings) if findings else None
+
+    return {
+        "ecosystem": ecosystem,
+        "package": package,
+        "since": since,
+        "dry_run": dry_run,
+        "persist": persist,
+        "cutoff_epoch": cutoff,
+        "recent_versions": [
+            {"version": version, "published_at": stamp, "previous_version": previous_by_version.get(version)}
+            for version, stamp, _epoch in recent
+        ],
+        "scanned": scanned,
+        "total_scanned": len(scanned),
+        "malicious": sum(1 for result in results if result.verdict == "malicious"),
+        "errors": sum(1 for result in results if result.verdict == "error"),
+        "db_path": db_path,
+    }
+
+
 def _iter_recent_pypi_releases(top: int, lookback_seconds: int, use_state: bool) -> tuple[List[tuple[str, str, int]], Dict[str, int]]:
     watchlist = _load_watchlist(top)
     client = xmlrpc.client.ServerProxy(PYPI_XMLRPC)
@@ -2760,7 +3047,3 @@ def reconcile_history(*, drop_benign: bool = False, include_advisories: bool = F
         "advisory_finding_ids": sorted(set(advisory_finding_ids)),
         "removed_finding_ids": sorted(set(removed_finding_ids)),
     }
-
-
-# Ensure time module is imported at the top
-import time

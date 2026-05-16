@@ -1,0 +1,72 @@
+{
+  "advisory_id": "SECOPSAI-ADV-2026-05-NODE-IPC",
+  "campaign_id": "node-ipc-stealer-backdoor-2026",
+  "title": "node-ipc npm stealer/backdoor compromise",
+  "summary": "Emergency denylist for confirmed malicious node-ipc npm releases containing an obfuscated CommonJS credential-stealing backdoor.",
+  "severity": "critical",
+  "confidence": "high",
+  "status": "active",
+  "published_at": "2026-05-14T00:00:00Z",
+  "updated_at": "2026-05-16T00:00:00Z",
+  "ingested_at": "2026-05-16T00:00:00Z",
+  "source_names": [
+    "Socket",
+    "StepSecurity",
+    "Datadog Security Labs",
+    "The Hacker News"
+  ],
+  "source_urls": [
+    "https://socket.dev/blog/node-ipc-package-compromised",
+    "https://www.stepsecurity.io/blog/node-ipc-npm-supply-chain-attack",
+    "https://securitylabs.datadoghq.com/articles/node-ipc-npm-malware-analysis/",
+    "https://thehackernews.com/2026/05/stealer-backdoor-found-in-3-node-ipc.html"
+  ],
+  "affected": [
+    {
+      "ecosystem": "npm",
+      "package": "node-ipc",
+      "versions": ["9.1.6", "9.2.3", "12.0.1"],
+      "safe_versions": [
+        "Use a maintainer-confirmed clean version such as 9.2.1 or 12.0.0 when compatible, and verify lockfiles before reinstalling."
+      ]
+    }
+  ],
+  "iocs": {
+    "filenames": ["node-ipc.cjs"],
+    "hashes": [
+      "96097e0612d9575cb133021017fb1a5c68a03b60f9f3d24ebdc0e628d9034144"
+    ],
+    "file_paths": [
+      "node_modules/node-ipc/node-ipc.cjs",
+      "package-lock.json",
+      "pnpm-lock.yaml",
+      "yarn.lock",
+      "npm-shrinkwrap.json"
+    ],
+    "commands": [
+      "npm ls node-ipc --all 2>/dev/null | grep -E '9\\.1\\.6|9\\.2\\.3|12\\.0\\.1'",
+      "rg -n \"node-ipc|9\\\\.1\\\\.6|9\\\\.2\\\\.3|12\\\\.0\\\\.1\" package-lock.json pnpm-lock.yaml yarn.lock npm-shrinkwrap.json package.json ."
+    ],
+    "behaviors": [
+      "obfuscated appended payload in node-ipc.cjs",
+      "module-load CommonJS execution",
+      "host fingerprinting",
+      "developer credential and token harvesting",
+      "local file enumeration",
+      "DNS/HTTPS exfiltration"
+    ],
+    "campaign_labels": ["node-ipc", "credential stealer", "npm supply-chain compromise"]
+  },
+  "detection_rationale": [
+    "Confirmed compromised versions contain an obfuscated credential-stealing payload appended to the CommonJS bundle node-ipc.cjs.",
+    "The payload can execute when the CommonJS package path is loaded, so no npm lifecycle script is required for malicious behavior.",
+    "Reported behavior includes host fingerprinting, local credential file enumeration, process.env harvesting, payload wrapping, and attempted exfiltration.",
+    "The releases appeared across multiple major lines in a short window, which is a registry/release anomaly for this long-running package."
+  ],
+  "remediation": [
+    "Block node-ipc@9.1.6, node-ipc@9.2.3, and node-ipc@12.0.1 in package-manager policy, CI allowlists, and artifact proxies.",
+    "Audit package-lock.json, pnpm-lock.yaml, yarn.lock, npm-shrinkwrap.json, node_modules/node-ipc, CI runner caches, and container build layers.",
+    "If an affected version was installed or loaded, rotate npm tokens, GitHub/GitLab tokens, cloud keys, SSH keys, CI/CD secrets, and developer-machine credentials.",
+    "Reinstall from a clean lockfile using a maintainer-confirmed clean version and purge compromised package-manager caches."
+  ]
+}

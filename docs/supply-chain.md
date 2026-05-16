@@ -68,6 +68,37 @@ secopsai supply-chain reconcile-history --include-advisories
 
 See [Emergency Supply Chain Advisories](supply-chain-advisories.md) for the full operator workflow and JSON schema.
 
+## Real-Time npm Release Watch
+
+Use the package-scoped registry watcher when a high-risk npm package publishes
+new versions and you want fast deterministic analysis without executing package
+code.
+
+```bash
+# Dry-run recent node-ipc publishes from npm registry metadata.
+secopsai supply-chain watch-registry --ecosystem npm --package node-ipc --since 10m --dry-run --json
+
+# Persist scan history and SOC findings only after you are ready to mutate local state.
+secopsai supply-chain watch-registry --ecosystem npm --package node-ipc --since 2h --persist
+```
+
+The watcher reads npm registry publish timestamps, identifies versions inside
+the requested lookback window, compares each version with the previous publish,
+and runs the same deterministic package-diff rules used by `scan` and
+`explain-verdict`. It does not install or execute suspicious packages.
+
+For node-ipc-style compromises, SecOpsAI looks for:
+
+- Obfuscated appended JavaScript payloads in built bundles such as `node-ipc.cjs`.
+- Import/module-load execution through IIFEs or self-executing CommonJS code.
+- Host fingerprinting via OS APIs.
+- Local file enumeration of `.ssh`, `.npmrc`, `.env`, lockfiles, and cloud config paths.
+- `process.env` harvesting of GitHub, npm, cloud, SSH, or CI/CD credentials.
+- Payload wrapping or exfiltration staging with network APIs.
+
+Absence of local lockfile usage lowers environment impact, but it does not erase
+package-level maliciousness when advisory or strong behavioral evidence exists.
+
 ## Detection Capabilities
 
 ### 1. Static Analysis
