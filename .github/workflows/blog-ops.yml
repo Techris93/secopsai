@@ -164,11 +164,7 @@ jobs:
             save-draft)
               test -n "$DRAFT"
               body_file="$RUNNER_TEMP/secopsai-blog-draft.md"
-              BODY_FILE="$body_file" "$PYTHON_BIN" - <<'PY'
-              import os
-              from pathlib import Path
-              Path(os.environ["BODY_FILE"]).write_text(os.environ.get("BODY_MARKDOWN", ""), encoding="utf-8")
-              PY
+              BODY_FILE="$body_file" "$PYTHON_BIN" -c 'import os; from pathlib import Path; Path(os.environ["BODY_FILE"]).write_text(os.environ.get("BODY_MARKDOWN", ""), encoding="utf-8")'
               cmd=("$PYTHON_BIN" -m secopsai.cli blog news-review edit "$DRAFT")
               [ -n "${TITLE:-}" ] && cmd+=(--title "$TITLE")
               [ -n "${SUMMARY:-}" ] && cmd+=(--summary "$SUMMARY")
