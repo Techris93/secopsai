@@ -79,6 +79,22 @@ secopsai blog news-publish-approved --rebuild
 
 The pipeline stores fetched metadata in `blog/data/news-cache.json`, deduplicates by canonical URL/title hash, and keeps external claims source-linked. Do not commit generated cache entries or generated drafts unless the post has been reviewed and intentionally published.
 
+### Safe Media And Social Previews
+
+Published posts support operator-approved local screenshots and deterministic social preview cards.
+
+Attach only redacted, approved images:
+
+```bash
+secopsai blog attach-media <draft-slug-or-path> --file /path/to/redacted-alert.png --alt "Redacted SecOpsAI alert showing package verdict evidence" --caption "Operator-approved alert screenshot"
+```
+
+The media helper copies the file into `blog/assets/posts/<slug>/`, records structured metadata, and resets external-news drafts back to review. Do not attach screenshots that contain secrets, customer data, private hostnames, private tickets, raw exploit payloads, or unlicensed third-party images.
+
+External RSS/feed images are stored only as draft metadata candidates. They are not published automatically. If an image is safe and licensed for reuse, download/redact it yourself and attach it with `secopsai blog attach-media`.
+
+Every public post gets Open Graph and X/Twitter Card metadata. If no approved hero image exists, `secopsai blog rebuild-feeds` generates a local SecOpsAI social card under `blog/assets/social/<slug>.svg` and uses it as the preview image.
+
 ### Becoming The Originator
 
 Use external news as source context, but originate SecOpsAI-owned posts from your own evidence whenever possible:

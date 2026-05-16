@@ -48,9 +48,15 @@ class BlogPublishingTests(unittest.TestCase):
             self.assertIn("Featured research", index)
             self.assertIn("data-topic-filter", index)
             self.assertIn("post-sort", index)
+            self.assertIn("og:image", index)
+            self.assertIn("summary_large_image", index)
             self.assertIn("Operator commands", post_html)
             self.assertIn("Affected artifacts", post_html)
             self.assertIn("References", post_html)
+            self.assertIn("twitter:card", post_html)
+            self.assertIn("article:published_time", post_html)
+            self.assertTrue((paths.root / "assets" / "social" / "secopsai-blog.svg").exists())
+            self.assertTrue((paths.root / "assets" / "social" / "unit-campaign-unit-supply-chain-campaign.svg").exists())
 
     def test_draft_finding_redacts_token_like_values(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -304,6 +310,67 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertNotIn("Review Checklist", post_json["body_markdown"])
         self.assertNotIn("review_checklist", post_json)
         self.assertNotIn("Review Checklist", post_html)
+
+    def test_publish_with_approved_media_renders_hero_and_og_image(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.drafts.mkdir(parents=True)
+            source_media = Path(temp_dir) / "alert.svg"
+            source_media.write_text(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630"><rect width="1200" height="630" fill="#06251c"/></svg>',
+                encoding="utf-8",
+            )
+            draft = blog._base_post(
+                title="Media backed alert",
+                summary="A SecOpsAI alert with approved local screenshot media.",
+                categories=["Detection Engineering"],
+                sources=["https://example.com/media"],
+                slug="media-backed-alert",
+            )
+            draft["body_markdown"] = "# Media backed alert\n\n## Executive Summary\n\nApproved media renders safely."
+            draft_path = paths.drafts / "media-backed-alert.json"
+            draft_path.write_text(json.dumps(draft), encoding="utf-8")
+
+            attached = blog.attach_media(
+                "media-backed-alert",
+                file_path=str(source_media),
+                alt="SecOpsAI alert screenshot",
+                caption="Redacted alert evidence.",
+                paths=paths,
+            )
+            published = blog.publish("media-backed-alert", confirm=True, paths=paths)
+            post_json = json.loads((paths.posts / "media-backed-alert.json").read_text(encoding="utf-8"))
+            post_html = Path(published["post_path"]).read_text(encoding="utf-8")
+
+        self.assertTrue(attached["media"]["src"].startswith("/assets/posts/media-backed-alert/"))
+        self.assertIn('class="hero-image"', post_html)
+        self.assertIn("SecOpsAI alert screenshot", post_html)
+        self.assertIn('property="og:image"', post_html)
+        self.assertIn("https://blog.secopsai.dev/assets/posts/media-backed-alert/", post_html)
+        self.assertEqual(post_json["social_image"], post_json["images"][0]["src"])
+
+    def test_unsafe_media_paths_are_not_published(self):
+        post = blog._base_post(
+            title="Unsafe media",
+            summary="Unsafe media should be ignored.",
+            categories=["Security News"],
+            sources=["https://example.com/source"],
+            slug="unsafe-media",
+        )
+        post.update({
+            "hero_image": "https://evil.example/image.png",
+            "images": [
+                {"src": "/Users/chrixchange/private.png", "alt": "private"},
+                {"src": "javascript:alert(1)", "alt": "bad"},
+                {"src": "/assets/posts/unsafe-media/safe.svg", "alt": "Safe local image"},
+            ],
+        })
+
+        public = blog._public_post(post)
+
+        self.assertEqual(public["images"], [{"src": "/assets/posts/unsafe-media/safe.svg", "alt": "Safe local image", "caption": "", "source_name": "", "source_url": "", "license": "", "kind": "image", "width": 1200, "height": 630, "approved": True}])
+        self.assertNotIn("/Users/chrixchange", json.dumps(public))
+        self.assertNotIn("javascript:", json.dumps(public))
 
     def test_news_draft_preserves_existing_rejected_draft(self):
         with tempfile.TemporaryDirectory() as temp_dir:

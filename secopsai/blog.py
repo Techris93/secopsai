@@ -5,6 +5,7 @@ import hashlib
 import html
 import json
 import re
+import shutil
 import time
 import urllib.parse
 import urllib.request
@@ -30,6 +31,9 @@ DRAFTS_DIR = BLOG_DIR / "drafts"
 NEWS_CACHE_PATH = BLOG_DIR / "data" / "news-cache.json"
 NEWS_SOURCES_PATH = BLOG_DIR / "data" / "news-sources.json"
 BASE_URL = "https://blog.secopsai.dev"
+SOCIAL_CARD_WIDTH = 1200
+SOCIAL_CARD_HEIGHT = 630
+ALLOWED_MEDIA_SUFFIXES = {".avif", ".gif", ".jpg", ".jpeg", ".png", ".svg", ".webp"}
 TOPIC_SECTIONS = [
     "Security News",
     "Threat Intelligence",
@@ -92,6 +96,17 @@ class BlogPaths:
         return self.root / "data"
 
     @property
+    def assets(self) -> Path:
+        return self.root / "assets"
+
+    @property
+    def social(self) -> Path:
+        return self.assets / "social"
+
+    def post_assets(self, slug: str) -> Path:
+        return self.assets / "posts" / slug
+
+    @property
     def news_cache(self) -> Path:
         return self.data / "news-cache.json"
 
@@ -127,6 +142,11 @@ def _safe_list(values: Iterable[Any], *, limit: int = 24) -> List[str]:
         if len(output) >= limit:
             break
     return output
+
+
+def _safe_text(value: Any, *, fallback: str = "") -> str:
+    cleaned = re.sub(r"\s+", " ", redact(value)).strip()
+    return cleaned or fallback
 
 
 def _split_review_values(value: Any, *, limit: int = 24) -> List[str]:
@@ -199,6 +219,15 @@ def _post_url(slug: str) -> str:
     return f"{BASE_URL}/posts/{slug}.html"
 
 
+def _absolute_url(path_or_url: Any) -> str:
+    value = str(path_or_url or "").strip()
+    if value.startswith("http://") or value.startswith("https://"):
+        return value
+    if value.startswith("/"):
+        return f"{BASE_URL}{value}"
+    return f"{BASE_URL}/{value.lstrip('/')}"
+
+
 def _post_author(post: Dict[str, Any]) -> str:
     return str(post.get("author") or post.get("source_name") or "SecOpsAI Research")
 
@@ -218,6 +247,149 @@ def _post_reading_time(post: Dict[str, Any]) -> int:
     body = str(post.get("body_markdown") or "")
     words = re.findall(r"\b[\w@./:-]+\b", f"{post.get('title', '')} {post.get('summary', '')} {body}")
     return max(1, round(len(words) / 220))
+
+
+def _sanitize_public_asset_src(value: Any) -> Optional[str]:
+    src = str(value or "").strip().replace("\\", "/")
+    if not src or src.startswith(("/", "assets/")) is False:
+        return None
+    if src.startswith("assets/"):
+        src = f"/{src}"
+    parsed = urllib.parse.urlparse(src)
+    if parsed.scheme or parsed.netloc or ".." in Path(parsed.path).parts:
+        return None
+    suffix = Path(parsed.path).suffix.lower()
+    if suffix not in ALLOWED_MEDIA_SUFFIXES:
+        return None
+    if not parsed.path.startswith("/assets/"):
+        return None
+    return parsed.path
+
+
+def _normalize_media_item(item: Any, *, fallback_alt: str, require_approved: bool = True) -> Optional[Dict[str, Any]]:
+    raw = {"src": item} if isinstance(item, str) else dict(item) if isinstance(item, dict) else {}
+    src = _sanitize_public_asset_src(raw.get("src") or raw.get("url"))
+    if not src:
+        return None
+    if require_approved and raw.get("approved", True) is False:
+        return None
+    alt = _safe_text(raw.get("alt") or raw.get("title") or fallback_alt, fallback=fallback_alt)
+    media = {
+        "src": src,
+        "alt": alt[:180],
+        "caption": _safe_text(raw.get("caption"), fallback="")[:260],
+        "source_name": _safe_text(raw.get("source_name"), fallback="")[:100],
+        "source_url": str(raw.get("source_url") or "").strip(),
+        "license": _safe_text(raw.get("license"), fallback="")[:80],
+        "kind": _safe_text(raw.get("kind"), fallback="image")[:40],
+        "width": int(raw.get("width") or SOCIAL_CARD_WIDTH),
+        "height": int(raw.get("height") or SOCIAL_CARD_HEIGHT),
+        "approved": True,
+    }
+    if urllib.parse.urlparse(media["source_url"]).scheme not in {"http", "https"}:
+        media["source_url"] = ""
+    return media
+
+
+def _normalize_media(post: Dict[str, Any]) -> List[Dict[str, Any]]:
+    fallback_alt = str(post.get("title") or "SecOpsAI blog image")
+    media: List[Dict[str, Any]] = []
+    for candidate in [post.get("hero_image"), *(post.get("images") if isinstance(post.get("images"), list) else [])]:
+        item = _normalize_media_item(candidate, fallback_alt=fallback_alt)
+        if not item:
+            continue
+        if item["src"] not in {existing["src"] for existing in media}:
+            media.append(item)
+    return media[:12]
+
+
+def _primary_media(post: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    media = _normalize_media(post)
+    return media[0] if media else None
+
+
+def _social_card_path(slug: str, paths: BlogPaths) -> Path:
+    return paths.social / f"{slug}.svg"
+
+
+def _social_card_src(slug: str) -> str:
+    return f"/assets/social/{slug}.svg"
+
+
+def _wrap_card_text(value: Any, *, width: int = 34, lines: int = 4) -> List[str]:
+    words = _safe_text(value, fallback="SecOpsAI Security Blog").split()
+    output: List[str] = []
+    current: List[str] = []
+    for word in words:
+        trial = " ".join([*current, word])
+        if len(trial) > width and current:
+            output.append(" ".join(current))
+            current = [word]
+        else:
+            current.append(word)
+        if len(output) >= lines:
+            break
+    if current and len(output) < lines:
+        output.append(" ".join(current))
+    return output or ["SecOpsAI Security Blog"]
+
+
+def _write_social_card(post: Dict[str, Any], paths: BlogPaths) -> str:
+    slug = slugify(str(post.get("slug") or post.get("title") or "secopsai-post"))
+    paths.social.mkdir(parents=True, exist_ok=True)
+    title_lines = _wrap_card_text(post.get("title"), width=34, lines=4)
+    severity = _safe_text(str(post.get("severity") or "info").upper(), fallback="INFO")
+    category = _safe_text(", ".join(_post_categories(post)[:2]), fallback="Security Research")
+    date = _post_date(post.get("published_at") or post.get("updated_at") or _utc_now())
+    title_tspans = "\n".join(
+        f'<tspan x="86" dy="{0 if index == 0 else 64}">{html.escape(line)}</tspan>'
+        for index, line in enumerate(title_lines)
+    )
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{SOCIAL_CARD_WIDTH}" height="{SOCIAL_CARD_HEIGHT}" viewBox="0 0 {SOCIAL_CARD_WIDTH} {SOCIAL_CARD_HEIGHT}" role="img" aria-label="{html.escape(_safe_text(post.get('title'), fallback='SecOpsAI Security Blog'))}">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#061711"/>
+      <stop offset="0.54" stop-color="#08251c"/>
+      <stop offset="1" stop-color="#03100c"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="18%" cy="18%" r="74%">
+      <stop offset="0" stop-color="#2dd4a8" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#2dd4a8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" rx="0" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <circle cx="1010" cy="112" r="190" fill="#67e8f9" opacity="0.12"/>
+  <rect x="58" y="50" width="1084" height="530" rx="42" fill="#ffffff" fill-opacity="0.045" stroke="#2dd4a8" stroke-opacity="0.34"/>
+  <rect x="86" y="82" width="78" height="78" rx="22" fill="#123d2f" stroke="#2dd4a8" stroke-opacity="0.5"/>
+  <text x="125" y="134" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="900" fill="#e5f0f7">S</text>
+  <text x="184" y="116" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="900" fill="#e5f0f7">SecOpsAI</text>
+  <text x="184" y="148" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#93a6b8" letter-spacing="3">SECURITY BLOG</text>
+  <text x="86" y="256" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="900" fill="#f4fbf8">{title_tspans}</text>
+  <rect x="86" y="488" width="168" height="44" rx="22" fill="#2dd4a8"/>
+  <text x="170" y="517" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="900" fill="#03100c">{html.escape(severity)}</text>
+  <text x="278" y="517" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#c9d8e3">{html.escape(category)}</text>
+  <text x="86" y="558" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#93a6b8">blog.secopsai.dev • {html.escape(date)}</text>
+</svg>
+"""
+    _social_card_path(slug, paths).write_text(svg, encoding="utf-8")
+    return _social_card_src(slug)
+
+
+def _ensure_social_image(post: Dict[str, Any], paths: BlogPaths) -> Dict[str, Any]:
+    post = dict(post)
+    primary = _primary_media(post)
+    if primary:
+        post["social_image"] = primary["src"]
+        post["social_image_alt"] = primary["alt"]
+        post["social_image_width"] = primary.get("width", SOCIAL_CARD_WIDTH)
+        post["social_image_height"] = primary.get("height", SOCIAL_CARD_HEIGHT)
+    else:
+        post["social_image"] = _write_social_card(post, paths)
+        post["social_image_alt"] = f"SecOpsAI social preview card for {post.get('title', 'blog post')}"
+        post["social_image_width"] = SOCIAL_CARD_WIDTH
+        post["social_image_height"] = SOCIAL_CARD_HEIGHT
+    return post
 
 
 def strip_review_checklist_section(markdown: Any) -> str:
@@ -259,6 +431,12 @@ def _normalize_post(post: Dict[str, Any]) -> Dict[str, Any]:
     normalized.setdefault("affected_artifacts", [])
     normalized.setdefault("iocs", [])
     normalized.setdefault("extracted", {})
+    normalized["images"] = _normalize_media(normalized)
+    if normalized["images"]:
+        normalized["hero_image"] = normalized["images"][0]
+    else:
+        normalized.pop("hero_image", None)
+    normalized.pop("media_candidates", None)
     normalized.setdefault("review_checklist", [])
     normalized.setdefault("readiness_score", 0)
     normalized.setdefault("readiness_status", "needs_edits")
@@ -852,6 +1030,9 @@ def _normalise_news_item(raw: Dict[str, Any], source: Dict[str, Any]) -> Dict[st
     raw_tags = raw.get("tags", []) if isinstance(raw.get("tags", []), list) else []
     tags = _safe_list([category, *source_tags, *raw_tags], limit=12)
     key = _source_key(url, title)
+    media_candidates = raw.get("media_candidates", [])
+    if not isinstance(media_candidates, list):
+        media_candidates = []
     return {
         "key": key,
         "title": title,
@@ -868,6 +1049,7 @@ def _normalise_news_item(raw: Dict[str, Any], source: Dict[str, Any]) -> Dict[st
         "severity": str(raw.get("severity") or source.get("default_severity") or "info"),
         "trust_level": str(source.get("trust_level") or "external"),
         "review_status": "new",
+        "media_candidates": media_candidates[:8],
     }
 
 
@@ -889,11 +1071,39 @@ def _parse_rss_items(text: str, source: Dict[str, Any], *, limit: int) -> List[D
         link = first_text("link", "{http://www.w3.org/2005/Atom}id")
         if atom_link is not None and atom_link.get("href"):
             link = atom_link.get("href", "")
+        media_candidates: List[Dict[str, Any]] = []
+        for enclosure in item.findall("enclosure"):
+            url = enclosure.get("url", "")
+            media_type = enclosure.get("type", "")
+            if url and media_type.startswith("image/"):
+                media_candidates.append({
+                    "src": url,
+                    "alt": first_text("title", "{http://www.w3.org/2005/Atom}title"),
+                    "source_name": source.get("name", ""),
+                    "source_url": link,
+                    "approved": False,
+                    "kind": "source-candidate",
+                })
+        for media in [
+            *item.findall("{http://search.yahoo.com/mrss/}content"),
+            *item.findall("{http://search.yahoo.com/mrss/}thumbnail"),
+        ]:
+            url = media.get("url", "")
+            if url:
+                media_candidates.append({
+                    "src": url,
+                    "alt": media.get("title") or first_text("title", "{http://www.w3.org/2005/Atom}title"),
+                    "source_name": source.get("name", ""),
+                    "source_url": link,
+                    "approved": False,
+                    "kind": "source-candidate",
+                })
         items.append(_normalise_news_item({
             "title": first_text("title", "{http://www.w3.org/2005/Atom}title"),
             "url": link,
             "summary": first_text("description", "summary", "{http://www.w3.org/2005/Atom}summary"),
             "published_at": first_text("pubDate", "published", "{http://www.w3.org/2005/Atom}published", "{http://www.w3.org/2005/Atom}updated"),
+            "media_candidates": media_candidates,
         }, source))
     return items
 
@@ -1182,6 +1392,7 @@ secopsai blog news-review show {slug_value}
         "review_checklist": _review_checklist(),
         "news_key": item.get("key"),
         "fetched_at": item.get("fetched_at"),
+        "media_candidates": item.get("media_candidates", []) if isinstance(item.get("media_candidates"), list) else [],
         "extracted": extracted,
         "iocs": extracted_iocs,
         "affected_packages": affected_packages,
@@ -1543,6 +1754,65 @@ def news_review_edit(
     return news_review_show(str(path), paths=paths)
 
 
+def attach_media(
+    identifier: str,
+    *,
+    file_path: str,
+    alt: str,
+    caption: Optional[str] = None,
+    kind: str = "screenshot",
+    source_name: str = "SecOpsAI",
+    source_url: Optional[str] = None,
+    paths: Optional[BlogPaths] = None,
+) -> Dict[str, Any]:
+    paths = paths or BlogPaths()
+    draft_path = _resolve_draft(identifier, paths)
+    post = _load_json(draft_path)
+    slug = str(post.get("slug") or draft_path.stem)
+    source = Path(file_path).expanduser().resolve()
+    if not source.exists() or not source.is_file():
+        raise ValueError(f"media file not found: {file_path}")
+    if source.suffix.lower() not in ALLOWED_MEDIA_SUFFIXES:
+        raise ValueError(f"unsupported media type: {source.suffix}")
+    if source.stat().st_size > 5 * 1024 * 1024:
+        raise ValueError("media file is too large; keep public blog images under 5 MB")
+    cleaned_alt = _safe_text(alt, fallback="")
+    if not cleaned_alt:
+        raise ValueError("alt text is required for blog media")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()[:12]
+    safe_name = slugify(source.stem)[:48] or "media"
+    destination = paths.post_assets(slug) / f"{digest}-{safe_name}{source.suffix.lower()}"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    src = "/" + destination.relative_to(paths.root).as_posix()
+    media = {
+        "src": src,
+        "alt": cleaned_alt[:180],
+        "caption": _safe_text(caption, fallback="")[:260],
+        "source_name": _safe_text(source_name, fallback="SecOpsAI")[:100],
+        "source_url": source_url or "",
+        "license": "operator-approved",
+        "kind": _safe_text(kind, fallback="screenshot")[:40],
+        "hash": digest,
+        "approved": True,
+    }
+    normalised = _normalize_media_item(media, fallback_alt=cleaned_alt)
+    if not normalised:
+        raise ValueError("media destination did not pass public asset validation")
+    existing = [item for item in post.get("images", []) if isinstance(item, dict)]
+    existing = [item for item in existing if item.get("src") != normalised["src"]]
+    post["images"] = [normalised, *existing]
+    post["hero_image"] = normalised
+    post["updated_at"] = _utc_now()
+    if post.get("external_news"):
+        post["review_status"] = "needs_review"
+        _set_review_checklist_status(post, "needs_review")
+        post.update(score_external_news_readiness(post))
+    post["reading_time"] = _post_reading_time(post)
+    _write_json(draft_path, post)
+    return {"draft_path": str(draft_path), "media": normalised, "hero_image": normalised}
+
+
 def draft_news(source: str, *, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     paths = paths or BlogPaths()
     source_config = {
@@ -1711,11 +1981,102 @@ def _render_artifact_table(post: Dict[str, Any]) -> str:
     return "<table><thead><tr><th>Ecosystem</th><th>Artifact</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
 
 
+def _render_meta_tags(
+    *,
+    title: str,
+    description: str,
+    url: str,
+    image: str,
+    image_alt: str,
+    image_width: Any = SOCIAL_CARD_WIDTH,
+    image_height: Any = SOCIAL_CARD_HEIGHT,
+    post: Optional[Dict[str, Any]] = None,
+) -> str:
+    tags = [
+        f'<meta property="og:site_name" content="SecOpsAI Security Blog" />',
+        f'<meta property="og:title" content="{html.escape(title)}" />',
+        f'<meta property="og:description" content="{html.escape(description)}" />',
+        f'<meta property="og:url" content="{html.escape(url)}" />',
+        f'<meta property="og:image" content="{html.escape(_absolute_url(image))}" />',
+        f'<meta property="og:image:alt" content="{html.escape(image_alt)}" />',
+        f'<meta property="og:image:width" content="{html.escape(str(image_width or SOCIAL_CARD_WIDTH))}" />',
+        f'<meta property="og:image:height" content="{html.escape(str(image_height or SOCIAL_CARD_HEIGHT))}" />',
+        '<meta name="twitter:card" content="summary_large_image" />',
+        f'<meta name="twitter:title" content="{html.escape(title)}" />',
+        f'<meta name="twitter:description" content="{html.escape(description)}" />',
+        f'<meta name="twitter:image" content="{html.escape(_absolute_url(image))}" />',
+        f'<meta name="twitter:image:alt" content="{html.escape(image_alt)}" />',
+    ]
+    if post:
+        tags.insert(0, '<meta property="og:type" content="article" />')
+        if post.get("published_at"):
+            tags.append(f'<meta property="article:published_time" content="{html.escape(str(post.get("published_at")))}" />')
+        if post.get("updated_at"):
+            tags.append(f'<meta property="article:modified_time" content="{html.escape(str(post.get("updated_at")))}" />')
+        for category in _post_categories(post)[:8]:
+            tags.append(f'<meta property="article:tag" content="{html.escape(category)}" />')
+    else:
+        tags.insert(0, '<meta property="og:type" content="website" />')
+    return "\n    ".join(tags)
+
+
+def _render_hero_media(post: Dict[str, Any]) -> str:
+    media = _primary_media(post)
+    if not media:
+        return ""
+    caption_parts = [media.get("caption") or ""]
+    if media.get("source_name"):
+        source_label = html.escape(str(media["source_name"]))
+        if media.get("source_url"):
+            caption_parts.append(
+                f'Source: <a href="{html.escape(str(media["source_url"]))}" rel="noopener noreferrer" target="_blank">{source_label}</a>'
+            )
+        else:
+            caption_parts.append(f"Source: {source_label}")
+    caption = " · ".join(part for part in caption_parts if part)
+    return f"""<figure class="hero-image">
+          <img src="{html.escape(media['src'])}" alt="{html.escape(media['alt'])}" loading="eager" decoding="async" />
+          {f'<figcaption>{caption}</figcaption>' if caption else ''}
+        </figure>"""
+
+
+def _render_media_gallery(post: Dict[str, Any]) -> str:
+    media = _normalize_media(post)
+    if len(media) <= 1:
+        return ""
+    figures = []
+    for item in media[1:]:
+        caption = html.escape(str(item.get("caption") or item.get("source_name") or "SecOpsAI media artifact"))
+        figures.append(
+            f"""<figure class="media-card">
+              <img src="{html.escape(item['src'])}" alt="{html.escape(item['alt'])}" loading="lazy" decoding="async" />
+              <figcaption>{caption}</figcaption>
+            </figure>"""
+        )
+    return f"""<section class="media-gallery" aria-label="Related screenshots and media">
+          <h2>Media Artifacts</h2>
+          <div class="media-grid">{''.join(figures)}</div>
+        </section>"""
+
+
+def _render_card_thumbnail(post: Dict[str, Any]) -> str:
+    media = _primary_media(post)
+    if not media:
+        src = str(post.get("social_image") or _social_card_src(str(post.get("slug") or "secopsai-post")))
+        alt = str(post.get("social_image_alt") or f"SecOpsAI social card for {post.get('title', 'blog post')}")
+    else:
+        src = media["src"]
+        alt = media["alt"]
+    return f'<div class="post-thumb"><img src="{html.escape(src)}" alt="{html.escape(alt)}" loading="lazy" decoding="async" /></div>'
+
+
 def _render_post_html(post: Dict[str, Any]) -> str:
     post = _public_post(post)
     slug = str(post["slug"])
     title = html.escape(redact(post["title"]))
-    summary = html.escape(redact(post.get("summary", "")))
+    raw_title = redact(post["title"])
+    raw_summary = redact(post.get("summary", ""))
+    summary = html.escape(raw_summary)
     categories = _post_categories(post)
     pills = _render_pills(categories)
     severity = html.escape(str(post.get("severity", "info")).title())
@@ -1725,6 +2086,10 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     body_html = markdown_to_html(str(post.get("body_markdown") or ""))
     iocs = _safe_list(post.get("iocs", []), limit=12)
     ioc_items = "".join(f"<li><code>{html.escape(ioc)}</code></li>" for ioc in iocs) or "<li>No structured IOCs attached.</li>"
+    social_image = str(post.get("social_image") or _social_card_src(slug))
+    social_alt = str(post.get("social_image_alt") or f"SecOpsAI social preview card for {raw_title}")
+    hero_media = _render_hero_media(post)
+    media_gallery = _render_media_gallery(post)
     return f"""<!doctype html>
 <html lang="en">
   <head>
@@ -1732,6 +2097,16 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title} | SecOpsAI Security Blog</title>
     <meta name="description" content="{summary}" />
+    {_render_meta_tags(
+        title=f"{raw_title} | SecOpsAI Security Blog",
+        description=raw_summary,
+        url=_post_url(slug),
+        image=social_image,
+        image_alt=social_alt,
+        image_width=post.get("social_image_width", SOCIAL_CARD_WIDTH),
+        image_height=post.get("social_image_height", SOCIAL_CARD_HEIGHT),
+        post=post,
+    )}
     <link rel="canonical" href="{_post_url(slug)}" />
     <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
@@ -1764,6 +2139,7 @@ def _render_post_html(post: Dict[str, Any]) -> str:
           <span>Updated: {html.escape(_post_date(post.get("updated_at")))}</span>
         </div>
         <div class="tags">{pills}</div>
+{hero_media}
         <section class="intelligence-brief" aria-label="Post intelligence brief">
           <div>
             <p class="eyebrow">Executive summary</p>
@@ -1779,6 +2155,7 @@ def _render_post_html(post: Dict[str, Any]) -> str:
           </div>
         </section>
         {body_html}
+{media_gallery}
         <section class="comments" data-comments data-slug="{html.escape(slug)}">
           <h2>Comments</h2>
           <p>Comments are moderated before publication. Do not post secrets, tokens, customer data, or exploit payloads.</p>
@@ -1843,7 +2220,7 @@ def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPa
     post["status"] = "published"
     post["published_at"] = post.get("published_at") or _utc_now()
     post["updated_at"] = _utc_now()
-    post = _public_post(post)
+    post = _ensure_social_image(_public_post(post), paths)
     paths.posts.mkdir(parents=True, exist_ok=True)
     _write_json(_post_json_path(str(post["slug"]), paths), post)
     _post_html_path(str(post["slug"]), paths).write_text(
@@ -1886,6 +2263,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
           data-severity="{_post_severity_rank(post)}"
           data-date="{html.escape(updated)}"
           data-reading="{reading_time}">
+          {_render_card_thumbnail(post)}
           <div class="meta">
             <span class="pill {severity_class}">{severity}</span>
             <span>{html.escape(_post_author(post))}</span>
@@ -1931,13 +2309,22 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
       </section>"""
     else:
         featured_html = ""
+    homepage_social = _absolute_url(_social_card_src("secopsai-blog"))
+    homepage_description = "Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates."
     return f"""<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SecOpsAI Security Blog</title>
-    <meta name="description" content="Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates." />
+    <meta name="description" content="{homepage_description}" />
+    {_render_meta_tags(
+        title="SecOpsAI Security Blog",
+        description=homepage_description,
+        url=f"{BASE_URL}/",
+        image=homepage_social,
+        image_alt="SecOpsAI Security Blog social preview card",
+    )}
     <link rel="canonical" href="{BASE_URL}/" />
     <link rel="alternate" type="application/rss+xml" title="SecOpsAI Security Blog RSS" href="/feed.xml" />
     <link rel="alternate" type="application/feed+json" title="SecOpsAI Security Blog JSON Feed" href="/feed.json" />
@@ -2091,11 +2478,19 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
 def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     paths = paths or BlogPaths()
     posts = _load_posts(paths)
+    _write_social_card({
+        "slug": "secopsai-blog",
+        "title": "SecOpsAI Security Blog",
+        "summary": "Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.",
+        "severity": "info",
+        "categories": ["Security Research", "Advisories"],
+        "published_at": _utc_now(),
+    }, paths)
     (paths.root / "index.html").write_text(_render_index(posts), encoding="utf-8")
     feed_items = []
     rss_items = []
     for post in posts:
-        post = _public_post(post)
+        post = _ensure_social_image(_public_post(post), paths)
         slug = str(post["slug"])
         url = _post_url(slug)
         if post.get("body_markdown"):
@@ -2108,6 +2503,8 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
                 "url": url,
                 "title": redact(post.get("title", "")),
                 "summary": summary,
+                "image": _absolute_url(post.get("social_image") or _social_card_src(slug)),
+                "banner_image": _absolute_url(post.get("social_image") or _social_card_src(slug)),
                 "date_published": post.get("published_at"),
                 "date_modified": post.get("updated_at"),
                 "tags": post.get("tags") or post.get("categories") or [],
@@ -2115,6 +2512,7 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
                 "reading_time_minutes": _post_reading_time(post),
                 "severity": post.get("severity"),
                 "affected_packages": post.get("affected_packages", []),
+                "images": post.get("images", []),
             }
         )
         rss_items.append(

@@ -126,6 +126,12 @@ secopsai blog news-review show <draft-slug-or-path>
 secopsai blog news-review approve <draft-slug-or-path> --note "Reviewed sources"
 secopsai blog news-publish-approved --rebuild
 
+# Attach an operator-approved screenshot or image to a draft.
+secopsai blog attach-media <draft-slug-or-path> \
+  --file /path/to/redacted-alert.png \
+  --alt "Redacted SecOpsAI alert showing affected package evidence" \
+  --caption "Operator-approved SecOpsAI alert screenshot"
+
 # Rebuild index, RSS, and JSON feeds from published post metadata.
 secopsai blog rebuild-feeds
 ```
@@ -140,6 +146,9 @@ Safety gates:
 - News fetch balances across enabled sources and prefers direct government/vendor/project sources before commentary sources, so Socket cannot fill the whole queue by itself.
 - To originate SecOpsAI-owned posts, draft from local advisories or SOC findings with `secopsai blog draft-advisory` and `secopsai blog draft-finding`.
 - `scripts/blog_newsroom.sh` is the one-command daily helper: it fetches news, creates review-only drafts, and prints the review queue.
+- Public posts may use approved local images from `blog/assets/posts/<slug>/...`; external feed images are treated as draft-only candidates unless an operator explicitly approves and imports them.
+- Do not attach screenshots containing tokens, customer data, private hostnames, private tickets, or raw exploit payloads. Redact first, then attach with descriptive alt text.
+- If no approved hero image exists, `secopsai blog rebuild-feeds` creates deterministic SecOpsAI social-card SVGs under `blog/assets/social/` and uses them for Open Graph and X/Twitter preview metadata.
 
 ## Publishing From Advisories
 

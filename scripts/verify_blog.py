@@ -40,11 +40,16 @@ def main() -> int:
     for marker in ["Security Research & Advisories", "Security News", "Featured research", "Latest posts", "data-topic-filter", "post-sort"]:
         if marker not in index:
             raise AssertionError(f"blog index missing advanced blog marker: {marker}")
+    for marker in ["og:image", "twitter:card", "summary_large_image"]:
+        if marker not in index:
+            raise AssertionError(f"blog index missing social preview marker: {marker}")
     if "data-comments" not in post:
         raise AssertionError("post does not include comments scaffold")
-    for marker in ["Operator commands", "Affected artifacts", "References", "Executive summary"]:
+    for marker in ["Operator commands", "Affected artifacts", "References", "Executive summary", "article:published_time", "twitter:image"]:
         if marker not in post:
             raise AssertionError(f"post page missing intelligence section: {marker}")
+    if "Review Checklist" in post or "review_checklist" in post:
+        raise AssertionError("public post must not render internal review checklist")
     if "data-turnstile" not in post:
         raise AssertionError("post comments form must include the Turnstile mount point")
     if not feed_json.get("items"):
@@ -57,6 +62,10 @@ def main() -> int:
         raise AssertionError("JSON feed items must include author metadata")
     if not feed_json["items"][0].get("reading_time_minutes"):
         raise AssertionError("JSON feed items must include reading-time metadata")
+    if not feed_json["items"][0].get("image"):
+        raise AssertionError("JSON feed items must include a social image")
+    require(BLOG / "assets" / "social" / "secopsai-blog.svg")
+    require(BLOG / "assets" / "social" / "mini-shai-hulud-emergency-advisory.svg")
     if not (BLOG / "data" / "news-sources.json").exists():
         raise AssertionError("news ingestion source registry is missing")
     news_sources = json.loads(require(BLOG / "data" / "news-sources.json")).get("sources", [])

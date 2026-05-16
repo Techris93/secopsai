@@ -30,6 +30,7 @@ from secopsai.agent_core import (
 )
 from secopsai.adaptive_response import evaluate_adaptive_response
 from secopsai.blog import (
+    attach_media as attach_blog_media,
     comments_setup_status,
     draft_advisory as draft_blog_advisory,
     draft_daily as draft_blog_daily,
@@ -919,6 +920,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     blog_publish.add_argument("draft_or_slug", help="Path to draft JSON or draft slug")
     blog_publish.add_argument("--publish", action="store_true", help="Required confirmation to write public files")
 
+    blog_attach_media = blog_sub.add_parser("attach-media", help="Copy an approved local image/screenshot into a blog draft")
+    blog_attach_media.add_argument("draft", help="Draft path, slug, or unique slug fragment")
+    blog_attach_media.add_argument("--file", required=True, help="Local image/screenshot file to copy into blog assets")
+    blog_attach_media.add_argument("--alt", required=True, help="Accessible alt text for the image")
+    blog_attach_media.add_argument("--caption", default=None, help="Optional public caption")
+    blog_attach_media.add_argument("--kind", default="screenshot", help="Media kind, e.g. screenshot, terminal, alert, photo")
+    blog_attach_media.add_argument("--source-name", default="SecOpsAI", help="Source label for attribution")
+    blog_attach_media.add_argument("--source-url", default=None, help="Optional http(s) source URL")
+
     blog_sub.add_parser("rebuild-feeds", help="Rebuild blog index, RSS feed, and JSON feed from published metadata")
     blog_sub.add_parser("comments-status", help="Report required comment env/secret names without printing values")
 
@@ -1507,6 +1517,16 @@ def main(argv: Optional[List[str]] = None) -> int:
                 payload = draft_blog_daily(limit=args.limit)
             elif args.blog_cmd == "publish":
                 payload = publish_blog_post(args.draft_or_slug, confirm=args.publish)
+            elif args.blog_cmd == "attach-media":
+                payload = attach_blog_media(
+                    args.draft,
+                    file_path=args.file,
+                    alt=args.alt,
+                    caption=args.caption,
+                    kind=args.kind,
+                    source_name=args.source_name,
+                    source_url=args.source_url,
+                )
             elif args.blog_cmd == "rebuild-feeds":
                 payload = rebuild_blog()
             else:
@@ -1581,6 +1601,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(payload["message"])
             if payload.get("url"):
                 print(f"url={payload['url']}")
+        elif args.blog_cmd == "attach-media":
+            print(f"draft_path={payload['draft_path']}")
+            print(f"media={payload['media']['src']}")
+            print(f"alt={payload['media']['alt']}")
         elif args.blog_cmd == "rebuild-feeds":
             print(f"posts={payload['posts']}")
             for path in payload["paths"]:

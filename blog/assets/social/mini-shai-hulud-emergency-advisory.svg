@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#061711"/>
+      <stop offset="0.54" stop-color="#08251c"/>
+      <stop offset="1" stop-color="#03100c"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="18%" cy="18%" r="74%">
+      <stop offset="0" stop-color="#2dd4a8" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#2dd4a8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" rx="0" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <circle cx="1010" cy="112" r="190" fill="#67e8f9" opacity="0.12"/>
+  <rect x="58" y="50" width="1084" height="530" rx="42" fill="#ffffff" fill-opacity="0.045" stroke="#2dd4a8" stroke-opacity="0.34"/>
+  <rect x="86" y="82" width="78" height="78" rx="22" fill="#123d2f" stroke="#2dd4a8" stroke-opacity="0.5"/>
+  <text x="125" y="134" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="900" fill="#e5f0f7">S</text>
+  <text x="184" y="116" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="900" fill="#e5f0f7">SecOpsAI</text>
+  <text x="184" y="148" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#93a6b8" letter-spacing="3">SECURITY BLOG</text>
+  <text x="86" y="256" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="900" fill="#f4fbf8"><tspan x="86" dy="0">Mini Shai-Hulud crosses npm and</tspan>
+<tspan x="86" dy="64">PyPI: advisory protection for</tspan>
+<tspan x="86" dy="64">removed artifacts</tspan></text>
+  <rect x="86" y="488" width="168" height="44" rx="22" fill="#2dd4a8"/>
+  <text x="170" y="517" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="900" fill="#03100c">CRITICAL</text>
+  <text x="278" y="517" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#c9d8e3">Supply Chain, Advisories</text>
+  <text x="86" y="558" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#93a6b8">blog.secopsai.dev • 2026-05-12</text>
+</svg>

@@ -10,9 +10,12 @@
           "name": "CISA Known Exploited Vulnerabilities"
         }
       ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-5752d8dcb4593420-cisa-kev-microsoft-microsoft-cve-2026-42897.svg",
       "date_modified": "2026-05-16T18:56:57Z",
       "date_published": "2026-05-15",
       "id": "https://blog.secopsai.dev/posts/news-5752d8dcb4593420-cisa-kev-microsoft-microsoft-cve-2026-42897.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-5752d8dcb4593420-cisa-kev-microsoft-microsoft-cve-2026-42897.svg",
+      "images": [],
       "reading_time_minutes": 1,
       "severity": "high",
       "summary": "Microsoft Exchange Server contains a cross-site scripting vulnerability during web page generation in Outlook Web Access and when certain interaction conditions are met, arbitrary JavaScript can be executed in the browser context.",
@@ -39,9 +42,12 @@
           "name": "SecOpsAI Threat Research"
         }
       ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/mini-shai-hulud-emergency-advisory.svg",
       "date_modified": "2026-05-12T00:00:00Z",
       "date_published": "2026-05-12T00:00:00Z",
       "id": "https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html",
+      "image": "https://blog.secopsai.dev/assets/social/mini-shai-hulud-emergency-advisory.svg",
+      "images": [],
       "reading_time_minutes": 4,
       "severity": "critical",
       "summary": "Mini Shai-Hulud affected npm and PyPI packages, including removed artifacts that now receive source-backed SecOpsAI advisory detections.",
