@@ -250,6 +250,32 @@ Publishing writes:
 - `blog/feed.xml`
 - `blog/feed.json`
 
+## RSS and JSON Feed
+
+The blog publishes two subscription feeds:
+
+- RSS: `https://blog.secopsai.dev/feed.xml`
+- JSON Feed: `https://blog.secopsai.dev/feed.json`
+
+Both feeds contain the same approved public posts. They exist for different
+clients, not because the blog has two separate content streams.
+
+Use RSS when a normal feed reader, email/news app, Slack RSS integration,
+Zapier-style workflow, or older aggregator asks for a feed URL. Use JSON Feed
+when an app, script, or automation prefers structured JSON. Seeing raw XML or
+JSON in a browser is normal for these machine-readable endpoints, but the
+homepage and `/json-feed` page explain the difference for human visitors.
+
+Feed rules:
+
+- Drafts, rejected posts, blocked external-news drafts, review checklists, local
+  file paths, and secrets must never appear in feeds.
+- RSS items should include title, link, guid, publication date, and a useful
+  description.
+- JSON Feed items should include absolute URLs, summaries, tags/categories,
+  author metadata, dates, severity, reading time, and image/social-card metadata
+  when available.
+
 ## Comments
 
 Comments are handled by a Cloudflare Pages Function and Supabase. Required Cloudflare Pages values for project `secopsai-blog`:

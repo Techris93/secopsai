@@ -6,19 +6,19 @@
     <link>https://blog.secopsai.dev/</link>
     <description>Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.</description>
     <language>en-us</language>
-    <lastBuildDate>Sat, 16 May 2026 21:50:46 GMT</lastBuildDate>
+    <lastBuildDate>Sat, 16 May 2026 18:56:57 GMT</lastBuildDate>
     <item>
       <title>CISA KEV: Microsoft CVE-2026-42897</title>
       <link>https://blog.secopsai.dev/posts/news-5752d8dcb4593420-cisa-kev-microsoft-microsoft-cve-2026-42897.html</link>
       <guid>https://blog.secopsai.dev/posts/news-5752d8dcb4593420-cisa-kev-microsoft-microsoft-cve-2026-42897.html</guid>
-      <pubDate>Sat, 16 May 2026 21:50:46 GMT</pubDate>
+      <pubDate>Fri, 15 May 2026 00:00:00 GMT</pubDate>
       <description>Microsoft Exchange Server contains a cross-site scripting vulnerability during web page generation in Outlook Web Access and when certain interaction conditions are met, arbitrary JavaScript can be executed in the browser context.</description>
     </item>
     <item>
       <title>Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts</title>
       <link>https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html</link>
       <guid>https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html</guid>
-      <pubDate>Mon, 11 May 2026 21:00:00 GMT</pubDate>
+      <pubDate>Tue, 12 May 2026 00:00:00 GMT</pubDate>
       <description>Mini Shai-Hulud affected npm and PyPI packages, including removed artifacts that now receive source-backed SecOpsAI advisory detections.</description>
     </item>
   </channel>

@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest import mock
 
@@ -39,13 +40,24 @@ class BlogPublishingTests(unittest.TestCase):
             self.assertTrue((paths.root / "feed.json").exists())
             self.assertTrue((paths.root / "feed.xml").exists())
             feed = json.loads((paths.root / "feed.json").read_text(encoding="utf-8"))
+            rss = ET.parse(paths.root / "feed.xml")
+            rss_items = rss.findall("./channel/item")
             self.assertEqual(feed["items"][0]["title"], "Unit supply-chain campaign")
             self.assertEqual(feed["items"][0]["authors"][0]["name"], "SecOpsAI Threat Research")
             self.assertEqual(feed["items"][0]["severity"], "critical")
             self.assertGreaterEqual(feed["items"][0]["reading_time_minutes"], 1)
+            self.assertTrue(feed["items"][0]["url"].startswith("https://blog.secopsai.dev/posts/"))
+            self.assertTrue(feed["items"][0]["summary"])
+            self.assertEqual(len(rss_items), 1)
+            self.assertTrue(rss_items[0].findtext("description"))
             index = (paths.root / "index.html").read_text(encoding="utf-8")
+            json_landing = (paths.root / "json-feed.html").read_text(encoding="utf-8")
             post_html = Path(published["post_path"]).read_text(encoding="utf-8")
             self.assertIn("Featured research", index)
+            self.assertIn("Use the feed format your reader understands", index)
+            self.assertIn("Best for feed readers", index)
+            self.assertIn("Best for apps and automation", index)
+            self.assertIn("raw XML or JSON", index)
             self.assertIn("data-topic-filter", index)
             self.assertIn("post-sort", index)
             self.assertIn("data-nav-toggle", index)
@@ -59,6 +71,9 @@ class BlogPublishingTests(unittest.TestCase):
             self.assertIn("/json-feed", post_html)
             self.assertIn("twitter:card", post_html)
             self.assertIn("article:published_time", post_html)
+            self.assertIn("/feed.json?raw=1", json_landing)
+            self.assertNotIn("Review Checklist", (paths.root / "feed.json").read_text(encoding="utf-8"))
+            self.assertNotIn("Review Checklist", (paths.root / "feed.xml").read_text(encoding="utf-8"))
             self.assertTrue((paths.root / "assets" / "social" / "secopsai-blog.svg").exists())
             self.assertTrue((paths.root / "assets" / "social" / "unit-campaign-unit-supply-chain-campaign.svg").exists())
 

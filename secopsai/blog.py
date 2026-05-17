@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 import email.utils
 import hashlib
 import html
@@ -2158,6 +2159,30 @@ def _render_site_header(*, subtitle: str = "Security Blog", links: Optional[List
     </header>"""
 
 
+def _render_subscribe_panel() -> str:
+    return f"""<section class="subscribe-panel card" aria-labelledby="subscribe-heading">
+        <div>
+          <p class="eyebrow">Subscribe</p>
+          <h2 id="subscribe-heading">Use the feed format your reader understands.</h2>
+          <p>RSS and JSON Feed publish the same SecOpsAI posts in two machine-readable formats. They are meant for feed readers, email/news apps, Slack/Zapier-style automations, and security workflows, so they may look like raw XML or JSON when opened directly in a browser.</p>
+        </div>
+        <div class="feed-choice-grid">
+          <a class="feed-choice" href="/feed.xml">
+            <span class="feed-choice-kicker">RSS Feed</span>
+            <strong>Best for feed readers</strong>
+            <span>Use this with apps like Feedly, NetNewsWire, Slack RSS, email digests, and older news readers.</span>
+            <code>{BASE_URL}/feed.xml</code>
+          </a>
+          <a class="feed-choice" href="/json-feed">
+            <span class="feed-choice-kicker">JSON Feed</span>
+            <strong>Best for apps and automation</strong>
+            <span>Use this modern JSON format when an integration, script, or API-style tool prefers structured JSON.</span>
+            <code>{BASE_URL}/feed.json</code>
+          </a>
+        </div>
+      </section>"""
+
+
 def _render_hero_media(post: Dict[str, Any]) -> str:
     media = _primary_media(post)
     if not media:
@@ -2475,11 +2500,12 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
           affected packages, IOCs, detection logic, mitigations, timelines,
           and source-backed updates.</p>
         <div class="feed-actions">
-          <a class="button" href="/feed.xml">Subscribe by RSS</a>
-          <a class="button secondary" href="/json-feed">JSON Feed</a>
+          <a class="button" href="#subscribe">Subscribe</a>
+          <a class="button secondary" href="/json-feed">What is JSON Feed?</a>
         </div>
       </section>
       {featured_html}
+      <div id="subscribe">{_render_subscribe_panel()}</div>
       <section class="topic-strip" id="topics" aria-label="Security topics">
         {section_cards}
       </section>
@@ -2524,8 +2550,11 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
 
 def _rss_date(value: str) -> str:
     try:
-        parsed = time.strptime(value[:19], "%Y-%m-%dT%H:%M:%S")
-        return email.utils.formatdate(time.mktime(parsed), usegmt=True)
+        raw = str(value or "").strip()
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+            raw = f"{raw}T00:00:00"
+        parsed = time.strptime(raw[:19], "%Y-%m-%dT%H:%M:%S")
+        return email.utils.formatdate(calendar.timegm(parsed), usegmt=True)
     except Exception:
         return email.utils.formatdate(time.time(), usegmt=True)
 
@@ -2575,12 +2604,15 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
         <p class="eyebrow">Programmatic feed</p>
         <h1>SecOpsAI JSON Feed</h1>
         <p class="lede">This page makes the JSON feed readable in a browser.
-          Feed readers and API clients can use the raw JSON endpoint.</p>
+          JSON Feed contains the same published posts as RSS, but in a modern
+          JSON format for apps, scripts, and automation tools. Raw JSON is normal
+          for feed clients, even if it looks unfriendly in a browser.</p>
         <div class="feed-actions">
-          <a class="button" href="/feed.json">Open raw JSON</a>
+          <a class="button" href="/feed.json?raw=1">Open raw JSON</a>
           <a class="button secondary" href="/feed.xml">Open RSS</a>
         </div>
       </section>
+      {_render_subscribe_panel()}
       <section class="grid">{items}</section>
     </main>
   </body>
@@ -2591,13 +2623,18 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
 def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     paths = paths or BlogPaths()
     posts = _load_posts(paths)
+    latest_feed_date = (
+        str(posts[0].get("updated_at") or posts[0].get("published_at") or "")
+        if posts
+        else "2026-05-12T00:00:00Z"
+    )
     _write_social_card({
         "slug": "secopsai-blog",
         "title": "SecOpsAI Security Blog",
         "summary": "Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.",
         "severity": "info",
         "categories": ["Security Research", "Advisories"],
-        "published_at": _utc_now(),
+        "published_at": latest_feed_date,
     }, paths)
     (paths.root / "index.html").write_text(_render_index(posts), encoding="utf-8")
     feed_items = []
@@ -2660,7 +2697,7 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
         '    <description>Real-time SecOpsAI advisories, detections, mitigation steps, '
         'and incident updates.</description>\n'
         '    <language>en-us</language>\n'
-        f'    <lastBuildDate>{email.utils.formatdate(time.time(), usegmt=True)}</lastBuildDate>\n'
+        f'    <lastBuildDate>{_rss_date(latest_feed_date)}</lastBuildDate>\n'
         f'{rss_body}\n'
         '  </channel>\n'
         '</rss>\n'

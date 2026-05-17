@@ -172,7 +172,7 @@ export default {
       if (request.method === "POST") return commentsPost(request, env);
       return json({ok: false, error: "method not allowed"}, {status: 405});
     }
-    if (url.pathname === "/feed.json" && request.headers.get("accept")?.includes("text/html")) {
+    if (url.pathname === "/feed.json" && url.searchParams.get("raw") !== "1" && request.headers.get("accept")?.includes("text/html")) {
       const landing = new URL("/json-feed", request.url);
       return env.ASSETS.fetch(new Request(landing, request));
     }

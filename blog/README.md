@@ -136,6 +136,15 @@ secopsai blog attach-media <draft-slug-or-path> \
 secopsai blog rebuild-feeds
 ```
 
+Feed UX:
+
+- `feed.xml` is the RSS feed for feed readers, email/news apps, Slack RSS, and
+  older aggregation tools.
+- `feed.json` is the JSON Feed for scripts, apps, and automation tools that
+  prefer structured JSON.
+- Both feeds expose the same approved public posts. Raw XML/JSON in a browser is
+  expected, so the homepage and `/json-feed` explain what the links are for.
+
 Safety gates:
 
 - Drafts are JSON files under `blog/drafts/`.
