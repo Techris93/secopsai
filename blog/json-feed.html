@@ -34,10 +34,8 @@
       <section class="hero">
         <p class="eyebrow">Programmatic feed</p>
         <h1>SecOpsAI JSON Feed</h1>
-        <p class="lede">This page makes the JSON feed readable in a browser.
-          JSON Feed contains the same published posts as RSS, but in a modern
-          JSON format for apps, scripts, and automation tools. Raw JSON is normal
-          for feed clients, even if it looks unfriendly in a browser.</p>
+        <p class="lede">A structured JSON feed for applications, scripts, and
+          automation workflows that consume SecOpsAI advisories and research.</p>
         <div class="feed-actions">
           <a class="button" href="/feed.json?raw=1">Open raw JSON</a>
           <a class="button secondary" href="/feed.xml">Open RSS</a>
@@ -46,20 +44,20 @@
       <section class="subscribe-panel card" aria-labelledby="subscribe-heading">
         <div>
           <p class="eyebrow">Subscribe</p>
-          <h2 id="subscribe-heading">Use the feed format your reader understands.</h2>
-          <p>RSS and JSON Feed publish the same SecOpsAI posts in two machine-readable formats. They are meant for feed readers, email/news apps, Slack/Zapier-style automations, and security workflows, so they may look like raw XML or JSON when opened directly in a browser.</p>
+          <h2 id="subscribe-heading">Follow SecOpsAI advisories and research.</h2>
+          <p>Subscribe through your preferred feed reader, security workflow, or automation platform.</p>
         </div>
         <div class="feed-choice-grid">
           <a class="feed-choice" href="/feed.xml">
             <span class="feed-choice-kicker">RSS Feed</span>
-            <strong>Best for feed readers</strong>
-            <span>Use this with apps like Feedly, NetNewsWire, Slack RSS, email digests, and older news readers.</span>
+            <strong>Traditional syndication</strong>
+            <span>For feed readers, email digests, Slack RSS, and news aggregators.</span>
             <code>https://blog.secopsai.dev/feed.xml</code>
           </a>
           <a class="feed-choice" href="/json-feed">
             <span class="feed-choice-kicker">JSON Feed</span>
-            <strong>Best for apps and automation</strong>
-            <span>Use this modern JSON format when an integration, script, or API-style tool prefers structured JSON.</span>
+            <strong>Structured automation</strong>
+            <span>For applications, scripts, and security automation that prefer JSON.</span>
             <code>https://blog.secopsai.dev/feed.json</code>
           </a>
         </div>
