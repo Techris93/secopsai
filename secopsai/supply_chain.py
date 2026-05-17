@@ -26,6 +26,7 @@ import time
 import urllib.parse
 import urllib.request
 import xmlrpc.client
+import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -116,13 +117,13 @@ SUPPORTED_ECOSYSTEMS: Dict[str, Dict[str, Any]] = {
         "identifier": "crate/version",
         "features": {
             "advisory_match": True,
-            "metadata_fetch": False,
-            "artifact_fetch": False,
-            "diff_analysis": False,
+            "metadata_fetch": True,
+            "artifact_fetch": True,
+            "diff_analysis": True,
             "behavioral_rules": True,
-            "monitor": False,
+            "monitor": True,
         },
-        "limitations": ["Manifest/source rules are fixture/local-artifact based in this release."],
+        "limitations": ["Package-scoped monitoring uses crates.io version timestamps; no code is executed."],
     },
     "chrome-web-store": {
         "display_name": "Chrome Web Store",
@@ -130,103 +131,103 @@ SUPPORTED_ECOSYSTEMS: Dict[str, Dict[str, Any]] = {
         "features": {
             "advisory_match": True,
             "metadata_fetch": False,
-            "artifact_fetch": False,
-            "diff_analysis": False,
+            "artifact_fetch": True,
+            "diff_analysis": True,
             "behavioral_rules": True,
             "monitor": False,
         },
-        "limitations": ["No live CRX download is performed; analyze exported extension files or advisory data."],
+        "limitations": ["Live Chrome Web Store CRX fetch is not reliable without browser/session context; use --artifact/--previous-artifact with exported CRX or ZIP files."],
     },
     "packagist": {
         "display_name": "Packagist",
         "identifier": "vendor/package/version",
         "features": {
             "advisory_match": True,
-            "metadata_fetch": False,
-            "artifact_fetch": False,
-            "diff_analysis": False,
+            "metadata_fetch": True,
+            "artifact_fetch": True,
+            "diff_analysis": True,
             "behavioral_rules": True,
-            "monitor": False,
+            "monitor": True,
         },
-        "limitations": ["Composer manifest and PHP source rules are deterministic local-artifact checks."],
+        "limitations": ["Packagist dist archives are unpacked only for static analysis; Composer scripts are never run."],
     },
     "go": {
         "display_name": "Go Modules",
         "identifier": "module path/version",
         "features": {
             "advisory_match": True,
-            "metadata_fetch": False,
-            "artifact_fetch": False,
-            "diff_analysis": False,
+            "metadata_fetch": True,
+            "artifact_fetch": True,
+            "diff_analysis": True,
             "behavioral_rules": True,
-            "monitor": False,
+            "monitor": True,
         },
-        "limitations": ["Go source checks are local/fixture based; no module proxy fetch in this release."],
+        "limitations": ["Go module proxy ZIPs are statically unpacked; init/build code is never executed."],
     },
     "huggingface": {
         "display_name": "Hugging Face Hub",
         "identifier": "repo id/revision",
         "features": {
             "advisory_match": True,
-            "metadata_fetch": False,
-            "artifact_fetch": False,
-            "diff_analysis": False,
+            "metadata_fetch": True,
+            "artifact_fetch": True,
+            "diff_analysis": True,
             "behavioral_rules": True,
-            "monitor": False,
+            "monitor": True,
         },
-        "limitations": ["Model code is never executed; checks flag unsafe loading metadata and risky files."],
+        "limitations": ["Model weights are not downloaded; SecOpsAI compares metadata, file listings, and small allowlisted text/source files only."],
     },
     "maven": {
         "display_name": "Maven Central",
         "identifier": "groupId:artifactId/version",
         "features": {
             "advisory_match": True,
-            "metadata_fetch": False,
-            "artifact_fetch": False,
-            "diff_analysis": False,
+            "metadata_fetch": True,
+            "artifact_fetch": True,
+            "diff_analysis": True,
             "behavioral_rules": True,
-            "monitor": False,
+            "monitor": True,
         },
-        "limitations": ["POM/source/class-text rules are local-artifact based in this release."],
+        "limitations": ["Maven scans prefer source JARs/POMs; binary class files are not decompiled or executed."],
     },
     "nuget": {
         "display_name": "NuGet",
         "identifier": "package id/version",
         "features": {
             "advisory_match": True,
-            "metadata_fetch": False,
-            "artifact_fetch": False,
-            "diff_analysis": False,
+            "metadata_fetch": True,
+            "artifact_fetch": True,
+            "diff_analysis": True,
             "behavioral_rules": True,
-            "monitor": False,
+            "monitor": True,
         },
-        "limitations": ["Nuspec/scripts/build target rules are deterministic local-artifact checks."],
+        "limitations": ["NuGet version timestamps are limited in the flat-container API; monitoring falls back to latest-version deltas."],
     },
     "open-vsx": {
         "display_name": "Open VSX",
         "identifier": "namespace.extension/version",
         "features": {
             "advisory_match": True,
-            "metadata_fetch": False,
-            "artifact_fetch": False,
-            "diff_analysis": False,
+            "metadata_fetch": True,
+            "artifact_fetch": True,
+            "diff_analysis": True,
             "behavioral_rules": True,
-            "monitor": False,
+            "monitor": True,
         },
-        "limitations": ["VSIX/package.json rules are local-artifact based in this release."],
+        "limitations": ["Open VSX VSIX packages are unpacked only for static analysis; extensions are never activated."],
     },
     "rubygems": {
         "display_name": "RubyGems.org",
         "identifier": "gem/version",
         "features": {
             "advisory_match": True,
-            "metadata_fetch": False,
-            "artifact_fetch": False,
-            "diff_analysis": False,
+            "metadata_fetch": True,
+            "artifact_fetch": True,
+            "diff_analysis": True,
             "behavioral_rules": True,
-            "monitor": False,
+            "monitor": True,
         },
-        "limitations": ["Gemspec/Rake/extconf Ruby source rules are local-artifact based in this release."],
+        "limitations": ["RubyGems .gem payloads are unpacked for static checks; native extension hooks are never run."],
     },
 }
 
@@ -321,6 +322,13 @@ BENIGN_ARTIFACT_PATH_SUFFIXES = (
     ".cfg",
 )
 
+DEFAULT_MAX_DOWNLOAD_MB = 50
+DEFAULT_MAX_FILES = 5000
+DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024
+ARCHIVE_MEMBER_LIMIT = 10000
+HF_ALLOWED_FILE_NAMES = {"README.md", "config.json", "model_index.json", "tokenizer_config.json"}
+HF_ALLOWED_SUFFIXES = (".py", ".md", ".json", ".yaml", ".yml", ".txt")
+
 
 @dataclass
 class ScanResult:
@@ -335,6 +343,7 @@ class ScanResult:
     finding_id: Optional[str]
     error: Optional[str] = None
     advisory_matches: Optional[List[Dict[str, Any]]] = None
+    metadata: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         payload = {
@@ -352,6 +361,8 @@ class ScanResult:
         }
         if self.advisory_matches:
             payload["advisory_matches"] = self.advisory_matches
+        if self.metadata:
+            payload["metadata"] = self.metadata
         return payload
 
 
@@ -368,6 +379,12 @@ def _http_json(url: str, timeout: int = 30) -> Any:
     req = urllib.request.Request(url, headers={"User-Agent": "secopsai-supply-chain/0.1"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
+
+
+def _http_text(url: str, timeout: int = 30) -> str:
+    req = urllib.request.Request(url, headers={"User-Agent": "secopsai-supply-chain/0.1"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", errors="replace")
 
 
 def _load_state() -> Dict[str, Any]:
@@ -1183,6 +1200,9 @@ def _build_finding(result: ScanResult) -> Dict[str, Any]:
         "report_path": result.report_path,
         "confidence": "high" if advisory_matches else None,
         "advisory_matches": advisory_matches,
+        "artifact_urls": (result.metadata or {}).get("artifact_urls", []),
+        "matched_rules": (result.metadata or {}).get("matched_rules", []),
+        "supply_chain_metadata": result.metadata or {},
         "advisory_ids": sorted(
             {
                 str(match.get("advisory_id"))
@@ -1258,9 +1278,23 @@ def _pick_best_wheel(wheels: list[dict]) -> dict:
     return wheels[0]
 
 
-def _download_file(url: str, dest: Path) -> Path:
+def _download_file(url: str, dest: Path, *, max_bytes: int = DEFAULT_MAX_DOWNLOAD_MB * 1024 * 1024, timeout: int = 30) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    urllib.request.urlretrieve(url, dest)
+    req = urllib.request.Request(url, headers={"User-Agent": "secopsai-supply-chain/0.1"})
+    written = 0
+    with urllib.request.urlopen(req, timeout=timeout) as resp, dest.open("wb") as fh:
+        while True:
+            chunk = resp.read(1024 * 256)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > max_bytes:
+                try:
+                    dest.unlink()
+                except OSError:
+                    pass
+                raise RuntimeError(f"download exceeds limit ({max_bytes} bytes): {url}")
+            fh.write(chunk)
     return dest
 
 
@@ -1291,35 +1325,128 @@ def _download_npm_package(package: str, version: str, dest: Path) -> Path:
     return _download_file(tarball_url, dest / filename)
 
 
-def _safe_tar_members(tf: tarfile.TarFile, dest: Path):
+def _safe_relative_path(dest: Path, member_name: str) -> Path:
+    if member_name.startswith(("/", "\\")) or re.match(r"^[a-zA-Z]:[\\/]", member_name):
+        raise RuntimeError(f"Archive absolute path blocked: {member_name}")
     root = dest.resolve()
-    for member in tf.getmembers():
-        resolved = (dest / member.name).resolve()
-        if not str(resolved).startswith(str(root)):
+    resolved = (dest / member_name).resolve()
+    if resolved != root and root not in resolved.parents:
+        raise RuntimeError(f"Archive path traversal blocked: {member_name}")
+    return resolved
+
+
+def _safe_tar_members(tf: tarfile.TarFile, dest: Path, *, max_files: int = DEFAULT_MAX_FILES, max_file_bytes: int = DEFAULT_MAX_FILE_BYTES):
+    root = dest.resolve()
+    members = tf.getmembers()
+    if len(members) > min(max_files, ARCHIVE_MEMBER_LIMIT):
+        raise RuntimeError(f"Archive contains too many members: {len(members)}")
+    for member in members:
+        resolved = _safe_relative_path(dest, member.name)
+        if resolved != root and root not in resolved.parents:
             raise RuntimeError(f"Tar path traversal blocked: {member.name}")
+        if member.issym() or member.islnk():
+            raise RuntimeError(f"Archive link blocked: {member.name}")
+        if member.isfile() and member.size > max_file_bytes:
+            raise RuntimeError(f"Archive member exceeds per-file limit: {member.name}")
         yield member
 
 
-def _extract_archive(archive: Path, dest: Path) -> Path:
+def _extract_zip_safe(archive: Path, dest: Path, *, max_files: int = DEFAULT_MAX_FILES, max_file_bytes: int = DEFAULT_MAX_FILE_BYTES) -> None:
+    with zipfile.ZipFile(archive, "r") as zf:
+        infos = zf.infolist()
+        if len(infos) > min(max_files, ARCHIVE_MEMBER_LIMIT):
+            raise RuntimeError(f"Archive contains too many members: {len(infos)}")
+        for info in infos:
+            if info.is_dir():
+                _safe_relative_path(dest, info.filename).mkdir(parents=True, exist_ok=True)
+                continue
+            if info.file_size > max_file_bytes:
+                raise RuntimeError(f"Archive member exceeds per-file limit: {info.filename}")
+            mode = (info.external_attr >> 16) & 0o170000
+            if mode == 0o120000:
+                raise RuntimeError(f"Archive symlink blocked: {info.filename}")
+            target = _safe_relative_path(dest, info.filename)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info, "r") as src, target.open("wb") as out:
+                shutil.copyfileobj(src, out, length=1024 * 256)
+
+
+def _extract_crx_safe(archive: Path, dest: Path, *, max_files: int = DEFAULT_MAX_FILES, max_file_bytes: int = DEFAULT_MAX_FILE_BYTES) -> None:
+    data = archive.read_bytes()
+    if data[:4] == b"PK\x03\x04":
+        _extract_zip_safe(archive, dest, max_files=max_files, max_file_bytes=max_file_bytes)
+        return
+    if data[:4] != b"Cr24" or len(data) < 12:
+        raise RuntimeError(f"Unsupported CRX format: {archive.name}")
+    version = int.from_bytes(data[4:8], "little")
+    if version == 2 and len(data) >= 16:
+        public_key_len = int.from_bytes(data[8:12], "little")
+        signature_len = int.from_bytes(data[12:16], "little")
+        zip_offset = 16 + public_key_len + signature_len
+    elif version == 3:
+        header_size = int.from_bytes(data[8:12], "little")
+        zip_offset = 12 + header_size
+    else:
+        raise RuntimeError(f"Unsupported CRX version: {version}")
+    payload = data[zip_offset:]
+    if payload[:4] != b"PK\x03\x04":
+        raise RuntimeError("CRX payload is not a ZIP archive")
+    tmp_zip = archive.with_suffix(".payload.zip")
+    tmp_zip.write_bytes(payload)
+    try:
+        _extract_zip_safe(tmp_zip, dest, max_files=max_files, max_file_bytes=max_file_bytes)
+    finally:
+        tmp_zip.unlink(missing_ok=True)
+
+
+def _extract_gem_safe(archive: Path, dest: Path, *, max_files: int = DEFAULT_MAX_FILES, max_file_bytes: int = DEFAULT_MAX_FILE_BYTES) -> None:
+    with tarfile.open(archive, "r:*") as tf:
+        member = next((item for item in tf.getmembers() if item.name == "data.tar.gz"), None)
+        if member is None:
+            raise RuntimeError(f"RubyGems archive missing data.tar.gz: {archive.name}")
+        if member.size > DEFAULT_MAX_DOWNLOAD_MB * 1024 * 1024:
+            raise RuntimeError("RubyGems data.tar.gz exceeds download limit")
+        extracted = tf.extractfile(member)
+        if extracted is None:
+            raise RuntimeError("Unable to read RubyGems data.tar.gz")
+        nested = archive.with_suffix(".data.tar.gz")
+        nested.write_bytes(extracted.read())
+    try:
+        _extract_archive(nested, dest, max_files=max_files, max_file_bytes=max_file_bytes)
+    finally:
+        nested.unlink(missing_ok=True)
+
+
+def _extract_archive(archive: Path, dest: Path, *, max_files: int = DEFAULT_MAX_FILES, max_file_bytes: int = DEFAULT_MAX_FILE_BYTES) -> Path:
     dest.mkdir(parents=True, exist_ok=True)
     name = archive.name.lower()
-    if name.endswith((".tar.gz", ".tgz")):
+    if name.endswith((".tar.gz", ".tgz", ".crate")):
         with tarfile.open(archive, "r:gz") as tf:
-            tf.extractall(dest, members=list(_safe_tar_members(tf, dest)))
+            tf.extractall(dest, members=list(_safe_tar_members(tf, dest, max_files=max_files, max_file_bytes=max_file_bytes)))
     elif name.endswith(".tar.bz2"):
         with tarfile.open(archive, "r:bz2") as tf:
-            tf.extractall(dest, members=list(_safe_tar_members(tf, dest)))
-    elif name.endswith((".zip", ".whl")):
-        with zipfile.ZipFile(archive, "r") as zf:
-            zf.extractall(dest)
+            tf.extractall(dest, members=list(_safe_tar_members(tf, dest, max_files=max_files, max_file_bytes=max_file_bytes)))
+    elif name.endswith((".zip", ".whl", ".nupkg", ".vsix", ".jar")):
+        _extract_zip_safe(archive, dest, max_files=max_files, max_file_bytes=max_file_bytes)
+    elif name.endswith(".crx"):
+        _extract_crx_safe(archive, dest, max_files=max_files, max_file_bytes=max_file_bytes)
+    elif name.endswith(".gem"):
+        _extract_gem_safe(archive, dest, max_files=max_files, max_file_bytes=max_file_bytes)
     else:
         raise RuntimeError(f"Unsupported archive format: {archive.name}")
     children = [p for p in dest.iterdir() if not p.name.startswith(".")]
     return children[0] if len(children) == 1 and children[0].is_dir() else dest
 
 
-def _collect_files(root: Path) -> Dict[str, Path]:
-    return {str(path.relative_to(root)): path for path in sorted(root.rglob("*")) if path.is_file()}
+def _collect_files(root: Path, *, max_files: int = DEFAULT_MAX_FILES) -> Dict[str, Path]:
+    files: Dict[str, Path] = {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        if len(files) >= max_files:
+            raise RuntimeError(f"Artifact contains more than {max_files} files")
+        files[str(path.relative_to(root))] = path
+    return files
 
 
 def _file_hash(path: Path) -> str:
@@ -2086,14 +2213,330 @@ def _summarize_artifact_mismatch(artifact_reports: Dict[str, Dict[str, Any]]) ->
     return lines
 
 
-def _diff_package(ecosystem: str, package: str, old_version: str, new_version: str) -> tuple[str | None, Path | None]:
+def _registry_package_path(ecosystem: str, package: str) -> str:
+    if ecosystem == "go":
+        return urllib.parse.quote(package, safe="/")
+    if ecosystem == "maven":
+        group, artifact = package.split(":", 1)
+        return f"{group.replace('.', '/')}/{artifact}"
+    return urllib.parse.quote(package, safe="/")
+
+
+def _version_rows_from_metadata(ecosystem: str, package: str, metadata: Any) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    if ecosystem == "crates":
+        for item in metadata.get("versions", []) or []:
+            version = str(item.get("num") or "")
+            if not version:
+                continue
+            rows.append({
+                "version": version,
+                "published_at": item.get("created_at"),
+                "artifact_url": f"https://crates.io/api/v1/crates/{urllib.parse.quote(package)}/{urllib.parse.quote(version)}/download",
+                "artifact_name": f"{package}-{version}.crate",
+            })
+    elif ecosystem == "packagist":
+        packages = metadata.get("packages", {}) or {}
+        versions = packages.get(package) or packages.get(package.lower()) or []
+        for item in versions:
+            version = str(item.get("version") or item.get("version_normalized") or "")
+            dist = item.get("dist") or {}
+            url = dist.get("url")
+            if version and url:
+                rows.append({
+                    "version": version,
+                    "published_at": item.get("time"),
+                    "artifact_url": url,
+                    "artifact_name": Path(urllib.parse.urlparse(url).path).name or f"{package.replace('/', '-')}-{version}.zip",
+                })
+    elif ecosystem == "go":
+        for item in metadata.get("versions", []) or []:
+            version = str(item.get("version") or "")
+            if not version:
+                continue
+            encoded = _registry_package_path("go", package)
+            rows.append({
+                "version": version,
+                "published_at": item.get("published_at"),
+                "artifact_url": f"https://proxy.golang.org/{encoded}/@v/{urllib.parse.quote(version)}.zip",
+                "artifact_name": f"{package.replace('/', '_')}@{version}.zip",
+            })
+    elif ecosystem == "huggingface":
+        revisions = metadata.get("revisions") or metadata.get("tags") or []
+        if not revisions:
+            revisions = [{"version": str(metadata.get("sha") or metadata.get("revision") or "main"), "published_at": metadata.get("lastModified")}]
+        for item in revisions:
+            version = str(item.get("version") or item.get("name") or item.get("ref") or item.get("sha") or "main")
+            rows.append({
+                "version": version,
+                "published_at": item.get("published_at") or item.get("lastModified") or metadata.get("lastModified"),
+                "artifact_url": f"hf://{package}@{version}",
+                "artifact_name": f"{package.replace('/', '_')}@{version}.metadata",
+            })
+    elif ecosystem == "maven":
+        for item in metadata.get("versions", []) or []:
+            version = str(item.get("version") or "")
+            if not version:
+                continue
+            group_path = _registry_package_path("maven", package)
+            _group, artifact = package.split(":", 1)
+            base = f"https://repo1.maven.org/maven2/{group_path}/{urllib.parse.quote(version)}"
+            rows.append({
+                "version": version,
+                "published_at": item.get("published_at"),
+                "artifact_url": f"{base}/{artifact}-{version}-sources.jar",
+                "fallback_artifact_url": f"{base}/{artifact}-{version}.jar",
+                "artifact_name": f"{artifact}-{version}-sources.jar",
+            })
+    elif ecosystem == "nuget":
+        lower = package.lower()
+        for version in metadata.get("versions", []) or []:
+            ver = str(version)
+            rows.append({
+                "version": ver,
+                "published_at": None,
+                "artifact_url": f"https://api.nuget.org/v3-flatcontainer/{lower}/{ver.lower()}/{lower}.{ver.lower()}.nupkg",
+                "artifact_name": f"{lower}.{ver.lower()}.nupkg",
+            })
+    elif ecosystem == "open-vsx":
+        namespace, extension = package.split(".", 1)
+        versions = metadata.get("versions") or []
+        if isinstance(versions, dict):
+            versions = [dict(value, version=key) if isinstance(value, dict) else {"version": key} for key, value in versions.items()]
+        for item in versions:
+            version = str(item.get("version") or item.get("name") or "")
+            files = item.get("files") or {}
+            url = files.get("download") or item.get("downloadUrl") or item.get("download")
+            if not url and version:
+                url = f"https://open-vsx.org/api/{urllib.parse.quote(namespace)}/{urllib.parse.quote(extension)}/{urllib.parse.quote(version)}/file/{urllib.parse.quote(namespace)}.{urllib.parse.quote(extension)}-{urllib.parse.quote(version)}.vsix"
+            if version and url:
+                rows.append({
+                    "version": version,
+                    "published_at": item.get("timestamp") or item.get("publishedTimestamp"),
+                    "artifact_url": url,
+                    "artifact_name": Path(urllib.parse.urlparse(url).path).name or f"{namespace}.{extension}-{version}.vsix",
+                })
+    elif ecosystem == "rubygems":
+        for item in metadata if isinstance(metadata, list) else []:
+            version = str(item.get("number") or item.get("version") or "")
+            if version:
+                rows.append({
+                    "version": version,
+                    "published_at": item.get("built_at") or item.get("created_at"),
+                    "artifact_url": f"https://rubygems.org/downloads/{urllib.parse.quote(package)}-{urllib.parse.quote(version)}.gem",
+                    "artifact_name": f"{package}-{version}.gem",
+                })
+    return rows
+
+
+def _fetch_ecosystem_metadata(ecosystem: str, package: str, *, timeout: int = 30) -> Any:
+    if ecosystem == "crates":
+        return _http_json(f"https://crates.io/api/v1/crates/{urllib.parse.quote(package)}", timeout=timeout)
+    if ecosystem == "packagist":
+        return _http_json(f"https://repo.packagist.org/p2/{urllib.parse.quote(package, safe='/')}.json", timeout=timeout)
+    if ecosystem == "go":
+        encoded = _registry_package_path("go", package)
+        versions = []
+        for version in _http_text(f"https://proxy.golang.org/{encoded}/@v/list", timeout=timeout).splitlines():
+            version = version.strip()
+            if not version:
+                continue
+            published_at = None
+            try:
+                published_at = _http_json(f"https://proxy.golang.org/{encoded}/@v/{urllib.parse.quote(version)}.info", timeout=timeout).get("Time")
+            except Exception:
+                pass
+            versions.append({"version": version, "published_at": published_at})
+        return {"versions": versions}
+    if ecosystem == "huggingface":
+        errors: List[str] = []
+        for repo_type, prefix in (("model", "models"), ("dataset", "datasets"), ("space", "spaces")):
+            try:
+                data = _http_json(f"https://huggingface.co/api/{prefix}/{urllib.parse.quote(package, safe='/')}", timeout=timeout)
+                data["repo_type"] = repo_type
+                return data
+            except Exception as exc:
+                errors.append(f"{repo_type}: {exc}")
+        raise RuntimeError("; ".join(errors))
+    if ecosystem == "maven":
+        metadata_url = f"https://repo1.maven.org/maven2/{_registry_package_path('maven', package)}/maven-metadata.xml"
+        raw = _http_text(metadata_url, timeout=timeout)
+        root = ET.fromstring(raw)
+        versions = [{"version": item.text or "", "published_at": None} for item in root.findall(".//versions/version")]
+        return {"metadata_url": metadata_url, "versions": versions, "lastUpdated": (root.findtext(".//lastUpdated") or "")}
+    if ecosystem == "nuget":
+        return _http_json(f"https://api.nuget.org/v3-flatcontainer/{urllib.parse.quote(package.lower())}/index.json", timeout=timeout)
+    if ecosystem == "open-vsx":
+        namespace, extension = package.split(".", 1)
+        return _http_json(f"https://open-vsx.org/api/{urllib.parse.quote(namespace)}/{urllib.parse.quote(extension)}", timeout=timeout)
+    if ecosystem == "rubygems":
+        return _http_json(f"https://rubygems.org/api/v1/versions/{urllib.parse.quote(package)}.json", timeout=timeout)
+    raise RuntimeError(f"Live metadata fetch is not supported for {ecosystem}")
+
+
+def _ecosystem_version_rows(ecosystem: str, package: str, metadata: Optional[Any] = None, *, timeout: int = 30) -> List[Dict[str, Any]]:
+    metadata = metadata if metadata is not None else _fetch_ecosystem_metadata(ecosystem, package, timeout=timeout)
+    rows = _version_rows_from_metadata(ecosystem, package, metadata)
+    rows.sort(key=lambda item: (_safe_timestamp_sort(item.get("published_at")), _version_key(str(item.get("version", "")))))
+    return rows
+
+
+def _get_ecosystem_previous_version(ecosystem: str, package: str, new_version: str, metadata: Optional[Any] = None, *, timeout: int = 30) -> Optional[str]:
+    rows = _ecosystem_version_rows(ecosystem, package, metadata, timeout=timeout)
+    versions = [row["version"] for row in rows]
+    if new_version not in versions:
+        versions.append(new_version)
+        versions.sort(key=_version_key)
+    try:
+        index = versions.index(new_version)
+    except ValueError:
+        return None
+    return versions[index - 1] if index > 0 else None
+
+
+def _version_row(ecosystem: str, package: str, version: str, metadata: Optional[Any] = None, *, timeout: int = 30) -> Dict[str, Any]:
+    for row in _ecosystem_version_rows(ecosystem, package, metadata, timeout=timeout):
+        if row.get("version") == version:
+            return row
+    rows = _version_rows_from_metadata(ecosystem, package, metadata if metadata is not None else {})
+    if rows:
+        raise RuntimeError(f"No artifact metadata for {ecosystem}:{package}@{version}")
+    raise RuntimeError(f"No versions found for {ecosystem}:{package}")
+
+
+def _download_ecosystem_artifact(
+    ecosystem: str,
+    package: str,
+    version: str,
+    dest: Path,
+    *,
+    metadata: Optional[Any] = None,
+    max_download_mb: int = DEFAULT_MAX_DOWNLOAD_MB,
+    timeout: int = 30,
+) -> tuple[Path, Dict[str, Any]]:
+    if ecosystem == "huggingface":
+        return _materialize_huggingface_snapshot(package, version, dest, metadata=metadata, max_download_mb=max_download_mb, timeout=timeout)
+    row = _version_row(ecosystem, package, version, metadata, timeout=timeout)
+    url = row.get("artifact_url")
+    name = row.get("artifact_name") or Path(urllib.parse.urlparse(str(url)).path).name or f"{package.replace('/', '_')}-{version}.artifact"
+    try:
+        archive = _download_file(str(url), dest / name, max_bytes=max_download_mb * 1024 * 1024, timeout=timeout)
+    except Exception:
+        fallback = row.get("fallback_artifact_url")
+        if not fallback:
+            raise
+        archive = _download_file(str(fallback), dest / Path(urllib.parse.urlparse(str(fallback)).path).name, max_bytes=max_download_mb * 1024 * 1024, timeout=timeout)
+        row = dict(row, artifact_url=fallback, artifact_name=archive.name)
+    return archive, row
+
+
+def _materialize_huggingface_snapshot(
+    package: str,
+    version: str,
+    dest: Path,
+    *,
+    metadata: Optional[Any] = None,
+    max_download_mb: int = DEFAULT_MAX_DOWNLOAD_MB,
+    timeout: int = 30,
+) -> tuple[Path, Dict[str, Any]]:
+    data = metadata if metadata is not None else _fetch_ecosystem_metadata("huggingface", package, timeout=timeout)
+    root = dest / f"{package.replace('/', '_')}@{version}"
+    root.mkdir(parents=True, exist_ok=True)
+    siblings = data.get("siblings") or []
+    listing = {
+        "repo": package,
+        "revision": version,
+        "repo_type": data.get("repo_type", "model"),
+        "last_modified": data.get("lastModified"),
+        "files": [item.get("rfilename") for item in siblings if item.get("rfilename")],
+    }
+    (root / "huggingface-file-list.json").write_text(json.dumps(listing, indent=2, sort_keys=True), encoding="utf-8")
+    for item in siblings:
+        filename = str(item.get("rfilename") or "")
+        if not filename or filename.startswith(("/", "\\")) or ".." in Path(filename).parts:
+            continue
+        if Path(filename).name not in HF_ALLOWED_FILE_NAMES and not filename.endswith(HF_ALLOWED_SUFFIXES):
+            continue
+        target = root / filename
+        try:
+            url = f"https://huggingface.co/{urllib.parse.quote(package, safe='/')}/resolve/{urllib.parse.quote(version, safe='')}/{urllib.parse.quote(filename, safe='/')}"
+            _download_file(url, target, max_bytes=min(max_download_mb * 1024 * 1024, DEFAULT_MAX_FILE_BYTES), timeout=timeout)
+        except Exception:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(f"# fetch unavailable for {filename}\n", encoding="utf-8")
+    return root, {"artifact_url": f"hf://{package}@{version}", "artifact_name": root.name, "metadata_only": True}
+
+
+def _diff_local_artifacts(
+    ecosystem: str,
+    package: str,
+    old_version: str,
+    new_version: str,
+    old_artifact: Optional[Path],
+    new_artifact: Path,
+    *,
+    max_files: int = DEFAULT_MAX_FILES,
+) -> tuple[str, Path]:
+    tmp = Path(tempfile.mkdtemp(prefix=f"scm_local_{ecosystem}_{package.replace('/', '_').replace('@', '')}_"))
+    try:
+        old_root = tmp / "empty_old"
+        old_root.mkdir(parents=True, exist_ok=True)
+        if old_artifact:
+            old_root = _extract_archive(old_artifact, tmp / "ext_old", max_files=max_files)
+        new_root = _extract_archive(new_artifact, tmp / "ext_new", max_files=max_files)
+        report = _build_artifact_report(
+            package,
+            f"{ecosystem}-local-artifact",
+            old_artifact.name if old_artifact else old_version,
+            new_artifact.name,
+            _collect_files(old_root, max_files=max_files),
+            _collect_files(new_root, max_files=max_files),
+        )
+        return report, tmp
+    except Exception:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+
+
+def _safe_timestamp_sort(stamp: Any) -> float:
+    if not stamp:
+        return 0.0
+    try:
+        return _parse_registry_timestamp(str(stamp))
+    except Exception:
+        return 0.0
+
+
+def _diff_package(
+    ecosystem: str,
+    package: str,
+    old_version: str,
+    new_version: str,
+    *,
+    max_download_mb: int = DEFAULT_MAX_DOWNLOAD_MB,
+    max_files: int = DEFAULT_MAX_FILES,
+    timeout: int = 30,
+) -> tuple[str | None, Path | None, Dict[str, Any]]:
     tmp = Path(tempfile.mkdtemp(prefix=f"scm_{ecosystem}_{package.replace('/', '_').replace('@', '')}_"))
+    diff_meta: Dict[str, Any] = {
+        "ecosystem": ecosystem,
+        "artifact_urls": [],
+        "artifact_names": [],
+        "fetch_status": "started",
+        "artifact_status": "started",
+        "limitations": ecosystem_capabilities(ecosystem).get("limitations", []),
+    }
     try:
         if ecosystem == "npm":
             archive_old = _download_npm_package(package, old_version, tmp / "dl_old")
             archive_new = _download_npm_package(package, new_version, tmp / "dl_new")
             root_old = _extract_archive(archive_old, tmp / "ext_old")
             root_new = _extract_archive(archive_new, tmp / "ext_new")
+            diff_meta.update({
+                "artifact_names": [archive_old.name, archive_new.name],
+                "artifact_status": "downloaded",
+                "files_scanned": len(_collect_files(root_old)) + len(_collect_files(root_new)),
+            })
             report = _build_artifact_report(
                 package,
                 "npm-tarball",
@@ -2102,33 +2545,78 @@ def _diff_package(ecosystem: str, package: str, old_version: str, new_version: s
                 _collect_files(root_old),
                 _collect_files(root_new),
             )
-            return report, tmp
+            return report, tmp, diff_meta
 
         reports: List[str] = []
         artifact_reports: Dict[str, Dict[str, Any]] = {}
-        for packagetype in ("bdist_wheel", "sdist"):
-            try:
-                archive_old = _download_pypi_package(package, old_version, tmp / f"dl_old_{packagetype}", packagetype)
-                archive_new = _download_pypi_package(package, new_version, tmp / f"dl_new_{packagetype}", packagetype)
-            except RuntimeError:
-                continue
-            root_old = _extract_archive(archive_old, tmp / f"ext_old_{packagetype}")
-            root_new = _extract_archive(archive_new, tmp / f"ext_new_{packagetype}")
-            label_old = archive_old.name.rsplit(".", 2)[0]
-            label_new = archive_new.name.rsplit(".", 2)[0]
-            files_old = _collect_files(root_old)
-            files_new = _collect_files(root_new)
-            artifact_reports[packagetype] = {"files_old": files_old, "files_new": files_new}
-            reports.append(_build_artifact_report(package, packagetype, label_old, label_new, files_old, files_new))
-        if not reports:
-            raise RuntimeError(f"No common artifact types for {package} {old_version} / {new_version}")
-        mismatch_summary = _summarize_artifact_mismatch(artifact_reports)
-        if mismatch_summary:
-            reports.extend(mismatch_summary)
-        return "\n\n---\n\n".join(reports), tmp
+        if ecosystem == "pypi":
+            for packagetype in ("bdist_wheel", "sdist"):
+                try:
+                    archive_old = _download_pypi_package(package, old_version, tmp / f"dl_old_{packagetype}", packagetype)
+                    archive_new = _download_pypi_package(package, new_version, tmp / f"dl_new_{packagetype}", packagetype)
+                except RuntimeError:
+                    continue
+                root_old = _extract_archive(archive_old, tmp / f"ext_old_{packagetype}", max_files=max_files)
+                root_new = _extract_archive(archive_new, tmp / f"ext_new_{packagetype}", max_files=max_files)
+                label_old = archive_old.name.rsplit(".", 2)[0]
+                label_new = archive_new.name.rsplit(".", 2)[0]
+                files_old = _collect_files(root_old, max_files=max_files)
+                files_new = _collect_files(root_new, max_files=max_files)
+                artifact_reports[packagetype] = {"files_old": files_old, "files_new": files_new}
+                diff_meta["artifact_names"].extend([archive_old.name, archive_new.name])
+                reports.append(_build_artifact_report(package, packagetype, label_old, label_new, files_old, files_new))
+            if not reports:
+                raise RuntimeError(f"No common artifact types for {package} {old_version} / {new_version}")
+            mismatch_summary = _summarize_artifact_mismatch(artifact_reports)
+            if mismatch_summary:
+                reports.extend(mismatch_summary)
+            diff_meta["artifact_status"] = "downloaded"
+            return "\n\n---\n\n".join(reports), tmp, diff_meta
+
+        metadata = _fetch_ecosystem_metadata(ecosystem, package, timeout=timeout)
+        archive_old, row_old = _download_ecosystem_artifact(
+            ecosystem,
+            package,
+            old_version,
+            tmp / "dl_old",
+            metadata=metadata,
+            max_download_mb=max_download_mb,
+            timeout=timeout,
+        )
+        archive_new, row_new = _download_ecosystem_artifact(
+            ecosystem,
+            package,
+            new_version,
+            tmp / "dl_new",
+            metadata=metadata,
+            max_download_mb=max_download_mb,
+            timeout=timeout,
+        )
+        if archive_old.is_dir():
+            root_old = archive_old
+        else:
+            root_old = _extract_archive(archive_old, tmp / "ext_old", max_files=max_files)
+        if archive_new.is_dir():
+            root_new = archive_new
+        else:
+            root_new = _extract_archive(archive_new, tmp / "ext_new", max_files=max_files)
+        files_old = _collect_files(root_old, max_files=max_files)
+        files_new = _collect_files(root_new, max_files=max_files)
+        diff_meta.update({
+            "registry_url": row_new.get("registry_url"),
+            "artifact_urls": [row_old.get("artifact_url"), row_new.get("artifact_url")],
+            "artifact_names": [archive_old.name, archive_new.name],
+            "fetch_status": "ok",
+            "artifact_status": "downloaded",
+            "files_scanned": len(files_old) + len(files_new),
+            "files_added": len(set(files_new) - set(files_old)),
+            "files_changed": sum(1 for path in set(files_old) & set(files_new) if _file_hash(files_old[path]) != _file_hash(files_new[path])),
+        })
+        report = _build_artifact_report(package, f"{ecosystem}-artifact", archive_old.name, archive_new.name, files_old, files_new)
+        return report, tmp, diff_meta
     except Exception:
         shutil.rmtree(tmp, ignore_errors=True)
-        return None, None
+        return None, None, diff_meta
 
 
 # ============================================================================
@@ -2900,6 +3388,12 @@ def _scan_release(
     rank: Optional[int] = None,
     model: Optional[str] = None,
     keep_report: bool = True,
+    artifact: Optional[Path] = None,
+    previous_artifact: Optional[Path] = None,
+    metadata_only: bool = False,
+    max_download_mb: int = DEFAULT_MAX_DOWNLOAD_MB,
+    max_files: int = DEFAULT_MAX_FILES,
+    timeout: int = 30,
 ) -> ScanResult:
     _ensure_dirs()
     ecosystem = canonical_ecosystem(ecosystem)
@@ -2907,8 +3401,62 @@ def _scan_release(
     policy = load_policy()
     advisory_matches = find_advisory_matches(ecosystem, package, new_version)
     capabilities = ecosystem_capabilities(ecosystem)
+    scan_meta: Dict[str, Any] = {
+        "capabilities": capabilities.get("features", {}),
+        "limitations": capabilities.get("limitations", []),
+        "metadata_only": bool(metadata_only or ecosystem == "huggingface"),
+    }
 
-    if not capabilities.get("features", {}).get("artifact_fetch", False):
+    if artifact:
+        old_label = old_version or (previous_artifact.name if previous_artifact else "empty-baseline")
+        try:
+            report, tmp_dir = _diff_local_artifacts(
+                ecosystem,
+                package,
+                old_label,
+                new_version,
+                previous_artifact,
+                artifact,
+                max_files=max_files,
+            )
+            scan_meta.update({
+                "artifact_status": "local-artifact",
+                "artifact_names": [previous_artifact.name if previous_artifact else None, artifact.name],
+                "files_scanned": len(report.splitlines()),
+            })
+        except Exception as exc:
+            if advisory_matches:
+                return ScanResult(
+                    ecosystem,
+                    package,
+                    old_label,
+                    new_version,
+                    "malicious",
+                    _advisory_analysis(advisory_matches, artifact_unavailable=True),
+                    None,
+                    rank,
+                    _finding_id(ecosystem, package, new_version),
+                    str(exc),
+                    advisory_matches,
+                    scan_meta,
+                )
+            return ScanResult(ecosystem, package, old_label, new_version, "error", repr(exc), None, rank, None, str(exc), None, scan_meta)
+        try:
+            report_path = None
+            if keep_report:
+                report_file = _report_filename(ecosystem, package, old_label, new_version)
+                report_file.write_text(report, encoding="utf-8")
+                report_path = str(report_file)
+            verdict, analysis = _analyze_report(report, model, ecosystem=ecosystem, package=package, policy=policy)
+            if advisory_matches:
+                verdict = "malicious"
+                analysis = _attach_advisory_analysis(analysis, advisory_matches)
+            finding_id = _finding_id(ecosystem, package, new_version) if verdict == "malicious" else None
+            return ScanResult(ecosystem, package, old_label, new_version, verdict, analysis, report_path, rank, finding_id, None, advisory_matches or None, scan_meta)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    if not capabilities.get("features", {}).get("metadata_fetch", False) or not capabilities.get("features", {}).get("artifact_fetch", False):
         if advisory_matches:
             return ScanResult(
                 ecosystem,
@@ -2922,6 +3470,7 @@ def _scan_release(
                 _finding_id(ecosystem, package, new_version),
                 "artifact fetch not implemented for this ecosystem; advisory matched",
                 advisory_matches,
+                scan_meta,
             )
         return ScanResult(
             ecosystem,
@@ -2929,11 +3478,13 @@ def _scan_release(
             None,
             new_version,
             "skipped",
-            f"{capabilities.get('display_name', ecosystem)} artifact fetch/diff is not implemented yet; advisory matching and local fixture rules are supported.",
+            f"{capabilities.get('display_name', ecosystem)} live registry fetch is not available from this command without --artifact; advisory matching and local artifact rules are supported.",
             None,
             rank,
             None,
-            "artifact fetch unsupported for ecosystem",
+            "live registry fetch unsupported for ecosystem; use --artifact when available",
+            None,
+            scan_meta,
         )
     
     # Emergency advisories intentionally override local allow/reputation shortcuts.
@@ -2959,7 +3510,11 @@ def _scan_release(
                 None, rank, None
             )
     
-    old_version = old_version or (_npm_get_previous_version(package, new_version) if ecosystem == "npm" else _get_previous_version(package, new_version))
+    old_version = old_version or (
+        _npm_get_previous_version(package, new_version)
+        if ecosystem == "npm"
+        else (_get_previous_version(package, new_version) if ecosystem == "pypi" else _get_ecosystem_previous_version(ecosystem, package, new_version, timeout=timeout))
+    )
     if not old_version:
         if advisory_matches:
             return ScanResult(
@@ -2974,10 +3529,25 @@ def _scan_release(
                 _finding_id(ecosystem, package, new_version),
                 "artifact unavailable; advisory matched",
                 advisory_matches,
+                scan_meta,
             )
         return ScanResult(ecosystem, package, None, new_version, "skipped", "", None, rank, None, "no previous version found")
     
-    report, tmp_dir = _diff_package(ecosystem, package, old_version, new_version)
+    diff_result = _diff_package(
+        ecosystem,
+        package,
+        old_version,
+        new_version,
+        max_download_mb=max_download_mb,
+        max_files=max_files,
+        timeout=timeout,
+    )
+    if len(diff_result) == 2:  # Backward-compatible for older tests/mocks.
+        report, tmp_dir = diff_result
+        diff_meta = {}
+    else:
+        report, tmp_dir, diff_meta = diff_result
+    scan_meta.update(diff_meta or {})
     try:
         if not report:
             if advisory_matches:
@@ -2993,6 +3563,7 @@ def _scan_release(
                     _finding_id(ecosystem, package, new_version),
                     "artifact unavailable; advisory matched",
                     advisory_matches,
+                    scan_meta,
                 )
             return ScanResult(ecosystem, package, old_version, new_version, "error", "", None, rank, None, "diff generation failed")
         report_path = None
@@ -3023,6 +3594,7 @@ def _scan_release(
             finding_id,
             None,
             advisory_matches or None,
+            scan_meta,
         )
     except Exception as exc:
         if advisory_matches:
@@ -3038,8 +3610,9 @@ def _scan_release(
                 _finding_id(ecosystem, package, new_version),
                 str(exc),
                 advisory_matches,
+                scan_meta,
             )
-        return ScanResult(ecosystem, package, old_version, new_version, "error", repr(exc), None, rank, None, str(exc))
+        return ScanResult(ecosystem, package, old_version, new_version, "error", repr(exc), None, rank, None, str(exc), None, scan_meta)
     finally:
         if tmp_dir:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -3255,17 +3828,48 @@ def watch_registry(
     metadata: Optional[Dict[str, Any]] = None,
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
-    if ecosystem != "npm":
-        raise ValueError("watch-registry currently supports npm package metadata")
+    ecosystem = canonical_ecosystem(ecosystem)
     if not package:
         raise ValueError("--package is required for package-scoped registry watching")
 
-    metadata = metadata if metadata is not None else (_npm_get_package_info(package) or {})
     seconds = _parse_duration_seconds(since)
     now_epoch = float(now if now is not None else time.time())
     cutoff = now_epoch - seconds
-    ordered = _ordered_npm_versions(metadata)
+    if ecosystem == "npm":
+        metadata = metadata if metadata is not None else (_npm_get_package_info(package) or {})
+        ordered = _ordered_npm_versions(metadata)
+    else:
+        capabilities = ecosystem_capabilities(ecosystem)
+        if not capabilities.get("features", {}).get("monitor", False):
+            return {
+                "ecosystem": ecosystem,
+                "package": package,
+                "since": since,
+                "dry_run": dry_run,
+                "persist": persist,
+                "supported": False,
+                "limitations": capabilities.get("limitations", []),
+                "recent_versions": [],
+                "scanned": [],
+                "total_scanned": 0,
+                "malicious": 0,
+                "errors": 0,
+                "db_path": None,
+            }
+        package = normalize_package_name(ecosystem, package)
+        metadata = metadata if metadata is not None else _fetch_ecosystem_metadata(ecosystem, package)
+        rows = _ecosystem_version_rows(ecosystem, package, metadata)
+        ordered = []
+        for row in rows:
+            stamp = row.get("published_at")
+            epoch = _safe_timestamp_sort(stamp)
+            if not epoch:
+                epoch = now_epoch
+                stamp = stamp or "version-delta-only"
+            ordered.append((row["version"], str(stamp), epoch))
     recent = [row for row in ordered if row[2] >= cutoff][:limit]
+    if ecosystem != "npm" and not recent and ordered:
+        recent = ordered[-limit:]
     previous_by_version: Dict[str, Optional[str]] = {}
     for index, (version, _stamp, _epoch) in enumerate(ordered):
         previous_by_version[version] = ordered[index - 1][0] if index > 0 else None
@@ -3380,8 +3984,27 @@ def run_scan(
     model: Optional[str] = None,
     keep_report: bool = True,
     slack: bool = False,
+    artifact: Optional[Path] = None,
+    previous_artifact: Optional[Path] = None,
+    metadata_only: bool = False,
+    max_download_mb: int = DEFAULT_MAX_DOWNLOAD_MB,
+    max_files: int = DEFAULT_MAX_FILES,
+    timeout: int = 30,
 ) -> Dict[str, Any]:
-    result = _scan_release(ecosystem, package, version, old_version=previous_version, model=model, keep_report=keep_report)
+    result = _scan_release(
+        ecosystem,
+        package,
+        version,
+        old_version=previous_version,
+        model=model,
+        keep_report=keep_report,
+        artifact=artifact,
+        previous_artifact=previous_artifact,
+        metadata_only=metadata_only,
+        max_download_mb=max_download_mb,
+        max_files=max_files,
+        timeout=timeout,
+    )
     _append_results([result])
     findings = [_build_finding(result)] if result.verdict == "malicious" and result.finding_id else []
     db_path = _upsert_findings(findings) if findings else None

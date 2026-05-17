@@ -84,11 +84,14 @@ secopsai supply-chain ecosystems
 secopsai supply-chain ecosystems --ecosystem maven
 ```
 
-npm and PyPI currently support live metadata/artifact fetch, deterministic diff
+npm and PyPI support full live metadata/artifact fetch, deterministic diff
 analysis, advisory matching, SOC finding creation, and registry monitoring.
-Other ecosystems are protected through advisory matching and deterministic
-local-artifact rules until live registry adapters are enabled. Unsupported live
-monitoring returns a clear limitation instead of failing obscurely.
+SecOpsAI also has live, no-execution adapters for crates.io, Packagist, Go
+Modules, Hugging Face Hub, Maven Central, NuGet, Open VSX, and RubyGems.org.
+Chrome Web Store scanning supports exported local CRX/ZIP artifacts because
+stable unauthenticated CRX download is not reliable from server-side registry
+metadata. Unsupported live monitoring returns a clear limitation instead of
+failing obscurely.
 
 Per-ecosystem operator examples:
 
@@ -105,7 +108,18 @@ secopsai supply-chain explain-verdict --ecosystem rubygems --package fixture_gem
 ```
 
 For non-npm/PyPI ecosystems, use these commands with advisory-backed versions
-or local fixture/report input. SecOpsAI does not execute package code.
+or live package identifiers. SecOpsAI fetches and unpacks artifacts into
+temporary directories, blocks archive path traversal/symlinks, enforces
+download/file-count limits, and never executes package, model, build, extension,
+or install code.
+
+Local artifact scanning is available when you have a CRX/ZIP/VSIX/JAR/NUPKG/GEM
+or other supported archive:
+
+```bash
+secopsai supply-chain scan --ecosystem chrome-web-store --package <extension-id> --version <version> --artifact exported-extension.zip
+secopsai supply-chain scan --ecosystem open-vsx --package namespace.extension --version 1.2.3 --artifact extension.vsix --previous-artifact previous.vsix
+```
 
 ## Changelog Workflow
 
@@ -124,24 +138,32 @@ Use:
 - `Docs` for operator/documentation-only changes.
 - `Internal` for test, refactor, or maintenance notes.
 
-## Real-Time npm Release Watch
+## Package-Scoped Registry Watch
 
-Use the package-scoped registry watcher when a high-risk npm package publishes
-new versions and you want fast deterministic analysis without executing package
+Use the package-scoped registry watcher when a high-risk package publishes new
+versions and you want fast deterministic analysis without executing package
 code.
 
 ```bash
 # Dry-run recent node-ipc publishes from npm registry metadata.
 secopsai supply-chain watch-registry --ecosystem npm --package node-ipc --since 10m --dry-run --json
 
+# Watch a package-scoped crates.io release feed.
+secopsai supply-chain watch-registry --ecosystem crates --package serde --since 2h --dry-run --json
+
+# Watch Packagist/Composer metadata.
+secopsai supply-chain watch-registry --ecosystem packagist --package vendor/package --since 1d --dry-run --json
+
 # Persist scan history and SOC findings only after you are ready to mutate local state.
 secopsai supply-chain watch-registry --ecosystem npm --package node-ipc --since 2h --persist
 ```
 
-The watcher reads npm registry publish timestamps, identifies versions inside
-the requested lookback window, compares each version with the previous publish,
-and runs the same deterministic package-diff rules used by `scan` and
-`explain-verdict`. It does not install or execute suspicious packages.
+The watcher reads package-scoped registry metadata, identifies versions inside
+the requested lookback window where timestamps are available, compares each
+version with the previous publish, and runs the same deterministic package-diff
+rules used by `scan` and `explain-verdict`. NuGet has limited publish timestamp
+data in the flat-container API, so SecOpsAI reports version-delta monitoring for
+that ecosystem. It does not install or execute suspicious packages.
 
 For node-ipc-style compromises, SecOpsAI looks for:
 

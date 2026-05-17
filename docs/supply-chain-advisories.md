@@ -36,24 +36,27 @@ secopsai supply-chain reconcile-history --include-advisories
 
 ## Supported Ecosystems
 
-Emergency advisory matching is ecosystem-generic. Live artifact diffing remains
-full-fidelity for npm and PyPI today; the other ecosystems have first-pass,
-deterministic local-artifact/manifest rules and source-backed advisory matching
-until safe registry fetch adapters are added.
+Emergency advisory matching is ecosystem-generic. Live artifact diffing is
+full-fidelity for npm and PyPI, and SecOpsAI now safely enables live
+metadata/artifact adapters for crates.io, Packagist, Go Modules, Hugging Face
+Hub, Maven Central, NuGet, Open VSX, and RubyGems.org where public registry APIs
+allow it. Chrome Web Store remains local-artifact/advisory focused because
+server-side CRX download is not reliably available without browser/session
+context.
 
 | Ecosystem | Identifier | Current support |
 | --- | --- | --- |
 | npm | `package` | Advisory, metadata fetch, artifact fetch, diff, behavior rules, monitor |
 | PyPI | `project` | Advisory, metadata fetch, artifact fetch, diff, behavior rules, monitor |
-| crates.io | `crate` | Advisory, Cargo/build.rs/proc-macro local rules |
-| Chrome Web Store | `extension-id` | Advisory, extension manifest/background-script local rules |
-| Packagist | `vendor/package` | Advisory, Composer/PHP local rules |
-| Go Modules | `module/path` | Advisory, go.mod and Go source local rules |
-| Hugging Face Hub | `owner/repo` | Advisory, unsafe loading/model metadata local rules; model code is never executed |
-| Maven Central | `groupId:artifactId` | Advisory, POM/source local rules |
-| NuGet | `Package.Id` | Advisory, nuspec/PowerShell/build-target local rules |
-| Open VSX | `namespace.extension` | Advisory, VS Code extension manifest/source local rules |
-| RubyGems.org | `gem` | Advisory, gemspec/extconf/Rake/Ruby source local rules |
+| crates.io | `crate` | Advisory, crates.io metadata, `.crate` fetch/diff, Cargo/build.rs/proc-macro rules, package watch |
+| Chrome Web Store | `extension-id` | Advisory, local CRX/ZIP artifact scan, extension manifest/background-script rules |
+| Packagist | `vendor/package` | Advisory, Packagist metadata, dist archive fetch/diff, Composer/PHP rules, package watch |
+| Go Modules | `module/path` | Advisory, Go proxy metadata, module ZIP fetch/diff, go.mod/source rules, package watch |
+| Hugging Face Hub | `owner/repo` | Advisory, metadata/file-list/small source fetch, unsafe loading rules, package watch; model code/weights are never executed |
+| Maven Central | `groupId:artifactId` | Advisory, Maven metadata, source JAR/POM fetch/diff, Java/POM rules, package watch |
+| NuGet | `Package.Id` | Advisory, NuGet flat-container metadata, NUPKG fetch/diff, nuspec/PowerShell/build-target rules, version-delta watch |
+| Open VSX | `namespace.extension` | Advisory, Open VSX metadata, VSIX fetch/diff, VS Code extension manifest/source rules, package watch |
+| RubyGems.org | `gem` | Advisory, RubyGems metadata, GEM fetch/diff, gemspec/Rake/extconf Ruby rules, package watch |
 
 Examples:
 

@@ -18,6 +18,9 @@ the next tagged release.
   lifecycle scripts, Go `init()` behavior, Hugging Face unsafe loading
   metadata, Maven build/plugin execution, NuGet install/build scripts, Open VSX
   activation behavior, and RubyGems install/source hooks.
+- Added safe live registry metadata/artifact adapters for crates.io, Packagist,
+  Go Modules, Hugging Face Hub, Maven Central, NuGet, Open VSX, and RubyGems,
+  plus local CRX/ZIP artifact scanning for Chrome Web Store extensions.
 - Added a changelog entry helper at `scripts/changelog_entry.py`.
 
 ### Security
@@ -26,8 +29,12 @@ the next tagged release.
   yanked compromised artifacts.
 - Preserved node-ipc, Mini Shai-Hulud, LiteLLM, mistralai, and guardrails-ai
   advisory-backed supply-chain behavior while expanding ecosystem coverage.
-- Kept non-npm/PyPI live artifact fetching disabled until safe deterministic
-  registry adapters are implemented.
+- Kept Chrome Web Store live CRX fetching disabled unless an operator supplies a
+  local exported CRX/ZIP artifact, because stable unauthenticated CRX download
+  is not reliable from registry metadata.
+- Hardened supply-chain artifact handling with bounded downloads, safe archive
+  extraction, traversal/symlink blocking, and no-execution analysis across the
+  new live adapters.
 
 ### Docs
 
