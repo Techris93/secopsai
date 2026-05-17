@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from scripts.verify_docs_examples import (
     extract_doc_tool_names,
@@ -49,6 +50,13 @@ secopsai research preflight
             extract_plugin_tool_names(typescript_source),
             ["secopsai_list_findings", "secopsai_research_finding"],
         )
+
+    def test_changelog_has_unreleased_workflow_sections(self) -> None:
+        changelog = Path(__file__).resolve().parents[1] / "CHANGELOG.md"
+        text = changelog.read_text(encoding="utf-8")
+        self.assertIn("## Unreleased", text)
+        self.assertIn("### Added", text)
+        self.assertIn("### Security", text)
 
 
 if __name__ == "__main__":

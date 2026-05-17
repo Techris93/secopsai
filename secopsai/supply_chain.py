@@ -2,7 +2,10 @@
 SecOpsAI Supply Chain Module - Enhanced with False Positive Reduction
 
 This module provides supply chain security scanning for PyPI and NPM packages
-with comprehensive false positive reduction mechanisms.
+with comprehensive false positive reduction mechanisms. It also exposes a
+shared ecosystem/advisory layer for additional package registries where
+SecOpsAI can safely perform deterministic manifest checks without executing
+untrusted package code.
 """
 
 from __future__ import annotations
@@ -61,6 +64,174 @@ NPM_REGISTRY = "https://registry.npmjs.org"
 NPM_SEARCH = "https://registry.npmjs.org/-/v1/search"
 NPM_MAX_CHANGES_PER_CYCLE = 10000
 
+ECOSYSTEM_ALIASES = {
+    "crate": "crates",
+    "crates.io": "crates",
+    "rust": "crates",
+    "chrome": "chrome-web-store",
+    "chrome-extension": "chrome-web-store",
+    "chrome_web_store": "chrome-web-store",
+    "composer": "packagist",
+    "golang": "go",
+    "gomod": "go",
+    "go-modules": "go",
+    "hugging-face": "huggingface",
+    "hf": "huggingface",
+    "maven-central": "maven",
+    "openvsx": "open-vsx",
+    "open_vsx": "open-vsx",
+    "gem": "rubygems",
+    "rubygems.org": "rubygems",
+}
+
+SUPPORTED_ECOSYSTEMS: Dict[str, Dict[str, Any]] = {
+    "npm": {
+        "display_name": "npm",
+        "identifier": "package/version",
+        "features": {
+            "advisory_match": True,
+            "metadata_fetch": True,
+            "artifact_fetch": True,
+            "diff_analysis": True,
+            "behavioral_rules": True,
+            "monitor": True,
+        },
+        "limitations": [],
+    },
+    "pypi": {
+        "display_name": "PyPI",
+        "identifier": "normalized project/version",
+        "features": {
+            "advisory_match": True,
+            "metadata_fetch": True,
+            "artifact_fetch": True,
+            "diff_analysis": True,
+            "behavioral_rules": True,
+            "monitor": True,
+        },
+        "limitations": [],
+    },
+    "crates": {
+        "display_name": "crates.io",
+        "identifier": "crate/version",
+        "features": {
+            "advisory_match": True,
+            "metadata_fetch": False,
+            "artifact_fetch": False,
+            "diff_analysis": False,
+            "behavioral_rules": True,
+            "monitor": False,
+        },
+        "limitations": ["Manifest/source rules are fixture/local-artifact based in this release."],
+    },
+    "chrome-web-store": {
+        "display_name": "Chrome Web Store",
+        "identifier": "extension id or name/version",
+        "features": {
+            "advisory_match": True,
+            "metadata_fetch": False,
+            "artifact_fetch": False,
+            "diff_analysis": False,
+            "behavioral_rules": True,
+            "monitor": False,
+        },
+        "limitations": ["No live CRX download is performed; analyze exported extension files or advisory data."],
+    },
+    "packagist": {
+        "display_name": "Packagist",
+        "identifier": "vendor/package/version",
+        "features": {
+            "advisory_match": True,
+            "metadata_fetch": False,
+            "artifact_fetch": False,
+            "diff_analysis": False,
+            "behavioral_rules": True,
+            "monitor": False,
+        },
+        "limitations": ["Composer manifest and PHP source rules are deterministic local-artifact checks."],
+    },
+    "go": {
+        "display_name": "Go Modules",
+        "identifier": "module path/version",
+        "features": {
+            "advisory_match": True,
+            "metadata_fetch": False,
+            "artifact_fetch": False,
+            "diff_analysis": False,
+            "behavioral_rules": True,
+            "monitor": False,
+        },
+        "limitations": ["Go source checks are local/fixture based; no module proxy fetch in this release."],
+    },
+    "huggingface": {
+        "display_name": "Hugging Face Hub",
+        "identifier": "repo id/revision",
+        "features": {
+            "advisory_match": True,
+            "metadata_fetch": False,
+            "artifact_fetch": False,
+            "diff_analysis": False,
+            "behavioral_rules": True,
+            "monitor": False,
+        },
+        "limitations": ["Model code is never executed; checks flag unsafe loading metadata and risky files."],
+    },
+    "maven": {
+        "display_name": "Maven Central",
+        "identifier": "groupId:artifactId/version",
+        "features": {
+            "advisory_match": True,
+            "metadata_fetch": False,
+            "artifact_fetch": False,
+            "diff_analysis": False,
+            "behavioral_rules": True,
+            "monitor": False,
+        },
+        "limitations": ["POM/source/class-text rules are local-artifact based in this release."],
+    },
+    "nuget": {
+        "display_name": "NuGet",
+        "identifier": "package id/version",
+        "features": {
+            "advisory_match": True,
+            "metadata_fetch": False,
+            "artifact_fetch": False,
+            "diff_analysis": False,
+            "behavioral_rules": True,
+            "monitor": False,
+        },
+        "limitations": ["Nuspec/scripts/build target rules are deterministic local-artifact checks."],
+    },
+    "open-vsx": {
+        "display_name": "Open VSX",
+        "identifier": "namespace.extension/version",
+        "features": {
+            "advisory_match": True,
+            "metadata_fetch": False,
+            "artifact_fetch": False,
+            "diff_analysis": False,
+            "behavioral_rules": True,
+            "monitor": False,
+        },
+        "limitations": ["VSIX/package.json rules are local-artifact based in this release."],
+    },
+    "rubygems": {
+        "display_name": "RubyGems.org",
+        "identifier": "gem/version",
+        "features": {
+            "advisory_match": True,
+            "metadata_fetch": False,
+            "artifact_fetch": False,
+            "diff_analysis": False,
+            "behavioral_rules": True,
+            "monitor": False,
+        },
+        "limitations": ["Gemspec/Rake/extconf Ruby source rules are local-artifact based in this release."],
+    },
+}
+
+SUPPORTED_ECOSYSTEM_NAMES = tuple(sorted(SUPPORTED_ECOSYSTEMS))
+
 AGENT_PROMPT = """Review the diff in the workspace file and decide whether it is highly likely to show package supply-chain compromise.
 
 Start the response with exactly one of:
@@ -85,6 +256,7 @@ SUSPICIOUS_RULES: list[tuple[str, str, int]] = [
     ("local file enumeration", r"\b(local file enumeration|readdirSync|readFileSync|\.ssh|\.npmrc|\.env|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)\b", 4),
     ("environment credential harvesting", r"\b(environment credential|process\.env|GITHUB_TOKEN|NPM_TOKEN|AWS_|GOOGLE_|AZURE_|SSH_AUTH_SOCK)\b", 4),
     ("payload wrapping or exfil staging", r"\b(payload wrapping|exfil staging|dns exfil|zlib|gzip|Buffer\.from)\b", 3),
+    ("ecosystem manifest risk", r"\b(?:crates|chrome extension|composer|go module|hugging face|maven|nuget|open vsx|rubygems).*(?:install-time|credential|remote code|unsafe|eval|exec|permission|hook|lifecycle)\b", 3),
 ]
 
 COMMON_BUILD_BACKENDS = {
@@ -252,7 +424,79 @@ def _toml_literal(value: Any) -> str:
 
 
 def _policy_target(ecosystem: str, package: str) -> str:
-    return f"{ecosystem.lower()}:{package}"
+    return f"{canonical_ecosystem(ecosystem)}:{normalize_package_name(ecosystem, package)}"
+
+
+def canonical_ecosystem(ecosystem: str) -> str:
+    normalized = str(ecosystem or "").strip().lower().replace("_", "-")
+    return ECOSYSTEM_ALIASES.get(normalized, normalized)
+
+
+def normalize_package_name(ecosystem: str, package: str) -> str:
+    eco = canonical_ecosystem(ecosystem)
+    cleaned = " ".join(str(package or "").strip().split())
+    if eco in {"npm", "pypi", "crates", "chrome-web-store", "packagist", "maven", "nuget", "open-vsx", "rubygems"}:
+        return cleaned.lower()
+    if eco == "go":
+        return cleaned.rstrip("/")
+    if eco == "huggingface":
+        return cleaned.strip("/")
+    return cleaned
+
+
+def validate_package_identifier(ecosystem: str, package: str) -> Dict[str, Any]:
+    eco = canonical_ecosystem(ecosystem)
+    normalized = normalize_package_name(eco, package)
+    errors: List[str] = []
+    if eco not in SUPPORTED_ECOSYSTEMS:
+        errors.append(f"unsupported ecosystem: {ecosystem}")
+    if not normalized:
+        errors.append("package identifier is required")
+    elif eco == "packagist" and "/" not in normalized:
+        errors.append("Packagist packages should use vendor/package")
+    elif eco == "go" and "." not in normalized:
+        errors.append("Go modules should use a module path such as github.com/org/module")
+    elif eco == "maven" and ":" not in normalized:
+        errors.append("Maven artifacts should use groupId:artifactId")
+    elif eco == "open-vsx" and "." not in normalized:
+        errors.append("Open VSX extensions should use namespace.extension")
+    elif eco == "huggingface" and "/" not in normalized:
+        errors.append("Hugging Face identifiers should use owner/repo")
+    elif eco == "chrome-web-store" and not re.fullmatch(r"[a-z0-9_.-]+", normalized):
+        errors.append("Chrome Web Store identifiers may contain letters, digits, dots, underscores, or dashes")
+    return {
+        "ecosystem": eco,
+        "package": normalized,
+        "valid": not errors,
+        "errors": errors,
+    }
+
+
+def ecosystem_capabilities(ecosystem: str) -> Dict[str, Any]:
+    eco = canonical_ecosystem(ecosystem)
+    details = SUPPORTED_ECOSYSTEMS.get(eco)
+    if not details:
+        return {
+            "ecosystem": eco,
+            "supported": False,
+            "features": {},
+            "limitations": [f"Unsupported ecosystem: {ecosystem}"],
+        }
+    return {
+        "ecosystem": eco,
+        "display_name": details["display_name"],
+        "identifier": details["identifier"],
+        "supported": True,
+        "features": dict(details["features"]),
+        "limitations": list(details.get("limitations", [])),
+    }
+
+
+def list_supported_ecosystems() -> Dict[str, Any]:
+    return {
+        "total": len(SUPPORTED_ECOSYSTEMS),
+        "ecosystems": [ecosystem_capabilities(name) for name in SUPPORTED_ECOSYSTEM_NAMES],
+    }
 
 
 def save_policy(policy: Dict[str, Any], path: Optional[Path] = None) -> Path:
@@ -409,7 +653,7 @@ def tune_threshold(
 def _package_matches_policy(entries: List[str], ecosystem: Optional[str], package: Optional[str]) -> bool:
     if not ecosystem or not package:
         return False
-    target = f"{ecosystem}:{package}".lower()
+    target = _policy_target(ecosystem, package).lower()
     for entry in entries:
         candidate = str(entry).strip().lower()
         if not candidate:
@@ -424,7 +668,7 @@ def _package_matches_policy(entries: List[str], ecosystem: Optional[str], packag
 def _matching_policy_entries(entries: List[str], ecosystem: Optional[str], package: Optional[str]) -> List[str]:
     if not ecosystem or not package:
         return []
-    target = f"{ecosystem}:{package}".lower()
+    target = _policy_target(ecosystem, package).lower()
     matches: List[str] = []
     for entry in entries:
         candidate = str(entry).strip()
@@ -479,9 +723,11 @@ def _package_threshold(policy: Dict[str, Any], ecosystem: Optional[str], package
 
 def explain_policy(ecosystem: str, package: str, policy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     policy = policy or load_policy()
+    ecosystem = canonical_ecosystem(ecosystem)
+    package = normalize_package_name(ecosystem, package)
     allow_matches = _matching_policy_entries(policy.get("allow", {}).get("packages", []), ecosystem, package)
     deny_matches = _matching_policy_entries(policy.get("deny", {}).get("packages", []), ecosystem, package)
-    target = f"{ecosystem}:{package}".lower()
+    target = _policy_target(ecosystem, package).lower()
 
     ecosystem_thresholds = {
         str(key).lower(): int(value)
@@ -687,8 +933,7 @@ def _advisory_slug(advisory: Dict[str, Any]) -> str:
 
 
 def _canonical_package_name(ecosystem: str, package: str) -> str:
-    package = package.strip()
-    return package.lower() if ecosystem.lower() in {"npm", "pypi"} else package
+    return normalize_package_name(ecosystem, package)
 
 
 def _version_key(version: str) -> tuple:
@@ -849,7 +1094,7 @@ def _advisory_index(path: Optional[Path] = None) -> Dict[Tuple[str, str], List[T
 
 
 def find_advisory_matches(ecosystem: str, package: str, version: str) -> List[Dict[str, Any]]:
-    target_ecosystem = ecosystem.lower()
+    target_ecosystem = canonical_ecosystem(ecosystem)
     target_package = _canonical_package_name(target_ecosystem, package)
     matches: List[Dict[str, Any]] = []
     for advisory, affected in _advisory_index().get((target_ecosystem, target_package), []):
@@ -861,10 +1106,12 @@ def find_advisory_matches(ecosystem: str, package: str, version: str) -> List[Di
 
 
 def check_advisory(ecosystem: str, package: str, version: str) -> Dict[str, Any]:
-    matches = find_advisory_matches(ecosystem, package, version)
+    canonical = canonical_ecosystem(ecosystem)
+    normalized_package = normalize_package_name(canonical, package)
+    matches = find_advisory_matches(canonical, normalized_package, version)
     return {
-        "ecosystem": ecosystem,
-        "package": package,
+        "ecosystem": canonical,
+        "package": normalized_package,
         "version": version,
         "matched": bool(matches),
         "matches": matches,
@@ -1272,6 +1519,202 @@ def _pyproject_policy_findings(path: str, source: str) -> List[str]:
     return sorted(set(findings))
 
 
+def _rust_policy_findings(path: str, source: str) -> List[str]:
+    lowered = path.lower()
+    findings: List[str] = []
+    if lowered.endswith("build.rs"):
+        findings.append(f"{path}: crates build.rs install-time execution risk")
+        if re.search(r"\b(Command::new|std::process|reqwest|ureq|curl|wget)\b", source):
+            findings.append(f"{path}: crates build.rs process or network-capable behavior")
+        if re.search(r"\b(env::var|std::env|CARGO_|GITHUB_TOKEN|AWS_|NPM_TOKEN)\b", source):
+            findings.append(f"{path}: crates build.rs environment credential access")
+    if re.search(r"\bproc_macro\b", source) and re.search(r"\b(Command::new|std::fs|std::env|reqwest)\b", source):
+        findings.append(f"{path}: crates proc-macro contains filesystem, process, env, or network behavior")
+    return sorted(set(findings))
+
+
+def _chrome_extension_policy_findings(path: str, source: str) -> List[str]:
+    lowered = path.lower()
+    findings: List[str] = []
+    if lowered.endswith("manifest.json"):
+        try:
+            data = json.loads(source)
+        except Exception:
+            return []
+        permissions = data.get("permissions", []) or []
+        host_permissions = data.get("host_permissions", []) or []
+        permissions_text = " ".join(str(item) for item in [*permissions, *host_permissions])
+        if any(item in permissions for item in ("tabs", "cookies", "webRequest", "scripting", "nativeMessaging")):
+            findings.append(f"{path}: chrome extension high-risk permissions {permissions}")
+        if "<all_urls>" in permissions_text or "*://*/*" in permissions_text:
+            findings.append(f"{path}: chrome extension broad host access")
+        if data.get("externally_connectable"):
+            findings.append(f"{path}: chrome extension externally_connectable trust boundary")
+        content_scripts = data.get("content_scripts", [])
+        if isinstance(content_scripts, list) and any("<all_urls>" in str(script) or "*://*/*" in str(script) for script in content_scripts):
+            findings.append(f"{path}: chrome extension broad content-script injection")
+    elif lowered.endswith((".js", ".mjs", ".cjs")) and re.search(r"\bchrome\.(?:storage|cookies|tabs|scripting|runtime)\b", source):
+        if re.search(r"\b(eval|Function|fetch|XMLHttpRequest|sendMessage)\b", source):
+            findings.append(f"{path}: chrome extension remote code or sensitive API behavior")
+    return sorted(set(findings))
+
+
+def _packagist_policy_findings(path: str, source: str) -> List[str]:
+    lowered = path.lower()
+    findings: List[str] = []
+    if lowered.endswith("composer.json"):
+        try:
+            data = json.loads(source)
+        except Exception:
+            return []
+        scripts = data.get("scripts", {})
+        if isinstance(scripts, dict):
+            for hook, command in scripts.items():
+                commands = command if isinstance(command, list) else [command]
+                if hook in {"pre-install-cmd", "post-install-cmd", "pre-update-cmd", "post-update-cmd"}:
+                    findings.append(f"{path}: composer install/update lifecycle hook {hook}")
+                if any(isinstance(cmd, str) and re.search(r"\b(curl|wget|php\s+-r|bash|sh|powershell|eval)\b|https?://", cmd, re.IGNORECASE) for cmd in commands):
+                    findings.append(f"{path}: composer lifecycle hook executes remote or inline code ({hook})")
+    elif lowered.endswith(".php") and re.search(r"\b(eval|base64_decode|gzinflate|shell_exec|system|proc_open|passthru|curl_exec)\s*\(", source):
+        findings.append(f"{path}: packagist php dynamic execution, shell, or network-capable behavior")
+    return sorted(set(findings))
+
+
+def _go_policy_findings(path: str, source: str) -> List[str]:
+    lowered = path.lower()
+    findings: List[str] = []
+    if lowered.endswith(".go"):
+        if re.search(r"\bfunc\s+init\s*\(", source) and re.search(r"\b(os/exec|exec\.Command|net/http|http\.Post|os\.UserHomeDir|os\.Environ|os\.Getenv)\b", source):
+            findings.append(f"{path}: go module init() contains process, network, home, or env behavior")
+        if re.search(r"\b(exec\.Command|http\.Post|http\.Get|os\.Environ|os\.Getenv|UserHomeDir)\b", source):
+            findings.append(f"{path}: go module process, network, or credential-environment access")
+    elif lowered.endswith("go.mod") and re.search(r"\breplace\s+.+=>\s+(?:https?://|\.\./|/)", source):
+        findings.append(f"{path}: go module replace directive points outside normal module proxy")
+    return sorted(set(findings))
+
+
+def _huggingface_policy_findings(path: str, source: str) -> List[str]:
+    lowered = path.lower()
+    findings: List[str] = []
+    if lowered.endswith((".bin", ".pt", ".pth", ".pkl", ".pickle", ".safetensors")):
+        if not lowered.endswith(".safetensors"):
+            findings.append(f"{path}: hugging face model artifact may require unsafe pickle-style loading")
+    if lowered.endswith(("config.json", "model_index.json", "README.md".lower(), "readme.md")):
+        if re.search(r"\btrust_remote_code\s*[:=]\s*true\b|custom code|pickle|unsafe deserialization", source, re.IGNORECASE):
+            findings.append(f"{path}: hugging face metadata references trust_remote_code or unsafe loading")
+    if lowered.endswith((".py", ".sh")) and re.search(r"\b(subprocess|os\.system|eval|exec|requests\.|urllib|curl|wget|HF_TOKEN|HUGGINGFACE_TOKEN)\b", source):
+        findings.append(f"{path}: hugging face repository script has execution, network, or token access")
+    return sorted(set(findings))
+
+
+def _maven_policy_findings(path: str, source: str) -> List[str]:
+    lowered = path.lower()
+    findings: List[str] = []
+    if lowered.endswith("pom.xml"):
+        if re.search(r"<plugin>|exec-maven-plugin|maven-antrun-plugin|gmaven|build-helper", source, re.IGNORECASE):
+            findings.append(f"{path}: maven build plugin can execute lifecycle code")
+        if re.search(r"<url>https?://|<systemPath>|<scope>system</scope>", source, re.IGNORECASE):
+            findings.append(f"{path}: maven pom references remote/system dependency source")
+    if lowered.endswith((".java", ".kt", ".scala", ".class.txt")) and re.search(r"\b(Runtime\.getRuntime\(\)\.exec|ProcessBuilder|System\.getenv|HttpURLConnection|java\.net\.http|Files\.walk)\b", source):
+        findings.append(f"{path}: maven artifact source has process, env, network, or file enumeration behavior")
+    return sorted(set(findings))
+
+
+def _nuget_policy_findings(path: str, source: str) -> List[str]:
+    lowered = path.lower()
+    findings: List[str] = []
+    if lowered.endswith(".nuspec") and re.search(r"<files|tools/|build/", source, re.IGNORECASE):
+        findings.append(f"{path}: nuget package includes tools/build files that may execute during install/build")
+    if lowered.endswith((".ps1", ".targets", ".props")) and re.search(r"\b(Invoke-WebRequest|iwr|DownloadString|Start-Process|powershell|cmd\.exe|System\.Environment|Get-ChildItem)\b", source, re.IGNORECASE):
+        findings.append(f"{path}: nuget install/build script has download, process, env, or file enumeration behavior")
+    return sorted(set(findings))
+
+
+def _open_vsx_policy_findings(path: str, source: str) -> List[str]:
+    lowered = path.lower()
+    findings: List[str] = []
+    if lowered.endswith("package.json"):
+        try:
+            data = json.loads(source)
+        except Exception:
+            return []
+        activation = data.get("activationEvents", []) or []
+        scripts = data.get("scripts", {}) or {}
+        if any(str(item) == "*" or str(item).startswith("onStartupFinished") for item in activation):
+            findings.append(f"{path}: open vsx extension broad activation event")
+        if any(hook in scripts for hook in ("postinstall", "preinstall", "install")):
+            findings.append(f"{path}: open vsx extension npm lifecycle hook")
+    elif lowered.endswith((".js", ".ts", ".mjs", ".cjs")) and re.search(r"\bvscode\.workspace|process\.env|child_process|eval\s*\(|Function\s*\(|fetch\s*\(", source):
+        findings.append(f"{path}: open vsx extension workspace, credential, process, or remote code behavior")
+    return sorted(set(findings))
+
+
+def _rubygems_policy_findings(path: str, source: str) -> List[str]:
+    lowered = path.lower()
+    findings: List[str] = []
+    if lowered.endswith(("extconf.rb", "rakefile")) or lowered.endswith(".gemspec"):
+        if re.search(r"\b(system|exec|spawn|Open3|Net::HTTP|URI\.open|eval|`[^`]+`|ENV\[)\b", source):
+            findings.append(f"{path}: rubygems install/build metadata has process, network, eval, or env behavior")
+    elif lowered.endswith(".rb") and re.search(r"\b(eval|system|exec|spawn|Open3|Net::HTTP|URI\.open|ENV\[|File\.read|Dir\.glob)\b", source):
+        findings.append(f"{path}: rubygems ruby source has dynamic execution, network, env, or file access")
+    return sorted(set(findings))
+
+
+def _ecosystem_policy_findings(path: str, source: str) -> List[str]:
+    findings: List[str] = []
+    findings.extend(_rust_policy_findings(path, source))
+    findings.extend(_chrome_extension_policy_findings(path, source))
+    findings.extend(_packagist_policy_findings(path, source))
+    findings.extend(_go_policy_findings(path, source))
+    findings.extend(_huggingface_policy_findings(path, source))
+    findings.extend(_maven_policy_findings(path, source))
+    findings.extend(_nuget_policy_findings(path, source))
+    findings.extend(_open_vsx_policy_findings(path, source))
+    findings.extend(_rubygems_policy_findings(path, source))
+    return sorted(set(findings))
+
+
+def analyze_ecosystem_files(ecosystem: str, files: Dict[str, str]) -> Dict[str, Any]:
+    canonical = canonical_ecosystem(ecosystem)
+    findings: List[str] = []
+    manifest_files: List[str] = []
+    suspicious_files: List[str] = []
+    for path, source in sorted(files.items()):
+        file_findings = _ecosystem_policy_findings(path, source)
+        if file_findings:
+            findings.extend(file_findings)
+            suspicious_files.append(path)
+        if path.lower().endswith((
+            "package.json",
+            "manifest.json",
+            "composer.json",
+            "go.mod",
+            "pom.xml",
+            ".nuspec",
+            ".gemspec",
+            "cargo.toml",
+            "readme.md",
+            "config.json",
+        )):
+            manifest_files.append(path)
+    report = "\n".join(["## Ecosystem Findings", "", *[f"- {finding}" for finding in sorted(set(findings))]])
+    explanation = explain_verdict(report, ecosystem=canonical, package="fixture", policy=load_policy())
+    return {
+        "ecosystem": canonical,
+        "manifest_files": sorted(set(manifest_files)),
+        "suspicious_files": sorted(set(suspicious_files)),
+        "matched_rules": explanation.get("matched_rules", []),
+        "findings": sorted(set(findings)),
+        "score": explanation.get("score", 0),
+        "verdict": explanation.get("verdict", "benign"),
+        "confidence": "medium" if findings else "low",
+        "severity": "high" if explanation.get("verdict") == "malicious" else "info",
+        "fetch_status": "not_requested",
+        "artifact_status": "local_fixture",
+        "limitations": ecosystem_capabilities(canonical).get("limitations", []),
+    }
+
+
 def _added_text_scope(report: str) -> str:
     added_lines: List[str] = []
     for line in report.splitlines():
@@ -1296,7 +1739,9 @@ def _normalized_artifact_path(path: str) -> str:
 
 def _artifact_path_is_benign(path: str) -> bool:
     normalized = _normalized_artifact_path(path)
-    if normalized in {"package.json", "pyproject.toml", "setup.py"}:
+    if normalized in {"package.json", "manifest.json", "composer.json", "go.mod", "pom.xml", "pyproject.toml", "setup.py", "build.rs"}:
+        return False
+    if normalized.endswith((".nuspec", ".gemspec", "extconf.rb")):
         return False
     if normalized.startswith(BENIGN_ARTIFACT_PATH_PREFIXES):
         return True
@@ -1441,6 +1886,7 @@ def _semantic_findings_for_file(path: str, file_path: Path) -> List[str]:
     source = file_path.read_text(encoding="utf-8", errors="replace")
     lowered = path.lower()
     findings: List[str] = []
+    findings.extend(_ecosystem_policy_findings(path, source))
     if lowered.endswith(".py"):
         findings.extend(_python_semantic_findings(path, source))
     if lowered.endswith("setup.py"):
@@ -2083,6 +2529,25 @@ def explain_verdict(
         semantic_credential_harvest = any("credential harvesting" in finding for finding in semantic_findings)
         semantic_exfil_staging = any("exfiltration staging" in finding or "payload wrapping" in finding for finding in semantic_findings)
         semantic_node_ipc_bundle = any("node-ipc CommonJS bundle" in finding for finding in semantic_findings)
+        semantic_ecosystem_manifest = any(
+            needle in finding
+            for finding in semantic_findings
+            for needle in (
+                "crates ",
+                "chrome extension",
+                "composer ",
+                "go module",
+                "hugging face",
+                "maven ",
+                "nuget ",
+                "open vsx",
+                "rubygems ",
+                "install-time",
+                "lifecycle hook",
+                "remote code",
+                "unsafe loading",
+            )
+        )
         raw_subprocess = bool(re.search(r"\b(child_process|subprocess|os\.system|popen|spawn|execFile)\b", _added_text_scope(report), re.IGNORECASE))
         semantic_contextual = (
             semantic_dynamic
@@ -2094,6 +2559,7 @@ def explain_verdict(
             or semantic_credential_harvest
             or semantic_exfil_staging
             or semantic_node_ipc_bundle
+            or semantic_ecosystem_manifest
             or (semantic_subprocess and raw_subprocess)
         )
 
@@ -2197,6 +2663,16 @@ def explain_verdict(
                     "node-ipc bundle payload indicators",
                     applied_weight,
                     "node-ipc CommonJS bundle contains appended high-risk payload indicators.",
+                )
+            if semantic_ecosystem_manifest and _rule_enabled(policy, "ecosystem manifest risk"):
+                applied_weight = _rule_weight(policy, "ecosystem manifest risk", 3)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "ecosystem manifest risk",
+                    applied_weight,
+                    "Ecosystem-specific manifest or source inspection found install, permission, credential, or remote-code risk.",
                 )
             if semantic_lifecycle and _rule_enabled(policy, "manifest lifecycle hook policy"):
                 applied_weight = _rule_weight(policy, "manifest lifecycle hook policy", 3)
@@ -2426,8 +2902,39 @@ def _scan_release(
     keep_report: bool = True,
 ) -> ScanResult:
     _ensure_dirs()
+    ecosystem = canonical_ecosystem(ecosystem)
+    package = normalize_package_name(ecosystem, package)
     policy = load_policy()
     advisory_matches = find_advisory_matches(ecosystem, package, new_version)
+    capabilities = ecosystem_capabilities(ecosystem)
+
+    if not capabilities.get("features", {}).get("artifact_fetch", False):
+        if advisory_matches:
+            return ScanResult(
+                ecosystem,
+                package,
+                "unavailable",
+                new_version,
+                "malicious",
+                _advisory_analysis(advisory_matches, artifact_unavailable=True),
+                None,
+                rank,
+                _finding_id(ecosystem, package, new_version),
+                "artifact fetch not implemented for this ecosystem; advisory matched",
+                advisory_matches,
+            )
+        return ScanResult(
+            ecosystem,
+            package,
+            None,
+            new_version,
+            "skipped",
+            f"{capabilities.get('display_name', ecosystem)} artifact fetch/diff is not implemented yet; advisory matching and local fixture rules are supported.",
+            None,
+            rank,
+            None,
+            "artifact fetch unsupported for ecosystem",
+        )
     
     # Emergency advisories intentionally override local allow/reputation shortcuts.
     if not advisory_matches and _package_matches_policy(policy.get("allow", {}).get("packages", []), ecosystem, package):
@@ -2703,6 +3210,8 @@ def package_compromise_mitigation(
     version: Optional[str] = None,
     advisory_matches: Optional[List[Dict[str, Any]]] = None,
 ) -> List[str]:
+    ecosystem = canonical_ecosystem(ecosystem)
+    package = normalize_package_name(ecosystem, package)
     versions: List[str] = []
     if version:
         versions.append(version)
@@ -2716,9 +3225,20 @@ def package_compromise_mitigation(
         canonical_order = ["9.1.6", "9.2.3", "12.0.1"]
         affected_versions = [item for item in canonical_order if item in detected_versions] or canonical_order
         return _node_ipc_mitigation(package, [item for item in affected_versions if item])
+    ecosystem_specific = {
+        "crates": "Audit Cargo.lock, build.rs, proc-macro crates, cargo registry cache, and CI build logs.",
+        "chrome-web-store": "Audit installed extension IDs, manifest permissions, service workers, and browser policy allowlists.",
+        "packagist": "Audit composer.lock, vendor packages, Composer scripts, and PHP autoload paths.",
+        "go": "Audit go.mod, go.sum, module cache, init() paths, and CI build logs.",
+        "huggingface": "Audit model revisions, trust_remote_code usage, unsafe pickle artifacts, and inference runtime secrets.",
+        "maven": "Audit pom.xml, dependency trees, local Maven cache, build plugins, and CI artifact layers.",
+        "nuget": "Audit packages.lock.json, obj/project.assets.json, NuGet cache, PowerShell install scripts, and build targets.",
+        "open-vsx": "Audit installed VS Code/Open VSX extensions, activation events, workspace trust, and extension host logs.",
+        "rubygems": "Audit Gemfile.lock, gem cache, extconf/Rake hooks, and Bundler install logs.",
+    }
     return [
         f"Block {ecosystem}:{package}@{version or '<affected-version>'} in package-manager policy, CI allowlists, and artifact proxies.",
-        "Audit lockfiles, local package caches, build caches, and container layers for the affected version.",
+        ecosystem_specific.get(ecosystem, "Audit lockfiles, local package caches, build caches, and container layers for the affected version."),
         "Rotate credentials only if the affected artifact was installed, imported, or executed in an environment with secrets.",
     ]
 

@@ -12,6 +12,15 @@ Supply chain attacks have grown 742% since 2024. SecOpsAI adds a critical defens
 |--------------|----------|------------------|
 | **npm packages** | axios@1.14.1, plain-crypto-js | Known malicious DB + heuristics |
 | **PyPI packages** | litellm@1.82.7 | .pth file monitoring + imports |
+| **crates.io** | Rust crates | Advisory matching + `build.rs`/proc-macro local rules |
+| **Chrome Web Store** | Browser extensions | Advisory matching + manifest/permission/background-script rules |
+| **Packagist** | Composer PHP packages | Advisory matching + Composer script/PHP source rules |
+| **Go Modules** | Go module paths | Advisory matching + go.mod/init/process/network/env rules |
+| **Hugging Face Hub** | Models and repos | Advisory matching + unsafe loading/custom-code metadata rules |
+| **Maven Central** | Java artifacts | Advisory matching + POM/plugin/source behavior rules |
+| **NuGet** | .NET packages | Advisory matching + nuspec/PowerShell/build-target rules |
+| **Open VSX** | VS Code extensions | Advisory matching + activation/workspace/token rules |
+| **RubyGems.org** | Ruby gems | Advisory matching + gemspec/extconf/Rake/Ruby source rules |
 | **Editor exploits** | Vim CVE-2025-27423, Emacs CVE-2025-1244 | Configuration analysis |
 | **Runtime droppers** | Cross-platform RATs | File path + behavior detection |
 | **Typosquatting** | lodash vs lodash-js | Levenshtein distance analysis |
@@ -67,6 +76,53 @@ secopsai supply-chain reconcile-history --include-advisories
 ```
 
 See [Emergency Supply Chain Advisories](supply-chain-advisories.md) for the full operator workflow and JSON schema.
+
+## Ecosystem Capability Matrix
+
+```bash
+secopsai supply-chain ecosystems
+secopsai supply-chain ecosystems --ecosystem maven
+```
+
+npm and PyPI currently support live metadata/artifact fetch, deterministic diff
+analysis, advisory matching, SOC finding creation, and registry monitoring.
+Other ecosystems are protected through advisory matching and deterministic
+local-artifact rules until live registry adapters are enabled. Unsupported live
+monitoring returns a clear limitation instead of failing obscurely.
+
+Per-ecosystem operator examples:
+
+```bash
+secopsai supply-chain explain-verdict --ecosystem crates --package secopsai-fixture-crate --version 1.2.3
+secopsai supply-chain explain-verdict --ecosystem chrome-web-store --package fixtureextensionid --version 4.5.6
+secopsai supply-chain explain-verdict --ecosystem packagist --package vendor/fixture --version 1.0.0
+secopsai supply-chain explain-verdict --ecosystem go --package github.com/example/fixture --version v1.2.3
+secopsai supply-chain explain-verdict --ecosystem huggingface --package secopsai/fixture-model --version main
+secopsai supply-chain explain-verdict --ecosystem maven --package com.example:fixture --version 2.0.0
+secopsai supply-chain explain-verdict --ecosystem nuget --package fixture.package --version 3.0.0
+secopsai supply-chain explain-verdict --ecosystem open-vsx --package secopsai.fixture --version 0.1.0
+secopsai supply-chain explain-verdict --ecosystem rubygems --package fixture_gem --version 9.9.9
+```
+
+For non-npm/PyPI ecosystems, use these commands with advisory-backed versions
+or local fixture/report input. SecOpsAI does not execute package code.
+
+## Changelog Workflow
+
+Record user-visible supply-chain changes in `CHANGELOG.md` before release.
+
+```bash
+python3 scripts/changelog_entry.py --section Security --message "Documented a new emergency advisory campaign."
+```
+
+Use:
+
+- `Added` for new commands, adapters, workflows, or public features.
+- `Changed` for behavior changes.
+- `Fixed` for bug fixes.
+- `Security` for detection, triage, hardening, advisory, or mitigation work.
+- `Docs` for operator/documentation-only changes.
+- `Internal` for test, refactor, or maintenance notes.
 
 ## Real-Time npm Release Watch
 

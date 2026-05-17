@@ -71,12 +71,16 @@ from secopsai.sessions import (
 )
 
 from secopsai.supply_chain import (
+    SUPPORTED_ECOSYSTEM_NAMES,
     allowlist_add,
     allowlist_remove,
+    analyze_ecosystem_files,
     check_advisory,
+    ecosystem_capabilities,
     explain_policy,
     explain_verdict,
     ingest_advisory,
+    list_supported_ecosystems,
     load_advisories,
     load_recent_results,
     reconcile_history,
@@ -850,7 +854,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     research_finding_cmd.add_argument("--session-dir", default=None, help="Override session storage directory")
 
     research_package_cmd = research_sub.add_parser("package", help="Generate a source-backed research report for one package")
-    research_package_cmd.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    research_package_cmd.add_argument("--ecosystem", required=True, choices=SUPPORTED_ECOSYSTEM_NAMES)
     research_package_cmd.add_argument("--package", required=True, help="Package name")
     research_package_cmd.add_argument("--version", default=None, help="Optional version hint")
     research_package_cmd.add_argument("--search-root", default=None, help="Root path to scan for local references")
@@ -946,14 +950,18 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     intel_match.add_argument("--limit-iocs", type=int, default=2000)
     intel_match.add_argument("--replay", help="Override replay path (default: data/openclaw/replay/labeled/current.json)")
 
-    supply_chain = sub.add_parser("supply-chain", help="Monitor PyPI/npm package releases for supply-chain compromise")
+    supply_chain = sub.add_parser("supply-chain", help="Monitor package releases for supply-chain compromise")
     supply_chain_sub = supply_chain.add_subparsers(dest="supply_chain_cmd", required=True)
 
+    supply_chain_ecosystems = supply_chain_sub.add_parser("ecosystems", help="List supported supply-chain ecosystems and capabilities")
+    supply_chain_ecosystems.add_argument("--ecosystem", choices=SUPPORTED_ECOSYSTEM_NAMES, help="Show one ecosystem")
+
     supply_chain_scan = supply_chain_sub.add_parser("scan", help="Scan a specific package release")
-    supply_chain_scan.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    supply_chain_scan.add_argument("--ecosystem", required=True, choices=SUPPORTED_ECOSYSTEM_NAMES)
     supply_chain_scan.add_argument("--package", required=True, help="Package name")
     supply_chain_scan.add_argument("--version", required=True, help="New version to review")
     supply_chain_scan.add_argument("--previous-version", help="Override previous version instead of auto-discovery")
+    supply_chain_scan.add_argument("--fixture-json", help="Analyze a local JSON object of path-to-text files instead of fetching artifacts")
     supply_chain_scan.add_argument("--model", help="Override analysis model passed to Cursor Agent CLI")
     supply_chain_scan.add_argument("--no-report", action="store_true", help="Do not persist the diff report to disk")
     supply_chain_scan.add_argument("--slack", action="store_true", help="Send Slack alert when verdict is malicious")
@@ -981,7 +989,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "watch-registry",
         help="Analyze recent package publishes from registry metadata without running package code",
     )
-    supply_chain_watch.add_argument("--ecosystem", required=True, choices=["npm"])
+    supply_chain_watch.add_argument("--ecosystem", required=True, choices=SUPPORTED_ECOSYSTEM_NAMES)
     supply_chain_watch.add_argument("--package", required=True, help="Package name to watch")
     supply_chain_watch.add_argument("--since", default="10m", help="Look back duration, for example 10m, 2h, or 1d")
     supply_chain_watch.add_argument("--limit", type=int, default=20, help="Maximum recent versions to analyze")
@@ -1008,7 +1016,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
 
     supply_chain_explain = supply_chain_sub.add_parser("explain-policy", help="Show the effective policy for a package")
-    supply_chain_explain.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    supply_chain_explain.add_argument("--ecosystem", required=True, choices=SUPPORTED_ECOSYSTEM_NAMES)
     supply_chain_explain.add_argument("--package", required=True, help="Package name")
 
     supply_chain_advisory = supply_chain_sub.add_parser("advisory", help="Manage emergency package advisories")
@@ -1018,17 +1026,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_advisory_ingest = supply_chain_advisory_sub.add_parser("ingest", help="Ingest a JSON advisory file or URL")
     supply_chain_advisory_ingest.add_argument("source", help="Path or HTTPS URL to an advisory JSON object/list")
     supply_chain_advisory_check = supply_chain_advisory_sub.add_parser("check", help="Check one package version against advisories")
-    supply_chain_advisory_check.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    supply_chain_advisory_check.add_argument("--ecosystem", required=True, choices=SUPPORTED_ECOSYSTEM_NAMES)
     supply_chain_advisory_check.add_argument("--package", required=True, help="Package name")
     supply_chain_advisory_check.add_argument("--version", required=True, help="Package version")
 
     supply_chain_allowlist = supply_chain_sub.add_parser("allowlist", help="Manage supply-chain allowlist entries")
     supply_chain_allowlist_sub = supply_chain_allowlist.add_subparsers(dest="supply_chain_allowlist_cmd", required=True)
     supply_chain_allowlist_add = supply_chain_allowlist_sub.add_parser("add", help="Add a package to the allowlist")
-    supply_chain_allowlist_add.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    supply_chain_allowlist_add.add_argument("--ecosystem", required=True, choices=SUPPORTED_ECOSYSTEM_NAMES)
     supply_chain_allowlist_add.add_argument("--package", required=True, help="Package name or wildcard")
     supply_chain_allowlist_remove = supply_chain_allowlist_sub.add_parser("remove", help="Remove a package from the allowlist")
-    supply_chain_allowlist_remove.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    supply_chain_allowlist_remove.add_argument("--ecosystem", required=True, choices=SUPPORTED_ECOSYSTEM_NAMES)
     supply_chain_allowlist_remove.add_argument("--package", required=True, help="Package name or wildcard")
 
     supply_chain_tune = supply_chain_sub.add_parser("tune", help="Tune supply-chain thresholds and rules")
@@ -1042,16 +1050,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_tune_threshold = supply_chain_tune_sub.add_parser("threshold", help="Set global, ecosystem, or package threshold")
     threshold_scope = supply_chain_tune_threshold.add_mutually_exclusive_group(required=True)
     threshold_scope.add_argument("--global-threshold", action="store_true", help="Set the global malicious score threshold")
-    threshold_scope.add_argument("--ecosystem", choices=["pypi", "npm"], help="Set the threshold for one ecosystem")
+    threshold_scope.add_argument("--ecosystem", choices=SUPPORTED_ECOSYSTEM_NAMES, help="Set the threshold for one ecosystem")
     threshold_scope.add_argument("--package", help="Set the threshold for one package target")
-    supply_chain_tune_threshold.add_argument("--package-ecosystem", choices=["pypi", "npm"], help="Required with --package")
+    supply_chain_tune_threshold.add_argument("--package-ecosystem", choices=SUPPORTED_ECOSYSTEM_NAMES, help="Required with --package")
     supply_chain_tune_threshold.add_argument("--value", type=int, required=True, help="Threshold value")
 
     supply_chain_explain_verdict = supply_chain_sub.add_parser(
         "explain-verdict",
         help="Explain which rules fired for a supply-chain scan report",
     )
-    supply_chain_explain_verdict.add_argument("--ecosystem", required=True, choices=["pypi", "npm"])
+    supply_chain_explain_verdict.add_argument("--ecosystem", required=True, choices=SUPPORTED_ECOSYSTEM_NAMES)
     supply_chain_explain_verdict.add_argument("--package", required=True, help="Package name")
     supply_chain_explain_verdict.add_argument("--version", help="Release version to resolve from stored results")
     supply_chain_explain_verdict.add_argument("--report", help="Path to a stored report file")
@@ -2584,16 +2592,57 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0
 
     if args.cmd == "supply-chain":
-        if args.supply_chain_cmd == "scan":
-            payload = run_scan(
-                ecosystem=args.ecosystem,
-                package=args.package,
-                version=args.version,
-                previous_version=args.previous_version,
-                model=args.model,
-                keep_report=not args.no_report,
-                slack=args.slack,
+        if args.supply_chain_cmd == "ecosystems":
+            payload = (
+                ecosystem_capabilities(args.ecosystem)
+                if args.ecosystem
+                else list_supported_ecosystems()
             )
+            if args.json:
+                print(to_json(payload))
+            elif args.ecosystem:
+                print(f"ecosystem={payload['ecosystem']}")
+                print(f"display_name={payload.get('display_name')}")
+                print(f"supported={payload['supported']}")
+                print(f"identifier={payload.get('identifier')}")
+                for feature, enabled in payload.get("features", {}).items():
+                    print(f"{feature}={enabled}")
+                if payload.get("limitations"):
+                    print("limitations:")
+                    for item in payload["limitations"]:
+                        print(f"- {item}")
+            else:
+                print(f"total={payload['total']}")
+                for item in payload["ecosystems"]:
+                    features = ",".join(
+                        name for name, enabled in item.get("features", {}).items() if enabled
+                    )
+                    print(f"- {item['ecosystem']} ({item['display_name']}): {features}")
+            return 0
+
+        if args.supply_chain_cmd == "scan":
+            if args.fixture_json:
+                files = json.loads(Path(args.fixture_json).read_text(encoding="utf-8"))
+                payload = {
+                    "result": analyze_ecosystem_files(args.ecosystem, files),
+                    "db_path": None,
+                    "slack_alerts_sent": 0,
+                }
+                payload["result"].update({
+                    "package": args.package,
+                    "new_version": args.version,
+                    "old_version": args.previous_version,
+                })
+            else:
+                payload = run_scan(
+                    ecosystem=args.ecosystem,
+                    package=args.package,
+                    version=args.version,
+                    previous_version=args.previous_version,
+                    model=args.model,
+                    keep_report=not args.no_report,
+                    slack=args.slack,
+                )
             if args.json:
                 print(to_json(payload))
             else:
@@ -2667,6 +2716,33 @@ def main(argv: Optional[List[str]] = None) -> int:
             try:
                 if args.dry_run and args.persist:
                     raise ValueError("--dry-run and --persist are mutually exclusive")
+                capabilities = ecosystem_capabilities(args.ecosystem)
+                if not capabilities.get("features", {}).get("monitor", False):
+                    payload = {
+                        "ecosystem": capabilities["ecosystem"],
+                        "package": args.package,
+                        "since": args.since,
+                        "dry_run": True,
+                        "persist": False,
+                        "recent_versions": [],
+                        "scanned": [],
+                        "total_scanned": 0,
+                        "malicious": 0,
+                        "errors": 0,
+                        "db_path": None,
+                        "supported": False,
+                        "limitations": capabilities.get("limitations", []),
+                    }
+                    if args.json:
+                        print(to_json(payload))
+                    else:
+                        print(
+                            f"watch-registry unsupported for {capabilities['ecosystem']}; "
+                            "advisory matching and local fixture rules are available."
+                        )
+                        for item in payload["limitations"]:
+                            print(f"- {item}")
+                    return 0
                 payload = watch_registry(
                     ecosystem=args.ecosystem,
                     package=args.package,
@@ -2879,11 +2955,17 @@ def main(argv: Optional[List[str]] = None) -> int:
                     else {"matched": False}
                 )
                 if not advisory_payload.get("matched"):
-                    if args.json:
-                        print(to_json({"error": str(exc)}))
+                    capabilities = ecosystem_capabilities(args.ecosystem)
+                    if not capabilities.get("features", {}).get("artifact_fetch", False):
+                        report_text = "## Ecosystem Findings\n\n"
                     else:
-                        print(f"error: {exc}")
-                    return 1
+                        if args.json:
+                            print(to_json({"error": str(exc)}))
+                        else:
+                            print(f"error: {exc}")
+                        return 1
+                else:
+                    report_text = ""
 
             payload = explain_verdict(
                 report_text,
@@ -2892,6 +2974,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 version=args.version,
             )
             payload["report_path"] = str(report_path) if report_path else None
+            payload["ecosystem_capabilities"] = ecosystem_capabilities(args.ecosystem)
             if args.version:
                 payload["version"] = args.version
 
@@ -2927,6 +3010,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                     print("mitigation:")
                     for step in payload["mitigation"]:
                         print(f"- {step}")
+                if payload.get("ecosystem_capabilities", {}).get("limitations"):
+                    print("limitations:")
+                    for item in payload["ecosystem_capabilities"]["limitations"]:
+                        print(f"- {item}")
                 if payload.get("policy"):
                     print(f"policy_precedence={','.join(payload['policy']['precedence'])}")
                     if payload["allow_matches"]:

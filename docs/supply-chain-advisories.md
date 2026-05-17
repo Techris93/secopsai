@@ -6,7 +6,7 @@ Emergency advisories are SecOpsAI's local-first denylist path for package versio
 
 Use advisories when a package version is confirmed malicious and one of these is true:
 
-- The npm/PyPI artifact was removed, yanked, or returns 404.
+- The package artifact was removed, yanked, or returns 404.
 - Diff generation fails but the package/version appears in a trusted campaign report.
 - You need a fast block before the next full scanner release.
 - You need SOC findings with sources, IOCs, and mitigation even when local manifests do not currently reference the package.
@@ -27,8 +27,46 @@ secopsai supply-chain explain-verdict --ecosystem npm --package @squawk/mcp --ve
 secopsai supply-chain advisory check --ecosystem npm --package node-ipc --version 12.0.1
 secopsai supply-chain explain-verdict --ecosystem npm --package node-ipc --version 12.0.1
 
+# Show supported ecosystem capabilities and limitations.
+secopsai supply-chain ecosystems
+
 # Reconcile historical scanner errors after adding an advisory.
 secopsai supply-chain reconcile-history --include-advisories
+```
+
+## Supported Ecosystems
+
+Emergency advisory matching is ecosystem-generic. Live artifact diffing remains
+full-fidelity for npm and PyPI today; the other ecosystems have first-pass,
+deterministic local-artifact/manifest rules and source-backed advisory matching
+until safe registry fetch adapters are added.
+
+| Ecosystem | Identifier | Current support |
+| --- | --- | --- |
+| npm | `package` | Advisory, metadata fetch, artifact fetch, diff, behavior rules, monitor |
+| PyPI | `project` | Advisory, metadata fetch, artifact fetch, diff, behavior rules, monitor |
+| crates.io | `crate` | Advisory, Cargo/build.rs/proc-macro local rules |
+| Chrome Web Store | `extension-id` | Advisory, extension manifest/background-script local rules |
+| Packagist | `vendor/package` | Advisory, Composer/PHP local rules |
+| Go Modules | `module/path` | Advisory, go.mod and Go source local rules |
+| Hugging Face Hub | `owner/repo` | Advisory, unsafe loading/model metadata local rules; model code is never executed |
+| Maven Central | `groupId:artifactId` | Advisory, POM/source local rules |
+| NuGet | `Package.Id` | Advisory, nuspec/PowerShell/build-target local rules |
+| Open VSX | `namespace.extension` | Advisory, VS Code extension manifest/source local rules |
+| RubyGems.org | `gem` | Advisory, gemspec/extconf/Rake/Ruby source local rules |
+
+Examples:
+
+```bash
+secopsai supply-chain advisory check --ecosystem crates --package secopsai-fixture-crate --version 1.2.3
+secopsai supply-chain advisory check --ecosystem chrome-web-store --package fixtureextensionid --version 4.5.6
+secopsai supply-chain advisory check --ecosystem packagist --package vendor/fixture --version 1.0.0
+secopsai supply-chain advisory check --ecosystem go --package github.com/example/fixture --version v1.2.3
+secopsai supply-chain advisory check --ecosystem huggingface --package secopsai/fixture-model --version main
+secopsai supply-chain advisory check --ecosystem maven --package com.example:fixture --version 2.0.0
+secopsai supply-chain advisory check --ecosystem nuget --package fixture.package --version 3.0.0
+secopsai supply-chain advisory check --ecosystem open-vsx --package secopsai.fixture --version 0.1.0
+secopsai supply-chain advisory check --ecosystem rubygems --package fixture_gem --version 9.9.9
 ```
 
 ## Ingesting A New Advisory
@@ -77,6 +115,20 @@ secopsai supply-chain advisory ingest https://example.com/secopsai/advisory.json
   "remediation": ["Block the version and rotate exposed credentials"]
 }
 ```
+
+Package identifiers are ecosystem-specific:
+
+- crates.io: crate name and version.
+- Chrome Web Store: extension ID or canonical extension name and version.
+- Packagist: `vendor/package` and version.
+- Go Modules: module path and semantic/module version.
+- Hugging Face Hub: `owner/repo` plus revision/tag/commit where available.
+- Maven Central: `groupId:artifactId` and version.
+- NuGet: package ID and version.
+- Open VSX: `namespace.extension` and version.
+- PyPI: normalized project name and version.
+- RubyGems.org: gem name and version.
+- npm: package name and version.
 
 ## SOC Behavior
 
