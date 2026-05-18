@@ -33,6 +33,7 @@ from secopsai.blog import (
     attach_media as attach_blog_media,
     comments_setup_status,
     draft_advisory as draft_blog_advisory,
+    draft_campaign as draft_blog_campaign,
     draft_daily as draft_blog_daily,
     draft_finding as draft_blog_finding,
     draft_news as draft_blog_news,
@@ -84,6 +85,7 @@ from secopsai.supply_chain import (
     load_advisories,
     load_recent_results,
     reconcile_history,
+    research_campaign as research_supply_chain_campaign,
     run_recent_top_scan,
     run_scan,
     tune_rule,
@@ -871,6 +873,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     blog_advisory = blog_sub.add_parser("draft-advisory", help="Create a moderated blog draft from an advisory")
     blog_advisory.add_argument("--campaign", required=True, help="Campaign id or advisory id")
+    blog_campaign = blog_sub.add_parser("draft-campaign", help="Create a review-only blog draft from a campaign research result")
+    blog_campaign.add_argument("--campaign", required=True, help="Campaign id, advisory id, or campaign research JSON path")
 
     blog_news = blog_sub.add_parser("draft-news", help="Create a review-only blog draft from a URL or RSS feed")
     blog_news.add_argument("--source", required=True, help="Source URL or feed URL")
@@ -1002,6 +1006,24 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_watch.add_argument("--dry-run", action="store_true", help="Analyze without persisting reports/findings")
     supply_chain_watch.add_argument("--persist", action="store_true", help="Persist scan history and SOC findings")
     supply_chain_watch.add_argument("--model", help="Override analysis model passed to Cursor Agent CLI")
+
+    supply_chain_campaign = supply_chain_sub.add_parser("research-campaign", help="Research and correlate a cross-ecosystem supply-chain campaign")
+    supply_chain_campaign.add_argument("--input", help="Campaign JSON input file")
+    supply_chain_campaign.add_argument("--campaign-id", help="Campaign identifier")
+    supply_chain_campaign.add_argument("--title", help="Campaign title")
+    supply_chain_campaign.add_argument("--summary", help="Campaign summary")
+    supply_chain_campaign.add_argument("--source-url", action="append", default=[], help="Source/reference URL")
+    supply_chain_campaign.add_argument("--source-name", action="append", default=[], help="Source/reference name")
+    supply_chain_campaign.add_argument("--actor", action="append", default=[], help="Actor label")
+    supply_chain_campaign.add_argument("--publisher", action="append", default=[], help="Publisher/maintainer/namespace")
+    supply_chain_campaign.add_argument("--ioc", action="append", default=[], help="Known IOC or hunt string")
+    supply_chain_campaign.add_argument("--behavior", action="append", default=[], help="Known behavioral indicator")
+    supply_chain_campaign.add_argument("--package", action="append", default=[], help="Package spec: ecosystem:package:version")
+    supply_chain_campaign.add_argument("--search-root", help="Root path to scan for local usage")
+    supply_chain_campaign.add_argument("--dry-run", action="store_true", help="Do not persist SOC findings")
+    supply_chain_campaign.add_argument("--persist", action="store_true", help="Persist SOC findings")
+    supply_chain_campaign.add_argument("--no-fetch", action="store_true", help="Do not fetch live registry artifacts")
+    supply_chain_campaign.add_argument("--create-blog-draft", action="store_true", help="Create a review-only campaign blog draft")
 
     supply_chain_list = supply_chain_sub.add_parser("list", help="List recent supply-chain scan results")
     supply_chain_list.add_argument("--limit", type=int, default=20)
@@ -1488,6 +1510,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 payload = draft_blog_finding(args.finding_id, db_path=args.db_path)
             elif args.blog_cmd == "draft-advisory":
                 payload = draft_blog_advisory(args.campaign)
+            elif args.blog_cmd == "draft-campaign":
+                payload = draft_blog_campaign(args.campaign)
             elif args.blog_cmd == "draft-news":
                 payload = draft_blog_news(args.source)
             elif args.blog_cmd == "news-sources":
@@ -2795,6 +2819,76 @@ def main(argv: Optional[List[str]] = None) -> int:
                     )
                 if payload.get("db_path"):
                     print(f"db_path={payload['db_path']}")
+            return 0
+
+        if args.supply_chain_cmd == "research-campaign":
+            try:
+                if args.dry_run and args.persist:
+                    raise ValueError("--dry-run and --persist are mutually exclusive")
+                campaign_payload: Dict[str, Any] = {}
+                if args.input:
+                    campaign_payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
+                    if not isinstance(campaign_payload, dict):
+                        raise ValueError("--input must contain a JSON object")
+                if args.campaign_id:
+                    campaign_payload["campaign_id"] = args.campaign_id
+                if args.title:
+                    campaign_payload["title"] = args.title
+                if args.summary:
+                    campaign_payload["summary"] = args.summary
+                if args.source_url:
+                    campaign_payload.setdefault("source_urls", [])
+                    campaign_payload["source_urls"].extend(args.source_url)
+                if args.source_name:
+                    campaign_payload.setdefault("source_names", [])
+                    campaign_payload["source_names"].extend(args.source_name)
+                if args.actor:
+                    campaign_payload.setdefault("actors", [])
+                    campaign_payload["actors"].extend(args.actor)
+                if args.publisher:
+                    campaign_payload.setdefault("publishers", [])
+                    campaign_payload["publishers"].extend(args.publisher)
+                if args.behavior:
+                    campaign_payload.setdefault("behavioral_indicators", [])
+                    campaign_payload["behavioral_indicators"].extend(args.behavior)
+                if args.ioc:
+                    campaign_payload.setdefault("iocs", {})
+                    campaign_payload["iocs"].setdefault("operator_supplied", [])
+                    campaign_payload["iocs"]["operator_supplied"].extend(args.ioc)
+                if args.package:
+                    campaign_payload.setdefault("packages", [])
+                    campaign_payload["packages"].extend(args.package)
+                if not campaign_payload.get("packages"):
+                    raise ValueError("campaign research requires at least one package")
+                payload = research_supply_chain_campaign(
+                    campaign=campaign_payload,
+                    search_root=args.search_root,
+                    dry_run=args.dry_run or not args.persist,
+                    persist=args.persist,
+                    no_fetch=args.no_fetch or args.dry_run or not args.persist,
+                    create_blog_draft=args.create_blog_draft,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc)}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(f"campaign_id={payload['campaign_id']}")
+                print(f"campaign_verdict={payload['campaign_verdict']}")
+                print(f"confidence={payload['confidence']}")
+                print(f"score={payload['score']}")
+                print(f"packages={len(payload['packages'])}")
+                print(f"environment_impact={payload['environment_impact']['status']}")
+                if payload.get("finding_ids"):
+                    print(f"finding_ids={','.join(payload['finding_ids'])}")
+                if payload.get("db_path"):
+                    print(f"db_path={payload['db_path']}")
+                if payload.get("blog_draft"):
+                    print(f"blog_draft={payload['blog_draft']['draft_path']}")
             return 0
 
         if args.supply_chain_cmd == "list":

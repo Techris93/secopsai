@@ -177,6 +177,73 @@ For node-ipc-style compromises, SecOpsAI looks for:
 Absence of local lockfile usage lowers environment impact, but it does not erase
 package-level maliciousness when advisory or strong behavioral evidence exists.
 
+## Cross-Ecosystem Campaign Research
+
+Use campaign research when one actor, maintainer, namespace, C2 server, or
+external report links multiple suspicious packages. This workflow works across
+all ecosystems reported by `secopsai supply-chain ecosystems`; npm and PyPI can
+use live artifacts, while every ecosystem can use advisory data and deterministic
+fixture/local-artifact evidence without executing untrusted code.
+
+```bash
+secopsai supply-chain research-campaign \
+  --input tests/fixtures/deadcode09284814-campaign.json \
+  --dry-run \
+  --json
+```
+
+You can also build a small campaign directly from flags:
+
+```bash
+secopsai supply-chain research-campaign \
+  --campaign-id deadcode09284814-infostealer-botnet-campaign \
+  --source-url https://thehackernews.com/2026/05/four-malicious-npm-packages-deliver.html \
+  --actor deadcode09284814 \
+  --package npm:chalk-tempalte:0.0.1 \
+  --package npm:@deadcode09284814/axios-util:0.0.1 \
+  --ioc 87e0bbc636999b.lhr.life \
+  --behavior "credential theft" \
+  --dry-run
+```
+
+Pass `--search-root /path/to/repo` when you want SecOpsAI to check local
+manifests and lockfiles. Local usage changes the environment-impact field; it
+does not erase package-level maliciousness when advisory or behavioral evidence
+is strong.
+
+Campaign JSON supports:
+
+- `campaign_id`, `title`, `summary`, `severity`, `confidence`
+- `source_urls` and `source_names`
+- `actors`, `publishers`, `iocs`, and `behavioral_indicators`
+- `packages`, where each package has `ecosystem`, `package`, `version`,
+  optional `publisher`, optional `iocs`, optional `behavioral_indicators`, and
+  optional deterministic `files` fixtures for static analysis
+
+SecOpsAI correlates packages by same publisher, shared IOCs, shared source
+reports, typosquatting signals, and deterministic behavior such as credential
+harvesting, C2 communication, botnet/persistence behavior, install-time
+execution, import/module-load execution, build hooks, unsafe model loading, and
+extension permission abuse.
+
+Persist findings only after reviewing the dry-run result:
+
+```bash
+secopsai supply-chain research-campaign --input campaign.json --persist --search-root /path/to/repo
+```
+
+Create a review-only blog draft from the campaign result or from an advisory:
+
+```bash
+secopsai blog draft-campaign --campaign tests/fixtures/deadcode09284814-campaign.json
+secopsai blog draft-campaign --campaign deadcode09284814-infostealer-botnet-campaign
+```
+
+Campaign blog drafts remain private until review and approval. Do not publish
+third-party screenshots or article text unless rights and attribution are clear;
+use public source URLs as references and summarize findings in SecOpsAI's own
+words.
+
 ## Detection Capabilities
 
 ### 1. Static Analysis

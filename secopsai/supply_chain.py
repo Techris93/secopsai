@@ -1787,7 +1787,39 @@ def _rubygems_policy_findings(path: str, source: str) -> List[str]:
     return sorted(set(findings))
 
 
-def _ecosystem_policy_findings(path: str, source: str) -> List[str]:
+def _ecosystem_policy_findings(path: str, source: str, ecosystem: Optional[str] = None) -> List[str]:
+    if ecosystem:
+        eco = canonical_ecosystem(ecosystem)
+        lowered = path.lower()
+        if eco == "npm":
+            findings: List[str] = []
+            if lowered.endswith("package.json"):
+                findings.extend(_package_json_policy_findings(path, source))
+            if lowered.endswith((".js", ".mjs", ".cjs", ".ts")):
+                findings.extend(_javascript_semantic_findings(path, source))
+            return sorted(set(findings))
+        if eco == "pypi":
+            findings = []
+            if lowered.endswith("setup.py"):
+                findings.extend(_setup_py_policy_findings(path, source))
+            if lowered.endswith("pyproject.toml"):
+                findings.extend(_pyproject_policy_findings(path, source))
+            if lowered.endswith(".py"):
+                findings.extend(_python_semantic_findings(path, source))
+            return sorted(set(findings))
+        ecosystem_rules = {
+            "crates": _rust_policy_findings,
+            "chrome-web-store": _chrome_extension_policy_findings,
+            "packagist": _packagist_policy_findings,
+            "go": _go_policy_findings,
+            "huggingface": _huggingface_policy_findings,
+            "maven": _maven_policy_findings,
+            "nuget": _nuget_policy_findings,
+            "open-vsx": _open_vsx_policy_findings,
+            "rubygems": _rubygems_policy_findings,
+        }
+        rule = ecosystem_rules.get(eco)
+        return sorted(set(rule(path, source) if rule else []))
     findings: List[str] = []
     findings.extend(_rust_policy_findings(path, source))
     findings.extend(_chrome_extension_policy_findings(path, source))
@@ -1807,7 +1839,7 @@ def analyze_ecosystem_files(ecosystem: str, files: Dict[str, str]) -> Dict[str, 
     manifest_files: List[str] = []
     suspicious_files: List[str] = []
     for path, source in sorted(files.items()):
-        file_findings = _ecosystem_policy_findings(path, source)
+        file_findings = _ecosystem_policy_findings(path, source, canonical)
         if file_findings:
             findings.extend(file_findings)
             suspicious_files.append(path)
@@ -3814,6 +3846,584 @@ def package_compromise_mitigation(
         ecosystem_specific.get(ecosystem, "Audit lockfiles, local package caches, build caches, and container layers for the affected version."),
         "Rotate credentials only if the affected artifact was installed, imported, or executed in an environment with secrets.",
     ]
+
+
+CAMPAIGN_MANIFEST_FILES = {
+    "package.json",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "requirements.txt",
+    "requirements-dev.txt",
+    "pyproject.toml",
+    "poetry.lock",
+    "uv.lock",
+    "pipfile.lock",
+    "cargo.toml",
+    "cargo.lock",
+    "composer.json",
+    "composer.lock",
+    "go.mod",
+    "go.sum",
+    "pom.xml",
+    "build.gradle",
+    "gradle.lockfile",
+    "packages.lock.json",
+    "packages.config",
+    "gemfile",
+    "gemfile.lock",
+    "manifest.json",
+    "extensions.json",
+}
+
+CAMPAIGN_SKIP_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "venv",
+    "env",
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    "tests",
+    "data",
+    "docs",
+    "blog",
+    "dist",
+    "build",
+    "target",
+    ".next",
+}
+
+
+def _safe_str(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _defang_to_indicator(value: str) -> str:
+    return (
+        value.replace("[.]", ".")
+        .replace("(.)", ".")
+        .replace("[dot]", ".")
+        .replace("hxxp://", "http://")
+        .replace("hxxps://", "https://")
+    )
+
+
+def extract_campaign_iocs(values: Iterable[Any]) -> Dict[str, List[str]]:
+    """Extract simple campaign indicators from operator/source text.
+
+    This is intentionally deterministic and conservative. It supports defanged
+    domains used in public reports, but does not fetch or enrich indicators.
+    """
+    text = "\n".join(_defang_to_indicator(str(value or "")) for value in values)
+    domains = {
+        item.lower().strip(".,;:()[]{}<>\"'")
+        for item in re.findall(r"\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b", text, re.IGNORECASE)
+        if item.rsplit(".", 1)[-1].lower() not in {"html", "json", "js", "css", "png", "jpg", "jpeg", "svg", "md"}
+    }
+    urls = {
+        item.rstrip(".,;:()[]{}<>\"'")
+        for item in re.findall(r"https?://[^\s)>\]\"']+", text, re.IGNORECASE)
+    }
+    ip_ports = {
+        item
+        for item in re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}:\d{2,5}\b", text)
+    }
+    ips = {
+        item.split(":", 1)[0]
+        for item in re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{2,5})?\b", text)
+    }
+    repo_descriptions = {
+        item.strip()
+        for item in re.findall(r"A Mini Sha1-Hulud has Appeared", text, re.IGNORECASE)
+    }
+    return {
+        "domains": sorted(domains),
+        "urls": sorted(urls),
+        "ips": sorted(ips),
+        "ip_ports": sorted(ip_ports),
+        "repository_descriptions": sorted(repo_descriptions),
+    }
+
+
+def _merge_iocs(*items: Any) -> Dict[str, List[str]]:
+    merged: Dict[str, set[str]] = {
+        "domains": set(),
+        "urls": set(),
+        "ips": set(),
+        "ip_ports": set(),
+        "hashes": set(),
+        "file_paths": set(),
+        "filenames": set(),
+        "repository_descriptions": set(),
+    }
+    text_values: List[str] = []
+    for item in items:
+        if not item:
+            continue
+        if isinstance(item, dict):
+            for key, values in item.items():
+                bucket = merged.setdefault(str(key), set())
+                if isinstance(values, list):
+                    bucket.update(_defang_to_indicator(str(value)) for value in values if value)
+                    text_values.extend(str(value) for value in values if value)
+                elif values:
+                    bucket.add(_defang_to_indicator(str(values)))
+                    text_values.append(str(values))
+        elif isinstance(item, list):
+            text_values.extend(str(value) for value in item if value)
+        else:
+            text_values.append(str(item))
+    extracted = extract_campaign_iocs(text_values)
+    for key, values in extracted.items():
+        merged.setdefault(key, set()).update(values)
+    return {key: sorted(values) for key, values in merged.items() if values}
+
+
+def _flatten_iocs(iocs: Dict[str, List[str]]) -> List[str]:
+    flattened: List[str] = []
+    for values in iocs.values():
+        flattened.extend(str(value) for value in values)
+    return sorted(set(flattened))
+
+
+def _campaign_score(
+    *,
+    advisory_matches: List[Dict[str, Any]],
+    matched_rules: List[Dict[str, Any]],
+    behavioral_indicators: List[str],
+    iocs: Dict[str, List[str]],
+) -> int:
+    score = 0
+    if advisory_matches:
+        score += 40
+    rule_names = {str(rule.get("rule") or "").lower() for rule in matched_rules}
+    strong_rule_needles = (
+        "credential",
+        "environment credential",
+        "local file enumeration",
+        "module-load",
+        "install hook",
+        "lifecycle",
+        "subprocess",
+        "dynamic execution",
+        "network",
+        "exfil",
+        "persistence",
+    )
+    score += min(30, len([name for name in rule_names if any(needle in name for needle in strong_rule_needles)]) * 8)
+    behavior_text = " ".join(behavioral_indicators).lower()
+    for needle, weight in (
+        ("credential", 12),
+        ("token", 10),
+        ("ssh", 8),
+        ("cloud", 8),
+        ("github", 8),
+        ("botnet", 12),
+        ("ddos", 12),
+        ("persistence", 10),
+        ("shai-hulud", 12),
+        ("c2", 10),
+        ("exfil", 10),
+        ("typosquat", 6),
+    ):
+        if needle in behavior_text:
+            score += weight
+    if iocs:
+        score += min(20, len(_flatten_iocs(iocs)) * 4)
+    return max(0, min(100, score))
+
+
+def _package_verdict_from_score(score: int, advisory_matches: List[Dict[str, Any]]) -> Tuple[str, str]:
+    if advisory_matches and score >= 75:
+        return "confirmed_true_positive", "high"
+    if advisory_matches or score >= 65:
+        return "likely_true_positive", "high" if score >= 75 else "medium"
+    if score >= 35:
+        return "needs_review", "medium"
+    if score >= 15:
+        return "likely_false_positive", "low"
+    return "needs_review", "low"
+
+
+def _campaign_package_spec(spec: str) -> Dict[str, str]:
+    parts = str(spec or "").split(":")
+    if len(parts) < 3:
+        raise ValueError("--package must look like ecosystem:package:version")
+    ecosystem = canonical_ecosystem(parts[0])
+    version = parts[-1]
+    package = ":".join(parts[1:-1])
+    return {"ecosystem": ecosystem, "package": normalize_package_name(ecosystem, package), "version": version}
+
+
+def _normalize_campaign_packages(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    packages = payload.get("packages") or []
+    normalized: List[Dict[str, Any]] = []
+    for item in packages:
+        if isinstance(item, str):
+            item = _campaign_package_spec(item)
+        if not isinstance(item, dict):
+            continue
+        ecosystem = canonical_ecosystem(str(item.get("ecosystem") or item.get("registry") or ""))
+        package = normalize_package_name(ecosystem, str(item.get("package") or item.get("name") or item.get("artifact") or ""))
+        if isinstance(item.get("versions"), list):
+            versions = [_safe_str(value) for value in item["versions"] if _safe_str(value)]
+        else:
+            versions = []
+        version = _safe_str(item.get("version") or item.get("revision") or (versions[0] if versions else "") or "unknown")
+        if not versions and version and version != "unknown":
+            versions = [version]
+        normalized.append({
+            **item,
+            "ecosystem": ecosystem,
+            "package": package,
+            "version": version,
+            "versions": versions,
+            "publisher": _safe_str(item.get("publisher") or item.get("maintainer") or item.get("owner")),
+        })
+    return normalized
+
+
+def _campaign_search_terms(package: Dict[str, Any], campaign: Dict[str, Any], iocs: Dict[str, List[str]]) -> List[str]:
+    terms = [
+        str(package.get("package") or ""),
+        str(package.get("version") or ""),
+        str(package.get("publisher") or ""),
+        str(campaign.get("campaign_id") or ""),
+    ]
+    terms.extend(str(item) for item in campaign.get("actors", []) if item)
+    terms.extend(_flatten_iocs(iocs))
+    seen: set[str] = set()
+    cleaned: List[str] = []
+    for term in terms:
+        term = term.strip()
+        if len(term) < 3:
+            continue
+        lowered = term.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        cleaned.append(term)
+    return cleaned
+
+
+def _campaign_local_usage(search_root: Optional[str], terms: Iterable[str], *, limit: int = 10) -> Dict[str, Any]:
+    if not search_root:
+        return {
+            "status": "not_observed",
+            "present": False,
+            "matches": [],
+            "reason": "local usage scan not requested; pass --search-root to check manifests and lockfiles",
+        }
+    root = Path(search_root).expanduser().resolve()
+    if not root.exists():
+        return {"status": "unknown", "present": False, "matches": [], "reason": f"search root does not exist: {root}"}
+    lowered_terms = [term.lower() for term in terms if term]
+    matches: List[Dict[str, Any]] = []
+    for path in root.rglob("*"):
+        if len(matches) >= limit:
+            break
+        if not path.is_file():
+            continue
+        if any(part in CAMPAIGN_SKIP_DIRS for part in path.parts):
+            continue
+        name = path.name.lower()
+        if name not in CAMPAIGN_MANIFEST_FILES and path.suffix.lower() not in {".json", ".toml", ".lock", ".mod", ".sum", ".csproj", ".gradle"}:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        lowered = text.lower()
+        matched = [term for term in lowered_terms if term.lower() in lowered]
+        if not matched:
+            continue
+        matches.append({
+            "path": str(path),
+            "matched_terms": matched[:5],
+            "manifest": name in CAMPAIGN_MANIFEST_FILES,
+        })
+    exact_version = any(any(re.fullmatch(r"v?\d+(?:\.\d+)+(?:[A-Za-z0-9_.+-]*)?", term) for term in match["matched_terms"]) for match in matches)
+    status = "confirmed_affected" if exact_version else "likely_affected" if matches else "not_observed"
+    return {"status": status, "present": bool(matches), "matches": matches}
+
+
+def _campaign_behavior_indicators(package: Dict[str, Any], analysis: Dict[str, Any], campaign: Dict[str, Any], iocs: Dict[str, List[str]]) -> List[str]:
+    values: List[str] = []
+    values.extend(str(item) for item in campaign.get("behavioral_indicators", []) if item)
+    values.extend(str(item) for item in package.get("behavioral_indicators", []) if item)
+    values.extend(str(item) for item in analysis.get("findings", []) if item)
+    text = " ".join(values + _flatten_iocs(iocs)).lower()
+    if "shai" in text or "hulud" in text:
+        values.append("Shai-Hulud clone or derivative indicator")
+    if "github" in text and ("token" in text or "repository" in text):
+        values.append("GitHub token or repository abuse")
+    if "ddos" in text or "botnet" in text:
+        values.append("botnet or DDoS behavior")
+    if "ssh" in text or "cloud credential" in text or "environment variable" in text:
+        values.append("credential harvesting")
+    if "lhr.life" in text or iocs.get("domains") or iocs.get("ip_ports"):
+        values.append("outbound C2 indicators")
+    pkg_name = str(package.get("package") or "")
+    if "axois" in pkg_name or "tempalte" in pkg_name:
+        values.append("typosquatting package-name indicator")
+    return sorted(set(_safe_str(value) for value in values if _safe_str(value)))
+
+
+def _research_one_campaign_package(
+    package: Dict[str, Any],
+    campaign: Dict[str, Any],
+    *,
+    search_root: Optional[str],
+    no_fetch: bool,
+) -> Dict[str, Any]:
+    ecosystem = str(package["ecosystem"])
+    package_name = str(package["package"])
+    version = str(package.get("version") or "unknown")
+    validation = validate_package_identifier(ecosystem, package_name)
+    advisory_matches = find_advisory_matches(ecosystem, package_name, version) if version != "unknown" else []
+    files = package.get("files") if isinstance(package.get("files"), dict) else {}
+    analysis = analyze_ecosystem_files(ecosystem, files) if files else {
+        "ecosystem": ecosystem,
+        "findings": [],
+        "matched_rules": [],
+        "score": 0,
+        "verdict": "skipped" if no_fetch else "not_analyzed",
+        "confidence": "low",
+        "manifest_files": [],
+        "suspicious_files": [],
+        "limitations": ecosystem_capabilities(ecosystem).get("limitations", []),
+    }
+    package_iocs = _merge_iocs(campaign.get("iocs"), package.get("iocs"), campaign.get("summary"), package.get("notes"))
+    behavior = _campaign_behavior_indicators(package, analysis, campaign, package_iocs)
+    local_usage = _campaign_local_usage(search_root, _campaign_search_terms(package, campaign, package_iocs))
+    score = _campaign_score(
+        advisory_matches=advisory_matches,
+        matched_rules=analysis.get("matched_rules", []),
+        behavioral_indicators=behavior,
+        iocs=package_iocs,
+    )
+    package_verdict, confidence = _package_verdict_from_score(score, advisory_matches)
+    if analysis.get("verdict") == "malicious" and package_verdict == "needs_review":
+        package_verdict = "likely_true_positive"
+        confidence = "medium"
+    mitigation = package_compromise_mitigation(ecosystem, package_name, version, advisory_matches)
+    if package_iocs:
+        mitigation.append("Block or hunt the listed campaign IOCs before rotating credentials.")
+    if local_usage["status"] in {"confirmed_affected", "likely_affected"}:
+        mitigation.append("Treat local exposure as active until affected lockfiles, caches, and runtime artifacts are cleaned.")
+    return {
+        "ecosystem": ecosystem,
+        "package": package_name,
+        "version": version,
+        "publisher": package.get("publisher") or "",
+        "validation": validation,
+        "advisory_matches": advisory_matches,
+        "analysis": analysis,
+        "matched_rules": analysis.get("matched_rules", []),
+        "behavioral_indicators": behavior,
+        "iocs": package_iocs,
+        "score": score,
+        "package_verdict": package_verdict,
+        "environment_impact": {
+            "status": local_usage["status"],
+            "local_usage": local_usage["matches"],
+            "guidance": "Local usage affects exposure, not package-level maliciousness.",
+        },
+        "confidence": confidence,
+        "recommended_mitigation": mitigation,
+        "artifact_reports": [],
+        "references": sorted(set(str(url) for url in campaign.get("source_urls", []) if url)),
+    }
+
+
+def _campaign_correlations(packages: List[Dict[str, Any]], campaign: Dict[str, Any]) -> List[Dict[str, Any]]:
+    correlations: List[Dict[str, Any]] = []
+    by_publisher: Dict[str, List[str]] = {}
+    by_ioc: Dict[str, List[str]] = {}
+    for package in packages:
+        label = f"{package['ecosystem']}:{package['package']}@{package['version']}"
+        publisher = str(package.get("publisher") or "").strip()
+        if publisher:
+            by_publisher.setdefault(publisher, []).append(label)
+        for ioc in _flatten_iocs(package.get("iocs", {})):
+            by_ioc.setdefault(ioc, []).append(label)
+    for publisher, labels in sorted(by_publisher.items()):
+        if len(labels) > 1:
+            correlations.append({"signal": "same_publisher", "value": publisher, "packages": labels})
+    for ioc, labels in sorted(by_ioc.items()):
+        if len(labels) > 1:
+            correlations.append({"signal": "shared_ioc", "value": ioc, "packages": labels})
+    if campaign.get("source_urls") and len(packages) > 1:
+        correlations.append({
+            "signal": "same_external_source",
+            "value": ", ".join(str(url) for url in campaign.get("source_urls", [])[:3]),
+            "packages": [f"{p['ecosystem']}:{p['package']}@{p['version']}" for p in packages],
+        })
+    return correlations
+
+
+def _campaign_verdict(packages: List[Dict[str, Any]]) -> Tuple[str, str, int]:
+    score = max((int(package.get("score") or 0) for package in packages), default=0)
+    verdicts = {str(package.get("package_verdict")) for package in packages}
+    if "confirmed_true_positive" in verdicts:
+        return "confirmed_true_positive", "high", score
+    if "likely_true_positive" in verdicts:
+        return "likely_true_positive", "high" if score >= 75 else "medium", score
+    if "needs_review" in verdicts:
+        return "needs_review", "medium", score
+    return "likely_false_positive", "low", score
+
+
+def _build_campaign_finding(campaign: Dict[str, Any], package: Dict[str, Any]) -> Dict[str, Any]:
+    now = _utc_now()
+    finding_id = _finding_id(package["ecosystem"], package["package"], package["version"])
+    summary = (
+        f"{package['ecosystem']}:{package['package']}@{package['version']} is linked to "
+        f"{campaign['campaign_id']} with verdict {package['package_verdict']}."
+    )
+    return {
+        "finding_id": finding_id,
+        "campaign_id": campaign["campaign_id"],
+        "title": f"Supply-chain campaign package: {package['package']}@{package['version']}",
+        "summary": summary,
+        "severity": campaign.get("severity", "critical"),
+        "severity_score": 98 if package.get("advisory_matches") else 90,
+        "status": "open",
+        "disposition": "unreviewed",
+        "first_seen": now,
+        "last_seen": now,
+        "event_ids": [_scan_event_id(package["ecosystem"], package["package"], package["version"])],
+        "rule_ids": ["SUPPLY-CHAIN-CAMPAIGN", "SUPPLY-CHAIN-NATIVE"],
+        "platform": "supply_chain",
+        "source": "secopsai-supply-chain",
+        "package": package["package"],
+        "ecosystem": package["ecosystem"],
+        "new_version": package["version"],
+        "verdict": package["package_verdict"],
+        "package_verdict": package["package_verdict"],
+        "environment_impact": package["environment_impact"],
+        "confidence": package["confidence"],
+        "analysis": "; ".join(package.get("behavioral_indicators", [])[:8]),
+        "matched_rules": package.get("matched_rules", []),
+        "advisory_matches": package.get("advisory_matches", []),
+        "campaign_ids": [campaign["campaign_id"]],
+        "iocs": package.get("iocs", {}),
+        "remediation": package.get("recommended_mitigation", []),
+        "supply_chain_metadata": {
+            "campaign_id": campaign["campaign_id"],
+            "package_verdict": package["package_verdict"],
+            "environment_impact": package["environment_impact"],
+            "correlation_source": "research-campaign",
+        },
+    }
+
+
+def normalize_campaign_input(payload: Dict[str, Any]) -> Dict[str, Any]:
+    campaign_id = _safe_str(payload.get("campaign_id") or payload.get("id") or "supply-chain-campaign")
+    packages = _normalize_campaign_packages(payload)
+    iocs = _merge_iocs(payload.get("iocs"), payload.get("summary"), payload.get("behavioral_indicators"))
+    return {
+        **payload,
+        "campaign_id": campaign_id,
+        "title": _safe_str(payload.get("title") or campaign_id.replace("-", " ").title()),
+        "summary": _safe_str(payload.get("summary") or "Cross-ecosystem supply-chain campaign research."),
+        "ecosystems": sorted(set(package["ecosystem"] for package in packages)),
+        "packages": packages,
+        "actors": [str(item) for item in payload.get("actors", []) if item] if isinstance(payload.get("actors"), list) else [],
+        "publishers": [str(item) for item in payload.get("publishers", []) if item] if isinstance(payload.get("publishers"), list) else [],
+        "source_urls": [str(item) for item in payload.get("source_urls", []) if item],
+        "source_names": [str(item) for item in payload.get("source_names", []) if item],
+        "iocs": iocs,
+        "behavioral_indicators": [str(item) for item in payload.get("behavioral_indicators", []) if item],
+        "severity": str(payload.get("severity") or "critical"),
+        "confidence": str(payload.get("confidence") or "medium"),
+    }
+
+
+def research_campaign(
+    *,
+    campaign: Dict[str, Any],
+    search_root: Optional[str] = None,
+    dry_run: bool = True,
+    persist: bool = False,
+    no_fetch: bool = False,
+    create_blog_draft: bool = False,
+) -> Dict[str, Any]:
+    normalized = normalize_campaign_input(campaign)
+    package_results = [
+        _research_one_campaign_package(package, normalized, search_root=search_root, no_fetch=no_fetch)
+        for package in normalized["packages"]
+    ]
+    verdict, confidence, score = _campaign_verdict(package_results)
+    campaign_iocs = _merge_iocs(normalized.get("iocs"), *[package.get("iocs", {}) for package in package_results])
+    correlations = _campaign_correlations(package_results, normalized)
+    mitigation = sorted(set(
+        step
+        for package in package_results
+        for step in package.get("recommended_mitigation", [])
+    ))
+    output = {
+        "generated_at": _utc_now(),
+        "campaign_id": normalized["campaign_id"],
+        "title": normalized["title"],
+        "summary": normalized["summary"],
+        "ecosystems": sorted(set(package["ecosystem"] for package in package_results)),
+        "actors": normalized.get("actors", []),
+        "publishers": sorted(set([*normalized.get("publishers", []), *[p.get("publisher") for p in package_results if p.get("publisher")]])),
+        "source_urls": normalized.get("source_urls", []),
+        "source_names": normalized.get("source_names", []),
+        "first_seen": normalized.get("first_seen"),
+        "last_seen": normalized.get("last_seen"),
+        "severity": normalized.get("severity", "critical"),
+        "confidence": confidence,
+        "campaign_verdict": verdict,
+        "score": score,
+        "package_verdict": verdict,
+        "environment_impact": {
+            "status": "confirmed_affected" if any(p["environment_impact"]["status"] == "confirmed_affected" for p in package_results)
+            else "likely_affected" if any(p["environment_impact"]["status"] == "likely_affected" for p in package_results)
+            else "not_observed",
+            "guidance": "Package maliciousness is assessed separately from local environment impact.",
+        },
+        "iocs": campaign_iocs,
+        "behavioral_indicators": sorted(set(
+            indicator
+            for package in package_results
+            for indicator in package.get("behavioral_indicators", [])
+        )),
+        "packages": package_results,
+        "correlations": correlations,
+        "recommended_mitigation": mitigation,
+        "blog_ready_summary": (
+            f"SecOpsAI correlated {len(package_results)} package artifact(s) across "
+            f"{', '.join(sorted(set(package['ecosystem'] for package in package_results))) or 'unknown ecosystems'} "
+            f"for {normalized['campaign_id']} and assessed the campaign as {verdict}."
+        ),
+        "references": normalized.get("source_urls", []),
+        "dry_run": dry_run,
+        "persist": persist,
+        "db_path": None,
+        "finding_ids": [],
+        "blog_draft": None,
+    }
+    if persist and not dry_run:
+        findings = [
+            _build_campaign_finding(output, package)
+            for package in package_results
+            if package.get("package_verdict") in {"confirmed_true_positive", "likely_true_positive", "needs_review"}
+        ]
+        output["db_path"] = _upsert_findings(findings) if findings else None
+        output["finding_ids"] = [finding["finding_id"] for finding in findings]
+    if create_blog_draft:
+        from secopsai import blog
+
+        output["blog_draft"] = blog.draft_campaign(campaign_data=output)
+    return output
 
 
 def watch_registry(

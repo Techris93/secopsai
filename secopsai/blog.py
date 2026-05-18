@@ -780,6 +780,176 @@ def draft_finding(finding_id: str, *, db_path: Optional[str] = None, paths: Opti
     return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
 
 
+def _campaign_from_source(campaign: str) -> Dict[str, Any]:
+    candidate = Path(campaign)
+    if candidate.exists():
+        payload = _load_json(candidate)
+        if not isinstance(payload, dict):
+            raise ValueError("campaign input must be a JSON object")
+        return payload
+    for advisory in load_advisories():
+        if campaign in {advisory.get("campaign_id"), advisory.get("advisory_id")}:
+            return {
+                "campaign_id": advisory.get("campaign_id") or advisory.get("advisory_id"),
+                "title": advisory.get("title"),
+                "summary": advisory.get("summary"),
+                "severity": advisory.get("severity", "critical"),
+                "confidence": advisory.get("confidence", "high"),
+                "source_urls": advisory.get("source_urls", []),
+                "source_names": advisory.get("source_names", []),
+                "iocs": advisory.get("iocs", {}),
+                "behavioral_indicators": advisory.get("detection_rationale", []),
+                "packages": [
+                    {
+                        "ecosystem": item.get("ecosystem", ""),
+                        "package": item.get("package", ""),
+                        "version": ", ".join(str(v) for v in item.get("versions", [])) or "range-listed",
+                        "advisory_matches": [{"campaign_id": advisory.get("campaign_id"), "advisory_id": advisory.get("advisory_id")}],
+                        "package_verdict": "likely_true_positive",
+                        "confidence": advisory.get("confidence", "high"),
+                        "environment_impact": {"status": "unknown"},
+                        "behavioral_indicators": advisory.get("detection_rationale", []),
+                        "recommended_mitigation": advisory.get("remediation", []),
+                    }
+                    for item in advisory.get("affected", [])
+                    if isinstance(item, dict)
+                ],
+                "recommended_mitigation": advisory.get("remediation", []),
+                "references": advisory.get("source_urls", []),
+            }
+    raise ValueError(f"No campaign found: {campaign}")
+
+
+def draft_campaign(
+    campaign: Optional[str] = None,
+    *,
+    campaign_data: Optional[Dict[str, Any]] = None,
+    paths: Optional[BlogPaths] = None,
+) -> Dict[str, Any]:
+    paths = paths or BlogPaths()
+    payload = campaign_data or _campaign_from_source(campaign or "")
+    campaign_id = str(payload.get("campaign_id") or "supply-chain-campaign")
+    title = str(payload.get("title") or campaign_id.replace("-", " ").title())
+    summary = str(payload.get("blog_ready_summary") or payload.get("summary") or title)
+    packages = [item for item in payload.get("packages", []) if isinstance(item, dict)]
+    iocs = payload.get("iocs", {})
+    ioc_values: List[str] = []
+    if isinstance(iocs, dict):
+        for values in iocs.values():
+            if isinstance(values, list):
+                ioc_values.extend(str(value) for value in values)
+    package_lines = [
+        "| Ecosystem | Package | Version | Verdict | Local impact |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for item in packages:
+        impact = item.get("environment_impact", {})
+        impact_status = str(impact.get("status") or "unknown") if isinstance(impact, dict) else "unknown"
+        package_lines.append(
+            "| {eco} | `{pkg}` | `{ver}` | {verdict} | {impact} |".format(
+                eco=redact(str(item.get("ecosystem") or "")),
+                pkg=redact(str(item.get("package") or "")),
+                ver=redact(str(item.get("version") or "")),
+                verdict=redact(str(item.get("package_verdict") or "needs_review")),
+                impact=redact(impact_status),
+            )
+        )
+    detected = sorted(set(
+        str(indicator)
+        for item in packages
+        for indicator in item.get("behavioral_indicators", [])
+        if indicator
+    ))
+    if not detected:
+        detected = [str(item) for item in payload.get("behavioral_indicators", []) if item]
+    mitigation = _safe_list(payload.get("recommended_mitigation", []), limit=20)
+    refs = _safe_list(payload.get("references") or payload.get("source_urls") or [], limit=12)
+    env_impact = payload.get("environment_impact", {})
+    env_status = str(env_impact.get("status") or "unknown") if isinstance(env_impact, dict) else "unknown"
+    body = f"""# {title}
+
+## Executive Summary
+
+{summary}
+
+## Campaign Overview
+
+- Campaign id: `{campaign_id}`
+- Severity: `{payload.get('severity', 'critical')}`
+- Confidence: `{payload.get('confidence', 'medium')}`
+- Campaign verdict: `{payload.get('campaign_verdict') or payload.get('package_verdict') or 'needs_review'}`
+- Environment impact: `{env_status}`
+
+## Affected Packages
+
+{chr(10).join(package_lines)}
+
+## What SecOpsAI Detected
+
+{chr(10).join(f'- {redact(item)}' for item in _safe_list(detected, limit=16)) or '- Review campaign package evidence before publishing.'}
+
+## IOCs
+
+{chr(10).join(f'- `{redact(item)}`' for item in _safe_list(ioc_values, limit=24)) or '- No structured IOCs attached.'}
+
+## Environment Impact Guidance
+
+Absence of local usage lowers local exposure, but it does not downgrade package-level maliciousness when advisory or behavioral evidence is strong.
+
+## Recommended Actions
+
+{chr(10).join(f'- {redact(item)}' for item in mitigation) or '- Block affected package versions, inspect lockfiles and caches, and rotate credentials if installation or execution is confirmed.'}
+
+## Operator Commands
+
+```bash
+secopsai supply-chain research-campaign --campaign-id {campaign_id} --dry-run --json
+secopsai triage summary
+secopsai blog draft-campaign --campaign {campaign_id}
+```
+
+## References
+
+{chr(10).join(f'- {source}' for source in refs)}
+"""
+    post = _base_post(
+        title=title,
+        summary=summary,
+        severity=str(payload.get("severity") or "critical"),
+        categories=["Supply Chain", "Threat Intelligence", "Mitigation"],
+        sources=refs,
+        slug=slugify(f"{campaign_id}-{title}"),
+    )
+    post.update(
+        {
+            "affected_ecosystems": _safe_list(payload.get("ecosystems") or [item.get("ecosystem", "") for item in packages]),
+            "affected_packages": _safe_list([item.get("package", "") for item in packages]),
+            "affected_artifacts": [
+                {
+                    "ecosystem": item.get("ecosystem", ""),
+                    "package": item.get("package", ""),
+                    "version": item.get("version", ""),
+                    "verdict": item.get("package_verdict", "needs_review"),
+                }
+                for item in packages
+            ],
+            "iocs": _safe_list(ioc_values, limit=50),
+            "featured": False,
+            "external_news": bool(payload.get("source_urls")),
+            "review_status": "needs_review",
+            "author": "SecOpsAI Threat Research",
+            "source_name": "SecOpsAI Campaign Research",
+            "references": refs,
+            "campaign_id": campaign_id,
+            "campaign_verdict": payload.get("campaign_verdict") or payload.get("package_verdict"),
+            "body_markdown": redact(body),
+        }
+    )
+    post["reading_time"] = _post_reading_time(post)
+    _write_json(_draft_path(post["slug"], paths), post)
+    return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
+
+
 def _read_news_cache(paths: BlogPaths) -> Dict[str, Any]:
     if not paths.news_cache.exists():
         return {"items": []}

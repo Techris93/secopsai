@@ -77,6 +77,39 @@ class BlogPublishingTests(unittest.TestCase):
             self.assertTrue((paths.root / "assets" / "social" / "secopsai-blog.svg").exists())
             self.assertTrue((paths.root / "assets" / "social" / "unit-campaign-unit-supply-chain-campaign.svg").exists())
 
+    def test_draft_campaign_creates_review_only_blog_post(self):
+        campaign = {
+            "campaign_id": "unit-cross-ecosystem-campaign",
+            "title": "Unit cross-ecosystem supply-chain campaign",
+            "summary": "Credential theft across package ecosystems.",
+            "campaign_verdict": "likely_true_positive",
+            "severity": "critical",
+            "source_urls": ["https://example.com/research"],
+            "iocs": {"domains": ["c2.example"]},
+            "ecosystems": ["npm", "pypi"],
+            "packages": [
+                {
+                    "ecosystem": "npm",
+                    "package": "unit-pkg",
+                    "version": "1.0.0",
+                    "package_verdict": "likely_true_positive",
+                    "environment_impact": {"status": "not_observed"},
+                    "behavioral_indicators": ["credential harvesting"],
+                }
+            ],
+            "recommended_mitigation": ["Block unit-pkg@1.0.0."],
+            "references": ["https://example.com/research"],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            draft = blog.draft_campaign(campaign_data=campaign, paths=paths)
+            post = draft["post"]
+        self.assertEqual(post["review_status"], "needs_review")
+        self.assertTrue(post["external_news"])
+        self.assertIn("Affected Packages", post["body_markdown"])
+        self.assertIn("unit-pkg", post["body_markdown"])
+        self.assertNotIn("Review Checklist", post["body_markdown"])
+
     def test_draft_finding_redacts_token_like_values(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = str(Path(temp_dir) / "findings.db")

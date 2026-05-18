@@ -13,6 +13,10 @@ secopsai blog draft-finding <FINDING_ID>
 # Draft from an emergency advisory.
 secopsai blog draft-advisory --campaign mini-shai-hulud
 
+# Draft from cross-ecosystem campaign research.
+secopsai blog draft-campaign --campaign tests/fixtures/deadcode09284814-campaign.json
+secopsai blog draft-campaign --campaign deadcode09284814-infostealer-botnet-campaign
+
 # Draft from an external news URL or RSS feed.
 secopsai blog draft-news --source https://example.com/security-feed.xml
 
@@ -105,6 +109,10 @@ secopsai blog draft-advisory --campaign <campaign-id>
 
 # SecOpsAI-originated finding post
 secopsai blog draft-finding <FINDING_ID>
+
+# SecOpsAI-originated campaign research post
+secopsai supply-chain research-campaign --input campaign.json --dry-run --json
+secopsai blog draft-campaign --campaign campaign.json
 ```
 
 For a first-party post, include:

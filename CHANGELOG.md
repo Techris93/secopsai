@@ -21,6 +21,9 @@ the next tagged release.
 - Added safe live registry metadata/artifact adapters for crates.io, Packagist,
   Go Modules, Hugging Face Hub, Maven Central, NuGet, Open VSX, and RubyGems,
   plus local CRX/ZIP artifact scanning for Chrome Web Store extensions.
+- Added cross-ecosystem supply-chain campaign research with correlated package
+  verdicts, environment-impact separation, SOC finding persistence, and
+  review-only campaign blog drafts.
 - Added a changelog entry helper at `scripts/changelog_entry.py`.
 
 ### Security
@@ -35,6 +38,9 @@ the next tagged release.
 - Hardened supply-chain artifact handling with bounded downloads, safe archive
   extraction, traversal/symlink blocking, and no-execution analysis across the
   new live adapters.
+- Added a `deadcode09284814` npm infostealer/botnet campaign advisory fixture
+  with IOCs, behavioral indicators, and mitigation guidance for research and
+  blog-drafting workflows.
 
 ### Docs
 

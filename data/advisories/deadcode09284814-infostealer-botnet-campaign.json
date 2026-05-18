@@ -1,0 +1,69 @@
+{
+  "advisory_id": "SECOPSAI-ADV-2026-05-DEADCODE09284814",
+  "campaign_id": "deadcode09284814-infostealer-botnet-campaign",
+  "title": "deadcode09284814 npm infostealer and botnet campaign",
+  "summary": "Emergency campaign advisory for four reported npm packages associated with credential theft, Shai-Hulud clone behavior, C2 communication, and botnet activity.",
+  "severity": "critical",
+  "confidence": "high",
+  "status": "active",
+  "published_at": "2026-05-18T00:00:00Z",
+  "updated_at": "2026-05-18T00:00:00Z",
+  "ingested_at": "2026-05-18T00:00:00Z",
+  "source_names": [
+    "The Hacker News",
+    "OX Security"
+  ],
+  "source_urls": [
+    "https://thehackernews.com/2026/05/four-malicious-npm-packages-deliver.html"
+  ],
+  "affected": [
+    {
+      "ecosystem": "npm",
+      "package": "chalk-tempalte",
+      "version_ranges": [{"introduced": "0"}],
+      "safe_versions": ["Remove the package and replace with a trusted dependency; no safe version is listed in the source report."]
+    },
+    {
+      "ecosystem": "npm",
+      "package": "@deadcode09284814/axios-util",
+      "version_ranges": [{"introduced": "0"}],
+      "safe_versions": ["Remove the package and replace with a trusted dependency; no safe version is listed in the source report."]
+    },
+    {
+      "ecosystem": "npm",
+      "package": "axois-utils",
+      "version_ranges": [{"introduced": "0"}],
+      "safe_versions": ["Remove the package and replace with a trusted dependency; no safe version is listed in the source report."]
+    },
+    {
+      "ecosystem": "npm",
+      "package": "color-style-utils",
+      "version_ranges": [{"introduced": "0"}],
+      "safe_versions": ["Remove the package and replace with a trusted dependency; no safe version is listed in the source report."]
+    }
+  ],
+  "iocs": {
+    "domains": [
+      "87e0bbc636999b.lhr.life",
+      "edcf8b03c84634.lhr.life",
+      "69466bcfa27554.lhr.life"
+    ],
+    "ips": ["80.200.28.28"],
+    "ip_ports": ["80.200.28.28:2222"],
+    "repository_descriptions": ["A Mini Sha1-Hulud has Appeared"],
+    "campaign_labels": ["deadcode09284814", "Shai-Hulud clone", "Phantom Bot", "npm infostealer"]
+  },
+  "detection_rationale": [
+    "Reported packages share the publisher deadcode09284814 and are linked to credential theft, C2 communication, and botnet behavior.",
+    "chalk-tempalte is reported as a Shai-Hulud clone that abuses GitHub tokens and exports stolen data to a public repository.",
+    "axois-utils is reported to deliver a Go-based DDoS botnet with Windows and Linux persistence behavior.",
+    "The remaining reported packages are associated with SSH key, environment variable, cloud credential, system information, IP address, and cryptocurrency wallet harvesting."
+  ],
+  "remediation": [
+    "Block chalk-tempalte, @deadcode09284814/axios-util, axois-utils, and color-style-utils in npm policy, CI allowlists, and artifact proxies.",
+    "Remove any installed copies and purge npm, pnpm, yarn, CI runner, and container build caches.",
+    "Hunt for C2 indicators 87e0bbc636999b.lhr.life, edcf8b03c84634.lhr.life, 69466bcfa27554.lhr.life, and 80.200.28.28:2222.",
+    "Search GitHub for repositories or audit logs containing the description A Mini Sha1-Hulud has Appeared.",
+    "Rotate GitHub, npm, cloud, SSH, CI/CD, package-manager, and cryptocurrency wallet secrets if installation or execution is confirmed."
+  ]
+}
