@@ -13,7 +13,7 @@
   --dim: #6b7280;
   --emerald: #10b981;
   --cyan: #38bdf8;
-  --amber: #d7b34a;
+  --accent: #10b981;
   --crimson: #ef4444;
   --radius: 14px;
 }
@@ -102,11 +102,14 @@ a {
   text-decoration: none;
 }
 
-.brand-diamond {
-  color: var(--amber);
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
-  font-size: 0.75rem;
-  line-height: 1;
+.brand-mark {
+  display: block;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(16, 185, 129, 0.28);
+  border-radius: 10px;
+  object-fit: contain;
+  box-shadow: 0 0 28px rgba(16, 185, 129, 0.18);
 }
 
 .brand-title {
@@ -144,7 +147,7 @@ a {
 }
 
 .nav-links a:last-child {
-  color: var(--amber);
+  color: var(--accent);
   font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-size: 0.6875rem;
   font-weight: 600;
@@ -206,8 +209,9 @@ a {
   z-index: -1;
   content: "";
   background:
-    radial-gradient(circle at 32% 18%, rgba(16, 185, 129, 0.14), transparent 21rem),
-    radial-gradient(circle at 68% 8%, rgba(56, 189, 248, 0.08), transparent 22rem);
+    radial-gradient(circle at 28% 18%, rgba(16, 185, 129, 0.18), transparent 22rem),
+    radial-gradient(circle at 68% 8%, rgba(45, 212, 191, 0.1), transparent 23rem),
+    radial-gradient(circle at 50% 52%, rgba(5, 150, 105, 0.08), transparent 28rem);
   filter: blur(4px);
 }
 
@@ -218,8 +222,8 @@ a {
   width: fit-content;
   max-width: 100%;
   margin: 0;
-  color: var(--amber);
-  border: 1px solid rgba(215, 179, 74, 0.38);
+  color: var(--accent);
+  border: 1px solid rgba(16, 185, 129, 0.42);
   border-radius: 6px;
   padding: 7px 14px;
   font-family: "IBM Plex Mono", ui-monospace, monospace;
@@ -276,7 +280,7 @@ button {
   border-radius: 8px;
   padding: 13px 28px;
   color: #06100d;
-  background: var(--amber);
+  background: var(--accent);
   font: inherit;
   font-size: 0.875rem;
   font-weight: 700;
@@ -302,7 +306,7 @@ button:hover {
   left: 50%;
   width: 1px;
   height: 40px;
-  background: rgba(215, 179, 74, 0.28);
+  background: rgba(16, 185, 129, 0.32);
   animation: pulse-line 2s ease-in-out infinite;
 }
 
@@ -685,8 +689,8 @@ pre,
 
 .topic-filter:hover,
 .topic-filter.active {
-  color: var(--amber);
-  border-bottom-color: var(--amber);
+  color: var(--accent);
+  border-bottom-color: var(--accent);
   filter: none;
 }
 
@@ -825,7 +829,7 @@ textarea {
 }
 
 .breadcrumb span:last-child {
-  color: var(--amber);
+  color: var(--accent);
 }
 
 .article-hero .dek {

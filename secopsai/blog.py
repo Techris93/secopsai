@@ -2315,7 +2315,7 @@ def _render_site_header(*, subtitle: str = "Security Blog", links: Optional[List
     return f"""<header class="topbar">
       <nav class="shell nav" data-site-nav>
         <a class="brand" href="/">
-          <span class="brand-diamond" aria-hidden="true">◆</span>
+          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
           <span class="brand-title"><span>SECOPSAI</span><span>{html.escape(subtitle).upper()}</span></span>
         </a>
         <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-menu" data-nav-toggle>
