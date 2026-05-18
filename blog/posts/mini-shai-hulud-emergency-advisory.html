@@ -28,14 +28,17 @@
     <link rel="canonical" href="https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html" />
     <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
     <header class="topbar">
       <nav class="shell nav" data-site-nav>
         <a class="brand" href="/">
-          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
-          <span class="brand-title"><span>SecOpsAI</span><span>Security Blog</span></span>
+          <span class="brand-diamond" aria-hidden="true">◆</span>
+          <span class="brand-title"><span>SECOPSAI</span><span>SECURITY BLOG</span></span>
         </a>
         <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-menu" data-nav-toggle>
           <span class="nav-toggle-lines" aria-hidden="true"><span></span><span></span><span></span></span>
@@ -49,9 +52,12 @@
         </div>
       </nav>
     </header>
-    <main class="shell post-layout">
-      <article class="post-body">
-        <p class="eyebrow">Critical • SecOpsAI intelligence</p>
+    <main>
+      <header class="shell article-hero">
+        <div class="breadcrumb">
+          <a href="/">Blog Home</a><span>&gt;</span><span>Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts</span>
+        </div>
+        <p class="eyebrow">CRITICAL • SecOpsAI Intelligence</p>
         <h1>Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts</h1>
         <p class="dek">Mini Shai-Hulud affected npm and PyPI packages, including removed artifacts that now receive source-backed SecOpsAI advisory detections.</p>
         <div class="meta">
@@ -59,24 +65,13 @@
           <span>By SecOpsAI Threat Research</span>
           <span>4 min read</span>
           <span>Published: 2026-05-12</span>
-          <span>Updated: 2026-05-12</span>
+            <span>Updated: 2026-05-12</span>
         </div>
         <div class="tags"><span class="pill">Supply Chain</span> <span class="pill">Advisories</span> <span class="pill">Detection Engineering</span> <span class="pill">Mitigation</span></div>
 
-        <section class="intelligence-brief" aria-label="Post intelligence brief">
-          <div>
-            <p class="eyebrow">Executive summary</p>
-            <p>Mini Shai-Hulud affected npm and PyPI packages, including removed artifacts that now receive source-backed SecOpsAI advisory detections.</p>
-          </div>
-          <div>
-            <p class="eyebrow">Affected artifacts</p>
-            <table><thead><tr><th>Ecosystem</th><th>Artifact</th><th>Versions</th></tr></thead><tbody><tr><td>npm</td><td><code>@opensearch-project/opensearch</code></td><td>3.5.3, 3.6.2, 3.7.0, 3.8.0</td></tr><tr><td>pypi</td><td><code>mistralai</code></td><td>2.4.6</td></tr><tr><td>pypi</td><td><code>guardrails-ai</code></td><td>0.10.1</td></tr><tr><td>npm</td><td><code>@squawk/mcp</code></td><td>0.9.5</td></tr><tr><td>npm</td><td><code>@squawk/airport-data</code></td><td>0.7.8</td></tr></tbody></table>
-          </div>
-          <div>
-            <p class="eyebrow">IOCs</p>
-            <ul><li><code>git-tanstack.com/transformers.pyz</code></li><li><code>83.142.209.194/transformers.pyz</code></li><li><code>/tmp/transformers.pyz</code></li><li><code>router_init.js</code></li><li><code>setup.mjs</code></li></ul>
-          </div>
-        </section>
+      </header>
+      <div class="shell post-layout">
+        <article class="post-body">
         <h2>Affected Artifacts</h2>
 <ul>
 <li>npm: <code>@opensearch-project/opensearch</code> versions <code>3.5.3</code>, <code>3.6.2</code>, <code>3.7.0</code>, <code>3.8.0</code></li>
@@ -160,6 +155,7 @@ secopsai supply-chain reconcile-history --include-advisories</code></pre>
           <p>No related posts yet.</p>
         </section>
       </aside>
+      </div>
     </main>
     <script src="/assets/blog.js" defer></script>
     <script src="/assets/comments.js" defer></script>

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Latest posts | SecOpsAI Security Blog</title>
+    <meta name="description" content="Research, advisories, detections, and mitigation notes" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="SecOpsAI Security Blog" />
+    <meta property="og:title" content="Latest posts | SecOpsAI Security Blog" />
+    <meta property="og:description" content="Research, advisories, detections, and mitigation notes" />
+    <meta property="og:url" content="https://blog.secopsai.dev/posts/" />
+    <meta property="og:image" content="https://blog.secopsai.dev/assets/social/secopsai-blog.svg" />
+    <meta property="og:image:alt" content="SecOpsAI Security Blog social preview card" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Latest posts | SecOpsAI Security Blog" />
+    <meta name="twitter:description" content="Research, advisories, detections, and mitigation notes" />
+    <meta name="twitter:image" content="https://blog.secopsai.dev/assets/social/secopsai-blog.svg" />
+    <meta name="twitter:image:alt" content="SecOpsAI Security Blog social preview card" />
+    <link rel="canonical" href="https://blog.secopsai.dev/posts/" />
+    <link rel="alternate" type="application/rss+xml" title="SecOpsAI Security Blog RSS" href="/feed.xml" />
+    <link rel="alternate" type="application/feed+json" title="SecOpsAI Security Blog JSON Feed" href="/feed.json" />
+    <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/blog.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <nav class="shell nav" data-site-nav>
+        <a class="brand" href="/">
+          <span class="brand-diamond" aria-hidden="true">◆</span>
+          <span class="brand-title"><span>SECOPSAI</span><span>SECURITY BLOG</span></span>
+        </a>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-menu" data-nav-toggle>
+          <span class="nav-toggle-lines" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span class="nav-toggle-label">Menu</span>
+        </button>
+        <div class="nav-links" id="site-menu" data-nav-menu>
+          <a href="https://secopsai.dev/">Platform</a>
+          <a href="/#topics">Topics</a>
+          <a href="/posts/">Latest</a>
+          <a href="https://docs.secopsai.dev/">Docs</a>
+          <a href="/feed.xml">RSS</a>
+          <a href="/json-feed">JSON Feed</a>
+        </div>
+      </nav>
+    </header>
+    <main class="listing-page">
+      <section class="shell listing-hero">
+        <h1>Latest posts</h1>
+        <p>Research, advisories, detections, and mitigation notes</p>
+        <div class="filter-row" aria-label="Post topic filters">
+          <button class="topic-filter active" type="button" data-topic-filter="all">All</button>
+          <button class="topic-filter" type="button" data-topic-filter="security news">Security News</button>
+<button class="topic-filter" type="button" data-topic-filter="threat intelligence">Threat Intelligence</button>
+<button class="topic-filter" type="button" data-topic-filter="supply chain">Supply Chain</button>
+<button class="topic-filter" type="button" data-topic-filter="detection engineering">Detection Engineering</button>
+<button class="topic-filter" type="button" data-topic-filter="mitigation">Mitigation</button>
+<button class="topic-filter" type="button" data-topic-filter="openclaw">OpenClaw</button>
+<button class="topic-filter" type="button" data-topic-filter="product updates">Product Updates</button>
+        </div>
+        <div class="filters compact" aria-label="Search and sort posts">
+          <input id="post-search" type="search" placeholder="Search posts, tags, ecosystems, packages, or IOCs..." />
+          <label for="post-sort">Sort</label>
+          <select id="post-sort">
+            <option value="latest">Latest</option>
+            <option value="oldest">Oldest</option>
+            <option value="severity">Severity</option>
+            <option value="reading">Reading Time</option>
+          </select>
+        </div>
+      </section>
+      <section class="shell latest-grid" id="posts" aria-live="polite">
+        <a class="post-card" href="/posts/news-5752d8dcb4593420-cisa-kev-microsoft-microsoft-cve-2026-42897.html"
+          data-search="cisa kev: microsoft cve-2026-42897 microsoft exchange server contains a cross-site scripting vulnerability during web page generation in outlook web access and when certain interaction conditions are met, arbitrary javascript can be executed in the browser context.   https://msrc.microsoft.com/update-guide/en-us/vulnerability/cve-2026-42897 https://learn.microsoft.com/en-us/exchange/plan-and-deploy/post-installation-tasks/security-best-practices/exchange-emergency-mitigation-service https://nvd.nist.gov/vuln/detail/cve-2026-42897 security news threat intelligence cisa kev vulnerability cve-2026-42897"
+          data-topic="security news threat intelligence cisa kev vulnerability cve-2026-42897"
+          data-severity="3"
+          data-date="2026-05-16T18:56:57Z"
+          data-reading="1">
+          <span class="pill high">High</span>
+          <h2>CISA KEV: Microsoft CVE-2026-42897</h2>
+          <p>Microsoft Exchange Server contains a cross-site scripting vulnerability during web page generation in Outlook Web Access and when certain interaction conditions are met, arbitrary JavaScript can be executed in the browser context.</p>
+          <div class="meta">
+            <span>CISA Known Exploited Vulnerabilities</span>
+            <span>1 min read</span>
+            <span>2026-05-16</span>
+          </div>
+          <div class="tags"><span class="pill">Security News</span> <span class="pill">Threat Intelligence</span> <span class="pill">CISA KEV</span> <span class="pill">Vulnerability</span> <span class="pill">CVE-2026-42897</span></div>
+        </a><a class="post-card" href="/posts/mini-shai-hulud-emergency-advisory.html"
+          data-search="mini shai-hulud crosses npm and pypi: advisory protection for removed artifacts mini shai-hulud affected npm and pypi packages, including removed artifacts that now receive source-backed secopsai advisory detections. @opensearch-project/opensearch mistralai guardrails-ai @squawk/mcp @squawk/airport-data git-tanstack.com/transformers.pyz 83.142.209.194/transformers.pyz /tmp/transformers.pyz router_init.js setup.mjs https://www.ox.security/blog/shai-hulud-here-we-go-again-170-packages-hit-across-npm-pypi/ https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack https://docs.secopsai.dev/supply-chain-advisories/ supply chain advisories detection engineering mitigation"
+          data-topic="supply chain advisories detection engineering mitigation"
+          data-severity="4"
+          data-date="2026-05-12T00:00:00Z"
+          data-reading="4">
+          <span class="pill critical">Critical</span>
+          <h2>Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts</h2>
+          <p>Mini Shai-Hulud affected npm and PyPI packages, including removed artifacts that now receive source-backed SecOpsAI advisory detections.</p>
+          <div class="meta">
+            <span>SecOpsAI Threat Research</span>
+            <span>4 min read</span>
+            <span>2026-05-12</span>
+          </div>
+          <div class="tags"><span class="pill">Supply Chain</span> <span class="pill">Advisories</span> <span class="pill">Detection Engineering</span> <span class="pill">Mitigation</span></div>
+        </a>
+      </section>
+    </main>
+    <footer class="footer">
+      <div class="shell footer-inner">
+        <div class="footer-top">
+          <div><span>SecOpsAI</span><span>Security Blog</span></div>
+          <span>Operator feed</span>
+        </div>
+        <p>New SecOpsAI detections, package advisories, OpenClaw telemetry learnings, malware behavior cards, and practical response notes.</p>
+        <div class="footer-bottom">
+          <div><span>SecOpsAI Security Blog</span><span>Local-first intelligence, source-backed actions.</span></div>
+          <nav aria-label="Footer links">
+            <a href="https://secopsai.dev/">Platform</a>
+            <a href="/#topics">Topics</a>
+            <a href="/posts/">Latest</a>
+            <a href="https://docs.secopsai.dev/">Docs</a>
+            <a href="/feed.xml">RSS</a>
+            <a href="/json-feed">JSON Feed</a>
+          </nav>
+        </div>
+        <div class="copyright">© 2026 SecOpsAI. All rights reserved.</div>
+      </div>
+    </footer>
+    <script src="/assets/blog.js" defer></script>
+  </body>
+</html>

@@ -176,6 +176,10 @@ export default {
       const landing = new URL("/json-feed", request.url);
       return env.ASSETS.fetch(new Request(landing, request));
     }
+    if (url.pathname === "/posts") {
+      const latest = new URL("/posts/", request.url);
+      return env.ASSETS.fetch(new Request(latest, request));
+    }
     return env.ASSETS.fetch(request);
   },
 };

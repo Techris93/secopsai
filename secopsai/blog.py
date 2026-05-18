@@ -2315,8 +2315,8 @@ def _render_site_header(*, subtitle: str = "Security Blog", links: Optional[List
     return f"""<header class="topbar">
       <nav class="shell nav" data-site-nav>
         <a class="brand" href="/">
-          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
-          <span class="brand-title"><span>SecOpsAI</span><span>{html.escape(subtitle)}</span></span>
+          <span class="brand-diamond" aria-hidden="true">◆</span>
+          <span class="brand-title"><span>SECOPSAI</span><span>{html.escape(subtitle).upper()}</span></span>
         </a>
         <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-menu" data-nav-toggle>
           <span class="nav-toggle-lines" aria-hidden="true"><span></span><span></span><span></span></span>
@@ -2329,27 +2329,133 @@ def _render_site_header(*, subtitle: str = "Security Blog", links: Optional[List
     </header>"""
 
 
-def _render_subscribe_panel() -> str:
-    return f"""<section class="subscribe-panel card" aria-labelledby="subscribe-heading">
-        <div>
-          <p class="eyebrow">Subscribe</p>
-          <h2 id="subscribe-heading">Follow SecOpsAI advisories and research.</h2>
-          <p>Subscribe through your preferred feed reader, security workflow, or automation platform.</p>
+def _render_site_footer() -> str:
+    return f"""<footer class="footer">
+      <div class="shell footer-inner">
+        <div class="footer-top">
+          <div><span>SecOpsAI</span><span>Security Blog</span></div>
+          <span>Operator feed</span>
         </div>
+        <p>New SecOpsAI detections, package advisories, OpenClaw telemetry learnings, malware behavior cards, and practical response notes.</p>
+        <div class="footer-bottom">
+          <div><span>SecOpsAI Security Blog</span><span>Local-first intelligence, source-backed actions.</span></div>
+          <nav aria-label="Footer links">
+            <a href="https://secopsai.dev/">Platform</a>
+            <a href="/#topics">Topics</a>
+            <a href="/posts/">Latest</a>
+            <a href="https://docs.secopsai.dev/">Docs</a>
+            <a href="/feed.xml">RSS</a>
+            <a href="/json-feed">JSON Feed</a>
+          </nav>
+        </div>
+        <div class="copyright">© {time.strftime('%Y')} SecOpsAI. All rights reserved.</div>
+      </div>
+    </footer>"""
+
+
+def _feed_icon(kind: str) -> str:
+    if kind == "rss":
+        return """<svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 11a9 9 0 0 1 9 9" />
+              <path d="M4 4a16 16 0 0 1 16 16" />
+              <circle cx="5" cy="19" r="1.5" />
+            </svg>"""
+    return """<svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <polyline points="8 3 4 7 8 11" />
+              <polyline points="16 3 20 7 16 11" />
+              <line x1="10" y1="21" x2="14" y2="3" />
+            </svg>"""
+
+
+def _render_feed_card(*, kind: str, title: str, subtitle: str, heading: str, body: str, url: str, href: str) -> str:
+    return f"""<article class="feed-card">
+          <div class="feed-card-bar" aria-hidden="true"></div>
+          <div class="feed-card-body">
+            <div class="feed-card-head">
+              <div class="feed-icon">{_feed_icon(kind)}</div>
+              <div>
+                <span class="feed-choice-kicker">{html.escape(title)}</span>
+                <p>{html.escape(subtitle)}</p>
+              </div>
+            </div>
+            <h3>{html.escape(heading)}</h3>
+            <p>{html.escape(body)}</p>
+            <div class="feed-url-row">
+              <a class="feed-url" href="{html.escape(href)}">
+                <span aria-hidden="true">⌁</span>
+                <code>{html.escape(url)}</code>
+              </a>
+              <button class="copy-url" type="button" data-copy="{html.escape(url)}" title="Copy URL" aria-label="Copy {html.escape(title)} URL">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <rect x="3" y="3" width="7" height="7" rx="1" />
+                  <rect x="6" y="6" width="7" height="7" rx="1" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </article>"""
+
+
+def _category_counts(posts: List[Dict[str, Any]]) -> Dict[str, int]:
+    return {topic: sum(1 for post in posts if topic in _post_categories(post)) for topic in TOPIC_SECTIONS}
+
+
+def _render_category_cards(posts: Optional[List[Dict[str, Any]]] = None) -> str:
+    counts = _category_counts(posts or [])
+    cards = []
+    for topic in TOPIC_SECTIONS:
+        count = counts.get(topic, 0)
+        body = (
+            f"{count} posts with SecOpsAI context, detections, or operator guidance."
+            if count
+            else "No posts yet. Coming soon."
+        )
+        cards.append(
+            f"""<article class="topic-card">
+              <div class="topic-card-top">
+                <span>{html.escape(topic.upper())}</span>
+                <span>{count} post{'s' if count != 1 else ''}</span>
+              </div>
+              <p>{html.escape(body)}</p>
+            </article>"""
+        )
+    return f"""<section class="topic-catalog" id="topics" aria-label="Intelligence categories">
+        <div class="section-kicker"><span></span>Intelligence Categories</div>
+        <div class="topic-grid">{''.join(cards)}</div>
+      </section>"""
+
+
+def _render_subscribe_panel(posts: Optional[List[Dict[str, Any]]] = None) -> str:
+    return f"""<section class="subscribe-section" id="subscribe" aria-labelledby="subscribe-heading">
+        <div class="subscribe-top">
+          <div>
+            <p class="section-label">Subscribe</p>
+            <h2 id="subscribe-heading">Follow SecOpsAI advisories and research.</h2>
+          </div>
+          <p>Subscribe through your preferred feed reader, security workflow, or automation platform. Both feeds update simultaneously.</p>
+        </div>
+        <div class="section-divider" aria-hidden="true"></div>
         <div class="feed-choice-grid">
-          <a class="feed-choice" href="/feed.xml">
-            <span class="feed-choice-kicker">RSS Feed</span>
-            <strong>Traditional syndication</strong>
-            <span>For feed readers, email digests, Slack RSS, and news aggregators.</span>
-            <code>{BASE_URL}/feed.xml</code>
-          </a>
-          <a class="feed-choice" href="/json-feed">
-            <span class="feed-choice-kicker">JSON Feed</span>
-            <strong>Structured automation</strong>
-            <span>For applications, scripts, and security automation that prefer JSON.</span>
-            <code>{BASE_URL}/feed.json</code>
-          </a>
+          {_render_feed_card(
+              kind="rss",
+              title="RSS Feed",
+              subtitle="XML-based syndication",
+              heading="Traditional syndication",
+              body="For feed readers, email digests, Slack RSS integrations, and news aggregators. Standard RSS 2.0 format.",
+              url=f"{BASE_URL}/feed.xml",
+              href="/feed.xml",
+          )}
+          {_render_feed_card(
+              kind="json",
+              title="JSON Feed",
+              subtitle="JSON-based automation",
+              heading="Structured automation",
+              body="For applications, scripts, SOAR platforms, and security automation that prefer structured JSON data.",
+              url=f"{BASE_URL}/feed.json",
+              href="/json-feed",
+          )}
         </div>
+        {_render_category_cards(posts)}
       </section>"""
 
 
@@ -2417,8 +2523,6 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     author = html.escape(_post_author(post))
     reading_time = _post_reading_time(post)
     body_html = markdown_to_html(str(post.get("body_markdown") or ""))
-    iocs = _safe_list(post.get("iocs", []), limit=12)
-    ioc_items = "".join(f"<li><code>{html.escape(ioc)}</code></li>" for ioc in iocs) or "<li>No structured IOCs attached.</li>"
     social_image = str(post.get("social_image") or _social_card_src(slug))
     social_alt = str(post.get("social_image_alt") or f"SecOpsAI social preview card for {raw_title}")
     hero_media = _render_hero_media(post)
@@ -2443,13 +2547,24 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     <link rel="canonical" href="{_post_url(slug)}" />
     <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
-    {_render_site_header()}
-    <main class="shell post-layout">
-      <article class="post-body">
-        <p class="eyebrow">{severity} • SecOpsAI intelligence</p>
+    {_render_site_header(links=[
+        ("/", "Blog Home"),
+        ("https://docs.secopsai.dev/", "Docs"),
+        ("/feed.xml", "RSS"),
+        ("/json-feed", "JSON Feed"),
+    ])}
+    <main>
+      <header class="shell article-hero">
+        <div class="breadcrumb">
+          <a href="/">Blog Home</a><span>&gt;</span><span>{title}</span>
+        </div>
+        <p class="eyebrow">{severity.upper()} • SecOpsAI Intelligence</p>
         <h1>{title}</h1>
         <p class="dek">{summary}</p>
         <div class="meta">
@@ -2457,24 +2572,13 @@ def _render_post_html(post: Dict[str, Any]) -> str:
           <span>By {author}</span>
           <span>{reading_time} min read</span>
           <span>Published: {html.escape(_post_date(post.get("published_at")))}</span>
-          <span>Updated: {html.escape(_post_date(post.get("updated_at")))}</span>
+            <span>Updated: {html.escape(_post_date(post.get("updated_at")))}</span>
         </div>
         <div class="tags">{pills}</div>
 {hero_media}
-        <section class="intelligence-brief" aria-label="Post intelligence brief">
-          <div>
-            <p class="eyebrow">Executive summary</p>
-            <p>{summary}</p>
-          </div>
-          <div>
-            <p class="eyebrow">Affected artifacts</p>
-            {_render_artifact_table(post)}
-          </div>
-          <div>
-            <p class="eyebrow">IOCs</p>
-            <ul>{ioc_items}</ul>
-          </div>
-        </section>
+      </header>
+      <div class="shell post-layout">
+        <article class="post-body">
         {body_html}
 {media_gallery}
         <section class="comments" data-comments data-slug="{html.escape(slug)}">
@@ -2512,6 +2616,7 @@ def _render_post_html(post: Dict[str, Any]) -> str:
           {_render_related_links(post)}
         </section>
       </aside>
+      </div>
     </main>
     <script src="/assets/blog.js" defer></script>
     <script src="/assets/comments.js" defer></script>
@@ -2578,22 +2683,20 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
             " ".join([title, summary, packages, iocs, sources, topics]).lower()
         )
         cards.append(
-            f"""<a class="card post-card" href="/posts/{slug}.html"
+            f"""<a class="post-card" href="/posts/{slug}.html"
           data-search="{search}"
           data-topic="{html.escape(topics)}"
           data-severity="{_post_severity_rank(post)}"
           data-date="{html.escape(updated)}"
           data-reading="{reading_time}">
-          {_render_card_thumbnail(post)}
+          <span class="pill {severity_class}">{severity}</span>
+          <h2>{title}</h2>
+          <p>{summary}</p>
           <div class="meta">
-            <span class="pill {severity_class}">{severity}</span>
             <span>{html.escape(_post_author(post))}</span>
             <span>{reading_time} min read</span>
             <span>{html.escape(_post_date(updated))}</span>
           </div>
-          <h2>{title}</h2>
-          <p>{summary}</p>
-          <p class="artifact-line">{html.escape(packages[:140])}</p>
           <div class="tags">{tags}</div>
         </a>"""
         )
@@ -2613,7 +2716,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
         featured_slug = html.escape(str(featured["slug"]))
         featured_html = f"""<section class="featured-grid" aria-label="Featured security research">
         <a class="featured-card" href="/posts/{featured_slug}.html">
-          <p class="eyebrow">Featured research</p>
+          <p class="section-label">Featured Research</p>
           <h2>{html.escape(redact(featured.get("title", "")))}</h2>
           <p>{html.escape(_post_summary(featured))}</p>
           <div class="meta">
@@ -2623,7 +2726,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
           </div>
         </a>
         <aside class="card intelligence-card">
-          <p class="eyebrow">Operator intelligence model</p>
+          <p class="section-label">Operator Intelligence Model</p>
           <h2>Source-backed. Detection-aware. Mitigation-first.</h2>
           <p>Every published post is designed to connect external reporting, SecOpsAI detections, IOCs, and concrete response commands.</p>
         </aside>
@@ -2651,18 +2754,21 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
     <link rel="alternate" type="application/feed+json" title="SecOpsAI Security Blog JSON Feed" href="/feed.json" />
     <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
     {_render_site_header(links=[
         ("https://secopsai.dev/", "Platform"),
         ("#topics", "Topics"),
-        ("#posts", "Latest"),
+        ("/posts/", "Latest"),
         ("https://docs.secopsai.dev/", "Docs"),
         ("/feed.xml", "RSS"),
         ("/json-feed", "JSON Feed"),
     ])}
-    <main class="shell">
+    <main>
       <section class="hero">
         <p class="eyebrow">Security Research & Advisories</p>
         <h1>Security intelligence operators can act on quickly.</h1>
@@ -2673,19 +2779,105 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
           <a class="button" href="#subscribe">Subscribe</a>
           <a class="button secondary" href="/json-feed">JSON Feed</a>
         </div>
+        <div class="scroll-indicator" aria-hidden="true"></div>
       </section>
-      {featured_html}
-      <div id="subscribe">{_render_subscribe_panel()}</div>
-      <section class="topic-strip" id="topics" aria-label="Security topics">
-        {section_cards}
-      </section>
-      <section class="filters card" aria-label="Search and filter posts">
-        <input id="post-search" type="search" placeholder="Search posts, tags, ecosystems, packages, or IOCs..." />
-        <div class="filter-row">
+      <div class="content-section">
+        {featured_html}
+      </div>
+      {_render_subscribe_panel(posts)}
+    </main>
+    {_render_site_footer()}
+    <script src="/assets/blog.js" defer></script>
+  </body>
+</html>
+"""
+
+
+def _render_latest_page(posts: List[Dict[str, Any]]) -> str:
+    posts = [_normalize_post(post) for post in posts]
+    cards = []
+    for post in posts:
+        slug = html.escape(str(post["slug"]))
+        title = html.escape(redact(post["title"]))
+        summary = html.escape(redact(post.get("summary", "")))
+        severity = html.escape(str(post.get("severity", "info")).title())
+        severity_class = _badge_class(post.get("severity"))
+        categories = _post_categories(post)
+        tags = _render_pills(categories[:5])
+        topics = " ".join(categories).lower()
+        packages = " ".join(post.get("affected_packages", []))
+        iocs = " ".join(post.get("iocs", []))
+        sources = " ".join(post.get("sources", []))
+        reading_time = _post_reading_time(post)
+        updated = str(post.get("updated_at") or post.get("published_at") or "")
+        search = html.escape(" ".join([title, summary, packages, iocs, sources, topics]).lower())
+        cards.append(
+            f"""<a class="post-card" href="/posts/{slug}.html"
+          data-search="{search}"
+          data-topic="{html.escape(topics)}"
+          data-severity="{_post_severity_rank(post)}"
+          data-date="{html.escape(updated)}"
+          data-reading="{reading_time}">
+          <span class="pill {severity_class}">{severity}</span>
+          <h2>{title}</h2>
+          <p>{summary}</p>
+          <div class="meta">
+            <span>{html.escape(_post_author(post))}</span>
+            <span>{reading_time} min read</span>
+            <span>{html.escape(_post_date(updated))}</span>
+          </div>
+          <div class="tags">{tags}</div>
+        </a>"""
+        )
+    topic_buttons = "\n".join(
+        f'<button class="topic-filter" type="button" data-topic-filter="{html.escape(topic.lower())}">{html.escape(topic)}</button>'
+        for topic in TOPIC_SECTIONS
+    )
+    latest_description = "Research, advisories, detections, and mitigation notes"
+    homepage_social = _absolute_url(_social_card_src("secopsai-blog"))
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Latest posts | SecOpsAI Security Blog</title>
+    <meta name="description" content="{latest_description}" />
+    {_render_meta_tags(
+        title="Latest posts | SecOpsAI Security Blog",
+        description=latest_description,
+        url=f"{BASE_URL}/posts/",
+        image=homepage_social,
+        image_alt="SecOpsAI Security Blog social preview card",
+    )}
+    <link rel="canonical" href="{BASE_URL}/posts/" />
+    <link rel="alternate" type="application/rss+xml" title="SecOpsAI Security Blog RSS" href="/feed.xml" />
+    <link rel="alternate" type="application/feed+json" title="SecOpsAI Security Blog JSON Feed" href="/feed.json" />
+    <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/blog.css" />
+  </head>
+  <body>
+    {_render_site_header(links=[
+        ("https://secopsai.dev/", "Platform"),
+        ("/#topics", "Topics"),
+        ("/posts/", "Latest"),
+        ("https://docs.secopsai.dev/", "Docs"),
+        ("/feed.xml", "RSS"),
+        ("/json-feed", "JSON Feed"),
+    ])}
+    <main class="listing-page">
+      <section class="shell listing-hero">
+        <h1>Latest posts</h1>
+        <p>{latest_description}</p>
+        <div class="filter-row" aria-label="Post topic filters">
           <button class="topic-filter active" type="button" data-topic-filter="all">All</button>
           {topic_buttons}
         </div>
-        <div class="filter-row">
+        <div class="filters compact" aria-label="Search and sort posts">
+          <input id="post-search" type="search" placeholder="Search posts, tags, ecosystems, packages, or IOCs..." />
           <label for="post-sort">Sort</label>
           <select id="post-sort">
             <option value="latest">Latest</option>
@@ -2695,23 +2887,11 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
           </select>
         </div>
       </section>
-      <section class="section-heading">
-        <p class="eyebrow">Latest posts</p>
-        <h2>Research, advisories, detections, and mitigation notes</h2>
-      </section>
-      <section class="post-list" id="posts" aria-live="polite">
-        {cards_html}
-        <aside class="card">
-          <p class="eyebrow">Operator feed</p>
-          <h2>What appears here</h2>
-          <p>New SecOpsAI detections, package advisories, OpenClaw telemetry
-            learnings, malware behavior cards, and practical response notes.</p>
-        </aside>
+      <section class="shell latest-grid" id="posts" aria-live="polite">
+        {''.join(cards)}
       </section>
     </main>
-    <footer class="footer">
-      <div class="shell">SecOpsAI Security Blog • Local-first intelligence, source-backed actions.</div>
-    </footer>
+    {_render_site_footer()}
     <script src="/assets/blog.js" defer></script>
   </body>
 </html>
@@ -2742,7 +2922,7 @@ def _post_summary(post: Dict[str, Any]) -> str:
 
 def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
     items = "\n".join(
-        f"""<article class="card">
+        f"""<article class="post-card">
           <p class="eyebrow">{html.escape(str(post.get("updated_at", "")))}</p>
           <h2><a href="/posts/{html.escape(str(post["slug"]))}.html">{html.escape(redact(post.get("title", "")))}</a></h2>
           <p>{html.escape(_post_summary(post))}</p>
@@ -2760,6 +2940,9 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
     <link rel="alternate" type="application/feed+json" title="SecOpsAI Security Blog JSON Feed" href="/feed.json" />
     <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/blog.css" />
   </head>
   <body>
@@ -2769,7 +2952,7 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
         ("/feed.xml", "RSS"),
         ("https://docs.secopsai.dev/", "Docs"),
     ])}
-    <main class="shell">
+    <main>
       <section class="hero">
         <p class="eyebrow">Programmatic feed</p>
         <h1>SecOpsAI JSON Feed</h1>
@@ -2780,9 +2963,10 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
           <a class="button secondary" href="/feed.xml">Open RSS</a>
         </div>
       </section>
-      {_render_subscribe_panel()}
-      <section class="grid">{items}</section>
+      {_render_subscribe_panel(posts)}
+      <section class="shell latest-grid">{items}</section>
     </main>
+    {_render_site_footer()}
   </body>
 </html>
 """
@@ -2805,6 +2989,7 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
         "published_at": latest_feed_date,
     }, paths)
     (paths.root / "index.html").write_text(_render_index(posts), encoding="utf-8")
+    (paths.posts / "index.html").write_text(_render_latest_page(posts), encoding="utf-8")
     feed_items = []
     rss_items = []
     for post in posts:
@@ -2875,6 +3060,7 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
         "posts": len(posts),
         "paths": [
             str(paths.root / "index.html"),
+            str(paths.posts / "index.html"),
             str(paths.root / "json-feed.html"),
             str(paths.root / "feed.json"),
             str(paths.root / "feed.xml"),
