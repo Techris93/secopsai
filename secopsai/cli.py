@@ -76,14 +76,21 @@ from secopsai.supply_chain import (
     allowlist_add,
     allowlist_remove,
     analyze_ecosystem_files,
+    campaign_autopilot,
+    campaign_intake,
+    campaign_watchlist_add,
+    campaign_watchlist_list,
     check_advisory,
+    discover_campaigns,
     ecosystem_capabilities,
     explain_policy,
     explain_verdict,
     ingest_advisory,
+    load_campaign_candidates,
     list_supported_ecosystems,
     load_advisories,
     load_recent_results,
+    promote_campaign_candidate,
     reconcile_history,
     research_campaign as research_supply_chain_campaign,
     run_recent_top_scan,
@@ -1024,6 +1031,42 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_campaign.add_argument("--persist", action="store_true", help="Persist SOC findings")
     supply_chain_campaign.add_argument("--no-fetch", action="store_true", help="Do not fetch live registry artifacts")
     supply_chain_campaign.add_argument("--create-blog-draft", action="store_true", help="Create a review-only campaign blog draft")
+
+    supply_chain_discover = supply_chain_sub.add_parser("discover-campaigns", help="Discover supply-chain campaign candidates from trusted sources")
+    supply_chain_discover.add_argument("--since", default="24h", help="Look back duration, for example 24h, 2h, or 7d")
+    supply_chain_discover.add_argument("--source", default="all", help="Source name filter or all")
+    supply_chain_discover.add_argument("--limit", type=int, default=50, help="Maximum candidates to return")
+    supply_chain_discover.add_argument("--no-save", action="store_true", help="Do not update the local candidate cache")
+
+    supply_chain_intake = supply_chain_sub.add_parser("campaign-intake", help="Build campaign JSON from a URL or text file")
+    supply_chain_intake.add_argument("--url", help="Trusted source URL to fetch and extract")
+    supply_chain_intake.add_argument("--text", help="Local text file containing source/report text")
+    supply_chain_intake.add_argument("--source-name", help="Source/report name")
+    supply_chain_intake.add_argument("--title", help="Override extracted campaign title")
+
+    supply_chain_watchlist = supply_chain_sub.add_parser("campaign-watchlist", help="Manage autonomous campaign discovery watchlist")
+    supply_chain_watchlist_sub = supply_chain_watchlist.add_subparsers(dest="campaign_watchlist_cmd", required=True)
+    supply_chain_watchlist_add = supply_chain_watchlist_sub.add_parser("add", help="Add package, publisher, IOC, or source URL to the watchlist")
+    supply_chain_watchlist_add.add_argument("--package", help="Package spec or name to watch, for example npm:axios")
+    supply_chain_watchlist_add.add_argument("--publisher", help="Publisher, maintainer, namespace, or actor to watch")
+    supply_chain_watchlist_add.add_argument("--ioc", help="IOC/C2/domain/IP/string to watch")
+    supply_chain_watchlist_add.add_argument("--source-url", help="Trusted source URL to watch")
+    supply_chain_watchlist_sub.add_parser("list", help="List campaign discovery watchlist")
+
+    supply_chain_autopilot = supply_chain_sub.add_parser("campaign-autopilot", help="Discover, research, and optionally persist campaign candidates")
+    supply_chain_autopilot.add_argument("--since", default="24h", help="Look back duration, for example 24h, 2h, or 7d")
+    supply_chain_autopilot.add_argument("--limit", type=int, default=10, help="Maximum candidates to research")
+    supply_chain_autopilot.add_argument("--min-score", type=int, default=35, help="Minimum candidate score to research")
+    supply_chain_autopilot.add_argument("--search-root", help="Root path to scan for local usage")
+    supply_chain_autopilot.add_argument("--dry-run", action="store_true", help="Do not persist SOC findings or drafts")
+    supply_chain_autopilot.add_argument("--persist", action="store_true", help="Persist SOC findings")
+    supply_chain_autopilot.add_argument("--create-drafts", action="store_true", help="Create review-only blog drafts when persisting")
+
+    supply_chain_candidates = supply_chain_sub.add_parser("campaign-candidates", help="Inspect or promote cached discovery candidates")
+    supply_chain_candidates_sub = supply_chain_candidates.add_subparsers(dest="campaign_candidates_cmd", required=True)
+    supply_chain_candidates_sub.add_parser("list", help="List cached campaign candidates")
+    supply_chain_candidates_promote = supply_chain_candidates_sub.add_parser("promote", help="Return campaign JSON for a candidate")
+    supply_chain_candidates_promote.add_argument("candidate_id")
 
     supply_chain_list = supply_chain_sub.add_parser("list", help="List recent supply-chain scan results")
     supply_chain_list.add_argument("--limit", type=int, default=20)
@@ -2889,6 +2932,139 @@ def main(argv: Optional[List[str]] = None) -> int:
                     print(f"db_path={payload['db_path']}")
                 if payload.get("blog_draft"):
                     print(f"blog_draft={payload['blog_draft']['draft_path']}")
+            return 0
+
+        if args.supply_chain_cmd == "discover-campaigns":
+            try:
+                payload = discover_campaigns(
+                    since=args.since,
+                    source=args.source,
+                    limit=args.limit,
+                    save=not args.no_save,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"ok": False, "error": str(exc)}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(f"campaign_candidates={payload['total_candidates']}")
+                for candidate in payload.get("candidates", [])[: args.limit]:
+                    campaign = candidate.get("campaign", {})
+                    packages = ", ".join(
+                        f"{pkg.get('ecosystem')}:{pkg.get('package')}@{pkg.get('version')}"
+                        for pkg in campaign.get("packages", [])[:5]
+                    )
+                    print(f"- {candidate.get('candidate_id')} score={candidate.get('score')} packages={packages}")
+                if payload.get("saved_to"):
+                    print(f"saved_to={payload['saved_to']}")
+            return 0
+
+        if args.supply_chain_cmd == "campaign-intake":
+            try:
+                text = Path(args.text).read_text(encoding="utf-8") if args.text else None
+                if not args.url and text is None:
+                    raise ValueError("campaign-intake requires --url or --text")
+                payload = campaign_intake(
+                    url=args.url,
+                    text=text,
+                    source_name=args.source_name,
+                    title=args.title,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"ok": False, "error": str(exc)}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(f"candidate_id={payload['candidate_id']}")
+                print(f"score={payload['score']}")
+                print(f"packages={len(payload.get('campaign', {}).get('packages', []))}")
+                print(json.dumps(payload["campaign"], indent=2, sort_keys=True))
+            return 0
+
+        if args.supply_chain_cmd == "campaign-watchlist":
+            try:
+                if args.campaign_watchlist_cmd == "add":
+                    if not any([args.package, args.publisher, args.ioc, args.source_url]):
+                        raise ValueError("campaign-watchlist add requires at least one value")
+                    payload = campaign_watchlist_add(
+                        package=args.package,
+                        publisher=args.publisher,
+                        ioc=args.ioc,
+                        source_url=args.source_url,
+                    )
+                else:
+                    payload = campaign_watchlist_list()
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"ok": False, "error": str(exc)}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(f"packages={len(payload.get('packages', []))}")
+                print(f"publishers={len(payload.get('publishers', []))}")
+                print(f"iocs={len(payload.get('iocs', []))}")
+                print(f"source_urls={len(payload.get('source_urls', []))}")
+            return 0
+
+        if args.supply_chain_cmd == "campaign-autopilot":
+            try:
+                if args.dry_run and args.persist:
+                    raise ValueError("--dry-run and --persist are mutually exclusive")
+                payload = campaign_autopilot(
+                    since=args.since,
+                    dry_run=args.dry_run or not args.persist,
+                    persist=args.persist,
+                    create_drafts=args.create_drafts,
+                    search_root=args.search_root,
+                    limit=args.limit,
+                    min_score=args.min_score,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"ok": False, "error": str(exc)}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(f"selected_candidates={payload['selected_candidates']}")
+                print(f"dry_run={payload['dry_run']}")
+                for row in payload.get("results", []):
+                    print(f"- {row.get('campaign_id')} verdict={row.get('campaign_verdict')} score={row.get('score')}")
+            return 0
+
+        if args.supply_chain_cmd == "campaign-candidates":
+            try:
+                if args.campaign_candidates_cmd == "list":
+                    payload = load_campaign_candidates()
+                else:
+                    payload = promote_campaign_candidate(args.candidate_id)
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"ok": False, "error": str(exc)}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            elif args.campaign_candidates_cmd == "list":
+                print(f"candidates={len(payload.get('candidates', []))}")
+                for candidate in payload.get("candidates", [])[:20]:
+                    print(f"- {candidate.get('candidate_id')} score={candidate.get('score')}")
+            else:
+                print(json.dumps(payload.get("campaign", {}), indent=2, sort_keys=True))
             return 0
 
         if args.supply_chain_cmd == "list":

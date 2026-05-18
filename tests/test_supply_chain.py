@@ -1191,6 +1191,66 @@ const https = require("https");
         self.assertEqual(exit_code, 0)
         self.assertIn('"campaign_id": "deadcode09284814-infostealer-botnet-campaign"', stdout.getvalue())
 
+    def test_campaign_intake_extracts_packages_iocs_and_behavior(self):
+        text = (
+            "Four malicious npm packages chalk-tempalte, @deadcode09284814/axios-util, "
+            "axois-utils, and color-style-utils steal credentials and talk to "
+            "87e0bbc636999b.lhr[.]life plus 80.200.28[.]28:2222. Published by deadcode09284814."
+        )
+        payload = supply_chain.campaign_intake(text=text, source_name="Unit Source", source_url="https://example.com/report")
+        packages = {item["package"] for item in payload["campaign"]["packages"]}
+        self.assertIn("chalk-tempalte", packages)
+        self.assertIn("@deadcode09284814/axios-util", packages)
+        self.assertIn("87e0bbc636999b.lhr.life", payload["campaign"]["iocs"]["domains"])
+        self.assertTrue(any("credential" in item.lower() for item in payload["campaign"]["behavioral_indicators"]))
+        self.assertGreaterEqual(payload["score"], 35)
+
+    def test_campaign_watchlist_add_and_list_uses_runtime_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "watchlist.json"
+            supply_chain.campaign_watchlist_add(package="npm:chalk-tempalte", ioc="c2.example", path=path)
+            payload = supply_chain.campaign_watchlist_list(path)
+        self.assertIn("npm:chalk-tempalte", payload["packages"])
+        self.assertIn("c2.example", payload["iocs"])
+
+    def test_discover_campaigns_scores_and_dedupes_feed_items(self):
+        feed = """<?xml version='1.0'?><rss><channel>
+        <item><title>Malicious npm packages steal credentials</title>
+        <link>https://example.com/report</link>
+        <description>chalk-tempalte and axois-utils contact 87e0bbc636999b.lhr[.]life for credential theft.</description></item>
+        <item><title>Malicious npm packages steal credentials</title>
+        <link>https://example.com/report</link>
+        <description>chalk-tempalte and axois-utils contact 87e0bbc636999b.lhr[.]life for credential theft.</description></item>
+        </channel></rss>"""
+        with tempfile.TemporaryDirectory() as temp_dir, \
+            mock.patch.object(supply_chain, "CAMPAIGN_CANDIDATES_PATH", Path(temp_dir) / "candidates.json"), \
+            mock.patch.object(supply_chain, "_load_discovery_sources", return_value=[{"name": "Unit Feed", "feed_url": "https://example.com/feed.xml", "type": "rss"}]), \
+            mock.patch.object(supply_chain, "_http_text", return_value=feed), \
+            mock.patch.object(supply_chain, "_cached_news_items", return_value=[]):
+            payload = supply_chain.discover_campaigns(since="24h", limit=10)
+        self.assertEqual(payload["total_candidates"], 1)
+        self.assertGreaterEqual(payload["candidates"][0]["score"], 35)
+
+    def test_campaign_autopilot_dry_run_does_not_persist(self):
+        candidate = supply_chain.campaign_intake(
+            text="Malicious npm package chalk-tempalte steals credentials from environment variables.",
+            source_url="https://example.com/report",
+        )
+        with mock.patch.object(supply_chain, "discover_campaigns", return_value={"ok": True, "candidates": [candidate], "errors": []}):
+            payload = supply_chain.campaign_autopilot(since="24h", dry_run=True, persist=False, limit=1, min_score=0)
+        self.assertTrue(payload["dry_run"])
+        self.assertEqual(payload["selected_candidates"], 1)
+        self.assertFalse(payload["results"][0]["finding_ids"])
+
+    def test_cli_campaign_watchlist_list_outputs_json(self):
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.object(supply_chain, "CAMPAIGN_WATCHLIST_PATH", Path(temp_dir) / "watchlist.json"):
+            supply_chain.campaign_watchlist_add(package="npm:chalk-tempalte", path=supply_chain.CAMPAIGN_WATCHLIST_PATH)
+            stdout = StringIO()
+            with mock.patch("sys.stdout", stdout):
+                exit_code = secopsai_cli.main(["--json", "supply-chain", "campaign-watchlist", "list"])
+        self.assertEqual(exit_code, 0)
+        self.assertIn("chalk-tempalte", stdout.getvalue())
+
     def test_reconcile_history_upgrades_advisory_error(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

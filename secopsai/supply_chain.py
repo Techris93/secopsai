@@ -54,6 +54,11 @@ REPORTS_DIR = SUPPLY_CHAIN_DIR / "reports"
 RESULTS_PATH = SUPPLY_CHAIN_DIR / "results.jsonl"
 STATE_PATH = SUPPLY_CHAIN_DIR / "state.json"
 POLICY_PATH = REPO_ROOT / "config" / "supply_chain_policy.toml"
+CAMPAIGN_DISCOVERY_DIR = SUPPLY_CHAIN_DIR / "campaign_discovery"
+CAMPAIGN_CANDIDATES_PATH = CAMPAIGN_DISCOVERY_DIR / "candidates.json"
+CAMPAIGN_WATCHLIST_PATH = CAMPAIGN_DISCOVERY_DIR / "watchlist.json"
+BLOG_NEWS_SOURCES_PATH = REPO_ROOT / "blog" / "data" / "news-sources.json"
+BLOG_NEWS_CACHE_PATH = REPO_ROOT / "blog" / "data" / "news-cache.json"
 
 PYPI_XMLRPC = "https://pypi.org/pypi"
 PYPI_JSON = "https://pypi.org/pypi/{package}/json"
@@ -373,6 +378,7 @@ def _utc_now() -> str:
 def _ensure_dirs() -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     ADVISORIES_DIR.mkdir(parents=True, exist_ok=True)
+    CAMPAIGN_DISCOVERY_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _http_json(url: str, timeout: int = 30) -> Any:
@@ -3947,6 +3953,613 @@ def extract_campaign_iocs(values: Iterable[Any]) -> Dict[str, List[str]]:
         "ips": sorted(ips),
         "ip_ports": sorted(ip_ports),
         "repository_descriptions": sorted(repo_descriptions),
+    }
+
+
+DISCOVERY_SUPPLY_CHAIN_TERMS = (
+    "supply chain",
+    "supply-chain",
+    "malicious package",
+    "compromised package",
+    "typosquat",
+    "dependency confusion",
+    "package manager",
+    "npm",
+    "pypi",
+    "rubygems",
+    "packagist",
+    "composer",
+    "crates.io",
+    "maven",
+    "nuget",
+    "open vsx",
+    "hugging face",
+    "chrome web store",
+    "stealer",
+    "infostealer",
+    "botnet",
+    "credential theft",
+    "c2",
+    "exfiltration",
+    "shai-hulud",
+)
+
+DISCOVERY_BEHAVIOR_KEYWORDS = {
+    "credential theft": ("credential", "token", "secret", "ssh key", "api key"),
+    "environment variable harvesting": ("environment variable", "process.env", "os.environ", "env var"),
+    "cloud credential harvesting": ("cloud credential", "aws", "gcp", "azure", ".aws", ".config/gcloud"),
+    "GitHub token abuse": ("github token", "github api", "repository creation", "public repository"),
+    "outbound C2 communication": ("c2", "command and control", "exfiltration", "exfiltrate"),
+    "botnet or DDoS behavior": ("botnet", "ddos", "tcp flood", "udp flood", "http flood"),
+    "persistence": ("persistence", "startup", "scheduled task", "launch agent", "cron"),
+    "obfuscation": ("obfuscated", "base64", "eval", "packed payload", "encoded payload"),
+    "install-time execution": ("postinstall", "preinstall", "setup.py", "build.rs", "install.ps1", "composer scripts"),
+    "module-load execution": ("import-time", "module-load", "iife", "when imported"),
+    "Shai-Hulud clone or derivative indicator": ("shai-hulud", "sha1-hulud", "mini shai", "mini sha1"),
+    "typosquatting package-name indicator": ("typosquat", "typo-squatting", "clone package"),
+}
+
+DISCOVERY_ECOSYSTEM_HINTS = {
+    "npm": ("npm", "node.js", "node package", "package.json", "javascript package"),
+    "pypi": ("pypi", "python package", "pip", "wheel", "sdist"),
+    "crates": ("crates.io", "rust crate", "cargo"),
+    "packagist": ("packagist", "composer", "php package"),
+    "go": ("go module", "golang", "go package"),
+    "huggingface": ("hugging face", "huggingface", "model hub", "model repository"),
+    "maven": ("maven central", "maven", "java package", "jar"),
+    "nuget": ("nuget", ".net package", "powershell package"),
+    "open-vsx": ("open vsx", "vs code extension", "vscode extension"),
+    "rubygems": ("rubygems", "ruby gem", "gem package"),
+    "chrome-web-store": ("chrome web store", "chrome extension", "crx"),
+}
+
+
+def _slug(value: str, *, limit: int = 96) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
+    return (slug or "campaign")[:limit].strip("-") or "campaign"
+
+
+def _load_json_file(path: Path, default: Any) -> Any:
+    try:
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+    return default
+
+
+def _write_json_file(path: Path, payload: Any) -> None:
+    _ensure_dirs()
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _discovery_text_values(payload: Dict[str, Any]) -> List[str]:
+    values = [
+        payload.get("title"),
+        payload.get("summary"),
+        payload.get("description"),
+        payload.get("content"),
+        payload.get("source_name"),
+        payload.get("source_url"),
+        payload.get("url"),
+    ]
+    values.extend(payload.get("behavioral_indicators", []) or [])
+    values.extend(payload.get("source_urls", []) or [])
+    return [str(value) for value in values if value]
+
+
+def load_campaign_watchlist(path: Optional[Path] = None) -> Dict[str, Any]:
+    path = path or CAMPAIGN_WATCHLIST_PATH
+    payload = _load_json_file(path, {})
+    if not isinstance(payload, dict):
+        payload = {}
+    return {
+        "updated_at": payload.get("updated_at"),
+        "packages": [str(item) for item in payload.get("packages", []) if item],
+        "publishers": [str(item) for item in payload.get("publishers", []) if item],
+        "iocs": [str(item) for item in payload.get("iocs", []) if item],
+        "source_urls": [str(item) for item in payload.get("source_urls", []) if item],
+    }
+
+
+def save_campaign_watchlist(payload: Dict[str, Any], path: Optional[Path] = None) -> Dict[str, Any]:
+    path = path or CAMPAIGN_WATCHLIST_PATH
+    cleaned = {
+        "updated_at": _utc_now(),
+        "packages": sorted(set(str(item) for item in payload.get("packages", []) if item)),
+        "publishers": sorted(set(str(item) for item in payload.get("publishers", []) if item)),
+        "iocs": sorted(set(str(item) for item in payload.get("iocs", []) if item)),
+        "source_urls": sorted(set(str(item) for item in payload.get("source_urls", []) if item)),
+    }
+    _write_json_file(path, cleaned)
+    return cleaned
+
+
+def campaign_watchlist_add(
+    *,
+    package: Optional[str] = None,
+    publisher: Optional[str] = None,
+    ioc: Optional[str] = None,
+    source_url: Optional[str] = None,
+    path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    watchlist = load_campaign_watchlist(path)
+    if package:
+        watchlist.setdefault("packages", []).append(_safe_str(package))
+    if publisher:
+        watchlist.setdefault("publishers", []).append(_safe_str(publisher))
+    if ioc:
+        watchlist.setdefault("iocs", []).append(_defang_to_indicator(_safe_str(ioc)))
+    if source_url:
+        watchlist.setdefault("source_urls", []).append(_safe_str(source_url))
+    return save_campaign_watchlist(watchlist, path)
+
+
+def campaign_watchlist_list(path: Optional[Path] = None) -> Dict[str, Any]:
+    path = path or CAMPAIGN_WATCHLIST_PATH
+    watchlist = load_campaign_watchlist(path)
+    watchlist["path"] = str(path)
+    return watchlist
+
+
+def load_campaign_candidates(path: Optional[Path] = None) -> Dict[str, Any]:
+    path = path or CAMPAIGN_CANDIDATES_PATH
+    payload = _load_json_file(path, {"candidates": []})
+    if not isinstance(payload, dict):
+        payload = {"candidates": []}
+    payload.setdefault("candidates", [])
+    return payload
+
+
+def save_campaign_candidates(candidates: List[Dict[str, Any]], path: Optional[Path] = None) -> Dict[str, Any]:
+    path = path or CAMPAIGN_CANDIDATES_PATH
+    payload = {
+        "updated_at": _utc_now(),
+        "total": len(candidates),
+        "candidates": candidates,
+    }
+    _write_json_file(path, payload)
+    return payload
+
+
+def _watchlist_matches(campaign: Dict[str, Any], watchlist: Dict[str, Any]) -> List[Dict[str, str]]:
+    values = " ".join(_discovery_text_values(campaign)).lower()
+    matches: List[Dict[str, str]] = []
+    package_labels = {
+        f"{pkg.get('ecosystem')}:{pkg.get('package')}".lower(): str(pkg.get("package"))
+        for pkg in campaign.get("packages", [])
+    }
+    for item in watchlist.get("packages", []):
+        lowered = str(item).lower()
+        if lowered in values or any(lowered in key or lowered in value.lower() for key, value in package_labels.items()):
+            matches.append({"type": "package", "value": str(item)})
+    for item in watchlist.get("publishers", []):
+        if str(item).lower() in values:
+            matches.append({"type": "publisher", "value": str(item)})
+    flattened_iocs = " ".join(_flatten_iocs(campaign.get("iocs", {}))).lower()
+    for item in watchlist.get("iocs", []):
+        if str(item).lower() in values or str(item).lower() in flattened_iocs:
+            matches.append({"type": "ioc", "value": str(item)})
+    for item in watchlist.get("source_urls", []):
+        if str(item).lower() in values:
+            matches.append({"type": "source_url", "value": str(item)})
+    return matches
+
+
+def _discovery_behavior_indicators(text: str) -> List[str]:
+    lowered = text.lower()
+    indicators: List[str] = []
+    for label, needles in DISCOVERY_BEHAVIOR_KEYWORDS.items():
+        if any(needle in lowered for needle in needles):
+            indicators.append(label)
+    return sorted(set(indicators))
+
+
+def _infer_ecosystems_from_text(text: str) -> List[str]:
+    lowered = text.lower()
+    ecosystems = [
+        ecosystem
+        for ecosystem, hints in DISCOVERY_ECOSYSTEM_HINTS.items()
+        if any(hint in lowered for hint in hints)
+    ]
+    return sorted(set(ecosystems))
+
+
+def _extract_campaign_packages_from_text(text: str) -> List[Dict[str, Any]]:
+    packages: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    lowered = text.lower()
+    default_ecosystems = _infer_ecosystems_from_text(text) or ["npm"]
+
+    patterns: List[tuple[str, str]] = [
+        ("npm", r"(?<![\w.-])(@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*[-_.][a-z0-9][a-z0-9._-]*)(?:@([0-9][A-Za-z0-9.+:_~!-]{0,80}))?"),
+        ("pypi", r"\b([a-z0-9][a-z0-9._-]{2,80})(?:==|@)([0-9][A-Za-z0-9.+:_~!-]{0,80})\b"),
+        ("maven", r"\b([A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+)(?:[:@]([0-9][A-Za-z0-9.+:_~!-]{0,80}))?\b"),
+        ("go", r"\b((?:github|gitlab|bitbucket)\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.:/-]+)(?:@([vV]?[0-9][A-Za-z0-9.+:_~!-]{0,80}))?\b"),
+    ]
+    quoted = re.findall(r"['\"`]([@A-Za-z0-9][@A-Za-z0-9._:/-]{2,120})['\"`]", text)
+    for raw in quoted:
+        if raw.startswith(("http:", "https:")):
+            continue
+        if "/" in raw and raw.count("/") == 1 and not raw.startswith("@"):
+            ecosystem = "packagist" if "packagist" in lowered or "composer" in lowered else default_ecosystems[0]
+        elif raw.startswith("@") or "npm" in lowered:
+            ecosystem = "npm"
+        else:
+            ecosystem = default_ecosystems[0]
+        name = normalize_package_name(ecosystem, raw)
+        key = (ecosystem, name, "unknown")
+        if key not in seen and validate_package_identifier(ecosystem, name).get("valid"):
+            seen.add(key)
+            packages.append({"ecosystem": ecosystem, "package": name, "version": "unknown"})
+
+    for ecosystem_hint, pattern in patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            raw_name = match.group(1)
+            if not raw_name:
+                continue
+            if ecosystem_hint == "npm" and raw_name.lower() in {
+                "security", "package", "packages", "registry", "versions", "malware", "credentials",
+                "github", "windows", "linux", "remote", "server", "source", "article", "follow", "google",
+                "supply-chain", "thehackernews.com", "lhr.life",
+            }:
+                continue
+            ecosystem = ecosystem_hint if ecosystem_hint in default_ecosystems or ecosystem_hint in {"maven", "go"} else default_ecosystems[0]
+            version = match.group(2) if match.lastindex and match.group(2) else "unknown"
+            name = normalize_package_name(ecosystem, raw_name)
+            key = (ecosystem, name, version)
+            if key in seen:
+                continue
+            if not validate_package_identifier(ecosystem, name).get("valid"):
+                continue
+            seen.add(key)
+            packages.append({"ecosystem": ecosystem, "package": name, "version": version})
+    return packages[:40]
+
+
+def _extract_actors_from_text(text: str) -> List[str]:
+    actors: set[str] = set()
+    patterns = [
+        r"(?:published by|npm user|publisher|maintainer|actor|threat actor)\s+['\"]?([@A-Za-z0-9_.-]{3,80})['\"]?",
+        r"same\s+(?:npm\s+)?user,\s*['\"]([@A-Za-z0-9_.-]{3,80})['\"]",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            actors.add(match.group(1).strip("@'\""))
+    return sorted(actors)
+
+
+def _candidate_score(campaign: Dict[str, Any], watchlist_matches: List[Dict[str, str]]) -> tuple[int, List[str]]:
+    reasons: List[str] = []
+    score = 0
+    packages = campaign.get("packages", [])
+    iocs = campaign.get("iocs", {})
+    behaviors = campaign.get("behavioral_indicators", [])
+    if packages:
+        score += 20
+        reasons.append("package identifiers extracted")
+    if any(pkg.get("version") and pkg.get("version") != "unknown" for pkg in packages):
+        score += 12
+        reasons.append("exact package version mentioned")
+    if iocs:
+        score += min(20, len(_flatten_iocs(iocs)) * 4)
+        reasons.append("IOC/C2 indicators extracted")
+    behavior_text = " ".join(behaviors).lower()
+    for needle, weight in (
+        ("credential", 12),
+        ("botnet", 12),
+        ("persistence", 10),
+        ("shai-hulud", 10),
+        ("c2", 8),
+        ("install-time", 8),
+        ("module-load", 8),
+        ("typosquatting", 6),
+    ):
+        if needle in behavior_text:
+            score += weight
+            reasons.append(f"{needle} behavior signal")
+    if watchlist_matches:
+        score += min(20, len(watchlist_matches) * 8)
+        reasons.append("watchlist overlap")
+    source_count = len(campaign.get("source_urls", []) or [])
+    if source_count:
+        score += min(10, source_count * 5)
+        reasons.append("trusted source reference")
+    return min(100, score), sorted(set(reasons))
+
+
+def _campaign_id_from_source(title: str, source_url: str, packages: List[Dict[str, Any]]) -> str:
+    base = title or source_url or "autonomous-campaign"
+    if packages:
+        base = f"{packages[0]['package']}-{base}"
+    digest = hashlib.sha256(f"{base}|{source_url}".encode("utf-8")).hexdigest()[:10]
+    return f"{_slug(base, limit=64)}-{digest}"
+
+
+def campaign_intake(
+    *,
+    url: Optional[str] = None,
+    text: Optional[str] = None,
+    title: Optional[str] = None,
+    source_name: Optional[str] = None,
+    source_url: Optional[str] = None,
+    watchlist: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    fetched_text = ""
+    effective_url = source_url or url or ""
+    if url and not text:
+        fetched_text = _http_text(url, timeout=20)
+    raw_text = "\n".join(value for value in [title or "", text or "", fetched_text] if value)
+    raw_text = raw_text[:120000]
+    if text:
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict) and parsed.get("packages"):
+                campaign = normalize_campaign_input(parsed)
+                active_watchlist = watchlist if watchlist is not None else load_campaign_watchlist()
+                matches = _watchlist_matches(campaign, active_watchlist)
+                score, reasons = _candidate_score(campaign, matches)
+                return {
+                    "candidate_id": campaign["campaign_id"],
+                    "campaign": campaign,
+                    "score": score,
+                    "score_reasons": reasons,
+                    "watchlist_matches": matches,
+                    "source_url": (campaign.get("source_urls") or [effective_url or ""])[0],
+                    "source_name": (campaign.get("source_names") or [source_name or ""])[0],
+                    "raw_excerpt": raw_text[:2000],
+                }
+        except Exception:
+            pass
+    packages = _extract_campaign_packages_from_text(raw_text)
+    iocs = _merge_iocs(raw_text)
+    actors = _extract_actors_from_text(raw_text)
+    behaviors = _discovery_behavior_indicators(raw_text)
+    inferred_ecosystems = sorted(set([pkg["ecosystem"] for pkg in packages] or _infer_ecosystems_from_text(raw_text)))
+    derived_title = _safe_str(title or (raw_text.splitlines()[0] if raw_text.splitlines() else "") or "Autonomous supply-chain campaign candidate")
+    summary = _safe_str(raw_text[:900])
+    campaign = normalize_campaign_input({
+        "campaign_id": _campaign_id_from_source(derived_title, effective_url, packages),
+        "title": derived_title[:240],
+        "summary": summary,
+        "ecosystems": inferred_ecosystems,
+        "packages": packages,
+        "actors": actors,
+        "publishers": actors,
+        "source_urls": [effective_url] if effective_url else [],
+        "source_names": [source_name] if source_name else [],
+        "iocs": iocs,
+        "behavioral_indicators": behaviors,
+        "severity": "critical" if {"credential theft", "botnet or DDoS behavior"} & set(behaviors) else "high",
+        "confidence": "medium",
+    })
+    active_watchlist = watchlist if watchlist is not None else load_campaign_watchlist()
+    matches = _watchlist_matches(campaign, active_watchlist)
+    score, reasons = _candidate_score(campaign, matches)
+    return {
+        "candidate_id": campaign["campaign_id"],
+        "campaign": campaign,
+        "score": score,
+        "score_reasons": reasons,
+        "watchlist_matches": matches,
+        "source_url": effective_url,
+        "source_name": source_name or "",
+        "raw_excerpt": raw_text[:2000],
+    }
+
+
+def _parse_feed_items(text: str, source: Dict[str, Any], *, limit: int) -> List[Dict[str, Any]]:
+    source_type = str(source.get("type") or "rss").lower()
+    items: List[Dict[str, Any]] = []
+    if source_type == "json":
+        payload = json.loads(text)
+        rows: Iterable[Any]
+        if isinstance(payload, dict) and isinstance(payload.get("vulnerabilities"), list):
+            rows = payload["vulnerabilities"]
+        elif isinstance(payload, dict) and isinstance(payload.get("items"), list):
+            rows = payload["items"]
+        elif isinstance(payload, list):
+            rows = payload
+        else:
+            rows = []
+        for row in list(rows)[:limit]:
+            if not isinstance(row, dict):
+                continue
+            title = row.get("title") or row.get("name") or row.get("cveID") or row.get("id") or source.get("name")
+            summary = row.get("summary") or row.get("description") or row.get("shortDescription") or row.get("notes") or ""
+            url = row.get("url") or row.get("link") or row.get("knownRansomwareCampaignUse") or source.get("url") or source.get("feed_url")
+            published = row.get("dateAdded") or row.get("published_at") or row.get("published") or row.get("updated")
+            items.append({"title": title, "summary": summary, "url": url, "published_at": published, "source": source})
+        return items
+    root = ET.fromstring(text)
+    for item in root.findall(".//item")[:limit]:
+        title = item.findtext("title") or source.get("name")
+        link = item.findtext("link") or item.findtext("guid") or source.get("url") or source.get("feed_url")
+        summary = item.findtext("description") or item.findtext("summary") or ""
+        published = item.findtext("pubDate") or item.findtext("updated") or item.findtext("published")
+        items.append({"title": title, "summary": summary, "url": link, "published_at": published, "source": source})
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    for entry in root.findall(".//atom:entry", ns)[:limit]:
+        title = entry.findtext("atom:title", default="", namespaces=ns) or source.get("name")
+        link_node = entry.find("atom:link[@href]", ns) or entry.find("atom:link", ns)
+        link = link_node.get("href") if link_node is not None else source.get("url") or source.get("feed_url")
+        summary = entry.findtext("atom:summary", default="", namespaces=ns) or entry.findtext("atom:content", default="", namespaces=ns)
+        published = entry.findtext("atom:published", default="", namespaces=ns) or entry.findtext("atom:updated", default="", namespaces=ns)
+        items.append({"title": title, "summary": summary, "url": link, "published_at": published, "source": source})
+    return items[:limit]
+
+
+def _load_discovery_sources() -> List[Dict[str, Any]]:
+    payload = _load_json_file(BLOG_NEWS_SOURCES_PATH, {"sources": []})
+    sources = payload.get("sources", []) if isinstance(payload, dict) else []
+    cleaned: List[Dict[str, Any]] = []
+    for source in sources:
+        if not isinstance(source, dict) or source.get("enabled") is False:
+            continue
+        feed_url = str(source.get("feed_url") or source.get("url") or "")
+        if not feed_url.startswith(("http://", "https://")):
+            continue
+        cleaned.append(source)
+    return cleaned
+
+
+def _cached_news_items(limit: int) -> List[Dict[str, Any]]:
+    payload = _load_json_file(BLOG_NEWS_CACHE_PATH, {"items": []})
+    rows = payload.get("items", []) if isinstance(payload, dict) else []
+    items: List[Dict[str, Any]] = []
+    for row in rows[:limit]:
+        if not isinstance(row, dict):
+            continue
+        source = {
+            "name": row.get("source_name") or "SecOpsAI news cache",
+            "url": row.get("source_url") or row.get("url"),
+            "feed_url": row.get("source_url") or row.get("url"),
+            "type": row.get("source_type") or "cache",
+        }
+        items.append({
+            "title": row.get("title"),
+            "summary": row.get("summary"),
+            "url": row.get("canonical_url") or row.get("url"),
+            "published_at": row.get("published_at"),
+            "source": source,
+        })
+    return items
+
+
+def _is_campaign_relevant(item: Dict[str, Any]) -> bool:
+    text = " ".join(str(item.get(key) or "") for key in ("title", "summary", "url")).lower()
+    return any(term in text for term in DISCOVERY_SUPPLY_CHAIN_TERMS)
+
+
+def _dedupe_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen: set[str] = set()
+    deduped: List[Dict[str, Any]] = []
+    for candidate in sorted(candidates, key=lambda row: int(row.get("score") or 0), reverse=True):
+        campaign = candidate.get("campaign", {})
+        packages = ",".join(sorted(f"{p.get('ecosystem')}:{p.get('package')}:{p.get('version')}" for p in campaign.get("packages", [])))
+        iocs = ",".join(_flatten_iocs(campaign.get("iocs", {}))[:8])
+        key = "|".join([str(candidate.get("source_url") or ""), packages, iocs, str(candidate.get("candidate_id") or "")])
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        if digest in seen:
+            continue
+        seen.add(digest)
+        candidate["dedupe_key"] = digest[:16]
+        deduped.append(candidate)
+    return deduped
+
+
+def discover_campaigns(
+    *,
+    since: str = "24h",
+    source: str = "all",
+    limit: int = 50,
+    save: bool = True,
+    watchlist: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    _parse_duration_seconds(since)  # Validate for stable CLI behavior.
+    errors: List[Dict[str, str]] = []
+    items: List[Dict[str, Any]] = []
+    sources = _load_discovery_sources()
+    if source != "all":
+        sources = [row for row in sources if source.lower() in str(row.get("name") or row.get("url") or row.get("feed_url") or "").lower()]
+    for src in sources[: max(1, min(limit, 50))]:
+        try:
+            text = _http_text(str(src.get("feed_url") or src.get("url")), timeout=20)
+            items.extend(_parse_feed_items(text, src, limit=max(5, min(limit, 50))))
+        except Exception as exc:
+            errors.append({"source": str(src.get("name") or src.get("feed_url") or src.get("url")), "error": str(exc)})
+    items.extend(_cached_news_items(limit * 2))
+    active_watchlist = watchlist if watchlist is not None else load_campaign_watchlist()
+    candidates: List[Dict[str, Any]] = []
+    for item in items:
+        if not _is_campaign_relevant(item):
+            continue
+        src = item.get("source") or {}
+        try:
+            candidate = campaign_intake(
+                text="\n".join(str(item.get(key) or "") for key in ("title", "summary", "url")),
+                title=str(item.get("title") or ""),
+                source_name=str(src.get("name") or ""),
+                source_url=str(item.get("url") or src.get("url") or src.get("feed_url") or ""),
+                watchlist=active_watchlist,
+            )
+            candidate["published_at"] = item.get("published_at")
+            candidates.append(candidate)
+        except Exception as exc:
+            errors.append({"source": str(item.get("url") or src.get("name") or "item"), "error": str(exc)})
+    candidates = _dedupe_candidates(candidates)[: max(1, min(limit, 200))]
+    saved = save_campaign_candidates(candidates) if save else None
+    return {
+        "ok": True,
+        "generated_at": _utc_now(),
+        "since": since,
+        "source": source,
+        "total_candidates": len(candidates),
+        "candidates": candidates,
+        "watchlist": active_watchlist,
+        "errors": errors[:20],
+        "saved_to": str(CAMPAIGN_CANDIDATES_PATH) if saved else None,
+    }
+
+
+def promote_campaign_candidate(candidate_id: str, path: Optional[Path] = None) -> Dict[str, Any]:
+    payload = load_campaign_candidates(path)
+    for candidate in payload.get("candidates", []):
+        if str(candidate.get("candidate_id") or "") == candidate_id:
+            return {"ok": True, "candidate": candidate, "campaign": candidate.get("campaign")}
+    raise ValueError(f"campaign candidate not found: {candidate_id}")
+
+
+def campaign_autopilot(
+    *,
+    since: str = "24h",
+    dry_run: bool = True,
+    persist: bool = False,
+    create_drafts: bool = False,
+    search_root: Optional[str] = None,
+    limit: int = 10,
+    min_score: int = 35,
+) -> Dict[str, Any]:
+    if dry_run and persist:
+        raise ValueError("--dry-run and --persist are mutually exclusive")
+    discovery = discover_campaigns(since=since, limit=limit, save=True)
+    selected = [
+        candidate
+        for candidate in discovery.get("candidates", [])
+        if int(candidate.get("score") or 0) >= min_score and candidate.get("campaign", {}).get("packages")
+    ][: max(1, min(limit, 50))]
+    results: List[Dict[str, Any]] = []
+    for candidate in selected:
+        campaign = candidate.get("campaign") or {}
+        result = research_campaign(
+            campaign=campaign,
+            search_root=search_root,
+            dry_run=dry_run or not persist,
+            persist=persist,
+            no_fetch=True,
+            create_blog_draft=bool(create_drafts and persist and not dry_run),
+        )
+        results.append({
+            "candidate_id": candidate.get("candidate_id"),
+            "score": candidate.get("score"),
+            "campaign_id": result.get("campaign_id"),
+            "campaign_verdict": result.get("campaign_verdict"),
+            "environment_impact": result.get("environment_impact"),
+            "finding_ids": result.get("finding_ids", []),
+            "blog_draft": result.get("blog_draft"),
+            "result": result,
+        })
+    return {
+        "ok": True,
+        "generated_at": _utc_now(),
+        "since": since,
+        "dry_run": dry_run,
+        "persist": persist,
+        "create_drafts": create_drafts,
+        "min_score": min_score,
+        "selected_candidates": len(selected),
+        "discovery": discovery,
+        "results": results,
     }
 
 

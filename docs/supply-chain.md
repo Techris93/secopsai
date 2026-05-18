@@ -244,6 +244,56 @@ third-party screenshots or article text unless rights and attribution are clear;
 use public source URLs as references and summarize findings in SecOpsAI's own
 words.
 
+## Autonomous Campaign Discovery
+
+Autonomous discovery reduces manual campaign entry. SecOpsAI can poll the
+trusted blog/news source registry, reuse the local news cache, extract
+cross-ecosystem package names, IOCs, publishers, behavior signals, and source
+links, then score campaign candidates before any SOC write happens.
+
+Discovery is read-only by default:
+
+```bash
+secopsai supply-chain discover-campaigns --since 24h --limit 10 --json
+secopsai supply-chain campaign-autopilot --since 24h --dry-run --json
+```
+
+Use watchlists to raise priority for packages, publishers, source URLs, or IOCs
+you care about:
+
+```bash
+secopsai supply-chain campaign-watchlist add --package npm:node-ipc
+secopsai supply-chain campaign-watchlist add --publisher deadcode09284814
+secopsai supply-chain campaign-watchlist add --ioc 87e0bbc636999b.lhr.life
+secopsai supply-chain campaign-watchlist list --json
+```
+
+Candidate intake can also convert one source report into campaign JSON:
+
+```bash
+secopsai supply-chain campaign-intake --url https://example.com/security-report --json
+secopsai supply-chain campaign-intake --text report.txt --source-name "Trusted Research Team" --json
+```
+
+Promotion and persistence stay explicit:
+
+```bash
+secopsai supply-chain campaign-candidates list --json
+secopsai supply-chain campaign-candidates promote <candidate-id> --json
+secopsai supply-chain campaign-autopilot --since 24h --persist --search-root /path/to/repo --json
+secopsai supply-chain campaign-autopilot --since 24h --persist --create-drafts --json
+```
+
+Safety model:
+
+- Discovery and dry-run autopilot do not create SOC findings or blog drafts.
+- `--persist` is required before campaign findings are written.
+- `--create-drafts` only creates review-only drafts and never publishes.
+- Only allowlisted sources from `blog/data/news-sources.json` are polled by
+  default, and fetched text is sanitized/truncated for dashboard display.
+- Package code is never executed; campaign research uses deterministic advisory,
+  metadata, IOC, and static-behavior evidence.
+
 ## Detection Capabilities
 
 ### 1. Static Analysis
