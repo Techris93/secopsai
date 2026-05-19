@@ -374,6 +374,8 @@ class BlogPublishingTests(unittest.TestCase):
         )
 
         self.assertIn("git add -A blog/drafts", workflow)
+        self.assertIn("blog/assets/social", workflow)
+        self.assertIn("blog/assets/posts", workflow)
 
     def test_publish_with_approved_media_renders_hero_and_og_image(self):
         with tempfile.TemporaryDirectory() as temp_dir:
