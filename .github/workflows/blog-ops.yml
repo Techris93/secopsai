@@ -214,7 +214,10 @@ jobs:
           git config user.name "secopsai-blog-ops[bot]"
           git config user.email "115749095+Techris93@users.noreply.github.com"
 
-          git add blog/posts blog/assets/social blog/assets/posts blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml
+          git add blog/posts blog/assets/social blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml
+          if [ -d blog/assets/posts ]; then
+            git add blog/assets/posts
+          fi
           if [ -d blog/drafts ]; then
             # Stage draft edits, new forced draft files, and deletions caused by publishing.
             git add -A blog/drafts
