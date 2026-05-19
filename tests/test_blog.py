@@ -368,6 +368,13 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertNotIn("review_checklist", post_json)
         self.assertNotIn("Review Checklist", post_html)
 
+    def test_blog_ops_workflow_stages_draft_deletions(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "blog-ops.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("git add -A blog/drafts", workflow)
+
     def test_publish_with_approved_media_renders_hero_and_og_image(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = blog.BlogPaths(Path(temp_dir) / "blog")

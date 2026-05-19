@@ -216,6 +216,8 @@ jobs:
 
           git add blog/posts blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml
           if [ -d blog/drafts ]; then
+            # Stage draft edits, new forced draft files, and deletions caused by publishing.
+            git add -A blog/drafts
             git add -f blog/drafts/*.json 2>/dev/null || true
           fi
 
