@@ -4013,6 +4013,61 @@ DISCOVERY_ECOSYSTEM_HINTS = {
     "chrome-web-store": ("chrome web store", "chrome extension", "crx"),
 }
 
+CAMPAIGN_PACKAGE_EXTRACTION_NOISE = {
+    "overview",
+    "description",
+    "impact",
+    "solution",
+    "mitigation",
+    "mitigations",
+    "acknowledgment",
+    "acknowledgments",
+    "acknowledgement",
+    "acknowledgements",
+    "byline-author",
+    "separator",
+    "ltr",
+    "presentation",
+    "font-family",
+    "sans-serif",
+    "font-size",
+    "font-weight",
+    "font-variant-alternates",
+    "font-variant-east-asian",
+    "font-variant-emoji",
+    "font-variant-numeric",
+    "font-variant-position",
+    "vertical-align",
+    "white-space-collapse",
+    "line-height",
+    "margin-bottom",
+    "margin-top",
+    "margin-left",
+    "padding-inline-start",
+    "text-decoration-line",
+    "text-decoration-skip-ink",
+    "all-time",
+    "inline-block",
+    "aria-level",
+    "list-style-type",
+    "white-space",
+    "text-wrap-mode",
+    "open-source",
+    "out-of-bounds",
+    "gpt-generated",
+    "user-supplied",
+    "ai-assisted",
+    "web-based",
+    "content-serving",
+    "attacker-controlled",
+    "drc-managed",
+    "host-based",
+    "chrome-friends",
+    "unsafe.slice",
+    "denial-of-service",
+    "remote-code-execution",
+}
+
 
 def _slug(value: str, *, limit: int = 96) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
@@ -4165,13 +4220,70 @@ def _infer_ecosystems_from_text(text: str) -> List[str]:
     return sorted(set(ecosystems))
 
 
+def _looks_like_campaign_package_noise(ecosystem: str, name: str) -> bool:
+    normalized = str(name or "").strip().lower()
+    if not normalized:
+        return True
+    if normalized in CAMPAIGN_PACKAGE_EXTRACTION_NOISE:
+        return True
+    if re.fullmatch(r"\d+(?:\.\d+)?", normalized):
+        return True
+    if re.fullmatch(r"cve-\d{4}-\d{4,}\.?", normalized):
+        return True
+    if re.fullmatch(r"docs-internal-guid-[a-f0-9-]{20,}", normalized):
+        return True
+    if re.search(r"\.(?:png|jpe?g|gif|webp|svg|html?|css|js)$", normalized):
+        return True
+    if normalized.startswith(("http://", "https://", "www.")):
+        return True
+    if re.match(r"^[a-z0-9.-]+\.(?:com|org|net|io|dev|gov|edu|life|app|co)(?:/|$)", normalized):
+        return True
+    if len(normalized) > 90 and "/" not in normalized:
+        return True
+    if len(normalized) > 55 and normalized.count("-") > 6 and not normalized.startswith("@"):
+        return True
+    if normalized.startswith(("docs-internal-guid-", "language-", "data-original-")):
+        return True
+    if normalized.startswith(("font-", "margin-", "padding-", "text-", "white-space")):
+        return True
+    if ecosystem == "npm" and "/" in normalized and not normalized.startswith("@") and re.match(r"^[a-z0-9.-]+\.[a-z]{2,}/", normalized):
+        return True
+    if ecosystem == "go" and re.search(r"/(?:issues|pulls|actions|blob|tree)(?:/|$)", normalized):
+        return True
+    return False
+
+
+def _has_campaign_package_context(text: str, start: int, end: int, ecosystem: str) -> bool:
+    window = text[max(0, start - 120): min(len(text), end + 120)].lower()
+    if ecosystem == "npm":
+        return any(
+            marker in window
+            for marker in (
+                "npm",
+                "node package",
+                "node packages",
+                "package name",
+                "package names",
+                "packages",
+                "malicious package",
+                "malicious packages",
+                "published package",
+                "typosquat",
+                "typosquatting",
+                "registry",
+            )
+        )
+    return any(marker in window for marker in ("package", "packages", "module", "modules", "artifact", "artifacts", "registry"))
+
+
 def _extract_campaign_packages_from_text(text: str) -> List[Dict[str, Any]]:
     packages: List[Dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
     lowered = text.lower()
-    default_ecosystems = _infer_ecosystems_from_text(text) or ["npm"]
+    default_ecosystems = _infer_ecosystems_from_text(text)
 
     patterns: List[tuple[str, str]] = [
+        ("crates", r"\bcrates\.io/crates/([A-Za-z0-9_-]{2,80})(?:[/#?]|$)"),
         ("npm", r"(?<![\w.-])(@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*[-_.][a-z0-9][a-z0-9._-]*)(?:@([0-9][A-Za-z0-9.+:_~!-]{0,80}))?"),
         ("pypi", r"\b([a-z0-9][a-z0-9._-]{2,80})(?:==|@)([0-9][A-Za-z0-9.+:_~!-]{0,80})\b"),
         ("maven", r"\b([A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+)(?:[:@]([0-9][A-Za-z0-9.+:_~!-]{0,80}))?\b"),
@@ -4181,6 +4293,8 @@ def _extract_campaign_packages_from_text(text: str) -> List[Dict[str, Any]]:
     for raw in quoted:
         if raw.startswith(("http:", "https:")):
             continue
+        if not default_ecosystems and not raw.startswith("@") and "npm" not in lowered:
+            continue
         if "/" in raw and raw.count("/") == 1 and not raw.startswith("@"):
             ecosystem = "packagist" if "packagist" in lowered or "composer" in lowered else default_ecosystems[0]
         elif raw.startswith("@") or "npm" in lowered:
@@ -4188,6 +4302,12 @@ def _extract_campaign_packages_from_text(text: str) -> List[Dict[str, Any]]:
         else:
             ecosystem = default_ecosystems[0]
         name = normalize_package_name(ecosystem, raw)
+        if not raw.startswith("@") and "/" not in raw:
+            raw_index = text.find(raw)
+            if raw_index >= 0 and not _has_campaign_package_context(text, raw_index, raw_index + len(raw), ecosystem):
+                continue
+        if _looks_like_campaign_package_noise(ecosystem, name):
+            continue
         key = (ecosystem, name, "unknown")
         if key not in seen and validate_package_identifier(ecosystem, name).get("valid"):
             seen.add(key)
@@ -4198,15 +4318,23 @@ def _extract_campaign_packages_from_text(text: str) -> List[Dict[str, Any]]:
             raw_name = match.group(1)
             if not raw_name:
                 continue
+            if ecosystem_hint == "npm" and "npm" not in default_ecosystems and not raw_name.startswith("@"):
+                continue
+            if ecosystem_hint == "npm" and not raw_name.startswith("@") and not _has_campaign_package_context(text, match.start(1), match.end(1), ecosystem_hint):
+                continue
+            if ecosystem_hint == "maven" and "maven" not in default_ecosystems and not _has_campaign_package_context(text, match.start(1), match.end(1), ecosystem_hint):
+                continue
             if ecosystem_hint == "npm" and raw_name.lower() in {
                 "security", "package", "packages", "registry", "versions", "malware", "credentials",
                 "github", "windows", "linux", "remote", "server", "source", "article", "follow", "google",
                 "supply-chain", "thehackernews.com", "lhr.life",
             }:
                 continue
-            ecosystem = ecosystem_hint if ecosystem_hint in default_ecosystems or ecosystem_hint in {"maven", "go"} else default_ecosystems[0]
-            version = match.group(2) if match.lastindex and match.group(2) else "unknown"
+            ecosystem = ecosystem_hint
+            version = match.group(2) if (match.lastindex or 0) >= 2 and match.group(2) else "unknown"
             name = normalize_package_name(ecosystem, raw_name)
+            if _looks_like_campaign_package_noise(ecosystem, name):
+                continue
             key = (ecosystem, name, version)
             if key in seen:
                 continue

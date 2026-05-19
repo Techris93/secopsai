@@ -1205,6 +1205,35 @@ const https = require("https");
         self.assertTrue(any("credential" in item.lower() for item in payload["campaign"]["behavioral_indicators"]))
         self.assertGreaterEqual(payload["score"], 35)
 
+    def test_campaign_intake_ignores_article_html_as_packages(self):
+        text = (
+            '<h3 id="overview">Overview</h3><p class="byline-author">'
+            '<span id="docs-internal-guid-d358e087-7fff-fbc1-ad5b-f4611deb13fd" '
+            'style="font-family: Google Sans; font-size: 10pt; line-height: 1.38;">'
+            "A vulnerability tracked as CVE-2026-5756 allows user-supplied configuration changes "
+            "in a web-based product hosted at kb.cert.org.</span></p>"
+        )
+        payload = supply_chain.campaign_intake(text=text, source_name="CERT/CC", source_url="https://kb.cert.org/vuls/id/748485")
+        packages = {item["package"] for item in payload["campaign"]["packages"]}
+        self.assertNotIn("overview", packages)
+        self.assertNotIn("docs-internal-guid-d358e087-7fff-fbc1-ad5b-f4611deb13fd", packages)
+        self.assertNotIn("font-family", packages)
+        self.assertNotIn("cve-2026-5756", packages)
+        self.assertNotIn("kb.cert.org", packages)
+        self.assertFalse(packages)
+
+    def test_campaign_intake_requires_package_context_for_hyphenated_words(self):
+        text = (
+            "Protecting cookies with hardware-backed session credentials describes "
+            "short-lived browser sessions and cross-origin protections, but it does "
+            "not name a software registry artifact."
+        )
+        payload = supply_chain.campaign_intake(text=text, source_name="Security Blog", source_url="https://example.com/post")
+        packages = {item["package"] for item in payload["campaign"]["packages"]}
+        self.assertNotIn("hardware-backed", packages)
+        self.assertNotIn("short-lived", packages)
+        self.assertNotIn("cross-origin", packages)
+
     def test_campaign_watchlist_add_and_list_uses_runtime_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "watchlist.json"
