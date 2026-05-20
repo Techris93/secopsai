@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import calendar
+import copy
 import email.utils
 import hashlib
 import html
@@ -1843,7 +1844,7 @@ def _published_post_is_current(post: Dict[str, Any], path: Path, paths: BlogPath
         public_post = _load_json(public_json)
     except Exception:
         return False
-    candidate = _public_post({**post, "slug": slug})
+    candidate = _public_post(copy.deepcopy({**post, "slug": slug}))
     for key in ("title", "summary", "body_markdown"):
         if str(public_post.get(key) or "") != str(candidate.get(key) or ""):
             return False
@@ -1857,6 +1858,14 @@ def _effective_review_status(post: Dict[str, Any], path: Path, paths: BlogPaths)
     return status
 
 
+def _published_post_metadata_path(slug: str, paths: BlogPaths) -> str:
+    public_path = _post_json_path(slug, paths)
+    try:
+        return str(public_path.relative_to(paths.root.parent))
+    except ValueError:
+        return str(public_path)
+
+
 def _mark_draft_deployed(path: Path, post: Dict[str, Any], paths: BlogPaths, *, url: Optional[str] = None) -> Dict[str, Any]:
     now = _utc_now()
     slug = str(post.get("slug") or path.stem)
@@ -1867,7 +1876,7 @@ def _mark_draft_deployed(path: Path, post: Dict[str, Any], paths: BlogPaths, *, 
     post["updated_at"] = now
     post["deployed_at"] = now
     post["published_url"] = url or _post_url(slug)
-    post["published_post_path"] = str(_post_json_path(slug, paths))
+    post["published_post_path"] = _published_post_metadata_path(slug, paths)
     _set_review_checklist_status(post, "deployed")
     _write_json(path, post)
     return post

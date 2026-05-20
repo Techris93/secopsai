@@ -369,6 +369,8 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertEqual(deployed_draft["review_status"], "deployed")
         self.assertEqual(deployed_draft["status"], "published")
         self.assertIn("published_url", deployed_draft)
+        self.assertEqual(deployed_draft["published_post_path"], "blog/posts/external-story.json")
+        self.assertNotIn(str(temp_dir), deployed_draft["published_post_path"])
         self.assertEqual(repeated["total"], 0)
         self.assertEqual(repeated["published"], [])
         self.assertNotIn("Review Checklist", post_json["body_markdown"])
@@ -389,6 +391,7 @@ class BlogPublishingTests(unittest.TestCase):
             )
             draft.update({
                 "external_news": True,
+                "extracted": {"products": ["Microsoft Microsoft"]},
                 "review_status": "approved",
                 "review_checklist": [{"label": "Main claim is supported by source", "status": "completed"}],
                 "body_markdown": "# Already public story\n\nThis draft was already published in an earlier run.",
@@ -416,6 +419,9 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertEqual(payload["published"], [])
         self.assertEqual(payload["deployed"], ["https://blog.secopsai.dev/posts/already-public-story.html"])
         self.assertEqual(stored["review_status"], "deployed")
+        self.assertEqual(stored["published_post_path"], "blog/posts/already-public-story.json")
+        self.assertNotIn(str(temp_dir), stored["published_post_path"])
+        self.assertEqual(stored["extracted"]["products"], ["Microsoft Microsoft"])
 
     def test_approved_draft_with_newer_content_republishes_existing_post(self):
         ready_body = (
