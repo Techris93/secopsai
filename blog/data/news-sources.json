@@ -57,6 +57,61 @@
       "poll_frequency_hint": "daily"
     },
     {
+      "name": "GitHub Security Advisories",
+      "url": "https://github.com/advisories",
+      "feed_url": "https://github.com/advisories",
+      "type": "html",
+      "category": "Developer Security",
+      "trust_level": "platform",
+      "enabled": true,
+      "default_tags": ["Security News", "GitHub", "Advisory"],
+      "poll_frequency_hint": "hourly"
+    },
+    {
+      "name": "JFrog Security Research",
+      "url": "https://research.jfrog.com/",
+      "feed_url": "https://research.jfrog.com/",
+      "type": "html",
+      "category": "Supply Chain",
+      "trust_level": "external_research",
+      "enabled": true,
+      "default_tags": ["Security News", "Supply Chain", "Research"],
+      "poll_frequency_hint": "hourly"
+    },
+    {
+      "name": "The Hacker News",
+      "url": "https://thehackernews.com/",
+      "feed_url": "https://feeds.feedburner.com/TheHackersNews",
+      "type": "rss",
+      "category": "Threat Intelligence",
+      "trust_level": "aggregator",
+      "enabled": true,
+      "default_tags": ["Security News", "Threat Intelligence"],
+      "poll_frequency_hint": "hourly"
+    },
+    {
+      "name": "Grafana Security",
+      "url": "https://grafana.com/security/",
+      "feed_url": "https://grafana.com/security/",
+      "type": "html",
+      "category": "Vendor Security",
+      "trust_level": "vendor",
+      "enabled": true,
+      "default_tags": ["Security News", "Grafana", "Vendor Advisory"],
+      "poll_frequency_hint": "daily"
+    },
+    {
+      "name": "Open VSX Registry",
+      "url": "https://open-vsx.org/",
+      "feed_url": "https://open-vsx.org/",
+      "type": "html",
+      "category": "Developer Tooling",
+      "trust_level": "project",
+      "enabled": true,
+      "default_tags": ["Security News", "Open VSX", "VS Code"],
+      "poll_frequency_hint": "daily"
+    },
+    {
       "name": "OpenSSF Blog",
       "url": "https://openssf.org/blog/",
       "feed_url": "https://openssf.org/feed/",

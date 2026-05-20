@@ -33,8 +33,12 @@ Curated sources live in `blog/data/news-sources.json`. Each source declares a na
 The default registry now prioritizes direct/primary sources before commentary or aggregator-style sources:
 
 - Government/direct advisories: CISA KEV, CISA News, CERT/CC Vulnerability Notes.
-- Vendor/project primary sources: MSRC, GitHub Security Lab, OpenSSF, Google Online Security Blog, Cloudflare Security Blog, Microsoft Security Blog.
-- External research/context sources: Socket Blog.
+- Vendor/project primary sources: MSRC, GitHub Security Lab, GitHub Security Advisories, OpenSSF, Google Online Security Blog, Cloudflare Security Blog, Microsoft Security Blog, Grafana Security, and Open VSX Registry.
+- External research/context sources: Socket Blog, JFrog Security Research, and The Hacker News.
+
+Supply-chain campaign discovery also reports per-source freshness/status records
+through `secopsai supply-chain discover-campaigns --json`, so feed errors and
+stale sources are visible during daily review.
 
 `news-fetch` fetches across all enabled sources before choosing items, so one busy source cannot consume the whole daily draft limit.
 

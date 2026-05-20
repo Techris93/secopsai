@@ -1,0 +1,57 @@
+{
+  "advisory_id": "SECOPSAI-ADV-2026-05-JFROG-SHAI-HULUD-MAY19",
+  "campaign_id": "jfrog-shai-hulud-here-we-go-again-may19-2026",
+  "title": "JFrog Shai-Hulud Here We Go Again npm and PyPI campaign",
+  "summary": "Source-backed emergency campaign advisory for the May 19, 2026 Shai-Hulud wave reported by JFrog, including npm lifecycle execution, optional GitHub dependency abuse, credential theft, GitHub dead-drop exfiltration, and a related PyPI import-time loader.",
+  "severity": "critical",
+  "confidence": "high",
+  "status": "active",
+  "published_at": "2026-05-19T00:00:00Z",
+  "updated_at": "2026-05-20T00:00:00Z",
+  "ingested_at": "2026-05-20T00:00:00Z",
+  "source_names": ["JFrog Security Research"],
+  "source_urls": ["https://research.jfrog.com/post/shai-hulud-here-we-go-again-may19/"],
+  "affected": [
+    {
+      "ecosystem": "pypi",
+      "package": "durabletask",
+      "versions": ["1.4.1", "1.4.2", "1.4.3"],
+      "safe_versions": ["Use a version outside the affected range after verifying upstream maintainer guidance and clean lockfiles."]
+    },
+    {
+      "ecosystem": "npm",
+      "package": "@cap-js/openapi",
+      "versions": ["1.4.1"],
+      "safe_versions": ["Use a version outside the affected range after verifying upstream maintainer guidance and clean lockfiles."]
+    }
+  ],
+  "iocs": {
+    "domains": ["check.git-service.com", "t.m-kosche.com"],
+    "urls": [
+      "https://check.git-service.com/rope.pyz",
+      "https://t.m-kosche.com/rope.pyz",
+      "https://t.m-kosche.com:443/api/public/otel/v1/traces"
+    ],
+    "filenames": ["index.js", "rope.pyz", "managed.pyz", "kitty-monitor", "gh-token-monitor"],
+    "file_paths": [
+      "/tmp/managed.pyz",
+      "/tmp/.rope_state/ssm_instances.json",
+      "~/.cache/.sys-update-check",
+      "~/.cache/.sys-update-check-k8s",
+      "~/.claude/package/",
+      "~/.codex/package/"
+    ],
+    "campaign_labels": ["Shai-Hulud", "Here We Go Again", "TeamPCP"]
+  },
+  "detection_rationale": [
+    "npm packages use install-time lifecycle execution, Bun, and non-registry GitHub optional dependency delivery.",
+    "PyPI durabletask uses import-time execution to fetch and launch a Python zip payload without executing package code during SecOpsAI analysis.",
+    "The campaign includes credential harvesting, GitHub token abuse, GitHub dead-drop exfiltration, persistence, and cloud/Kubernetes lateral-movement indicators."
+  ],
+  "remediation": [
+    "Block affected package versions in package-manager policy, artifact proxies, and CI allowlists.",
+    "Isolate affected developer workstations and CI/CD runners before revoking GitHub tokens when destructive token monitors may be present.",
+    "Remove listed persistence artifacts and hunt for listed domains, files, GitHub dead-drop repository activity, and workflow injection.",
+    "Rotate GitHub, npm, PyPI, cloud, Kubernetes, Vault, SSH, CI/CD, and package-manager credentials after host isolation and persistence removal."
+  ]
+}

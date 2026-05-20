@@ -1,0 +1,40 @@
+{
+  "advisory_id": "SECOPSAI-ADV-2026-05-GRAFANA-GITHUB-TOKEN",
+  "campaign_id": "grafana-github-token-breach-2026-05",
+  "title": "Grafana GitHub token breach and repository download incident",
+  "summary": "Source-backed advisory for a developer-token compromise where a missed GitHub workflow token led to source-code and internal-repository access after a supply-chain attack.",
+  "severity": "high",
+  "confidence": "medium",
+  "status": "active",
+  "published_at": "2026-05-20T00:00:00Z",
+  "updated_at": "2026-05-20T00:00:00Z",
+  "ingested_at": "2026-05-20T00:00:00Z",
+  "source_names": ["The Hacker News", "Grafana Labs"],
+  "source_urls": [
+    "https://thehackernews.com/2026/05/grafana-github-breach-exposes-source.html",
+    "https://grafana.com/security/"
+  ],
+  "affected": [
+    {
+      "ecosystem": "github",
+      "package": "grafana/grafana",
+      "versions": ["2026-05"],
+      "safe_versions": ["Not versioned; review GitHub audit logs, token scope, and repository access."]
+    }
+  ],
+  "iocs": {
+    "campaign_labels": ["Grafana", "GitHub token breach", "repository download", "TeamPCP"],
+    "cloud_services": ["GitHub Actions", "GitHub repositories"]
+  },
+  "detection_rationale": [
+    "The incident class is source-backed GitHub token misuse rather than a package artifact compromise.",
+    "Behavioral detection should key on workflow token exposure, repository enumeration/download, unusual GitHub API access, and compromised CI workflows.",
+    "Local package usage should not downgrade the severity of a source-backed GitHub token/repository incident."
+  ],
+  "remediation": [
+    "Rotate impacted GitHub workflow, automation, and personal access tokens and review token scopes.",
+    "Audit GitHub access logs for repository enumeration, archive downloads, clone bursts, Git Data API activity, and unusual actors.",
+    "Review workflows initially considered unaffected and revalidate them against source-backed incident timelines.",
+    "Treat downloaded private source and operational repositories as exposed until investigation proves otherwise."
+  ]
+}

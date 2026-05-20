@@ -88,6 +88,13 @@ ECOSYSTEM_ALIASES = {
     "open_vsx": "open-vsx",
     "gem": "rubygems",
     "rubygems.org": "rubygems",
+    "github-repo": "github",
+    "github-repository": "github",
+    "repo": "github",
+    "repository": "github",
+    "vscode": "open-vsx",
+    "vs-code": "open-vsx",
+    "visual-studio-code": "open-vsx",
 }
 
 SUPPORTED_ECOSYSTEMS: Dict[str, Dict[str, Any]] = {
@@ -221,6 +228,19 @@ SUPPORTED_ECOSYSTEMS: Dict[str, Dict[str, Any]] = {
         },
         "limitations": ["Open VSX VSIX packages are unpacked only for static analysis; extensions are never activated."],
     },
+    "github": {
+        "display_name": "GitHub repository",
+        "identifier": "owner/repo or organization/repository",
+        "features": {
+            "advisory_match": True,
+            "metadata_fetch": False,
+            "artifact_fetch": False,
+            "diff_analysis": False,
+            "behavioral_rules": True,
+            "monitor": False,
+        },
+        "limitations": ["GitHub campaign records analyze source-backed audit/event fixtures only; repository contents are never cloned or downloaded."],
+    },
     "rubygems": {
         "display_name": "RubyGems.org",
         "identifier": "gem/version",
@@ -263,6 +283,11 @@ SUSPICIOUS_RULES: list[tuple[str, str, int]] = [
     ("environment credential harvesting", r"\b(environment credential|process\.env|GITHUB_TOKEN|NPM_TOKEN|AWS_|GOOGLE_|AZURE_|SSH_AUTH_SOCK)\b", 4),
     ("payload wrapping or exfil staging", r"\b(payload wrapping|exfil staging|dns exfil|zlib|gzip|Buffer\.from)\b", 3),
     ("ecosystem manifest risk", r"\b(?:crates|chrome extension|composer|go module|hugging face|maven|nuget|open vsx|rubygems).*(?:install-time|credential|remote code|unsafe|eval|exec|permission|hook|lifecycle)\b", 3),
+    ("github token abuse", r"\b(?:GitHub token|ghp_|gho_|ghs_|GITHUB_TOKEN|Actions secrets|GitHub API).*(?:abuse|exfil|download|repo|repository|token|secret)\b", 5),
+    ("mass repository download", r"\b(?:mass repo|mass repository|downloaded repositories|repo enumeration|repos/download|zipball|tarball|git clone --mirror)\b", 4),
+    ("orphan commit delivery", r"\b(?:orphan(?:ed)? commit|unreachable commit|dangling commit|unsigned commit|hidden commit)\b", 5),
+    ("vscode extension compromise", r"\b(?:VS Code|VSCode|Visual Studio Code|open vsx|marketplace|extension activation|activationEvents|workspace).*?(?:credential|child_process|fetch|orphan|malicious|compromised)\b", 5),
+    ("dns or https exfiltration", r"\b(?:DNS tunneling|dns exfil|HTTPS exfil|dead drop|dead-drop|GitHub dead-drop|OpenTelemetry endpoint)\b", 4),
 ]
 
 COMMON_BUILD_BACKENDS = {
@@ -483,6 +508,8 @@ def validate_package_identifier(ecosystem: str, package: str) -> Dict[str, Any]:
         errors.append("Maven artifacts should use groupId:artifactId")
     elif eco == "open-vsx" and "." not in normalized:
         errors.append("Open VSX extensions should use namespace.extension")
+    elif eco == "github" and "/" not in normalized:
+        errors.append("GitHub repository identifiers should use owner/repo")
     elif eco == "huggingface" and "/" not in normalized:
         errors.append("Hugging Face identifiers should use owner/repo")
     elif eco == "chrome-web-store" and not re.fullmatch(r"[a-z0-9_.-]+", normalized):
@@ -1773,12 +1800,34 @@ def _open_vsx_policy_findings(path: str, source: str) -> List[str]:
             return []
         activation = data.get("activationEvents", []) or []
         scripts = data.get("scripts", {}) or {}
-        if any(str(item) == "*" or str(item).startswith("onStartupFinished") for item in activation):
+        if any(str(item) == "*" or str(item).startswith("onStartupFinished") or str(item).startswith("workspaceContains") for item in activation):
             findings.append(f"{path}: open vsx extension broad activation event")
         if any(hook in scripts for hook in ("postinstall", "preinstall", "install")):
             findings.append(f"{path}: open vsx extension npm lifecycle hook")
     elif lowered.endswith((".js", ".ts", ".mjs", ".cjs")) and re.search(r"\bvscode\.workspace|process\.env|child_process|eval\s*\(|Function\s*\(|fetch\s*\(", source):
         findings.append(f"{path}: open vsx extension workspace, credential, process, or remote code behavior")
+        if re.search(r"\b(child_process|exec|spawn|execFile|execSync|spawnSync)\b", source):
+            findings.append(f"{path}: open vsx extension child_process execution capability")
+        if re.search(r"\b(process\.env|GITHUB_TOKEN|NPM_TOKEN|AWS_|\.npmrc|\.ssh|1Password|op\s+)\b", source, re.IGNORECASE):
+            findings.append(f"{path}: open vsx extension credential harvesting indicators")
+        if re.search(r"\b(fetch|https?\.request|dns\.|resolveTxt|github\.com|api\.github\.com)\b", source, re.IGNORECASE):
+            findings.append(f"{path}: open vsx extension exfiltration or GitHub dead-drop behavior")
+    return sorted(set(findings))
+
+
+def _github_policy_findings(path: str, source: str) -> List[str]:
+    lowered = path.lower()
+    findings: List[str] = []
+    if not lowered.endswith((".json", ".txt", ".log", ".ndjson", ".md")):
+        return findings
+    if re.search(r"\b(ghp_|gho_|ghs_|GITHUB_TOKEN|github workflow token|personal access token|PAT)\b", source, re.IGNORECASE):
+        findings.append(f"{path}: github token exposure or suspicious token use")
+    if re.search(r"\b(api\.github\.com/repos|/zipball|/tarball|git\s+clone|downloaded repositories|mass repo|repo enumeration)\b", source, re.IGNORECASE):
+        findings.append(f"{path}: github repository enumeration or code download behavior")
+    if re.search(r"\b(orphan(?:ed)? commit|unreachable commit|dangling commit|unsigned commit|refs/heads|git data api|create blob|create tree)\b", source, re.IGNORECASE):
+        findings.append(f"{path}: github orphan commit or Git Data API abuse indicator")
+    if re.search(r"\b(repository secrets|actions secrets|workflow tokens|OIDC|ACTIONS_ID_TOKEN_REQUEST_TOKEN)\b", source, re.IGNORECASE):
+        findings.append(f"{path}: github actions or CI/CD secret exposure indicator")
     return sorted(set(findings))
 
 
@@ -1822,6 +1871,7 @@ def _ecosystem_policy_findings(path: str, source: str, ecosystem: Optional[str] 
             "maven": _maven_policy_findings,
             "nuget": _nuget_policy_findings,
             "open-vsx": _open_vsx_policy_findings,
+            "github": _github_policy_findings,
             "rubygems": _rubygems_policy_findings,
         }
         rule = ecosystem_rules.get(eco)
@@ -1835,6 +1885,7 @@ def _ecosystem_policy_findings(path: str, source: str, ecosystem: Optional[str] 
     findings.extend(_maven_policy_findings(path, source))
     findings.extend(_nuget_policy_findings(path, source))
     findings.extend(_open_vsx_policy_findings(path, source))
+    findings.extend(_github_policy_findings(path, source))
     findings.extend(_rubygems_policy_findings(path, source))
     return sorted(set(findings))
 
@@ -3982,6 +4033,21 @@ DISCOVERY_SUPPLY_CHAIN_TERMS = (
     "c2",
     "exfiltration",
     "shai-hulud",
+    "github token",
+    "workflow token",
+    "personal access token",
+    "github breach",
+    "source code",
+    "repository download",
+    "mass repo",
+    "orphan commit",
+    "unreachable commit",
+    "dangling commit",
+    "vs code extension",
+    "vscode extension",
+    "visual studio code marketplace",
+    "extension marketplace",
+    "marketplace extension",
 )
 
 DISCOVERY_BEHAVIOR_KEYWORDS = {
@@ -3989,6 +4055,10 @@ DISCOVERY_BEHAVIOR_KEYWORDS = {
     "environment variable harvesting": ("environment variable", "process.env", "os.environ", "env var"),
     "cloud credential harvesting": ("cloud credential", "aws", "gcp", "azure", ".aws", ".config/gcloud"),
     "GitHub token abuse": ("github token", "github api", "repository creation", "public repository"),
+    "GitHub repository/code download": ("downloaded repositories", "source code", "repo enumeration", "mass repo", "github repositories"),
+    "orphan commit delivery": ("orphan commit", "orphaned commit", "unreachable commit", "dangling commit", "unsigned commit"),
+    "VS Code extension compromise": ("vs code extension", "vscode extension", "vs code developers", "visual studio code marketplace", "openvsx", "open vsx", "extension activation", "extension fetched"),
+    "DNS tunneling or HTTPS exfiltration": ("dns tunneling", "dns exfil", "https exfil", "github api", "dead drop", "dead-drop"),
     "outbound C2 communication": ("c2", "command and control", "exfiltration", "exfiltrate"),
     "botnet or DDoS behavior": ("botnet", "ddos", "tcp flood", "udp flood", "http flood"),
     "persistence": ("persistence", "startup", "scheduled task", "launch agent", "cron"),
@@ -4009,6 +4079,7 @@ DISCOVERY_ECOSYSTEM_HINTS = {
     "maven": ("maven central", "maven", "java package", "jar"),
     "nuget": ("nuget", ".net package", "powershell package"),
     "open-vsx": ("open vsx", "vs code extension", "vscode extension"),
+    "github": ("github repository", "github repositories", "github token", "github api", "source code repository", "orphan commit"),
     "rubygems": ("rubygems", "ruby gem", "gem package"),
     "chrome-web-store": ("chrome web store", "chrome extension", "crx"),
 }
@@ -4282,13 +4353,36 @@ def _extract_campaign_packages_from_text(text: str) -> List[Dict[str, Any]]:
     lowered = text.lower()
     default_ecosystems = _infer_ecosystems_from_text(text)
 
+    def add_package(ecosystem: str, raw_name: str, version: str = "unknown") -> None:
+        ecosystem = canonical_ecosystem(ecosystem)
+        name = normalize_package_name(ecosystem, raw_name)
+        if _looks_like_campaign_package_noise(ecosystem, name):
+            return
+        key = (ecosystem, name, version or "unknown")
+        if key in seen:
+            return
+        if not validate_package_identifier(ecosystem, name).get("valid"):
+            return
+        seen.add(key)
+        packages.append({"ecosystem": ecosystem, "package": name, "version": version or "unknown"})
+
     patterns: List[tuple[str, str]] = [
         ("crates", r"\bcrates\.io/crates/([A-Za-z0-9_-]{2,80})(?:[/#?]|$)"),
         ("npm", r"(?<![\w.-])(@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*[-_.][a-z0-9][a-z0-9._-]*)(?:@([0-9][A-Za-z0-9.+:_~!-]{0,80}))?"),
         ("pypi", r"\b([a-z0-9][a-z0-9._-]{2,80})(?:==|@)([0-9][A-Za-z0-9.+:_~!-]{0,80})\b"),
         ("maven", r"\b([A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+)(?:[:@]([0-9][A-Za-z0-9.+:_~!-]{0,80}))?\b"),
         ("go", r"\b((?:github|gitlab|bitbucket)\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.:/-]+)(?:@([vV]?[0-9][A-Za-z0-9.+:_~!-]{0,80}))?\b"),
+        ("open-vsx", r"\b([a-z][a-z0-9_-]{1,50}\.[a-z][a-z0-9_.-]{1,80})\s*(?:extension)?\s*(?:version\s*)?([0-9][A-Za-z0-9.+:_~!-]{0,80})\b"),
+        ("github", r"\bgithub\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?=[\s,.;:)\\\]]|[/#?]|$)"),
     ]
+    extension_aliases = {
+        "nx console": "nrwl.angular-console",
+    }
+    if "vs code" in lowered or "vscode" in lowered or "visual studio code" in lowered or "openvsx" in lowered:
+        for alias, identifier in extension_aliases.items():
+            if alias in lowered:
+                version_match = re.search(rf"{re.escape(alias)}(?:\s+extension)?(?:\s+version)?\s+([0-9][A-Za-z0-9.+:_~!-]{{0,80}})", text, re.IGNORECASE)
+                add_package("open-vsx", identifier, version_match.group(1) if version_match else "unknown")
     quoted = re.findall(r"['\"`]([@A-Za-z0-9][@A-Za-z0-9._:/-]{2,120})['\"`]", text)
     for raw in quoted:
         if raw.startswith(("http:", "https:")):
@@ -4301,17 +4395,11 @@ def _extract_campaign_packages_from_text(text: str) -> List[Dict[str, Any]]:
             ecosystem = "npm"
         else:
             ecosystem = default_ecosystems[0]
-        name = normalize_package_name(ecosystem, raw)
         if not raw.startswith("@") and "/" not in raw:
             raw_index = text.find(raw)
             if raw_index >= 0 and not _has_campaign_package_context(text, raw_index, raw_index + len(raw), ecosystem):
                 continue
-        if _looks_like_campaign_package_noise(ecosystem, name):
-            continue
-        key = (ecosystem, name, "unknown")
-        if key not in seen and validate_package_identifier(ecosystem, name).get("valid"):
-            seen.add(key)
-            packages.append({"ecosystem": ecosystem, "package": name, "version": "unknown"})
+        add_package(ecosystem, raw, "unknown")
 
     for ecosystem_hint, pattern in patterns:
         for match in re.finditer(pattern, text, re.IGNORECASE):
@@ -4332,16 +4420,7 @@ def _extract_campaign_packages_from_text(text: str) -> List[Dict[str, Any]]:
                 continue
             ecosystem = ecosystem_hint
             version = match.group(2) if (match.lastindex or 0) >= 2 and match.group(2) else "unknown"
-            name = normalize_package_name(ecosystem, raw_name)
-            if _looks_like_campaign_package_noise(ecosystem, name):
-                continue
-            key = (ecosystem, name, version)
-            if key in seen:
-                continue
-            if not validate_package_identifier(ecosystem, name).get("valid"):
-                continue
-            seen.add(key)
-            packages.append({"ecosystem": ecosystem, "package": name, "version": version})
+            add_package(ecosystem, raw_name, version)
     return packages[:40]
 
 
@@ -4479,6 +4558,26 @@ def campaign_intake(
 def _parse_feed_items(text: str, source: Dict[str, Any], *, limit: int) -> List[Dict[str, Any]]:
     source_type = str(source.get("type") or "rss").lower()
     items: List[Dict[str, Any]] = []
+    if source_type == "html" or text.lstrip()[:200].lower().startswith("<!doctype html") or "<html" in text[:500].lower():
+        for match in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', text, re.IGNORECASE | re.DOTALL):
+            href = match.group(1)
+            label = re.sub(r"<[^>]+>", " ", match.group(2))
+            title = " ".join(label.split())
+            if not title or len(title) < 8:
+                continue
+            if href.startswith("/"):
+                parsed = urllib.parse.urlparse(str(source.get("url") or source.get("feed_url") or ""))
+                href = f"{parsed.scheme}://{parsed.netloc}{href}" if parsed.netloc else href
+            items.append({
+                "title": title[:240],
+                "summary": title[:500],
+                "url": href,
+                "published_at": None,
+                "source": source,
+            })
+            if len(items) >= limit:
+                break
+        return items[:limit]
     if source_type == "json":
         payload = json.loads(text)
         rows: Iterable[Any]
@@ -4515,6 +4614,22 @@ def _parse_feed_items(text: str, source: Dict[str, Any], *, limit: int) -> List[
         published = entry.findtext("atom:published", default="", namespaces=ns) or entry.findtext("atom:updated", default="", namespaces=ns)
         items.append({"title": title, "summary": summary, "url": link, "published_at": published, "source": source})
     return items[:limit]
+
+
+def _poll_hint_to_seconds(value: Any) -> int:
+    hint = str(value or "").strip().lower()
+    if hint == "hourly":
+        return 3600
+    if hint == "daily":
+        return 86400
+    if hint == "weekly":
+        return 604800
+    match = re.fullmatch(r"(\d+)\s*([smhdw])", hint)
+    if not match:
+        return 86400
+    amount = int(match.group(1))
+    unit = match.group(2)
+    return amount * {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}[unit]
 
 
 def _load_discovery_sources() -> List[Dict[str, Any]]:
@@ -4586,16 +4701,41 @@ def discover_campaigns(
 ) -> Dict[str, Any]:
     _parse_duration_seconds(since)  # Validate for stable CLI behavior.
     errors: List[Dict[str, str]] = []
+    source_status: List[Dict[str, Any]] = []
     items: List[Dict[str, Any]] = []
     sources = _load_discovery_sources()
     if source != "all":
         sources = [row for row in sources if source.lower() in str(row.get("name") or row.get("url") or row.get("feed_url") or "").lower()]
     for src in sources[: max(1, min(limit, 50))]:
+        source_label = str(src.get("name") or src.get("feed_url") or src.get("url"))
+        source_url = str(src.get("feed_url") or src.get("url"))
+        started_at = _utc_now()
         try:
-            text = _http_text(str(src.get("feed_url") or src.get("url")), timeout=20)
-            items.extend(_parse_feed_items(text, src, limit=max(5, min(limit, 50))))
+            text = _http_text(source_url, timeout=20)
+            parsed = _parse_feed_items(text, src, limit=max(5, min(limit, 50)))
+            items.extend(parsed)
+            newest = sorted((str(item.get("published_at") or "") for item in parsed if item.get("published_at")), reverse=True)
+            source_status.append({
+                "source": source_label,
+                "url": source_url,
+                "status": "ok",
+                "fetched_at": started_at,
+                "items": len(parsed),
+                "newest_published_at": newest[0] if newest else None,
+                "sla_seconds": _poll_hint_to_seconds(src.get("poll_frequency_hint")),
+            })
         except Exception as exc:
-            errors.append({"source": str(src.get("name") or src.get("feed_url") or src.get("url")), "error": str(exc)})
+            error = str(exc)
+            errors.append({"source": source_label, "error": error})
+            source_status.append({
+                "source": source_label,
+                "url": source_url,
+                "status": "error",
+                "fetched_at": started_at,
+                "items": 0,
+                "error": error[:500],
+                "sla_seconds": _poll_hint_to_seconds(src.get("poll_frequency_hint")),
+            })
     items.extend(_cached_news_items(limit * 2))
     active_watchlist = watchlist if watchlist is not None else load_campaign_watchlist()
     candidates: List[Dict[str, Any]] = []
@@ -4625,6 +4765,7 @@ def discover_campaigns(
         "total_candidates": len(candidates),
         "candidates": candidates,
         "watchlist": active_watchlist,
+        "source_status": source_status,
         "errors": errors[:20],
         "saved_to": str(CAMPAIGN_CANDIDATES_PATH) if saved else None,
     }

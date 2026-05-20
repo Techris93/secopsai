@@ -79,7 +79,14 @@ def main() -> int:
     enabled_sources = [source for source in news_sources if source.get("enabled", True)]
     source_names = {str(source.get("name") or "") for source in enabled_sources}
     trust_levels = {str(source.get("trust_level") or "") for source in enabled_sources}
-    for required in {"CISA Known Exploited Vulnerabilities", "CERT/CC Vulnerability Notes", "Socket Blog"}:
+    for required in {
+        "CISA Known Exploited Vulnerabilities",
+        "CERT/CC Vulnerability Notes",
+        "Socket Blog",
+        "JFrog Security Research",
+        "The Hacker News",
+        "GitHub Security Advisories",
+    }:
         if required not in source_names:
             raise AssertionError(f"news source registry missing required source: {required}")
     if not ({"government", "vendor", "project"} & trust_levels):

@@ -1,0 +1,46 @@
+{
+  "advisory_id": "SECOPSAI-ADV-2026-05-NX-CONSOLE-VSCODE",
+  "campaign_id": "nx-console-vscode-extension-compromise-2026-05",
+  "title": "Compromised Nx Console VS Code extension 18.95.0",
+  "summary": "Source-backed advisory for the compromised Nx Console VS Code/Open VSX extension release that executed a credential-stealing payload after workspace activation.",
+  "severity": "critical",
+  "confidence": "high",
+  "status": "active",
+  "published_at": "2026-05-18T00:00:00Z",
+  "updated_at": "2026-05-20T00:00:00Z",
+  "ingested_at": "2026-05-20T00:00:00Z",
+  "source_names": ["GitHub Security Advisory", "The Hacker News"],
+  "source_urls": [
+    "https://github.com/nrwl/nx-console/security/advisories/GHSA-c9j4-9m59-847w",
+    "https://thehackernews.com/2026/05/compromised-nx-console-18950-targeted.html"
+  ],
+  "affected": [
+    {
+      "ecosystem": "open-vsx",
+      "package": "nrwl.angular-console",
+      "versions": ["18.95.0"],
+      "safe_versions": ["18.100.0"]
+    }
+  ],
+  "iocs": {
+    "file_paths": [
+      "~/.local/share/kitty/cat.py",
+      "~/Library/LaunchAgents/com.user.kitty-monitor.plist",
+      "/var/tmp/.gh_update_state",
+      "/tmp/kitty-*"
+    ],
+    "processes": ["cat.py", "__DAEMONIZED=1"],
+    "campaign_labels": ["Nx Console", "VS Code extension compromise", "GitHub orphan commit"]
+  },
+  "detection_rationale": [
+    "The compromised extension was source-backed as version 18.95.0 and patched in 18.100.0.",
+    "The attack path combined extension activation, orphan commit delivery, child-process execution, credential harvesting, HTTPS/GitHub API/DNS exfiltration, and persistence artifacts.",
+    "Open VSX and VS Code extension artifacts are statically analyzed only; extension activation code is never executed."
+  ],
+  "remediation": [
+    "Upgrade Nx Console to 18.100.0 or later and verify the compromised extension version is not installed in VS Code, Cursor, or compatible editor profiles.",
+    "Terminate cat.py and __DAEMONIZED processes, unload and remove the LaunchAgent, and delete listed persistence files.",
+    "Rotate all reachable developer, GitHub, npm, AWS, SSH, CI/CD, and password-manager credentials after affected hosts are contained.",
+    "Audit GitHub repositories for orphan/unreachable commits, unusual Git Data API activity, and source-code download bursts."
+  ]
+}

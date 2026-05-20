@@ -291,8 +291,17 @@ Safety model:
 - `--create-drafts` only creates review-only drafts and never publishes.
 - Only allowlisted sources from `blog/data/news-sources.json` are polled by
   default, and fetched text is sanitized/truncated for dashboard display.
+- Discovery emits per-source `source_status` records so stale or failing feeds
+  are visible instead of silently producing zero candidates.
 - Package code is never executed; campaign research uses deterministic advisory,
   metadata, IOC, and static-behavior evidence.
+
+Recent missed-threat hardening is documented in
+`docs/threat-intel-gap-analysis-2026-05.md` and
+`docs/missed-threat-validation-report-2026-05.md`. The current rules cover
+source-backed GitHub token/repository incidents, orphan commits, VS Code/Open VSX
+extension compromise, npm/PyPI lifecycle or import-time execution, and
+credential-exfiltration behavior without running untrusted code.
 
 ## Detection Capabilities
 
