@@ -203,9 +203,17 @@ def _refresh_lock(json_mode: bool):
 
 def _normalize_global_flags(argv: Optional[List[str]] = None) -> List[str]:
     args = list(sys.argv[1:] if argv is None else argv)
-    if "--json" in args and (not args or args[0] != "--json"):
-        args = [a for a in args if a != "--json"]
-        args.insert(0, "--json")
+    try:
+        passthrough_index = args.index("--")
+    except ValueError:
+        passthrough_index = len(args)
+
+    prefix = args[:passthrough_index]
+    passthrough = args[passthrough_index:]
+    if "--json" in prefix and (not prefix or prefix[0] != "--json"):
+        prefix = [a for a in prefix if a != "--json"]
+        prefix.insert(0, "--json")
+        args = prefix + passthrough
     return args
 
 

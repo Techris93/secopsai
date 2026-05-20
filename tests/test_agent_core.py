@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest import mock
 
+from secopsai import cli
 from secopsai.agent_core import DoomLoopDetector, ToolRouter, compact_session_context, list_jobs, run_isolated_job
 from secopsai.sessions import add_event, create_session
 
@@ -57,6 +61,19 @@ class AgentCoreTests(unittest.TestCase):
             self.assertEqual(job["status"], "completed")
             self.assertTrue(Path(job["stdout_path"]).exists())
             self.assertEqual(list_jobs(path=tmp)[0]["job_id"], job["job_id"])
+
+    def test_run_job_preserves_child_json_argument(self) -> None:
+        payload = {"job_id": "job-1", "status": "completed", "path": "/tmp/job-1"}
+        stdout = StringIO()
+
+        with mock.patch("secopsai.cli.run_isolated_job", return_value=payload) as run_job:
+            with redirect_stdout(stdout):
+                exit_code = cli.main(["agent", "run-job", "--name", "test", "--", "tool", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        run_job.assert_called_once()
+        self.assertEqual(run_job.call_args.kwargs["command"], ["tool", "--json"])
+        self.assertIn("JOB: job-1", stdout.getvalue())
 
 
 if __name__ == "__main__":
