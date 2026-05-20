@@ -1253,6 +1253,51 @@ const https = require("https");
         self.assertIn("vs code extension", behaviors)
         self.assertIn("orphan commit", behaviors)
         self.assertIn("github token", behaviors)
+        self.assertEqual(payload["orchestrator"]["campaign_type"], "vscode_extension_compromise")
+        self.assertEqual(payload["orchestrator"]["recommended_route"], "extension_security_review")
+
+    def test_campaign_orchestrator_routes_webworm_as_threat_intel_not_package_campaign(self):
+        text = (
+            "Webworm Deploys EchoCreep and GraphWorm Backdoors Using Discord and MS Graph API. "
+            "Cybersecurity researchers flagged fresh activity from a China-aligned threat actor known as Webworm "
+            "deploying custom backdoors that use Discord and Microsoft Graph API for command-and-control communications. "
+            "https://thehackernews.com/2026/05/webworm-deploys-echocreep-and-graphworm.html"
+        )
+        payload = supply_chain.campaign_intake(
+            text=text,
+            source_name="The Hacker News",
+            source_url="https://thehackernews.com/2026/05/webworm-deploys-echocreep-and-graphworm.html",
+        )
+        review = payload["orchestrator"]
+        self.assertEqual(review["campaign_type"], "malware_apt_c2")
+        self.assertEqual(review["recommended_route"], "threat_intel_review")
+        self.assertEqual(payload["campaign"]["packages"], [])
+        self.assertIn("not a package supply-chain campaign", review["route_blockers"])
+        self.assertNotIn("thehackernews.com", supply_chain._flatten_iocs(payload["campaign"]["iocs"]))
+        self.assertIn("Webworm", payload["campaign"]["actors"])
+
+    def test_campaign_orchestrator_rejects_placeholders_and_source_iocs(self):
+        candidate = {
+            "candidate_id": "unit-candidate",
+            "source_url": "https://thehackernews.com/report",
+            "campaign": {
+                "campaign_id": "unit-candidate",
+                "title": "Generic report",
+                "summary": "known publisher and @scope/pkg placeholder at https://thehackernews.com/report",
+                "source_urls": ["https://thehackernews.com/report"],
+                "actors": ["known"],
+                "publishers": ["known"],
+                "iocs": {"domains": ["thehackernews.com"], "operator_supplied": ["https://thehackernews.com/report"]},
+                "packages": [{"ecosystem": "npm", "package": "@scope/pkg", "version": "1.2.3"}],
+            },
+        }
+        payload = supply_chain.orchestrate_campaign_candidate(candidate)
+        review = payload["orchestrator"]
+        self.assertFalse(review["validated_packages"])
+        self.assertTrue(review["rejected_package_candidates"])
+        self.assertTrue(review["rejected_actors"])
+        self.assertTrue(review["rejected_iocs"])
+        self.assertEqual(payload["campaign"]["iocs"], {})
 
     def test_open_vsx_fixture_detects_extension_activation_and_credential_theft(self):
         payload = supply_chain.analyze_ecosystem_files(

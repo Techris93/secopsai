@@ -90,6 +90,7 @@ from secopsai.supply_chain import (
     list_supported_ecosystems,
     load_advisories,
     load_recent_results,
+    orchestrate_campaign_candidate,
     promote_campaign_candidate,
     reconcile_history,
     research_campaign as research_supply_chain_campaign,
@@ -1050,6 +1051,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_discover.add_argument("--source", default="all", help="Source name filter or all")
     supply_chain_discover.add_argument("--limit", type=int, default=50, help="Maximum candidates to return")
     supply_chain_discover.add_argument("--no-save", action="store_true", help="Do not update the local candidate cache")
+    supply_chain_discover.add_argument("--orchestrate", action="store_true", help="Include deterministic orchestrator review output (default)")
+
+    supply_chain_orchestrate = supply_chain_sub.add_parser("orchestrate-candidate", help="Classify, clean, and route one discovery candidate JSON")
+    supply_chain_orchestrate.add_argument("--input", required=True, help="Candidate JSON input file")
 
     supply_chain_intake = supply_chain_sub.add_parser("campaign-intake", help="Build campaign JSON from a URL or text file")
     supply_chain_intake.add_argument("--url", help="Trusted source URL to fetch and extract")
@@ -1074,6 +1079,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_autopilot.add_argument("--dry-run", action="store_true", help="Do not persist SOC findings or drafts")
     supply_chain_autopilot.add_argument("--persist", action="store_true", help="Persist SOC findings")
     supply_chain_autopilot.add_argument("--create-drafts", action="store_true", help="Create review-only blog drafts when persisting")
+    supply_chain_autopilot.add_argument("--orchestrate", action="store_true", help="Use deterministic orchestrator routing (default)")
 
     supply_chain_candidates = supply_chain_sub.add_parser("campaign-candidates", help="Inspect or promote cached discovery candidates")
     supply_chain_candidates_sub = supply_chain_candidates.add_subparsers(dest="campaign_candidates_cmd", required=True)
@@ -3002,6 +3008,31 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"score={payload['score']}")
                 print(f"packages={len(payload.get('campaign', {}).get('packages', []))}")
                 print(json.dumps(payload["campaign"], indent=2, sort_keys=True))
+            return 0
+
+        if args.supply_chain_cmd == "orchestrate-candidate":
+            try:
+                candidate = json.loads(Path(args.input).read_text(encoding="utf-8"))
+                if not isinstance(candidate, dict):
+                    raise ValueError("orchestrate-candidate input must be a JSON object")
+                payload = orchestrate_campaign_candidate(candidate)
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"ok": False, "error": str(exc)}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json({"ok": True, **payload}))
+            else:
+                review = payload.get("orchestrator", {})
+                print(f"candidate_id={payload.get('candidate_id')}")
+                print(f"campaign_type={review.get('campaign_type')}")
+                print(f"recommended_route={review.get('recommended_route')}")
+                print(f"supply_chain_relevance={review.get('supply_chain_relevance')}")
+                print(f"validated_packages={len(review.get('validated_packages', []))}")
+                if review.get("route_blockers"):
+                    print(f"route_blockers={'; '.join(review['route_blockers'])}")
             return 0
 
         if args.supply_chain_cmd == "campaign-watchlist":
