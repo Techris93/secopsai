@@ -355,6 +355,8 @@ class BlogPublishingTests(unittest.TestCase):
             approved = blog.news_publish_approved(paths=paths)
             post_json = json.loads((paths.posts / "external-story.json").read_text(encoding="utf-8"))
             post_html = (paths.posts / "external-story.html").read_text(encoding="utf-8")
+            deployed_draft = json.loads(draft_path.read_text(encoding="utf-8"))
+            repeated = blog.news_publish_approved(paths=paths)
 
         self.assertEqual(blocked["total"], 0)
         self.assertEqual(placeholder_blocked["total"], 0)
@@ -364,9 +366,119 @@ class BlogPublishingTests(unittest.TestCase):
             any("review checklist incomplete" in reason for item in checklist_blocked["blocked"] for reason in item["reasons"])
         )
         self.assertEqual(approved["total"], 1)
+        self.assertEqual(deployed_draft["review_status"], "deployed")
+        self.assertEqual(deployed_draft["status"], "published")
+        self.assertIn("published_url", deployed_draft)
+        self.assertEqual(repeated["total"], 0)
+        self.assertEqual(repeated["published"], [])
         self.assertNotIn("Review Checklist", post_json["body_markdown"])
         self.assertNotIn("review_checklist", post_json)
         self.assertNotIn("Review Checklist", post_html)
+
+    def test_legacy_approved_draft_with_existing_post_is_treated_as_deployed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.drafts.mkdir(parents=True)
+            paths.posts.mkdir(parents=True)
+            draft = blog._base_post(
+                title="Already public story",
+                summary="Already public source-backed summary.",
+                categories=["Security News"],
+                sources=["https://example.com/already-public"],
+                slug="already-public-story",
+            )
+            draft.update({
+                "external_news": True,
+                "review_status": "approved",
+                "review_checklist": [{"label": "Main claim is supported by source", "status": "completed"}],
+                "body_markdown": "# Already public story\n\nThis draft was already published in an earlier run.",
+            })
+            draft_path = paths.drafts / "already-public-story.json"
+            draft_path.write_text(json.dumps(draft), encoding="utf-8")
+            (paths.posts / "already-public-story.json").write_text(json.dumps({
+                "slug": "already-public-story",
+                "title": draft["title"],
+                "summary": draft["summary"],
+                "body_markdown": blog._public_post(draft)["body_markdown"],
+                "status": "published",
+            }), encoding="utf-8")
+
+            listed = blog.news_review_list(paths=paths)
+            approved = blog.news_review_list(status="approved", paths=paths)
+            deployed = blog.news_review_list(status="deployed", paths=paths)
+            payload = blog.news_publish_approved(paths=paths)
+            stored = json.loads(draft_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(listed["drafts"][0]["review_status"], "deployed")
+        self.assertEqual(approved["total"], 0)
+        self.assertEqual(deployed["total"], 1)
+        self.assertEqual(payload["total"], 0)
+        self.assertEqual(payload["published"], [])
+        self.assertEqual(payload["deployed"], ["https://blog.secopsai.dev/posts/already-public-story.html"])
+        self.assertEqual(stored["review_status"], "deployed")
+
+    def test_approved_draft_with_newer_content_republishes_existing_post(self):
+        ready_body = (
+            "# Updated public story\n\n"
+            "## Executive Summary\n\n"
+            "This updated approved draft includes new source-backed analysis for operators. "
+            "It explains the operational relevance in original language, keeps the claim scoped "
+            "to the cited source, and adds practical SecOpsAI review context for the affected team.\n\n"
+            "## Why It Matters\n\n"
+            "Security teams need updated public guidance when the previously published article "
+            "is stale. The new draft should replace the existing post only after it has been "
+            "reviewed, approved, and checked against its references. Operators should not need "
+            "to delete the previous post manually; the approved update should flow through the "
+            "same controlled publication path and keep the review queue honest.\n\n"
+            "## What SecOpsAI Can Detect\n\n"
+            "SecOpsAI can link the source-backed signal to local triage findings, dependency "
+            "records, and mitigation tasks so operators can validate exposure before acting. "
+            "It can also preserve reviewer notes, source URLs, and response commands for the "
+            "updated article without returning the old version to the approved queue.\n\n"
+            "## IOCs\n\n"
+            "None found deterministically; reviewer should add source-backed indicators if present.\n\n"
+            "## Recommended Actions\n\n"
+            "- Review the updated source material and confirm the original claim still applies.\n"
+            "- Compare affected assets against local inventory and note any exposure changes.\n"
+            "- Record any detections or compensating controls added after the updated review.\n"
+            "- Publish the approved replacement once, then move the draft into deployed state.\n\n"
+            "## References\n\n"
+            "- https://example.com/updated\n"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.drafts.mkdir(parents=True)
+            paths.posts.mkdir(parents=True)
+            draft = blog._base_post(
+                title="Updated public story",
+                summary="Updated source-backed summary with operator impact.",
+                categories=["Security News"],
+                sources=["https://example.com/updated"],
+                slug="updated-public-story",
+            )
+            draft.update({
+                "external_news": True,
+                "review_status": "approved",
+                "review_checklist": blog._review_checklist(),
+                "body_markdown": ready_body,
+            })
+            draft_path = paths.drafts / "updated-public-story.json"
+            draft_path.write_text(json.dumps(draft), encoding="utf-8")
+            (paths.posts / "updated-public-story.json").write_text(json.dumps({
+                "slug": "updated-public-story",
+                "title": "Updated public story",
+                "summary": "Old summary",
+                "body_markdown": "# Updated public story\n\nOld body.",
+                "status": "published",
+            }), encoding="utf-8")
+            blog.news_review_update("updated-public-story", status="approved", note="updated", paths=paths)
+
+            listed = blog.news_review_list(paths=paths)
+            payload = blog.news_publish_approved(paths=paths)
+
+        self.assertEqual(listed["drafts"][0]["review_status"], "approved")
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["published"], ["https://blog.secopsai.dev/posts/updated-public-story.html"])
 
     def test_blog_ops_workflow_stages_draft_deletions(self):
         workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "blog-ops.yml").read_text(
