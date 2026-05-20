@@ -4139,6 +4139,115 @@ CAMPAIGN_PACKAGE_EXTRACTION_NOISE = {
     "remote-code-execution",
 }
 
+CAMPAIGN_ACTOR_EXTRACTION_NOISE = {
+    "actor",
+    "known",
+    "unknown",
+    "publisher",
+    "maintainer",
+    "author",
+    "group",
+    "team",
+    "user",
+}
+
+CAMPAIGN_SOURCE_REFERENCE_DOMAINS = {
+    "thehackernews.com",
+    "www.thehackernews.com",
+    "security.googleblog.com",
+    "blog.google",
+    "blog.chromium.org",
+    "blogger.googleusercontent.com",
+    "kb.cert.org",
+    "cert.org",
+    "cisa.gov",
+    "nvd.nist.gov",
+    "github.com",
+    "research.jfrog.com",
+    "jfrog.com",
+    "socket.dev",
+    "checkmarx.com",
+    "reversinglabs.com",
+    "snyk.io",
+    "wiz.io",
+    "microsoft.com",
+    "msrc.microsoft.com",
+    "cloudflare.com",
+}
+
+CAMPAIGN_MALWARE_APT_TERMS = (
+    "apt",
+    "threat actor",
+    "china-aligned",
+    "nation-state",
+    "malware",
+    "backdoor",
+    "webworm",
+    "echocreep",
+    "graphworm",
+    "command-and-control",
+    "command and control",
+    "c2",
+    "c&c",
+)
+
+CAMPAIGN_VULNERABILITY_TERMS = (
+    "cve-",
+    "vulnerability",
+    "vulnerable",
+    "remote code execution",
+    "path traversal",
+    "memory leak",
+    "out-of-bounds",
+    "denial of service",
+    "vu#",
+)
+
+CAMPAIGN_GITHUB_BREACH_TERMS = (
+    "github breach",
+    "stolen github token",
+    "github token",
+    "personal access token",
+    "downloaded repositories",
+    "source code",
+    "mass repo",
+    "repository download",
+    "orphan commit",
+    "unreachable commit",
+    "dangling commit",
+)
+
+CAMPAIGN_EXTENSION_TERMS = (
+    "vs code extension",
+    "vscode extension",
+    "visual studio code marketplace",
+    "open vsx",
+    "open-vsx",
+    "extension marketplace",
+    "nx console",
+)
+
+CAMPAIGN_SUPPLY_CHAIN_TERMS = (
+    "supply chain",
+    "supply-chain",
+    "malicious package",
+    "compromised package",
+    "package compromise",
+    "dependency confusion",
+    "typosquat",
+    "registry",
+    "npm",
+    "pypi",
+    "rubygems",
+    "packagist",
+    "crates.io",
+    "maven",
+    "nuget",
+    "postinstall",
+    "install script",
+    "package manager",
+)
+
 
 def _slug(value: str, *, limit: int = 96) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
@@ -4295,6 +4404,8 @@ def _looks_like_campaign_package_noise(ecosystem: str, name: str) -> bool:
     normalized = str(name or "").strip().lower()
     if not normalized:
         return True
+    if normalized in {"@scope/pkg", "group:artifact", "org/model", "package-name", "package_name"}:
+        return True
     if normalized in CAMPAIGN_PACKAGE_EXTRACTION_NOISE:
         return True
     if re.fullmatch(r"\d+(?:\.\d+)?", normalized):
@@ -4427,12 +4538,15 @@ def _extract_campaign_packages_from_text(text: str) -> List[Dict[str, Any]]:
 def _extract_actors_from_text(text: str) -> List[str]:
     actors: set[str] = set()
     patterns = [
+        r"(?:known as|tracked as|called)\s+['\"]?([A-Z][A-Za-z0-9_.-]{3,80})['\"]?",
         r"(?:published by|npm user|publisher|maintainer|actor|threat actor)\s+['\"]?([@A-Za-z0-9_.-]{3,80})['\"]?",
         r"same\s+(?:npm\s+)?user,\s*['\"]([@A-Za-z0-9_.-]{3,80})['\"]",
     ]
     for pattern in patterns:
         for match in re.finditer(pattern, text, re.IGNORECASE):
-            actors.add(match.group(1).strip("@'\""))
+            label = match.group(1).strip("@'\"")
+            if label.lower() not in CAMPAIGN_ACTOR_EXTRACTION_NOISE:
+                actors.add(label)
     return sorted(actors)
 
 
@@ -4506,7 +4620,7 @@ def campaign_intake(
                 active_watchlist = watchlist if watchlist is not None else load_campaign_watchlist()
                 matches = _watchlist_matches(campaign, active_watchlist)
                 score, reasons = _candidate_score(campaign, matches)
-                return {
+                return orchestrate_campaign_candidate({
                     "candidate_id": campaign["campaign_id"],
                     "campaign": campaign,
                     "score": score,
@@ -4515,7 +4629,7 @@ def campaign_intake(
                     "source_url": (campaign.get("source_urls") or [effective_url or ""])[0],
                     "source_name": (campaign.get("source_names") or [source_name or ""])[0],
                     "raw_excerpt": raw_text[:2000],
-                }
+                })
         except Exception:
             pass
     packages = _extract_campaign_packages_from_text(raw_text)
@@ -4543,7 +4657,7 @@ def campaign_intake(
     active_watchlist = watchlist if watchlist is not None else load_campaign_watchlist()
     matches = _watchlist_matches(campaign, active_watchlist)
     score, reasons = _candidate_score(campaign, matches)
-    return {
+    candidate = {
         "candidate_id": campaign["campaign_id"],
         "campaign": campaign,
         "score": score,
@@ -4552,6 +4666,183 @@ def campaign_intake(
         "source_url": effective_url,
         "source_name": source_name or "",
         "raw_excerpt": raw_text[:2000],
+    }
+    return orchestrate_campaign_candidate(candidate)
+
+
+def _campaign_text_for_classification(candidate: Dict[str, Any], campaign: Dict[str, Any]) -> str:
+    values = [
+        candidate.get("candidate_id"),
+        candidate.get("source_name"),
+        candidate.get("source_url"),
+        candidate.get("raw_excerpt"),
+        campaign.get("campaign_id"),
+        campaign.get("title"),
+        campaign.get("summary"),
+    ]
+    values.extend(campaign.get("behavioral_indicators", []) or [])
+    values.extend(campaign.get("source_names", []) or [])
+    values.extend(campaign.get("source_urls", []) or [])
+    return " ".join(str(value) for value in values if value).lower()
+
+
+def _classify_campaign_candidate(
+    *,
+    candidate: Dict[str, Any],
+    campaign: Dict[str, Any],
+    packages: List[Dict[str, Any]],
+    iocs: Dict[str, List[str]],
+) -> Dict[str, Any]:
+    text = _campaign_text_for_classification(candidate, campaign)
+    ecosystems = {str(pkg.get("ecosystem") or "") for pkg in packages}
+    has_packages = bool(packages)
+    has_extension = "open-vsx" in ecosystems or any(term in text for term in CAMPAIGN_EXTENSION_TERMS)
+    has_github_signal = any(term in text for term in CAMPAIGN_GITHUB_BREACH_TERMS)
+    has_vulnerability = any(term in text for term in CAMPAIGN_VULNERABILITY_TERMS)
+    has_malware_apt = any(term in text for term in CAMPAIGN_MALWARE_APT_TERMS)
+    has_supply_chain = any(term in text for term in CAMPAIGN_SUPPLY_CHAIN_TERMS)
+    route_blockers: List[str] = []
+
+    if has_extension:
+        campaign_type = "vscode_extension_compromise"
+        recommended_route = "extension_security_review"
+        supply_chain_relevance = "medium" if has_packages else "low"
+    elif has_packages and has_supply_chain:
+        campaign_type = "supply_chain_package_campaign"
+        recommended_route = "campaign_research"
+        supply_chain_relevance = "high"
+    elif has_packages:
+        campaign_type = "malicious_package" if iocs or campaign.get("behavioral_indicators") else "package_compromise"
+        recommended_route = "campaign_research"
+        supply_chain_relevance = "medium"
+    elif has_github_signal:
+        campaign_type = "github_token_breach"
+        recommended_route = "github_security_review"
+        supply_chain_relevance = "low"
+    elif has_vulnerability:
+        campaign_type = "vulnerability_advisory"
+        recommended_route = "vulnerability_tracking"
+        supply_chain_relevance = "low"
+    elif has_malware_apt:
+        campaign_type = "malware_apt_c2"
+        recommended_route = "threat_intel_review"
+        supply_chain_relevance = "low"
+    else:
+        campaign_type = "general_threat_intel"
+        recommended_route = "needs_human_review"
+        supply_chain_relevance = "unknown"
+
+    if not has_packages and recommended_route == "campaign_research":
+        route_blockers.append("no validated package or extension artifacts")
+    if not has_packages and recommended_route != "campaign_research":
+        route_blockers.append("not a package supply-chain campaign")
+    if not _flatten_iocs(iocs) and campaign_type in {"malware_apt_c2", "general_threat_intel"}:
+        route_blockers.append("no attacker infrastructure IOC validated")
+
+    if recommended_route == "campaign_research" and has_packages:
+        allowed_actions = ["copy_cli_fallback", "run_campaign_research", "check_local_usage"]
+        blocked_actions: Dict[str, str] = {}
+    else:
+        allowed_actions = ["copy_cli_fallback", "add_validated_watchlist_items"]
+        blocked_actions = {
+            "promote_to_campaign_research": "Candidate is not routed to package Campaign Research.",
+            "persist_findings": "Persistence requires validated package/extension evidence and analyst approval.",
+            "create_blog_draft": "Drafting requires a supported route and minimum evidence.",
+        }
+
+    confidence = "high" if has_packages and (has_supply_chain or has_extension) else "medium" if (has_malware_apt or has_vulnerability or has_github_signal or iocs) else "low"
+    missing_evidence = []
+    if not has_packages:
+        missing_evidence.append("validated package or extension artifact")
+    if not _flatten_iocs(iocs):
+        missing_evidence.append("validated attacker IOC")
+
+    return {
+        "campaign_type": campaign_type,
+        "recommended_route": recommended_route,
+        "supply_chain_relevance": supply_chain_relevance,
+        "confidence": confidence,
+        "route_blockers": route_blockers,
+        "allowed_actions": allowed_actions,
+        "blocked_actions": blocked_actions,
+        "missing_evidence": missing_evidence,
+    }
+
+
+def orchestrate_campaign_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    raw_campaign = candidate.get("campaign") or {}
+    campaign = normalize_campaign_input(raw_campaign)
+    source_urls = sorted(set([
+        *(str(url) for url in campaign.get("source_urls", []) if url),
+        str(candidate.get("source_url") or ""),
+    ]))
+    source_urls = [url for url in source_urls if url]
+    validated_packages, rejected_packages = _validate_campaign_package_rows(campaign.get("packages", []))
+    raw_iocs = _merge_iocs(raw_campaign.get("iocs"), raw_campaign.get("summary"), raw_campaign.get("behavioral_indicators"))
+    validated_iocs, rejected_iocs, source_references = _clean_iocs_for_sources(raw_iocs, source_urls)
+    actors, rejected_actors = _clean_actor_values(raw_campaign.get("actors", campaign.get("actors", [])))
+    publishers, rejected_publishers = _clean_actor_values(raw_campaign.get("publishers", campaign.get("publishers", [])))
+    cleaned_campaign = {
+        **campaign,
+        "ecosystems": sorted(set(str(pkg.get("ecosystem")) for pkg in validated_packages if pkg.get("ecosystem"))),
+        "packages": validated_packages,
+        "actors": actors,
+        "publishers": publishers,
+        "iocs": validated_iocs,
+        "source_urls": source_urls,
+    }
+    route = _classify_campaign_candidate(
+        candidate=candidate,
+        campaign=cleaned_campaign,
+        packages=validated_packages,
+        iocs=validated_iocs,
+    )
+    score, reasons = _candidate_score(cleaned_campaign, candidate.get("watchlist_matches", []))
+    if route["recommended_route"] != "campaign_research" and not validated_packages:
+        score = min(score, 35 if route["campaign_type"] in {"malware_apt_c2", "vulnerability_advisory", "github_token_breach"} else 25)
+    explanation = (
+        "Candidate has validated package/extension evidence and can be researched as a supply-chain campaign."
+        if route["recommended_route"] == "campaign_research"
+        else f"Candidate appears to be {route['campaign_type'].replace('_', ' ')}; keep it out of package Campaign Research until package evidence exists."
+    )
+    orchestrator = {
+        "candidate_id": candidate.get("candidate_id") or cleaned_campaign.get("campaign_id"),
+        "title": cleaned_campaign.get("title"),
+        "summary": cleaned_campaign.get("summary"),
+        "source_urls": source_urls,
+        "source_names": cleaned_campaign.get("source_names", []),
+        "score": score,
+        "score_reasons": reasons,
+        **route,
+        "validated_packages": validated_packages,
+        "rejected_package_candidates": rejected_packages,
+        "validated_iocs": validated_iocs,
+        "rejected_iocs": rejected_iocs,
+        "source_references": source_references,
+        "actors": actors,
+        "rejected_actors": rejected_actors,
+        "publishers": publishers,
+        "rejected_publishers": rejected_publishers,
+        "malware_names": sorted(set(re.findall(r"\b(?:Webworm|EchoCreep|GraphWorm|Shai-Hulud|Sha1-Hulud)\b", _campaign_text_for_classification(candidate, cleaned_campaign), re.IGNORECASE))),
+        "cves": sorted(set(re.findall(r"\bCVE-\d{4}-\d{4,}\b", _campaign_text_for_classification(candidate, cleaned_campaign), re.IGNORECASE))),
+        "ghsas": sorted(set(re.findall(r"\bGHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}\b", _campaign_text_for_classification(candidate, cleaned_campaign), re.IGNORECASE))),
+        "extension_ids": sorted(set(pkg["package"] for pkg in validated_packages if pkg.get("ecosystem") == "open-vsx")),
+        "github_repos": sorted(set(pkg["package"] for pkg in validated_packages if pkg.get("ecosystem") == "github")),
+        "behavior_indicators": cleaned_campaign.get("behavioral_indicators", []),
+        "explanation": explanation,
+        "recommended_next_action": (
+            "Run Campaign Research, then review package verdicts before persisting."
+            if route["recommended_route"] == "campaign_research"
+            else "Review as a threat-intel lead or add only validated attacker IOCs/packages to the watchlist."
+        ),
+    }
+    return {
+        **candidate,
+        "candidate_id": orchestrator["candidate_id"],
+        "campaign": cleaned_campaign,
+        "score": score,
+        "score_reasons": reasons,
+        "orchestrator": orchestrator,
     }
 
 
@@ -4795,7 +5086,10 @@ def campaign_autopilot(
     selected = [
         candidate
         for candidate in discovery.get("candidates", [])
-        if int(candidate.get("score") or 0) >= min_score and candidate.get("campaign", {}).get("packages")
+        if int(candidate.get("score") or 0) >= min_score
+        and candidate.get("campaign", {}).get("packages")
+        and (candidate.get("orchestrator") or {}).get("recommended_route") == "campaign_research"
+        and not (candidate.get("orchestrator") or {}).get("route_blockers")
     ][: max(1, min(limit, 50))]
     results: List[Dict[str, Any]] = []
     for candidate in selected:
@@ -4871,6 +5165,117 @@ def _flatten_iocs(iocs: Dict[str, List[str]]) -> List[str]:
     for values in iocs.values():
         flattened.extend(str(value) for value in values)
     return sorted(set(flattened))
+
+
+def _domain_from_indicator(value: str) -> str:
+    raw = _defang_to_indicator(str(value or "").strip())
+    if not raw:
+        return ""
+    if raw.startswith(("http://", "https://")):
+        parsed = urllib.parse.urlparse(raw)
+        return (parsed.hostname or "").lower()
+    if "/" in raw:
+        raw = raw.split("/", 1)[0]
+    if ":" in raw and not re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}", raw):
+        raw = raw.split(":", 1)[0]
+    return raw.strip(".").lower()
+
+
+def _source_reference_domains(source_urls: Iterable[str]) -> set[str]:
+    domains = set(CAMPAIGN_SOURCE_REFERENCE_DOMAINS)
+    for url in source_urls:
+        domain = _domain_from_indicator(str(url or ""))
+        if domain:
+            domains.add(domain)
+            parts = domain.split(".")
+            if len(parts) > 2:
+                domains.add(".".join(parts[-2:]))
+    return domains
+
+
+def _is_source_reference_indicator(value: str, source_domains: set[str]) -> bool:
+    domain = _domain_from_indicator(value)
+    if not domain:
+        return False
+    if domain in source_domains:
+        return True
+    return any(domain.endswith(f".{source_domain}") for source_domain in source_domains if source_domain.count(".") >= 1)
+
+
+def _clean_iocs_for_sources(
+    iocs: Dict[str, List[str]],
+    source_urls: Iterable[str],
+) -> tuple[Dict[str, List[str]], List[Dict[str, str]], List[str]]:
+    source_domains = _source_reference_domains(source_urls)
+    validated: Dict[str, List[str]] = {}
+    rejected: List[Dict[str, str]] = []
+    source_references = sorted(set(str(url) for url in source_urls if str(url or "").strip()))
+    for kind, values in (iocs or {}).items():
+        clean_values: List[str] = []
+        for value in values or []:
+            indicator = _defang_to_indicator(str(value or "").strip())
+            if not indicator:
+                continue
+            if _is_source_reference_indicator(indicator, source_domains):
+                rejected.append({"type": kind, "value": indicator, "reason": "source reference, not attacker IOC"})
+                if indicator.startswith(("http://", "https://")):
+                    source_references.append(indicator)
+                continue
+            clean_values.append(indicator)
+        if clean_values:
+            validated[kind] = sorted(set(clean_values))
+    return validated, rejected, sorted(set(source_references))
+
+
+def _clean_actor_values(values: Iterable[Any]) -> tuple[List[str], List[Dict[str, str]]]:
+    cleaned: List[str] = []
+    rejected: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for value in values or []:
+        label = _safe_str(value).strip("@'\" ")
+        lowered = label.lower()
+        if not label:
+            continue
+        if lowered in CAMPAIGN_ACTOR_EXTRACTION_NOISE:
+            rejected.append({"value": label, "reason": "generic actor/publisher placeholder"})
+            continue
+        if re.fullmatch(r"cve-\d{4}-\d{4,}\.?", lowered):
+            rejected.append({"value": label, "reason": "advisory identifier, not actor or publisher"})
+            continue
+        if len(label) < 3:
+            rejected.append({"value": label, "reason": "too short to be a stable actor label"})
+            continue
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        cleaned.append(label)
+    return cleaned, rejected
+
+
+def _validate_campaign_package_rows(packages: Iterable[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+    validated: List[Dict[str, Any]] = []
+    rejected: List[Dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in packages or []:
+        if not isinstance(row, dict):
+            rejected.append({"ecosystem": "", "package": str(row), "reason": "package row is not an object"})
+            continue
+        ecosystem = canonical_ecosystem(str(row.get("ecosystem") or row.get("registry") or "npm"))
+        package = normalize_package_name(ecosystem, str(row.get("package") or row.get("name") or row.get("artifact") or ""))
+        version = _safe_str(row.get("version") or row.get("revision") or "unknown") or "unknown"
+        if _looks_like_campaign_package_noise(ecosystem, package):
+            rejected.append({"ecosystem": ecosystem, "package": package, "version": version, "reason": "likely extraction noise"})
+            continue
+        validation = validate_package_identifier(ecosystem, package)
+        if not validation.get("valid"):
+            rejected.append({"ecosystem": ecosystem, "package": package, "version": version, "reason": str(validation.get("reason") or "invalid package identifier")})
+            continue
+        key = (ecosystem, package, version)
+        if key in seen:
+            continue
+        seen.add(key)
+        validated.append({**row, "ecosystem": ecosystem, "package": package, "version": version})
+    return validated, rejected
 
 
 def _campaign_score(
@@ -5209,6 +5614,10 @@ def normalize_campaign_input(payload: Dict[str, Any]) -> Dict[str, Any]:
     campaign_id = _safe_str(payload.get("campaign_id") or payload.get("id") or "supply-chain-campaign")
     packages = _normalize_campaign_packages(payload)
     iocs = _merge_iocs(payload.get("iocs"), payload.get("summary"), payload.get("behavioral_indicators"))
+    source_urls = [str(item) for item in payload.get("source_urls", []) if item]
+    iocs, _, _ = _clean_iocs_for_sources(iocs, source_urls)
+    actors, _ = _clean_actor_values(payload.get("actors", []) if isinstance(payload.get("actors"), list) else [])
+    publishers, _ = _clean_actor_values(payload.get("publishers", []) if isinstance(payload.get("publishers"), list) else [])
     return {
         **payload,
         "campaign_id": campaign_id,
@@ -5216,9 +5625,9 @@ def normalize_campaign_input(payload: Dict[str, Any]) -> Dict[str, Any]:
         "summary": _safe_str(payload.get("summary") or "Cross-ecosystem supply-chain campaign research."),
         "ecosystems": sorted(set(package["ecosystem"] for package in packages)),
         "packages": packages,
-        "actors": [str(item) for item in payload.get("actors", []) if item] if isinstance(payload.get("actors"), list) else [],
-        "publishers": [str(item) for item in payload.get("publishers", []) if item] if isinstance(payload.get("publishers"), list) else [],
-        "source_urls": [str(item) for item in payload.get("source_urls", []) if item],
+        "actors": actors,
+        "publishers": publishers,
+        "source_urls": source_urls,
         "source_names": [str(item) for item in payload.get("source_names", []) if item],
         "iocs": iocs,
         "behavioral_indicators": [str(item) for item in payload.get("behavioral_indicators", []) if item],

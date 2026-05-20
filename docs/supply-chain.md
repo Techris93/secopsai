@@ -251,15 +251,26 @@ trusted blog/news source registry, reuse the local news cache, extract
 cross-ecosystem package names, IOCs, publishers, behavior signals, and source
 links, then score campaign candidates before any SOC write happens.
 
+Every discovered candidate now passes through the constrained Campaign Intake
+Orchestrator before promotion. The orchestrator classifies the report, validates
+package and extension identifiers, separates source references from attacker
+IOCs, rejects extraction noise, and recommends a route such as Campaign
+Research, Threat Intel Review, Vulnerability Tracking, GitHub Security Review,
+or Extension Security Review. Broad malware/APT stories without package
+artifacts remain review-only threat-intel leads instead of becoming fake npm
+campaigns.
+
 Discovery is read-only by default:
 
 ```bash
-secopsai supply-chain discover-campaigns --since 24h --limit 10 --json
-secopsai supply-chain campaign-autopilot --since 24h --dry-run --json
+secopsai supply-chain discover-campaigns --since 24h --limit 10 --orchestrate --json
+secopsai supply-chain campaign-autopilot --since 24h --dry-run --orchestrate --json
+secopsai supply-chain orchestrate-candidate --input candidate.json --json
 ```
 
-Use watchlists to raise priority for packages, publishers, source URLs, or IOCs
-you care about:
+Use watchlists to raise priority for validated packages, publishers, campaign
+IDs, malware names, extension IDs, GitHub repos, or attacker IOCs you care
+about. Do not add source domains such as security news sites as attacker IOCs:
 
 ```bash
 secopsai supply-chain campaign-watchlist add --package npm:node-ipc
@@ -289,6 +300,8 @@ Safety model:
 - Discovery and dry-run autopilot do not create SOC findings or blog drafts.
 - `--persist` is required before campaign findings are written.
 - `--create-drafts` only creates review-only drafts and never publishes.
+- Autopilot only researches candidates routed to Campaign Research with
+  validated package or extension artifacts and no orchestrator blockers.
 - Only allowlisted sources from `blog/data/news-sources.json` are polled by
   default, and fetched text is sanitized/truncated for dashboard display.
 - Discovery emits per-source `source_status` records so stale or failing feeds
