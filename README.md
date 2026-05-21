@@ -47,6 +47,29 @@ curl -fsSL https://secopsai.dev/install.sh | bash
 
 Security note: only run a `curl | bash` installer if you trust the publisher and the source code. If you prefer a safer path, clone the repo and inspect `docs/install.sh` + `setup.sh` before running.
 
+### GitHub Distribution
+
+SecOpsAI keeps its existing npm package flow and also prepares a GitHub
+Packages path for GitHub-native installs:
+
+```bash
+npm config set @techris93:registry https://npm.pkg.github.com
+npm install @techris93/secopsai
+```
+
+The GitHub Packages workflow publishes the scoped package
+`@techris93/secopsai` from the existing `supply-chain/` npm manifest without
+renaming the public npm package. See
+[docs/github-distribution-plan.md](docs/github-distribution-plan.md).
+
+For GitHub Marketplace, SecOpsAI ships a constrained Action wrapper in
+[`marketplace/github-action`](marketplace/github-action). The wrapper can run
+advisory checks, package scans, campaign discovery, and triage summaries in
+GitHub Actions. Marketplace submission should use a dedicated public action
+repository because GitHub Marketplace Action listings expect one root
+`action.yml` and no workflow files. See
+[docs/github-marketplace.md](docs/github-marketplace.md).
+
 ### Activate
 
 ```bash

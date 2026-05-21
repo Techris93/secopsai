@@ -1,0 +1,78 @@
+name: Publish GitHub npm Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate package without publishing"
+        required: true
+        default: true
+        type: boolean
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-github-package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-github-package:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_NPM_SCOPE: "@techris93"
+      GH_NPM_PACKAGE: "@techris93/secopsai"
+
+    steps:
+      - name: Checkout SecOpsAI
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Node for GitHub Packages
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@techris93"
+
+      - name: Prepare scoped GitHub Packages manifest
+        working-directory: supply-chain
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("fs");
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          pkg.name = "@techris93/secopsai";
+          pkg.repository = {
+            type: "git",
+            url: "git+https://github.com/Techris93/secopsai.git",
+            directory: "supply-chain"
+          };
+          pkg.homepage = "https://github.com/Techris93/secopsai#readme";
+          pkg.bugs = { url: "https://github.com/Techris93/secopsai/issues" };
+          pkg.publishConfig = {
+            registry: "https://npm.pkg.github.com",
+            access: "public"
+          };
+          fs.writeFileSync("package.json", `${JSON.stringify(pkg, null, 2)}\n`);
+          NODE
+          node -e 'const pkg=require("./package.json"); if (pkg.name !== process.env.GH_NPM_PACKAGE) process.exit(1); console.log(`Prepared ${pkg.name}@${pkg.version}`)'
+
+      - name: Validate package contents
+        working-directory: supply-chain
+        run: npm pack --dry-run
+
+      - name: Publish to GitHub Packages
+        if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+        working-directory: supply-chain
+        run: npm publish
+
+      - name: Dry-run summary
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run != false }}
+        run: |
+          echo "Dry run completed. Re-run with dry_run=false or push a v* tag to publish @techris93/secopsai to GitHub Packages."
