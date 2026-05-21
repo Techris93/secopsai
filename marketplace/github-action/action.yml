@@ -1,0 +1,89 @@
+name: "SecOpsAI Supply-Chain Guard"
+description: "Run SecOpsAI supply-chain, advisory, campaign discovery, or triage checks in GitHub Actions."
+author: "Techris93"
+
+branding:
+  icon: "shield"
+  color: "green"
+
+inputs:
+  mode:
+    description: "Check mode: supply-chain-scan, advisory-check, discover-campaigns, or triage-summary."
+    required: false
+    default: "supply-chain-scan"
+  secopsai-ref:
+    description: "SecOpsAI git ref to install from Techris93/secopsai."
+    required: false
+    default: "main"
+  path:
+    description: "Workspace path used by modes that inspect a repository."
+    required: false
+    default: "."
+  ecosystem:
+    description: "Package ecosystem for package-specific checks, for example npm, pypi, open-vsx, or go."
+    required: false
+    default: ""
+  package:
+    description: "Package, module, extension, or artifact identifier for package-specific checks."
+    required: false
+    default: ""
+  version:
+    description: "Package version for package-specific checks."
+    required: false
+    default: ""
+  previous-version:
+    description: "Optional previous version for supply-chain-scan."
+    required: false
+    default: ""
+  since:
+    description: "Discovery lookback window for discover-campaigns."
+    required: false
+    default: "24h"
+  limit:
+    description: "Maximum discovery candidates to return."
+    required: false
+    default: "10"
+  output-format:
+    description: "Output format. Currently json is supported."
+    required: false
+    default: "json"
+  output-file:
+    description: "Path where SecOpsAI JSON output should be written."
+    required: false
+    default: "secopsai-results.json"
+  fail-on-severity:
+    description: "Fail the workflow when output reaches this severity: none, high, or critical."
+    required: false
+    default: "critical"
+
+outputs:
+  result-file:
+    description: "Path to the JSON result file."
+    value: ${{ steps.secopsai.outputs.result-file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      with:
+        python-version: "3.11"
+        cache: "pip"
+
+    - name: Run SecOpsAI
+      id: secopsai
+      shell: bash
+      env:
+        SECOPSAI_ACTION_MODE: ${{ inputs.mode }}
+        SECOPSAI_REF: ${{ inputs.secopsai-ref }}
+        SECOPSAI_SCAN_PATH: ${{ inputs.path }}
+        SECOPSAI_ECOSYSTEM: ${{ inputs.ecosystem }}
+        SECOPSAI_PACKAGE: ${{ inputs.package }}
+        SECOPSAI_VERSION: ${{ inputs.version }}
+        SECOPSAI_PREVIOUS_VERSION: ${{ inputs.previous-version }}
+        SECOPSAI_SINCE: ${{ inputs.since }}
+        SECOPSAI_LIMIT: ${{ inputs.limit }}
+        SECOPSAI_OUTPUT_FORMAT: ${{ inputs.output-format }}
+        SECOPSAI_OUTPUT_FILE: ${{ inputs.output-file }}
+        SECOPSAI_FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
+      run: "$GITHUB_ACTION_PATH/secopsai-action.sh"

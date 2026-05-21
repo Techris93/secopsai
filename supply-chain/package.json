@@ -37,7 +37,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/secopsai/secopsai"
+    "url": "git+https://github.com/Techris93/secopsai.git",
+    "directory": "supply-chain"
+  },
+  "homepage": "https://github.com/Techris93/secopsai#readme",
+  "bugs": {
+    "url": "https://github.com/Techris93/secopsai/issues"
   },
   "modules": {
     "supply-chain": {
