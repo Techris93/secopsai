@@ -18,6 +18,24 @@ secopsai --json list --severity high
 secopsai list --severity high --json
 ```
 
+## GitHub Actions Usage
+
+For CI workflows, the published **SecOpsAI Supply-Chain Guard** GitHub
+Marketplace Action wraps selected CLI modes with fixed, constrained execution:
+
+```yaml
+- uses: Techris93/secopsai-action@v1
+  with:
+    mode: advisory-check
+    ecosystem: npm
+    package: node-ipc
+    version: 12.0.1
+```
+
+Distribution and Marketplace maintenance details live in
+[GitHub Distribution](github-distribution-plan.md) and
+[GitHub Marketplace](github-marketplace.md).
+
 ## Command overview
 
 ## Triage commands

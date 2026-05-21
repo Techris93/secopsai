@@ -1,14 +1,16 @@
-# GitHub Distribution Plan
+# GitHub Distribution
 
-SecOpsAI is already distributed through the existing npm package flow from
-`supply-chain/package.json`. This plan adds GitHub-native distribution without
-changing that npm install path.
+SecOpsAI is distributed through the existing npm package flow from
+`supply-chain/package.json` and through GitHub-native distribution paths.
 
 ## Current Package State
 
 - Repository: `https://github.com/Techris93/secopsai`
 - Current npm package manifest: `supply-chain/package.json`
 - Current npm package name: `secopsai`
+- GitHub Packages package: `@techris93/secopsai`
+- Marketplace Action repo: `https://github.com/Techris93/secopsai-action`
+- Marketplace Action release: `https://github.com/Techris93/secopsai-action/releases/tag/v1.0.0`
 - Python package metadata: `pyproject.toml` exposes the `secopsai` CLI.
 - Existing GitHub workflows already build/test, scan, release containers, and
   run Blog Ops.
@@ -16,7 +18,7 @@ changing that npm install path.
 The root of this repository does not currently contain a Node `package.json`.
 The npm-distributed CLI wrapper lives in `supply-chain/`.
 
-## GitHub Packages Strategy
+## GitHub Packages Status
 
 GitHub's npm registry requires package names and scopes to use lowercase
 letters, and packages published by GitHub Actions can authenticate with the
@@ -31,13 +33,18 @@ workflow-local manifest named:
 @techris93/secopsai
 ```
 
-The workflow then publishes that scoped package to:
+The workflow publishes that scoped package to:
 
 ```text
 https://npm.pkg.github.com
 ```
 
 This keeps the public npm install path stable while enabling GitHub Packages.
+
+Published workflow runs:
+
+- Dry run: `https://github.com/Techris93/secopsai/actions/runs/26197411144`
+- Publish: `https://github.com/Techris93/secopsai/actions/runs/26197426834`
 
 ## Publishing Workflow
 
@@ -87,7 +94,7 @@ GitHub Packages with a token that can read the package. Public visibility may
 still need to be enabled after the first package publish because GitHub
 Packages can default new packages to private.
 
-## Marketplace Eligibility Findings
+## Marketplace Status
 
 Official GitHub Marketplace Action requirements include:
 
@@ -100,29 +107,33 @@ This SecOpsAI repository already contains multiple GitHub workflows under
 `.github/workflows/`, so it should **not** be submitted directly as the
 Marketplace Action repository.
 
-## Recommended Marketplace Route
-
-Use a dedicated Marketplace repository, for example:
+SecOpsAI is published from the dedicated action repository:
 
 ```text
-Techris93/secopsai-action
+https://github.com/Techris93/secopsai-action
 ```
 
-Copy these prepared files from this repository into that dedicated repo root:
+Marketplace/release metadata:
 
 ```text
-marketplace/github-action/action.yml -> action.yml
-marketplace/github-action/secopsai-action.sh -> secopsai-action.sh
-marketplace/github-action/README.md -> README.md
+Name: SecOpsAI Supply-Chain Guard
+Tag: v1.0.0
+Category: Security
+Secondary category: Continuous integration
 ```
 
-Then tag and publish the release through GitHub Marketplace.
+The dedicated repo contains the root Marketplace action files:
 
-The prepared action can also be used from this repo subdirectory before the
-Marketplace repo is created:
+```text
+action.yml
+secopsai-action.sh
+README.md
+```
+
+Use the Marketplace Action in workflows:
 
 ```yaml
-- uses: Techris93/secopsai/marketplace/github-action@main
+- uses: Techris93/secopsai-action@v1
   with:
     mode: advisory-check
     ecosystem: npm
@@ -130,26 +141,25 @@ Marketplace repo is created:
     version: 12.0.1
 ```
 
-Subdirectory usage is useful for testing, but GitHub will not automatically
-list subdirectory action metadata in Marketplace.
+The source wrapper remains mirrored under `marketplace/github-action/` in this
+main repo so changes can be reviewed alongside SecOpsAI core code.
 
-## Required Owner Actions
+## Ongoing Owner Actions
 
-1. Run the GitHub Packages workflow in dry-run mode.
-2. Run it with `dry_run=false` or push a `v*` tag when ready to publish
-   `@techris93/secopsai`.
-3. After first publish, review GitHub package visibility and set it public if
-   intended.
-4. Create a dedicated public repository such as `Techris93/secopsai-action`.
-5. Copy the prepared Marketplace Action files to the root of that repository.
-6. Accept the GitHub Marketplace Developer Agreement if prompted.
-7. Draft a release from the root `action.yml`, select "Publish this Action to
-   the GitHub Marketplace", choose categories, and publish.
+1. After each SecOpsAI npm package release, run the GitHub Packages workflow
+   with `dry_run=true`.
+2. Run it with `dry_run=false` or push a `v*` tag to publish the matching
+   `@techris93/secopsai` package version.
+3. Keep `Techris93/secopsai-action` tagged releases in sync with wrapper
+   changes.
+4. If Marketplace metadata changes, update the release/listing from the
+   `Techris93/secopsai-action` repository.
 
 ## Limitations
 
-- This does not publish or submit anything automatically.
 - The Marketplace action installs SecOpsAI from this GitHub repository and runs
   only allowlisted SecOpsAI CLI modes.
 - The action does not run untrusted package lifecycle scripts; package checks
   use SecOpsAI's metadata/advisory-oriented CLI paths.
+- GitHub Packages may require package visibility/access review after the first
+  publish, depending on repository/account settings.

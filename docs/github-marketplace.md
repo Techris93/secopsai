@@ -1,13 +1,26 @@
-# GitHub Marketplace Preparation
+# GitHub Marketplace
 
-SecOpsAI should enter GitHub Marketplace as a GitHub Action, not as the main
-multi-surface repository. The main repo contains workflows, docs, dashboard/blog
-assets, and Python runtime code; GitHub Marketplace Action listings are intended
-for a repository that packages one root action.
+SecOpsAI is published for GitHub Marketplace as **SecOpsAI Supply-Chain Guard**.
+The listing is backed by the dedicated public action repository:
 
-## Prepared Action
+```text
+https://github.com/Techris93/secopsai-action
+```
 
-Prepared files:
+Published release:
+
+```text
+https://github.com/Techris93/secopsai-action/releases/tag/v1.0.0
+```
+
+The main SecOpsAI repository contains workflows, docs, dashboard/blog assets,
+and Python runtime code. GitHub Marketplace Action listings are cleaner from a
+repository that packages one root action, so the Marketplace listing is served
+from `Techris93/secopsai-action` while source copies stay here for review.
+
+## Action Source Mirror
+
+Source mirror files in this repo:
 
 ```text
 marketplace/github-action/action.yml
@@ -15,7 +28,8 @@ marketplace/github-action/secopsai-action.sh
 marketplace/github-action/README.md
 ```
 
-The action runs deterministic, allowlisted SecOpsAI CLI modes:
+The published action in `Techris93/secopsai-action` runs deterministic,
+allowlisted SecOpsAI CLI modes:
 
 - `supply-chain-scan`
 - `advisory-check`
@@ -25,7 +39,7 @@ The action runs deterministic, allowlisted SecOpsAI CLI modes:
 It validates inputs, installs SecOpsAI from `Techris93/secopsai`, writes JSON
 output to a file, and can fail the workflow on `high` or `critical` severity.
 
-## Recommended Listing
+## Listing Metadata
 
 Product name:
 
@@ -71,24 +85,13 @@ Privacy/data handling:
 - JSON output remains in the workflow workspace unless the caller uploads it.
 - Package code is not executed by the wrapper.
 
-## Manual Submission Steps
+## Release And Maintenance Steps
 
-1. Create a dedicated public repo, for example `Techris93/secopsai-action`.
-2. Copy prepared action files to the root:
-   - `action.yml`
-   - `secopsai-action.sh`
-   - `README.md`
-3. Confirm the repository has no `.github/workflows/*` files when publishing
-   the initial Marketplace listing.
-4. Commit and push.
-5. Open `action.yml` on GitHub and use the Marketplace banner to draft a
-   release.
-6. Accept the GitHub Marketplace Developer Agreement if GitHub prompts for it.
-7. Select "Publish this Action to the GitHub Marketplace".
-8. Choose the categories above.
-9. Publish a semantic tag, for example `v1.0.0`.
-10. After publishing, verify the listing install snippet and run a consumer
-    smoke test.
+1. Update `marketplace/github-action/*` in this repo.
+2. Copy the changed files to the root of `Techris93/secopsai-action`.
+3. Tag a new release, for example `v1.0.1`.
+4. Keep Marketplace metadata aligned with this document.
+5. Run a consumer workflow smoke test before announcing the new version.
 
 ## Suggested Screenshots
 
@@ -123,7 +126,7 @@ jobs:
           fail-on-severity: critical
 ```
 
-## Why The Main Repo Is Not Submitted Directly
+## Why The Main Repo Is Not The Marketplace Repo
 
 GitHub Marketplace Action requirements say the Marketplace repository should
 contain one root action metadata file and should not contain workflow files.

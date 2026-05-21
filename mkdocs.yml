@@ -36,6 +36,9 @@ nav:
   - Rules Registry: rules-registry.md
   - Deployment Guide: deployment-guide.md
   - API Reference: api-reference.md
+  - GitHub Distribution: github-distribution-plan.md
+  - GitHub Marketplace: github-marketplace.md
+  - Marketplace Listing: marketplace-listing.md
   - Threat Intel (IOCs): threat-intel.md
   - Threat Model: threat-model.md
   - Supply Chain Security: supply-chain.md

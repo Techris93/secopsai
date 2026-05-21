@@ -33,6 +33,8 @@ secopsai turns OpenClaw and host OS telemetry into repeatable, explainable secur
 - [Rules Registry](rules-registry.md)
 - [Deployment Guide](deployment-guide.md)
 - [API Reference](api-reference.md)
+- [GitHub Distribution](github-distribution-plan.md)
+- [GitHub Marketplace](github-marketplace.md)
 - [Threat Intel (IOCs)](threat-intel.md)
 - [OpenClaw Integration](OpenClaw-Integration.md)
 - [Supply Chain Security](supply-chain.md)
@@ -67,6 +69,29 @@ secopsai triage orchestrate --search-root ~/secopsai
 secopsai adaptive-response --persist-memory
 ```
 
+## GitHub Distribution
+
+SecOpsAI is available through the original install flow, GitHub Packages, and
+the published **SecOpsAI Supply-Chain Guard** GitHub Marketplace Action.
+
+```bash
+npm config set @techris93:registry https://npm.pkg.github.com
+npm install @techris93/secopsai
+```
+
+```yaml
+- uses: Techris93/secopsai-action@v1
+  with:
+    mode: advisory-check
+    ecosystem: npm
+    package: node-ipc
+    version: 12.0.1
+```
+
+See [GitHub Distribution](github-distribution-plan.md) and
+[GitHub Marketplace](github-marketplace.md) for package, action, and release
+maintenance details.
+
 ## Platform Support
 
 | Platform | Source | Status | Notes |
@@ -97,3 +122,5 @@ secopsai adaptive-response --persist-memory
 - [Supply Chain Security](supply-chain.md)
 - [Emergency Supply Chain Advisories](supply-chain-advisories.md)
 - [Security Blog Publishing](blog-publishing.md)
+- [GitHub Distribution](github-distribution-plan.md)
+- [GitHub Marketplace](github-marketplace.md)

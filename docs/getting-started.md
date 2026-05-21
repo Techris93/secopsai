@@ -94,6 +94,51 @@ python prepare.py  # Generate data/events.json and data/events_unlabeled.json
 python -m pytest tests/ -v  # Optional: verify installation
 ```
 
+### GitHub-Native Install And CI
+
+SecOpsAI is also published to GitHub Packages as `@techris93/secopsai` for
+GitHub-native consumers:
+
+```bash
+npm config set @techris93:registry https://npm.pkg.github.com
+npm install @techris93/secopsai
+```
+
+GitHub Packages may require a token with package-read access depending on the
+repository and package visibility. Do not commit `.npmrc` files that contain
+tokens.
+
+For GitHub Actions, use the published **SecOpsAI Supply-Chain Guard** action:
+
+```yaml
+name: SecOpsAI supply-chain guard
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secopsai:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Techris93/secopsai-action@v1
+        with:
+          mode: advisory-check
+          ecosystem: npm
+          package: node-ipc
+          version: 12.0.1
+          fail-on-severity: critical
+```
+
+The action can run advisory checks, supply-chain scans, campaign discovery, and
+triage summaries without accepting arbitrary shell commands. See
+[GitHub Distribution](github-distribution-plan.md) and
+[GitHub Marketplace](github-marketplace.md) for release and maintenance notes.
+
 ## Run Your First Detection (1 minute)
 
 ### Generate a Benchmark Corpus
