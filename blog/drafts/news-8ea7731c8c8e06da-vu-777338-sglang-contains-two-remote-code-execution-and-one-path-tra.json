@@ -12,6 +12,7 @@
     "Vulnerability",
     "RCE"
   ],
+  "deployed_at": "2026-05-20T14:22:20Z",
   "external_news": true,
   "extracted": {
     "cves": [],
@@ -41,6 +42,8 @@
     "https://kb.cert.org/vuls/id/777338"
   ],
   "published_at": "2026-05-18T10:40:34.061443+00:00",
+  "published_post_path": "blog/posts/news-8ea7731c8c8e06da-vu-777338-sglang-contains-two-remote-code-execution-and-one-path-tra.json",
+  "published_url": "https://blog.secopsai.dev/posts/news-8ea7731c8c8e06da-vu-777338-sglang-contains-two-remote-code-execution-and-one-path-tra.html",
   "readiness_blockers": [],
   "readiness_score": 95,
   "readiness_status": "ready_to_review",
@@ -79,7 +82,7 @@
     }
   ],
   "review_note": "Approved from Blog Ops dashboard",
-  "review_status": "approved",
+  "review_status": "deployed",
   "reviewed_at": "2026-05-19T15:07:31Z",
   "severity": "high",
   "severity_reason": "Remote code execution signal.",
@@ -94,7 +97,7 @@
   "sources": [
     "https://kb.cert.org/vuls/id/777338"
   ],
-  "status": "draft",
+  "status": "published",
   "summary": "Overview Three vulnerabilities have been discovered in the SGLang project, two enabling remote code execution (RCE), and one regarding a path traversal vulnerability. In order for an attacker to exploit these vulnerabilities, the multimodal generation mode must be enabled, and an attacker must have network access to the SGLang service. No patch is available at this time, and no response was obtained from the project maintainers during coordination. Description SGLang is an open-source framework",
   "tags": [
     "Security News",
@@ -104,5 +107,5 @@
     "RCE"
   ],
   "title": "VU#777338: SGLang contains two remote code execution and one path traversal vulnerability",
-  "updated_at": "2026-05-19T15:04:37Z"
+  "updated_at": "2026-05-20T14:22:20Z"
 }

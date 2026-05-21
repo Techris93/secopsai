@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import calendar
+import copy
 import email.utils
 import hashlib
 import html
@@ -78,6 +79,9 @@ REVIEW_CHECKLIST_COMPLETE_STATUSES = {
     "passed",
     "reviewed",
 }
+PUBLISHABLE_REVIEW_STATUSES = {"approved", "reviewed"}
+DEPLOYED_REVIEW_STATUSES = {"deployed", "published"}
+NEWS_REVIEW_STATUSES = {"needs_review", "approved", "reviewed", "rejected", *DEPLOYED_REVIEW_STATUSES}
 
 
 @dataclass
@@ -1227,7 +1231,7 @@ def _normalise_review_checklist(checklist: Any) -> List[Dict[str, str]]:
 def _set_review_checklist_status(post: Dict[str, Any], status: str) -> None:
     if not post.get("external_news"):
         return
-    if status in {"approved", "reviewed"}:
+    if status in PUBLISHABLE_REVIEW_STATUSES | DEPLOYED_REVIEW_STATUSES:
         checklist_status = "completed"
     elif status == "rejected":
         checklist_status = "rejected"
@@ -1700,7 +1704,7 @@ def news_draft(*, limit: int = 5, paths: Optional[BlogPaths] = None) -> Dict[str
     for item in cache.get("items", []):
         if len(created) >= limit:
             break
-        if not isinstance(item, dict) or item.get("draft_path") or item.get("review_status") == "published":
+        if not isinstance(item, dict) or item.get("draft_path") or item.get("review_status") in DEPLOYED_REVIEW_STATUSES:
             continue
         title = str(item.get("title") or "Security news item")
         existing_slug = slugify(f"news-{item.get('key', '')}-{title}")
@@ -1816,21 +1820,82 @@ def external_news_publish_blockers(post: Dict[str, Any]) -> List[str]:
         return []
     readiness = score_external_news_readiness(post)
     blockers = list(readiness.get("readiness_blockers", []))
-    if post.get("review_status") not in {"approved", "reviewed"}:
+    if post.get("review_status") not in PUBLISHABLE_REVIEW_STATUSES:
         blockers.append("external-news draft has not been approved or reviewed")
     blockers.extend(review_checklist_publish_blockers(post))
     return _safe_list(blockers, limit=24)
 
 
+def _draft_paths_for_post(path: Path) -> BlogPaths:
+    return BlogPaths(path.parent.parent)
+
+
+def _published_post_exists(post: Dict[str, Any], path: Path, paths: BlogPaths) -> bool:
+    slug = str(post.get("slug") or path.stem)
+    return _post_json_path(slug, paths).exists() or _post_html_path(slug, paths).exists()
+
+
+def _published_post_is_current(post: Dict[str, Any], path: Path, paths: BlogPaths) -> bool:
+    slug = str(post.get("slug") or path.stem)
+    public_json = _post_json_path(slug, paths)
+    if not public_json.exists():
+        return _post_html_path(slug, paths).exists()
+    try:
+        public_post = _load_json(public_json)
+    except Exception:
+        return False
+    candidate = _public_post(copy.deepcopy({**post, "slug": slug}))
+    for key in ("title", "summary", "body_markdown"):
+        if str(public_post.get(key) or "") != str(candidate.get(key) or ""):
+            return False
+    return True
+
+
+def _effective_review_status(post: Dict[str, Any], path: Path, paths: BlogPaths) -> str:
+    status = str(post.get("review_status") or "needs_review")
+    if status in PUBLISHABLE_REVIEW_STATUSES and _published_post_is_current(post, path, paths):
+        return "deployed"
+    return status
+
+
+def _published_post_metadata_path(slug: str, paths: BlogPaths) -> str:
+    public_path = _post_json_path(slug, paths)
+    try:
+        return str(public_path.relative_to(paths.root.parent))
+    except ValueError:
+        return str(public_path)
+
+
+def _mark_draft_deployed(path: Path, post: Dict[str, Any], paths: BlogPaths, *, url: Optional[str] = None) -> Dict[str, Any]:
+    now = _utc_now()
+    slug = str(post.get("slug") or path.stem)
+    post["slug"] = slug
+    post["review_status"] = "deployed"
+    post["status"] = "published"
+    post["published_at"] = post.get("published_at") or now
+    post["updated_at"] = now
+    post["deployed_at"] = now
+    post["published_url"] = url or _post_url(slug)
+    post["published_post_path"] = _published_post_metadata_path(slug, paths)
+    _set_review_checklist_status(post, "deployed")
+    _write_json(path, post)
+    return post
+
+
 def news_publish_approved(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     paths = paths or BlogPaths()
     published: List[str] = []
+    deployed: List[str] = []
     blocked: List[Dict[str, Any]] = []
     for path in sorted(paths.drafts.glob("*.json")):
         post = _load_json(path)
-        if post.get("external_news") and post.get("review_status") not in {"approved", "reviewed"}:
+        if post.get("external_news") and post.get("review_status") not in PUBLISHABLE_REVIEW_STATUSES:
             continue
         if post.get("external_news"):
+            if _published_post_is_current(post, path, paths):
+                deployed_post = _mark_draft_deployed(path, post, paths)
+                deployed.append(str(deployed_post["published_url"]))
+                continue
             blockers = external_news_publish_blockers(post)
             if blockers:
                 blocked.append({
@@ -1843,7 +1908,7 @@ def news_publish_approved(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any
             payload = publish(str(path), confirm=True, paths=paths)
             if payload.get("url"):
                 published.append(str(payload["url"]))
-    return {"published": published, "blocked": blocked, "total": len(published)}
+    return {"published": published, "deployed": deployed, "blocked": blocked, "total": len(published)}
 
 
 def _resolve_draft(identifier: str, paths: BlogPaths) -> Path:
@@ -1862,16 +1927,18 @@ def _resolve_draft(identifier: str, paths: BlogPaths) -> Path:
     raise ValueError(f"draft not found: {identifier}")
 
 
-def _draft_review_summary(path: Path) -> Dict[str, Any]:
+def _draft_review_summary(path: Path, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+    paths = paths or _draft_paths_for_post(path)
     post = _load_json(path)
     readiness = score_external_news_readiness(post) if post.get("external_news") else {}
     extracted = post.get("extracted") if isinstance(post.get("extracted"), dict) else {}
+    review_status = _effective_review_status(post, path, paths)
     return {
         "path": str(path),
         "slug": str(post.get("slug") or path.stem),
         "title": str(post.get("title") or path.stem),
         "summary": str(post.get("summary") or "")[:240],
-        "review_status": str(post.get("review_status") or "needs_review"),
+        "review_status": review_status,
         "severity": str(post.get("severity") or "info"),
         "source_name": str(post.get("source_name") or post.get("author") or "SecOpsAI"),
         "sources": _safe_list(post.get("sources") or post.get("references") or [], limit=5),
@@ -1899,7 +1966,7 @@ def news_review_list(*, status: Optional[str] = None, paths: Optional[BlogPaths]
     paths = paths or BlogPaths()
     drafts = []
     for path in sorted(paths.drafts.glob("*.json")):
-        summary = _draft_review_summary(path)
+        summary = _draft_review_summary(path, paths)
         if status and summary["review_status"] != status:
             continue
         drafts.append(summary)
@@ -1910,7 +1977,7 @@ def news_review_show(identifier: str, *, paths: Optional[BlogPaths] = None) -> D
     paths = paths or BlogPaths()
     path = _resolve_draft(identifier, paths)
     post = _load_json(path)
-    summary = _draft_review_summary(path)
+    summary = _draft_review_summary(path, paths)
     summary["body_markdown"] = str(post.get("body_markdown") or "")
     summary["references"] = _safe_list(post.get("references") or post.get("sources") or [], limit=12)
     summary["primary_references"] = _safe_list(post.get("primary_references") or [], limit=8)
@@ -1925,8 +1992,8 @@ def news_review_update(
     note: Optional[str] = None,
     paths: Optional[BlogPaths] = None,
 ) -> Dict[str, Any]:
-    if status not in {"needs_review", "approved", "reviewed", "rejected"}:
-        raise ValueError("status must be one of: needs_review, approved, reviewed, rejected")
+    if status not in NEWS_REVIEW_STATUSES:
+        raise ValueError("status must be one of: needs_review, approved, reviewed, rejected, deployed, published")
     paths = paths or BlogPaths()
     path = _resolve_draft(identifier, paths)
     post = _load_json(path)
@@ -1938,7 +2005,7 @@ def news_review_update(
     if post.get("external_news"):
         post.update(score_external_news_readiness(post))
     _write_json(path, post)
-    return _draft_review_summary(path)
+    return _draft_review_summary(path, paths)
 
 
 def news_review_edit(
@@ -2646,6 +2713,7 @@ def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPa
     post["status"] = "published"
     post["published_at"] = post.get("published_at") or _utc_now()
     post["updated_at"] = _utc_now()
+    draft_record = dict(post)
     post = _ensure_social_image(_public_post(post), paths)
     paths.posts.mkdir(parents=True, exist_ok=True)
     _write_json(_post_json_path(str(post["slug"]), paths), post)
@@ -2654,6 +2722,10 @@ def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPa
         encoding="utf-8",
     )
     rebuild(paths=paths)
+    if draft_record.get("external_news"):
+        draft_record["published_at"] = post.get("published_at")
+        draft_record["updated_at"] = post.get("updated_at")
+        _mark_draft_deployed(draft_path, draft_record, paths, url=_post_url(str(post["slug"])))
     return {
         "published": True,
         "post_path": str(_post_html_path(str(post["slug"]), paths)),

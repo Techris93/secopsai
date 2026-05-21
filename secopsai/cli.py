@@ -911,7 +911,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     blog_news_review = blog_sub.add_parser("news-review", help="Review, approve, or reject generated news drafts")
     news_review_sub = blog_news_review.add_subparsers(dest="news_review_cmd", required=True)
     news_review_list = news_review_sub.add_parser("list", help="List generated drafts waiting for review")
-    news_review_list.add_argument("--status", default=None, choices=["needs_review", "approved", "reviewed", "rejected"], help="Filter by review status")
+    news_review_list.add_argument(
+        "--status",
+        default=None,
+        choices=["needs_review", "approved", "reviewed", "rejected", "deployed", "published"],
+        help="Filter by review status",
+    )
     news_review_show = news_review_sub.add_parser("show", help="Show one draft summary and body")
     news_review_show.add_argument("draft", help="Draft path, slug, or unique slug fragment")
     news_review_approve = news_review_sub.add_parser("approve", help="Approve one reviewed draft for publishing")
@@ -1652,6 +1657,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"total={payload['total']}")
             for path in payload.get("created", payload.get("published", [])):
                 print(f"- {path}")
+            for url in payload.get("deployed", []):
+                print(f"deployed={url}")
             for blocked in payload.get("blocked", []):
                 print(f"blocked={blocked.get('slug')}")
                 for reason in blocked.get("reasons", []):

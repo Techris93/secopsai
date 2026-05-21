@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Techris93/secopsai/marketplace/github-action@main
+      - uses: Techris93/secopsai-action@v1
         with:
           mode: advisory-check
           ecosystem: npm
@@ -38,8 +38,9 @@ jobs:
           path: secopsai-results.json
 ```
 
-For GitHub Marketplace publication, copy this directory's files to the root of
-a dedicated public action repository, such as `Techris93/secopsai-action`.
+The GitHub Marketplace version is published from the dedicated public action
+repository [`Techris93/secopsai-action`](https://github.com/Techris93/secopsai-action).
+This directory is the source mirror kept with the main SecOpsAI product.
 
 ## Inputs
 
@@ -63,7 +64,7 @@ a dedicated public action repository, such as `Techris93/secopsai-action`.
 ### Advisory Check
 
 ```yaml
-- uses: Techris93/secopsai/marketplace/github-action@main
+- uses: Techris93/secopsai-action@v1
   with:
     mode: advisory-check
     ecosystem: npm
@@ -74,7 +75,7 @@ a dedicated public action repository, such as `Techris93/secopsai-action`.
 ### Supply-Chain Scan
 
 ```yaml
-- uses: Techris93/secopsai/marketplace/github-action@main
+- uses: Techris93/secopsai-action@v1
   with:
     mode: supply-chain-scan
     ecosystem: pypi
@@ -86,7 +87,7 @@ a dedicated public action repository, such as `Techris93/secopsai-action`.
 ### Campaign Discovery
 
 ```yaml
-- uses: Techris93/secopsai/marketplace/github-action@main
+- uses: Techris93/secopsai-action@v1
   with:
     mode: discover-campaigns
     since: 24h
@@ -97,6 +98,6 @@ a dedicated public action repository, such as `Techris93/secopsai-action`.
 ## Marketplace Notes
 
 GitHub Marketplace Action listings should live in a repository with one root
-`action.yml` and no workflow files. This main SecOpsAI repository already has
-product workflows, so use a dedicated action repository for the Marketplace
-listing.
+`action.yml` and no product workflow noise. The published listing lives in
+`Techris93/secopsai-action`; keep this source mirror aligned whenever the
+wrapper changes.

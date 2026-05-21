@@ -49,25 +49,36 @@ Security note: only run a `curl | bash` installer if you trust the publisher and
 
 ### GitHub Distribution
 
-SecOpsAI keeps its existing npm package flow and also prepares a GitHub
-Packages path for GitHub-native installs:
+SecOpsAI keeps its existing npm package flow and is now also published through
+GitHub Packages for GitHub-native installs:
 
 ```bash
 npm config set @techris93:registry https://npm.pkg.github.com
 npm install @techris93/secopsai
 ```
 
-The GitHub Packages workflow publishes the scoped package
-`@techris93/secopsai` from the existing `supply-chain/` npm manifest without
-renaming the public npm package. See
+The GitHub Packages workflow publishes the scoped package `@techris93/secopsai`
+from the existing `supply-chain/` npm manifest without renaming the public npm
+package. See
 [docs/github-distribution-plan.md](docs/github-distribution-plan.md).
 
-For GitHub Marketplace, SecOpsAI ships a constrained Action wrapper in
-[`marketplace/github-action`](marketplace/github-action). The wrapper can run
-advisory checks, package scans, campaign discovery, and triage summaries in
-GitHub Actions. Marketplace submission should use a dedicated public action
-repository because GitHub Marketplace Action listings expect one root
-`action.yml` and no workflow files. See
+For GitHub Marketplace, SecOpsAI is published as **SecOpsAI Supply-Chain
+Guard** from the dedicated public action repository
+[`Techris93/secopsai-action`](https://github.com/Techris93/secopsai-action).
+The action can run advisory checks, package scans, campaign discovery, and
+triage summaries in GitHub Actions:
+
+```yaml
+- uses: Techris93/secopsai-action@v1
+  with:
+    mode: advisory-check
+    ecosystem: npm
+    package: node-ipc
+    version: 12.0.1
+```
+
+The source wrapper remains mirrored in [`marketplace/github-action`](marketplace/github-action).
+See
 [docs/github-marketplace.md](docs/github-marketplace.md).
 
 ### Activate

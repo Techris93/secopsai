@@ -24,6 +24,10 @@ the next tagged release.
 - Added cross-ecosystem supply-chain campaign research with correlated package
   verdicts, environment-impact separation, SOC finding persistence, and
   review-only campaign blog drafts.
+- Published GitHub Packages distribution as `@techris93/secopsai` while
+  preserving the existing npm package release flow.
+- Published the **SecOpsAI Supply-Chain Guard** GitHub Marketplace Action from
+  `Techris93/secopsai-action`.
 - Added a changelog entry helper at `scripts/changelog_entry.py`.
 
 ### Security
@@ -45,8 +49,8 @@ the next tagged release.
 ### Docs
 
 - Documented the multi-ecosystem support matrix, per-ecosystem CLI examples,
-  limitations, operator triage workflow, mitigation guidance, and changelog
-  workflow.
+  limitations, operator triage workflow, mitigation guidance, changelog
+  workflow, GitHub Packages install path, and GitHub Marketplace Action usage.
 
 ## 2026-05 SecOpsAI Operator Upgrades
 

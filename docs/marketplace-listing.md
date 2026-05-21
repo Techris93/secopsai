@@ -1,4 +1,4 @@
-# Marketplace Listing Draft
+# Marketplace Listing
 
 ## Name
 
@@ -30,7 +30,7 @@ allowlisted SecOpsAI CLI modes rather than arbitrary shell command inputs.
 
 Free / open source.
 
-## Logo And Screenshots Needed
+## Listing Assets
 
 - Logo: square SecOpsAI shield or wordmark, preferably 512x512.
 - Screenshot 1: successful `advisory-check` workflow run.
@@ -48,6 +48,12 @@ Free / open source.
     version: 12.0.1
 ```
 
+## Published Links
+
+- Action repository: `https://github.com/Techris93/secopsai-action`
+- Release: `https://github.com/Techris93/secopsai-action/releases/tag/v1.0.0`
+- Main SecOpsAI repository: `https://github.com/Techris93/secopsai`
+
 ## Support
 
 - Issues: `https://github.com/Techris93/secopsai/issues`
@@ -61,17 +67,18 @@ Free / open source.
 - Does not execute target package lifecycle scripts.
 - Does not upload results unless the caller adds an upload-artifact step.
 
-## Manual Submission Checklist
+## Publication Checklist
 
-- [ ] Create dedicated public `Techris93/secopsai-action` repository.
-- [ ] Copy `marketplace/github-action/action.yml` to root `action.yml`.
-- [ ] Copy `marketplace/github-action/secopsai-action.sh` to root.
-- [ ] Copy `marketplace/github-action/README.md` to root.
-- [ ] Confirm there are no workflow files in the action repo.
-- [ ] Commit and push.
-- [ ] Accept the GitHub Marketplace Developer Agreement.
-- [ ] Draft a release from `action.yml`.
-- [ ] Select "Publish this Action to the GitHub Marketplace".
-- [ ] Choose Security and Continuous integration categories.
-- [ ] Publish tag `v1.0.0`.
-- [ ] Verify the listing and run a consumer workflow smoke test.
+- [x] Create dedicated public `Techris93/secopsai-action` repository.
+- [x] Copy `marketplace/github-action/action.yml` to root `action.yml`.
+- [x] Copy `marketplace/github-action/secopsai-action.sh` to root.
+- [x] Copy `marketplace/github-action/README.md` to root.
+- [x] Confirm there are no workflow files in the action repo.
+- [x] Commit and push.
+- [x] Accept the GitHub Marketplace Developer Agreement if prompted.
+- [x] Draft a release from `action.yml`.
+- [x] Select "Publish this Action to the GitHub Marketplace".
+- [x] Choose Security and Continuous integration categories.
+- [x] Publish tag `v1.0.0`.
+- [ ] Run a consumer workflow smoke test after GitHub finishes Marketplace
+  indexing and record the run URL in release notes.
