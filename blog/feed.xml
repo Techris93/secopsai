@@ -6,20 +6,27 @@
     <link>https://blog.secopsai.dev/</link>
     <description>Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.</description>
     <language>en-us</language>
-    <lastBuildDate>Tue, 19 May 2026 15:19:55 GMT</lastBuildDate>
-    <item>
-      <title>CISA KEV: Microsoft CVE-2026-42897</title>
-      <link>https://blog.secopsai.dev/posts/news-5752d8dcb4593420-cisa-kev-microsoft-microsoft-cve-2026-42897.html</link>
-      <guid>https://blog.secopsai.dev/posts/news-5752d8dcb4593420-cisa-kev-microsoft-microsoft-cve-2026-42897.html</guid>
-      <pubDate>Fri, 15 May 2026 00:00:00 GMT</pubDate>
-      <description>Microsoft Exchange Server contains a cross-site scripting vulnerability during web page generation in Outlook Web Access and when certain interaction conditions are met, arbitrary JavaScript can be executed in the browser context.</description>
-    </item>
+    <lastBuildDate>Wed, 20 May 2026 14:40:32 GMT</lastBuildDate>
     <item>
       <title>VU#777338: SGLang contains two remote code execution and one path traversal vulnerability</title>
       <link>https://blog.secopsai.dev/posts/news-8ea7731c8c8e06da-vu-777338-sglang-contains-two-remote-code-execution-and-one-path-tra.html</link>
       <guid>https://blog.secopsai.dev/posts/news-8ea7731c8c8e06da-vu-777338-sglang-contains-two-remote-code-execution-and-one-path-tra.html</guid>
       <pubDate>Mon, 18 May 2026 10:40:34 GMT</pubDate>
       <description>Overview Three vulnerabilities have been discovered in the SGLang project, two enabling remote code execution (RCE), and one regarding a path traversal vulnerability. In order for an attacker to exploit these vulnerabilities, the multimodal generation mode must be enabled, and an attacker must have network access to the SGLang service. No patch is available at this time, and no response was obtained from the project maintainers during coordination. Description SGLang is an open-source framework</description>
+    </item>
+    <item>
+      <title>Post-quantum encryption for Cloudflare IPsec is generally available</title>
+      <link>https://blog.secopsai.dev/posts/news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available.html</link>
+      <guid>https://blog.secopsai.dev/posts/news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available.html</guid>
+      <pubDate>Wed, 20 May 2026 14:40:32 GMT</pubDate>
+      <description>Cloudflare IPsec now has generally available support for post-quantum encryption via hybrid ML-KEM. We’ve confirmed interoperability with Cisco and Fortinet.</description>
+    </item>
+    <item>
+      <title>CISA KEV: Microsoft CVE-2026-42897</title>
+      <link>https://blog.secopsai.dev/posts/news-5752d8dcb4593420-cisa-kev-microsoft-microsoft-cve-2026-42897.html</link>
+      <guid>https://blog.secopsai.dev/posts/news-5752d8dcb4593420-cisa-kev-microsoft-microsoft-cve-2026-42897.html</guid>
+      <pubDate>Fri, 15 May 2026 00:00:00 GMT</pubDate>
+      <description>Microsoft Exchange Server contains a cross-site scripting vulnerability during web page generation in Outlook Web Access and when certain interaction conditions are met, arbitrary JavaScript can be executed in the browser context.</description>
     </item>
     <item>
       <title>Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts</title>
