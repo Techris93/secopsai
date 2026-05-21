@@ -15,6 +15,9 @@ SecOpsAI is distributed through the existing npm package flow from
 - Python package metadata: `pyproject.toml` exposes the `secopsai` CLI.
 - Existing GitHub workflows already build/test, scan, release containers, and
   run Blog Ops.
+- Exact-name GitHub ownership is tracked separately in
+  [Name Reservation](name-reservation.md). The intended final namespace is
+  `secopsai/secopsai`, but current local GitHub CLI auth is `Techris93`.
 
 The root of this repository does not currently contain a Node `package.json`.
 The npm-distributed CLI wrapper lives in `supply-chain/`.

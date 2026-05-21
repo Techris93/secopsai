@@ -112,10 +112,11 @@ Reserve or verify ownership for the surfaces tracked in
 [Name Reservation](name-reservation.md):
 
 - npm: `secopsai`
-- GitHub: `Techris93/secopsai` and `Techris93/secopsai-action`
-- Docker Hub: `secopsai`
+- GitHub: `secopsai/secopsai`, `secopsai/secopsai-action`, and
+  `secopsai/homebrew-secopsai`
+- Docker Hub: `secopsai/secopsai`
 - PyPI: `secopsai`
-- Homebrew tap: `homebrew-secopsai` or `secopsai/tap`
+- Homebrew tap: `secopsai/homebrew-secopsai` or `secopsai/homebrew-tap`
 - Domains: `secopsai.dev` and related product domains
 
 If a registry name is unavailable, document ownership, contact path, and the

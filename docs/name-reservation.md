@@ -1,8 +1,11 @@
 # Name Reservation
 
-This page tracks SecOpsAI name ownership across public package and distribution
-surfaces. It is intentionally operational: do not publish packages, upload
-images, or create paid resources unless an owner explicitly approves the action.
+This page tracks exact `secopsai` name ownership across public package and
+distribution surfaces. The primary target is the clean brand name `secopsai`,
+not owner-scoped fallbacks such as `Techris93/secopsai`.
+
+It is intentionally operational: do not publish packages, upload images, or
+create paid resources unless an owner explicitly approves the action.
 
 ## Current Status
 
@@ -10,40 +13,53 @@ Checked on 2026-05-21:
 
 | Surface | Desired name | Status | Next action |
 | --- | --- | --- | --- |
-| GitHub repository | `Techris93/secopsai` | Secured and public | Keep canonical repo protected. |
-| GitHub user/org | `secopsai` | `secopsai` is already a GitHub user account; org lookup returns 404 | Cannot reserve exact org while username exists. Use `Techris93/secopsai` as canonical. |
-| GitHub Marketplace Action | `Techris93/secopsai-action` | Secured and public | Keep releases aligned with Marketplace docs. |
-| Homebrew tap | `Techris93/homebrew-secopsai` | Secured and public | Add a formula after a stable release tarball and SHA256 exist. |
+| GitHub account/organization | `secopsai` | `secopsai` is already a GitHub user account; current CLI auth is `Techris93` | Log in as the `secopsai` account or obtain ownership/transfer before creating exact-name repos. |
+| GitHub repository | `secopsai/secopsai` | Not created from this repo because current auth is not the `secopsai` account | Create under the `secopsai` account after account access is confirmed. |
+| GitHub Marketplace Action | `secopsai/secopsai-action` | Not created from this repo because current auth is not the `secopsai` account | Create or transfer the action repo under `secopsai` before Marketplace submission. |
+| Homebrew tap | `secopsai/homebrew-secopsai` or `secopsai/homebrew-tap` | Not created from this repo because current auth is not the `secopsai` account | Create the exact tap under the `secopsai` account after GitHub access is confirmed. |
 | npm | `secopsai` | Secured as public npm package maintained by `techris` | Publish next approved npm wrapper version when ready. |
-| GitHub Packages | `@techris93/secopsai` | Secured through GitHub Packages workflow | Keep scoped package workflow. |
+| GitHub Packages | `@secopsai/secopsai` | Requires GitHub `secopsai` account/org package namespace | Add a scoped package workflow after GitHub namespace access is available. |
 | PyPI | `secopsai` | Available: PyPI JSON endpoint returned 404 | Publish an approved first package to reserve. |
-| Docker Hub namespace/repo | `secopsai/secopsai` | Repository lookup returned 404; namespace reservation requires Docker Hub owner UI/account access | Create/claim Docker Hub organization or publish under approved owner namespace. |
-| Docker Hub fallback repo | `techris93/secopsai` | Repository lookup returned 404 | Configure Docker Hub secrets and run the Docker Hub workflow after approval. |
+| Docker Hub namespace/repo | `secopsai/secopsai` | Repository lookup returned 404; namespace repository listing returned 200 with no repos | Create/claim Docker Hub `secopsai` namespace, then run the Docker Hub workflow with namespace `secopsai`. |
 
 ## GitHub
 
-Canonical project repository:
+Exact target repository:
 
 ```text
-https://github.com/Techris93/secopsai
+https://github.com/secopsai/secopsai
 ```
 
-The exact `secopsai` GitHub account name is unavailable because it resolves as
-a user account. Keep the canonical project under `Techris93/secopsai` unless
-the owner of `secopsai` transfers the account/name.
+The exact `secopsai` GitHub name resolves as a user account, not an
+organization. Current local GitHub CLI auth is `Techris93`, so this repository
+cannot create or manage repos under `secopsai` until the owner logs in as that
+account or transfers the namespace.
+
+Owner action after logging in as `secopsai`:
+
+```bash
+gh auth login
+gh repo create secopsai/secopsai --public --description "SecOpsAI security operations automation"
+gh repo create secopsai/secopsai-action --public --description "GitHub Action for SecOpsAI"
+gh repo create secopsai/homebrew-secopsai --public --description "Homebrew tap for SecOpsAI"
+```
+
+If the current `Techris93/secopsai` repository remains the development source,
+transfer it to `secopsai/secopsai` instead of creating a second disconnected
+repository.
 
 ## Homebrew
 
-Tap repository:
+Exact target tap repository:
 
 ```text
-https://github.com/Techris93/homebrew-secopsai
+https://github.com/secopsai/homebrew-secopsai
 ```
 
 User-facing tap command:
 
 ```bash
-brew tap Techris93/secopsai
+brew tap secopsai/secopsai
 ```
 
 Do not add `brew install secopsai` documentation until the tap contains a
@@ -96,18 +112,17 @@ DOCKERHUB_USERNAME
 DOCKERHUB_TOKEN
 ```
 
-Safe reservation path for the fallback owner namespace:
+Safe reservation path for the exact `secopsai` namespace:
 
-1. Confirm Docker Hub account ownership for `techris93`.
+1. Create or claim the Docker Hub `secopsai` namespace.
 2. Run `Publish Docker Hub Image` with `dry_run=true` and namespace
-   `techris93`.
+   `secopsai`.
 3. Configure Docker Hub secrets.
 4. Run with `dry_run=false`.
-5. Verify `https://hub.docker.com/r/techris93/secopsai`.
+5. Verify `https://hub.docker.com/r/secopsai/secopsai`.
 
-To reserve the cleaner `secopsai/secopsai` path, create or claim the Docker Hub
-`secopsai` organization in Docker Hub first. This cannot be safely completed
-from the repository without account-owner access.
+This cannot be safely completed from the repository without Docker Hub
+account-owner access.
 
 ## No-Secret Rules
 

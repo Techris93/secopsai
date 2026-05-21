@@ -11,7 +11,7 @@ on:
       namespace:
         description: "Docker Hub namespace"
         required: true
-        default: "techris93"
+        default: "secopsai"
         type: string
 
 permissions:
