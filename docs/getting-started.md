@@ -96,6 +96,16 @@ python -m pytest tests/ -v  # Optional: verify installation
 
 ### GitHub-Native Install And CI
 
+For npm users, the clean public package name is `secopsai`:
+
+```bash
+npm install -g secopsai
+```
+
+The package name already exists on npm under the `techris` maintainer account,
+and this repository is prepared for the next `secopsai@1.0.1` wrapper release.
+Publishing still requires explicit maintainer approval and npm authentication.
+
 SecOpsAI is also published to GitHub Packages as `@techris93/secopsai` for
 GitHub-native consumers:
 

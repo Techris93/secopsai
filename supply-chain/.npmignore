@@ -1,0 +1,13 @@
+.DS_Store
+.env
+.npmrc
+*.log
+*.tgz
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+coverage/
+dist/
+reports/
+results/

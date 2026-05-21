@@ -28,6 +28,8 @@ the next tagged release.
   preserving the existing npm package release flow.
 - Published the **SecOpsAI Supply-Chain Guard** GitHub Marketplace Action from
   `Techris93/secopsai-action`.
+- Prepared the next unscoped npm wrapper release path as `secopsai@1.0.1`
+  with a manual/tag-gated npm publish workflow.
 - Added a changelog entry helper at `scripts/changelog_entry.py`.
 
 ### Security
@@ -50,7 +52,8 @@ the next tagged release.
 
 - Documented the multi-ecosystem support matrix, per-ecosystem CLI examples,
   limitations, operator triage workflow, mitigation guidance, changelog
-  workflow, GitHub Packages install path, and GitHub Marketplace Action usage.
+  workflow, public npm install path, GitHub Packages install path, and GitHub
+  Marketplace Action usage.
 
 ## 2026-05 SecOpsAI Operator Upgrades
 
