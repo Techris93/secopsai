@@ -108,7 +108,8 @@ npm deprecate secopsai@1.0.1 "Superseded by a corrected SecOpsAI release. Please
 
 ## Brand Reservation Checklist
 
-Reserve or verify ownership for:
+Reserve or verify ownership for the surfaces tracked in
+[Name Reservation](name-reservation.md):
 
 - npm: `secopsai`
 - GitHub: `Techris93/secopsai` and `Techris93/secopsai-action`

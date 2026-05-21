@@ -1,0 +1,57 @@
+name: Publish Docker Hub Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build without pushing"
+        required: true
+        default: true
+        type: boolean
+      namespace:
+        description: "Docker Hub namespace"
+        required: true
+        default: "techris93"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-dockerhub-image-${{ github.ref }}-${{ inputs.namespace }}
+  cancel-in-progress: false
+
+jobs:
+  publish-dockerhub-image:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ${{ inputs.namespace }}/secopsai
+
+    steps:
+      - name: Checkout SecOpsAI
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
+
+      - name: Log in to Docker Hub
+        if: ${{ inputs.dry_run == false }}
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294
+        with:
+          context: .
+          push: ${{ inputs.dry_run == false }}
+          load: ${{ inputs.dry_run != false }}
+          tags: |
+            docker.io/${{ env.IMAGE_NAME }}:latest
+            docker.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Dry-run summary
+        if: ${{ inputs.dry_run != false }}
+        run: |
+          echo "Dry run completed. Re-run with dry_run=false after configuring DOCKERHUB_USERNAME and DOCKERHUB_TOKEN to publish docker.io/${IMAGE_NAME}."

@@ -38,6 +38,7 @@ nav:
   - API Reference: api-reference.md
   - GitHub Distribution: github-distribution-plan.md
   - npm Name Migration: npm-name-migration.md
+  - Name Reservation: name-reservation.md
   - GitHub Marketplace: github-marketplace.md
   - Marketplace Listing: marketplace-listing.md
   - Threat Intel (IOCs): threat-intel.md

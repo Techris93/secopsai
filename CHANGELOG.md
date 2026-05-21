@@ -30,6 +30,8 @@ the next tagged release.
   `Techris93/secopsai-action`.
 - Prepared the next unscoped npm wrapper release path as `secopsai@1.0.1`
   with a manual/tag-gated npm publish workflow.
+- Added guarded PyPI and Docker Hub publish workflows plus a Homebrew tap
+  reservation for SecOpsAI name ownership.
 - Added a changelog entry helper at `scripts/changelog_entry.py`.
 
 ### Security
@@ -54,6 +56,8 @@ the next tagged release.
   limitations, operator triage workflow, mitigation guidance, changelog
   workflow, public npm install path, GitHub Packages install path, and GitHub
   Marketplace Action usage.
+- Documented SecOpsAI name reservation status across GitHub, Docker Hub, PyPI,
+  Homebrew, npm, and GitHub Packages.
 
 ## 2026-05 SecOpsAI Operator Upgrades
 
