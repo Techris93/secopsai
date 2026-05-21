@@ -197,8 +197,11 @@ python3 cli.py correlate
 Install SecOpsAI directly as an OpenClaw plugin for seamless integration:
 
 ```bash
-openclaw plugins install clawhub:@techris93/secopsai
+openclaw plugins install secopsai
 ```
+
+If your OpenClaw registry still requires the scoped alias during migration, use
+`openclaw plugins install clawhub:@techris93/secopsai`.
 
 Available plugin tools:
 

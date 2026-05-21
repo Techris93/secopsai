@@ -39,7 +39,7 @@ const quickstartProfiles = {
   npm: {
     eyebrow: "npm",
     title: "Package-manager path for JavaScript-heavy teams",
-    description: "Keep the install familiar for Node users while still landing in the same SecOpsAI workflow once the CLI is available.",
+    description: "Install the public npm package name while still landing in the same SecOpsAI workflow once the CLI is available.",
     support: "Great when your workstation already centers around npm and you want a lighter-weight entry path.",
     supportLabel: "Hackable",
     supportTone: "production",

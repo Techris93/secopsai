@@ -27,6 +27,15 @@ cd ~/secopsai
 source .venv/bin/activate
 ```
 
+### npm install
+
+If you prefer a package-manager entry point, use the public npm package:
+
+```bash
+npm install -g secopsai
+secopsai --help
+```
+
 ### Manual install
 
 ```bash
