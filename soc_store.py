@@ -36,7 +36,7 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
     directory = os.path.dirname(resolved_path)
     os.makedirs(directory, exist_ok=True)
     try:
-        os.chmod(directory, 0o700)  # nosec B103
+        os.chmod(directory, 0o700)  # nosec B103  # nosem
     except OSError:
         pass
 
