@@ -154,6 +154,8 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
 
     build_workflow = yaml.safe_load(test_build)
     build_steps = build_workflow["jobs"]["build-container"]["steps"]
+    image_scan_step = next(step for step in build_steps if step.get("name") == "Scan image with Trivy")
+    assert image_scan_step["with"]["ignore-unfixed"] is True
     image_upload_step = next(step for step in build_steps if step.get("name") == "Upload Trivy results to GitHub Security tab")
     assert image_upload_step["with"]["category"] == "trivy-image"
 
