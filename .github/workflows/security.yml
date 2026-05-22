@@ -31,13 +31,12 @@ jobs:
           cache: "pip"
 
       - name: Run Trivy file/config scan
-        continue-on-error: ${{ github.event_name != 'schedule' }}
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           scan-type: "fs"
           scan-ref: "."
           severity: "HIGH,CRITICAL"
-          exit-code: "0"
+          exit-code: "1"
           format: "sarif"
           output: "trivy-fs-results.sarif"
       - name: Ensure trivy-fs-results.sarif exists
@@ -45,13 +44,12 @@ jobs:
           if [ ! -f trivy-fs-results.sarif ]; then echo '{"version":"2.1.0","runs":[]}' > trivy-fs-results.sarif; fi
 
       - name: Run Trivy secret scan
-        continue-on-error: ${{ github.event_name != 'schedule' }}
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           scan-type: "secret"
           scan-ref: "."
           severity: "HIGH,CRITICAL"
-          exit-code: "0"
+          exit-code: "1"
           format: "sarif"
           output: "trivy-secret-results.sarif"
       - name: Ensure trivy-secret-results.sarif exists
@@ -59,13 +57,12 @@ jobs:
           if [ ! -f trivy-secret-results.sarif ]; then echo '{"version":"2.1.0","runs":[]}' > trivy-secret-results.sarif; fi
 
       - name: Run Trivy dependency scan
-        continue-on-error: ${{ github.event_name != 'schedule' }}
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           scan-type: "config"
           scan-ref: "."
           severity: "HIGH,CRITICAL"
-          exit-code: "0"
+          exit-code: "1"
           format: "sarif"
           output: "trivy-config-results.sarif"
       - name: Ensure trivy-config-results.sarif exists
@@ -83,13 +80,11 @@ jobs:
             trivy-config-results.sarif
 
       - name: Run pip-audit (dependency vulnerabilities)
-        continue-on-error: true
         run: |
           pip install pip-audit
-          pip-audit --desc || true
+          pip-audit --desc
 
       - name: OWASP Dependency-Check
-        continue-on-error: true
         uses: dependency-check/Dependency-Check_Action@1e54355a8b4c8abaa8cc7d0b70aa655a3bb15a6c
         with:
           project: "secopsai"
@@ -125,15 +120,14 @@ jobs:
           cache: "pip"
 
       - name: Check for vulnerable dependencies
-        continue-on-error: true
         run: |
           pip install safety bandit
 
           # Check for vulnerabilities in Python packages
-          safety check -r requirements.txt --output json > safety-report.json || echo '{"vulnerabilities":[]}' > safety-report.json
+          safety check -r requirements.txt --output json > safety-report.json
 
           # Static security analysis
-          bandit -r . -x ./.git,./.venv,./__pycache__,./data,./tests -f json -o bandit-report.json || echo '{"results":[]}' > bandit-report.json
+          bandit -r . -x ./.git,./.venv,./__pycache__,./data,./tests -f json -o bandit-report.json
 
       - name: Upload reports
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

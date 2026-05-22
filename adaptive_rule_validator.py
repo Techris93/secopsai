@@ -26,6 +26,7 @@ AUTO_RULES_START = "# === AUTO-GENERATED RULES ==="
 AUTO_RULES_END = "# === END AUTO-GENERATED RULES ==="
 AUTO_RULE_REGISTRY_START = "# === AUTO-GENERATED RULE REGISTRY ==="
 AUTO_RULE_REGISTRY_END = "# === END AUTO-GENERATED RULE REGISTRY ==="
+REVIEW_MANIFEST_PATH = os.path.join(AUTO_RULES_DIR, "review_required.json")
 
 
 def _utc_now() -> datetime:
@@ -44,7 +45,7 @@ class RuleValidator:
         self._original_detect_content: str | None = None
         self.validation_failed = False
     
-    def get_baseline_f1(self) -> float:
+    def get_baseline_f1(self) -> Optional[float]:
         """Get current F1 score without new rules"""
         print("[BASELINE] Running evaluation without new rules...")
         
@@ -55,6 +56,19 @@ class RuleValidator:
             capture_output=True,
             text=True
         )
+
+        if result.returncode != 0:
+            self.validation_failed = True
+            print(f"[ERROR] evaluate.py failed before injecting rules (exit {result.returncode})")
+            if result.stdout:
+                print("[ERROR] evaluate.py stdout tail:")
+                for line in result.stdout.splitlines()[-20:]:
+                    print(f"  {line}")
+            if result.stderr:
+                print("[ERROR] evaluate.py stderr tail:")
+                for line in result.stderr.splitlines()[-20:]:
+                    print(f"  {line}")
+            return None
         
         # Extract F1 score
         for line in result.stdout.split('\n'):
@@ -71,8 +85,9 @@ class RuleValidator:
                     print(f"[DEBUG] Failed to parse F1 from: {line} - {e}")
                     pass
         
-        print(f"[WARN] Could not parse F1, using default 0.0")
-        return 0.0
+        self.validation_failed = True
+        print("[ERROR] Could not parse baseline F1 from evaluate.py output")
+        return None
     
     def inject_rules_into_detect_py(self) -> bool:
         """Inject auto-generated rules into detect.py"""
@@ -271,6 +286,31 @@ class RuleValidator:
                 shutil.copy2(src, dst)
         
         print(f"[COMMIT] Saved {len(self.validated_rules)} validated rules to {validated_dir}")
+
+    def write_review_manifest(self, improvement: float) -> None:
+        """Write a human-review artifact instead of mutating production code."""
+        os.makedirs(AUTO_RULES_DIR, exist_ok=True)
+        rule_files = sorted(
+            file_name
+            for file_name in os.listdir(AUTO_RULES_DIR)
+            if file_name.startswith("auto_rule_") and file_name.endswith(".py")
+        )
+        manifest = {
+            "status": "needs_human_review",
+            "generated_at": _utc_now().isoformat(),
+            "baseline_f1": self.baseline_f1,
+            "new_f1": self.new_f1,
+            "improvement": improvement,
+            "candidate_rule_files": rule_files,
+            "note": (
+                "Adaptive rules improved the benchmark but were not committed or "
+                "injected into production detect.py. Review these candidate rules "
+                "manually and promote them through normal code review."
+            ),
+        }
+        with open(REVIEW_MANIFEST_PATH, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2, sort_keys=True)
+        print(f"[REVIEW] Wrote adaptive rule review manifest: {REVIEW_MANIFEST_PATH}")
     
     def run(self) -> bool:
         """Full validation pipeline"""
@@ -280,72 +320,41 @@ class RuleValidator:
         print("=" * 60)
         
         # Step 1: Get baseline
-        self.get_baseline_f1()
+        baseline_f1 = self.get_baseline_f1()
+        if baseline_f1 is None:
+            return False
+        self.baseline_f1 = baseline_f1
         
         # Step 2: Inject new rules
         if not self.inject_rules_into_detect_py():
             return False
-        
-        # Step 3: Test with new rules
-        new_f1 = self.get_new_f1()
-        if new_f1 is None:
-            self.rollback_detect_py()
-            return False
-        self.new_f1 = new_f1
-        
-        # Step 4: Decide
-        improvement = self.new_f1 - self.baseline_f1
-        
-        if improvement > 0.001:  # At least 0.1% improvement
-            print(f"\n[✅ SUCCESS] F1 improved by {improvement:.6f}")
-            print(f"  Baseline: {self.baseline_f1:.6f}")
-            print(f"  New:      {self.new_f1:.6f}")
-            
-            # Keep the rules in detect.py
-            # (they're already injected)
-            
-            # Commit to git
-            self._git_commit_rules()
-            return True
-        else:
+
+        try:
+            # Step 3: Test with new rules
+            new_f1 = self.get_new_f1()
+            if new_f1 is None:
+                return False
+            self.new_f1 = new_f1
+
+            # Step 4: Decide
+            improvement = self.new_f1 - self.baseline_f1
+
+            if improvement > 0.001:  # At least 0.1% improvement
+                print(f"\n[✅ REVIEW REQUIRED] F1 improved by {improvement:.6f}")
+                print(f"  Baseline: {self.baseline_f1:.6f}")
+                print(f"  New:      {self.new_f1:.6f}")
+
+                self.write_review_manifest(improvement)
+                return True
+
             print(f"\n[❌ REJECTED] No improvement or regression")
             print(f"  Baseline: {self.baseline_f1:.6f}")
             print(f"  New:      {self.new_f1:.6f}")
             print(f"  Change:   {improvement:.6f}")
-            
-            # Rollback
-            self.rollback_detect_py()
             return False
+        finally:
+            self.rollback_detect_py()
     
-    def _git_commit_rules(self):
-        """Commit the validated rules to git"""
-        try:
-            # Add detect.py with new rules
-            subprocess.run(['git', 'add', 'detect.py'], cwd=SECOPSAI_DIR, check=True)
-            
-            # Also add the auto_rules directory
-            subprocess.run(['git', 'add', 'auto_rules/'], cwd=SECOPSAI_DIR, check=True)
-            
-            # Commit
-            commit_msg = f"""feat: Auto-generated threat intel rules
-
-F1 improved: {self.baseline_f1:.6f} → {self.new_f1:.6f} (+{self.new_f1 - self.baseline_f1:.6f})
-
-Generated from latest threat intelligence:
-- CVE database
-- Security RSS feeds  
-- GitHub exploit PoCs
-
-Rules are automatically validated before inclusion."""
-            
-            subprocess.run(['git', 'commit', '-m', commit_msg], cwd=SECOPSAI_DIR, check=True)
-            
-            print("[GIT] Committed validated rules")
-            
-        except subprocess.CalledProcessError as e:
-            print(f"[WARN] Git commit failed: {e}")
-
-
 def main():
     """Main entry point"""
     validator = RuleValidator()
@@ -353,7 +362,7 @@ def main():
     
     if success:
         print("\n" + "=" * 60)
-        print("✅ Adaptive rules deployed successfully!")
+        print("✅ Adaptive rules validated; human review required")
         print("=" * 60)
         sys.exit(0)
     if validator.validation_failed:

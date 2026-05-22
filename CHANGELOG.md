@@ -36,6 +36,12 @@ the next tagged release.
 
 ### Security
 
+- Removed the default Telegram report recipient; report delivery now requires
+  an explicit `--chat-id` or `TELEGRAM_CHAT_ID`.
+- Made release tests and high/critical security scans block publish/deploy
+  jobs instead of continuing after known failures.
+- Changed adaptive rule validation to stage improved generated rules for human
+  review instead of committing generated code or leaving `detect.py` mutated.
 - Preserved emergency supply-chain advisory/denylist matching for removed or
   yanked compromised artifacts.
 - Preserved node-ipc, Mini Shai-Hulud, LiteLLM, mistralai, and guardrails-ai

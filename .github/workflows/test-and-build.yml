@@ -102,14 +102,12 @@ jobs:
             --exclude .git,.venv,__pycache__,data
 
       - name: Type check with mypy
-        continue-on-error: true
         run: |
           mypy detect.py evaluate.py prepare.py swarm.py --ignore-missing-imports
 
       - name: Test detection rules
         run: |
           python -m pytest tests/ -v --cov=detect --cov-report=xml --cov-report=term
-        continue-on-error: true
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@1af58845a975a7985b0beb0cbe6fbbb71a41dbad
@@ -160,7 +158,6 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Scan image with Trivy
-        continue-on-error: ${{ github.event_name != 'pull_request' }}
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           image-ref: secopsai-ci-scan:${{ github.sha }}

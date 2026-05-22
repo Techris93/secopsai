@@ -13,7 +13,6 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CHAT_ID = "623118122"
 TELEGRAM_LIMIT = 4096
 SAFE_CHUNK_SIZE = 3800
 
@@ -39,6 +38,10 @@ def _telegram_token(args: argparse.Namespace) -> str:
     if token:
         return token
     return _openclaw_telegram_token(Path(args.openclaw_config))
+
+
+def _telegram_chat_id(args: argparse.Namespace) -> str:
+    return str(args.chat_id or os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
 
 
 def _run_report(args: argparse.Namespace) -> str:
@@ -123,7 +126,7 @@ def _send_telegram(token: str, chat_id: str, text: str) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render and send deterministic SecOpsAI reports")
     parser.add_argument("--kind", required=True, choices=["daily-intel", "status-summary", "daily-brief"])
-    parser.add_argument("--chat-id", default=os.environ.get("TELEGRAM_CHAT_ID", DEFAULT_CHAT_ID))
+    parser.add_argument("--chat-id", default=None, help="Telegram chat ID; required for non-dry-run sends")
     parser.add_argument("--openclaw-config", default=str(Path.home() / ".openclaw" / "openclaw.json"))
     parser.add_argument("--dry-run", action="store_true", help="Render only; do not send to Telegram")
     return parser.parse_args()
@@ -131,16 +134,24 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if not args.dry_run:
+        chat_id = _telegram_chat_id(args)
+        if not chat_id:
+            raise SystemExit("missing --chat-id or TELEGRAM_CHAT_ID; report delivery is disabled by default")
+        token = _telegram_token(args)
+        if not token:
+            raise SystemExit("missing TELEGRAM_BOT_TOKEN and OpenClaw telegram botToken")
+    else:
+        chat_id = ""
+        token = ""
+
     report = _run_report(args)
     if args.dry_run:
         print(report)
         return 0
 
-    token = _telegram_token(args)
-    if not token:
-        raise SystemExit("missing TELEGRAM_BOT_TOKEN and OpenClaw telegram botToken")
-    _send_telegram(token, str(args.chat_id), report)
-    print(f"sent kind={args.kind} chat_id={args.chat_id}")
+    _send_telegram(token, chat_id, report)
+    print(f"sent kind={args.kind} chat_id={chat_id}")
     return 0
 
 
