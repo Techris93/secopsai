@@ -296,7 +296,7 @@ class SupplyChainDetector:
     def _generate_id(self) -> str:
         """Generate SecOpsAI-compatible finding ID"""
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        hash_suffix = hashlib.md5(str(datetime.now()).encode()).hexdigest()[:6]
+        hash_suffix = hashlib.sha256(str(datetime.now()).encode()).hexdigest()[:6]
         return f"SCF-{timestamp}-{hash_suffix}"  # Supply Chain Finding
     
     def run_full_detection(self, project_path: str = ".") -> List[SupplyChainFinding]:

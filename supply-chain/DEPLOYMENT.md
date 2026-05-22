@@ -248,7 +248,7 @@ jobs:
       
       - name: Setup SecOpsAI
         run: |
-          curl -sL https://secopsai.io/install.sh | bash
+          curl -fsSL https://secopsai.dev/install.sh | bash
           
       - name: Validate SBOM
         run: |
@@ -499,9 +499,9 @@ journalctl -u secopsai-monitor -f
 
 ## Support
 
-- Documentation: https://docs.secopsai.io
-- Issues: https://github.com/secopsai/toolkit/issues
-- Email: support@secopsai.io
+- Documentation: https://docs.secopsai.dev
+- Issues: https://github.com/Techris93/secopsai/issues
+- Email: support@secopsai.dev
 - Slack: https://secopsai.slack.com
 
 ## License

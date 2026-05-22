@@ -8,15 +8,49 @@ SecOpsAI is distributed through the existing npm package flow from
 - Repository: `https://github.com/Techris93/secopsai`
 - Current npm package manifest: `supply-chain/package.json`
 - Current npm package name: `secopsai`
+- Current prepared npm wrapper version: `1.0.1`
 - GitHub Packages package: `@techris93/secopsai`
 - Marketplace Action repo: `https://github.com/Techris93/secopsai-action`
 - Marketplace Action release: `https://github.com/Techris93/secopsai-action/releases/tag/v1.0.0`
 - Python package metadata: `pyproject.toml` exposes the `secopsai` CLI.
 - Existing GitHub workflows already build/test, scan, release containers, and
   run Blog Ops.
+- Exact-name GitHub ownership is tracked separately in
+  [Name Reservation](name-reservation.md). The intended final namespace is
+  `secopsai/secopsai`, but current local GitHub CLI auth is `Techris93`.
 
 The root of this repository does not currently contain a Node `package.json`.
 The npm-distributed CLI wrapper lives in `supply-chain/`.
+
+## npm Registry Status
+
+Registry checks on 2026-05-21 showed:
+
+- `npm view secopsai --json` returns `secopsai@1.0.0`.
+- The npm package is maintained by `techris`.
+- `npm view @techris93/secopsai --json` returns `E404` from the public npm
+  registry.
+
+That means `secopsai` is not globally available for a new unrelated owner, but
+it is already the public unscoped package name for this product line. This repo
+is prepared for the next authorized unscoped npm release as `secopsai@1.0.1`.
+
+Preferred public npm install:
+
+```bash
+npm install -g secopsai
+```
+
+The public npm publish workflow is:
+
+```text
+.github/workflows/publish-npm-package.yml
+```
+
+It validates `supply-chain/package.json`, runs `npm pack --dry-run`, and
+publishes only when manually dispatched with `dry_run=false` or when an
+`npm-v*` tag is pushed. It requires the repository secret `NPM_TOKEN` and does
+not commit `.npmrc`.
 
 ## GitHub Packages Status
 
@@ -48,7 +82,7 @@ Published workflow runs:
 
 ## Publishing Workflow
 
-Workflow:
+GitHub Packages workflow:
 
 ```text
 .github/workflows/publish-github-package.yml
@@ -81,6 +115,12 @@ Safety:
 - Generated `.tgz` files and `.npmrc` are ignored.
 
 ## Consumer Install Path
+
+For public npm consumers:
+
+```bash
+npm install -g secopsai
+```
 
 For GitHub Packages consumers:
 
@@ -146,13 +186,16 @@ main repo so changes can be reviewed alongside SecOpsAI core code.
 
 ## Ongoing Owner Actions
 
-1. After each SecOpsAI npm package release, run the GitHub Packages workflow
+1. For a public npm release, run `Publish npm Package` with `dry_run=true`.
+2. After review, run it with `dry_run=false` or push an `npm-v*` tag to publish
+   the prepared `secopsai` version.
+3. After each SecOpsAI npm package release, run the GitHub Packages workflow
    with `dry_run=true`.
-2. Run it with `dry_run=false` or push a `v*` tag to publish the matching
+4. Run it with `dry_run=false` or push a `v*` tag to publish the matching
    `@techris93/secopsai` package version.
-3. Keep `Techris93/secopsai-action` tagged releases in sync with wrapper
+5. Keep `Techris93/secopsai-action` tagged releases in sync with wrapper
    changes.
-4. If Marketplace metadata changes, update the release/listing from the
+6. If Marketplace metadata changes, update the release/listing from the
    `Techris93/secopsai-action` repository.
 
 ## Limitations

@@ -35,6 +35,7 @@ secopsai turns OpenClaw and host OS telemetry into repeatable, explainable secur
 - [API Reference](api-reference.md)
 - [GitHub Distribution](github-distribution-plan.md)
 - [GitHub Marketplace](github-marketplace.md)
+- [Name Reservation](name-reservation.md)
 - [Threat Intel (IOCs)](threat-intel.md)
 - [OpenClaw Integration](OpenClaw-Integration.md)
 - [Supply Chain Security](supply-chain.md)
@@ -75,6 +76,10 @@ SecOpsAI is available through the original install flow, GitHub Packages, and
 the published **SecOpsAI Supply-Chain Guard** GitHub Marketplace Action.
 
 ```bash
+npm install -g secopsai
+```
+
+```bash
 npm config set @techris93:registry https://npm.pkg.github.com
 npm install @techris93/secopsai
 ```
@@ -89,8 +94,10 @@ npm install @techris93/secopsai
 ```
 
 See [GitHub Distribution](github-distribution-plan.md) and
-[GitHub Marketplace](github-marketplace.md) for package, action, and release
-maintenance details.
+[npm Name Migration](npm-name-migration.md) for package release details, and
+[GitHub Marketplace](github-marketplace.md) for action release maintenance.
+Use [Name Reservation](name-reservation.md) to track GitHub, Docker Hub, PyPI,
+Homebrew, npm, and package-registry ownership.
 
 ## Platform Support
 

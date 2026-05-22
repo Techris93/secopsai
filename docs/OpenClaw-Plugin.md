@@ -14,6 +14,12 @@ The plugin lives in the separate repository at `Techris93/openclaw-secopsai-plug
 Install from ClawHub:
 
 ```bash
+openclaw plugins install secopsai
+```
+
+If your OpenClaw registry still requires the scoped alias during migration:
+
+```bash
 openclaw plugins install clawhub:@techris93/secopsai
 ```
 

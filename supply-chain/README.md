@@ -10,6 +10,12 @@ A security module for [SecOpsAI](https://secopsai.dev/) that detects and mitigat
 curl -fsSL https://secopsai.dev/install.sh | bash
 ```
 
+Or install the public npm CLI wrapper:
+
+```bash
+npm install -g secopsai
+```
+
 This installs SecOpsAI to `~/secopsai/` with the `secopsai` CLI.
 
 ## Installation

@@ -43,6 +43,7 @@ class AdaptiveIntelligencePipeline:
             'f1_baseline': 0.0,
             'f1_new': 0.0,
             'deployed': False,
+            'review_required': False,
             'errors': []
         }
         
@@ -155,19 +156,22 @@ class AdaptiveIntelligencePipeline:
 
             combined = "\n".join([result.stdout or "", result.stderr or ""])
             scores = self._extract_f1_scores(combined)
+            if result.returncode != 0:
+                self.log(f"[ERROR] evaluate.py exited non-zero: {result.returncode}")
+                if result.stderr:
+                    for line in result.stderr.splitlines()[-20:]:
+                        self.log(f"[EVAL_STDERR] {line}")
+                self.results['errors'].append(f"Validation: evaluate.py exited {result.returncode}")
+                return False
+
             if scores:
                 self.results['f1_baseline'] = scores[0]
                 self.log(f"[BASELINE] F1 Score: {self.results['f1_baseline']:.6f}")
             else:
-                self.log("[WARN] Could not parse baseline F1 from evaluate.py output")
+                self.log("[ERROR] Could not parse baseline F1 from evaluate.py output")
                 self.results['errors'].append("Validation: could not parse baseline F1")
+                return False
 
-            if result.returncode != 0:
-                self.log(f"[WARN] evaluate.py exited non-zero: {result.returncode}")
-                if result.stderr:
-                    for line in result.stderr.splitlines()[-20:]:
-                        self.log(f"[EVAL_STDERR] {line}")
-            
             return True
         except Exception as e:
             self.log(f"[ERROR] Validation failed: {e}")
@@ -196,10 +200,10 @@ class AdaptiveIntelligencePipeline:
                 for line in result.stderr.splitlines()[-80:]:
                     self.log(f"[VALIDATOR_STDERR] {line}")
             
-            # Check if it succeeded
             if result.returncode == 0:
-                self.results['deployed'] = True
-                self.log("[SUCCESS] Rules improved F1 and were deployed")
+                self.results['deployed'] = False
+                self.results['review_required'] = True
+                self.log("[SUCCESS] Rules improved F1 and were staged for human review")
             elif result.returncode == 1:
                 self.results['deployed'] = False
                 self.log("[INFO] Rules did not improve F1 - skipped deployment")
@@ -243,9 +247,10 @@ class AdaptiveIntelligencePipeline:
         
         # Build summary message
         validation_failed = any("validator failed" in str(err).lower() for err in self.results['errors'])
-        status_emoji = "✅" if self.results['deployed'] else ("❌" if validation_failed else "⚠️")
-        if self.results['deployed']:
-            outcome_line = "✅ Rules DEPLOYED"
+        review_required = bool(self.results.get('review_required'))
+        status_emoji = "✅" if review_required else ("❌" if validation_failed else "⚠️")
+        if review_required:
+            outcome_line = "✅ Rules staged for human review"
         elif validation_failed:
             outcome_line = "❌ Validation failed - rules not deployed"
         else:

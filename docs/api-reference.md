@@ -452,6 +452,12 @@ secopsai triage apply-action ACT-0001 --yes
 curl -fsSL https://secopsai.dev/install.sh | bash
 ```
 
+- Public npm package:
+
+```bash
+npm install -g secopsai
+```
+
 - The installer creates a virtualenv and installs the `secopsai` CLI into it.
 - The packaged install includes the runtime helper modules required by the CLI entrypoint.
 

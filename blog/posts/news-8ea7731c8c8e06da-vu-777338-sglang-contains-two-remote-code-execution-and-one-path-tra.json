@@ -83,5 +83,5 @@
     "RCE"
   ],
   "title": "VU#777338: SGLang contains two remote code execution and one path traversal vulnerability",
-  "updated_at": "2026-05-19T15:19:55Z"
+  "updated_at": "2026-05-20T14:40:32Z"
 }

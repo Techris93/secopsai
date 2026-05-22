@@ -25,7 +25,7 @@ import textwrap
 import time
 import urllib.parse
 import urllib.request
-import xmlrpc.client
+import xmlrpc.client  # nosec B411
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
@@ -34,6 +34,13 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import soc_store
+
+try:
+    from defusedxml.xmlrpc import monkey_patch as _defuse_xmlrpc
+
+    _defuse_xmlrpc()
+except ImportError:  # pragma: no cover - dependency is declared for runtime.
+    pass
 
 try:
     import tomllib

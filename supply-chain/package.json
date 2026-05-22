@@ -1,6 +1,6 @@
 {
   "name": "secopsai",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "SecOpsAI - Unified Security Operations Platform with Supply Chain Security Module",
   "author": "SecOpsAI Research",
   "license": "MIT",
@@ -46,7 +46,7 @@
   },
   "modules": {
     "supply-chain": {
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Supply chain attack detection and mitigation",
       "commands": ["scan", "monitor", "check", "validate", "respond"]
     }

@@ -37,7 +37,7 @@
         <key>TELEGRAM_BOT_TOKEN</key>
         <string>SET_ME_LOCALLY</string>
         <key>TELEGRAM_CHAT_ID</key>
-        <string>623118122</string>
+        <string>SET_ME_LOCALLY</string>
     </dict>
     
     <key>RunAtLoad</key>

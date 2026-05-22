@@ -25,6 +25,9 @@ This supply chain security module integrates **natively** with SecOpsAI's existi
 # Install SecOpsAI first
 curl -fsSL https://secopsai.dev/install.sh | bash
 
+# Or use the public npm CLI wrapper
+npm install -g secopsai
+
 # Install supply chain module
 cd ~/secopsai
 source .venv/bin/activate

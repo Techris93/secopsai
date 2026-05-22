@@ -49,8 +49,19 @@ Security note: only run a `curl | bash` installer if you trust the publisher and
 
 ### GitHub Distribution
 
-SecOpsAI keeps its existing npm package flow and is now also published through
-GitHub Packages for GitHub-native installs:
+SecOpsAI's public npm package name is `secopsai`, so npm users can install the
+CLI wrapper with the clean unscoped name:
+
+```bash
+npm install -g secopsai
+```
+
+The next prepared npm wrapper release is `secopsai@1.0.1`; publishing still
+requires an authorized npm maintainer and must not be run from an untrusted
+machine. See [docs/npm-name-migration.md](docs/npm-name-migration.md).
+
+SecOpsAI is also published through GitHub Packages for GitHub-native installs,
+where GitHub's npm registry keeps the package scoped:
 
 ```bash
 npm config set @techris93:registry https://npm.pkg.github.com
@@ -186,8 +197,11 @@ python3 cli.py correlate
 Install SecOpsAI directly as an OpenClaw plugin for seamless integration:
 
 ```bash
-openclaw plugins install clawhub:@techris93/secopsai
+openclaw plugins install secopsai
 ```
+
+If your OpenClaw registry still requires the scoped alias during migration, use
+`openclaw plugins install clawhub:@techris93/secopsai`.
 
 Available plugin tools:
 

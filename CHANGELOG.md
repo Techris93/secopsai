@@ -28,10 +28,23 @@ the next tagged release.
   preserving the existing npm package release flow.
 - Published the **SecOpsAI Supply-Chain Guard** GitHub Marketplace Action from
   `Techris93/secopsai-action`.
+- Prepared the next unscoped npm wrapper release path as `secopsai@1.0.1`
+  with a manual/tag-gated npm publish workflow.
+- Added guarded PyPI and Docker Hub publish workflows plus a Homebrew tap
+  reservation for SecOpsAI name ownership.
 - Added a changelog entry helper at `scripts/changelog_entry.py`.
 
 ### Security
 
+- Removed the default Telegram report recipient; report delivery now requires
+  an explicit `--chat-id` or `TELEGRAM_CHAT_ID`.
+- Made release tests and high/critical security scans block publish/deploy
+  jobs instead of continuing after known failures.
+- Hardened Security Scan workflow artifact handling so SARIF uploads are
+  per-file guarded, dependency audits target project requirements, and
+  high-severity Bandit findings remain blocking without legacy scan noise.
+- Changed adaptive rule validation to stage improved generated rules for human
+  review instead of committing generated code or leaving `detect.py` mutated.
 - Preserved emergency supply-chain advisory/denylist matching for removed or
   yanked compromised artifacts.
 - Preserved node-ipc, Mini Shai-Hulud, LiteLLM, mistralai, and guardrails-ai
@@ -50,7 +63,10 @@ the next tagged release.
 
 - Documented the multi-ecosystem support matrix, per-ecosystem CLI examples,
   limitations, operator triage workflow, mitigation guidance, changelog
-  workflow, GitHub Packages install path, and GitHub Marketplace Action usage.
+  workflow, public npm install path, GitHub Packages install path, and GitHub
+  Marketplace Action usage.
+- Documented SecOpsAI name reservation status across GitHub, Docker Hub, PyPI,
+  Homebrew, npm, and GitHub Packages.
 
 ## 2026-05 SecOpsAI Operator Upgrades
 

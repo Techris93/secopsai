@@ -303,9 +303,12 @@ class IncidentResponsePlaybooks:
         elif command:
             print(f"   Executing: {command}")
             try:
+                # Curated incident-response playbook commands may use shell
+                # operators, but execution stays argv-based and remains gated
+                # by dry-run/operator confirmation.
+                shell_path = shutil.which("sh") or "/bin/sh"
                 proc = subprocess.run(
-                    command,
-                    shell=True,
+                    [shell_path, "-c", command],
                     capture_output=True,
                     text=True,
                     timeout=30

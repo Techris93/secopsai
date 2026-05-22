@@ -1,0 +1,57 @@
+name: Publish npm Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate package without publishing"
+        required: true
+        default: true
+        type: boolean
+  push:
+    tags:
+      - "npm-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-npm-package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-npm-package:
+    runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NPM_PACKAGE: "secopsai"
+
+    steps:
+      - name: Checkout SecOpsAI
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Node for npm
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Validate unscoped npm manifest
+        working-directory: supply-chain
+        run: |
+          set -euo pipefail
+          node -e 'const pkg=require("./package.json"); if (pkg.name !== process.env.NPM_PACKAGE) { throw new Error(`Expected ${process.env.NPM_PACKAGE}, got ${pkg.name}`); } console.log(`Prepared ${pkg.name}@${pkg.version}`)'
+
+      - name: Validate package contents
+        working-directory: supply-chain
+        run: npm pack --dry-run
+
+      - name: Publish to npm
+        if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+        working-directory: supply-chain
+        run: npm publish --access public
+
+      - name: Dry-run summary
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run != false }}
+        run: |
+          echo "Dry run completed. Re-run with dry_run=false or push an npm-v* tag to publish secopsai to npm."
