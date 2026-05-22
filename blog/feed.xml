@@ -6,7 +6,21 @@
     <link>https://blog.secopsai.dev/</link>
     <description>Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.</description>
     <language>en-us</language>
-    <lastBuildDate>Wed, 20 May 2026 14:40:32 GMT</lastBuildDate>
+    <lastBuildDate>Fri, 22 May 2026 15:47:09 GMT</lastBuildDate>
+    <item>
+      <title>CISA Enhances Known Exploited Vulnerabilities Catalog to Include New Nomination Form</title>
+      <link>https://blog.secopsai.dev/posts/news-0361c07f135b13ef-cisa-enhances-known-exploited-vulnerabilities-catalog-to-include-new.html</link>
+      <guid>https://blog.secopsai.dev/posts/news-0361c07f135b13ef-cisa-enhances-known-exploited-vulnerabilities-catalog-to-include-new.html</guid>
+      <pubDate>Fri, 22 May 2026 15:47:09 GMT</pubDate>
+      <description>CISA News reports a security-relevant update titled &quot;CISA Enhances Known Exploited Vulnerabilities Catalog to Include New Nomination Form&quot;. Operators should validate the source details, map any affected assets, and add SecOpsAI-specific detections or mitigations before publication.</description>
+    </item>
+    <item>
+      <title>Google Workspace’s continuous approach to mitigating indirect prompt injections</title>
+      <link>https://blog.secopsai.dev/posts/news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt.html</link>
+      <guid>https://blog.secopsai.dev/posts/news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt.html</guid>
+      <pubDate>Thu, 02 Apr 2026 12:00:00 GMT</pubDate>
+      <description>Google Online Security Blog reports a security-relevant update titled &quot;Google Workspace’s continuous approach to mitigating indirect prompt injections&quot;. Operators should validate the source details, map any affected assets, and add SecOpsAI-specific detections or mitigations before publication.</description>
+    </item>
     <item>
       <title>VU#777338: SGLang contains two remote code execution and one path traversal vulnerability</title>
       <link>https://blog.secopsai.dev/posts/news-8ea7731c8c8e06da-vu-777338-sglang-contains-two-remote-code-execution-and-one-path-tra.html</link>
@@ -18,7 +32,7 @@
       <title>Post-quantum encryption for Cloudflare IPsec is generally available</title>
       <link>https://blog.secopsai.dev/posts/news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available.html</link>
       <guid>https://blog.secopsai.dev/posts/news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available.html</guid>
-      <pubDate>Wed, 20 May 2026 14:40:32 GMT</pubDate>
+      <pubDate>Fri, 22 May 2026 15:47:09 GMT</pubDate>
       <description>Cloudflare IPsec now has generally available support for post-quantum encryption via hybrid ML-KEM. We’ve confirmed interoperability with Cisco and Fortinet.</description>
     </item>
     <item>

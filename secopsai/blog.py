@@ -1844,6 +1844,14 @@ def _published_post_is_current(post: Dict[str, Any], path: Path, paths: BlogPath
         public_post = _load_json(public_json)
     except Exception:
         return False
+    reviewed_at = post.get("reviewed_at")
+    public_updated = public_post.get("updated_at") or public_post.get("published_at")
+    if reviewed_at and public_updated:
+        try:
+            if str(reviewed_at) > str(public_updated):
+                return False
+        except Exception:
+            pass
     candidate = _public_post(copy.deepcopy({**post, "slug": slug}))
     for key in ("title", "summary", "body_markdown"):
         if str(public_post.get(key) or "") != str(candidate.get(key) or ""):

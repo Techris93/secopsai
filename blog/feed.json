@@ -7,6 +7,55 @@
       "affected_packages": [],
       "authors": [
         {
+          "name": "CISA News"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-0361c07f135b13ef-cisa-enhances-known-exploited-vulnerabilities-catalog-to-include-new.svg",
+      "date_modified": "2026-05-22T15:47:09Z",
+      "date_published": "Thu, 21 May 26 12:00:00 +0000",
+      "id": "https://blog.secopsai.dev/posts/news-0361c07f135b13ef-cisa-enhances-known-exploited-vulnerabilities-catalog-to-include-new.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-0361c07f135b13ef-cisa-enhances-known-exploited-vulnerabilities-catalog-to-include-new.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "high",
+      "summary": "CISA News reports a security-relevant update titled \"CISA Enhances Known Exploited Vulnerabilities Catalog to Include New Nomination Form\". Operators should validate the source details, map any affected assets, and add SecOpsAI-specific detections or mitigations before publication.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "CISA",
+        "CISA KEV"
+      ],
+      "title": "CISA Enhances Known Exploited Vulnerabilities Catalog to Include New Nomination Form",
+      "url": "https://blog.secopsai.dev/posts/news-0361c07f135b13ef-cisa-enhances-known-exploited-vulnerabilities-catalog-to-include-new.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Google Online Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt.svg",
+      "date_modified": "2026-05-22T15:47:09Z",
+      "date_published": "2026-04-02T12:00:00.003-04:00",
+      "id": "https://blog.secopsai.dev/posts/news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "Google Online Security Blog reports a security-relevant update titled \"Google Workspace\u2019s continuous approach to mitigating indirect prompt injections\". Operators should validate the source details, map any affected assets, and add SecOpsAI-specific detections or mitigations before publication.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "Google"
+      ],
+      "title": "Google Workspace\u2019s continuous approach to mitigating indirect prompt injections",
+      "url": "https://blog.secopsai.dev/posts/news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
           "name": "CERT/CC Vulnerability Notes"
         }
       ],

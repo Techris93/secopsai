@@ -1,0 +1,80 @@
+{
+  "affected_artifacts": [],
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "affected_products": [],
+  "author": "Google Online Security Blog",
+  "body_markdown": "## Source Metadata\n\n- Source: Google Online Security Blog\n- Canonical URL: http://security.googleblog.com/feeds/7611943504123181983/comments/default\n- Additional references: none\n- Published at: 2026-04-02T12:00:00.003-04:00\n- Fetched at: 2026-05-22T15:45:29Z\n- Trust level: vendor\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, and track any source-backed detections or mitigations added during review.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- None found deterministically; reviewer should add source-backed affected assets if present.\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Compare the source-backed claim against local assets and current SOC findings.\n- Create a follow-up triage task if the affected technology is present.\n- Document whether this item requires a new advisory, detection, or mitigation note.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt\n```\n\n## References\n\n- http://security.googleblog.com/feeds/7611943504123181983/comments/default",
+  "canonical_url": "http://security.googleblog.com/feeds/7611943504123181983/comments/default",
+  "categories": [
+    "Security News",
+    "Threat Intelligence",
+    "Google"
+  ],
+  "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [],
+    "products": [],
+    "severity_signals": [],
+    "urls": []
+  },
+  "featured": false,
+  "fetched_at": "2026-05-22T15:45:29Z",
+  "images": [],
+  "iocs": [],
+  "news_key": "07135b7bac96747f",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt"
+  ],
+  "primary_references": [
+    "http://security.googleblog.com/feeds/7611943504123181983/comments/default"
+  ],
+  "published_at": "2026-04-02T12:00:00.003-04:00",
+  "readiness_blockers": [],
+  "readiness_score": 95,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [
+    "no CVEs, IOCs, packages, or products were extracted deterministically"
+  ],
+  "reading_time": 1,
+  "references": [
+    "http://security.googleblog.com/feeds/7611943504123181983/comments/default"
+  ],
+  "related_posts": [],
+  "review_status": "approved",
+  "reviewed_at": "2026-05-22T15:46:10Z",
+  "severity": "medium",
+  "severity_reason": "Security-relevant vulnerability/news signal.",
+  "slug": "news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt",
+  "social_image": "/assets/social/news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt.svg",
+  "social_image_alt": "SecOpsAI social preview card for Google Workspace\u2019s continuous approach to mitigating indirect prompt injections",
+  "social_image_height": 630,
+  "social_image_width": 1200,
+  "source_category": "Threat Intelligence",
+  "source_links": [
+    "http://security.googleblog.com/feeds/7611943504123181983/comments/default"
+  ],
+  "source_name": "Google Online Security Blog",
+  "source_trust_level": "vendor",
+  "source_url": "https://security.googleblog.com/",
+  "sources": [
+    "http://security.googleblog.com/feeds/7611943504123181983/comments/default"
+  ],
+  "status": "published",
+  "summary": "Google Online Security Blog reports a security-relevant update titled \"Google Workspace\u2019s continuous approach to mitigating indirect prompt injections\". Operators should validate the source details, map any affected assets, and add SecOpsAI-specific detections or mitigations before publication.",
+  "tags": [
+    "Security News",
+    "Threat Intelligence",
+    "Google"
+  ],
+  "title": "Google Workspace\u2019s continuous approach to mitigating indirect prompt injections",
+  "updated_at": "2026-05-22T15:47:09Z"
+}

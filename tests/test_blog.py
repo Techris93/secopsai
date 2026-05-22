@@ -707,6 +707,44 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertIn("https://example.com/source", updated["references"])
         self.assertGreaterEqual(updated["readiness_score"], 80)
 
+    def test_approved_draft_reapproved_after_publish_is_treated_as_approved(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.drafts.mkdir(parents=True)
+            paths.posts.mkdir(parents=True)
+            draft = blog._base_post(
+                title="Re-approved public story",
+                summary="Re-approved public source-backed summary.",
+                categories=["Security News"],
+                sources=["https://example.com/re-approved"],
+                slug="re-approved-story",
+            )
+            draft.update({
+                "external_news": True,
+                "review_status": "approved",
+                "reviewed_at": "2026-05-22T22:00:00Z",
+                "review_checklist": [{"label": "Main claim is supported by source", "status": "completed"}],
+                "body_markdown": "# Re-approved public story\n\nThis draft content matches but was approved after deployment.",
+            })
+            draft_path = paths.drafts / "re-approved-story.json"
+            draft_path.write_text(json.dumps(draft), encoding="utf-8")
+            (paths.posts / "re-approved-story.json").write_text(json.dumps({
+                "slug": "re-approved-story",
+                "title": draft["title"],
+                "summary": draft["summary"],
+                "body_markdown": blog._public_post(draft)["body_markdown"],
+                "status": "published",
+                "updated_at": "2026-05-22T15:47:09Z",
+            }), encoding="utf-8")
+
+            listed = blog.news_review_list(paths=paths)
+            approved = blog.news_review_list(status="approved", paths=paths)
+            deployed = blog.news_review_list(status="deployed", paths=paths)
+
+        self.assertEqual(listed["drafts"][0]["review_status"], "approved")
+        self.assertEqual(approved["total"], 1)
+        self.assertEqual(deployed["total"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
