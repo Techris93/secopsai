@@ -75,9 +75,9 @@ jobs:
 
       - name: Run Evaluation Harness v2
         id: eval
+        env:
+          EVAL_TYPE: ${{ github.event.inputs.evaluation_type || 'full' }}
         run: |
-          EVAL_TYPE="${{ github.event.inputs.evaluation_type || 'full' }}"
-          
           if [ "$EVAL_TYPE" == "full" ]; then
             python -m eval.harness.runner --full --ci 2>&1 | tee eval-results.txt
           elif [ "$EVAL_TYPE" == "accuracy" ]; then

@@ -84,7 +84,7 @@ def utc_now() -> str:
 
 
 def _sha1(text: str) -> str:
-    return hashlib.sha1(text.encode("utf-8"), usedforsecurity=False).hexdigest()
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _fetch_text(url: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> str:
