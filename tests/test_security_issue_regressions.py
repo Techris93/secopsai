@@ -140,6 +140,27 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
         assert "hashFiles(" in step["if"]
         assert "\n" not in step["with"]["sarif_file"]
 
+    categories = []
+    for step in security_steps:
+        if step.get("uses", "").startswith("github/codeql-action/upload-sarif"):
+            cat = step.get("with", {}).get("category")
+            assert cat is not None, f"Step '{step.get('name')}' is missing a category"
+            categories.append(cat)
+    assert len(categories) == len(set(categories))
+    assert "trivy-fs" in categories
+    assert "trivy-secret" in categories
+    assert "trivy-config" in categories
+    assert "dependency-check" in categories
+
+    build_workflow = yaml.safe_load(test_build)
+    build_steps = build_workflow["jobs"]["build-container"]["steps"]
+    image_upload_step = next(step for step in build_steps if step.get("name") == "Upload Trivy results to GitHub Security tab")
+    assert image_upload_step["with"]["category"] == "trivy-image"
+
+    eval_harness = (ROOT / ".github" / "workflows" / "eval-harness-v2.yml").read_text(encoding="utf-8")
+    assert "EVAL_TYPE=\"${{ github.event.inputs.evaluation_type" not in eval_harness
+    assert "EVAL_TYPE: ${{ github.event.inputs.evaluation_type" in eval_harness
+
 
 def test_container_and_playbook_security_gates_stay_clean():
     dockerfile = (ROOT / "Dockerfile").read_text()

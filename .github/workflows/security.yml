@@ -66,6 +66,7 @@ jobs:
         continue-on-error: true
         with:
           sarif_file: "trivy-fs-results.sarif"
+          category: "trivy-fs"
 
       - name: Upload Trivy secret SARIF
         uses: github/codeql-action/upload-sarif@a60c4df7a135c7317c1e9ddf9b5a9b07a910dda9
@@ -73,6 +74,7 @@ jobs:
         continue-on-error: true
         with:
           sarif_file: "trivy-secret-results.sarif"
+          category: "trivy-secret"
 
       - name: Upload Trivy config SARIF
         uses: github/codeql-action/upload-sarif@a60c4df7a135c7317c1e9ddf9b5a9b07a910dda9
@@ -80,6 +82,7 @@ jobs:
         continue-on-error: true
         with:
           sarif_file: "trivy-config-results.sarif"
+          category: "trivy-config"
 
       - name: Run pip-audit (dependency vulnerabilities)
         run: |
@@ -101,6 +104,7 @@ jobs:
         continue-on-error: true
         with:
           sarif_file: "reports/dependency-check-report.sarif"
+          category: "dependency-check"
 
       - name: Create security badge
         run: |

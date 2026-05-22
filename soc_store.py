@@ -36,7 +36,7 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
     directory = os.path.dirname(resolved_path)
     os.makedirs(directory, exist_ok=True)
     try:
-        os.chmod(directory, 0o700)
+        os.chmod(directory, 0o700)  # nosec B103  # nosem
     except OSError:
         pass
 
@@ -44,7 +44,7 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     try:
-        os.chmod(resolved_path, 0o600)
+        os.chmod(resolved_path, 0o600)  # nosec B103
     except OSError:
         pass
     return connection

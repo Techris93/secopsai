@@ -172,6 +172,7 @@ jobs:
         continue-on-error: true
         with:
           sarif_file: "trivy-results.sarif"
+          category: "trivy-image"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
