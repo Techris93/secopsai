@@ -35,7 +35,6 @@ jobs:
         with:
           scan-type: fs
           severity: CRITICAL,HIGH
-          ignore-unfixed: true
           format: table
           exit-code: "1"
 

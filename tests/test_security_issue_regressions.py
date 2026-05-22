@@ -155,7 +155,7 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
     build_workflow = yaml.safe_load(test_build)
     build_steps = build_workflow["jobs"]["build-container"]["steps"]
     image_scan_step = next(step for step in build_steps if step.get("name") == "Scan image with Trivy")
-    assert image_scan_step["with"]["ignore-unfixed"] is True
+    assert "ignore-unfixed" not in image_scan_step["with"]
     image_upload_step = next(step for step in build_steps if step.get("name") == "Upload Trivy results to GitHub Security tab")
     assert image_upload_step["with"]["category"] == "trivy-image"
 
@@ -168,7 +168,7 @@ def test_container_and_playbook_security_gates_stay_clean():
     dockerfile = (ROOT / "Dockerfile").read_text()
     playbook = (ROOT / "supply-chain/playbooks/incident_response.py").read_text()
 
-    assert "apt-get install -y --no-install-recommends" in dockerfile
+    assert "apk add --no-cache" in dockerfile
     assert "shell=True" not in playbook
 
 
@@ -185,7 +185,7 @@ def test_additional_sast_and_container_security_fixes():
     assert "os.chmod(directory, 0o700)  # nosec B103  # nosem" in common_py
     assert "os.chmod(output_dir, 0o700)  # nosec B103  # nosem" in findings_py
 
-    # Assert Dockerfile upgrades dependencies and uses bookworm
-    assert "FROM python:3.10-slim-bookworm" in dockerfile
-    assert "apt-get upgrade -y" in dockerfile
+    # Assert Dockerfile upgrades dependencies and uses alpine
+    assert "FROM python:3.10-alpine" in dockerfile
+    assert "apk upgrade" in dockerfile
     assert "pip install --no-cache-dir --upgrade pip setuptools wheel" in dockerfile

@@ -1,4 +1,4 @@
-FROM python:3.10-slim-bookworm
+FROM python:3.10-alpine
 
 # Metadata
 LABEL maintainer="secopsai"
@@ -9,21 +9,22 @@ LABEL version="1.0.0"
 WORKDIR /opt/secopsai
 
 # Install system dependencies and apply security updates
-RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+RUN apk update && apk upgrade && apk add --no-cache \
     git \
     curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    ca-certificates
 
 # Copy project files
 COPY . .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies (including build deps for compile-on-demand)
+RUN apk add --no-cache --virtual .build-deps build-base linux-headers python3-dev && \
+    pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt && \
+    apk del .build-deps
 
 # Create non-root user for security
-RUN useradd -m -u 1000 secops && \
+RUN adduser -D -u 1000 secops && \
     chown -R secops:secops /opt/secopsai
 
 # Switch to non-root user
