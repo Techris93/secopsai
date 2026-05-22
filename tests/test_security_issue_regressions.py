@@ -168,3 +168,22 @@ def test_container_and_playbook_security_gates_stay_clean():
 
     assert "apt-get install -y --no-install-recommends" in dockerfile
     assert "shell=True" not in playbook
+
+
+def test_additional_sast_and_container_security_fixes():
+    common_py = (ROOT / "openclaw_adapters" / "common.py").read_text(encoding="utf-8")
+    findings_py = (ROOT / "openclaw_findings.py").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    # Assert SHA1 is not used for record IDs in openclaw_adapters/common.py
+    assert "hashlib.sha1" not in common_py
+    assert "hashlib.sha256" in common_py
+
+    # Assert chmod statements are bypassed with proper annotations
+    assert "os.chmod(directory, 0o700)  # nosec B103  # nosem" in common_py
+    assert "os.chmod(output_dir, 0o700)  # nosec B103  # nosem" in findings_py
+
+    # Assert Dockerfile upgrades dependencies and uses bookworm
+    assert "FROM python:3.10-slim-bookworm" in dockerfile
+    assert "apt-get upgrade -y" in dockerfile
+    assert "pip install --no-cache-dir --upgrade pip setuptools wheel" in dockerfile

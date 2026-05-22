@@ -103,7 +103,7 @@ def normalize_status(value: Any, default: str) -> str:
 
 
 def stable_record_id(surface: str, source_path: str, index: int, record: Dict[str, Any]) -> str:
-    digest = hashlib.sha1(
+    digest = hashlib.sha256(
         json.dumps(
             {
                 "surface": surface,
@@ -169,7 +169,7 @@ def ensure_private_path(path: str) -> None:
     if directory:
         os.makedirs(directory, exist_ok=True)
         try:
-            os.chmod(directory, 0o700)
+            os.chmod(directory, 0o700)  # nosec B103  # nosem
         except OSError:
             pass
 

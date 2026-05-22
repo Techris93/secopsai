@@ -280,7 +280,7 @@ def build_bundle(source_path: str, events: List[Dict[str, Any]]) -> Dict[str, An
 def write_bundle(output_dir: str, bundle: Dict[str, Any]) -> str:
     os.makedirs(output_dir, exist_ok=True)
     try:
-        os.chmod(output_dir, 0o700)
+        os.chmod(output_dir, 0o700)  # nosec B103  # nosem
     except OSError:
         pass
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
