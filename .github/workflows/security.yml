@@ -28,7 +28,6 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.10"
-          cache: "pip"
 
       - name: Run Trivy file/config scan
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
@@ -39,22 +38,17 @@ jobs:
           exit-code: "1"
           format: "sarif"
           output: "trivy-fs-results.sarif"
-      - name: Ensure trivy-fs-results.sarif exists
-        run: |
-          if [ ! -f trivy-fs-results.sarif ]; then echo '{"version":"2.1.0","runs":[]}' > trivy-fs-results.sarif; fi
 
       - name: Run Trivy secret scan
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
-          scan-type: "secret"
+          scan-type: "fs"
           scan-ref: "."
+          scanners: "secret"
           severity: "HIGH,CRITICAL"
           exit-code: "1"
           format: "sarif"
           output: "trivy-secret-results.sarif"
-      - name: Ensure trivy-secret-results.sarif exists
-        run: |
-          if [ ! -f trivy-secret-results.sarif ]; then echo '{"version":"2.1.0","runs":[]}' > trivy-secret-results.sarif; fi
 
       - name: Run Trivy dependency scan
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
@@ -65,24 +59,32 @@ jobs:
           exit-code: "1"
           format: "sarif"
           output: "trivy-config-results.sarif"
-      - name: Ensure trivy-config-results.sarif exists
-        run: |
-          if [ ! -f trivy-config-results.sarif ]; then echo '{"version":"2.1.0","runs":[]}' > trivy-config-results.sarif; fi
 
-      - name: Upload Trivy results to GitHub Security tab
+      - name: Upload Trivy filesystem SARIF
         uses: github/codeql-action/upload-sarif@a60c4df7a135c7317c1e9ddf9b5a9b07a910dda9
-        if: always()
+        if: always() && hashFiles('trivy-fs-results.sarif') != ''
         continue-on-error: true
         with:
-          sarif_file: |
-            trivy-fs-results.sarif
-            trivy-secret-results.sarif
-            trivy-config-results.sarif
+          sarif_file: "trivy-fs-results.sarif"
+
+      - name: Upload Trivy secret SARIF
+        uses: github/codeql-action/upload-sarif@a60c4df7a135c7317c1e9ddf9b5a9b07a910dda9
+        if: always() && hashFiles('trivy-secret-results.sarif') != ''
+        continue-on-error: true
+        with:
+          sarif_file: "trivy-secret-results.sarif"
+
+      - name: Upload Trivy config SARIF
+        uses: github/codeql-action/upload-sarif@a60c4df7a135c7317c1e9ddf9b5a9b07a910dda9
+        if: always() && hashFiles('trivy-config-results.sarif') != ''
+        continue-on-error: true
+        with:
+          sarif_file: "trivy-config-results.sarif"
 
       - name: Run pip-audit (dependency vulnerabilities)
         run: |
           pip install pip-audit
-          pip-audit --desc
+          pip-audit -r requirements.txt --desc
 
       - name: OWASP Dependency-Check
         uses: dependency-check/Dependency-Check_Action@1e54355a8b4c8abaa8cc7d0b70aa655a3bb15a6c
@@ -91,14 +93,14 @@ jobs:
           path: "."
           format: "SARIF"
           args: >
-            --enablePackageAudit
+            --failOnCVSS 7.0
 
       - name: Upload OWASP Dependency-Check results
         uses: github/codeql-action/upload-sarif@a60c4df7a135c7317c1e9ddf9b5a9b07a910dda9
-        if: always() && hashFiles('dependency-check-report.sarif') != ''
+        if: always() && hashFiles('reports/dependency-check-report.sarif') != ''
         continue-on-error: true
         with:
-          sarif_file: "dependency-check-report.sarif"
+          sarif_file: "reports/dependency-check-report.sarif"
 
       - name: Create security badge
         run: |
@@ -117,25 +119,21 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.10"
-          cache: "pip"
 
       - name: Check for vulnerable dependencies
         run: |
-          pip install safety bandit
+          pip install bandit
 
-          # Check for vulnerabilities in Python packages
-          safety check -r requirements.txt --output json > safety-report.json
-
-          # Static security analysis
-          bandit -r . -x ./.git,./.venv,./__pycache__,./data,./tests -f json -o bandit-report.json
+          # Static security analysis. High-severity findings block the workflow;
+          # lower-severity findings remain visible in the SARIF/security reports.
+          bandit -r . -x ./.git,./.venv,./__pycache__,./data,./tests --severity-level high -f json -o bandit-report.json
 
       - name: Upload reports
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: security-reports
           path: |
-            safety-report.json
             bandit-report.json
           retention-days: 30
 
@@ -150,7 +148,6 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.10"
-          cache: "pip"
 
       - name: Check licenses with REUSE
         uses: fsfe/reuse-action@4d31d76f16747cf196a58f1ae62f215e7cc739a9

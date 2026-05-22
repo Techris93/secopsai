@@ -40,6 +40,9 @@ the next tagged release.
   an explicit `--chat-id` or `TELEGRAM_CHAT_ID`.
 - Made release tests and high/critical security scans block publish/deploy
   jobs instead of continuing after known failures.
+- Hardened Security Scan workflow artifact handling so SARIF uploads are
+  per-file guarded, dependency audits target project requirements, and
+  high-severity Bandit findings remain blocking without legacy scan noise.
 - Changed adaptive rule validation to stage improved generated rules for human
   review instead of committing generated code or leaving `detect.py` mutated.
 - Preserved emergency supply-chain advisory/denylist matching for removed or

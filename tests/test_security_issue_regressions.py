@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import yaml
+
 import adaptive_intelligence_pipeline as pipeline_mod
 import adaptive_rule_validator as validator_mod
 
@@ -113,7 +115,35 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
     assert "Test detection rules\n        run:" in test_build
     assert "python -m pytest tests/ -v --cov=detect" in test_build
     assert "exit-code: \"0\"" not in security
+    assert "scanners: \"secret\"" in security
+    assert "scan-type: \"secret\"" not in security
+    assert "sarif_file: |\n" not in security
+    assert "hashFiles('trivy-fs-results.sarif') != ''" in security
+    assert "hashFiles('trivy-secret-results.sarif') != ''" in security
+    assert "hashFiles('trivy-config-results.sarif') != ''" in security
+    assert "pip-audit -r requirements.txt --desc" in security
+    assert "pip-audit --desc" not in security
+    assert "safety check" not in security
+    assert "--enablePackageAudit" not in security
+    assert "--failOnCVSS 7.0" in security
+    assert "--severity-level high" in security
     assert "pip-audit --desc || true" not in security
     assert "safety check -r requirements.txt --output json > safety-report.json ||" not in security
     assert "bandit -r . -x ./.git,./.venv,./__pycache__,./data,./tests -f json -o bandit-report.json ||" not in security
     assert "Run Semgrep\n        continue-on-error: true" not in security_scan
+
+    workflow = yaml.safe_load(security)
+    security_steps = workflow["jobs"]["security"]["steps"]
+    upload_steps = [step for step in security_steps if str(step.get("name", "")).startswith("Upload Trivy")]
+    assert len(upload_steps) == 3
+    for step in upload_steps:
+        assert "hashFiles(" in step["if"]
+        assert "\n" not in step["with"]["sarif_file"]
+
+
+def test_container_and_playbook_security_gates_stay_clean():
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    playbook = (ROOT / "supply-chain/playbooks/incident_response.py").read_text()
+
+    assert "apt-get install -y --no-install-recommends" in dockerfile
+    assert "shell=True" not in playbook
