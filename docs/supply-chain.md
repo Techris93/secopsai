@@ -14,7 +14,7 @@ Supply chain attacks have grown 742% since 2024. SecOpsAI adds a critical defens
 | **PyPI packages** | litellm@1.82.7 | .pth file monitoring + imports |
 | **crates.io** | Rust crates | Advisory matching + `build.rs`/proc-macro local rules |
 | **Chrome Web Store** | Browser extensions | Advisory matching + manifest/permission/background-script rules |
-| **Packagist** | Composer PHP packages | Advisory matching + Composer script/PHP source rules |
+| **Packagist** | Composer PHP packages | Advisory matching + source refs/tag provenance + Composer autoload/PHP source rules |
 | **Go Modules** | Go module paths | Advisory matching + go.mod/init/process/network/env rules |
 | **Hugging Face Hub** | Models and repos | Advisory matching + unsafe loading/custom-code metadata rules |
 | **Maven Central** | Java artifacts | Advisory matching + POM/plugin/source behavior rules |
@@ -154,6 +154,9 @@ secopsai supply-chain watch-registry --ecosystem crates --package serde --since 
 # Watch Packagist/Composer metadata.
 secopsai supply-chain watch-registry --ecosystem packagist --package vendor/package --since 1d --dry-run --json
 
+# Watch a Packagist namespace for coordinated source/tag movement.
+secopsai supply-chain watch-registry --ecosystem packagist --namespace laravel-lang --since 7d --dry-run --json
+
 # Persist scan history and SOC findings only after you are ready to mutate local state.
 secopsai supply-chain watch-registry --ecosystem npm --package node-ipc --since 2h --persist
 ```
@@ -164,6 +167,17 @@ version with the previous publish, and runs the same deterministic package-diff
 rules used by `scan` and `explain-verdict`. NuGet has limited publish timestamp
 data in the flat-container API, so SecOpsAI reports version-delta monitoring for
 that ecosystem. It does not install or execute suspicious packages.
+
+For Packagist, `watch-registry` also returns source-first evidence where
+available: source URLs, source references, dist references, historical
+source/dist ref changes, high-volume version activity, and Composer/PHP static
+signals. Namespace mode expands a Composer vendor such as `laravel-lang` through
+Packagist search and scans each matching `vendor/package` without running
+Composer scripts or package code.
+
+See [Composer/Packagist Source-First Detection](composer-packagist-source-detection.md)
+for tag-rewrite, `autoload.files`, PHP credential-stealer, and `composer.lock`
+triage details.
 
 For node-ipc-style compromises, SecOpsAI looks for:
 

@@ -67,6 +67,31 @@ Gaps:
 
 ## Incident Root Cause
 
+### Laravel-Lang Composer/Packagist Tag-Rewrite Campaign
+
+Likely miss:
+
+- Packagist support was package/version reactive and did not continuously
+  compare source references or GitHub tag state.
+- Campaign discovery could see a title about a Composer compromise but lacked a
+  source-first path to prove affected package/version evidence from Packagist and
+  GitHub.
+- Composer static rules did not explicitly model `autoload.files` helper
+  backdoors, disabled TLS verification, temp staging, cloud metadata,
+  Kubernetes token reads, `/proc/*/environ`, or broad developer credential
+  collection.
+
+Fix:
+
+- Added Packagist source/dist reference extraction, package namespace watch,
+  source snapshot comparison, and historical metadata-change signals.
+- Added deterministic GitHub tag provenance helpers for rewritten tags, mass tag
+  activity, unreachable commits, and unexpected fork origins.
+- Strengthened Composer/PHP static rules for autoload backdoors and credential
+  stealer behavior.
+- Added a source-backed Packagist emergency advisory and local `composer.lock`
+  exposure checks for Laravel-Lang style validation.
+
 ### JFrog Shai-Hulud May 19 Wave
 
 Likely miss:

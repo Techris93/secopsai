@@ -64,6 +64,7 @@ POLICY_PATH = REPO_ROOT / "config" / "supply_chain_policy.toml"
 CAMPAIGN_DISCOVERY_DIR = SUPPLY_CHAIN_DIR / "campaign_discovery"
 CAMPAIGN_CANDIDATES_PATH = CAMPAIGN_DISCOVERY_DIR / "candidates.json"
 CAMPAIGN_WATCHLIST_PATH = CAMPAIGN_DISCOVERY_DIR / "watchlist.json"
+PACKAGIST_SOURCE_SNAPSHOTS_DIR = SUPPLY_CHAIN_DIR / "packagist_source"
 BLOG_NEWS_SOURCES_PATH = REPO_ROOT / "blog" / "data" / "news-sources.json"
 BLOG_NEWS_CACHE_PATH = REPO_ROOT / "blog" / "data" / "news-cache.json"
 
@@ -411,6 +412,7 @@ def _ensure_dirs() -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     ADVISORIES_DIR.mkdir(parents=True, exist_ok=True)
     CAMPAIGN_DISCOVERY_DIR.mkdir(parents=True, exist_ok=True)
+    PACKAGIST_SOURCE_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _http_json(url: str, timeout: int = 30) -> Any:
@@ -1734,6 +1736,18 @@ def _packagist_policy_findings(path: str, source: str) -> List[str]:
             data = json.loads(source)
         except Exception:
             return []
+        autoload = data.get("autoload", {})
+        if isinstance(autoload, dict):
+            autoload_files = autoload.get("files", [])
+            if isinstance(autoload_files, str):
+                autoload_files = [autoload_files]
+            if isinstance(autoload_files, list):
+                for item in autoload_files:
+                    if not isinstance(item, str) or not item.strip():
+                        continue
+                    findings.append(f"{path}: composer autoload.files executes PHP file {item}")
+                    if re.search(r"(helper|bootstrap|loader|locale|temp|tmp|download|payload)", item, re.IGNORECASE):
+                        findings.append(f"{path}: composer autoload.files references high-risk bootstrap/helper path {item}")
         scripts = data.get("scripts", {})
         if isinstance(scripts, dict):
             for hook, command in scripts.items():
@@ -1742,8 +1756,21 @@ def _packagist_policy_findings(path: str, source: str) -> List[str]:
                     findings.append(f"{path}: composer install/update lifecycle hook {hook}")
                 if any(isinstance(cmd, str) and re.search(r"\b(curl|wget|php\s+-r|bash|sh|powershell|eval)\b|https?://", cmd, re.IGNORECASE) for cmd in commands):
                     findings.append(f"{path}: composer lifecycle hook executes remote or inline code ({hook})")
-    elif lowered.endswith(".php") and re.search(r"\b(eval|base64_decode|gzinflate|shell_exec|system|proc_open|passthru|curl_exec)\s*\(", source):
-        findings.append(f"{path}: packagist php dynamic execution, shell, or network-capable behavior")
+    elif lowered.endswith(".php"):
+        if re.search(r"\b(eval|assert|base64_decode|gzinflate|str_rot13|preg_replace)\s*\(", source, re.IGNORECASE):
+            findings.append(f"{path}: packagist php dynamic execution or obfuscation behavior")
+        if re.search(r"\b(exec|shell_exec|system|proc_open|passthru|popen)\s*\(", source, re.IGNORECASE):
+            findings.append(f"{path}: packagist php shell or process execution behavior")
+        if re.search(r"\b(curl_exec|file_get_contents|stream_context_create)\s*\(|https?://", source, re.IGNORECASE):
+            findings.append(f"{path}: packagist php outbound network or payload retrieval behavior")
+        if re.search(r"verify_peer['\"]?\s*=>\s*false|verify_peer_name['\"]?\s*=>\s*false|CURLOPT_SSL_VERIFY(?:PEER|HOST)\b", source, re.IGNORECASE):
+            findings.append(f"{path}: packagist php disables TLS verification")
+        if re.search(r"\b(sys_get_temp_dir|/tmp/|\.laravel_locale|tempnam|DebugChromium\.exe|\.vbs|cscript)\b", source, re.IGNORECASE):
+            findings.append(f"{path}: packagist php temp staging or background payload execution indicator")
+        if re.search(r"169\.254\.169\.254|/proc/[^\\s'\"]*/environ|/var/run/secrets", source, re.IGNORECASE):
+            findings.append(f"{path}: packagist php cloud, process, or Kubernetes secret discovery")
+        if re.search(r"(\.env|\.ssh|id_rsa|\.git-credentials|auth\.json|\.docker/config\.json|\.vault-token|kubeconfig|GITHUB_TOKEN|AWS_|AZURE_|GOOGLE_|CI_JOB_TOKEN)", source, re.IGNORECASE):
+            findings.append(f"{path}: packagist php developer, cloud, or CI credential file discovery")
     return sorted(set(findings))
 
 
@@ -2337,6 +2364,7 @@ def _version_rows_from_metadata(ecosystem: str, package: str, metadata: Any) -> 
         for item in versions:
             version = str(item.get("version") or item.get("version_normalized") or "")
             dist = item.get("dist") or {}
+            source = item.get("source") or {}
             url = dist.get("url")
             if version and url:
                 rows.append({
@@ -2344,6 +2372,11 @@ def _version_rows_from_metadata(ecosystem: str, package: str, metadata: Any) -> 
                     "published_at": item.get("time"),
                     "artifact_url": url,
                     "artifact_name": Path(urllib.parse.urlparse(url).path).name or f"{package.replace('/', '-')}-{version}.zip",
+                    "dist_reference": dist.get("reference"),
+                    "dist_type": dist.get("type"),
+                    "source_url": source.get("url"),
+                    "source_reference": source.get("reference"),
+                    "source_type": source.get("type"),
                 })
     elif ecosystem == "go":
         for item in metadata.get("versions", []) or []:
@@ -2470,11 +2503,321 @@ def _fetch_ecosystem_metadata(ecosystem: str, package: str, *, timeout: int = 30
     raise RuntimeError(f"Live metadata fetch is not supported for {ecosystem}")
 
 
+def _fetch_packagist_namespace_packages(namespace: str, *, timeout: int = 30, limit: int = 100) -> List[str]:
+    namespace = normalize_package_name("packagist", namespace).strip("/")
+    if not namespace or "/" in namespace:
+        raise ValueError("Packagist namespace should be a vendor name such as laravel-lang")
+    url = f"https://packagist.org/search.json?q={urllib.parse.quote(namespace + '/')}"
+    data = _http_json(url, timeout=timeout)
+    rows = data.get("results", []) if isinstance(data, dict) else []
+    packages: List[str] = []
+    for row in rows:
+        name = str(row.get("name") or "").lower() if isinstance(row, dict) else ""
+        if name.startswith(f"{namespace}/") and validate_package_identifier("packagist", name).get("valid"):
+            packages.append(name)
+        if len(packages) >= limit:
+            break
+    return sorted(set(packages))
+
+
 def _ecosystem_version_rows(ecosystem: str, package: str, metadata: Optional[Any] = None, *, timeout: int = 30) -> List[Dict[str, Any]]:
     metadata = metadata if metadata is not None else _fetch_ecosystem_metadata(ecosystem, package, timeout=timeout)
     rows = _version_rows_from_metadata(ecosystem, package, metadata)
     rows.sort(key=lambda item: (_safe_timestamp_sort(item.get("published_at")), _version_key(str(item.get("version", "")))))
     return rows
+
+
+def _packagist_source_snapshot_path(package: str) -> Path:
+    safe = normalize_package_name("packagist", package).replace("/", "__")
+    return PACKAGIST_SOURCE_SNAPSHOTS_DIR / f"{safe}.json"
+
+
+def _packagist_source_snapshot(package: str, metadata: Any) -> Dict[str, Any]:
+    package = normalize_package_name("packagist", package)
+    rows = _version_rows_from_metadata("packagist", package, metadata)
+    return {
+        "ecosystem": "packagist",
+        "package": package,
+        "fetched_at": _utc_now(),
+        "versions": [
+            {
+                "version": row.get("version"),
+                "published_at": row.get("published_at"),
+                "artifact_url": row.get("artifact_url"),
+                "dist_reference": row.get("dist_reference"),
+                "source_url": row.get("source_url"),
+                "source_reference": row.get("source_reference"),
+            }
+            for row in rows
+        ],
+    }
+
+
+def _snapshot_version_map(snapshot: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    if not isinstance(snapshot, dict):
+        return {}
+    versions = snapshot.get("versions", [])
+    if isinstance(versions, dict):
+        return {
+            str(version): dict(value) if isinstance(value, dict) else {"source_reference": value}
+            for version, value in versions.items()
+        }
+    if isinstance(versions, list):
+        return {
+            str(row.get("version")): row
+            for row in versions
+            if isinstance(row, dict) and row.get("version")
+        }
+    return {}
+
+
+def _github_repo_from_url(url: str) -> str:
+    parsed = urllib.parse.urlparse(str(url or ""))
+    host = parsed.netloc.lower()
+    if host.endswith("github.com"):
+        parts = [part for part in parsed.path.strip("/").split("/") if part]
+        if len(parts) >= 2:
+            return f"{parts[0]}/{parts[1].removesuffix('.git')}"
+    return ""
+
+
+def detect_packagist_source_signals(
+    package: str,
+    metadata: Any,
+    *,
+    previous_snapshot: Optional[Dict[str, Any]] = None,
+    burst_window_seconds: int = 900,
+    burst_threshold: int = 10,
+) -> Dict[str, Any]:
+    """Detect source-of-truth Packagist metadata anomalies without executing package code."""
+    package = normalize_package_name("packagist", package)
+    rows = _version_rows_from_metadata("packagist", package, metadata)
+    previous = _snapshot_version_map(previous_snapshot)
+    signals: List[Dict[str, Any]] = []
+
+    epochs = [(row, _safe_timestamp_sort(row.get("published_at"))) for row in rows if _safe_timestamp_sort(row.get("published_at"))]
+    epochs.sort(key=lambda item: item[1])
+    for index, (_row, epoch) in enumerate(epochs):
+        clustered = [candidate for candidate, candidate_epoch in epochs if 0 <= candidate_epoch - epoch <= burst_window_seconds]
+        if len(clustered) >= burst_threshold:
+            signals.append({
+                "rule_id": "PACKAGIST-MASS-VERSION-UPDATE",
+                "severity": "high",
+                "confidence": "medium",
+                "matched_behavior": "many Packagist versions changed inside a short window",
+                "version_count": len(clustered),
+                "window_seconds": burst_window_seconds,
+                "versions": [str(item.get("version")) for item in clustered[:25]],
+            })
+            break
+
+    for row in rows:
+        version = str(row.get("version") or "")
+        old = previous.get(version) or {}
+        old_source = str(old.get("source_reference") or old.get("source_ref") or "")
+        new_source = str(row.get("source_reference") or "")
+        old_dist = str(old.get("dist_reference") or old.get("dist_ref") or "")
+        new_dist = str(row.get("dist_reference") or "")
+        if version and old_source and new_source and old_source != new_source:
+            signals.append({
+                "rule_id": "PACKAGIST-HISTORICAL-SOURCE-REF-CHANGED",
+                "severity": "critical",
+                "confidence": "high",
+                "matched_behavior": "historical Packagist version source reference changed",
+                "version": version,
+                "previous_source_reference": old_source,
+                "source_reference": new_source,
+            })
+        if version and old_dist and new_dist and old_dist != new_dist:
+            signals.append({
+                "rule_id": "PACKAGIST-HISTORICAL-DIST-REF-CHANGED",
+                "severity": "critical",
+                "confidence": "high",
+                "matched_behavior": "historical Packagist version dist reference changed",
+                "version": version,
+                "previous_dist_reference": old_dist,
+                "dist_reference": new_dist,
+            })
+
+    expected_vendor = package.split("/", 1)[0].lower() if "/" in package else ""
+    for row in rows[:50]:
+        repo = _github_repo_from_url(str(row.get("source_url") or ""))
+        if repo and expected_vendor and repo.split("/", 1)[0].lower() != expected_vendor:
+            signals.append({
+                "rule_id": "PACKAGIST-SOURCE-REPO-MISMATCH",
+                "severity": "high",
+                "confidence": "medium",
+                "matched_behavior": "Packagist source repository owner differs from package namespace",
+                "version": row.get("version"),
+                "source_repo": repo,
+                "expected_namespace": expected_vendor,
+            })
+
+    return {
+        "ecosystem": "packagist",
+        "package": package,
+        "version_count": len(rows),
+        "source_repos": sorted(set(repo for repo in (_github_repo_from_url(str(row.get("source_url") or "")) for row in rows if row.get("source_url")) if repo)),
+        "signals": signals,
+    }
+
+
+def normalize_github_tag_rows(repo: str, rows: Iterable[Dict[str, Any]], *, source_package: Optional[str] = None) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        ref = str(row.get("ref") or row.get("name") or row.get("tag") or "")
+        tag = ref.removeprefix("refs/tags/")
+        target = row.get("object") if isinstance(row.get("object"), dict) else row
+        sha = str(target.get("sha") or row.get("sha") or row.get("target_sha") or "")
+        target_type = str(target.get("type") or row.get("target_type") or "commit")
+        if tag and sha:
+            normalized.append({
+                "repo": repo,
+                "source_package": source_package,
+                "tag": tag,
+                "target_sha": sha,
+                "target_type": target_type,
+                "tagger_date": row.get("tagger_date") or row.get("commit_date") or row.get("date"),
+                "source_repo": row.get("source_repo") or repo,
+                "reachable": row.get("reachable", True),
+                "signed": row.get("signed"),
+            })
+    return normalized
+
+
+def detect_github_tag_provenance(
+    repo: str,
+    current_tags: Iterable[Dict[str, Any]],
+    *,
+    previous_tags: Optional[Iterable[Dict[str, Any]]] = None,
+    source_package: Optional[str] = None,
+    burst_window_seconds: int = 900,
+    burst_threshold: int = 10,
+) -> Dict[str, Any]:
+    current = normalize_github_tag_rows(repo, current_tags, source_package=source_package)
+    previous = {
+        str(row.get("tag")): row
+        for row in normalize_github_tag_rows(repo, previous_tags or [], source_package=source_package)
+        if row.get("tag")
+    }
+    signals: List[Dict[str, Any]] = []
+    for row in current:
+        old = previous.get(str(row.get("tag")))
+        if old and old.get("target_sha") and row.get("target_sha") != old.get("target_sha"):
+            signals.append({
+                "rule_id": "GITHUB-TAG-REWRITTEN",
+                "severity": "critical",
+                "confidence": "high",
+                "matched_behavior": "GitHub tag target changed compared with prior snapshot",
+                "repo": repo,
+                "tag": row.get("tag"),
+                "previous_sha": old.get("target_sha"),
+                "target_sha": row.get("target_sha"),
+            })
+        if row.get("reachable") is False:
+            signals.append({
+                "rule_id": "GITHUB-TAG-UNREACHABLE-COMMIT",
+                "severity": "high",
+                "confidence": "medium",
+                "matched_behavior": "GitHub tag points to commit marked unreachable from expected lineage",
+                "repo": repo,
+                "tag": row.get("tag"),
+                "target_sha": row.get("target_sha"),
+            })
+        if str(row.get("source_repo") or repo).lower() != repo.lower():
+            signals.append({
+                "rule_id": "GITHUB-TAG-FORK-ORIGIN",
+                "severity": "high",
+                "confidence": "medium",
+                "matched_behavior": "GitHub tag metadata references an unexpected repository origin",
+                "repo": repo,
+                "tag": row.get("tag"),
+                "source_repo": row.get("source_repo"),
+            })
+
+    dated = [(row, _safe_timestamp_sort(row.get("tagger_date"))) for row in current if _safe_timestamp_sort(row.get("tagger_date"))]
+    dated.sort(key=lambda item: item[1])
+    for _index, (_row, epoch) in enumerate(dated):
+        clustered = [candidate for candidate, candidate_epoch in dated if 0 <= candidate_epoch - epoch <= burst_window_seconds]
+        if len(clustered) >= burst_threshold:
+            signals.append({
+                "rule_id": "GITHUB-MASS-TAG-ACTIVITY",
+                "severity": "high",
+                "confidence": "medium",
+                "matched_behavior": "many GitHub tags were created or updated inside a short window",
+                "repo": repo,
+                "tag_count": len(clustered),
+                "window_seconds": burst_window_seconds,
+                "tags": [str(item.get("tag")) for item in clustered[:25]],
+            })
+            break
+
+    return {"repo": repo, "source_package": source_package, "tag_count": len(current), "signals": signals}
+
+
+def analyze_packagist_source_package(
+    package: str,
+    *,
+    metadata: Optional[Any] = None,
+    previous_snapshot: Optional[Dict[str, Any]] = None,
+    current_tags: Optional[Iterable[Dict[str, Any]]] = None,
+    previous_tags: Optional[Iterable[Dict[str, Any]]] = None,
+    files: Optional[Dict[str, str]] = None,
+    save_snapshot: bool = False,
+) -> Dict[str, Any]:
+    package = normalize_package_name("packagist", package)
+    metadata = metadata if metadata is not None else _fetch_ecosystem_metadata("packagist", package)
+    if previous_snapshot is None:
+        snapshot_path = _packagist_source_snapshot_path(package)
+        if snapshot_path.exists():
+            try:
+                previous_snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            except Exception:
+                previous_snapshot = None
+    metadata_result = detect_packagist_source_signals(package, metadata, previous_snapshot=previous_snapshot)
+    repos = [repo for repo in metadata_result.get("source_repos", []) if repo]
+    tag_result = {"signals": [], "tag_count": 0}
+    if current_tags is not None:
+        tag_result = detect_github_tag_provenance(
+            repos[0] if repos else package,
+            current_tags,
+            previous_tags=previous_tags,
+            source_package=package,
+        )
+    artifact_result = analyze_ecosystem_files("packagist", files or {}) if files else {
+        "findings": [],
+        "matched_rules": [],
+        "score": 0,
+        "verdict": "not_analyzed",
+        "confidence": "low",
+    }
+    artifact_text = "\n".join((files or {}).values())
+    iocs = _merge_iocs(artifact_text)
+    signals = list(metadata_result.get("signals", [])) + list(tag_result.get("signals", []))
+    critical = any(str(signal.get("severity")) == "critical" for signal in signals)
+    verdict = "malicious" if critical or artifact_result.get("verdict") == "malicious" else "needs_review" if signals or artifact_result.get("findings") else "benign"
+    if save_snapshot:
+        _ensure_dirs()
+        _packagist_source_snapshot_path(package).write_text(json.dumps(_packagist_source_snapshot(package, metadata), indent=2), encoding="utf-8")
+    return {
+        "ecosystem": "packagist",
+        "package": package,
+        "verdict": verdict,
+        "confidence": "high" if critical else "medium" if signals or artifact_result.get("findings") else "low",
+        "metadata_evidence": metadata_result,
+        "tag_evidence": tag_result,
+        "artifact_evidence": artifact_result,
+        "iocs": iocs,
+        "behavior_indicators": sorted(set(_campaign_behavior_indicators(
+            {"ecosystem": "packagist", "package": package},
+            artifact_result,
+            {"behavioral_indicators": []},
+            iocs,
+        ))),
+        "recommended_mitigation": package_compromise_mitigation("packagist", package),
+    }
 
 
 def _get_ecosystem_previous_version(ecosystem: str, package: str, new_version: str, metadata: Optional[Any] = None, *, timeout: int = 30) -> Optional[str]:
@@ -3987,7 +4330,7 @@ def extract_campaign_iocs(values: Iterable[Any]) -> Dict[str, List[str]]:
     domains = {
         item.lower().strip(".,;:()[]{}<>\"'")
         for item in re.findall(r"\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b", text, re.IGNORECASE)
-        if item.rsplit(".", 1)[-1].lower() not in {"html", "json", "js", "css", "png", "jpg", "jpeg", "svg", "md"}
+        if item.rsplit(".", 1)[-1].lower() not in {"html", "json", "js", "css", "png", "jpg", "jpeg", "svg", "md", "files"}
     }
     urls = {
         item.rstrip(".,;:()[]{}<>\"'")
@@ -4019,6 +4362,10 @@ DISCOVERY_SUPPLY_CHAIN_TERMS = (
     "supply-chain",
     "malicious package",
     "compromised package",
+    "compromised",
+    "backdoor",
+    "rce",
+    "remote code execution",
     "typosquat",
     "dependency confusion",
     "package manager",
@@ -4027,6 +4374,13 @@ DISCOVERY_SUPPLY_CHAIN_TERMS = (
     "rubygems",
     "packagist",
     "composer",
+    "autoload",
+    "autoload.files",
+    "php package",
+    "tag rewrite",
+    "tag-rewrite",
+    "repointed tag",
+    "historical versions",
     "crates.io",
     "maven",
     "nuget",
@@ -4071,6 +4425,9 @@ DISCOVERY_BEHAVIOR_KEYWORDS = {
     "persistence": ("persistence", "startup", "scheduled task", "launch agent", "cron"),
     "obfuscation": ("obfuscated", "base64", "eval", "packed payload", "encoded payload"),
     "install-time execution": ("postinstall", "preinstall", "setup.py", "build.rs", "install.ps1", "composer scripts"),
+    "composer autoload backdoor": ("autoload.files", "composer autoload", "src/helpers.php", "php package"),
+    "tag rewrite/provenance anomaly": ("tag rewrite", "repointed tag", "historical tags", "historical versions", "fork commit"),
+    "remote code execution backdoor": ("rce", "remote code execution", "backdoor"),
     "module-load execution": ("import-time", "module-load", "iife", "when imported"),
     "Shai-Hulud clone or derivative indicator": ("shai-hulud", "sha1-hulud", "mini shai", "mini sha1"),
     "typosquatting package-name indicator": ("typosquat", "typo-squatting", "clone package"),
@@ -4247,6 +4604,16 @@ CAMPAIGN_SUPPLY_CHAIN_TERMS = (
     "pypi",
     "rubygems",
     "packagist",
+    "composer",
+    "php package",
+    "autoload",
+    "autoload.files",
+    "rce",
+    "remote code execution",
+    "backdoor",
+    "tag rewrite",
+    "repointed tag",
+    "historical versions",
     "crates.io",
     "maven",
     "nuget",
@@ -4486,6 +4853,8 @@ def _extract_campaign_packages_from_text(text: str) -> List[Dict[str, Any]]:
 
     patterns: List[tuple[str, str]] = [
         ("crates", r"\bcrates\.io/crates/([A-Za-z0-9_-]{2,80})(?:[/#?]|$)"),
+        ("packagist", r"\bpackagist\.org/packages/([a-z0-9_.-]+/[a-z0-9_.-]+)(?:[/#?]|$)"),
+        ("packagist", r"(?<![./\w-])([a-z0-9_.-]+/[a-z0-9_.-]+)(?:@([0-9][A-Za-z0-9.+:_~!-]{0,80}))?\b"),
         ("npm", r"(?<![\w.-])(@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*[-_.][a-z0-9][a-z0-9._-]*)(?:@([0-9][A-Za-z0-9.+:_~!-]{0,80}))?"),
         ("pypi", r"\b([a-z0-9][a-z0-9._-]{2,80})(?:==|@)([0-9][A-Za-z0-9.+:_~!-]{0,80})\b"),
         ("maven", r"\b([A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+)(?:[:@]([0-9][A-Za-z0-9.+:_~!-]{0,80}))?\b"),
@@ -4523,6 +4892,8 @@ def _extract_campaign_packages_from_text(text: str) -> List[Dict[str, Any]]:
         for match in re.finditer(pattern, text, re.IGNORECASE):
             raw_name = match.group(1)
             if not raw_name:
+                continue
+            if ecosystem_hint == "packagist" and "packagist" not in default_ecosystems:
                 continue
             if ecosystem_hint == "npm" and "npm" not in default_ecosystems and not raw_name.startswith("@"):
                 continue
@@ -4726,13 +5097,13 @@ def _classify_campaign_candidate(
         campaign_type = "github_token_breach"
         recommended_route = "github_security_review"
         supply_chain_relevance = "low"
-    elif has_vulnerability:
-        campaign_type = "vulnerability_advisory"
-        recommended_route = "vulnerability_tracking"
-        supply_chain_relevance = "low"
     elif has_malware_apt:
         campaign_type = "malware_apt_c2"
         recommended_route = "threat_intel_review"
+        supply_chain_relevance = "low"
+    elif has_vulnerability:
+        campaign_type = "vulnerability_advisory"
+        recommended_route = "vulnerability_tracking"
         supply_chain_relevance = "low"
     else:
         campaign_type = "general_threat_intel"
@@ -5446,6 +5817,47 @@ def _campaign_local_usage(search_root: Optional[str], terms: Iterable[str], *, l
     return {"status": status, "present": bool(matches), "matches": matches}
 
 
+def find_composer_lock_usage(search_root: str, package: str, *, limit: int = 20) -> Dict[str, Any]:
+    package = normalize_package_name("packagist", package)
+    root = Path(search_root).expanduser().resolve()
+    matches: List[Dict[str, Any]] = []
+    if not root.exists():
+        return {"package": package, "present": False, "matches": [], "status": "unknown", "reason": f"search root does not exist: {root}"}
+    for path in root.rglob("composer.lock"):
+        if len(matches) >= limit:
+            break
+        if any(part in CAMPAIGN_SKIP_DIRS for part in path.parts):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for section in ("packages", "packages-dev"):
+            for row in data.get(section, []) or []:
+                if not isinstance(row, dict):
+                    continue
+                if normalize_package_name("packagist", str(row.get("name") or "")) != package:
+                    continue
+                source = row.get("source") if isinstance(row.get("source"), dict) else {}
+                dist = row.get("dist") if isinstance(row.get("dist"), dict) else {}
+                matches.append({
+                    "path": str(path),
+                    "section": section,
+                    "package": package,
+                    "version": row.get("version"),
+                    "source_reference": source.get("reference"),
+                    "source_url": source.get("url"),
+                    "dist_reference": dist.get("reference"),
+                    "installed_at": row.get("time"),
+                })
+    return {
+        "package": package,
+        "present": bool(matches),
+        "matches": matches,
+        "status": "confirmed_affected" if matches else "not_observed",
+    }
+
+
 def _campaign_behavior_indicators(package: Dict[str, Any], analysis: Dict[str, Any], campaign: Dict[str, Any], iocs: Dict[str, List[str]]) -> List[str]:
     values: List[str] = []
     values.extend(str(item) for item in campaign.get("behavioral_indicators", []) if item)
@@ -5812,6 +6224,13 @@ def watch_registry(
         findings = [_build_finding(result) for result in results if result.verdict == "malicious" and result.finding_id]
         db_path = _upsert_findings(findings) if findings else None
 
+    source_evidence = None
+    if ecosystem == "packagist":
+        try:
+            source_evidence = analyze_packagist_source_package(package, metadata=metadata, save_snapshot=persist and not dry_run)
+        except Exception as exc:
+            source_evidence = {"error": str(exc), "status": "source_evidence_unavailable"}
+
     return {
         "ecosystem": ecosystem,
         "package": package,
@@ -5828,6 +6247,46 @@ def watch_registry(
         "malicious": sum(1 for result in results if result.verdict == "malicious"),
         "errors": sum(1 for result in results if result.verdict == "error"),
         "db_path": db_path,
+        "source_evidence": source_evidence,
+    }
+
+
+def watch_packagist_namespace(
+    *,
+    namespace: str,
+    since: str = "10m",
+    dry_run: bool = True,
+    persist: bool = False,
+    limit: int = 20,
+    model: Optional[str] = None,
+    packages: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    namespace = normalize_package_name("packagist", namespace).strip("/")
+    package_names = packages if packages is not None else _fetch_packagist_namespace_packages(namespace, limit=limit)
+    results = [
+        watch_registry(
+            ecosystem="packagist",
+            package=package,
+            since=since,
+            dry_run=dry_run,
+            persist=persist,
+            limit=limit,
+            model=model,
+        )
+        for package in package_names[:limit]
+    ]
+    return {
+        "ecosystem": "packagist",
+        "namespace": namespace,
+        "since": since,
+        "dry_run": dry_run,
+        "persist": persist,
+        "packages": package_names[:limit],
+        "results": results,
+        "total_packages": len(package_names[:limit]),
+        "total_scanned": sum(int(row.get("total_scanned") or 0) for row in results),
+        "malicious": sum(int(row.get("malicious") or 0) for row in results),
+        "errors": sum(int(row.get("errors") or 0) for row in results),
     }
 
 
