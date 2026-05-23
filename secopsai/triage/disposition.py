@@ -12,6 +12,7 @@ VALID_DISPOSITIONS = {
     "needs_review",
     "tune_policy",
     "remediated",
+    "not_applicable",
 }
 
 VALID_STATUSES = {
@@ -46,6 +47,6 @@ def require_closure_note(disposition: str, note: str) -> str:
     clean_note = str(note or "").strip()
     if not clean_note:
         raise ValueError("A closure note is required.")
-    if disposition in {"false_positive", "accepted_risk", "exception_granted", "tune_policy"} and len(clean_note) < 12:
+    if disposition in {"false_positive", "accepted_risk", "exception_granted", "tune_policy", "not_applicable"} and len(clean_note) < 12:
         raise ValueError("Provide a more specific closure note explaining why this disposition is justified.")
     return clean_note
