@@ -98,6 +98,7 @@ from secopsai.supply_chain import (
     run_scan,
     tune_rule,
     tune_threshold,
+    watch_packagist_namespace,
     watch_registry,
 )
 from secopsai.triage import (
@@ -1021,7 +1022,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Analyze recent package publishes from registry metadata without running package code",
     )
     supply_chain_watch.add_argument("--ecosystem", required=True, choices=SUPPORTED_ECOSYSTEM_NAMES)
-    supply_chain_watch.add_argument("--package", required=True, help="Package name to watch")
+    supply_chain_watch.add_argument("--package", help="Package name to watch")
+    supply_chain_watch.add_argument("--namespace", help="Packagist namespace/vendor to watch, for example laravel-lang")
     supply_chain_watch.add_argument("--since", default="10m", help="Look back duration, for example 10m, 2h, or 1d")
     supply_chain_watch.add_argument("--limit", type=int, default=20, help="Maximum recent versions to analyze")
     supply_chain_watch.add_argument("--dry-run", action="store_true", help="Analyze without persisting reports/findings")
@@ -2816,6 +2818,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             try:
                 if args.dry_run and args.persist:
                     raise ValueError("--dry-run and --persist are mutually exclusive")
+                if not args.package and not args.namespace:
+                    raise ValueError("--package or --namespace is required")
+                if args.namespace and args.ecosystem != "packagist":
+                    raise ValueError("--namespace is currently supported for --ecosystem packagist")
                 capabilities = ecosystem_capabilities(args.ecosystem)
                 if not capabilities.get("features", {}).get("monitor", False):
                     payload = {
@@ -2843,15 +2849,25 @@ def main(argv: Optional[List[str]] = None) -> int:
                         for item in payload["limitations"]:
                             print(f"- {item}")
                     return 0
-                payload = watch_registry(
-                    ecosystem=args.ecosystem,
-                    package=args.package,
-                    since=args.since,
-                    dry_run=not args.persist,
-                    persist=args.persist,
-                    limit=args.limit,
-                    model=args.model,
-                )
+                if args.namespace:
+                    payload = watch_packagist_namespace(
+                        namespace=args.namespace,
+                        since=args.since,
+                        dry_run=not args.persist,
+                        persist=args.persist,
+                        limit=args.limit,
+                        model=args.model,
+                    )
+                else:
+                    payload = watch_registry(
+                        ecosystem=args.ecosystem,
+                        package=args.package,
+                        since=args.since,
+                        dry_run=not args.persist,
+                        persist=args.persist,
+                        limit=args.limit,
+                        model=args.model,
+                    )
             except Exception as exc:
                 if args.json:
                     print(to_json({"error": str(exc)}))
@@ -2861,17 +2877,22 @@ def main(argv: Optional[List[str]] = None) -> int:
             if args.json:
                 print(to_json(payload))
             else:
+                target = payload.get("package") or f"{payload.get('namespace')}/*"
                 print(
-                    "supply-chain watch-registry: {eco} {pkg} scanned={scanned} malicious={malicious} errors={errors} dry_run={dry_run}".format(
+                    "supply-chain watch-registry: {eco} {target} scanned={scanned} malicious={malicious} errors={errors} dry_run={dry_run}".format(
                         eco=payload["ecosystem"],
-                        pkg=payload["package"],
+                        target=target,
                         scanned=payload["total_scanned"],
                         malicious=payload["malicious"],
                         errors=payload["errors"],
                         dry_run=payload["dry_run"],
                     )
                 )
-                for row in payload["scanned"]:
+                rows = payload.get("scanned", [])
+                if not rows and payload.get("results"):
+                    for result_payload in payload["results"]:
+                        rows.extend(result_payload.get("scanned", []))
+                for row in rows:
                     result = row["result"]
                     print(
                         "- {pkg}@{ver} previous={prev} verdict={verdict}".format(

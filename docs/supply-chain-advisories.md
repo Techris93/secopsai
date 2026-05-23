@@ -27,6 +27,9 @@ secopsai supply-chain explain-verdict --ecosystem npm --package @squawk/mcp --ve
 secopsai supply-chain advisory check --ecosystem npm --package node-ipc --version 12.0.1
 secopsai supply-chain explain-verdict --ecosystem npm --package node-ipc --version 12.0.1
 
+# Check the Laravel-Lang Composer/Packagist source-backed advisory.
+secopsai supply-chain advisory check --ecosystem packagist --package laravel-lang/lang --version 14.3.7 --json
+
 # Show supported ecosystem capabilities and limitations.
 secopsai supply-chain ecosystems
 
@@ -50,7 +53,7 @@ context.
 | PyPI | `project` | Advisory, metadata fetch, artifact fetch, diff, behavior rules, monitor |
 | crates.io | `crate` | Advisory, crates.io metadata, `.crate` fetch/diff, Cargo/build.rs/proc-macro rules, package watch |
 | Chrome Web Store | `extension-id` | Advisory, local CRX/ZIP artifact scan, extension manifest/background-script rules |
-| Packagist | `vendor/package` | Advisory, Packagist metadata, dist archive fetch/diff, Composer/PHP rules, package watch |
+| Packagist | `vendor/package` | Advisory, Packagist metadata, source/dist refs, dist archive fetch/diff, Composer/PHP rules, package and namespace watch |
 | Go Modules | `module/path` | Advisory, Go proxy metadata, module ZIP fetch/diff, go.mod/source rules, package watch |
 | Hugging Face Hub | `owner/repo` | Advisory, metadata/file-list/small source fetch, unsafe loading rules, package watch; model code/weights are never executed |
 | Maven Central | `groupId:artifactId` | Advisory, Maven metadata, source JAR/POM fetch/diff, Java/POM rules, package watch |
@@ -164,3 +167,27 @@ Operator mitigation:
   secrets, and developer-machine credentials only when an affected version was
   installed or loaded in an environment with secrets.
 - Rebuild from clean lockfiles and purge compromised package-manager caches.
+
+## Composer/Packagist Tag-Rewrite Workflow
+
+Composer compromises can affect historical releases when source tags are
+repointed after publication. SecOpsAI treats Packagist source refs, GitHub tag
+provenance, Composer `autoload.files`, and local `composer.lock` exposure as
+source-backed evidence.
+
+```bash
+secopsai supply-chain watch-registry --ecosystem packagist --namespace laravel-lang --since 7d --dry-run --json
+secopsai supply-chain advisory check --ecosystem packagist --package laravel-lang/lang --version 14.3.7 --json
+```
+
+Operator mitigation:
+
+- Block affected Composer versions in package-manager policy and artifact
+  proxies until source refs are verified clean.
+- Audit `composer.lock` for affected package names, versions, source refs, and
+  dist refs.
+- Remove vendor copies with suspicious `autoload.files` helpers and rebuild from
+  verified clean lockfiles.
+- Hunt for temp staging paths, disabled TLS payload retrieval, cloud metadata
+  reads, Kubernetes service-account token reads, `/proc/*/environ`, `.env`, SSH,
+  Git, Docker, Vault, and CI/CD credential access.

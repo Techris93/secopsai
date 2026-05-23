@@ -1,0 +1,64 @@
+{
+  "advisory_id": "SECOPSAI-ADV-2026-05-LARAVEL-LANG-PACKAGIST",
+  "campaign_id": "laravel-lang-packagist-tag-rewrite-backdoor-2026-05",
+  "title": "Laravel-Lang Packagist tag rewrite and Composer autoload backdoor campaign",
+  "summary": "Source-backed emergency advisory for a Composer/Packagist compromise pattern involving historical Git tag rewrites, Packagist source reference anomalies, Composer autoload.files backdoor loading, PHP payload retrieval, and credential harvesting behavior.",
+  "severity": "critical",
+  "confidence": "high",
+  "status": "active",
+  "published_at": "2026-05-24T00:00:00Z",
+  "updated_at": "2026-05-24T00:00:00Z",
+  "ingested_at": "2026-05-24T00:00:00Z",
+  "source_names": ["Packagist metadata", "GitHub repository tags", "Composer artifact static analysis"],
+  "source_urls": [
+    "https://packagist.org/packages/laravel-lang/lang",
+    "https://github.com/Laravel-Lang/lang",
+    "https://github.com/Laravel-Lang/http-statuses",
+    "https://github.com/Laravel-Lang/attributes",
+    "https://github.com/Laravel-Lang/actions"
+  ],
+  "affected": [
+    {
+      "ecosystem": "packagist",
+      "package": "laravel-lang/lang",
+      "versions": ["14.3.7"],
+      "safe_versions": ["Reinstall from a verified clean source reference after upstream tag provenance is confirmed."]
+    },
+    {
+      "ecosystem": "packagist",
+      "package": "laravel-lang/http-statuses",
+      "versions": ["3.0.0"],
+      "safe_versions": ["Reinstall from a verified clean source reference after upstream tag provenance is confirmed."]
+    },
+    {
+      "ecosystem": "packagist",
+      "package": "laravel-lang/attributes",
+      "versions": ["2.0.0"],
+      "safe_versions": ["Reinstall from a verified clean source reference after upstream tag provenance is confirmed."]
+    },
+    {
+      "ecosystem": "packagist",
+      "package": "laravel-lang/actions",
+      "versions": ["1.0.0"],
+      "safe_versions": ["Reinstall from a verified clean source reference after upstream tag provenance is confirmed."]
+    }
+  ],
+  "iocs": {
+    "domains": ["flipboxstudio.info"],
+    "file_paths": ["/tmp/.laravel_locale", "src/helpers.php", "/proc/*/environ", "/var/run/secrets"],
+    "filenames": ["DebugChromium.exe"],
+    "campaign_labels": ["Laravel-Lang", "Composer autoload backdoor", "Packagist tag rewrite"]
+  },
+  "detection_rationale": [
+    "Packagist metadata and prior source snapshots can show historical versions repointed to new source/dist references without executing package code.",
+    "GitHub tag snapshots can show rewritten tags, high-volume tag activity, fork-origin targets, or unreachable commits across related repositories.",
+    "Composer artifacts can be statically inspected for autoload.files entries such as src/helpers.php and PHP credential-stealer behavior including payload retrieval, disabled TLS verification, cloud metadata reads, Kubernetes token reads, /proc environ reads, and developer credential file discovery."
+  ],
+  "remediation": [
+    "Block affected Packagist versions in Composer policy, artifact proxies, and CI lockfile review until source refs are verified clean.",
+    "Audit composer.lock for laravel-lang/lang, laravel-lang/http-statuses, laravel-lang/attributes, and laravel-lang/actions, including source and dist references.",
+    "Remove vendor copies containing suspicious autoload.files helpers and rebuild vendor directories from verified clean lockfiles.",
+    "Hunt for listed domains, temp staging paths, DebugChromium.exe, cloud metadata access, Kubernetes token reads, /proc environ access, and PHP/VBS background execution.",
+    "Rotate Composer, GitHub, SSH, cloud, Vault, Docker, Kubernetes, CI/CD, and application credentials if an affected artifact was installed or autoloaded."
+  ]
+}
