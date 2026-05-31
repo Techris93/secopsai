@@ -85,6 +85,12 @@ Then run:
 secopsai blog news-publish-approved --rebuild
 ```
 
+This writes approved drafts into `blog/posts/` and rebuilds the feed files. The draft stays in the `approved` review bucket until the blog is deployed. After a successful deployment, mark the staged drafts as deployed:
+
+```bash
+secopsai blog news-mark-deployed
+```
+
 The pipeline stores fetched metadata in `blog/data/news-cache.json`, deduplicates by canonical URL/title hash, and keeps external claims source-linked. Do not commit generated cache entries or generated drafts unless the post has been reviewed and intentionally published.
 
 ### Safe Media And Social Previews
@@ -143,8 +149,9 @@ The safe daily rhythm is:
 1. Automation runs `scripts/blog_newsroom.sh 5` and creates drafts only.
 2. You run `secopsai blog news-review list` and inspect candidates.
 3. You approve only source-backed posts you are comfortable publishing.
-4. You run `secopsai blog news-publish-approved --rebuild`.
+4. You run `secopsai blog news-publish-approved --rebuild`; the drafts remain `approved`.
 5. You deploy the blog with `npx --yes wrangler@latest pages deploy blog --project-name secopsai-blog --branch main`.
+6. You run `secopsai blog news-mark-deployed` so successfully deployed drafts move to `deployed`.
 
 ## Dashboard Blog Ops
 
@@ -173,6 +180,9 @@ Draft persistence design:
 - External-news drafts still cannot publish until their `review_status` is `approved` or `reviewed`.
 - External-news drafts also need a passing readiness gate. Approved drafts with
   readiness blockers are skipped and reported by `news-publish-approved`.
+- `publish-approved` stages posts locally and keeps drafts under Approved; the
+  `deploy` action moves staged approved drafts to Deployed only after Cloudflare
+  Pages deployment succeeds.
 
 ## External News Readiness
 
@@ -232,8 +242,8 @@ Daily Blog Ops flow:
    source metadata.
 4. Edit weak drafts in the repo or reject them.
 5. Approve only drafts with no blockers and useful SecOpsAI context.
-6. Click **Publish approved**.
-7. Click **Deploy blog** after the publish workflow succeeds.
+6. Click **Publish approved** to stage approved drafts into the blog output; they remain under Approved.
+7. Click **Deploy blog** after the publish workflow succeeds; successful deployment moves staged drafts to Deployed.
 
 Required dashboard secrets:
 

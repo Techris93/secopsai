@@ -1852,10 +1852,7 @@ def _published_post_is_current(post: Dict[str, Any], path: Path, paths: BlogPath
 
 
 def _effective_review_status(post: Dict[str, Any], path: Path, paths: BlogPaths) -> str:
-    status = str(post.get("review_status") or "needs_review")
-    if status in PUBLISHABLE_REVIEW_STATUSES and _published_post_is_current(post, path, paths):
-        return "deployed"
-    return status
+    return str(post.get("review_status") or "needs_review")
 
 
 def _published_post_metadata_path(slug: str, paths: BlogPaths) -> str:
@@ -1882,10 +1879,28 @@ def _mark_draft_deployed(path: Path, post: Dict[str, Any], paths: BlogPaths, *, 
     return post
 
 
+def _mark_draft_published(path: Path, post: Dict[str, Any], paths: BlogPaths, *, url: Optional[str] = None) -> Dict[str, Any]:
+    now = _utc_now()
+    slug = str(post.get("slug") or path.stem)
+    post["slug"] = slug
+    was_published = post.get("status") == "published"
+    post["status"] = "published"
+    post["published_at"] = post.get("published_at") or now
+    if not was_published:
+        post["updated_at"] = now
+    else:
+        post.setdefault("updated_at", now)
+    post["published_url"] = url or _post_url(slug)
+    post["published_post_path"] = _published_post_metadata_path(slug, paths)
+    _set_review_checklist_status(post, str(post.get("review_status") or "approved"))
+    _write_json(path, post)
+    return post
+
+
 def news_publish_approved(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     paths = paths or BlogPaths()
     published: List[str] = []
-    deployed: List[str] = []
+    ready_for_deploy: List[str] = []
     blocked: List[Dict[str, Any]] = []
     for path in sorted(paths.drafts.glob("*.json")):
         post = _load_json(path)
@@ -1893,8 +1908,8 @@ def news_publish_approved(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any
             continue
         if post.get("external_news"):
             if _published_post_is_current(post, path, paths):
-                deployed_post = _mark_draft_deployed(path, post, paths)
-                deployed.append(str(deployed_post["published_url"]))
+                published_post = _mark_draft_published(path, post, paths)
+                ready_for_deploy.append(str(published_post["published_url"]))
                 continue
             blockers = external_news_publish_blockers(post)
             if blockers:
@@ -1908,7 +1923,34 @@ def news_publish_approved(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any
             payload = publish(str(path), confirm=True, paths=paths)
             if payload.get("url"):
                 published.append(str(payload["url"]))
-    return {"published": published, "deployed": deployed, "blocked": blocked, "total": len(published)}
+    return {
+        "published": published,
+        "ready_for_deploy": ready_for_deploy,
+        "deployed": [],
+        "blocked": blocked,
+        "total": len(published),
+    }
+
+
+def news_mark_deployed(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+    paths = paths or BlogPaths()
+    deployed: List[str] = []
+    blocked: List[Dict[str, Any]] = []
+    for path in sorted(paths.drafts.glob("*.json")):
+        post = _load_json(path)
+        if not post.get("external_news") or post.get("review_status") not in PUBLISHABLE_REVIEW_STATUSES:
+            continue
+        if not _published_post_is_current(post, path, paths):
+            blocked.append({
+                "path": str(path),
+                "slug": post.get("slug") or path.stem,
+                "title": post.get("title"),
+                "reasons": ["approved draft is not published to the local blog output; run Publish approved before Deploy blog"],
+            })
+            continue
+        deployed_post = _mark_draft_deployed(path, post, paths)
+        deployed.append(str(deployed_post["published_url"]))
+    return {"deployed": deployed, "blocked": blocked, "total": len(deployed)}
 
 
 def _resolve_draft(identifier: str, paths: BlogPaths) -> Path:
@@ -2725,7 +2767,7 @@ def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPa
     if draft_record.get("external_news"):
         draft_record["published_at"] = post.get("published_at")
         draft_record["updated_at"] = post.get("updated_at")
-        _mark_draft_deployed(draft_path, draft_record, paths, url=_post_url(str(post["slug"])))
+        _mark_draft_published(draft_path, draft_record, paths, url=_post_url(str(post["slug"])))
     return {
         "published": True,
         "post_path": str(_post_html_path(str(post["slug"]), paths)),

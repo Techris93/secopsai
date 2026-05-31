@@ -1622,6 +1622,69 @@ const https = require("https");
         self.assertTrue(review["rejected_iocs"])
         self.assertEqual(payload["campaign"]["iocs"], {})
 
+    def test_campaign_orchestrator_routes_cve_repo_context_to_vulnerability_tracking(self):
+        candidate = {
+            "candidate_id": "torvalds-linux-vu-260001-linux-kernel-contains-local-privilege-e-d1df1dd372",
+            "source_url": "https://kb.cert.org/vuls/id/260001",
+            "campaign": {
+                "campaign_id": "torvalds-linux-vu-260001-linux-kernel-contains-local-privilege-e-d1df1dd372",
+                "title": "VU#260001: Linux kernel contains local privilege escalation vulnerability (Copy Fail)",
+                "summary": "Local privilege escalation vulnerability with CVE-2026-31431 references and public PoC notes.",
+                "source_urls": ["https://kb.cert.org/vuls/id/260001"],
+                "source_names": ["CERT/CC Vulnerability Notes"],
+                "iocs": {
+                    "domains": ["certcc.github.io", "copy.fail", "disable-algif-aead.conf", "www.cve.org"],
+                    "urls": [
+                        "https://certcc.github.io/SSVC/howto/gathering_info/exploitation/#public-poc",
+                        "https://copy.fail",
+                        "https://copy.fail</a",
+                        "https://www.cve.org/CVERecord?id=CVE-2026-31431",
+                    ],
+                },
+                "packages": [
+                    {"ecosystem": "github", "package": "torvalds/linux", "version": "unknown"},
+                    {"ecosystem": "github", "package": "bytedance/vArmor", "version": "unknown"},
+                ],
+            },
+        }
+        payload = supply_chain.orchestrate_campaign_candidate(candidate)
+        review = payload["orchestrator"]
+        flattened_iocs = supply_chain._flatten_iocs(payload["campaign"]["iocs"])
+
+        self.assertEqual(review["campaign_type"], "vulnerability_advisory")
+        self.assertEqual(review["recommended_route"], "vulnerability_tracking")
+        self.assertIn("github repositories are project context, not package artifacts", review["route_blockers"])
+        self.assertEqual(review["github_repos"], ["bytedance/vArmor", "torvalds/linux"])
+        self.assertFalse(flattened_iocs)
+        self.assertTrue(any(row["value"] == "https://copy.fail</a" and "HTML" in row["reason"] for row in review["rejected_iocs"]))
+        self.assertTrue(any(row["value"] == "www.cve.org" and "source reference" in row["reason"] for row in review["rejected_iocs"]))
+        self.assertIn("https://kb.cert.org/vuls/id/260001", review["source_references"])
+
+    def test_loaded_campaign_candidates_refresh_stale_orchestrator_routes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "candidates.json"
+            path.write_text(json.dumps({
+                "candidates": [
+                    {
+                        "candidate_id": "stale-linux-vu",
+                        "source_url": "https://kb.cert.org/vuls/id/260001",
+                        "orchestrator": {"recommended_route": "campaign_research", "campaign_type": "supply_chain_package_campaign"},
+                        "campaign": {
+                            "campaign_id": "stale-linux-vu",
+                            "title": "VU#260001: Linux kernel contains local privilege escalation vulnerability (Copy Fail)",
+                            "summary": "CVE-2026-31431 reference for a vulnerability in a GitHub project.",
+                            "source_urls": ["https://kb.cert.org/vuls/id/260001"],
+                            "packages": [{"ecosystem": "github", "package": "torvalds/linux", "version": "unknown"}],
+                            "iocs": {"domains": ["www.cve.org"]},
+                        },
+                    }
+                ]
+            }), encoding="utf-8")
+            payload = supply_chain.load_campaign_candidates(path)
+        review = payload["candidates"][0]["orchestrator"]
+        self.assertEqual(review["recommended_route"], "vulnerability_tracking")
+        self.assertEqual(review["campaign_type"], "vulnerability_advisory")
+
     def test_open_vsx_fixture_detects_extension_activation_and_credential_theft(self):
         payload = supply_chain.analyze_ecosystem_files(
             "open-vsx",
