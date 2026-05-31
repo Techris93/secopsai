@@ -143,6 +143,19 @@ class SupplyChainTests(unittest.TestCase):
         self.assertEqual(rows[0]["package"], "b")
         self.assertEqual(rows[1]["package"], "a")
 
+    def test_load_recent_results_respects_zero_limit(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original = supply_chain.RESULTS_PATH
+            supply_chain.RESULTS_PATH = Path(temp_dir) / "results.jsonl"
+            try:
+                result = supply_chain.ScanResult("pypi", "a", "1.0.0", "1.1.0", "benign", "", None, None, None)
+                supply_chain._append_results([result])
+                rows = supply_chain.load_recent_results(limit=0)
+            finally:
+                supply_chain.RESULTS_PATH = original
+
+        self.assertEqual(rows, [])
+
     def test_reconcile_history_cleans_stale_false_positive_state(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

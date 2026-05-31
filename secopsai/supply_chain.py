@@ -28,6 +28,7 @@ import urllib.request
 import xmlrpc.client  # nosec B411
 import xml.etree.ElementTree as ET
 import zipfile
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1299,9 +1300,15 @@ def _append_results(results: Iterable[ScanResult]) -> None:
 def load_recent_results(limit: int = 20) -> List[Dict[str, Any]]:
     if not RESULTS_PATH.exists():
         return []
-    rows = [json.loads(line) for line in RESULTS_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
-    rows.reverse()
-    return rows[:limit]
+    if limit <= 0:
+        return []
+    tail: deque[str] = deque(maxlen=int(limit))
+    with RESULTS_PATH.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                tail.append(line)
+    rows = [json.loads(line) for line in reversed(tail)]
+    return rows
 
 
 def _load_all_results() -> List[Dict[str, Any]]:

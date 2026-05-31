@@ -85,6 +85,17 @@ def init_db(db_path: str | None = None) -> None:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (finding_id) REFERENCES findings (finding_id) ON DELETE CASCADE
             );
+
+            CREATE INDEX IF NOT EXISTS idx_findings_status_severity_first_seen
+                ON findings (status, severity_score DESC, first_seen ASC);
+            CREATE INDEX IF NOT EXISTS idx_findings_severity_score_first_seen
+                ON findings (severity, severity_score DESC, first_seen ASC);
+            CREATE INDEX IF NOT EXISTS idx_findings_source
+                ON findings (source);
+            CREATE INDEX IF NOT EXISTS idx_findings_last_seen
+                ON findings (last_seen);
+            CREATE INDEX IF NOT EXISTS idx_notes_finding_note
+                ON notes (finding_id, note_id);
             """
         )
 
@@ -207,13 +218,70 @@ def add_note(finding_id: str, author: str, note: str, db_path: str | None = None
         connection.commit()
 
 
-def list_findings(db_path: str | None = None) -> List[Dict[str, Any]]:
+def list_findings(
+    db_path: str | None = None,
+    *,
+    severity: str | None = None,
+    status: str | None = None,
+    source: str | None = None,
+    limit: int | None = None,
+    include_payload: bool = False,
+) -> List[Dict[str, Any]]:
     init_db(db_path)
+    if limit is not None and limit <= 0:
+        return []
+    clauses: List[str] = []
+    params: List[Any] = []
+    if severity:
+        clauses.append("lower(severity) = lower(?)")
+        params.append(severity)
+    if status:
+        clauses.append("lower(status) = lower(?)")
+        params.append(status)
+    if source:
+        clauses.append("source = ?")
+        params.append(source)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    fields = (
+        "finding_id, title, severity, severity_score, status, disposition, "
+        "first_seen, last_seen, source, payload_json"
+        if include_payload
+        else "finding_id, title, severity, severity_score, status, disposition, first_seen, last_seen"
+    )
+    query = (
+        f"SELECT {fields} FROM findings{where} "
+        "ORDER BY severity_score DESC, first_seen ASC"
+    )
+    if limit is not None and limit > 0:
+        query += " LIMIT ?"
+        params.append(int(limit))
     with closing(connect(db_path)) as connection:
-        rows = connection.execute(
-            "SELECT finding_id, title, severity, severity_score, status, disposition, first_seen, last_seen FROM findings ORDER BY severity_score DESC, first_seen ASC"
-        ).fetchall()
-    return [dict(row) for row in rows]
+        rows = connection.execute(query, tuple(params)).fetchall()
+    results: List[Dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        if include_payload:
+            try:
+                payload = json.loads(str(item.pop("payload_json")))
+            except json.JSONDecodeError:
+                payload = {}
+            payload.update(
+                {
+                    "finding_id": item.get("finding_id"),
+                    "title": item.get("title"),
+                    "severity": item.get("severity"),
+                    "severity_score": item.get("severity_score"),
+                    "status": item.get("status"),
+                    "disposition": item.get("disposition"),
+                    "first_seen": item.get("first_seen"),
+                    "last_seen": item.get("last_seen"),
+                    "source": item.get("source"),
+                }
+            )
+            results.append(payload)
+        else:
+            results.append(item)
+    return results
 
 
 def get_finding(finding_id: str, db_path: str | None = None) -> Dict[str, Any] | None:

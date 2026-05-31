@@ -30,7 +30,6 @@ packages = ["secopsai", "secopsai.triage", "openclaw_adapters", "adapters"]
 py-modules = [
   "cli",
   "confidence",
-  "config",
   "correlation",
   "detect",
   "evaluate",

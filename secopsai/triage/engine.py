@@ -33,19 +33,22 @@ def list_triage_findings(
     category: Optional[str] = None,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
-    rows = soc_store.list_findings(db_path)
-    if severity:
-        rows = [row for row in rows if str(row.get("severity") or "").lower() == str(severity).lower()]
-    if status:
-        rows = [row for row in rows if str(row.get("status") or "").lower() == str(status).lower()]
+    rows = soc_store.list_findings(
+        db_path,
+        severity=severity,
+        status=status,
+        limit=limit if category is None else None,
+        include_payload=True,
+    )
     enriched = []
     for row in rows:
-        detail = soc_store.get_finding(str(row["finding_id"]), db_path) or dict(row)
-        triage_category = infer_category(detail)
+        triage_category = infer_category(row)
         if category and triage_category != category:
             continue
-        detail["category"] = triage_category
-        enriched.append(detail)
+        row["category"] = triage_category
+        enriched.append(row)
+        if len(enriched) >= limit:
+            break
     return enriched[:limit]
 
 
