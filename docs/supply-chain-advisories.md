@@ -27,6 +27,9 @@ secopsai supply-chain explain-verdict --ecosystem npm --package @squawk/mcp --ve
 secopsai supply-chain advisory check --ecosystem npm --package node-ipc --version 12.0.1
 secopsai supply-chain explain-verdict --ecosystem npm --package node-ipc --version 12.0.1
 
+# Check the Mini Shai-Hulud Red Hat Cloud Services npm advisory.
+secopsai supply-chain advisory check --ecosystem npm --package @redhat-cloud-services/chrome --version 2.3.1 --json
+
 # Check the Laravel-Lang Composer/Packagist source-backed advisory.
 secopsai supply-chain advisory check --ecosystem packagist --package laravel-lang/lang --version 14.3.7 --json
 
@@ -167,6 +170,39 @@ Operator mitigation:
   secrets, and developer-machine credentials only when an affected version was
   installed or loaded in an environment with secrets.
 - Rebuild from clean lockfiles and purge compromised package-manager caches.
+
+## Mini Shai-Hulud Red Hat Cloud Services npm Workflow
+
+SecOpsAI includes source-first npm namespace coverage for the June 2026
+`@redhat-cloud-services/*` Mini Shai-Hulud campaign. The primary detection path
+does not depend on third-party reporting; it watches npm source-of-truth
+metadata and package artifacts directly.
+
+```bash
+secopsai supply-chain watch-registry --ecosystem npm --namespace redhat-cloud-services --since 2h --dry-run --json
+secopsai supply-chain advisory check --ecosystem npm --package @redhat-cloud-services/chrome --version 2.3.1 --json
+```
+
+Source-first rules detect namespace-wide publish bursts, per-package version
+bursts, historical tarball/integrity/shasum changes, and npm lifecycle hooks.
+Artifact rules detect `preinstall node index.js`, AES-GCM encrypted JavaScript
+payload loaders, Bun temp staging, GitHub CLI token harvesting, GitHub Actions
+runner secret harvesting, encrypted exfiltration, and GitHub API dead-drop
+behavior.
+
+Operator mitigation:
+
+- Block listed `@redhat-cloud-services/*` versions in lockfile policy, npm proxy
+  policy, CI allowlists, and artifact caches.
+- Audit `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`,
+  `npm-shrinkwrap.json`, `node_modules`, CI runner caches, and container build
+  layers.
+- Hunt for `preinstall node index.js`, Bun staging under `/tmp`, `gh auth token`,
+  GitHub API dead-drop writes, and the marker strings listed in
+  `docs/mini-shai-hulud-redhat-validation.md`.
+- Rotate npm, GitHub, cloud, Kubernetes, Vault, SSH, Docker, and CI/CD
+  credentials only when an affected version was installed or executed in an
+  environment with secrets.
 
 ## Composer/Packagist Tag-Rewrite Workflow
 
