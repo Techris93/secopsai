@@ -64,6 +64,7 @@ POLICY_PATH = REPO_ROOT / "config" / "supply_chain_policy.toml"
 CAMPAIGN_DISCOVERY_DIR = SUPPLY_CHAIN_DIR / "campaign_discovery"
 CAMPAIGN_CANDIDATES_PATH = CAMPAIGN_DISCOVERY_DIR / "candidates.json"
 CAMPAIGN_WATCHLIST_PATH = CAMPAIGN_DISCOVERY_DIR / "watchlist.json"
+NPM_SOURCE_SNAPSHOTS_DIR = SUPPLY_CHAIN_DIR / "npm_source"
 PACKAGIST_SOURCE_SNAPSHOTS_DIR = SUPPLY_CHAIN_DIR / "packagist_source"
 BLOG_NEWS_SOURCES_PATH = REPO_ROOT / "blog" / "data" / "news-sources.json"
 BLOG_NEWS_CACHE_PATH = REPO_ROOT / "blog" / "data" / "news-cache.json"
@@ -296,6 +297,7 @@ SUSPICIOUS_RULES: list[tuple[str, str, int]] = [
     ("orphan commit delivery", r"\b(?:orphan(?:ed)? commit|unreachable commit|dangling commit|unsigned commit|hidden commit)\b", 5),
     ("vscode extension compromise", r"\b(?:VS Code|VSCode|Visual Studio Code|open vsx|marketplace|extension activation|activationEvents|workspace).*?(?:credential|child_process|fetch|orphan|malicious|compromised)\b", 5),
     ("dns or https exfiltration", r"\b(?:DNS tunneling|dns exfil|HTTPS exfil|dead drop|dead-drop|GitHub dead-drop|OpenTelemetry endpoint)\b", 4),
+    ("mini shai-hulud payload indicators", r"\b(?:Mini Shai-Hulud|Shai-Hulud|thebeautifulmarchoftime|f4abccab2|Miasma: The Spreading Blight|IfYouInvalidateThisTokenItWillNukeTheComputerOfTheOwner)\b", 5),
 ]
 
 COMMON_BUILD_BACKENDS = {
@@ -412,6 +414,7 @@ def _ensure_dirs() -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     ADVISORIES_DIR.mkdir(parents=True, exist_ok=True)
     CAMPAIGN_DISCOVERY_DIR.mkdir(parents=True, exist_ok=True)
+    NPM_SOURCE_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
     PACKAGIST_SOURCE_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -1120,6 +1123,7 @@ def _normalize_advisory_match(advisory: Dict[str, Any], affected: Dict[str, Any]
         "version_ranges": affected.get("version_ranges", []),
         "source_urls": advisory.get("source_urls", []),
         "source_names": advisory.get("source_names", []),
+        "abused_services": advisory.get("abused_services", []),
         "iocs": advisory.get("iocs", {}),
         "detection_rationale": advisory.get("detection_rationale", []),
         "remediation": advisory.get("remediation", []),
@@ -1566,6 +1570,7 @@ def _python_semantic_findings(path: str, source: str) -> List[str]:
 def _javascript_semantic_findings(path: str, source: str) -> List[str]:
     findings: List[str] = []
     lowered_path = path.lower()
+    lowered_source = source.lower()
     if re.search(r"\b(eval|Function)\s*\(", source):
         findings.append(f"{path}: javascript dynamic execution via eval/Function")
     if re.search(r"\bchild_process\b", source) or re.search(r"\b(execSync|spawnSync|execFileSync|spawn|execFile)\s*\(", source):
@@ -1599,6 +1604,42 @@ def _javascript_semantic_findings(path: str, source: str) -> List[str]:
         re.IGNORECASE,
     ):
         findings.append(f"{path}: javascript payload wrapping or exfiltration staging")
+    if re.search(r"createDecipheriv\s*\(\s*['\"]aes-128-gcm|setAuthTag\s*\(|authTagLength\s*:\s*16", source):
+        findings.append(f"{path}: javascript AES-GCM encrypted payload loader")
+    if re.search(r"createCipheriv\s*\(\s*['\"]aes-256-gcm|publicEncrypt\s*\(|RSA_PKCS1_OAEP_PADDING|oaepHash\s*:\s*['\"]sha256", source):
+        findings.append(f"{path}: javascript encrypted credential exfiltration envelope")
+    if re.search(r"\b(Bun|bun\s+run|getBunPath|oven-sh/bun|bun-v\d|/tmp/p|tmpdir\(\)|mkdtempSync)\b", source):
+        findings.append(f"{path}: javascript Bun runtime or randomized temp payload staging")
+    if re.search(r"\bwriteFileSync\s*\([^)]*(?:/tmp/|tmpdir|Math\.random)|\bexecSync\s*\([^)]*bun\s+run|unlinkSync\s*\(", source):
+        findings.append(f"{path}: javascript writes, executes, and removes staged payload")
+    if re.search(r"\bgh\s+auth\s+token\b|execSync\s*\([^)]*gh auth token", source):
+        findings.append(f"{path}: javascript GitHub CLI token harvesting")
+    if re.search(r"\bGITHUB_ACTIONS\b|\bRUNNER_OS\b|\bACTIONS_RUNTIME_TOKEN\b|\bACTIONS_ID_TOKEN_REQUEST_TOKEN\b|\bsudo\s+python3\b", source):
+        findings.append(f"{path}: javascript GitHub Actions runner secret harvesting")
+    if re.search(r"gh\[op\]_|npm_|ghs_\\d|ghs_\[|ghp_|gho_|ghs_", source):
+        findings.append(f"{path}: javascript GitHub/npm token pattern harvesting")
+    if re.search(r"api\.github\.com", source) and re.search(r"\b(createBlob|createTree|createCommit|/git/blobs|/git/trees|contents|repos)\b", source):
+        findings.append(f"{path}: javascript GitHub dead-drop or repository write exfiltration")
+    if re.search(r"\b(__IS_DAEMON|detached\s*:\s*true|child\.unref\s*\(|\.unref\s*\(\))", source):
+        findings.append(f"{path}: javascript daemonization or background persistence")
+    if re.search(r"Intl\.DateTimeFormat|LC_ALL|LC_MESSAGES|LANGUAGE|process\.env\[['\"]LANG", source) and "ru" in lowered_source:
+        findings.append(f"{path}: javascript locale-based execution avoidance")
+    if re.search(
+        r"(~?/\.aws/credentials|~?/\.azure/accessTokens\.json|~?/\.config/gcloud|~?/\.docker/config\.json|~?/\.kube/config|"
+        r"/var/run/secrets/kubernetes\.io/serviceaccount/token|~?/\.npmrc|~?/\.pypirc|~?/\.netrc|~?/\.ssh/id_|~?/\.git-credentials|"
+        r"wallet\.dat|\.ethereum/keystore)",
+        source,
+        re.IGNORECASE,
+    ):
+        findings.append(f"{path}: javascript developer, cloud, registry, and wallet credential file targeting")
+    if any(marker.lower() in lowered_source for marker in (
+        "f4abccab2",
+        "thebeautifulmarchoftime",
+        "ifyouinvalidatethistokenitwillnukethecomputeroftheowner",
+        "miasma: the spreading blight",
+        "tmp.0987654321.lock",
+    )):
+        findings.append(f"{path}: Mini Shai-Hulud payload marker string")
     if lowered_path.endswith("node-ipc.cjs") and any(
         token in source
         for token in ("process.env", "Buffer.from", "Function(", "eval(", "networkInterfaces", ".npmrc", ".ssh")
@@ -1615,16 +1656,30 @@ def _package_json_policy_findings(path: str, source: str) -> List[str]:
 
     findings: List[str] = []
     scripts = data.get("scripts", {})
+    lifecycle_commands: List[str] = []
     if isinstance(scripts, dict):
         for hook, command in scripts.items():
             if not isinstance(command, str):
                 continue
             if hook in {"preinstall", "install", "postinstall", "prepare"}:
-                findings.append(f"{path}: npm lifecycle hook present ({hook})")
+                lifecycle_commands.append(command)
+                findings.append(f"{path}: npm lifecycle hook present ({hook}: {command})")
+                if re.search(r"\b(?:node|bun)\s+\.?/?(?:index|setup|install|preinstall|postinstall)\.(?:js|mjs|cjs)\b", command, re.IGNORECASE):
+                    findings.append(f"{path}: npm lifecycle hook executes package entrypoint ({hook}: {command})")
             if re.search(r"\b(curl|wget|powershell|node\s+-e|python\s+-c|bash\s+-c|sh\s+-c|npx|npm\s+exec)\b", command, re.IGNORECASE):
                 findings.append(f"{path}: npm lifecycle hook runs remote or inline code ({hook})")
             if re.search(r"https?://", command, re.IGNORECASE):
                 findings.append(f"{path}: npm lifecycle hook reaches remote URL ({hook})")
+
+    main_entry = str(data.get("main") or "")
+    module_entry = str(data.get("module") or "")
+    if (
+        main_entry in {"index.js", "./index.js", "index.cjs", "./index.cjs"}
+        and module_entry
+        and module_entry != main_entry
+        and any(main_entry.removeprefix("./") in command for command in lifecycle_commands)
+    ):
+        findings.append(f"{path}: npm CommonJS entrypoint differs from module entrypoint ({main_entry} vs {module_entry})")
 
     if data.get("bin"):
         findings.append(f"{path}: npm executable entrypoint declared via bin")
@@ -2079,7 +2134,7 @@ def _filter_semantic_findings(findings: List[str]) -> List[str]:
             if any(hook in detail for hook in ("prepublishOnly", "prepack", "prepare", "prepublish")):
                 continue
             # Check if the hook command is actually suspicious
-            if not any(cmd in detail for cmd in ("curl", "wget", "powershell", "eval", "exec", "fetch")):
+            if not any(cmd in detail for cmd in ("curl", "wget", "powershell", "eval", "exec", "fetch", "node ", "bun ")):
                 continue
                 
         # Filter custom build backends that are common
@@ -2260,9 +2315,9 @@ def _generate_report(package: str, v1: str, v2: str, files_v1: Dict[str, Path], 
             else:
                 lines.extend(["```diff", diff.rstrip(), "```"])
             lines.append("")
-        semantic_lines = _semantic_summary_section(files_v1, files_v2, changed, added)
-        if semantic_lines:
-            lines.extend(semantic_lines)
+    semantic_lines = _semantic_summary_section(files_v1, files_v2, changed, added)
+    if semantic_lines:
+        lines.extend(semantic_lines)
     return "\n".join(lines)
 
 
@@ -3248,6 +3303,13 @@ def _has_strong_malicious_indicators(matched_rules: List[Dict[str, Any]], score:
         "semantic credential harvesting",
         "semantic exfiltration staging",
         "node-ipc bundle payload indicators",
+        "mini shai-hulud payload indicators",
+        "semantic encrypted payload loader",
+        "semantic bun temp payload staging",
+        "semantic github cli token harvesting",
+        "semantic github actions secret harvesting",
+        "semantic github dead-drop exfiltration",
+        "semantic encrypted credential exfiltration",
         "environment credential harvesting",
         "module-load execution",
         "local file enumeration",
@@ -3456,6 +3518,16 @@ def explain_verdict(
         semantic_credential_harvest = any("credential harvesting" in finding for finding in semantic_findings)
         semantic_exfil_staging = any("exfiltration staging" in finding or "payload wrapping" in finding for finding in semantic_findings)
         semantic_node_ipc_bundle = any("node-ipc CommonJS bundle" in finding for finding in semantic_findings)
+        semantic_encrypted_loader = any("AES-GCM encrypted payload loader" in finding for finding in semantic_findings)
+        semantic_encrypted_exfil = any("encrypted credential exfiltration envelope" in finding for finding in semantic_findings)
+        semantic_bun_staging = any("Bun runtime" in finding or "staged payload" in finding for finding in semantic_findings)
+        semantic_github_cli_token = any("GitHub CLI token harvesting" in finding for finding in semantic_findings)
+        semantic_github_actions_secret = any("GitHub Actions runner secret harvesting" in finding for finding in semantic_findings)
+        semantic_github_dead_drop = any("GitHub dead-drop" in finding for finding in semantic_findings)
+        semantic_token_patterns = any("token pattern harvesting" in finding for finding in semantic_findings)
+        semantic_daemonization = any("daemonization" in finding or "background persistence" in finding for finding in semantic_findings)
+        semantic_locale_avoidance = any("locale-based execution avoidance" in finding for finding in semantic_findings)
+        semantic_mini_shai_hulud = any("Mini Shai-Hulud payload marker" in finding for finding in semantic_findings)
         semantic_ecosystem_manifest = any(
             needle in finding
             for finding in semantic_findings
@@ -3486,6 +3558,15 @@ def explain_verdict(
             or semantic_credential_harvest
             or semantic_exfil_staging
             or semantic_node_ipc_bundle
+            or semantic_encrypted_loader
+            or semantic_encrypted_exfil
+            or semantic_bun_staging
+            or semantic_github_cli_token
+            or semantic_github_actions_secret
+            or semantic_github_dead_drop
+            or semantic_token_patterns
+            or semantic_daemonization
+            or semantic_mini_shai_hulud
             or semantic_ecosystem_manifest
             or (semantic_subprocess and raw_subprocess)
         )
@@ -3590,6 +3671,86 @@ def explain_verdict(
                     "node-ipc bundle payload indicators",
                     applied_weight,
                     "node-ipc CommonJS bundle contains appended high-risk payload indicators.",
+                )
+            if semantic_mini_shai_hulud and _rule_enabled(policy, "mini shai-hulud payload indicators"):
+                applied_weight = _rule_weight(policy, "mini shai-hulud payload indicators", 5)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "mini shai-hulud payload indicators",
+                    applied_weight,
+                    "Semantic findings include Mini Shai-Hulud marker strings.",
+                )
+            if semantic_encrypted_loader and _rule_enabled(policy, "semantic encrypted payload loader"):
+                applied_weight = _rule_weight(policy, "semantic encrypted payload loader", 4)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "semantic encrypted payload loader",
+                    applied_weight,
+                    "JavaScript decrypts embedded payloads with AES-GCM before execution.",
+                )
+            if semantic_bun_staging and _rule_enabled(policy, "semantic bun temp payload staging"):
+                applied_weight = _rule_weight(policy, "semantic bun temp payload staging", 4)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "semantic bun temp payload staging",
+                    applied_weight,
+                    "JavaScript stages decrypted payloads through Bun and temporary files.",
+                )
+            if semantic_github_cli_token and _rule_enabled(policy, "semantic github cli token harvesting"):
+                applied_weight = _rule_weight(policy, "semantic github cli token harvesting", 4)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "semantic github cli token harvesting",
+                    applied_weight,
+                    "JavaScript invokes gh auth token to collect GitHub CLI credentials.",
+                )
+            if semantic_github_actions_secret and _rule_enabled(policy, "semantic github actions secret harvesting"):
+                applied_weight = _rule_weight(policy, "semantic github actions secret harvesting", 4)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "semantic github actions secret harvesting",
+                    applied_weight,
+                    "JavaScript targets GitHub Actions runner secrets or OIDC material.",
+                )
+            if semantic_github_dead_drop and _rule_enabled(policy, "semantic github dead-drop exfiltration"):
+                applied_weight = _rule_weight(policy, "semantic github dead-drop exfiltration", 4)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "semantic github dead-drop exfiltration",
+                    applied_weight,
+                    "JavaScript references GitHub API repository write paths for dead-drop exfiltration.",
+                )
+            if semantic_encrypted_exfil and _rule_enabled(policy, "semantic encrypted credential exfiltration"):
+                applied_weight = _rule_weight(policy, "semantic encrypted credential exfiltration", 4)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "semantic encrypted credential exfiltration",
+                    applied_weight,
+                    "JavaScript wraps collected data in encrypted exfiltration envelopes.",
+                )
+            if (semantic_daemonization or semantic_locale_avoidance) and _rule_enabled(policy, "semantic evasive execution controls"):
+                applied_weight = _rule_weight(policy, "semantic evasive execution controls", 2)
+                score += applied_weight
+                _record_rule_match(
+                    matched_rules,
+                    seen_rule_names,
+                    "semantic evasive execution controls",
+                    applied_weight,
+                    "JavaScript includes daemonization or locale-based execution avoidance.",
                 )
             if semantic_ecosystem_manifest and _rule_enabled(policy, "ecosystem manifest risk"):
                 applied_weight = _rule_weight(policy, "ecosystem manifest risk", 3)
@@ -4204,6 +4365,187 @@ def _ordered_npm_versions(metadata: Dict[str, Any]) -> List[tuple[str, str, floa
             continue
     rows.sort(key=lambda item: item[2])
     return rows
+
+
+def _normalize_npm_namespace(namespace: str) -> str:
+    normalized = str(namespace or "").strip().lower()
+    normalized = normalized.removeprefix("scope:")
+    normalized = normalized.removeprefix("@")
+    if not normalized or "/" in normalized:
+        raise ValueError("npm namespace should be a scope such as redhat-cloud-services")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", normalized):
+        raise ValueError(f"invalid npm namespace: {namespace!r}")
+    return normalized
+
+
+def _npm_source_snapshot_path(package: str) -> Path:
+    safe = normalize_package_name("npm", package).replace("/", "__").replace("@", "scope__")
+    return NPM_SOURCE_SNAPSHOTS_DIR / f"{safe}.json"
+
+
+def _npm_source_snapshot(package: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    package = normalize_package_name("npm", package)
+    versions = metadata.get("versions", {}) if isinstance(metadata, dict) else {}
+    return {
+        "ecosystem": "npm",
+        "package": package,
+        "fetched_at": _utc_now(),
+        "dist_tags": metadata.get("dist-tags", {}) if isinstance(metadata, dict) else {},
+        "maintainers": [
+            str(item.get("name") or item.get("email") or item)
+            for item in (metadata.get("maintainers", []) if isinstance(metadata, dict) else [])
+        ],
+        "versions": [
+            {
+                "version": version,
+                "published_at": stamp,
+                "tarball": ((versions.get(version) or {}).get("dist") or {}).get("tarball") if isinstance(versions, dict) else None,
+                "integrity": ((versions.get(version) or {}).get("dist") or {}).get("integrity") if isinstance(versions, dict) else None,
+                "shasum": ((versions.get(version) or {}).get("dist") or {}).get("shasum") if isinstance(versions, dict) else None,
+                "scripts": (versions.get(version) or {}).get("scripts") if isinstance(versions, dict) else None,
+                "main": (versions.get(version) or {}).get("main") if isinstance(versions, dict) else None,
+                "module": (versions.get(version) or {}).get("module") if isinstance(versions, dict) else None,
+            }
+            for version, stamp, _epoch in _ordered_npm_versions(metadata if isinstance(metadata, dict) else {})
+        ],
+    }
+
+
+def _fetch_npm_namespace_packages(namespace: str, *, timeout: int = 30, limit: int = 250) -> List[str]:
+    scope = _normalize_npm_namespace(namespace)
+    packages: List[str] = []
+    offset = 0
+    while len(packages) < limit:
+        size = min(250, limit - len(packages))
+        params = urllib.parse.urlencode({"text": f"scope:{scope}", "size": str(size), "from": str(offset)})
+        data = _http_json(f"{NPM_SEARCH}?{params}", timeout=timeout)
+        rows = data.get("objects", []) if isinstance(data, dict) else []
+        for row in rows:
+            pkg = (row.get("package") or {}) if isinstance(row, dict) else {}
+            name = normalize_package_name("npm", str(pkg.get("name") or ""))
+            if name.startswith(f"@{scope}/") and validate_package_identifier("npm", name).get("valid"):
+                packages.append(name)
+        if len(rows) < size:
+            break
+        offset += size
+    return sorted(set(packages))
+
+
+def detect_npm_package_source_signals(
+    package: str,
+    metadata: Dict[str, Any],
+    *,
+    previous_snapshot: Optional[Dict[str, Any]] = None,
+    burst_window_seconds: int = 3600,
+    burst_threshold: int = 2,
+) -> Dict[str, Any]:
+    package = normalize_package_name("npm", package)
+    ordered = _ordered_npm_versions(metadata)
+    previous = _snapshot_version_map(previous_snapshot)
+    signals: List[Dict[str, Any]] = []
+    epochs = [(version, stamp, epoch) for version, stamp, epoch in ordered if epoch]
+    for _version, _stamp, epoch in epochs:
+        clustered = [(version, stamp, candidate_epoch) for version, stamp, candidate_epoch in epochs if 0 <= candidate_epoch - epoch <= burst_window_seconds]
+        if len(clustered) >= burst_threshold:
+            signals.append({
+                "rule_id": "NPM-PACKAGE-VERSION-BURST",
+                "severity": "medium" if len(clustered) < 4 else "high",
+                "confidence": "medium",
+                "matched_behavior": "multiple npm versions published inside a short window",
+                "package": package,
+                "version_count": len(clustered),
+                "window_seconds": burst_window_seconds,
+                "versions": [version for version, _stamp, _epoch in clustered[:25]],
+            })
+            break
+
+    snapshot = _npm_source_snapshot(package, metadata)
+    current_versions = _snapshot_version_map(snapshot)
+    for version, current in current_versions.items():
+        old = previous.get(version) or {}
+        for key, rule_id in (
+            ("integrity", "NPM-HISTORICAL-INTEGRITY-CHANGED"),
+            ("shasum", "NPM-HISTORICAL-SHASUM-CHANGED"),
+            ("tarball", "NPM-HISTORICAL-TARBALL-CHANGED"),
+        ):
+            old_value = str(old.get(key) or "")
+            new_value = str(current.get(key) or "")
+            if old_value and new_value and old_value != new_value:
+                signals.append({
+                    "rule_id": rule_id,
+                    "severity": "critical",
+                    "confidence": "high",
+                    "matched_behavior": f"historical npm version {key} changed compared with prior snapshot",
+                    "package": package,
+                    "version": version,
+                    f"previous_{key}": old_value,
+                    key: new_value,
+                })
+        scripts = current.get("scripts") or {}
+        if isinstance(scripts, dict):
+            for hook, command in scripts.items():
+                if hook in {"preinstall", "install", "postinstall", "prepare"} and isinstance(command, str):
+                    signals.append({
+                        "rule_id": "NPM-METADATA-LIFECYCLE-HOOK",
+                        "severity": "high" if re.search(r"\bnode\s+index\.js\b|\bbun\b|\bcurl\b|\bwget\b|https?://", command, re.IGNORECASE) else "medium",
+                        "confidence": "medium",
+                        "matched_behavior": "npm registry metadata declares install-time lifecycle execution",
+                        "package": package,
+                        "version": version,
+                        "hook": hook,
+                        "command": command,
+                    })
+
+    return {
+        "ecosystem": "npm",
+        "package": package,
+        "version_count": len(ordered),
+        "signals": signals,
+    }
+
+
+def _aggregate_npm_namespace_source_signals(
+    namespace: str,
+    package_rows: Iterable[Dict[str, Any]],
+    *,
+    burst_window_seconds: int = 3600,
+    burst_threshold: int = 10,
+) -> Dict[str, Any]:
+    scope = _normalize_npm_namespace(namespace)
+    rows = [
+        row for row in package_rows
+        if row.get("published_epoch") and str(row.get("package") or "").lower().startswith(f"@{scope}/")
+    ]
+    rows.sort(key=lambda item: float(item.get("published_epoch") or 0))
+    signals: List[Dict[str, Any]] = []
+    for row in rows:
+        epoch = float(row.get("published_epoch") or 0)
+        clustered = [candidate for candidate in rows if 0 <= float(candidate.get("published_epoch") or 0) - epoch <= burst_window_seconds]
+        unique_packages = sorted(set(str(item.get("package")) for item in clustered if item.get("package")))
+        if len(clustered) >= burst_threshold and len(unique_packages) >= max(3, burst_threshold // 3):
+            signals.append({
+                "rule_id": "NPM-NAMESPACE-MASS-PUBLISH-BURST",
+                "severity": "critical" if len(clustered) >= 25 else "high",
+                "confidence": "high",
+                "matched_behavior": "many npm package artifacts in one scope were published inside a short window",
+                "namespace": f"@{scope}",
+                "artifact_count": len(clustered),
+                "unique_package_count": len(unique_packages),
+                "window_seconds": burst_window_seconds,
+                "packages": unique_packages[:50],
+                "versions": [
+                    {"package": item.get("package"), "version": item.get("version"), "published_at": item.get("published_at")}
+                    for item in clustered[:50]
+                ],
+            })
+            break
+    return {
+        "ecosystem": "npm",
+        "namespace": f"@{scope}",
+        "total_recent_artifacts": len(rows),
+        "unique_recent_packages": len(set(str(row.get("package")) for row in rows if row.get("package"))),
+        "signals": signals,
+    }
 
 
 def _node_ipc_mitigation(package: str, versions: Iterable[str]) -> List[str]:
@@ -6225,7 +6567,22 @@ def watch_registry(
         db_path = _upsert_findings(findings) if findings else None
 
     source_evidence = None
-    if ecosystem == "packagist":
+    if ecosystem == "npm":
+        try:
+            previous_snapshot = None
+            snapshot_path = _npm_source_snapshot_path(package)
+            if snapshot_path.exists():
+                try:
+                    previous_snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+                except Exception:
+                    previous_snapshot = None
+            source_evidence = detect_npm_package_source_signals(package, metadata or {}, previous_snapshot=previous_snapshot)
+            if persist and not dry_run:
+                _ensure_dirs()
+                snapshot_path.write_text(json.dumps(_npm_source_snapshot(package, metadata or {}), indent=2), encoding="utf-8")
+        except Exception as exc:
+            source_evidence = {"error": str(exc), "status": "source_evidence_unavailable"}
+    elif ecosystem == "packagist":
         try:
             source_evidence = analyze_packagist_source_package(package, metadata=metadata, save_snapshot=persist and not dry_run)
         except Exception as exc:
@@ -6248,6 +6605,82 @@ def watch_registry(
         "errors": sum(1 for result in results if result.verdict == "error"),
         "db_path": db_path,
         "source_evidence": source_evidence,
+    }
+
+
+def watch_npm_namespace(
+    *,
+    namespace: str,
+    since: str = "10m",
+    dry_run: bool = True,
+    persist: bool = False,
+    limit: int = 50,
+    model: Optional[str] = None,
+    packages: Optional[List[str]] = None,
+    metadata_map: Optional[Dict[str, Dict[str, Any]]] = None,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    scope = _normalize_npm_namespace(namespace)
+    try:
+        package_names = packages if packages is not None else _fetch_npm_namespace_packages(scope, limit=limit)
+    except Exception as exc:
+        return {
+            "ecosystem": "npm",
+            "namespace": f"@{scope}",
+            "since": since,
+            "dry_run": dry_run,
+            "persist": persist,
+            "packages": [],
+            "results": [],
+            "total_packages": 0,
+            "total_scanned": 0,
+            "malicious": 0,
+            "errors": 1,
+            "namespace_evidence": {
+                "namespace": f"@{scope}",
+                "signals": [],
+                "source_status": "fetch_error",
+                "error": str(exc),
+                "recommended_action": "retry after npm registry rate limit clears or provide an allowlisted package set",
+            },
+            "package_source_signals": [],
+        }
+    package_names = [normalize_package_name("npm", package) for package in package_names if package]
+    results = [
+        watch_registry(
+            ecosystem="npm",
+            package=package,
+            since=since,
+            dry_run=dry_run,
+            persist=persist,
+            limit=limit,
+            model=model,
+            metadata=(metadata_map or {}).get(package) or (metadata_map or {}).get(package.lower()),
+            now=now,
+        )
+        for package in package_names[:limit]
+    ]
+    scanned_rows: List[Dict[str, Any]] = []
+    package_source_signals: List[Dict[str, Any]] = []
+    for result in results:
+        scanned_rows.extend(result.get("scanned", []))
+        source_evidence = result.get("source_evidence") or {}
+        package_source_signals.extend(source_evidence.get("signals", []) if isinstance(source_evidence, dict) else [])
+    namespace_evidence = _aggregate_npm_namespace_source_signals(scope, scanned_rows)
+    return {
+        "ecosystem": "npm",
+        "namespace": f"@{scope}",
+        "since": since,
+        "dry_run": dry_run,
+        "persist": persist,
+        "packages": package_names[:limit],
+        "results": results,
+        "total_packages": len(package_names[:limit]),
+        "total_scanned": sum(int(row.get("total_scanned") or 0) for row in results),
+        "malicious": sum(int(row.get("malicious") or 0) for row in results),
+        "errors": sum(int(row.get("errors") or 0) for row in results),
+        "namespace_evidence": namespace_evidence,
+        "package_source_signals": package_source_signals,
     }
 
 

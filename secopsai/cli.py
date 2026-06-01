@@ -98,6 +98,7 @@ from secopsai.supply_chain import (
     run_scan,
     tune_rule,
     tune_threshold,
+    watch_npm_namespace,
     watch_packagist_namespace,
     watch_registry,
 )
@@ -1023,7 +1024,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     supply_chain_watch.add_argument("--ecosystem", required=True, choices=SUPPORTED_ECOSYSTEM_NAMES)
     supply_chain_watch.add_argument("--package", help="Package name to watch")
-    supply_chain_watch.add_argument("--namespace", help="Packagist namespace/vendor to watch, for example laravel-lang")
+    supply_chain_watch.add_argument("--namespace", help="npm scope or Packagist namespace/vendor to watch, for example redhat-cloud-services or laravel-lang")
     supply_chain_watch.add_argument("--since", default="10m", help="Look back duration, for example 10m, 2h, or 1d")
     supply_chain_watch.add_argument("--limit", type=int, default=20, help="Maximum recent versions to analyze")
     supply_chain_watch.add_argument("--dry-run", action="store_true", help="Analyze without persisting reports/findings")
@@ -2820,8 +2821,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     raise ValueError("--dry-run and --persist are mutually exclusive")
                 if not args.package and not args.namespace:
                     raise ValueError("--package or --namespace is required")
-                if args.namespace and args.ecosystem != "packagist":
-                    raise ValueError("--namespace is currently supported for --ecosystem packagist")
+                if args.namespace and args.ecosystem not in {"npm", "packagist"}:
+                    raise ValueError("--namespace is currently supported for --ecosystem npm or packagist")
                 capabilities = ecosystem_capabilities(args.ecosystem)
                 if not capabilities.get("features", {}).get("monitor", False):
                     payload = {
@@ -2849,7 +2850,16 @@ def main(argv: Optional[List[str]] = None) -> int:
                         for item in payload["limitations"]:
                             print(f"- {item}")
                     return 0
-                if args.namespace:
+                if args.namespace and args.ecosystem == "npm":
+                    payload = watch_npm_namespace(
+                        namespace=args.namespace,
+                        since=args.since,
+                        dry_run=not args.persist,
+                        persist=args.persist,
+                        limit=args.limit,
+                        model=args.model,
+                    )
+                elif args.namespace:
                     payload = watch_packagist_namespace(
                         namespace=args.namespace,
                         since=args.since,

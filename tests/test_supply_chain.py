@@ -243,6 +243,70 @@ class SupplyChainTests(unittest.TestCase):
         self.assertEqual(verdict, "malicious")
         self.assertIn("install hook", analysis)
 
+    def test_npm_fixture_detects_mini_shai_hulud_bun_loader_cluster(self):
+        payload = supply_chain.analyze_ecosystem_files(
+            "npm",
+            {
+                "package.json": json.dumps({
+                    "name": "@redhat-cloud-services/chrome",
+                    "version": "2.3.1",
+                    "main": "index.js",
+                    "module": "esm/index.js",
+                    "scripts": {"preinstall": "node index.js"},
+                }),
+                "index.js": (
+                    "const crypto=require('crypto'); const fs=require('fs'); const cp=require('child_process');\n"
+                    "const d=crypto.createDecipheriv('aes-128-gcm', Buffer.from('00','hex'), Buffer.from('00','hex'), {authTagLength:16}); d.setAuthTag(Buffer.from('00','hex'));\n"
+                    "const t='/tmp/p'+Math.random().toString(36).slice(2)+'.js'; fs.writeFileSync(t,'payload'); cp.execSync('bun run \"'+t+'\"'); fs.unlinkSync(t);\n"
+                    "cp.execSync('gh auth token'); process.env.GITHUB_ACTIONS; process.env.RUNNER_OS; process.env.ACTIONS_RUNTIME_TOKEN; process.env.AWS_SECRET_ACCESS_KEY;\n"
+                    "const tokenRegex=/gh[op]_[A-Za-z0-9]{36,}|npm_[A-Za-z0-9]{36,}/g;\n"
+                    "fetch('https://api.github.com/repos/owner/repo/git/blobs');\n"
+                    "crypto.createCipheriv('aes-256-gcm', Buffer.from('00','hex'), Buffer.from('00','hex')); crypto.publicEncrypt({padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash:'sha256'}, Buffer.from('x'));\n"
+                    "const targets=['~/.aws/credentials','~/.npmrc','~/.ssh/id_rsa','/var/run/secrets/kubernetes.io/serviceaccount/token'];\n"
+                    "console.log('f4abccab2','thebeautifulmarchoftime','IfYouInvalidateThisTokenItWillNukeTheComputerOfTheOwner','Miasma: The Spreading Blight');\n"
+                ),
+            },
+        )
+        rules = {row["rule"] for row in payload["matched_rules"]}
+        findings = "\n".join(payload["findings"])
+        self.assertEqual(payload["verdict"], "malicious")
+        self.assertIn("semantic encrypted payload loader", rules)
+        self.assertIn("semantic bun temp payload staging", rules)
+        self.assertIn("semantic github cli token harvesting", rules)
+        self.assertIn("semantic github actions secret harvesting", rules)
+        self.assertIn("semantic github dead-drop exfiltration", rules)
+        self.assertIn("mini shai-hulud payload indicators", rules)
+        self.assertIn("npm lifecycle hook executes package entrypoint", findings)
+
+    def test_added_only_npm_artifact_gets_semantic_detection(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            new_root = root / "new"
+            new_root.mkdir()
+            (new_root / "package.json").write_text(
+                json.dumps({
+                    "name": "@redhat-cloud-services/chrome",
+                    "version": "2.3.1",
+                    "scripts": {"preinstall": "node index.js"},
+                }),
+                encoding="utf-8",
+            )
+            (new_root / "index.js").write_text(
+                "eval('1'); require('child_process').execSync('gh auth token'); process.env.GITHUB_TOKEN;",
+                encoding="utf-8",
+            )
+            report = supply_chain._build_artifact_report(
+                "@redhat-cloud-services/chrome",
+                "npm-local-artifact",
+                "empty-baseline",
+                "2.3.1",
+                {},
+                supply_chain._collect_files(new_root),
+            )
+        verdict, analysis = supply_chain._classify_report_text(report, ecosystem="npm", package="@redhat-cloud-services/chrome")
+        self.assertEqual(verdict, "malicious")
+        self.assertIn("ast-aware semantic findings", analysis)
+
     def test_classifier_flags_pypi_artifact_divergence(self):
         report = """
 ## Artifact Divergence
@@ -1177,6 +1241,158 @@ const https = require("https");
         self.assertIn("80.200.28.28:2222", payload["ip_ports"])
         self.assertIn("A Mini Sha1-Hulud has Appeared", payload["repository_descriptions"])
 
+    def test_watch_npm_namespace_detects_mass_publish_burst(self):
+        packages = [
+            "@redhat-cloud-services/chrome",
+            "@redhat-cloud-services/frontend-components",
+            "@redhat-cloud-services/insights-client",
+            "@redhat-cloud-services/rbac-client",
+            "@redhat-cloud-services/vulnerabilities-client",
+        ]
+        base_epoch = datetime(2026, 6, 1, 14, 20, tzinfo=timezone.utc).timestamp()
+        metadata_map = {}
+        for index, package in enumerate(packages):
+            metadata_map[package] = {
+                "name": package,
+                "time": {
+                    "created": "2026-01-01T00:00:00.000Z",
+                    "modified": "2026-06-01T14:40:00.000Z",
+                    "1.0.0": datetime_from_epoch(base_epoch - 86400),
+                    "1.0.1": datetime_from_epoch(base_epoch + index * 60),
+                    "1.0.2": datetime_from_epoch(base_epoch + index * 60 + 180),
+                },
+                "versions": {
+                    "1.0.1": {
+                        "scripts": {"preinstall": "node index.js"},
+                        "dist": {"tarball": f"https://registry.npmjs.org/{package}/-/{index}.tgz", "integrity": f"sha512-{index}a", "shasum": f"{index}a"},
+                    },
+                    "1.0.2": {
+                        "scripts": {"preinstall": "node index.js"},
+                        "dist": {"tarball": f"https://registry.npmjs.org/{package}/-/{index}b.tgz", "integrity": f"sha512-{index}b", "shasum": f"{index}b"},
+                    },
+                },
+            }
+        with mock.patch.object(
+            supply_chain,
+            "_scan_release",
+            side_effect=lambda ecosystem, package, version, **kwargs: supply_chain.ScanResult(
+                ecosystem,
+                package,
+                kwargs.get("old_version") or "unknown",
+                version,
+                "benign",
+                "fixture scan skipped",
+                None,
+                None,
+                None,
+            ),
+        ):
+            payload = supply_chain.watch_npm_namespace(
+                namespace="redhat-cloud-services",
+                since="2h",
+                dry_run=True,
+                limit=10,
+                packages=packages,
+                metadata_map=metadata_map,
+                now=base_epoch + 3600,
+            )
+        namespace_rules = {row["rule_id"] for row in payload["namespace_evidence"]["signals"]}
+        package_rules = {row["rule_id"] for row in payload["package_source_signals"]}
+        self.assertIn("NPM-NAMESPACE-MASS-PUBLISH-BURST", namespace_rules)
+        self.assertIn("NPM-METADATA-LIFECYCLE-HOOK", package_rules)
+        self.assertEqual(payload["total_scanned"], 10)
+
+    def test_cli_watch_registry_routes_npm_namespace_to_namespace_watcher(self):
+        payload = {
+            "ecosystem": "npm",
+            "namespace": "redhat-cloud-services",
+            "total_scanned": 0,
+            "malicious": 0,
+            "errors": 0,
+        }
+        stdout = StringIO()
+        with mock.patch.object(secopsai_cli, "watch_npm_namespace", return_value=payload) as watcher, \
+             mock.patch("sys.stdout", stdout):
+            exit_code = secopsai_cli.main([
+                "--json",
+                "supply-chain",
+                "watch-registry",
+                "--ecosystem",
+                "npm",
+                "--namespace",
+                "redhat-cloud-services",
+                "--since",
+                "2h",
+                "--limit",
+                "3",
+                "--dry-run",
+            ])
+        self.assertEqual(exit_code, 0)
+        watcher.assert_called_once()
+        self.assertEqual(watcher.call_args.kwargs["namespace"], "redhat-cloud-services")
+        self.assertEqual(watcher.call_args.kwargs["since"], "2h")
+        self.assertEqual(watcher.call_args.kwargs["limit"], 3)
+        self.assertTrue(watcher.call_args.kwargs["dry_run"])
+        self.assertIn('"namespace": "redhat-cloud-services"', stdout.getvalue())
+
+    def test_watch_npm_namespace_surfaces_source_fetch_failures(self):
+        with mock.patch.object(supply_chain, "_fetch_npm_namespace_packages", side_effect=RuntimeError("HTTP Error 429: Too Many Requests")):
+            payload = supply_chain.watch_npm_namespace(
+                namespace="redhat-cloud-services",
+                since="2h",
+                dry_run=True,
+                limit=1,
+            )
+        self.assertEqual(payload["errors"], 1)
+        self.assertEqual(payload["namespace_evidence"]["source_status"], "fetch_error")
+        self.assertIn("429", payload["namespace_evidence"]["error"])
+        self.assertEqual(payload["total_scanned"], 0)
+
+    def test_npm_package_source_detects_rewritten_historical_integrity(self):
+        current = {
+            "name": "@redhat-cloud-services/chrome",
+            "time": {"2.3.1": "2026-06-01T10:54:42.000Z"},
+            "versions": {
+                "2.3.1": {
+                    "scripts": {"preinstall": "node index.js"},
+                    "main": "index.js",
+                    "dist": {
+                        "tarball": "https://registry.npmjs.org/@redhat-cloud-services/chrome/-/chrome-2.3.1.tgz",
+                        "integrity": "sha512-new",
+                        "shasum": "new",
+                    },
+                }
+            },
+        }
+        previous = {
+            "versions": [
+                {
+                    "version": "2.3.1",
+                    "published_at": "2026-06-01T10:54:42.000Z",
+                    "tarball": "https://registry.npmjs.org/@redhat-cloud-services/chrome/-/chrome-2.3.1.tgz",
+                    "integrity": "sha512-old",
+                    "shasum": "old",
+                }
+            ]
+        }
+        payload = supply_chain.detect_npm_package_source_signals(
+            "@redhat-cloud-services/chrome",
+            current,
+            previous_snapshot=previous,
+        )
+        rules = {row["rule_id"] for row in payload["signals"]}
+        self.assertIn("NPM-HISTORICAL-INTEGRITY-CHANGED", rules)
+        self.assertIn("NPM-HISTORICAL-SHASUM-CHANGED", rules)
+        self.assertIn("NPM-METADATA-LIFECYCLE-HOOK", rules)
+
+    def test_redhat_cloud_services_emergency_advisory_matches_chrome(self):
+        payload = supply_chain.check_advisory("npm", "@redhat-cloud-services/chrome", "2.3.1")
+        self.assertTrue(payload["matched"])
+        self.assertEqual(
+            payload["matches"][0]["advisory_id"],
+            "SECOPSAI-ADV-2026-06-MINI-SHAI-HULUD-REDHAT-CLOUD-SERVICES",
+        )
+
     def test_research_campaign_correlates_npm_fixture(self):
         fixture = REPO_ROOT / "tests" / "fixtures" / "deadcode09284814-campaign.json"
         campaign = json.loads(fixture.read_text(encoding="utf-8"))
@@ -1279,6 +1495,25 @@ const https = require("https");
         self.assertIn("87e0bbc636999b.lhr.life", payload["campaign"]["iocs"]["domains"])
         self.assertTrue(any("credential" in item.lower() for item in payload["campaign"]["behavioral_indicators"]))
         self.assertGreaterEqual(payload["score"], 35)
+
+    def test_campaign_intake_routes_redhat_mini_shai_hulud_to_campaign_research(self):
+        text = (
+            "Mini Shai-Hulud campaign compromised Red Hat Cloud Services npm packages. "
+            "Affected package @redhat-cloud-services/chrome@2.3.1 uses preinstall node index.js, "
+            "AES-128-GCM encrypted payloads, Bun runtime staging, gh auth token collection, "
+            "GitHub Actions secrets, npm tokens, cloud credentials, and GitHub API dead-drop exfiltration."
+        )
+        payload = supply_chain.campaign_intake(
+            text=text,
+            source_name="Socket Research",
+            source_url="https://socket.dev/blog/mini-shai-hulud-campaign-hits-red-hat-cloud-services-npm-packages",
+        )
+        packages = {(item["ecosystem"], item["package"], item["version"]) for item in payload["campaign"]["packages"]}
+        behaviors = " ".join(payload["campaign"]["behavioral_indicators"]).lower()
+        self.assertIn(("npm", "@redhat-cloud-services/chrome", "2.3.1"), packages)
+        self.assertIn("install-time", behaviors)
+        self.assertIn("github token", behaviors)
+        self.assertEqual(payload["orchestrator"]["recommended_route"], "campaign_research")
 
     def test_campaign_intake_ignores_article_html_as_packages(self):
         text = (

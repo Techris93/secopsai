@@ -1,0 +1,108 @@
+{
+  "advisory_id": "SECOPSAI-ADV-2026-06-MINI-SHAI-HULUD-REDHAT-CLOUD-SERVICES",
+  "campaign_id": "mini-shai-hulud-redhat-cloud-services-2026-06",
+  "title": "Mini Shai-Hulud compromise of Red Hat Cloud Services npm packages",
+  "summary": "Source-backed emergency advisory for compromised @redhat-cloud-services npm package versions that used install-time preinstall execution, obfuscated JavaScript loaders, Bun temp staging, GitHub/npm/cloud credential harvesting, and encrypted exfiltration.",
+  "severity": "critical",
+  "confidence": "high",
+  "status": "active",
+  "published_at": "2026-06-01T00:00:00Z",
+  "updated_at": "2026-06-01T00:00:00Z",
+  "ingested_at": "2026-06-01T00:00:00Z",
+  "source_names": [
+    "npm registry metadata",
+    "SecOpsAI source-first npm namespace/artifact rules",
+    "Socket Research validation",
+    "Socket Red Hat Cloud Services Package Compromise validation"
+  ],
+  "source_urls": [
+    "https://registry.npmjs.org/-/v1/search?text=scope:redhat-cloud-services",
+    "https://socket.dev/blog/mini-shai-hulud-campaign-hits-red-hat-cloud-services-npm-packages",
+    "https://socket.dev/supply-chain-attacks/red-hat-cloud-services-package-compromise"
+  ],
+  "affected": [
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/chrome", "versions": ["2.3.1", "2.3.2", "2.3.4"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/compliance-client", "versions": ["4.0.3", "4.0.4", "4.0.6"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/config-manager-client", "versions": ["5.0.5", "5.0.7"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/entitlements-client", "versions": ["4.0.12", "4.0.14"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/frontend-components", "versions": ["7.7.2", "7.7.3", "7.7.5"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/frontend-components-advisor-components", "versions": ["3.8.2", "3.8.4", "3.8.6"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/frontend-components-config", "versions": ["6.11.4", "6.11.6"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/frontend-components-config-utilities", "versions": ["4.11.2", "4.11.3", "4.11.5"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/frontend-components-notifications", "versions": ["6.9.2", "6.9.3", "6.9.5"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/frontend-components-remediations", "versions": ["4.9.2", "4.9.3", "4.9.5"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/frontend-components-testing", "versions": ["1.2.2"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/frontend-components-translations", "versions": ["4.4.1", "4.4.2", "4.4.4"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/frontend-components-utilities", "versions": ["7.4.2", "7.4.4"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/hcc-feo-mcp", "versions": ["0.3.1", "0.3.2", "0.3.4"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/hcc-kessel-mcp", "versions": ["0.3.1", "0.3.2", "0.3.4"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/hcc-pf-mcp", "versions": ["0.6.1", "0.6.2", "0.6.4"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/host-inventory-client", "versions": ["5.0.3", "5.0.4", "5.0.6"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/insights-client", "versions": ["4.0.4", "4.0.5", "4.0.7"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/integrations-client", "versions": ["6.0.4", "6.0.5", "6.0.7"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/javascript-clients-shared", "versions": ["2.0.8", "2.0.9", "2.0.11"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/notifications-client", "versions": ["6.1.4", "6.1.5", "6.1.7"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/patch-client", "versions": ["4.0.4", "4.0.5", "4.0.7"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/quickstarts-client", "versions": ["4.0.11", "4.0.12", "4.0.14"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/rbac-client", "versions": ["9.0.3", "9.0.4", "9.0.6"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/remediations-client", "versions": ["4.0.4", "4.0.5", "4.0.7"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/rule-components", "versions": ["4.7.2", "4.7.3", "4.7.5"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/sources-client", "versions": ["3.0.10", "3.0.11", "3.0.13"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/topological-inventory-client", "versions": ["3.0.10", "3.0.11", "3.0.13"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/tsc-transform-imports", "versions": ["1.2.4", "1.2.6"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/types", "versions": ["3.6.2", "3.6.4"]},
+    {"ecosystem": "npm", "package": "@redhat-cloud-services/vulnerabilities-client", "versions": ["2.1.8", "2.1.9", "2.1.11"]}
+  ],
+  "abused_services": [
+    "https://api.github.com",
+    "https://api.anthropic.com:443/v1/api"
+  ],
+  "iocs": {
+    "file_paths": [
+      "/tmp/p<random>.js",
+      "/tmp/b-*/b.zip",
+      "/tmp/b-*/bun",
+      "tmp.0987654321.lock",
+      "~/.aws/credentials",
+      "~/.npmrc",
+      "~/.ssh/id_rsa",
+      "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    ],
+    "commands": [
+      "preinstall node index.js",
+      "bun run /tmp/p*.js",
+      "gh auth token",
+      "curl -sSL",
+      "sudo python3"
+    ],
+    "strings": [
+      "f4abccab2",
+      "thebeautifulmarchoftime",
+      "IfYouInvalidateThisTokenItWillNukeTheComputerOfTheOwner",
+      "Miasma: The Spreading Blight",
+      "__IS_DAEMON",
+      "SKIP_DOMAIN"
+    ],
+    "hashes": [
+      "88896d478986d453f5da79b311de39d9b4b1bea95c21af1d8ef181b0f4e52fe9",
+      "21b6409a7b84446310daca5409ad6112ac60a1e4bef97736e53fff5f63bfdef4",
+      "ee262510cb246d2b904991aee7fc61162bdae34463439ec6383bd5356479d362",
+      "ac2a2208e1726e008be6c73dc0872d9bba163319259dff1b62055ac933ca46b6",
+      "0dc06ecdaa63fe24859cfd955053c23245c536e4733480239d14bebf12688e35"
+    ]
+  },
+  "detection_rationale": [
+    "The primary source-of-truth signal is namespace-wide npm publish bursts under @redhat-cloud-services, not a third-party article.",
+    "Compromised versions declare npm lifecycle execution such as preinstall node index.js.",
+    "The JavaScript payload uses AES-GCM encrypted embedded blobs, Bun temp-file staging, dynamic execution, and cleanup.",
+    "The payload targets GitHub CLI tokens, GitHub Actions runner secrets, npm tokens, cloud credentials, Kubernetes/Vault material, SSH keys, Git credentials, Docker auth, and wallet files.",
+    "The payload supports encrypted outbound exfiltration and GitHub API dead-drop behavior."
+  ],
+  "remediation": [
+    "Block listed @redhat-cloud-services versions in lockfile policy, npm proxy policy, CI allowlists, and artifact caches.",
+    "Audit package-lock.json, pnpm-lock.yaml, yarn.lock, npm-shrinkwrap.json, node_modules, CI caches, and container build layers for listed versions.",
+    "If an affected version was installed, rotate npm, GitHub, cloud, Kubernetes, Vault, SSH, Docker, and CI/CD credentials exposed to that host or runner.",
+    "Hunt for preinstall node index.js, Bun staging under /tmp, gh auth token execution, GitHub API dead-drop writes, and the listed marker strings/hashes.",
+    "Rebuild from clean lockfiles and known-good package versions after cache purge."
+  ]
+}
