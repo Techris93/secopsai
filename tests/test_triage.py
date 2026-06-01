@@ -276,6 +276,48 @@ class TriageTests(unittest.TestCase):
             closed_rows = list_triage_findings(db_path=db_path, status="closed")
             self.assertEqual([row["finding_id"] for row in closed_rows], ["SCM-TEST001"])
 
+    def test_triage_list_uses_batched_store_rows_for_category_filtering(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = str(Path(temp_dir) / "soc.db")
+            _write_findings(
+                db_path,
+                [
+                    {
+                        "finding_id": "SCM-BATCH001",
+                        "title": "Suspicious npm package release: demo@1.0.0",
+                        "summary": "supply-chain test",
+                        "severity": "high",
+                        "severity_score": 80,
+                        "status": "open",
+                        "disposition": "unreviewed",
+                        "source": "secopsai-supply-chain",
+                        "first_seen": "2026-04-09T10:00:00Z",
+                        "last_seen": "2026-04-09T10:00:00Z",
+                        "event_ids": [],
+                        "platform": "supply_chain",
+                    },
+                    {
+                        "finding_id": "OCF-BATCH002",
+                        "title": "OpenClaw Policy Denials",
+                        "summary": "policy denial test",
+                        "severity": "low",
+                        "severity_score": 10,
+                        "status": "open",
+                        "disposition": "unreviewed",
+                        "source": "secopsai_cli",
+                        "first_seen": "2026-04-09T11:00:00Z",
+                        "last_seen": "2026-04-09T11:00:00Z",
+                        "event_ids": [],
+                    },
+                ],
+            )
+
+            with mock.patch("soc_store.get_finding", side_effect=AssertionError("N+1 detail lookup")):
+                rows = list_triage_findings(db_path=db_path, status="open", category="supply_chain", limit=5)
+
+            self.assertEqual([row["finding_id"] for row in rows], ["SCM-BATCH001"])
+            self.assertEqual(rows[0]["category"], "supply_chain")
+
 
 if __name__ == "__main__":
     unittest.main()

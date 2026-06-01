@@ -28,6 +28,7 @@ import urllib.request
 import xmlrpc.client  # nosec B411
 import xml.etree.ElementTree as ET
 import zipfile
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1299,9 +1300,15 @@ def _append_results(results: Iterable[ScanResult]) -> None:
 def load_recent_results(limit: int = 20) -> List[Dict[str, Any]]:
     if not RESULTS_PATH.exists():
         return []
-    rows = [json.loads(line) for line in RESULTS_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
-    rows.reverse()
-    return rows[:limit]
+    if limit <= 0:
+        return []
+    tail: deque[str] = deque(maxlen=int(limit))
+    with RESULTS_PATH.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                tail.append(line)
+    rows = [json.loads(line) for line in reversed(tail)]
+    return rows
 
 
 def _load_all_results() -> List[Dict[str, Any]]:
@@ -4843,6 +4850,13 @@ CAMPAIGN_PACKAGE_EXTRACTION_NOISE = {
     "unsafe.slice",
     "denial-of-service",
     "remote-code-execution",
+    "credential-stealing",
+    "credential-theft",
+    "credential-harvesting",
+    "secret-stealing",
+    "token-stealing",
+    "local-privilege-escalation",
+    "privilege-escalation",
 }
 
 CAMPAIGN_ACTOR_EXTRACTION_NOISE = {
@@ -4866,12 +4880,16 @@ CAMPAIGN_SOURCE_REFERENCE_DOMAINS = {
     "blogger.googleusercontent.com",
     "kb.cert.org",
     "cert.org",
+    "certcc.github.io",
     "cisa.gov",
     "nvd.nist.gov",
+    "cve.org",
+    "www.cve.org",
     "github.com",
     "research.jfrog.com",
     "jfrog.com",
     "socket.dev",
+    "theori.io",
     "checkmarx.com",
     "reversinglabs.com",
     "snyk.io",
@@ -4879,6 +4897,7 @@ CAMPAIGN_SOURCE_REFERENCE_DOMAINS = {
     "microsoft.com",
     "msrc.microsoft.com",
     "cloudflare.com",
+    "copy.fail",
 }
 
 CAMPAIGN_MALWARE_APT_TERMS = (
@@ -5059,6 +5078,15 @@ def load_campaign_candidates(path: Optional[Path] = None) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         payload = {"candidates": []}
     payload.setdefault("candidates", [])
+    refreshed: List[Dict[str, Any]] = []
+    for candidate in payload.get("candidates", []):
+        if not isinstance(candidate, dict):
+            continue
+        try:
+            refreshed.append(orchestrate_campaign_candidate(candidate))
+        except Exception:
+            refreshed.append(candidate)
+    payload["candidates"] = refreshed
     return payload
 
 
@@ -5415,11 +5443,17 @@ def _classify_campaign_candidate(
 ) -> Dict[str, Any]:
     text = _campaign_text_for_classification(candidate, campaign)
     ecosystems = {str(pkg.get("ecosystem") or "") for pkg in packages}
-    has_packages = bool(packages)
+    package_artifacts = [pkg for pkg in packages if str(pkg.get("ecosystem") or "") != "github"]
+    github_repos = [pkg for pkg in packages if str(pkg.get("ecosystem") or "") == "github"]
+    has_packages = bool(package_artifacts)
+    has_github_repos = bool(github_repos)
     has_extension = "open-vsx" in ecosystems or any(term in text for term in CAMPAIGN_EXTENSION_TERMS)
     has_github_signal = any(term in text for term in CAMPAIGN_GITHUB_BREACH_TERMS)
-    has_vulnerability = any(term in text for term in CAMPAIGN_VULNERABILITY_TERMS)
     has_malware_apt = any(term in text for term in CAMPAIGN_MALWARE_APT_TERMS)
+    has_strong_vulnerability = any(term in text for term in ("cve-", "vu#", "vulnerability", "vulnerable"))
+    has_vulnerability = has_strong_vulnerability or (
+        any(term in text for term in CAMPAIGN_VULNERABILITY_TERMS) and not has_malware_apt
+    )
     has_supply_chain = any(term in text for term in CAMPAIGN_SUPPLY_CHAIN_TERMS)
     route_blockers: List[str] = []
 
@@ -5439,13 +5473,13 @@ def _classify_campaign_candidate(
         campaign_type = "github_token_breach"
         recommended_route = "github_security_review"
         supply_chain_relevance = "low"
-    elif has_malware_apt:
-        campaign_type = "malware_apt_c2"
-        recommended_route = "threat_intel_review"
-        supply_chain_relevance = "low"
     elif has_vulnerability:
         campaign_type = "vulnerability_advisory"
         recommended_route = "vulnerability_tracking"
+        supply_chain_relevance = "low" if not has_github_repos else "context_only"
+    elif has_malware_apt:
+        campaign_type = "malware_apt_c2"
+        recommended_route = "threat_intel_review"
         supply_chain_relevance = "low"
     else:
         campaign_type = "general_threat_intel"
@@ -5456,6 +5490,8 @@ def _classify_campaign_candidate(
         route_blockers.append("no validated package or extension artifacts")
     if not has_packages and recommended_route != "campaign_research":
         route_blockers.append("not a package supply-chain campaign")
+    if has_github_repos and not has_packages and recommended_route != "github_security_review":
+        route_blockers.append("github repositories are project context, not package artifacts")
     if not _flatten_iocs(iocs) and campaign_type in {"malware_apt_c2", "general_threat_intel"}:
         route_blockers.append("no attacker infrastructure IOC validated")
 
@@ -5470,7 +5506,7 @@ def _classify_campaign_candidate(
             "create_blog_draft": "Drafting requires a supported route and minimum evidence.",
         }
 
-    confidence = "high" if has_packages and (has_supply_chain or has_extension) else "medium" if (has_malware_apt or has_vulnerability or has_github_signal or iocs) else "low"
+    confidence = "high" if has_packages and (has_supply_chain or has_extension) else "medium" if (has_malware_apt or has_vulnerability or has_github_signal or iocs or has_github_repos) else "low"
     missing_evidence = []
     if not has_packages:
         missing_evidence.append("validated package or extension artifact")
@@ -5935,6 +5971,12 @@ def _clean_iocs_for_sources(
         for value in values or []:
             indicator = _defang_to_indicator(str(value or "").strip())
             if not indicator:
+                continue
+            if "<" in indicator or ">" in indicator:
+                rejected.append({"type": kind, "value": indicator, "reason": "malformed HTML fragment, not an IOC"})
+                continue
+            if kind == "domains" and re.search(r"\.(?:conf|cfg|ini|ya?ml|json|xml|html?|css|js|png|jpe?g|svg|md|txt)$", indicator, re.IGNORECASE):
+                rejected.append({"type": kind, "value": indicator, "reason": "file or page reference, not domain IOC"})
                 continue
             if _is_source_reference_indicator(indicator, source_domains):
                 rejected.append({"type": kind, "value": indicator, "reason": "source reference, not attacker IOC"})

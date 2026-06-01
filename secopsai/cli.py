@@ -38,6 +38,7 @@ from secopsai.blog import (
     draft_finding as draft_blog_finding,
     draft_news as draft_blog_news,
     news_draft as draft_blog_news_batch,
+    news_mark_deployed as mark_deployed_blog_news,
     news_fetch as fetch_blog_news,
     news_publish_approved as publish_approved_blog_news,
     news_review_edit as edit_blog_news_review,
@@ -943,6 +944,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     blog_news_publish = blog_sub.add_parser("news-publish-approved", help="Publish only external-news drafts marked approved/reviewed")
     blog_news_publish.add_argument("--rebuild", action="store_true", help="Rebuild index, RSS, and JSON feeds after publishing")
+    blog_sub.add_parser("news-mark-deployed", help="Mark approved/reviewed external-news drafts as deployed after a successful blog deploy")
 
     blog_daily = blog_sub.add_parser("draft-daily", help="Automation-ready draft generation without autopublishing")
     blog_daily.add_argument("--limit", type=int, default=5, help="Maximum advisory drafts to create")
@@ -1616,6 +1618,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 payload = publish_approved_blog_news()
                 if args.rebuild:
                     payload["rebuild"] = rebuild_blog()
+            elif args.blog_cmd == "news-mark-deployed":
+                payload = mark_deployed_blog_news()
             elif args.blog_cmd == "draft-daily":
                 payload = draft_blog_daily(limit=args.limit)
             elif args.blog_cmd == "publish":
@@ -1656,10 +1660,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"cached={payload['cached']}")
             for error in payload.get("errors", []):
                 print(f"error={error.get('source')}: {error.get('error')}")
-        elif args.blog_cmd in {"news-draft", "news-publish-approved"}:
+        elif args.blog_cmd in {"news-draft", "news-publish-approved", "news-mark-deployed"}:
             print(f"total={payload['total']}")
             for path in payload.get("created", payload.get("published", [])):
                 print(f"- {path}")
+            for url in payload.get("ready_for_deploy", []):
+                print(f"ready_for_deploy={url}")
             for url in payload.get("deployed", []):
                 print(f"deployed={url}")
             for blocked in payload.get("blocked", []):
