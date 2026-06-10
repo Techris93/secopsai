@@ -1,9 +1,10 @@
-# Threat Model: SecOpsAI (OpenClaw sidecar)
+# Threat Model: SecOpsAI (local telemetry sidecar)
 
 This is a pragmatic threat model for the SecOpsAI product and its default deployment:
 
 - Local-first secops pipeline (`secopsai` CLI)
 - OpenClaw runtime delivery (e.g., WhatsApp)
+- Hermes Agent local telemetry collection
 - Local SOC store (SQLite)
 - Threat intel IOC pipeline (URLhaus/ThreatFox)
 - Optional scheduled automation (cron)
@@ -14,6 +15,7 @@ This is a pragmatic threat model for the SecOpsAI product and its default deploy
 
 - **User / Operator**: runs `secopsai` locally; may interact via WhatsApp.
 - **OpenClaw**: runtime and conversational delivery layer.
+- **Hermes Agent**: optional local agent runtime whose history, gateway, session, and tool logs can be collected read-only.
 - **SecOpsAI CLI**: local pipeline runner + findings UI.
 - **Local storage**:
   - `data/openclaw/...` (replay bundles)
@@ -29,14 +31,14 @@ This is a pragmatic threat model for the SecOpsAI product and its default deploy
 1) **Internet → local host**
    - Installer downloads
    - IOC feeds downloads
-2) **Local host → OpenClaw runtime**
+2) **Local host → OpenClaw / Hermes runtime**
    - Agent executes commands and posts summaries
 3) **User input → shell execution**
    - Chat prompts can cause command execution if not gated
 
 ## Data classification
 
-- OpenClaw logs/audit: **sensitive** (may contain tokens, commands, internal hostnames)
+- OpenClaw and Hermes logs/audit: **sensitive** (may contain tokens, commands, internal hostnames)
 - Findings DB: **sensitive** (security posture + evidence)
 - IOC cache: **public data** but correlated matches are **sensitive**
 
@@ -44,7 +46,7 @@ This is a pragmatic threat model for the SecOpsAI product and its default deploy
 
 | Threat | Component | Risk | Why it matters | Mitigations |
 |---|---|---:|---|---|
-| Spoofing | WhatsApp / OpenClaw chat | High | attacker impersonates operator → triggers actions | verify sender identity, require confirmation for write actions, limit command set |
+| Spoofing | WhatsApp / OpenClaw / Hermes chat | High | attacker impersonates operator → triggers actions | verify sender identity, require confirmation for write actions, limit command set |
 | Tampering | SOC store (SQLite) | Med | malicious/accidental edits affect triage history | file permissions, backups, append-only audit log for triage changes |
 | Repudiation | Triage actions | Med | no proof who changed status/disposition | log operator identity + timestamp, store immutable audit trail |
 | Info disclosure | Logs / findings / reports | High | leaks internal commands, secrets, incident details | redact secrets, least-privilege log access, avoid sending raw logs over chat |
@@ -70,7 +72,7 @@ This is a pragmatic threat model for the SecOpsAI product and its default deploy
 - Default to read-only operations (`list/show/check`).
 - Require explicit user confirmation before any write/triage action.
 - Implement a strict allowlist (only `secopsai ...` commands) for agent execution.
-- Run OpenClaw + secopsai under a dedicated low-privilege OS user.
+- Run OpenClaw, Hermes, and secopsai under a dedicated low-privilege OS user where practical.
 
 ### 3) Sensitive data in findings and WhatsApp summaries
 

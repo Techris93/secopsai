@@ -168,18 +168,21 @@ Options:
 
 ### `secopsai refresh`
 
-Run the full OpenClaw live pipeline and persist findings into the local SOC store.
+Run the full OpenClaw live pipeline by default, or collect from selected platform adapters such as Hermes, macOS, Linux, and Windows.
 
 ```bash
 secopsai refresh
 secopsai refresh --json
 secopsai refresh --skip-export
+secopsai refresh --platform hermes
+secopsai refresh --platform macos,openclaw,hermes
 ```
 
 Options:
 
 - `--skip-export` — reuse existing exported OpenClaw native telemetry
 - `--openclaw-home <path>` — override `OPENCLAW_HOME`
+- `--platform <list>` — comma-separated adapter list, for example `hermes`, `macos,openclaw`, or `macos,openclaw,hermes`
 - `--verbose` — verbose refresh output
 - `--json` — machine-friendly output
 

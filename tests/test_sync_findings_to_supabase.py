@@ -58,6 +58,15 @@ class SyncFindingsSchemaTests(unittest.TestCase):
                     table_name="findings",
                 )
 
+    def test_normalize_source_fields_handles_hermes_application_source(self):
+        source, platform, correlation_type, detection_layer = syncmod.normalize_source_fields(
+            {"source": "hermes", "platform": "hermes", "correlation_type": "x"}
+        )
+        self.assertEqual(source, "hermes")
+        self.assertEqual(platform, "hermes")
+        self.assertIsNone(correlation_type)
+        self.assertEqual(detection_layer, "application")
+
 
 class SyncFindingsExecutionTests(unittest.TestCase):
     def test_execute_sync_dry_run_reports_summary(self):

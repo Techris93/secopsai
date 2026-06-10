@@ -2,7 +2,7 @@
 
 This is the fastest way to get useful value from **SecOpsAI** without learning every feature up front.
 
-SecOpsAI is a local-first security operations toolkit for **OpenClaw, macOS, Linux, and Windows**. It can collect telemetry, generate findings, correlate activity across platforms, and match local activity against threat-intel feeds.
+SecOpsAI is a local-first security operations toolkit for **OpenClaw, Hermes Agent, macOS, Linux, and Windows**. It can collect telemetry, generate findings, correlate activity across platforms, and match local activity against threat-intel feeds.
 
 ## What this quickstart covers
 
@@ -112,6 +112,7 @@ SecOpsAI can collect from one or more supported platforms using `--platform`.
 Supported platform values:
 
 - `openclaw`
+- `hermes`
 - `macos`
 - `linux`
 - `windows`
@@ -123,12 +124,13 @@ secopsai refresh --platform macos
 secopsai refresh --platform linux
 secopsai refresh --platform windows
 secopsai refresh --platform openclaw
+secopsai refresh --platform hermes
 ```
 
 You can also combine platforms:
 
 ```bash
-secopsai refresh --platform macos,openclaw
+secopsai refresh --platform macos,openclaw,hermes
 ```
 
 ---
@@ -202,7 +204,7 @@ source .venv/bin/activate
 secopsai --help
 secopsai refresh
 secopsai list
-secopsai refresh --platform macos,openclaw
+secopsai refresh --platform macos,openclaw,hermes
 secopsai correlate
 secopsai intel refresh
 secopsai intel match --limit-iocs 500

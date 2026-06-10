@@ -1,6 +1,6 @@
 site_name: secopsai
 site_url: https://docs.secopsai.dev/
-site_description: Local-first cross-platform SecOps for OpenClaw, macOS, Linux, and Windows
+site_description: Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, and Windows
 repo_url: https://github.com/Techris93/secopsai
 repo_name: Techris93/secopsai
 
@@ -46,4 +46,5 @@ nav:
   - Supply Chain Security: supply-chain.md
   - Beginner Live Guide: BEGINNER-LIVE-GUIDE.md
   - OpenClaw Integration: OpenClaw-Integration.md
+  - Hermes Integration: Hermes-Integration.md
   - OpenClaw Plugin: OpenClaw-Plugin.md

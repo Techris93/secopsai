@@ -12,11 +12,11 @@ Welcome! This guide will get you from telemetry refresh to triage in under 5 min
 
 ## 30-Second Overview
 
-**secopsai** is a local-first detection and triage platform for OpenClaw and host telemetry. It comes with:
+**secopsai** is a local-first detection and triage platform for OpenClaw, Hermes Agent, and host telemetry. It comes with:
 
 - **Detection rules** for dangerous execution, policy abuse, data exfiltration, malware, and supply-chain release review
 - **Reproducible benchmark corpus** for OpenClaw validation
-- **Live telemetry support** for OpenClaw and host adapters
+- **Live telemetry support** for OpenClaw, Hermes Agent, and host adapters
 - **Native triage workflow** with investigation reports and queued analyst actions
 
 ## Install (2 minutes)
@@ -67,6 +67,7 @@ You now have the `secopsai` CLI available:
 ```bash
 secopsai refresh                         # run the OpenClaw live pipeline
 secopsai refresh --platform macos        # run adapter collection for a specific platform
+secopsai refresh --platform hermes       # collect local Hermes Agent telemetry
 secopsai live --platform macos           # stream adapter events live
 secopsai correlate                       # run cross-platform correlation
 secopsai list --severity high            # list high-severity findings
@@ -230,6 +231,18 @@ This will:
 1. Export your local OpenClaw audit logs
 2. Run detection rules
 3. Output findings in `findings.json`
+
+If you have Hermes Agent installed with local state in `~/.hermes/`, collect its
+history, session, gateway, and tool-call telemetry without executing Hermes:
+
+```bash
+secopsai refresh --platform hermes
+secopsai list --platform hermes
+```
+
+SecOpsAI does not read `~/.hermes/auth.json`, `.env`, or provider credential
+files. See [Hermes Integration](Hermes-Integration.md) for the full source and
+rule map.
 
 ## Run Your First Triage Pass
 

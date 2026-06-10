@@ -4,18 +4,18 @@ template: home.html
 hide:
   - navigation
   - toc
-description: Local-first cross-platform SecOps docs for OpenClaw, macOS, Linux, and Windows.
+description: Local-first cross-platform SecOps docs for OpenClaw, Hermes Agent, macOS, Linux, and Windows.
 ---
 
 # secopsai
 
-Local-first cross-platform SecOps for OpenClaw, macOS, Linux, and Windows.
+Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, and Windows.
 
 ## Why secopsai
 
-secopsai turns OpenClaw and host OS telemetry into repeatable, explainable security findings and now includes a native analyst workflow for investigation, disposition, and queued policy actions.
+secopsai turns OpenClaw, Hermes Agent, and host OS telemetry into repeatable, explainable security findings and now includes a native analyst workflow for investigation, disposition, and queued policy actions.
 
-- Unified collection across **OpenClaw**, **macOS**, **Linux**, and **Windows**
+- Unified collection across **OpenClaw**, **Hermes Agent**, **macOS**, **Linux**, and **Windows**
 - Local-first pipeline with SQLite-backed findings storage
 - Cross-platform correlation by IP, user, time, and file hash
 - Native CLI triage and orchestrated review workflow
@@ -38,6 +38,7 @@ secopsai turns OpenClaw and host OS telemetry into repeatable, explainable secur
 - [Name Reservation](name-reservation.md)
 - [Threat Intel (IOCs)](threat-intel.md)
 - [OpenClaw Integration](OpenClaw-Integration.md)
+- [Hermes Integration](Hermes-Integration.md)
 - [Supply Chain Security](supply-chain.md)
 - [Emergency Supply Chain Advisories](supply-chain-advisories.md)
 - [Security Blog Publishing](blog-publishing.md)
@@ -57,7 +58,7 @@ source .venv/bin/activate
 secopsai refresh
 
 # 4) Try the cross-platform adapter workflow
-secopsai refresh --platform macos,openclaw
+secopsai refresh --platform macos,openclaw,hermes
 secopsai correlate
 
 # 5) List high-severity findings
@@ -104,6 +105,7 @@ Homebrew, npm, and package-registry ownership.
 | Platform | Source | Status | Notes |
 |---|---|---:|---|
 | OpenClaw | Audit logs | ✅ Production | Primary native telemetry integration |
+| Hermes Agent | History, session, gateway, and tool logs | ✅ Beta | Read-only Hermes telemetry integration |
 | macOS | Unified logs | ✅ Production | Host telemetry collection |
 | Linux | journalctl / auditd | ✅ Beta | Ready for Linux deployment |
 | Windows | Event Logs / Sysmon | ✅ Beta | Ready for Windows deployment |
@@ -115,7 +117,7 @@ Homebrew, npm, and package-registry ownership.
 - Native triage orchestrator with queued human-reviewed actions
 - Adaptive Response Layer for threat memory, timing-aware anomalies, prioritization, safe probing, and deception
 - Cross-platform correlation engine
-- CLI and OpenClaw plugin workflows
+- CLI, OpenClaw plugin, and Hermes adapter workflows
 - Optional notification workflows for notable findings
 
 ## Operator Guides
@@ -126,6 +128,7 @@ Homebrew, npm, and package-registry ownership.
 - [Research And Verification](research-and-verification.md)
 - [Triage Orchestrator](triage-orchestrator.md)
 - [OpenClaw Integration](OpenClaw-Integration.md)
+- [Hermes Integration](Hermes-Integration.md)
 - [Supply Chain Security](supply-chain.md)
 - [Emergency Supply Chain Advisories](supply-chain-advisories.md)
 - [Security Blog Publishing](blog-publishing.md)

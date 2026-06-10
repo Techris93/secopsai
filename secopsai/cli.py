@@ -794,14 +794,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "refresh",
         help="Run the OpenClaw pipeline or adapter refresh when --platform is supplied",
     )
-    refresh.add_argument("--platform", "-p", help="Adapters: openclaw,macos,linux,windows")
+    refresh.add_argument("--platform", "-p", help="Adapters: openclaw,hermes,macos,linux,windows")
     refresh.add_argument("--skip-export", action="store_true", help="Skip export from ~/.openclaw")
     refresh.add_argument("--cache-ttl", type=int, default=DEFAULT_TTL_SECONDS)
     refresh.add_argument("--openclaw-home", help="Override OPENCLAW_HOME")
     refresh.add_argument("--verbose", action="store_true", help="Verbose refresh output (future use)")
 
     live = sub.add_parser("live", help="Stream events in real time from platform adapters")
-    live.add_argument("--platform", "-p", help="Adapters to stream: openclaw,macos,linux,windows")
+    live.add_argument("--platform", "-p", help="Adapters to stream: openclaw,hermes,macos,linux,windows")
     live.add_argument("--duration", "-d", type=int, default=60, help="Stream duration in seconds (0=infinite)")
 
     listing = sub.add_parser("list", help="List findings")

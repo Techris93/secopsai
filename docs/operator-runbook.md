@@ -1,6 +1,6 @@
 # Operator Runbook
 
-This runbook explains how to use **SecOpsAI** as an operator across **OpenClaw, macOS, Linux, and Windows**.
+This runbook explains how to use **SecOpsAI** as an operator across **OpenClaw, Hermes Agent, macOS, Linux, and Windows**.
 
 SecOpsAI is a local-first security operations toolkit that can:
 
@@ -43,7 +43,8 @@ secopsai refresh --platform macos
 secopsai refresh --platform linux
 secopsai refresh --platform windows
 secopsai refresh --platform openclaw
-secopsai refresh --platform macos,openclaw
+secopsai refresh --platform hermes
+secopsai refresh --platform macos,openclaw,hermes
 ```
 
 ### Live
@@ -121,7 +122,7 @@ secopsai list --platform macos
 ### Cross-platform example
 
 ```bash
-secopsai refresh --platform macos,openclaw
+secopsai refresh --platform macos,openclaw,hermes
 secopsai correlate
 ```
 
@@ -130,6 +131,34 @@ secopsai correlate
 - host activity validation
 - process and system event review
 - comparing host events with OpenClaw telemetry
+
+---
+
+## Hermes Agent
+
+Use this when monitoring Hermes Agent local telemetry and tool-call behavior.
+
+### Typical workflow
+
+```bash
+secopsai refresh --platform hermes
+secopsai list --platform hermes
+secopsai show SCX-XXXX
+```
+
+### Cross-platform example
+
+```bash
+secopsai refresh --platform hermes,openclaw,macos
+secopsai correlate
+```
+
+### Best for
+
+- Hermes agent history and session review
+- tool-call misuse detection
+- credential discovery or exfiltration behavior
+- comparing Hermes activity against OpenClaw or host telemetry
 
 ---
 
@@ -194,7 +223,7 @@ This is the recommended path when you want the full value of SecOpsAI.
 ### Example
 
 ```bash
-secopsai refresh --platform macos,linux,windows,openclaw
+secopsai refresh --platform macos,linux,windows,openclaw,hermes
 secopsai list
 secopsai correlate
 ```
@@ -284,6 +313,7 @@ Examples:
 
 ```bash
 secopsai live --platform openclaw --duration 60
+secopsai live --platform hermes --duration 60
 secopsai live --platform macos --duration 60
 secopsai live --platform linux --duration 60
 secopsai live --platform windows --duration 60
@@ -318,7 +348,7 @@ bash scripts/install_secopsai_agent_launchd.sh
 Optional overrides:
 
 ```bash
-SECOPSAI_REFRESH_PLATFORMS=macos,linux,openclaw \
+SECOPSAI_REFRESH_PLATFORMS=macos,linux,openclaw,hermes \
 SECOPSAI_REFRESH_INTERVAL_SECONDS=600 \
 	bash scripts/install_secopsai_agent_launchd.sh
 ```
@@ -333,7 +363,7 @@ For development from the repository:
 
 ```bash
 python3 cli.py --help
-python3 cli.py refresh --platform macos,openclaw
+python3 cli.py refresh --platform macos,openclaw,hermes
 python3 cli.py correlate
 ```
 
@@ -365,7 +395,7 @@ secopsai show OCF-XXXX
 ### Cross-platform operator
 
 ```bash
-secopsai refresh --platform macos,linux,windows,openclaw
+secopsai refresh --platform macos,linux,windows,openclaw,hermes
 secopsai correlate
 secopsai list
 ```
@@ -405,3 +435,4 @@ secopsai live --platform linux --duration 60
 - [Threat Intel](threat-intel.md)
 - [Deployment Guide](deployment-guide.md)
 - [OpenClaw Plugin](OpenClaw-Plugin.md)
+- [Hermes Integration](Hermes-Integration.md)

@@ -191,6 +191,29 @@ def extract_command_text(event: Dict[str, Any]) -> str:
 def is_openclaw_exec_like(event: Dict[str, Any]) -> bool:
     return is_openclaw_event(event, "tool") or is_openclaw_event(event, "exec")
 
+
+def is_hermes_event(event: Dict[str, Any], surface: Optional[str] = None) -> bool:
+    sourcetype = str(event.get("sourcetype") or event.get("source") or "")
+    if not sourcetype.startswith("hermes_"):
+        return False
+    if surface is None:
+        return True
+    return sourcetype == f"hermes_{surface}"
+
+
+def hermes_session_key(event: Dict[str, Any]) -> str:
+    return str(event.get("session_key") or "")
+
+
+def is_hermes_tool_like(event: Dict[str, Any]) -> bool:
+    return (
+        is_hermes_event(event, "history")
+        or (
+            is_hermes_event(event, "log")
+            and str(event.get("event_type") or "") == "tool_invocation"
+        )
+    )
+
 # ═══ Detection Rules ═════════════════════════════════════════════════════════
 # Each rule has:
 #   - id, name, mitre: metadata
@@ -602,7 +625,7 @@ def _event_actor_process(event: Dict[str, Any]) -> str:
 def _event_message(event: Dict[str, Any]) -> str:
     metadata = event.get("metadata")
     if isinstance(metadata, dict):
-        for key in ("macos_message", "message", "event_message"):
+        for key in ("macos_message", "hermes_message", "message", "event_message"):
             value = metadata.get(key)
             if isinstance(value, str) and value.strip():
                 return value
@@ -1622,6 +1645,94 @@ def detect_openclaw_malware_presence(events: List[Dict]) -> List[str]:
     return detected
 
 
+def detect_hermes_dangerous_tool_call(events: List[Dict]) -> List[str]:
+    """
+    Hermes-specific dangerous tool call detection.
+    Flags high-confidence shell/tool patterns in Hermes history or tool logs.
+    """
+    suspicious_patterns = [
+        r"(?i)curl\s+.*https?://.*\|\s*(bash|sh|zsh)",
+        r"(?i)wget\s+.*https?://.*\|\s*(bash|sh|zsh)",
+        r"(?i)bash\s+-c\s+.*(curl|wget|nc|/dev/tcp)",
+        r"(?i)\bnc\b.*\s-e\s",
+        r"(?i)\brm\s+-rf\s+/(?!Users(?:/|$)|tmp(?:/|$)|private/tmp(?:/|$))",
+        r"(?i)(chmod\s+\+x|xattr\s+-d).*&&\s*(bash|sh|zsh|python|node)",
+        r"(?i)(python|node|ruby|perl|php)\s+-e\s+.*(socket|requests|httpx|child_process)",
+    ]
+
+    detected = []
+    for event in events:
+        if not is_hermes_tool_like(event):
+            continue
+        command = extract_command_text(event)
+        if command and any(re.search(pattern, command) for pattern in suspicious_patterns):
+            detected.append(event["event_id"])
+    return detected
+
+
+def detect_hermes_credential_exfiltration(events: List[Dict]) -> List[str]:
+    """
+    Hermes-specific credential discovery or exfiltration pattern detection.
+    """
+    credential_paths = (
+        r"~?/\.ssh/(?:id_rsa|id_ed25519|config|known_hosts)",
+        r"~?/\.aws/(?:credentials|config)",
+        r"~?/\.config/gcloud",
+        r"~?/\.npmrc",
+        r"~?/\.pypirc",
+        r"~?/\.docker/config\.json",
+        r"~?/\.kube/config",
+        r"\.env\b",
+        r"/proc/[^ ]+/environ",
+        r"/var/run/secrets",
+        r"Library/Application Support/(?:Google/Chrome|BraveSoftware|Firefox)",
+    )
+    exfil_terms = (
+        r"(curl|wget)\s+.*(-F|--form|--data|--data-binary|--post-file)\s+.*@",
+        r"(tar|zip|7z)\s+.*&&\s*(curl|wget|rclone|scp|rsync)",
+        r"rclone\s+(copy|sync)\s+",
+        r"scp\s+.*\s+[A-Za-z0-9_.-]+@[^:\s]+:",
+        r"gh\s+(auth|api|repo)\s+.*(token|repos|download|clone)",
+    )
+
+    credential_re = re.compile("|".join(credential_paths), re.IGNORECASE)
+    exfil_re = re.compile("|".join(exfil_terms), re.IGNORECASE)
+    token_re = re.compile(r"(?i)(authorization:\s*bearer|github[_-]?token|api[_-]?key|secret|password)")
+
+    detected = []
+    for event in events:
+        if not is_hermes_tool_like(event):
+            continue
+        command = extract_command_text(event)
+        if not command:
+            continue
+        touches_credentials = bool(credential_re.search(command) or token_re.search(command))
+        if touches_credentials and (exfil_re.search(command) or re.search(r"(?i)(cat|grep|find|tar|zip|jq|sed|awk)\b", command)):
+            detected.append(event["event_id"])
+    return detected
+
+
+def detect_hermes_request_dump_leak(events: List[Dict]) -> List[str]:
+    """
+    Hermes-specific unsafe request-dump detection.
+    The adapter redacts expected secrets; this rule only fires if a dump-like
+    event still contains unredacted token material in evidence text.
+    """
+    secret_re = re.compile(
+        r"(?i)(bearer\s+[a-z0-9._~+/=-]{16,}|gh[pousr]_[a-z0-9_]{20,}|sk-[a-z0-9_-]{20,})"
+    )
+    detected = []
+    for event in events:
+        if not is_hermes_event(event, "request_dump"):
+            continue
+        combined = _combined_text(event)
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        combined = " ".join([combined, str(metadata.get("hermes_request_url") or ""), str(metadata.get("hermes_message") or "")])
+        if secret_re.search(combined):
+            detected.append(event["event_id"])
+    return detected
+
+
 # ═══ Anomaly Detection ═══════════════════════════════════════════════════════
 
 class AnomalyDetector:
@@ -1864,6 +1975,39 @@ RULE_FINDING_PROFILES: Dict[str, Dict[str, Any]] = {
             "Check for persistence mechanisms on the affected internal host.",
         ],
     },
+    "RULE-120": {
+        "title": "Hermes dangerous tool call",
+        "severity": "high",
+        "severity_score": 82,
+        "summary": "Hermes agent telemetry shows a high-risk tool or shell command pattern such as pipe-to-shell, reverse shell behavior, destructive root deletion, or staged interpreter execution.",
+        "recommended_actions": [
+            "Review the Hermes session and confirm whether the tool call was operator-approved.",
+            "Block or revoke the Hermes channel/session if the command was not expected.",
+            "Collect the command evidence, touched files, and follow-on network activity before cleanup.",
+        ],
+    },
+    "RULE-121": {
+        "title": "Hermes credential discovery or exfiltration",
+        "severity": "critical",
+        "severity_score": 91,
+        "summary": "Hermes agent telemetry shows credential-file discovery, token handling, or staged outbound transfer behavior.",
+        "recommended_actions": [
+            "Immediately rotate any potentially exposed SSH, cloud, GitHub, npm, PyPI, Docker, Kubernetes, or CI/CD credentials.",
+            "Review the Hermes session transcript, tool-call source, and gateway channel identity for unauthorized access.",
+            "Temporarily disable the affected Hermes channel or toolset until the session is understood.",
+        ],
+    },
+    "RULE-122": {
+        "title": "Hermes request dump contains unredacted secret material",
+        "severity": "high",
+        "severity_score": 80,
+        "summary": "A Hermes request-dump event appears to contain token-like material after SecOpsAI redaction, which can expose credentials in local telemetry.",
+        "recommended_actions": [
+            "Move or delete the affected request dump after preserving minimum forensic metadata.",
+            "Rotate the exposed token and review Hermes debug/logging settings.",
+            "Keep SecOpsAI redaction enabled before syncing or sharing Hermes telemetry.",
+        ],
+    },
 }
 
 
@@ -1902,6 +2046,12 @@ def build_detection_findings(events: List[Dict[str, Any]], rule_results: Dict[st
         evidence = [_format_evidence_line(event) for event in ordered[:5]]
         top_users = [user for user, _count in Counter((_event_actor_user(event) or "unknown") for event in ordered).most_common(3)]
         top_processes = [proc for proc, _count in Counter((_event_actor_process(event) or "unknown") for event in ordered).most_common(3)]
+        top_platforms = [
+            platform
+            for platform, _count in Counter(str(event.get("platform") or "unknown").lower() for event in ordered).most_common(1)
+            if platform
+        ]
+        finding_platform = top_platforms[0] if top_platforms else "unknown"
 
         severity_score = max(
             int(profile["severity_score"]),
@@ -1916,7 +2066,7 @@ def build_detection_findings(events: List[Dict[str, Any]], rule_results: Dict[st
             "rule_names": [rule.get("name", rule_id)],
             "mitre": rule.get("mitre", ""),
             "mitre_ids": [rule.get("mitre", "")],
-            "platform": "macos",
+            "platform": finding_platform,
             "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "status": "open",
             "disposition": "unreviewed",
@@ -2302,6 +2452,9 @@ DETECTION_RULES = [
     {"id": "RULE-108", "name": "OpenClaw Restart Loop",        "mitre": "T1529", "fn": detect_openclaw_restart_loop},
     {"id": "RULE-109", "name": "OpenClaw Data Exfiltration",   "mitre": "T1048", "fn": detect_openclaw_data_exfiltration},
     {"id": "RULE-110", "name": "OpenClaw Malware Presence",    "mitre": "T1204", "fn": detect_openclaw_malware_presence},
+    {"id": "RULE-120", "name": "Hermes Dangerous Tool Call",    "mitre": "T1059", "fn": detect_hermes_dangerous_tool_call},
+    {"id": "RULE-121", "name": "Hermes Credential Exfiltration", "mitre": "T1552", "fn": detect_hermes_credential_exfiltration},
+    {"id": "RULE-122", "name": "Hermes Request Dump Secret Leak", "mitre": "T1552", "fn": detect_hermes_request_dump_leak},
     {"id": "RULE-111", "name": "Node Installer Remote Fetch",  "mitre": "T1195", "fn": detect_node_installer_remote_fetch},
     {"id": "RULE-112", "name": "Detached Payload Execution",   "mitre": "T1059", "fn": detect_detached_payload_execution},
     {"id": "RULE-113", "name": "Windows Renamed Proxy Persistence", "mitre": "T1547", "fn": detect_windows_renamed_proxy_persistence},

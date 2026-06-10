@@ -3,13 +3,13 @@
 [![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/Techris93/secopsai)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-> **Local-first detection, investigation, and triage orchestration for OpenClaw, macOS, Linux, and Windows.**
+> **Local-first detection, investigation, and triage orchestration for OpenClaw, Hermes Agent, macOS, Linux, and Windows.**
 
-SecOpsAI is a local-first security monitoring, investigation, and triage platform. It ingests OpenClaw audit telemetry and host OS security events, normalizes them into a unified schema, persists findings in a local SOC store, and now includes a native triage engine with queued analyst actions and supply-chain policy controls.
+SecOpsAI is a local-first security monitoring, investigation, and triage platform. It ingests OpenClaw audit telemetry, Hermes Agent telemetry, and host OS security events, normalizes them into a unified schema, persists findings in a local SOC store, and now includes a native triage engine with queued analyst actions and supply-chain policy controls.
 
 ## What SecOpsAI does
 
-- Collects telemetry from **OpenClaw**, **macOS**, **Linux**, and **Windows**
+- Collects telemetry from **OpenClaw**, **Hermes Agent**, **macOS**, **Linux**, and **Windows**
 - Normalizes events into a **unified schema** for shared detection logic
 - Detects suspicious behavior and stores findings in a local **SQLite SOC store**
 - Correlates findings across platforms by **IP**, **user**, **time window**, and **file hash**
@@ -24,6 +24,7 @@ SecOpsAI is a local-first security monitoring, investigation, and triage platfor
 | Platform | Source              |        Status | Notes                            |
 | -------- | ------------------- | ------------: | -------------------------------- |
 | OpenClaw | Audit logs          | ✅ Production | Native telemetry source          |
+| Hermes   | Agent/session/tool logs | ✅ Beta | Read-only Hermes Agent telemetry |
 | macOS    | Unified logging     | ✅ Production | Auth, process, and host activity |
 | Linux    | journalctl / auditd |       ✅ Beta | Ready for Linux deployment       |
 | Windows  | Event Logs / Sysmon |       ✅ Beta | Ready for Windows deployment     |
@@ -106,10 +107,10 @@ source .venv/bin/activate
 secopsai refresh
 
 # Cross-platform adapter refresh
-secopsai refresh --platform macos,openclaw
+secopsai refresh --platform macos,openclaw,hermes
 
 # Live streaming from a platform adapter
-secopsai live --platform macos --duration 60
+secopsai live --platform hermes --duration 60
 
 # Cross-platform correlation
 secopsai correlate
@@ -161,7 +162,7 @@ What it implements:
 The packaged `secopsai` CLI is now the single operator surface for both the OpenClaw pipeline and the cross-platform adapter workflow:
 
 ```bash
-# OpenClaw and host pipeline
+# OpenClaw, Hermes, and host pipeline
 secopsai refresh
 secopsai list --severity high
 secopsai show OCF-XXXX
@@ -180,7 +181,8 @@ secopsai agent run-job --name docs-qa -- python scripts/docs_source_agent.py --b
 
 # Cross-platform adapter workflow
 secopsai refresh --platform macos
-secopsai refresh --platform macos,openclaw
+secopsai refresh --platform macos,openclaw,hermes
+secopsai refresh --platform hermes
 secopsai live --platform macos
 secopsai correlate
 ```
@@ -188,7 +190,7 @@ secopsai correlate
 For repo-local development you can still run the wrapper directly:
 
 ```bash
-python3 cli.py refresh --platform macos,openclaw
+python3 cli.py refresh --platform macos,openclaw,hermes
 python3 cli.py correlate
 ```
 
@@ -229,14 +231,14 @@ Current built-in operator flow is CLI-first. External chat or plugin surfaces re
 ## Architecture
 
 ```text
-OpenClaw + Host Adapters -> Unified Schema -> Detection Engine -> Correlation Engine -> SQLite SOC Store
-                                                           -> Native Triage Engine -> Action Queue / Policy Controls
-                                                           -> CLI / Plugin / Notifications
+OpenClaw + Hermes + Host Adapters -> Unified Schema -> Detection Engine -> Correlation Engine -> SQLite SOC Store
+                                                            -> Native Triage Engine -> Action Queue / Policy Controls
+                                                            -> CLI / Plugin / Notifications
 ```
 
 Core layers:
 
-- **Data adapters**: OpenClaw, macOS, Linux, Windows
+- **Data adapters**: OpenClaw, Hermes Agent, macOS, Linux, Windows
 - **Normalization**: unified event schema for shared logic
 - **Detection**: rules and findings generation
 - **Correlation**: IP/user/time/hash correlation across platforms
@@ -319,7 +321,7 @@ secopsai supply-chain tune rule "wheel/sdist artifact divergence" --weight 1
 secopsai supply-chain tune threshold --ecosystem pypi --value 12
 ```
 
-OpenClaw/host monitoring can also send Slack alerts for new high-severity findings:
+OpenClaw/Hermes/host monitoring can also send Slack alerts for new high-severity findings:
 
 ```bash
 python run_openclaw_live.py --slack
@@ -422,6 +424,7 @@ On macOS, launchd-based execution is supported via helper scripts, including:
 - [Threat Model](docs/threat-model.md)
 - [Beginner Live Guide](docs/BEGINNER-LIVE-GUIDE.md)
 - [OpenClaw Integration](docs/OpenClaw-Integration.md)
+- [Hermes Integration](docs/Hermes-Integration.md)
 
 ## Current state
 
@@ -429,6 +432,7 @@ What is implemented now:
 
 - ✅ Base adapter abstraction and registry
 - ✅ OpenClaw adapter
+- ✅ Hermes Agent adapter
 - ✅ macOS adapter
 - ✅ Linux adapter
 - ✅ Windows adapter

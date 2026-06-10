@@ -30,6 +30,8 @@ from urllib import error, request
 ROOT_DIR: Path = Path(__file__).resolve().parent.parent
 DEFAULT_FINDINGS_DIR: Path = ROOT_DIR / "data" / "openclaw" / "findings"
 DEFAULT_SOC_DB: Path = DEFAULT_FINDINGS_DIR / "openclaw_soc.db"
+SUPPORTED_PLATFORMS = {"openclaw", "hermes", "macos", "linux", "windows"}
+SUPPORTED_SOURCES = SUPPORTED_PLATFORMS | {"correlated"}
 DEFAULT_DASHBOARD_ENV: Path = ROOT_DIR.parent / "secopsai-dashboard" / ".env"
 DEFAULT_SCHEMA_SQL: Path = ROOT_DIR.parent / "secopsai-dashboard" / "supabase_migrations" / "2026-03-28_findings.sql"
 REQUIRED_TABLE = "findings"
@@ -257,14 +259,14 @@ def normalize_confidence(finding: dict[str, Any]) -> str:
 def normalize_source_fields(finding: dict[str, Any]) -> tuple[str, str, str | None, str]:
     raw_source = str(finding.get("source") or "").strip().lower()
     platform = str(finding.get("platform") or raw_source or "openclaw").strip().lower()
-    platform = platform if platform in {"openclaw", "macos", "linux", "windows"} else "openclaw"
+    platform = platform if platform in SUPPORTED_PLATFORMS else "openclaw"
 
-    source = raw_source if raw_source in {"openclaw", "macos", "linux", "windows", "correlated"} else platform
-    if source not in {"openclaw", "macos", "linux", "windows", "correlated"}:
+    source = raw_source if raw_source in SUPPORTED_SOURCES else platform
+    if source not in SUPPORTED_SOURCES:
         source = "openclaw"
 
     detection_layer = "correlated" if source == "correlated" else (
-        "application" if source == "openclaw" else "host"
+        "application" if source in {"openclaw", "hermes"} else "host"
     )
     correlation_type = finding.get("correlation_type")
     if source != "correlated":

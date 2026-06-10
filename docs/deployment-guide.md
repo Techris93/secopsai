@@ -166,7 +166,7 @@ Create `/etc/systemd/system/secopsai.service`:
 
 ```ini
 [Unit]
-Description=SecOpsAI OpenClaw Detection Daemon
+Description=SecOpsAI Detection Daemon
 After=network.target
 
 [Service]
@@ -249,7 +249,8 @@ bash scripts/install_openclaw_launchd.sh
 Use the repo-managed installer scripts instead of hand-editing plist files in `~/Library/LaunchAgents`.
 
 - `bash scripts/install_secopsai_agent_launchd.sh`
-  - refreshes `secopsai refresh --platform macos,openclaw`
+  - refreshes `secopsai refresh --platform macos,openclaw` by default
+  - set `SECOPSAI_REFRESH_PLATFORMS=macos,openclaw,hermes` to include Hermes Agent telemetry
   - default cadence: every 300 seconds
   - logs: `logs/agent.log`, `logs/agent.error.log`
 - `bash scripts/install_openclaw_launchd.sh`
