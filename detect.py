@@ -1726,7 +1726,8 @@ def detect_hermes_request_dump_leak(events: List[Dict]) -> List[str]:
         if not is_hermes_event(event, "request_dump"):
             continue
         combined = _combined_text(event)
-        metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        raw_metadata = event.get("metadata")
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
         combined = " ".join([combined, str(metadata.get("hermes_request_url") or ""), str(metadata.get("hermes_message") or "")])
         if secret_re.search(combined):
             detected.append(event["event_id"])
