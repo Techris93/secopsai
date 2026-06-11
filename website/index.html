@@ -865,6 +865,10 @@
                 </button>
                 <button class="install-tab" data-tab="npm">npm</button>
                 <button class="install-tab" data-tab="openclaw">OpenClaw Plugin</button>
+                <button class="install-tab" data-tab="hermes">
+                    Hermes Agent
+                    <span class="recommended" style="background: #eab308; color: #0a0a0a;">BETA</span>
+                </button>
                 <button class="install-tab" data-tab="macos">macOS</button>
                 <button class="install-tab" data-tab="linux">Linux</button>
                 <button class="install-tab" data-tab="windows">Windows</button>
@@ -934,6 +938,25 @@
                     </div>
                     <div class="requirements">
                         <strong>Requires:</strong> OpenClaw 0.9+
+                    </div>
+                </div>
+                
+                <!-- Hermes Agent Panel -->
+                <div class="install-panel" data-panel="hermes">
+                    <h3>Hermes Agent Telemetry</h3>
+                    <p class="description">Enable read-only telemetry collection from your local Hermes Agent history and session logs.</p>
+                    <div class="code-block">
+                        <code id="code-hermes">secopsai refresh --platform hermes</code>
+                        <button class="copy-btn" onclick="copyToClipboard('code-hermes', this)">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                            </svg>
+                            Copy
+                        </button>
+                    </div>
+                    <div class="requirements">
+                        <strong>Requires:</strong> Hermes Agent installed locally (reads from <code>~/.hermes/</code>)
                     </div>
                 </div>
                 
