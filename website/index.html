@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SecOpsAI | Local-first security operations</title>
-    <meta name="description" content="Local-first cross-platform SecOps for OpenClaw, macOS, Linux, and Windows. Detect supply chain attacks, correlate findings, and protect your infrastructure.">
+    <meta name="description" content="Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, and Windows. Detect supply chain attacks, correlate findings, and protect your infrastructure.">
     <link rel="canonical" href="https://secopsai.dev/">
     <link rel="icon" type="image/png" href="/assets/favicon-512.png">
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
@@ -749,7 +749,7 @@
             
             <h1>Local-first security operations,<br><span>across all platforms.</span></h1>
             
-            <p>SecOpsAI collects telemetry from OpenClaw, macOS, Linux, and Windows, then turns it into findings, correlations, threat memory, response guidance, and containment actions you can review locally.</p>
+            <p>SecOpsAI collects telemetry from OpenClaw, Hermes Agent, macOS, Linux, and Windows, then turns it into findings, correlations, threat memory, response guidance, and containment actions you can review locally.</p>
             
             <div class="hero-cta">
                 <a href="#install" class="btn btn-primary">
@@ -778,6 +778,13 @@
                         <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
                     </svg>
                     SQLite SOC store
+                </div>
+                <div class="pill">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                    Hermes Agent telemetry
                 </div>
                 <div class="pill">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -819,8 +826,8 @@
                     <span class="terminal-title">secopsai — local pipeline</span>
                 </div>
                 <div class="terminal-body">
-                    <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai refresh --platform macos,openclaw</span></div>
-                    <div class="terminal-line"><span class="success">[OK] Collected host + OpenClaw telemetry</span></div>
+                    <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai refresh --platform macos,openclaw,hermes</span></div>
+                    <div class="terminal-line"><span class="success">[OK] Collected host + OpenClaw + Hermes telemetry</span></div>
                     <div class="terminal-line"><span class="success">[OK] Findings persisted to local SOC store (SQLite)</span></div>
                     <div class="terminal-line"></div>
                     <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai-supply-chain check --project-path .</span></div>
@@ -1075,7 +1082,7 @@
                     <div class="stat-label">Detection Rules</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-number">4</div>
+                    <div class="stat-number">5</div>
                     <div class="stat-label">Platforms Supported</div>
                 </div>
                 <div class="stat-item">

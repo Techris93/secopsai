@@ -10,7 +10,7 @@
         </div>
         <h1>Security operations docs for teams that keep telemetry close.</h1>
         <p class="secops-home__lead">
-          Use SecOpsAI to collect from OpenClaw and host systems, correlate
+          Use SecOpsAI to collect from OpenClaw, Hermes Agent, and host systems, correlate
           findings, orchestrate triage, and deploy monitoring workflows without
           giving up operator control.
         </p>
@@ -35,6 +35,7 @@
         </div>
         <div class="secops-home__pills">
           <span class="secops-home__pill">OpenClaw</span>
+          <span class="secops-home__pill">Hermes Agent</span>
           <span class="secops-home__pill">macOS</span>
           <span class="secops-home__pill">Linux</span>
           <span class="secops-home__pill">Windows</span>
@@ -52,8 +53,8 @@
           </div>
           <span class="secops-home__terminal-label">docs.secopsai.dev</span>
         </div>
-        <pre class="secops-home__terminal-body"><code><span class="secops-home__prompt">$</span> secopsai refresh --platform macos,openclaw
-<span class="secops-home__ok">[OK]</span> host + OpenClaw telemetry collected
+        <pre class="secops-home__terminal-body"><code><span class="secops-home__prompt">$</span> secopsai refresh --platform macos,openclaw,hermes
+<span class="secops-home__ok">[OK]</span> host + OpenClaw + Hermes telemetry collected
 <span class="secops-home__ok">[OK]</span> findings persisted to local SOC store
 
 <span class="secops-home__prompt">$</span> secopsai correlate
@@ -76,6 +77,7 @@
         <p class="secops-home__manifesto-copy">
           Modern threats move across
           <span>OpenClaw</span>,
+          <span>Hermes Agent</span>,
           <span>macOS</span>,
           <span>Linux</span>, and
           <span>Windows</span>.
@@ -169,10 +171,11 @@
             <span class="secops-home__card-label">Surface 01</span>
             <h3>Collect everywhere</h3>
             <p>
-              Bring OpenClaw and host telemetry into one local-first pipeline.
+              Bring OpenClaw, Hermes Agent, and host telemetry into one local-first pipeline.
             </p>
             <ul class="secops-home__link-list">
               <li><a href="{{ 'OpenClaw-Integration/' | url }}">OpenClaw Integration</a></li>
+              <li><a href="{{ 'Hermes-Integration/' | url }}">Hermes Integration</a></li>
               <li><a href="{{ 'OpenClaw-Plugin/' | url }}">OpenClaw Plugin</a></li>
               <li><a href="{{ 'BEGINNER-LIVE-GUIDE/' | url }}">Beginner Live Guide</a></li>
             </ul>
@@ -247,7 +250,7 @@ curl -fsSL https://secopsai.dev/install.sh | bash
 cd ~/secopsai
 source .venv/bin/activate
 secopsai refresh
-secopsai refresh --platform macos,openclaw
+secopsai refresh --platform macos,openclaw,hermes
 secopsai correlate
 secopsai triage orchestrate --search-root ~/secopsai</code></pre>
             </div>
@@ -267,6 +270,13 @@ secopsai triage orchestrate --search-root ~/secopsai</code></pre>
               </div>
               <h3>macOS</h3>
               <p>Host telemetry collection and local findings generation.</p>
+            </article>
+            <article class="secops-home__status">
+              <div class="secops-home__status-label">
+                <span class="secops-home__status-pill secops-home__status-pill--beta">Beta</span>
+              </div>
+              <h3>Hermes Agent</h3>
+              <p>Read-only Hermes adapter to collect agent logs and state with redaction.</p>
             </article>
             <article class="secops-home__status">
               <div class="secops-home__status-label">

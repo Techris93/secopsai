@@ -50,7 +50,7 @@ const quickstartProfiles = {
       { type: "comment", text: "npm install" },
       { type: "command", text: "npm install -g secopsai" },
       { type: "command", text: "secopsai refresh" },
-      { type: "command", text: "secopsai refresh --platform macos,openclaw" },
+      { type: "command", text: "secopsai refresh --platform macos,openclaw,hermes" },
       { type: "command", text: "secopsai correlate" },
       { type: "command", text: "secopsai adaptive-response --persist-memory" },
     ],
