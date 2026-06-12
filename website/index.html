@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SecOpsAI | Local-first security operations</title>
-    <meta name="description" content="Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, and Windows. Detect supply chain attacks, correlate findings, and protect your infrastructure.">
+    <meta name="description" content="Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, and Windows. Detect supply chain attacks, AI slopsquatting risk, correlate findings, and protect your infrastructure.">
     <link rel="canonical" href="https://secopsai.dev/">
     <link rel="icon" type="image/png" href="/assets/favicon-512.png">
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
@@ -749,7 +749,7 @@
             
             <h1>Local-first security operations,<br><span>across all platforms.</span></h1>
             
-            <p>SecOpsAI collects telemetry from OpenClaw, Hermes Agent, macOS, Linux, and Windows, then turns it into findings, correlations, threat memory, response guidance, and containment actions you can review locally.</p>
+            <p>SecOpsAI collects telemetry from OpenClaw, Hermes Agent, macOS, Linux, and Windows, checks AI-built dependency changes for slopsquatting risk, then turns everything into findings, correlations, threat memory, response guidance, and containment actions you can review locally.</p>
             
             <div class="hero-cta">
                 <a href="#install" class="btn btn-primary">
@@ -796,6 +796,13 @@
                 </div>
                 <div class="pill">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 3l8 4v6c0 5-3.5 8-8 8s-8-3-8-8V7l8-4z"/>
+                        <path d="M9 12l2 2 4-5"/>
+                    </svg>
+                    AI Dependency Guard
+                </div>
+                <div class="pill">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
                         <line x1="8" y1="21" x2="16" y2="21"/>
                         <line x1="12" y1="17" x2="12" y2="21"/>
@@ -833,6 +840,9 @@
                     <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai-supply-chain check --project-path .</span></div>
                     <div class="terminal-line"><span class="success">✓ 8 packages scanned</span></div>
                     <div class="terminal-line"><span class="warning">⚠ 1 suspicious package detected</span></div>
+                    <div class="terminal-line"></div>
+                    <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai supply-chain ai-dependency-guard --path . --json</span></div>
+                    <div class="terminal-line"><span class="success">[OK] AI dependency guard checked hallucinated package risk</span></div>
                     <div class="terminal-line"></div>
                     <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai correlate</span></div>
                     <div class="terminal-line"><span class="success">[OK] Cross-platform correlation complete</span></div>
@@ -1062,6 +1072,10 @@
                             <span class="threat-icon">🔤</span>
                             <span>Typosquatting attacks</span>
                         </li>
+                        <li>
+                            <span class="threat-icon">🤖</span>
+                            <span>AI hallucinated package / slopsquatting risk</span>
+                        </li>
                     </ul>
                     
                     <a href="https://docs.secopsai.dev/supply-chain/" class="btn btn-primary">Learn More</a>
@@ -1090,6 +1104,8 @@
   <span class="success">express@4.18.2      ✓ CLEAN</span>
   
 <span class="success">🛡️ No threats detected!</span></pre>
+                        <pre><span class="prompt">$</span> <span class="command">secopsai supply-chain ai-dependency-guard --path . --json</span>
+<span class="success">✓ AI Dependency Guard: no hallucinated packages found</span></pre>
                     </div>
                 </div>
             </div>

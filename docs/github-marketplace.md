@@ -33,11 +33,13 @@ allowlisted SecOpsAI CLI modes:
 
 - `supply-chain-scan`
 - `advisory-check`
+- `ai-dependency-guard`
 - `discover-campaigns`
 - `triage-summary`
 
 It validates inputs, installs SecOpsAI from `Techris93/secopsai`, writes JSON
-output to a file, and can fail the workflow on `high` or `critical` severity.
+output to a file, and can fail the workflow on `high` or `critical` severity
+when the caller opts in.
 
 ## Listing Metadata
 
@@ -50,7 +52,7 @@ SecOpsAI Supply-Chain Guard
 Short description:
 
 ```text
-Local-first supply-chain, advisory, campaign-discovery, and triage checks for GitHub Actions.
+Local-first supply-chain, AI dependency, advisory, campaign-discovery, and triage checks for GitHub Actions.
 ```
 
 Primary category:
@@ -84,6 +86,8 @@ Privacy/data handling:
 - Inputs are passed to the local CLI.
 - JSON output remains in the workflow workspace unless the caller uploads it.
 - Package code is not executed by the wrapper.
+- AI Dependency Guard uses registry metadata only and does not install
+  dependencies suggested by AI output.
 
 ## Release And Maintenance Steps
 
@@ -124,6 +128,14 @@ jobs:
           package: node-ipc
           version: 12.0.1
           fail-on-severity: critical
+```
+
+```yaml
+- uses: Techris93/secopsai-action@v1
+  with:
+    mode: ai-dependency-guard
+    scan-path: .
+    fail-on-severity: high
 ```
 
 ## Why The Main Repo Is Not The Marketplace Repo

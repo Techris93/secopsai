@@ -1,7 +1,7 @@
 # SecOpsAI Supply-Chain Guard Action
 
-Run SecOpsAI supply-chain, advisory, campaign-discovery, and triage checks in
-GitHub Actions.
+Run SecOpsAI supply-chain, advisory, AI Dependency Guard,
+campaign-discovery, and triage checks in GitHub Actions.
 
 This wrapper is deterministic and intentionally constrained. It does not accept
 arbitrary shell command input, does not execute target package lifecycle scripts,
@@ -46,9 +46,10 @@ This directory is the source mirror kept with the main SecOpsAI product.
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `mode` | `supply-chain-scan` | `supply-chain-scan`, `advisory-check`, `discover-campaigns`, or `triage-summary`. |
+| `mode` | `supply-chain-scan` | `supply-chain-scan`, `advisory-check`, `ai-dependency-guard`, `discover-campaigns`, or `triage-summary`. |
 | `secopsai-ref` | `main` | Git ref to install from `Techris93/secopsai`. |
 | `path` | `.` | Workspace path used by repository-aware modes. |
+| `scan-path` | empty | Alias for `path`, useful in AI Dependency Guard examples. |
 | `ecosystem` | empty | Ecosystem for package-specific checks. |
 | `package` | empty | Package, module, extension, or artifact ID. |
 | `version` | empty | Package version. |
@@ -57,7 +58,9 @@ This directory is the source mirror kept with the main SecOpsAI product.
 | `limit` | `10` | Discovery candidate limit. |
 | `output-format` | `json` | Only JSON is supported. |
 | `output-file` | `secopsai-results.json` | Result file path. |
-| `fail-on-severity` | `critical` | `none`, `high`, or `critical`. |
+| `fail-on-severity` | `none` | `none`, `high`, or `critical`. |
+| `include-agent-logs` | `false` | Include local agent/session logs for AI Dependency Guard when available. |
+| `agent-source` | `auto` | `auto`, `openclaw`, `hermes`, or `sessions`. |
 
 ## Modes
 
@@ -94,6 +97,20 @@ This directory is the source mirror kept with the main SecOpsAI product.
     limit: 10
     fail-on-severity: none
 ```
+
+### AI Dependency Guard
+
+```yaml
+- uses: Techris93/secopsai-action@v1
+  with:
+    mode: ai-dependency-guard
+    scan-path: .
+    fail-on-severity: high
+```
+
+The guard warns by default. Set `fail-on-severity` to `high` or `critical`
+when you want CI to block hallucinated, newly registered, or lookalike
+dependencies.
 
 ## Marketplace Notes
 

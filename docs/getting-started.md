@@ -145,8 +145,25 @@ jobs:
           fail-on-severity: critical
 ```
 
-The action can run advisory checks, supply-chain scans, campaign discovery, and
-triage summaries without accepting arbitrary shell commands. See
+The action can run advisory checks, supply-chain scans, AI Dependency Guard,
+campaign discovery, and triage summaries without accepting arbitrary shell
+commands.
+
+```yaml
+- uses: Techris93/secopsai-action@v1
+  with:
+    mode: ai-dependency-guard
+    scan-path: .
+    fail-on-severity: high
+```
+
+Local equivalent:
+
+```bash
+secopsai supply-chain ai-dependency-guard --path . --include-agent-logs --json
+```
+
+See
 [GitHub Distribution](github-distribution-plan.md) and
 [GitHub Marketplace](github-marketplace.md) for release and maintenance notes.
 

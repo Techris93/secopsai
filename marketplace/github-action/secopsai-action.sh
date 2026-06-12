@@ -12,7 +12,10 @@ safe_ecosystem_re='^[A-Za-z0-9_.-]+$'
 
 mode="${SECOPSAI_ACTION_MODE:-supply-chain-scan}"
 ref="${SECOPSAI_REF:-main}"
-scan_path="${SECOPSAI_SCAN_PATH:-.}"
+scan_path="${SECOPSAI_SCAN_PATH_ALIAS:-}"
+if [[ -z "$scan_path" ]]; then
+  scan_path="${SECOPSAI_SCAN_PATH:-.}"
+fi
 ecosystem="${SECOPSAI_ECOSYSTEM:-}"
 package_name="${SECOPSAI_PACKAGE:-}"
 version="${SECOPSAI_VERSION:-}"
@@ -21,14 +24,18 @@ since="${SECOPSAI_SINCE:-24h}"
 limit="${SECOPSAI_LIMIT:-10}"
 output_format="${SECOPSAI_OUTPUT_FORMAT:-json}"
 output_file="${SECOPSAI_OUTPUT_FILE:-secopsai-results.json}"
-fail_on="${SECOPSAI_FAIL_ON_SEVERITY:-critical}"
+fail_on="${SECOPSAI_FAIL_ON_SEVERITY:-none}"
+include_agent_logs="${SECOPSAI_INCLUDE_AGENT_LOGS:-false}"
+agent_source="${SECOPSAI_AGENT_SOURCE:-auto}"
 
 [[ "$ref" =~ $safe_ref_re ]] || fail "Invalid secopsai-ref"
 [[ "$ref" != *".."* ]] || fail "Invalid secopsai-ref"
 [[ "$output_format" == "json" ]] || fail "Only json output is supported"
 [[ "$limit" =~ $safe_number_re ]] || fail "limit must be a number"
 [[ "$fail_on" =~ ^(none|high|critical)$ ]] || fail "fail-on-severity must be none, high, or critical"
-[[ "$mode" =~ ^(supply-chain-scan|advisory-check|discover-campaigns|triage-summary)$ ]] || fail "Unsupported mode: $mode"
+[[ "$include_agent_logs" =~ ^(true|false)$ ]] || fail "include-agent-logs must be true or false"
+[[ "$agent_source" =~ ^(auto|openclaw|hermes|sessions)$ ]] || fail "agent-source must be auto, openclaw, hermes, or sessions"
+[[ "$mode" =~ ^(supply-chain-scan|advisory-check|ai-dependency-guard|discover-campaigns|triage-summary)$ ]] || fail "Unsupported mode: $mode"
 
 if [[ "$scan_path" == -* ]]; then
   fail "path must not start with '-'"
@@ -60,6 +67,19 @@ case "$mode" in
     [[ -n "$package_name" && "$package_name" != -* ]] || fail "package is required for advisory-check"
     [[ -n "$version" && "$version" != -* ]] || fail "version is required for advisory-check"
     cmd+=(supply-chain advisory check --ecosystem "$ecosystem" --package "$package_name" --version "$version")
+    ;;
+  ai-dependency-guard)
+    cmd+=(supply-chain ai-dependency-guard --path "$scan_path" --agent-source "$agent_source")
+    if [[ "$include_agent_logs" == "true" ]]; then
+      cmd+=(--include-agent-logs)
+    fi
+    if [[ -n "$ecosystem" ]]; then
+      [[ "$ecosystem" =~ $safe_ecosystem_re ]] || fail "Invalid ecosystem"
+      cmd+=(--ecosystem "$ecosystem")
+    fi
+    if [[ "$fail_on" != "none" ]]; then
+      cmd+=(--fail-on "$fail_on")
+    fi
     ;;
   discover-campaigns)
     cmd+=(supply-chain discover-campaigns --since "$since" --limit "$limit" --orchestrate)

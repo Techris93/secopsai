@@ -29,6 +29,8 @@ from secopsai.agent_core import (
     run_isolated_job,
 )
 from secopsai.adaptive_response import evaluate_adaptive_response
+from secopsai.ai_dependency_guard import SUPPORTED_ECOSYSTEMS as AI_DEPENDENCY_GUARD_ECOSYSTEMS
+from secopsai.ai_dependency_guard import run_ai_dependency_guard
 from secopsai.blog import (
     attach_media as attach_blog_media,
     comments_setup_status,
@@ -1000,6 +1002,42 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_scan.add_argument("--model", help="Override analysis model passed to Cursor Agent CLI")
     supply_chain_scan.add_argument("--no-report", action="store_true", help="Do not persist the diff report to disk")
     supply_chain_scan.add_argument("--slack", action="store_true", help="Send Slack alert when verdict is malicious")
+
+    supply_chain_ai_guard = supply_chain_sub.add_parser(
+        "ai-dependency-guard",
+        help="Scan AI-built code and agent logs for hallucinated or slopsquatted dependencies",
+    )
+    supply_chain_ai_guard.add_argument("--path", default=".", help="Repository or file path to scan")
+    supply_chain_ai_guard.add_argument(
+        "--include-agent-logs",
+        action="store_true",
+        help="Also scan local OpenClaw/Hermes/session agent telemetry for AI-suggested dependencies",
+    )
+    supply_chain_ai_guard.add_argument(
+        "--agent-source",
+        choices=["auto", "openclaw", "hermes", "sessions"],
+        default="auto",
+        help="Agent telemetry source to scan when --include-agent-logs is set",
+    )
+    supply_chain_ai_guard.add_argument(
+        "--ecosystem",
+        action="append",
+        choices=AI_DEPENDENCY_GUARD_ECOSYSTEMS,
+        default=[],
+        help="Limit checks to one ecosystem; repeat for multiple ecosystems",
+    )
+    supply_chain_ai_guard.add_argument(
+        "--fail-on",
+        choices=["high", "critical"],
+        help="Return non-zero when a candidate reaches this severity",
+    )
+    supply_chain_ai_guard.add_argument(
+        "--persist-findings",
+        action="store_true",
+        help="Persist high-confidence AI Dependency Guard findings to the local SOC store",
+    )
+    supply_chain_ai_guard.add_argument("--report-path", help="Write full JSON report to this path")
+    supply_chain_ai_guard.add_argument("--timeout", type=int, default=8, help="Registry metadata timeout seconds")
 
     supply_chain_once = supply_chain_sub.add_parser("once", help="Scan recent releases from the top watchlists")
     supply_chain_once.add_argument("--top", type=int, default=1000, help="Top N packages per ecosystem (default: 1000)")
@@ -2779,6 +2817,54 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if payload.get("slack_alerts_sent"):
                     print(f"slack_alerts_sent={payload['slack_alerts_sent']}")
             return 0 if payload["result"]["verdict"] != "error" else 1
+
+        if args.supply_chain_cmd == "ai-dependency-guard":
+            try:
+                payload = run_ai_dependency_guard(
+                    path=args.path,
+                    include_agent_logs=args.include_agent_logs,
+                    agent_source=args.agent_source,
+                    ecosystems=args.ecosystem or None,
+                    fail_on=args.fail_on,
+                    persist_findings=args.persist_findings,
+                    report_path=args.report_path,
+                    timeout=args.timeout,
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"ok": False, "error": str(exc)}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            if args.json:
+                print(to_json(payload))
+            else:
+                summary = payload["summary"]
+                print(
+                    "ai-dependency-guard: candidates={total} verified={verified} missing={missing} newly_registered={new} high_risk={high}".format(
+                        total=summary["total_candidates"],
+                        verified=summary["verified"],
+                        missing=summary["missing_or_hallucinated"],
+                        new=summary["newly_registered"],
+                        high=summary["high_risk"],
+                    )
+                )
+                for candidate in payload.get("candidates", []):
+                    if candidate.get("severity") in {"high", "critical"}:
+                        print(
+                            "- {eco}:{pkg} classification={cls} severity={sev} confidence={conf}".format(
+                                eco=candidate.get("ecosystem"),
+                                pkg=candidate.get("package"),
+                                cls=candidate.get("classification"),
+                                sev=candidate.get("severity"),
+                                conf=candidate.get("confidence"),
+                            )
+                        )
+                if payload.get("db_path"):
+                    print(f"db_path={payload['db_path']}")
+                if payload.get("report_path"):
+                    print(f"report_path={payload['report_path']}")
+            return 1 if payload.get("would_fail") else 0
 
         if args.supply_chain_cmd == "once":
             payload = run_recent_top_scan(

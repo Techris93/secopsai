@@ -181,6 +181,18 @@ Use the Marketplace Action in workflows:
     version: 12.0.1
 ```
 
+AI Dependency Guard is also exposed through the same Action. It is warning-only
+unless `fail-on-severity` is set:
+
+```yaml
+- uses: Techris93/secopsai-action@v1
+  with:
+    mode: ai-dependency-guard
+    scan-path: .
+    include-agent-logs: false
+    fail-on-severity: high
+```
+
 The source wrapper remains mirrored under `marketplace/github-action/` in this
 main repo so changes can be reviewed alongside SecOpsAI core code.
 

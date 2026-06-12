@@ -19,6 +19,7 @@ secopsai turns OpenClaw, Hermes Agent, and host OS telemetry into repeatable, ex
 - Local-first pipeline with SQLite-backed findings storage
 - Cross-platform correlation by IP, user, time, and file hash
 - Native CLI triage and orchestrated review workflow
+- AI Dependency Guard for hallucinated or slopsquatted packages in AI-built code
 - Adaptive Response Layer with decaying threat memory, weak-signal routing, response posture, safe probes, and deception recommendations
 - Threat intel pipeline and deployment paths for ongoing monitoring
 
@@ -40,6 +41,7 @@ secopsai turns OpenClaw, Hermes Agent, and host OS telemetry into repeatable, ex
 - [OpenClaw Integration](OpenClaw-Integration.md)
 - [Hermes Integration](Hermes-Integration.md)
 - [Supply Chain Security](supply-chain.md)
+- [AI Dependency Guard](ai-dependency-guard.md)
 - [Emergency Supply Chain Advisories](supply-chain-advisories.md)
 - [Security Blog Publishing](blog-publishing.md)
 - [OpenClaw Plugin](OpenClaw-Plugin.md)
@@ -69,6 +71,9 @@ secopsai triage orchestrate --search-root ~/secopsai
 
 # 7) Run adaptive response analysis
 secopsai adaptive-response --persist-memory
+
+# 8) Check AI-built dependency changes for slopsquatting risk
+secopsai supply-chain ai-dependency-guard --path . --json
 ```
 
 ## GitHub Distribution
@@ -92,6 +97,14 @@ npm install @techris93/secopsai
     ecosystem: npm
     package: node-ipc
     version: 12.0.1
+```
+
+```yaml
+- uses: Techris93/secopsai-action@v1
+  with:
+    mode: ai-dependency-guard
+    scan-path: .
+    fail-on-severity: high
 ```
 
 See [GitHub Distribution](github-distribution-plan.md) and

@@ -32,6 +32,14 @@ Marketplace Action wraps selected CLI modes with fixed, constrained execution:
     version: 12.0.1
 ```
 
+```yaml
+- uses: Techris93/secopsai-action@v1
+  with:
+    mode: ai-dependency-guard
+    scan-path: .
+    fail-on-severity: high
+```
+
 Distribution and Marketplace maintenance details live in
 [GitHub Distribution](github-distribution-plan.md) and
 [GitHub Marketplace](github-marketplace.md).
@@ -329,6 +337,34 @@ Options:
 - `--limit-iocs <n>` — default `2000`
 - `--replay <path>` — override replay file
 - `--json`
+
+---
+
+## AI Dependency Guard
+
+### `secopsai supply-chain ai-dependency-guard`
+
+Scan AI-built code and optional AI-agent telemetry for hallucinated,
+newly-registered, or lookalike dependencies.
+
+```bash
+secopsai supply-chain ai-dependency-guard --path . --json
+secopsai supply-chain ai-dependency-guard --path . --include-agent-logs --agent-source auto --json
+secopsai supply-chain ai-dependency-guard --path . --fail-on high --json
+```
+
+Options:
+
+- `--path <path>` — repository or file to scan
+- `--include-agent-logs` — include local OpenClaw/Hermes/session telemetry
+- `--agent-source auto|openclaw|hermes|sessions`
+- `--ecosystem <name>` — repeatable ecosystem filter
+- `--fail-on high|critical` — opt-in CI failure threshold
+- `--persist-findings` — persist high-confidence findings to the local SOC store
+- `--report-path <path>` — write the full JSON report
+
+The command reads registry metadata only and does not install, import, or
+execute package code.
 
 ---
 

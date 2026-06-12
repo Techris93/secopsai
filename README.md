@@ -17,6 +17,7 @@ SecOpsAI is a local-first security monitoring, investigation, and triage platfor
 - Adds an **Adaptive Response Layer** for threat memory, confidence scoring, weak-signal routing, time-aware anomaly detection, safe validation, and containment recommendations
 - Provides a local **agent runtime** for tool routing, context compaction, loop detection, and isolated jobs
 - Supports supply-chain policy management with **allowlists**, **rule tuning**, and **threshold tuning**
+- Scans AI-built code and local agent telemetry for **slopsquatted / hallucinated dependencies**
 - Keeps data **local-first by default**
 
 ## Platform Support
@@ -311,6 +312,9 @@ secopsai supply-chain monitor --slack --interval 300 --top 1000
 # Show recent package scan history
 secopsai supply-chain list --limit 20
 
+# Scan AI-built code for hallucinated, newly registered, or lookalike dependencies
+secopsai supply-chain ai-dependency-guard --path . --include-agent-logs --json
+
 # Explain policy and verdict details
 secopsai supply-chain explain-policy --ecosystem pypi --package requests
 secopsai supply-chain explain-verdict --ecosystem pypi --package requests --report /path/to/report.md
@@ -418,6 +422,7 @@ On macOS, launchd-based execution is supported via helper scripts, including:
 - [Rules Registry](docs/rules-registry.md)
 - [Deployment Guide](docs/deployment-guide.md)
 - [API Reference](docs/api-reference.md)
+- [AI Dependency Guard](docs/ai-dependency-guard.md)
 - [Findings Triage Guide](docs/findings-triage-guide.md)
 - [Triage Orchestrator](docs/triage-orchestrator.md)
 - [Threat Intel](docs/threat-intel.md)

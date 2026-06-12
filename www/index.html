@@ -6,7 +6,7 @@
     <title>SecOpsAI | Local-first cross-platform SecOps</title>
     <meta
       name="description"
-      content="SecOpsAI is a local-first cross-platform security monitoring, investigation, and triage platform for OpenClaw, Hermes Agent, macOS, Linux, and Windows."
+      content="SecOpsAI is a local-first cross-platform security monitoring, investigation, triage, and AI dependency guard platform for OpenClaw, Hermes Agent, macOS, Linux, and Windows."
     />
     <link rel="canonical" href="https://secopsai.dev/" />
 
@@ -15,7 +15,7 @@
     <meta property="og:title" content="SecOpsAI | Local-first cross-platform SecOps" />
     <meta
       property="og:description"
-      content="Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, and Windows with unified telemetry, native triage orchestration, and local policy controls."
+      content="Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, and Windows with unified telemetry, native triage orchestration, AI dependency guard, and local policy controls."
     />
     <meta property="og:url" content="https://secopsai.dev/" />
     <meta property="og:image" content="https://secopsai.dev/assets/social-card.jpg" />
@@ -25,7 +25,7 @@
     <meta name="twitter:title" content="SecOpsAI | Local-first cross-platform SecOps" />
     <meta
       name="twitter:description"
-      content="Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, and Windows with unified telemetry, native triage orchestration, and local policy controls."
+      content="Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, and Windows with unified telemetry, native triage orchestration, AI dependency guard, and local policy controls."
     />
     <meta name="twitter:image" content="https://secopsai.dev/assets/social-card.jpg" />
 
@@ -317,7 +317,7 @@
 
             <p class="mt-6 max-w-2xl text-lg leading-8 text-muted">
               SecOpsAI unifies telemetry from <span class="text-white">OpenClaw, Hermes Agent, macOS, Linux, and Windows</span>,
-              detects threats, correlates findings across systems, and keeps analyst workflows grounded in a
+              detects threats, checks AI-built dependency changes for slopsquatting, correlates findings across systems, and keeps analyst workflows grounded in a
               local SOC store instead of a remote control plane.
             </p>
 
@@ -341,6 +341,7 @@
               <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Unified schema</span>
               <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">SQLite SOC store</span>
               <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Cross-platform correlation</span>
+              <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">AI Dependency Guard</span>
               <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Adaptive response layer</span>
               <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Queued analyst actions</span>
             </div>
@@ -368,6 +369,8 @@
                 <div class="text-accent-soft">[OK] Cross-platform correlation complete</div>
                 <div class="pt-3"><span class="text-accent">$</span> secopsai adaptive-response --persist-memory</div>
                 <div class="text-accent-soft">[OK] Immune response mode evaluated</div>
+                <div class="pt-3"><span class="text-accent">$</span> secopsai supply-chain ai-dependency-guard --path . --json</div>
+                <div class="text-accent-soft">[OK] AI dependency guard checked hallucinated package risk</div>
                 <div class="pt-3"><span class="text-accent">$</span> secopsai triage orchestrate --search-root ~/secopsai</div>
                 <div class="text-accent-soft">[OK] Low-risk findings auto-triaged</div>
                 <div class="text-amber">QUEUED: Review ACT-0001 (tune_policy)</div>
@@ -453,6 +456,22 @@
               <p class="mt-3 text-base leading-8 text-muted">
                 Tune supply-chain thresholds, rules, and allowlists locally instead of depending on a remote
                 service to approve the last mile of security decisions.
+              </p>
+            </article>
+
+            <article class="feature-card rounded-[1.5rem] p-8 shadow-card">
+              <div class="mb-5 inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-accent-border bg-accent-dim">
+                <svg fill="none" height="30" stroke="#2DD4A8" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 32 32" width="30" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M16 4L6 9V15C6 21 10 26 16 28C22 26 26 21 26 15V9L16 4Z" />
+                  <path d="M11 13H21" />
+                  <path d="M11 18H17" />
+                  <path d="M20 18L23 21" />
+                </svg>
+              </div>
+              <h3 class="font-display text-2xl font-bold text-white">AI Dependency Guard</h3>
+              <p class="mt-3 text-base leading-8 text-muted">
+                Scan AI-built code and local agent logs for hallucinated, newly registered,
+                or lookalike dependencies before they become slopsquatting incidents.
               </p>
             </article>
 

@@ -8,7 +8,7 @@ branding:
 
 inputs:
   mode:
-    description: "Check mode: supply-chain-scan, advisory-check, discover-campaigns, or triage-summary."
+    description: "Check mode: supply-chain-scan, advisory-check, ai-dependency-guard, discover-campaigns, or triage-summary."
     required: false
     default: "supply-chain-scan"
   secopsai-ref:
@@ -19,6 +19,10 @@ inputs:
     description: "Workspace path used by modes that inspect a repository."
     required: false
     default: "."
+  scan-path:
+    description: "Alias for path, used by ai-dependency-guard examples."
+    required: false
+    default: ""
   ecosystem:
     description: "Package ecosystem for package-specific checks, for example npm, pypi, open-vsx, or go."
     required: false
@@ -54,7 +58,15 @@ inputs:
   fail-on-severity:
     description: "Fail the workflow when output reaches this severity: none, high, or critical."
     required: false
-    default: "critical"
+    default: "none"
+  include-agent-logs:
+    description: "Include local agent/session logs for ai-dependency-guard when available."
+    required: false
+    default: "false"
+  agent-source:
+    description: "Agent source for ai-dependency-guard: auto, openclaw, hermes, or sessions."
+    required: false
+    default: "auto"
 
 outputs:
   result-file:
@@ -77,6 +89,7 @@ runs:
         SECOPSAI_ACTION_MODE: ${{ inputs.mode }}
         SECOPSAI_REF: ${{ inputs.secopsai-ref }}
         SECOPSAI_SCAN_PATH: ${{ inputs.path }}
+        SECOPSAI_SCAN_PATH_ALIAS: ${{ inputs.scan-path }}
         SECOPSAI_ECOSYSTEM: ${{ inputs.ecosystem }}
         SECOPSAI_PACKAGE: ${{ inputs.package }}
         SECOPSAI_VERSION: ${{ inputs.version }}
@@ -86,4 +99,6 @@ runs:
         SECOPSAI_OUTPUT_FORMAT: ${{ inputs.output-format }}
         SECOPSAI_OUTPUT_FILE: ${{ inputs.output-file }}
         SECOPSAI_FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
+        SECOPSAI_INCLUDE_AGENT_LOGS: ${{ inputs.include-agent-logs }}
+        SECOPSAI_AGENT_SOURCE: ${{ inputs.agent-source }}
       run: "$GITHUB_ACTION_PATH/secopsai-action.sh"

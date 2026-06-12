@@ -44,6 +44,7 @@ nav:
   - Threat Intel (IOCs): threat-intel.md
   - Threat Model: threat-model.md
   - Supply Chain Security: supply-chain.md
+  - AI Dependency Guard: ai-dependency-guard.md
   - Beginner Live Guide: BEGINNER-LIVE-GUIDE.md
   - OpenClaw Integration: OpenClaw-Integration.md
   - Hermes Integration: Hermes-Integration.md

@@ -6,15 +6,15 @@ SecOpsAI Supply-Chain Guard
 
 ## Short Description
 
-Local-first supply-chain, advisory, campaign-discovery, and triage checks for
-GitHub Actions.
+Local-first supply-chain, AI dependency, advisory, campaign-discovery, and
+triage checks for GitHub Actions.
 
 ## Long Description
 
 SecOpsAI Supply-Chain Guard brings SecOpsAI's local-first security checks into
-GitHub Actions. It can run package-release scanning, advisory checks,
-campaign-discovery review, and triage summaries from a workflow without sending
-repository contents to a hosted SecOpsAI service.
+GitHub Actions. It can run package-release scanning, AI Dependency Guard,
+advisory checks, campaign-discovery review, and triage summaries from a
+workflow without sending repository contents to a hosted SecOpsAI service.
 
 The action is designed for security teams that want deterministic supply-chain
 and developer-security checks in CI while preserving human review for risky
@@ -35,7 +35,8 @@ Free / open source.
 - Logo: square SecOpsAI shield or wordmark, preferably 512x512.
 - Screenshot 1: successful `advisory-check` workflow run.
 - Screenshot 2: failed `supply-chain-scan` run due to critical verdict.
-- Screenshot 3: JSON result artifact.
+- Screenshot 3: `ai-dependency-guard` report showing hallucinated dependency review.
+- Screenshot 4: JSON result artifact.
 
 ## Installation
 
@@ -46,6 +47,14 @@ Free / open source.
     ecosystem: npm
     package: node-ipc
     version: 12.0.1
+```
+
+```yaml
+- uses: Techris93/secopsai-action@v1
+  with:
+    mode: ai-dependency-guard
+    scan-path: .
+    fail-on-severity: high
 ```
 
 ## Published Links
@@ -65,6 +74,8 @@ Free / open source.
 - Does not require a SecOpsAI cloud token.
 - Does not publish or mutate findings by default.
 - Does not execute target package lifecycle scripts.
+- Does not install AI-suggested packages; AI Dependency Guard uses registry
+  metadata only.
 - Does not upload results unless the caller adds an upload-artifact step.
 
 ## Publication Checklist

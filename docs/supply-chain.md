@@ -179,6 +179,24 @@ See [Composer/Packagist Source-First Detection](composer-packagist-source-detect
 for tag-rewrite, `autoload.files`, PHP credential-stealer, and `composer.lock`
 triage details.
 
+## AI Dependency Guard
+
+Use AI Dependency Guard before accepting AI-generated dependency changes. It
+scans manifests, lockfiles, source imports, CI install commands, and optional
+OpenClaw/Hermes/session telemetry for hallucinated package names, newly
+registered packages, and lookalikes of trusted packages.
+
+```bash
+secopsai supply-chain ai-dependency-guard --path . --json
+secopsai supply-chain ai-dependency-guard --path . --include-agent-logs --agent-source auto --json
+secopsai supply-chain ai-dependency-guard --path . --fail-on high --json
+```
+
+The guard uses registry metadata only. It never installs packages, runs package
+scripts, imports generated code, activates extensions, or executes artifacts.
+See [AI Dependency Guard](ai-dependency-guard.md) for classifications and CI
+examples.
+
 For node-ipc-style compromises, SecOpsAI looks for:
 
 - Obfuscated appended JavaScript payloads in built bundles such as `node-ipc.cjs`.
