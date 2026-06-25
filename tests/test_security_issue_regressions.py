@@ -131,6 +131,8 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
     assert "safety check -r requirements.txt --output json > safety-report.json ||" not in security
     assert "bandit -r . -x ./.git,./.venv,./__pycache__,./data,./tests -f json -o bandit-report.json ||" not in security
     assert "Run Semgrep\n        continue-on-error: true" not in security_scan
+    assert "aquasecurity/trivy-action@master" not in security_scan
+    assert "aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1" in security_scan
 
     workflow = yaml.safe_load(security)
     security_steps = workflow["jobs"]["security"]["steps"]

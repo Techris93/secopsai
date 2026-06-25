@@ -33,6 +33,7 @@ from secopsai.ai_dependency_guard import SUPPORTED_ECOSYSTEMS as AI_DEPENDENCY_G
 from secopsai.ai_dependency_guard import run_ai_dependency_guard
 from secopsai.blog import (
     attach_media as attach_blog_media,
+    attach_source_media as attach_blog_source_media,
     comments_setup_status,
     draft_advisory as draft_blog_advisory,
     draft_campaign as draft_blog_campaign,
@@ -963,6 +964,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     blog_attach_media.add_argument("--kind", default="screenshot", help="Media kind, e.g. screenshot, terminal, alert, photo")
     blog_attach_media.add_argument("--source-name", default="SecOpsAI", help="Source label for attribution")
     blog_attach_media.add_argument("--source-url", default=None, help="Optional http(s) source URL")
+    blog_attach_source_media = blog_sub.add_parser("attach-source-media", help="Fetch and attach an approved source image candidate to a blog draft")
+    blog_attach_source_media.add_argument("draft", help="Draft path, slug, or unique slug fragment")
+    blog_attach_source_media.add_argument("--url", default=None, help="Approved http(s) source image URL to fetch")
+    blog_attach_source_media.add_argument("--media-index", type=int, default=None, help="Media candidate index from the draft")
+    blog_attach_source_media.add_argument("--alt", default=None, help="Accessible alt text for the image")
+    blog_attach_source_media.add_argument("--caption", default=None, help="Optional public caption")
+    blog_attach_source_media.add_argument("--kind", default="source-image", help="Media kind, e.g. source-image or source-screenshot")
+    blog_attach_source_media.add_argument("--source-name", default=None, help="Source label for attribution")
+    blog_attach_source_media.add_argument("--source-url", default=None, help="Optional source article URL")
 
     blog_sub.add_parser("rebuild-feeds", help="Rebuild blog index, RSS feed, and JSON feed from published metadata")
     blog_sub.add_parser("comments-status", help="Report required comment env/secret names without printing values")
@@ -1672,6 +1682,17 @@ def main(argv: Optional[List[str]] = None) -> int:
                     source_name=args.source_name,
                     source_url=args.source_url,
                 )
+            elif args.blog_cmd == "attach-source-media":
+                payload = attach_blog_source_media(
+                    args.draft,
+                    url=args.url,
+                    media_index=args.media_index,
+                    alt=args.alt,
+                    caption=args.caption,
+                    kind=args.kind,
+                    source_name=args.source_name,
+                    source_url=args.source_url,
+                )
             elif args.blog_cmd == "rebuild-feeds":
                 payload = rebuild_blog()
             else:
@@ -1750,10 +1771,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(payload["message"])
             if payload.get("url"):
                 print(f"url={payload['url']}")
-        elif args.blog_cmd == "attach-media":
+        elif args.blog_cmd in {"attach-media", "attach-source-media"}:
             print(f"draft_path={payload['draft_path']}")
             print(f"media={payload['media']['src']}")
             print(f"alt={payload['media']['alt']}")
+            if payload.get("source_media_url"):
+                print(f"source_media_url={payload['source_media_url']}")
         elif args.blog_cmd == "rebuild-feeds":
             print(f"posts={payload['posts']}")
             for path in payload["paths"]:

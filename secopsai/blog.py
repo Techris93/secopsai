@@ -5,9 +5,12 @@ import copy
 import email.utils
 import hashlib
 import html
+import ipaddress
 import json
 import re
 import shutil
+import socket
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -36,6 +39,21 @@ BASE_URL = "https://blog.secopsai.dev"
 SOCIAL_CARD_WIDTH = 1200
 SOCIAL_CARD_HEIGHT = 630
 ALLOWED_MEDIA_SUFFIXES = {".avif", ".gif", ".jpg", ".jpeg", ".png", ".svg", ".webp"}
+SOURCE_MEDIA_SUFFIXES = ALLOWED_MEDIA_SUFFIXES - {".svg"}
+MEDIA_CONTENT_TYPE_SUFFIXES = {
+    "image/avif": ".avif",
+    "image/gif": ".gif",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/svg+xml": ".svg",
+    "image/webp": ".webp",
+}
+SOURCE_MEDIA_CONTENT_TYPE_SUFFIXES = {
+    media_type: suffix
+    for media_type, suffix in MEDIA_CONTENT_TYPE_SUFFIXES.items()
+    if suffix in SOURCE_MEDIA_SUFFIXES
+}
 TOPIC_SECTIONS = [
     "Security News",
     "Threat Intelligence",
@@ -976,6 +994,155 @@ def _fetch_text(url: str) -> str:
         return response.read().decode("utf-8", errors="replace")
 
 
+def _source_media_host_is_blocked(hostname: str) -> bool:
+    host = hostname.strip().strip("[]").rstrip(".").lower()
+    if not host:
+        return True
+    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return any(
+        (
+            address.is_loopback,
+            address.is_private,
+            address.is_link_local,
+            address.is_multicast,
+            address.is_reserved,
+            address.is_unspecified,
+        )
+    )
+
+
+def _source_media_resolves_to_blocked_address(hostname: str, port: int) -> bool:
+    try:
+        results = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+    except OSError:
+        # Keep URL parsing deterministic in offline tests; urllib will still fail if the
+        # host cannot be resolved when an operator actually attaches the image.
+        return False
+    for result in results:
+        address = result[4][0]
+        if _source_media_host_is_blocked(address):
+            return True
+    return False
+
+
+def _safe_source_media_url(value: Any, *, base_url: str = "", for_fetch: bool = False) -> str:
+    raw = html.unescape(str(value or "")).strip()
+    if not raw:
+        return ""
+    if base_url:
+        raw = urllib.parse.urljoin(base_url, raw)
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    if _source_media_host_is_blocked(parsed.hostname or ""):
+        return ""
+    suffix = Path(parsed.path).suffix.lower()
+    if suffix and suffix not in SOURCE_MEDIA_SUFFIXES:
+        return ""
+    if for_fetch:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        if _source_media_resolves_to_blocked_address(parsed.hostname or "", port):
+            return ""
+    return raw
+
+
+def _dedupe_media_candidates(candidates: Iterable[Dict[str, Any]], *, limit: int = 8) -> List[Dict[str, Any]]:
+    seen: set[str] = set()
+    deduped: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        src = _safe_source_media_url(candidate.get("src") or candidate.get("url"), base_url=str(candidate.get("source_url") or ""))
+        if not src or src in seen:
+            continue
+        seen.add(src)
+        deduped.append({
+            "src": src,
+            "alt": _safe_text(candidate.get("alt") or candidate.get("title"), fallback="Source image")[:180],
+            "caption": _safe_text(candidate.get("caption"), fallback="")[:260],
+            "source_name": _safe_text(candidate.get("source_name"), fallback="External source")[:120],
+            "source_url": _safe_text(candidate.get("source_url"), fallback="")[:600],
+            "approved": False,
+            "kind": _safe_text(candidate.get("kind"), fallback="source-candidate")[:40],
+        })
+        if len(deduped) >= limit:
+            break
+    return deduped
+
+
+def _extract_meta_content(text: str, names: Iterable[str]) -> List[str]:
+    wanted = {name.lower() for name in names}
+    values: List[str] = []
+    for match in re.finditer(r"<meta\b[^>]*>", text, flags=re.IGNORECASE):
+        tag = match.group(0)
+        attrs = {
+            attr.lower(): html.unescape(value)
+            for attr, value in re.findall(r"""([\w:-]+)\s*=\s*["']([^"']+)["']""", tag)
+        }
+        key = str(attrs.get("property") or attrs.get("name") or attrs.get("itemprop") or "").lower()
+        content = str(attrs.get("content") or "").strip()
+        if key in wanted and content:
+            values.append(content)
+    return values
+
+
+def _json_ld_image_values(value: Any) -> Iterable[str]:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if str(key).lower() in {"image", "thumbnail", "thumbnailurl"}:
+                if isinstance(child, str):
+                    yield child
+                elif isinstance(child, dict):
+                    url = child.get("url") or child.get("@id")
+                    if url:
+                        yield str(url)
+                elif isinstance(child, list):
+                    for item in child:
+                        yield from _json_ld_image_values({"image": item})
+            else:
+                yield from _json_ld_image_values(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _json_ld_image_values(child)
+
+
+def _extract_source_page_media_candidates(item: Dict[str, Any], *, limit: int = 6) -> List[Dict[str, Any]]:
+    url = str(item.get("canonical_url") or item.get("url") or "").strip()
+    if urllib.parse.urlparse(url).scheme not in {"http", "https"}:
+        return []
+    try:
+        text = _fetch_text(url)
+    except Exception:
+        return []
+    title = str(item.get("title") or "Source image")
+    source_name = str(item.get("source_name") or urllib.parse.urlparse(url).netloc or "External source")
+    raw_urls = _extract_meta_content(text, ("og:image", "og:image:url", "twitter:image", "twitter:image:src", "image"))
+    for match in re.finditer(r"""<script\b[^>]*type=["']application/ld\+json["'][^>]*>(.*?)</script>""", text, flags=re.IGNORECASE | re.DOTALL):
+        try:
+            payload = json.loads(html.unescape(match.group(1)).strip())
+        except Exception:
+            continue
+        raw_urls.extend(_json_ld_image_values(payload))
+    candidates = [
+        {
+            "src": media_url,
+            "alt": title,
+            "caption": f"Source image candidate from {source_name}",
+            "source_name": source_name,
+            "source_url": url,
+            "approved": False,
+            "kind": "source-image",
+        }
+        for media_url in raw_urls
+    ]
+    return _dedupe_media_candidates(candidates, limit=limit)
+
+
 def _strip_markup(value: Any) -> str:
     text = html.unescape(str(value or ""))
     text = re.sub(r"<[^>]+>", " ", text)
@@ -1305,9 +1472,7 @@ def _normalise_news_item(raw: Dict[str, Any], source: Dict[str, Any]) -> Dict[st
     raw_tags = raw.get("tags", []) if isinstance(raw.get("tags", []), list) else []
     tags = _safe_list([category, *source_tags, *raw_tags], limit=12)
     key = _source_key(url, title)
-    media_candidates = raw.get("media_candidates", [])
-    if not isinstance(media_candidates, list):
-        media_candidates = []
+    media_candidates = _dedupe_media_candidates(raw.get("media_candidates", []) if isinstance(raw.get("media_candidates", []), list) else [])
     return {
         "key": key,
         "title": title,
@@ -1592,6 +1757,11 @@ def _draft_from_news_item(item: Dict[str, Any], *, paths: BlogPaths) -> Dict[str
     affected_packages = _safe_list(extracted.get("packages", []), limit=24)
     affected_ecosystems = _safe_list(extracted.get("ecosystems", []), limit=12)
     affected_products = _safe_list(extracted.get("products", []), limit=16)
+    media_candidates = _dedupe_media_candidates(
+        item.get("media_candidates", []) if isinstance(item.get("media_candidates"), list) else []
+    )
+    if not media_candidates:
+        media_candidates = _extract_source_page_media_candidates(item)
     body = f"""# {title}
 
 ## Executive Summary
@@ -1676,7 +1846,7 @@ secopsai blog news-review show {slug_value}
         "review_checklist": _review_checklist(),
         "news_key": item.get("key"),
         "fetched_at": item.get("fetched_at"),
-        "media_candidates": item.get("media_candidates", []) if isinstance(item.get("media_candidates"), list) else [],
+        "media_candidates": media_candidates,
         "extracted": extracted,
         "iocs": extracted_iocs,
         "affected_packages": affected_packages,
@@ -1954,10 +2124,22 @@ def news_mark_deployed(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
 
 
 def _resolve_draft(identifier: str, paths: BlogPaths) -> Path:
-    candidate = Path(identifier)
+    drafts_root = paths.drafts.resolve()
+    candidate = Path(identifier).expanduser()
     if candidate.exists():
-        return candidate
-    slug = identifier.removesuffix(".json")
+        resolved = candidate.resolve()
+        if drafts_root not in resolved.parents or resolved.suffix.lower() != ".json":
+            raise ValueError("draft path must be a JSON file under blog/drafts")
+        return resolved
+    slug = identifier.removesuffix(".json").strip()
+    if (
+        not slug
+        or slug in {".", ".."}
+        or "/" in slug
+        or "\\" in slug
+        or ".." in Path(slug).parts
+    ):
+        raise ValueError(f"invalid draft identifier: {identifier}")
     path = _draft_path(slug, paths)
     if path.exists():
         return path
@@ -2019,11 +2201,28 @@ def news_review_show(identifier: str, *, paths: Optional[BlogPaths] = None) -> D
     paths = paths or BlogPaths()
     path = _resolve_draft(identifier, paths)
     post = _load_json(path)
+    if post.get("external_news") and not post.get("media_candidates"):
+        references = _safe_reference_list(post.get("primary_references") or post.get("references") or post.get("sources") or [], limit=3)
+        source_url = references[0] if references else str(post.get("canonical_url") or post.get("source_url") or "")
+        media_candidates = _extract_source_page_media_candidates({
+            "title": post.get("title"),
+            "canonical_url": source_url,
+            "url": source_url,
+            "source_name": post.get("source_name") or post.get("author") or "External source",
+        })
+        if media_candidates:
+            post["media_candidates"] = media_candidates
+            try:
+                _write_json(path, post)
+            except OSError:
+                pass
     summary = _draft_review_summary(path, paths)
     summary["body_markdown"] = str(post.get("body_markdown") or "")
     summary["references"] = _safe_list(post.get("references") or post.get("sources") or [], limit=12)
     summary["primary_references"] = _safe_list(post.get("primary_references") or [], limit=8)
     summary["source_links"] = _safe_list(post.get("source_links") or [], limit=12)
+    summary["media_candidates"] = post.get("media_candidates") if isinstance(post.get("media_candidates"), list) else []
+    summary["images"] = post.get("images") if isinstance(post.get("images"), list) else []
     return summary
 
 
@@ -2200,6 +2399,100 @@ def attach_media(
     post["reading_time"] = _post_reading_time(post)
     _write_json(draft_path, post)
     return {"draft_path": str(draft_path), "media": normalised, "hero_image": normalised}
+
+
+def _source_media_suffix(url: str, content_type: str = "") -> str:
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type == "image/svg+xml":
+        raise ValueError("remote SVG source images are not supported")
+    suffix = Path(urllib.parse.urlparse(url).path).suffix.lower()
+    if suffix in SOURCE_MEDIA_SUFFIXES:
+        return suffix
+    if media_type in SOURCE_MEDIA_CONTENT_TYPE_SUFFIXES:
+        return SOURCE_MEDIA_CONTENT_TYPE_SUFFIXES[media_type]
+    raise ValueError("source media URL must point to a supported image type")
+
+
+def _download_source_media(url: str, destination: Path, *, max_bytes: int = 5 * 1024 * 1024) -> None:
+    if not _safe_source_media_url(url, for_fetch=True):
+        raise ValueError("source media URL is not allowed")
+    request = urllib.request.Request(url, headers={"User-Agent": "secopsai-blog/0.1"})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        content_type = response.headers.get("Content-Type", "")
+        if content_type and not content_type.lower().startswith("image/"):
+            raise ValueError(f"source media is not an image: {content_type}")
+        if content_type.split(";", 1)[0].strip().lower() == "image/svg+xml":
+            raise ValueError("remote SVG source images are not supported")
+        remaining = max_bytes + 1
+        with destination.open("wb") as handle:
+            while remaining > 0:
+                chunk = response.read(min(1024 * 256, remaining))
+                if not chunk:
+                    break
+                handle.write(chunk)
+                remaining -= len(chunk)
+        if remaining <= 0:
+            raise ValueError("source media is too large; keep public blog images under 5 MB")
+
+
+def attach_source_media(
+    identifier: str,
+    *,
+    url: Optional[str] = None,
+    media_index: Optional[int] = None,
+    alt: Optional[str] = None,
+    caption: Optional[str] = None,
+    kind: str = "source-image",
+    source_name: Optional[str] = None,
+    source_url: Optional[str] = None,
+    paths: Optional[BlogPaths] = None,
+) -> Dict[str, Any]:
+    paths = paths or BlogPaths()
+    draft_path = _resolve_draft(identifier, paths)
+    post = _load_json(draft_path)
+    candidates = post.get("media_candidates", []) if isinstance(post.get("media_candidates"), list) else []
+    candidate: Dict[str, Any] = {}
+    if media_index is not None:
+        try:
+            candidate = candidates[int(media_index)]
+        except (IndexError, TypeError, ValueError):
+            raise ValueError("media candidate not found") from None
+    media_url = _safe_source_media_url(url or candidate.get("src") or candidate.get("url"), for_fetch=True)
+    if not media_url:
+        raise ValueError("source media URL is required")
+    media_source_url = source_url or str(candidate.get("source_url") or media_url)
+    cleaned_alt = _safe_text(alt or candidate.get("alt") or post.get("title"), fallback="")
+    if not cleaned_alt:
+        raise ValueError("alt text is required for blog media")
+    cleaned_source_name = _safe_text(
+        source_name or candidate.get("source_name") or post.get("source_name"),
+        fallback="External source",
+    )
+    cleaned_caption = caption if caption is not None else candidate.get("caption")
+    content_type = ""
+    try:
+        request = urllib.request.Request(media_url, method="HEAD", headers={"User-Agent": "secopsai-blog/0.1"})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            content_type = response.headers.get("Content-Type", "")
+    except Exception:
+        content_type = ""
+    suffix = _source_media_suffix(media_url, content_type)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir) / f"source-media{suffix}"
+        _download_source_media(media_url, temp_path)
+        payload = attach_media(
+            identifier,
+            file_path=str(temp_path),
+            alt=cleaned_alt,
+            caption=cleaned_caption,
+            kind=kind or str(candidate.get("kind") or "source-image"),
+            source_name=cleaned_source_name,
+            source_url=media_source_url,
+            paths=paths,
+        )
+    payload["source_media_url"] = media_url
+    payload["media_index"] = media_index
+    return payload
 
 
 def draft_news(source: str, *, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:

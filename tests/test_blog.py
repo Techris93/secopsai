@@ -247,6 +247,41 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertIn("What SecOpsAI Can Detect", body)
         self.assertIn("Operator Commands", body)
 
+    def test_news_draft_extracts_source_page_image_candidates_when_feed_has_none(self):
+        item = {
+            "key": "source-image-news",
+            "title": "Cloud vendor publishes OAuth security update",
+            "canonical_url": "https://vendor.example/security/oauth-update",
+            "summary": "A vendor security update without feed media metadata.",
+            "source_name": "Vendor Security Blog",
+            "source_url": "https://vendor.example/feed",
+            "trust_level": "vendor",
+            "category": "Threat Intelligence",
+            "published_at": "2026-06-24T09:00:00Z",
+            "fetched_at": "2026-06-25T12:22:09Z",
+        }
+        html = """
+        <html>
+          <head>
+            <meta property="og:image" content="/assets/oauth-share.png">
+            <meta name="twitter:image" content="https://cdn.vendor.example/oauth-card.png">
+          </head>
+          <body>Security update</body>
+        </html>
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            with mock.patch.object(blog, "_fetch_text", return_value=html) as fetch_text:
+                payload = blog._draft_from_news_item(item, paths=paths)
+            draft = payload["post"]
+
+        self.assertEqual(fetch_text.call_count, 1)
+        self.assertEqual(len(draft["media_candidates"]), 2)
+        self.assertEqual(draft["media_candidates"][0]["src"], "https://vendor.example/assets/oauth-share.png")
+        self.assertEqual(draft["media_candidates"][0]["source_url"], item["canonical_url"])
+        self.assertEqual(draft["media_candidates"][0]["kind"], "source-image")
+        self.assertFalse(draft["media_candidates"][0]["approved"])
+
     def test_news_fetch_balances_primary_sources_before_aggregators(self):
         external_feed = (
             '<?xml version="1.0"?><rss version="2.0"><channel>'
@@ -552,6 +587,95 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertIn("https://blog.secopsai.dev/assets/posts/media-backed-alert/", post_html)
         self.assertEqual(post_json["social_image"], post_json["images"][0]["src"])
 
+    def test_attach_source_media_uses_draft_candidate_index(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.drafts.mkdir(parents=True)
+            draft = blog._base_post(
+                title="Source media draft",
+                summary="A draft with source media candidates.",
+                categories=["Security News"],
+                sources=["https://example.com/story"],
+                slug="source-media-draft",
+            )
+            draft.update({
+                "external_news": True,
+                "review_status": "approved",
+                "review_checklist": blog._review_checklist(),
+                "body_markdown": "# Source media draft\n\nCandidate image.",
+                "media_candidates": [
+                    {
+                        "src": "https://cdn.example/story-card.png",
+                        "alt": "Source card",
+                        "caption": "Source-provided card.",
+                        "source_name": "Example Source",
+                        "source_url": "https://example.com/story",
+                        "kind": "source-image",
+                    }
+                ],
+            })
+            draft_path = paths.drafts / "source-media-draft.json"
+            draft_path.write_text(json.dumps(draft), encoding="utf-8")
+
+            def write_fake_media(_url, destination, **_kwargs):
+                destination.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+            with mock.patch.object(blog.urllib.request, "urlopen", side_effect=OSError("offline test")):
+                with mock.patch.object(blog, "_download_source_media", side_effect=write_fake_media):
+                    attached = blog.attach_source_media("source-media-draft", media_index=0, paths=paths)
+            updated = json.loads(draft_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(attached["source_media_url"], "https://cdn.example/story-card.png")
+        self.assertTrue(attached["media"]["src"].startswith("/assets/posts/source-media-draft/"))
+        self.assertEqual(attached["media"]["source_url"], "https://example.com/story")
+        self.assertEqual(attached["media"]["alt"], "Source card")
+        self.assertEqual(updated["review_status"], "needs_review")
+
+    def test_attach_source_media_rejects_local_metadata_and_svg_urls(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.drafts.mkdir(parents=True)
+            draft = blog._base_post(
+                title="Unsafe source media draft",
+                summary="A draft that should not fetch unsafe source media.",
+                categories=["Security News"],
+                sources=["https://example.com/story"],
+                slug="unsafe-source-media-draft",
+            )
+            draft.update({
+                "external_news": True,
+                "review_status": "approved",
+                "review_checklist": blog._review_checklist(),
+                "body_markdown": "# Unsafe source media draft\n\nCandidate image.",
+            })
+            (paths.drafts / "unsafe-source-media-draft.json").write_text(json.dumps(draft), encoding="utf-8")
+
+            unsafe_urls = [
+                "http://127.0.0.1/source.png",
+                "http://localhost/source.png",
+                "http://169.254.169.254/latest/meta-data.png",
+                "https://cdn.example/source-card.svg",
+            ]
+            for unsafe_url in unsafe_urls:
+                with self.subTest(unsafe_url=unsafe_url):
+                    with self.assertRaisesRegex(ValueError, "source media URL"):
+                        blog.attach_source_media(
+                            "unsafe-source-media-draft",
+                            url=unsafe_url,
+                            alt="Unsafe source image",
+                            paths=paths,
+                        )
+
+    def test_resolve_draft_rejects_existing_file_outside_drafts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.drafts.mkdir(parents=True)
+            outside = Path(temp_dir) / "outside-draft.json"
+            outside.write_text("{}", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "under blog/drafts"):
+                blog._resolve_draft(str(outside), paths)
+
     def test_public_posts_remove_redundant_intro_and_split_references(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = blog.BlogPaths(Path(temp_dir) / "blog")
@@ -664,6 +788,20 @@ class BlogPublishingTests(unittest.TestCase):
                 "review_status": "needs_review",
                 "review_checklist": blog._review_checklist(),
                 "body_markdown": "# Review me\n\nNeeds review.",
+                "media_candidates": [
+                    {
+                        "src": "https://cdn.example/review-card.png",
+                        "source_url": "https://example.com/review",
+                        "kind": "source-image",
+                    }
+                ],
+                "images": [
+                    {
+                        "src": "/assets/posts/review-me/review-card.png",
+                        "source_url": "https://example.com/review",
+                        "alt": "Review image",
+                    }
+                ],
             })
             draft_path = paths.drafts / "review-me.json"
             draft_path.write_text(json.dumps(draft), encoding="utf-8")
@@ -675,8 +813,42 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertEqual(queue["total"], 1)
         self.assertEqual(shown["title"], "Review me")
         self.assertIn("Needs review", shown["body_markdown"])
+        self.assertEqual(shown["media_candidates"][0]["src"], "https://cdn.example/review-card.png")
+        self.assertEqual(shown["images"][0]["alt"], "Review image")
         self.assertEqual(approved["review_status"], "approved")
         self.assertTrue(all(item["status"] == "completed" for item in approved["review_checklist"]))
+
+    def test_news_review_show_backfills_source_page_media_for_existing_draft(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.drafts.mkdir(parents=True)
+            draft = blog._base_post(
+                title="Existing external draft",
+                summary="Existing draft created before source media extraction.",
+                categories=["Security News"],
+                sources=["https://vendor.example/security/story"],
+                slug="existing-external-draft",
+            )
+            draft.update({
+                "external_news": True,
+                "source_name": "Vendor Security Blog",
+                "review_status": "needs_review",
+                "review_checklist": blog._review_checklist(),
+                "body_markdown": "# Existing external draft\n\nNeeds image candidates.",
+                "primary_references": ["https://vendor.example/security/story"],
+                "media_candidates": [],
+            })
+            draft_path = paths.drafts / "existing-external-draft.json"
+            draft_path.write_text(json.dumps(draft), encoding="utf-8")
+            html = '<meta property="og:image" content="https://cdn.vendor.example/story.png">'
+
+            with mock.patch.object(blog, "_fetch_text", return_value=html):
+                shown = blog.news_review_show("existing-external-draft", paths=paths)
+            persisted = json.loads(draft_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(shown["media_candidates"][0]["src"], "https://cdn.vendor.example/story.png")
+        self.assertEqual(shown["media_candidates"][0]["source_url"], "https://vendor.example/security/story")
+        self.assertEqual(persisted["media_candidates"][0]["kind"], "source-image")
 
     def test_news_review_edit_updates_article_fields_and_resets_review(self):
         with tempfile.TemporaryDirectory() as temp_dir:
