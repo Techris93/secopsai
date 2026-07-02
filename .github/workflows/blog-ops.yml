@@ -215,6 +215,7 @@ jobs:
           git config user.email "115749095+Techris93@users.noreply.github.com"
 
           git add blog/posts blog/assets/social blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml
+          git add blog/data/published-posts.json 2>/dev/null || true
           if [ -d blog/assets/posts ]; then
             git add blog/assets/posts
           fi
@@ -254,6 +255,8 @@ jobs:
             echo "Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to this repository's Actions secrets." >&2
             exit 1
           fi
+          python -m secopsai.cli blog rebuild-feeds
+          python scripts/verify_blog.py
           npx --yes wrangler@latest pages deploy blog --project-name secopsai-blog --branch main
 
       - name: Mark deployed drafts after successful deploy
@@ -272,6 +275,7 @@ jobs:
             git add -A blog/drafts
             git add -f blog/drafts/*.json 2>/dev/null || true
           fi
+          git add blog/data/published-posts.json 2>/dev/null || true
 
           if git diff --cached --quiet; then
             echo "No deployed draft state changes to commit."

@@ -537,16 +537,116 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertEqual(payload["total"], 1)
         self.assertEqual(payload["published"], ["https://blog.secopsai.dev/posts/updated-public-story.html"])
 
+    def test_publish_archive_restores_generated_post_outputs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.drafts.mkdir(parents=True)
+            draft = blog._base_post(
+                title="Archived public story",
+                summary="Archived source-backed summary with operator context.",
+                categories=["Security News"],
+                sources=["https://example.com/archive"],
+                slug="archived-public-story",
+            )
+            draft["body_markdown"] = (
+                "# Archived public story\n\n"
+                "## Executive Summary\n\n"
+                "This published article is intentionally archived so generated files can be "
+                "recreated before deployment if blog/posts is cleaned from the git checkout."
+            )
+            draft_path = paths.drafts / "archived-public-story.json"
+            draft_path.write_text(json.dumps(draft), encoding="utf-8")
+
+            blog.publish("archived-public-story", confirm=True, paths=paths)
+            archive = json.loads(paths.published_posts_archive.read_text(encoding="utf-8"))
+            (paths.posts / "archived-public-story.json").unlink()
+            (paths.posts / "archived-public-story.html").unlink()
+            rebuilt = blog.rebuild(paths=paths)
+            feed = json.loads((paths.root / "feed.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(len(archive["posts"]), 1)
+            self.assertEqual(rebuilt["materialized_from_archive"], 1)
+            self.assertTrue((paths.posts / "archived-public-story.json").exists())
+            self.assertTrue((paths.posts / "archived-public-story.html").exists())
+            self.assertEqual(feed["items"][0]["title"], "Archived public story")
+
+    def test_rebuild_materializes_archive_without_rendering_missing_local_media(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            archived = blog._base_post(
+                title="Recovered old story",
+                summary="Recovered summary.",
+                categories=["Security News"],
+                sources=["https://example.com/recovered"],
+                slug="recovered-old-story",
+            )
+            archived.update({
+                "status": "published",
+                "body_markdown": "# Recovered old story\n\nOld public content should survive clean deploys.",
+                "images": [
+                    {
+                        "src": "/assets/posts/recovered-old-story/missing.png",
+                        "alt": "Missing source image",
+                        "approved": True,
+                    }
+                ],
+            })
+            paths.data.mkdir(parents=True)
+            paths.published_posts_archive.write_text(
+                json.dumps({"version": 1, "posts": [archived]}),
+                encoding="utf-8",
+            )
+
+            payload = blog.rebuild(paths=paths)
+            post_json = json.loads((paths.posts / "recovered-old-story.json").read_text(encoding="utf-8"))
+            post_html = (paths.posts / "recovered-old-story.html").read_text(encoding="utf-8")
+
+            self.assertEqual(payload["posts"], 1)
+            self.assertEqual(payload["materialized_from_archive"], 1)
+            self.assertNotIn("missing.png", json.dumps(post_json))
+            self.assertNotIn("missing.png", post_html)
+
+    def test_rebuild_materializes_deployed_draft_records(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.drafts.mkdir(parents=True)
+            draft = blog._base_post(
+                title="Deployed draft story",
+                summary="A deployed draft should rebuild public outputs.",
+                categories=["Security News"],
+                sources=["https://example.com/deployed"],
+                slug="deployed-draft-story",
+            )
+            draft.update({
+                "external_news": True,
+                "review_status": "deployed",
+                "status": "published",
+                "published_url": "https://blog.secopsai.dev/posts/deployed-draft-story.html",
+                "body_markdown": "# Deployed draft story\n\nThis public post can be recovered from deployed draft metadata.",
+            })
+            (paths.drafts / "deployed-draft-story.json").write_text(json.dumps(draft), encoding="utf-8")
+
+            payload = blog.rebuild(paths=paths)
+            archive = json.loads(paths.published_posts_archive.read_text(encoding="utf-8"))
+
+            self.assertEqual(payload["materialized_from_drafts"], 1)
+            self.assertTrue((paths.posts / "deployed-draft-story.json").exists())
+            self.assertTrue((paths.posts / "deployed-draft-story.html").exists())
+            self.assertEqual(archive["posts"][0]["slug"], "deployed-draft-story")
+
     def test_blog_ops_workflow_stages_draft_deletions(self):
         workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "blog-ops.yml").read_text(
             encoding="utf-8"
         )
 
         self.assertIn("git add -A blog/drafts", workflow)
+        self.assertIn("git add blog/data/published-posts.json", workflow)
         self.assertIn("blog/assets/social", workflow)
         self.assertIn("blog/assets/posts", workflow)
+        rebuild_step = workflow.index("python -m secopsai.cli blog rebuild-feeds")
         deploy_step = workflow.index("npx --yes wrangler@latest pages deploy blog")
         mark_step = workflow.index("python -m secopsai.cli blog news-mark-deployed --json")
+        self.assertLess(rebuild_step, deploy_step)
         self.assertGreater(mark_step, deploy_step)
 
     def test_publish_with_approved_media_renders_hero_and_og_image(self):

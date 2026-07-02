@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import calendar
 import copy
+import datetime as _dt
 import email.utils
 import hashlib
 import html
@@ -35,6 +36,7 @@ POSTS_DIR = BLOG_DIR / "posts"
 DRAFTS_DIR = BLOG_DIR / "drafts"
 NEWS_CACHE_PATH = BLOG_DIR / "data" / "news-cache.json"
 NEWS_SOURCES_PATH = BLOG_DIR / "data" / "news-sources.json"
+PUBLISHED_POSTS_ARCHIVE_PATH = BLOG_DIR / "data" / "published-posts.json"
 BASE_URL = "https://blog.secopsai.dev"
 SOCIAL_CARD_WIDTH = 1200
 SOCIAL_CARD_HEIGHT = 630
@@ -136,6 +138,10 @@ class BlogPaths:
     @property
     def news_sources(self) -> Path:
         return self.data / "news-sources.json"
+
+    @property
+    def published_posts_archive(self) -> Path:
+        return self.data / "published-posts.json"
 
 
 def _utc_now() -> str:
@@ -592,6 +598,190 @@ def _write_json(path: Path, payload: Dict[str, Any]) -> None:
 
 def _load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _parse_timestamp(value: Any) -> float:
+    raw = str(value or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        parsed = email.utils.parsedate_to_datetime(raw)
+        if parsed:
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=_dt.timezone.utc)
+            return parsed.timestamp()
+    except Exception:
+        pass
+    candidates = [raw]
+    if raw.endswith("Z"):
+        candidates.append(raw[:-1] + "+00:00")
+    if len(raw) == 10 and re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        candidates.append(raw + "T00:00:00+00:00")
+    for candidate in candidates:
+        try:
+            parsed = _dt.datetime.fromisoformat(candidate)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=_dt.timezone.utc)
+            return parsed.timestamp()
+        except Exception:
+            continue
+    return 0.0
+
+
+def _post_sort_timestamp(post: Dict[str, Any]) -> float:
+    return max(
+        _parse_timestamp(post.get("updated_at")),
+        _parse_timestamp(post.get("published_at")),
+        _parse_timestamp(post.get("date_published")),
+        _parse_timestamp(post.get("fetched_at")),
+    )
+
+
+def _public_asset_exists(src: Any, paths: BlogPaths) -> bool:
+    normalized = _sanitize_public_asset_src(src)
+    if not normalized:
+        return False
+    return (paths.root / normalized.lstrip("/")).is_file()
+
+
+def _drop_missing_local_media(post: Dict[str, Any], paths: BlogPaths) -> Dict[str, Any]:
+    """Avoid rendering archived posts with broken local image references."""
+    cleaned = dict(post)
+    images = []
+    for item in cleaned.get("images", []) if isinstance(cleaned.get("images"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        src = str(item.get("src") or "")
+        if src.startswith("/assets/posts/") and not _public_asset_exists(src, paths):
+            continue
+        images.append(item)
+    if images:
+        cleaned["images"] = images
+        cleaned["hero_image"] = images[0]
+    else:
+        cleaned.pop("images", None)
+        cleaned.pop("hero_image", None)
+    return cleaned
+
+
+def _read_published_archive(paths: BlogPaths) -> Dict[str, Any]:
+    if not paths.published_posts_archive.exists():
+        return {"version": 1, "generated_at": "", "posts": []}
+    payload = _load_json(paths.published_posts_archive)
+    if isinstance(payload, list):
+        return {"version": 1, "generated_at": "", "posts": payload}
+    posts = payload.get("posts", []) if isinstance(payload, dict) else []
+    if not isinstance(posts, list):
+        posts = []
+    return {"version": 1, "generated_at": str(payload.get("generated_at") or ""), "posts": posts}
+
+
+def _archive_posts_by_slug(paths: BlogPaths) -> Dict[str, Dict[str, Any]]:
+    archive = _read_published_archive(paths)
+    posts: Dict[str, Dict[str, Any]] = {}
+    for raw in archive.get("posts", []):
+        if not isinstance(raw, dict):
+            continue
+        slug = str(raw.get("slug") or "").strip()
+        if not slug:
+            continue
+        post = _normalize_post(raw)
+        post["slug"] = slug
+        post["status"] = "published"
+        posts[slug] = post
+    return posts
+
+
+def _write_published_archive(posts: Iterable[Dict[str, Any]], paths: BlogPaths) -> None:
+    by_slug: Dict[str, Dict[str, Any]] = {}
+    for raw in posts:
+        if not isinstance(raw, dict):
+            continue
+        slug = str(raw.get("slug") or "").strip()
+        if not slug:
+            continue
+        post = _drop_missing_local_media(_public_post(copy.deepcopy({**raw, "slug": slug})), paths)
+        post["status"] = "published"
+        by_slug[slug] = post
+    ordered = sorted(by_slug.values(), key=_post_sort_timestamp, reverse=True)
+    _write_json(
+        paths.published_posts_archive,
+        {
+            "version": 1,
+            "generated_at": _utc_now(),
+            "description": "Canonical public-post archive used to rebuild generated blog output without losing older posts.",
+            "posts": ordered,
+        },
+    )
+
+
+def _upsert_published_archive(post: Dict[str, Any], paths: BlogPaths) -> None:
+    archived = _archive_posts_by_slug(paths)
+    slug = str(post.get("slug") or "").strip()
+    if not slug:
+        return
+    archived[slug] = _drop_missing_local_media(_public_post(copy.deepcopy(post)), paths)
+    archived[slug]["status"] = "published"
+    _write_published_archive(archived.values(), paths)
+
+
+def _materialize_published_archive(paths: BlogPaths) -> int:
+    materialized = 0
+    for slug, archived in _archive_posts_by_slug(paths).items():
+        archived = _drop_missing_local_media(archived, paths)
+        target = _post_json_path(slug, paths)
+        should_write = True
+        if target.exists():
+            try:
+                existing = _load_json(target)
+                should_write = _post_sort_timestamp(archived) > _post_sort_timestamp(existing)
+            except Exception:
+                should_write = True
+        if not should_write:
+            continue
+        paths.posts.mkdir(parents=True, exist_ok=True)
+        _write_json(target, archived)
+        materialized += 1
+    return materialized
+
+
+def _draft_is_public_output_source(post: Dict[str, Any]) -> bool:
+    review_status = str(post.get("review_status") or "")
+    status = str(post.get("status") or "")
+    return bool(
+        status == "published"
+        and post.get("published_url")
+        and review_status in (PUBLISHABLE_REVIEW_STATUSES | DEPLOYED_REVIEW_STATUSES)
+    )
+
+
+def _materialize_published_drafts(paths: BlogPaths) -> int:
+    materialized = 0
+    if not paths.drafts.exists():
+        return materialized
+    for draft_path in sorted(paths.drafts.glob("*.json")):
+        try:
+            draft = _load_json(draft_path)
+        except Exception:
+            continue
+        if not _draft_is_public_output_source(draft):
+            continue
+        slug = str(draft.get("slug") or draft_path.stem)
+        post = _drop_missing_local_media(_public_post(copy.deepcopy({**draft, "slug": slug})), paths)
+        post["status"] = "published"
+        target = _post_json_path(slug, paths)
+        should_write = True
+        if target.exists():
+            try:
+                existing = _load_json(target)
+                should_write = _post_sort_timestamp(post) > _post_sort_timestamp(existing)
+            except Exception:
+                should_write = True
+        if should_write:
+            paths.posts.mkdir(parents=True, exist_ok=True)
+            _write_json(target, post)
+            materialized += 1
+    return materialized
 
 
 def _base_post(
@@ -2079,6 +2269,7 @@ def news_publish_approved(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any
         if post.get("external_news"):
             if _published_post_is_current(post, path, paths):
                 published_post = _mark_draft_published(path, post, paths)
+                _upsert_published_archive(published_post, paths)
                 ready_for_deploy.append(str(published_post["published_url"]))
                 continue
             blockers = external_news_publish_blockers(post)
@@ -2119,6 +2310,7 @@ def news_mark_deployed(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
             })
             continue
         deployed_post = _mark_draft_deployed(path, post, paths)
+        _upsert_published_archive(deployed_post, paths)
         deployed.append(str(deployed_post["published_url"]))
     return {"deployed": deployed, "blocked": blocked, "total": len(deployed)}
 
@@ -2564,7 +2756,7 @@ def _load_posts(paths: BlogPaths) -> List[Dict[str, Any]]:
         elif "published_at" in post and "body_markdown" not in post:
             post.setdefault("status", "published")
             posts.append(post)
-    return sorted(posts, key=lambda item: str(item.get("updated_at") or item.get("published_at") or ""), reverse=True)
+    return sorted(posts, key=_post_sort_timestamp, reverse=True)
 
 
 def _render_pills(values: Iterable[Any], *, limit: int = 8) -> str:
@@ -3049,13 +3241,14 @@ def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPa
     post["published_at"] = post.get("published_at") or _utc_now()
     post["updated_at"] = _utc_now()
     draft_record = dict(post)
-    post = _ensure_social_image(_public_post(post), paths)
+    post = _ensure_social_image(_drop_missing_local_media(_public_post(post), paths), paths)
     paths.posts.mkdir(parents=True, exist_ok=True)
     _write_json(_post_json_path(str(post["slug"]), paths), post)
     _post_html_path(str(post["slug"]), paths).write_text(
         _render_post_html(post),
         encoding="utf-8",
     )
+    _upsert_published_archive(post, paths)
     rebuild(paths=paths)
     if draft_record.get("external_news"):
         draft_record["published_at"] = post.get("published_at")
@@ -3381,6 +3574,8 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
 
 def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     paths = paths or BlogPaths()
+    materialized_from_drafts = _materialize_published_drafts(paths)
+    materialized = _materialize_published_archive(paths)
     posts = _load_posts(paths)
     latest_feed_date = (
         str(posts[0].get("updated_at") or posts[0].get("published_at") or "")
@@ -3400,12 +3595,11 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     feed_items = []
     rss_items = []
     for post in posts:
-        post = _ensure_social_image(_public_post(post), paths)
+        post = _ensure_social_image(_drop_missing_local_media(_public_post(post), paths), paths)
         slug = str(post["slug"])
         url = _post_url(slug)
-        if post.get("body_markdown"):
-            _post_html_path(slug, paths).write_text(_render_post_html(post), encoding="utf-8")
-            _write_json(_post_json_path(slug, paths), post)
+        _post_html_path(slug, paths).write_text(_render_post_html(post), encoding="utf-8")
+        _write_json(_post_json_path(slug, paths), post)
         summary = _post_summary(post)
         feed_items.append(
             {
@@ -3463,14 +3657,18 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
         '</rss>\n'
     )
     (paths.root / "feed.xml").write_text(rss_xml, encoding="utf-8")
+    _write_published_archive(posts, paths)
     return {
         "posts": len(posts),
+        "materialized_from_archive": materialized,
+        "materialized_from_drafts": materialized_from_drafts,
         "paths": [
             str(paths.root / "index.html"),
             str(paths.posts / "index.html"),
             str(paths.root / "json-feed.html"),
             str(paths.root / "feed.json"),
             str(paths.root / "feed.xml"),
+            str(paths.published_posts_archive),
         ],
     }
 
