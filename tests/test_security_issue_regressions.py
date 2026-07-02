@@ -156,10 +156,18 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
 
     build_workflow = yaml.safe_load(test_build)
     build_steps = build_workflow["jobs"]["build-container"]["steps"]
-    image_scan_step = next(step for step in build_steps if step.get("name") == "Scan image with Trivy")
-    assert "ignore-unfixed" not in image_scan_step["with"]
+    image_sarif_step = next(step for step in build_steps if step.get("name") == "Generate Trivy image SARIF")
+    assert image_sarif_step["with"]["exit-code"] == "0"
+    assert image_sarif_step["with"]["scanners"] == "vuln"
+    assert image_sarif_step["with"]["format"] == "sarif"
+    assert "ignore-unfixed" not in image_sarif_step["with"]
     image_upload_step = next(step for step in build_steps if step.get("name") == "Upload Trivy results to GitHub Security tab")
     assert image_upload_step["with"]["category"] == "trivy-image"
+    image_gate_step = next(step for step in build_steps if step.get("name") == "Enforce Trivy HIGH/CRITICAL image gate")
+    assert image_gate_step["with"]["severity"] == "HIGH,CRITICAL"
+    assert image_gate_step["with"]["exit-code"] == "1"
+    assert image_gate_step["with"]["format"] == "table"
+    assert image_gate_step["with"]["scanners"] == "vuln"
 
     eval_harness = (ROOT / ".github" / "workflows" / "eval-harness-v2.yml").read_text(encoding="utf-8")
     assert "EVAL_TYPE=\"${{ github.event.inputs.evaluation_type" not in eval_harness

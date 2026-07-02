@@ -157,12 +157,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Scan image with Trivy
+      - name: Generate Trivy image SARIF
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           image-ref: secopsai-ci-scan:${{ github.sha }}
-          severity: "HIGH,CRITICAL"
-          exit-code: "1"
+          scanners: "vuln"
+          exit-code: "0"
           format: "sarif"
           output: "trivy-results.sarif"
 
@@ -173,6 +173,15 @@ jobs:
         with:
           sarif_file: "trivy-results.sarif"
           category: "trivy-image"
+
+      - name: Enforce Trivy HIGH/CRITICAL image gate
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          image-ref: secopsai-ci-scan:${{ github.sha }}
+          scanners: "vuln"
+          severity: "HIGH,CRITICAL"
+          exit-code: "1"
+          format: "table"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
