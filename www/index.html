@@ -6,7 +6,7 @@
     <title>SecOpsAI | Local-first cross-platform SecOps</title>
     <meta
       name="description"
-      content="SecOpsAI is a local-first cross-platform security monitoring, investigation, triage, and AI dependency guard platform for OpenClaw, Hermes Agent, macOS, Linux, and Windows."
+      content="SecOpsAI is a local-first security operations platform combining host and agent telemetry with SecOpsAI Edge asset discovery, triage, research, and AI dependency protection."
     />
     <link rel="canonical" href="https://secopsai.dev/" />
 
@@ -15,7 +15,7 @@
     <meta property="og:title" content="SecOpsAI | Local-first cross-platform SecOps" />
     <meta
       property="og:description"
-      content="Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, and Windows with unified telemetry, native triage orchestration, AI dependency guard, and local policy controls."
+      content="Local-first security operations with SecOpsAI Edge asset discovery, unified telemetry, native triage orchestration, AI dependency guard, and local policy controls."
     />
     <meta property="og:url" content="https://secopsai.dev/" />
     <meta property="og:image" content="https://secopsai.dev/assets/social-card.jpg" />
@@ -25,7 +25,7 @@
     <meta name="twitter:title" content="SecOpsAI | Local-first cross-platform SecOps" />
     <meta
       name="twitter:description"
-      content="Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, and Windows with unified telemetry, native triage orchestration, AI dependency guard, and local policy controls."
+      content="Local-first security operations with SecOpsAI Edge asset discovery, unified telemetry, native triage orchestration, AI dependency guard, and local policy controls."
     />
     <meta name="twitter:image" content="https://secopsai.dev/assets/social-card.jpg" />
 
@@ -305,20 +305,20 @@
           <div class="relative z-10">
             <div class="inline-flex items-center gap-2 rounded-full border border-accent-border bg-accent-dim px-3.5 py-1.5 text-[11px] uppercase tracking-[0.24em] text-accent-soft">
               <span class="h-2 w-2 rounded-full bg-accent shadow-[0_0_12px_rgba(45,212,168,0.6)]"></span>
-              Local-first telemetry orchestration
+              SecOpsAI Edge network discovery
             </div>
 
             <h1 class="mt-7 max-w-3xl font-display text-5xl font-bold leading-[0.95] tracking-[-0.04em] text-white md:text-6xl lg:text-7xl">
-              Cross-platform SecOps
+              SecOpsAI
               <span class="block bg-gradient-to-r from-accent-soft via-white to-slate-400 bg-clip-text text-transparent">
-                with telemetry, triage, and policy staying local.
+                Know what is on your network and what changed.
               </span>
             </h1>
 
             <p class="mt-6 max-w-2xl text-lg leading-8 text-muted">
-              SecOpsAI unifies telemetry from <span class="text-white">OpenClaw, Hermes Agent, macOS, Linux, and Windows</span>,
-              detects threats, checks AI-built dependency changes for slopsquatting, correlates findings across systems, and keeps analyst workflows grounded in a
-              local SOC store instead of a remote control plane.
+              SecOpsAI combines <span class="text-white">SecOpsAI Edge asset discovery</span> with OpenClaw, Hermes Agent,
+              macOS, Linux, and Windows telemetry. It detects risky changes, checks AI-built dependencies for slopsquatting,
+              correlates findings across systems, and keeps analyst workflows grounded in a local SOC store.
             </p>
 
             <div class="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -338,6 +338,7 @@
 
             <div class="mt-8 flex flex-wrap gap-3 text-xs text-muted">
               <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">OpenClaw + Hermes + host telemetry</span>
+              <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Edge asset + Wi-Fi discovery</span>
               <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Unified schema</span>
               <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">SQLite SOC store</span>
               <span class="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5">Cross-platform correlation</span>
@@ -365,6 +366,8 @@
                 <div><span class="text-accent">$</span> secopsai refresh --platform macos,openclaw,hermes</div>
                 <div class="text-accent-soft">[OK] Collected host + OpenClaw + Hermes telemetry</div>
                 <div class="text-accent-soft">[OK] Findings persisted to local SOC store</div>
+                <div class="pt-3"><span class="text-accent">$</span> secopsai graph assets</div>
+                <div class="text-accent-soft">[OK] Edge assets and services loaded into the local graph</div>
                 <div class="pt-3"><span class="text-accent">$</span> secopsai correlate</div>
                 <div class="text-accent-soft">[OK] Cross-platform correlation complete</div>
                 <div class="pt-3"><span class="text-accent">$</span> secopsai adaptive-response --persist-memory</div>
@@ -410,6 +413,21 @@
               <p class="mt-3 text-base leading-8 text-muted">
                 Collect from OpenClaw, Hermes Agent, macOS, Linux, and Windows with a shared adapter model and normalize events
                 into one schema that is easier to reason about.
+              </p>
+            </article>
+
+            <article class="feature-card rounded-[1.5rem] p-8 shadow-card">
+              <div class="mb-5 inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-accent-border bg-accent-dim">
+                <svg fill="none" height="30" stroke="#2DD4A8" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 32 32" width="30" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="16" cy="16" r="4" />
+                  <circle cx="16" cy="16" r="11" />
+                  <path d="M16 2V6M16 26V30M2 16H6M26 16H30" />
+                </svg>
+              </div>
+              <h3 class="font-display text-2xl font-bold text-white">SecOpsAI Edge</h3>
+              <p class="mt-3 text-base leading-8 text-muted">
+                Discover internal assets, exposed services, and Wi-Fi changes with a local sensor, then import normalized
+                graph context and findings into the same Core triage workflow without exporting raw scan logs.
               </p>
             </article>
 
@@ -502,7 +520,7 @@
             <span class="font-mono text-xs uppercase tracking-[0.22em] text-accent-soft">Platform support</span>
             <h2 class="mt-4 font-display text-3xl font-bold tracking-[-0.03em] text-white md:text-5xl">Available now</h2>
             <p class="mt-5 text-base leading-8 text-muted md:text-lg">
-              OpenClaw and macOS are production-ready today, while Hermes Agent, Linux, and Windows adapters are in active beta.
+              OpenClaw and macOS are production-ready today. SecOpsAI Edge is pilot-ready, while Hermes Agent, Linux, and Windows adapters are in active beta.
               The support matrix keeps deployment posture obvious at a glance without dropping users into documentation
               too early.
             </p>
@@ -536,6 +554,13 @@
                 <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Source</span><span class="text-muted">Agent logs / history</span></div>
                 <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Status</span><span class="status-pill beta"><span class="h-2 w-2 rounded-full bg-amber"></span>Beta</span></div>
                 <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Notes</span><span class="text-muted">Read-only agent telemetry source</span></div>
+              </article>
+
+              <article class="grid gap-3 border-b border-white/10 px-6 py-5 md:grid-cols-[1.2fr_1.35fr_0.95fr_1.2fr] md:items-center md:gap-6">
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Platform</span><span class="text-white">SecOpsAI Edge</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Source</span><span class="text-muted">LAN assets / Wi-Fi inventory</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Status</span><span class="status-pill beta"><span class="h-2 w-2 rounded-full bg-amber"></span>Pilot</span></div>
+                <div><span class="mr-2 text-xs uppercase tracking-[0.18em] text-muted md:hidden">Notes</span><span class="text-muted">Separate local sensor module with Core sync</span></div>
               </article>
 
               <article class="grid gap-3 border-b border-white/10 px-6 py-5 md:grid-cols-[1.2fr_1.35fr_0.95fr_1.2fr] md:items-center md:gap-6">

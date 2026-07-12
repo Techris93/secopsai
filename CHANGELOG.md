@@ -8,6 +8,8 @@ the next tagged release.
 
 ### Added
 
+- Added the versioned SecOpsAI Edge graph/finding import path and made Edge a
+  first-class pilot sensor module across Core docs and public product surfaces.
 - Added first-pass multi-ecosystem supply-chain protection for crates.io,
   Chrome Web Store, Packagist, Go Modules, Hugging Face Hub, Maven Central,
   NuGet, Open VSX, RubyGems, PyPI, and npm.
@@ -61,6 +63,8 @@ the next tagged release.
 
 ### Docs
 
+- Documented Edge/Core ownership, privacy boundaries, one-step sync, graph
+  inspection, and stable Edge-origin triage workflows.
 - Documented the multi-ecosystem support matrix, per-ecosystem CLI examples,
   limitations, operator triage workflow, mitigation guidance, changelog
   workflow, public npm install path, GitHub Packages install path, and GitHub

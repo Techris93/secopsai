@@ -1,13 +1,15 @@
-# SecOpsAI Edge Integration
+# SecOpsAI Edge
 
-SecOpsAI Core can import Edge asset graphs and findings into the local SOC SQLite store.
+SecOpsAI Edge is the network discovery and sensor module for the SecOpsAI platform. Edge owns authorized LAN discovery, Wi-Fi observations, worker heartbeat, and scan execution. Core owns the canonical asset graph, findings, long-term context, triage, research, and reporting workflows.
+
+The repositories remain separate and do not share a database. They exchange a versioned `secopsai.edge.bundle.v1` contract containing normalized graph nodes, graph edges, and findings. Raw Nmap output, packet captures, and raw scan logs are excluded.
 
 ## One-Step Sync From The Edge Repo
 
 From the SecOpsAI Edge repo:
 
 ```bash
-./scripts/edge core sync --cloud --core-root /Users/chrixchange/secopsai --output edge-bundle.json
+./scripts/edge core sync --cloud --core-root "$HOME/secopsai" --output edge-bundle.json
 ```
 
 This exports the normalized Edge bundle, saves it for audit/review, and imports it into this Core local SOC/graph store.
@@ -56,3 +58,17 @@ secopsai triage investigate EDGE-...
 ```
 
 Core stores Edge findings with stable `EDGE-...` identifiers and preserves analyst triage state on re-sync.
+
+## Ownership Boundary
+
+| Surface | Owner |
+|---|---|
+| LAN and Wi-Fi collection | Edge sensor |
+| Scan jobs, schedules, and worker health | Edge API |
+| Raw scan minimization | Edge agent |
+| Canonical findings and analyst disposition | Core |
+| Asset graph and long-term change context | Core |
+| Pilot sensor administration | Edge dashboard |
+| Local automation and approval-gated actions | OpenClaw plugin |
+
+The Edge dashboard remains the pilot operations console. A future unified SecOpsAI operator console should consume Core as the source of truth instead of duplicating findings and reports indefinitely.

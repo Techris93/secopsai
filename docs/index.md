@@ -9,13 +9,14 @@ description: Local-first cross-platform SecOps docs for OpenClaw, Hermes Agent, 
 
 # secopsai
 
-Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, and Windows.
+Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, Windows, and SecOpsAI Edge network sensors.
 
 ## Why secopsai
 
 secopsai turns OpenClaw, Hermes Agent, and host OS telemetry into repeatable, explainable security findings and now includes a native analyst workflow for investigation, disposition, and queued policy actions.
 
 - Unified collection across **OpenClaw**, **Hermes Agent**, **macOS**, **Linux**, and **Windows**
+- SecOpsAI Edge asset discovery, service exposure, Wi-Fi inventory, and site sensor context
 - Local-first pipeline with SQLite-backed findings storage
 - Cross-platform correlation by IP, user, time, and file hash
 - Native CLI triage and orchestrated review workflow
@@ -26,6 +27,7 @@ secopsai turns OpenClaw, Hermes Agent, and host OS telemetry into repeatable, ex
 ## Start Here
 
 - [Getting Started](getting-started.md)
+- [SecOpsAI Edge](edge-integration.md)
 - [Operator Runbook](operator-runbook.md)
 - [Findings Triage Guide](findings-triage-guide.md)
 - [Research And Verification](research-and-verification.md)
@@ -122,10 +124,12 @@ Homebrew, npm, and package-registry ownership.
 | macOS | Unified logs | ✅ Production | Host telemetry collection |
 | Linux | journalctl / auditd | ✅ Beta | Ready for Linux deployment |
 | Windows | Event Logs / Sysmon | ✅ Beta | Ready for Windows deployment |
+| SecOpsAI Edge | LAN discovery and Wi-Fi inventory | ✅ Pilot | Separate local sensor module with normalized Core sync |
 
 ## What You Get
 
 - Unified security event schema
+- Edge asset graph and network-origin finding import
 - Local findings store with triage workflow
 - Native triage orchestrator with queued human-reviewed actions
 - Adaptive Response Layer for threat memory, timing-aware anomalies, prioritization, safe probing, and deception
@@ -142,6 +146,7 @@ Homebrew, npm, and package-registry ownership.
 - [Triage Orchestrator](triage-orchestrator.md)
 - [OpenClaw Integration](OpenClaw-Integration.md)
 - [Hermes Integration](Hermes-Integration.md)
+- [SecOpsAI Edge](edge-integration.md)
 - [Supply Chain Security](supply-chain.md)
 - [Emergency Supply Chain Advisories](supply-chain-advisories.md)
 - [Security Blog Publishing](blog-publishing.md)
