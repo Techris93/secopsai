@@ -96,6 +96,47 @@ def init_db(db_path: str | None = None) -> None:
                 ON findings (last_seen);
             CREATE INDEX IF NOT EXISTS idx_notes_finding_note
                 ON notes (finding_id, note_id);
+
+            CREATE TABLE IF NOT EXISTS asset_graph_nodes (
+                node_id TEXT PRIMARY KEY,
+                node_type TEXT NOT NULL,
+                label TEXT NOT NULL,
+                source TEXT NOT NULL,
+                source_id TEXT,
+                properties_json TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS asset_graph_edges (
+                edge_id TEXT PRIMARY KEY,
+                edge_type TEXT NOT NULL,
+                from_node_id TEXT NOT NULL,
+                to_node_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                properties_json TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS edge_sync_state (
+                source_instance TEXT PRIMARY KEY,
+                schema_version TEXT NOT NULL,
+                cursor_json TEXT NOT NULL,
+                bundle_exported_at TEXT,
+                last_synced_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_asset_graph_nodes_type_label
+                ON asset_graph_nodes (node_type, label);
+            CREATE INDEX IF NOT EXISTS idx_asset_graph_nodes_source_id
+                ON asset_graph_nodes (source, source_id);
+            CREATE INDEX IF NOT EXISTS idx_asset_graph_edges_type_from
+                ON asset_graph_edges (edge_type, from_node_id);
+            CREATE INDEX IF NOT EXISTS idx_asset_graph_edges_to
+                ON asset_graph_edges (to_node_id);
             """
         )
 

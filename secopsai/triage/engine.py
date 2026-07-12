@@ -30,6 +30,7 @@ def list_triage_findings(
     db_path: Optional[str] = None,
     severity: Optional[str] = None,
     status: Optional[str] = None,
+    source: Optional[str] = None,
     category: Optional[str] = None,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
@@ -37,6 +38,7 @@ def list_triage_findings(
         db_path,
         severity=severity,
         status=status,
+        source=source,
         limit=limit if category is None else None,
         include_payload=True,
     )
