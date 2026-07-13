@@ -24,7 +24,7 @@ From the Edge repo, install the platform service that repeats the same versioned
 ./scripts/edge core sync-service status
 ```
 
-Use `logs`, `run-now`, `stop`, and `uninstall` for recovery. The service uses launchd on macOS and a systemd user timer on Linux. It has a separate lifecycle from the scanner worker, skips overlapping runs, and stores no API credential in its owner-only JSON configuration.
+Use `logs`, `run-now`, `stop`, and `uninstall` for recovery. The service uses launchd on macOS and a systemd user timer on Linux. It has a separate lifecycle from the scanner worker and skips overlapping runs. A staged runner avoids macOS Documents-folder privacy failures; configuration and credentials are isolated in separate owner-only JSON files, and the token is never placed in launch arguments.
 
 ## Import A Bundle
 
