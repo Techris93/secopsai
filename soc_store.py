@@ -137,6 +137,105 @@ def init_db(db_path: str | None = None) -> None:
                 ON asset_graph_edges (edge_type, from_node_id);
             CREATE INDEX IF NOT EXISTS idx_asset_graph_edges_to
                 ON asset_graph_edges (to_node_id);
+
+            CREATE TABLE IF NOT EXISTS research_cases (
+                case_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                case_type TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                disclosure_status TEXT NOT NULL,
+                embargo_until TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                closed_at TEXT,
+                published_at TEXT,
+                payload_json TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_subjects (
+                subject_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                subject_type TEXT NOT NULL,
+                ecosystem TEXT NOT NULL,
+                name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                publisher TEXT NOT NULL,
+                status TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE (case_id, subject_type, ecosystem, name, version),
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_evidence (
+                evidence_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                evidence_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                locator TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                provenance TEXT NOT NULL,
+                notes TEXT NOT NULL,
+                status TEXT NOT NULL,
+                collected_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_iocs (
+                ioc_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                ioc_type TEXT NOT NULL,
+                value TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                first_seen TEXT,
+                last_seen TEXT,
+                source_evidence_id TEXT,
+                tags_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE (case_id, ioc_type, value),
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE,
+                FOREIGN KEY (source_evidence_id) REFERENCES research_evidence (evidence_id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_case_findings (
+                case_id TEXT NOT NULL,
+                finding_id TEXT NOT NULL,
+                relationship TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (case_id, finding_id),
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_case_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                message TEXT NOT NULL,
+                data_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_research_cases_status_updated
+                ON research_cases (status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_cases_type_updated
+                ON research_cases (case_type, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_subjects_case
+                ON research_subjects (case_id, subject_type);
+            CREATE INDEX IF NOT EXISTS idx_research_evidence_case
+                ON research_evidence (case_id, evidence_type);
+            CREATE INDEX IF NOT EXISTS idx_research_iocs_case_type
+                ON research_iocs (case_id, ioc_type);
+            CREATE INDEX IF NOT EXISTS idx_research_events_case_time
+                ON research_case_events (case_id, created_at);
             """
         )
 

@@ -77,6 +77,9 @@ Add to your OpenClaw config:
 - `secopsai_investigate_with_sources`
 - `secopsai_research_finding`
 - `secopsai_research_package`
+- `secopsai_edge_assets`
+- `secopsai_edge_changes`
+- `secopsai_edge_findings`
 - `secopsai_review_release_with_sources`
 - `secopsai_supply_chain_suggest_fp_action`
 - `secopsai_session_list`
@@ -123,6 +126,17 @@ secopsai_session_resolve_approval sessionId=SES-3f6a12bc45de approvalId=APR-3f6a
 secopsai_review_release_with_sources ecosystem=pypi packageName=litellm version=1.83.10
 secopsai_research_package ecosystem=npm packageName=@ant-design/x-skill version=2.6.0
 ```
+
+### Edge network context
+
+```text
+secopsai_edge_assets limit=50
+secopsai_edge_changes limit=20
+secopsai_edge_findings status=open limit=50
+```
+
+These tools read the Core-canonical asset graph and Edge-origin finding store.
+They do not run Nmap, queue scans, or change finding state.
 
 ### Guarded queued-action flow
 

@@ -57,6 +57,7 @@ SOURCE_MEDIA_CONTENT_TYPE_SUFFIXES = {
     if suffix in SOURCE_MEDIA_SUFFIXES
 }
 TOPIC_SECTIONS = [
+    "Original Research",
     "Security News",
     "Threat Intelligence",
     "Supply Chain",
@@ -157,6 +158,29 @@ def redact(text: Any) -> str:
     value = str(text or "")
     value = SENSITIVE_VALUE_RE.sub(lambda match: match.group(0).split("=", 1)[0].split(":", 1)[0] + "=[REDACTED]", value)
     return LONG_HEX_RE.sub("[HASH-REDACTED]", value)
+
+
+def _redact_public_ioc(value: Any) -> str:
+    text = str(value or "").strip()
+    if re.fullmatch(r"(?:[a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a-fA-F0-9]{64})", text):
+        return text.lower()
+    return redact(text)
+
+
+def _redact_preserving_structured_hashes(text: Any, hashes: Iterable[Any]) -> str:
+    protected: Dict[str, str] = {}
+    value = str(text or "")
+    for index, candidate in enumerate(hashes):
+        normalized = _redact_public_ioc(candidate)
+        if not re.fullmatch(r"(?:[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64})", normalized):
+            continue
+        marker = f"SECOPSAI_PUBLIC_HASH_{index}"
+        value = value.replace(str(candidate), marker)
+        protected[marker] = normalized
+    value = redact(value)
+    for marker, normalized in protected.items():
+        value = value.replace(marker, normalized)
+    return value
 
 
 def _safe_list(values: Iterable[Any], *, limit: int = 24) -> List[str]:
@@ -1155,6 +1179,144 @@ secopsai blog draft-campaign --campaign {campaign_id}
             "campaign_id": campaign_id,
             "campaign_verdict": payload.get("campaign_verdict") or payload.get("package_verdict"),
             "body_markdown": redact(body),
+        }
+    )
+    post["reading_time"] = _post_reading_time(post)
+    _write_json(_draft_path(post["slug"], paths), post)
+    return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
+
+
+def draft_research_case(case: Dict[str, Any], *, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+    paths = paths or BlogPaths()
+    case_id = str(case.get("case_id") or "research-case")
+    title = str(case.get("title") or case_id)
+    summary = str(case.get("summary") or title)
+    subjects = [item for item in case.get("subjects", []) if isinstance(item, dict) and item.get("status", "active") == "active"]
+    evidence = [item for item in case.get("evidence", []) if isinstance(item, dict) and item.get("status", "active") == "active"]
+    iocs = [item for item in case.get("iocs", []) if isinstance(item, dict) and item.get("status", "active") == "active"]
+    findings = [item for item in case.get("findings", []) if isinstance(item, dict)]
+    references = _safe_list([item.get("locator") for item in evidence if item.get("locator")], limit=20)
+    packages = [item for item in subjects if item.get("subject_type") in {"package", "extension"}]
+    subject_lines = [
+        "| Type | Ecosystem | Subject | Version | Publisher |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for item in subjects:
+        subject_lines.append(
+            "| {kind} | {ecosystem} | `{name}` | `{version}` | {publisher} |".format(
+                kind=redact(str(item.get("subject_type") or "other")),
+                ecosystem=redact(str(item.get("ecosystem") or "—")),
+                name=redact(str(item.get("name") or "")),
+                version=redact(str(item.get("version") or "—")),
+                publisher=redact(str(item.get("publisher") or "—")),
+            )
+        )
+    evidence_lines = []
+    for item in evidence:
+        locator = f" - {item['locator']}" if item.get("locator") else ""
+        evidence_lines.append(
+            f"- **{redact(str(item.get('title') or 'Evidence'))}** "
+            f"(`{redact(str(item.get('evidence_type') or 'other'))}`){redact(locator)}"
+        )
+        if item.get("notes"):
+            evidence_lines.append(f"  - {redact(str(item['notes']))}")
+    ioc_lines = [
+        f"- `{redact(str(item.get('ioc_type') or 'other'))}`: `{_redact_public_ioc(item.get('value') or '')}` "
+        f"(confidence {int(item.get('confidence') or 0)})"
+        for item in iocs
+        if item.get("value")
+    ]
+    finding_lines = [
+        f"- `{redact(str(item.get('finding_id') or ''))}` ({redact(str(item.get('relationship') or 'related'))})"
+        for item in findings
+        if item.get("finding_id")
+    ]
+    body = f"""# {title}
+
+## Executive Summary
+
+{summary}
+
+## Research Scope
+
+- Research case: `{case_id}`
+- Case type: `{case.get('case_type', 'other')}`
+- Severity: `{case.get('severity', 'medium')}`
+- Confidence: `{case.get('confidence', 0)}`
+- Disclosure status: `{case.get('disclosure_status', 'not_started')}`
+
+## Affected Subjects
+
+{chr(10).join(subject_lines) if subjects else '- No affected subjects recorded.'}
+
+## Technical Evidence
+
+{chr(10).join(evidence_lines) or '- Evidence summary pending final editorial review.'}
+
+## Indicators of Compromise
+
+{chr(10).join(ioc_lines) or '- No structured IOCs were identified in this investigation.'}
+
+## SecOpsAI Detection Context
+
+{chr(10).join(finding_lines) or '- No SecOpsAI SOC findings are linked to this case.'}
+
+## Recommended Actions
+
+- Block confirmed malicious packages, domains, URLs, or hashes in applicable controls.
+- Review manifests, lockfiles, build logs, endpoint telemetry, and credential exposure for affected subjects.
+- Rotate credentials when installation, execution, or exfiltration is confirmed.
+- Preserve artifacts and timestamps needed for incident response and coordinated disclosure.
+
+## Disclosure
+
+This draft reflects disclosure state `{case.get('disclosure_status', 'not_started')}`. Confirm embargo and vendor-coordination details before approval.
+
+## References
+
+{chr(10).join(f'- {redact(source)}' for source in references) or '- Original SecOpsAI analysis; public references pending final review.'}
+"""
+    categories = ["Original Research", "Threat Intelligence"]
+    if packages:
+        categories.append("Supply Chain")
+    post = _base_post(
+        title=title,
+        summary=summary,
+        severity=str(case.get("severity") or "medium"),
+        categories=categories,
+        sources=references,
+        slug=slugify(f"{case_id}-{title}"),
+    )
+    post.update(
+        {
+            "affected_ecosystems": _safe_list([item.get("ecosystem", "") for item in packages]),
+            "affected_packages": _safe_list([item.get("name", "") for item in packages]),
+            "affected_artifacts": [
+                {
+                    "ecosystem": item.get("ecosystem", ""),
+                    "package": item.get("name", ""),
+                    "version": item.get("version", ""),
+                    "verdict": "under_research",
+                }
+                for item in packages
+            ],
+            "iocs": [
+                _redact_public_ioc(item.get("value", ""))
+                for item in iocs[:50]
+                if str(item.get("value") or "").strip()
+            ],
+            "featured": False,
+            "external_news": False,
+            "review_status": "needs_review",
+            "author": "SecOpsAI Threat Research",
+            "source_name": "SecOpsAI Original Research",
+            "references": references,
+            "research_case_id": case_id,
+            "disclosure_status": case.get("disclosure_status"),
+            "body_markdown": _redact_preserving_structured_hashes(
+                body,
+                [item.get("value", "") for item in iocs if item.get("ioc_type") in {"md5", "sha1", "sha256"}],
+            ),
         }
     )
     post["reading_time"] = _post_reading_time(post)
