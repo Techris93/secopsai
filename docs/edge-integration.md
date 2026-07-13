@@ -115,6 +115,20 @@ status in the session. It does not store the helper stdout, raw Nmap output,
 packet data, or sensor/admin credentials. Rejected approvals do not queue a
 job. Operators must explicitly allow the optional write tools in OpenClaw.
 
+The same approval boundary covers report generation and worker lifecycle
+actions:
+
+```text
+secopsai_edge_request_report
+secopsai_edge_request_worker_action action=start
+secopsai_session_resolve_approval sessionId=SES-... approvalId=APR-... decision=approved apply=true
+```
+
+Report generation invokes the existing Edge `report --cloud` helper and keeps
+the generated report in Edge's authenticated report store. Worker start/stop
+invokes only the allowlisted `worker start` or `worker stop` action. Neither
+operation returns helper output to Core or exposes a credential to OpenClaw.
+
 ## Ownership Boundary
 
 | Surface | Owner |

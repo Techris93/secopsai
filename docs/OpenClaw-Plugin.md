@@ -83,6 +83,8 @@ Add to your OpenClaw config:
 - `secopsai_edge_assets`
 - `secopsai_edge_worker_status`
 - `secopsai_edge_scan_preview`
+- `secopsai_edge_request_report`
+- `secopsai_edge_request_worker_action`
 - `secopsai_edge_changes`
 - `secopsai_edge_sync_status`
 - `secopsai_edge_findings`
@@ -117,6 +119,8 @@ The plugin write-facing tools are intentionally approval-gated:
 - `secopsai_triage_orchestrate` runs with auto-apply disabled so resulting actions stay reviewable.
 - `secopsai_session_resolve_approval` is the only tool that can apply an approved session payload.
 - `secopsai_edge_request_scan` creates an `edge_scan` approval; it never runs Nmap directly.
+- `secopsai_edge_request_report` creates an `edge_report` approval; it never runs the report helper directly.
+- `secopsai_edge_request_worker_action` creates an `edge_worker` approval restricted to `start` or `stop`.
 
 ## Example flow
 
