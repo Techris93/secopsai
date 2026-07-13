@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import sys
 import tempfile
@@ -19,6 +20,7 @@ from secopsai import cli
 from secopsai.blog import BlogPaths, draft_research_case
 from secopsai.research_cases import (
     add_evidence,
+    add_local_artifact,
     add_ioc,
     add_subject,
     create_case,
@@ -28,6 +30,7 @@ from secopsai.research_cases import (
     link_finding,
     list_cases,
     retract_item,
+    start_package_case,
     update_case,
 )
 
@@ -129,10 +132,28 @@ class ResearchCaseTests(unittest.TestCase):
                 output_dir=str(Path(temp_dir) / "reports"),
             )
             self.assertTrue(Path(exported["json_report"]).exists())
+            self.assertTrue(Path(exported["manifest"]).exists())
             markdown = Path(exported["markdown_report"]).read_text(encoding="utf-8")
             self.assertIn("Indicators of Compromise", markdown)
             self.assertIn("checkout-telemetry.example", markdown)
             self.assertTrue(exported["publication_readiness"]["ready"])
+
+            repeat_dir = Path(temp_dir) / "repeat"
+            repeated = export_case(case["case_id"], db_path=db_path, output_dir=str(repeat_dir))
+            self.assertEqual(
+                Path(exported["json_report"]).read_bytes(),
+                Path(repeated["json_report"]).read_bytes(),
+            )
+            self.assertEqual(
+                Path(exported["markdown_report"]).read_bytes(),
+                Path(repeated["markdown_report"]).read_bytes(),
+            )
+            manifest = json.loads(Path(exported["manifest"]).read_text(encoding="utf-8"))
+            self.assertEqual(manifest["schema_version"], "secopsai.research.export-manifest.v1")
+            for item in manifest["files"]:
+                report_bytes = (Path(exported["json_report"]).parent / item["name"]).read_bytes()
+                self.assertEqual(item["bytes"], len(report_bytes))
+                self.assertEqual(item["sha256"], hashlib.sha256(report_bytes).hexdigest())
 
     def test_case_links_existing_soc_finding(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -214,6 +235,49 @@ class ResearchCaseTests(unittest.TestCase):
                     sha256="not-a-hash",
                     db_path=db_path,
                 )
+
+    def test_local_artifact_is_hash_only_and_does_not_store_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = str(root / "soc.db")
+            artifact = root / "sample-package.nupkg"
+            artifact.write_bytes(b"package bytes used only for hashing")
+            case = create_case(title="Local artifact hashing case", db_path=db_path)
+            hashed = add_local_artifact(case["case_id"], artifact_path=str(artifact), db_path=db_path)
+
+            evidence = hashed["evidence"][-1]
+            self.assertEqual(evidence["evidence_type"], "package_artifact")
+            self.assertEqual(evidence["sha256"], hashlib.sha256(artifact.read_bytes()).hexdigest())
+            self.assertEqual(evidence["metadata"]["collection_mode"], "hash_only")
+            self.assertNotIn(str(root), json.dumps(evidence))
+
+            symlink = root / "linked-package.nupkg"
+            symlink.symlink_to(artifact)
+            with self.assertRaisesRegex(ValueError, "symbolic link"):
+                add_local_artifact(case["case_id"], artifact_path=str(symlink), db_path=db_path)
+
+    def test_start_package_case_records_leads_without_fetching_or_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = str(root / "soc.db")
+            artifact = root / "package.tgz"
+            artifact.write_bytes(b"safe fixture bytes")
+            case = start_package_case(
+                package="payments-helper",
+                ecosystem="npm",
+                version="1.2.3",
+                publisher="unknown-publisher",
+                source_url="https://registry.example.test/payments-helper",
+                artifact_path=str(artifact),
+                db_path=db_path,
+            )
+
+            self.assertEqual(case["status"], "draft")
+            self.assertEqual(case["subjects"][0]["name"], "payments-helper")
+            self.assertEqual(case["subjects"][0]["ecosystem"], "npm")
+            self.assertEqual(len(case["evidence"]), 2)
+            self.assertTrue(all(item["metadata"].get("analysis_executed") is False for item in case["evidence"] if item["evidence_type"] == "package_artifact"))
+            self.assertTrue(any(item["evidence_type"] == "registry_metadata" for item in case["evidence"]))
 
     def test_original_research_blog_template_stays_review_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
