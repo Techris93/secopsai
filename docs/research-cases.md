@@ -41,6 +41,31 @@ retracted evidence blocks publication until its provenance is corrected.
 
 ## Create And Build A Case
 
+For a fast, safe package-research start, use the guided command. It records a
+package subject and optional analyst-supplied source URL. It does not fetch a
+registry or execute anything. With `--artifact`, it reads the local regular
+file only to calculate a SHA-256 hash; it does not unpack or retain the file.
+
+```bash
+secopsai research case start-package \
+  --ecosystem nuget \
+  --package Braintree.Payments.SDK \
+  --version 4.2.1 \
+  --source-url https://example.com/package \
+  --artifact ./fixtures/package.nupkg \
+  --owner "SecOpsAI Research"
+```
+
+The resulting case starts in `draft` with explicit validation language. Add
+evidence, IOCs, findings, and disclosure updates as the investigation earns
+them. To attach a local artifact to an existing case:
+
+```bash
+secopsai research case add-artifact RSC-... \
+  --artifact ./fixtures/package.nupkg \
+  --notes "Hash-only collection from the isolated evidence directory"
+```
+
 ```bash
 secopsai research case create \
   --title "NuGet payment SDK typosquat investigation" \
@@ -98,10 +123,15 @@ secopsai research case export RSC-...
 secopsai research case draft-blog RSC-...
 ```
 
-Exports are deterministic JSON and Markdown under
-`reports/research/cases/`. Draft handoff produces an **Original Research** Blog
-Ops item with `review_status=needs_review`; editorial approval and deployment
-remain separate actions.
+Exports are deterministic JSON and Markdown under `reports/research/cases/`.
+Each export also includes a `.manifest.json` with byte counts and SHA-256
+checksums for the JSON and Markdown files. The export schema is
+`secopsai.research.case.v1`; the manifest schema is
+`secopsai.research.export-manifest.v1`. Re-exporting an unchanged case produces
+the same report bytes, which makes review, archival, and publication checks
+reproducible. Draft handoff produces an **Original Research** Blog Ops item
+with `review_status=needs_review`; editorial approval and deployment remain
+separate actions.
 
 ## Dashboard
 

@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import secrets
+import stat
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -13,6 +14,9 @@ import soc_store
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REPORT_DIR = ROOT / "reports" / "research" / "cases"
+RESEARCH_EXPORT_SCHEMA_VERSION = "secopsai.research.case.v1"
+RESEARCH_EXPORT_MANIFEST_VERSION = "secopsai.research.export-manifest.v1"
+LOCAL_ARTIFACT_MAX_BYTES = 250 * 1024 * 1024
 
 CASE_TYPES = {
     "malicious_package",
@@ -105,6 +109,36 @@ def _case_id(value: str) -> str:
 
 def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _sha256_file(path: Path, *, max_bytes: int = LOCAL_ARTIFACT_MAX_BYTES) -> tuple[str, int]:
+    """Hash a local regular file without executing, unpacking, or retaining it."""
+    if path.is_symlink():
+        raise ValueError("artifact must not be a symbolic link")
+    try:
+        file_stat = path.stat()
+    except FileNotFoundError as exc:
+        raise ValueError(f"artifact not found: {path}") from exc
+    if not stat.S_ISREG(file_stat.st_mode):
+        raise ValueError("artifact must be a regular file")
+    if file_stat.st_size > max_bytes:
+        raise ValueError(f"artifact exceeds the {max_bytes} byte safety limit")
+
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError(f"artifact exceeds the {max_bytes} byte safety limit")
+                digest.update(chunk)
+    except OSError as exc:
+        raise ValueError(f"could not read artifact: {exc}") from exc
+    return digest.hexdigest(), total
 
 
 def _decode(value: Any, default: Any) -> Any:
@@ -435,6 +469,151 @@ def add_evidence(
     return get_case(case_id, db_path=db_path)
 
 
+def add_local_artifact(
+    case_id: str,
+    *,
+    artifact_path: str,
+    title: str = "",
+    locator: str = "",
+    provenance: str = "",
+    notes: str = "",
+    max_bytes: int = LOCAL_ARTIFACT_MAX_BYTES,
+    db_path: Optional[str] = None,
+    actor: str = "analyst",
+) -> Dict[str, Any]:
+    """Attach a local artifact as hash-only evidence.
+
+    The file is read as bytes solely to calculate a SHA-256 digest. This helper
+    deliberately does not execute, unpack, import, or otherwise inspect the
+    artifact contents.
+    """
+    raw_path = _clean(artifact_path, field="artifact_path", required=True, limit=4096)
+    path = Path(raw_path).expanduser()
+    digest, size = _sha256_file(path, max_bytes=max_bytes)
+    filename = path.name or "artifact"
+    safe_locator = locator.strip() or f"local-artifact:{filename}"
+    safe_provenance = provenance.strip() or "local artifact hashed without execution or unpacking"
+    size_note = f"filename={filename}; bytes={size}; collection=hash_only; execution=false; unpacking=false"
+    combined_notes = "; ".join(value for value in [size_note, notes.strip()] if value)
+    return add_evidence(
+        case_id,
+        evidence_type="package_artifact",
+        title=title.strip() or f"Local artifact: {filename}",
+        locator=safe_locator,
+        sha256=digest,
+        provenance=safe_provenance,
+        notes=combined_notes,
+        metadata={
+            "collection_mode": "hash_only",
+            "analysis_executed": False,
+            "unpacked": False,
+            "filename": filename,
+            "bytes": size,
+        },
+        db_path=db_path,
+        actor=actor,
+    )
+
+
+def start_package_case(
+    *,
+    package: str,
+    ecosystem: str,
+    version: str = "",
+    title: str = "",
+    summary: str = "",
+    case_type: str = "malicious_package",
+    severity: str = "medium",
+    confidence: Any = 0,
+    owner: str = "",
+    publisher: str = "",
+    source_url: str = "",
+    artifact_path: str = "",
+    artifact_title: str = "",
+    db_path: Optional[str] = None,
+    actor: str = "analyst",
+) -> Dict[str, Any]:
+    """Create a package research case with a safe, structured starting point.
+
+    This command records analyst-supplied metadata and optional public source
+    references. It never fetches a registry, executes a package, or unpacks a
+    local artifact. Local artifacts are hash-only evidence when supplied.
+    """
+    package_name = _clean(package, field="package", required=True, limit=512)
+    ecosystem_name = _clean(ecosystem, field="ecosystem", required=True, limit=80).lower()
+    package_version = _clean(version, field="version", limit=160)
+    generated_title = title.strip() or f"Package research: {ecosystem_name}/{package_name}"
+    generated_summary = summary.strip() or (
+        f"Initial structured research case for the {ecosystem_name} package {package_name}"
+        + (f" version {package_version}" if package_version else "")
+        + ". No maliciousness has been established; validation remains open."
+    )
+
+    # Preflight the artifact before creating any case records so a bad path
+    # cannot leave a guided start half-complete.
+    artifact_digest: Optional[str] = None
+    artifact_size: Optional[int] = None
+    artifact_name = ""
+    if artifact_path:
+        artifact_file = Path(_clean(artifact_path, field="artifact_path", required=True, limit=4096)).expanduser()
+        artifact_digest, artifact_size = _sha256_file(artifact_file)
+        artifact_name = artifact_file.name or "artifact"
+
+    case = create_case(
+        title=generated_title,
+        summary=generated_summary,
+        case_type=case_type,
+        severity=severity,
+        confidence=confidence,
+        owner=owner,
+        db_path=db_path,
+    )
+    case = add_subject(
+        case["case_id"],
+        subject_type="package",
+        name=package_name,
+        ecosystem=ecosystem_name,
+        version=package_version,
+        publisher=publisher,
+        actor=actor,
+        db_path=db_path,
+    )
+    if source_url:
+        case = add_evidence(
+            case["case_id"],
+            evidence_type="registry_metadata",
+            title="Analyst-supplied public package source",
+            locator=source_url,
+            provenance="analyst-supplied public source; not fetched by case start",
+            notes="Recorded as a research lead. Validate the source before publication.",
+            actor=actor,
+            db_path=db_path,
+        )
+    if artifact_digest:
+        case = add_evidence(
+            case["case_id"],
+            evidence_type="package_artifact",
+            title=artifact_title.strip() or f"Local artifact: {artifact_name}",
+            locator=f"local-artifact:{artifact_name}",
+            sha256=artifact_digest,
+            provenance="local artifact hashed without execution or unpacking",
+            notes=(
+                f"filename={artifact_name}; bytes={artifact_size}; collection=hash_only; "
+                "execution=false; unpacking=false"
+            ),
+            metadata={
+                "collection_mode": "hash_only",
+                "analysis_executed": False,
+                "unpacked": False,
+                "filename": artifact_name,
+                "bytes": artifact_size,
+            },
+            actor=actor,
+            db_path=db_path,
+        )
+    return case
+
+
 def add_ioc(
     case_id: str,
     *,
@@ -627,8 +806,8 @@ def publication_readiness(case: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _case_markdown(case: Dict[str, Any]) -> str:
-    readiness = publication_readiness(case)
+def _case_markdown(case: Dict[str, Any], *, readiness: Optional[Dict[str, Any]] = None) -> str:
+    readiness = readiness or publication_readiness(case)
     lines = [
         f"# {case['title']}",
         "",
@@ -697,13 +876,42 @@ def export_case(
     stem = f"{case['case_id'].lower()}-{re.sub(r'[^a-z0-9]+', '-', case['title'].lower()).strip('-')[:80]}"
     json_path = target / f"{stem}.json"
     markdown_path = target / f"{stem}.md"
-    json_path.write_text(json.dumps(case, indent=2, sort_keys=True), encoding="utf-8")
-    markdown_path.write_text(_case_markdown(case), encoding="utf-8")
+    # A readiness check is useful in the exported report, but its wall-clock
+    # evaluation time must not make identical case snapshots differ.
+    readiness = dict(case["publication_readiness"])
+    readiness["checked_at"] = case.get("updated_at")
+    export_payload = {
+        "schema_version": RESEARCH_EXPORT_SCHEMA_VERSION,
+        **{key: value for key, value in case.items() if key != "publication_readiness"},
+        "publication_readiness": readiness,
+    }
+    json_path.write_text(json.dumps(export_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    markdown_path.write_text(_case_markdown(export_payload, readiness=readiness), encoding="utf-8")
+    manifest_files = []
+    for report_path in (json_path, markdown_path):
+        report_bytes = report_path.read_bytes()
+        manifest_files.append(
+            {
+                "name": report_path.name,
+                "bytes": len(report_bytes),
+                "sha256": hashlib.sha256(report_bytes).hexdigest(),
+            }
+        )
+    manifest = {
+        "schema_version": RESEARCH_EXPORT_MANIFEST_VERSION,
+        "case_id": case["case_id"],
+        "case_updated_at": case.get("updated_at"),
+        "files": manifest_files,
+    }
+    manifest_path = target / f"{stem}.manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {
         "case_id": case["case_id"],
         "json_report": str(json_path),
         "markdown_report": str(markdown_path),
-        "publication_readiness": case["publication_readiness"],
+        "manifest": str(manifest_path),
+        "manifest_payload": manifest,
+        "publication_readiness": readiness,
     }
 
 

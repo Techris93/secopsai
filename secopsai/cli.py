@@ -77,6 +77,7 @@ from secopsai.research_cases import (
     SUBJECT_TYPES,
     add_case_note,
     add_evidence as add_research_evidence,
+    add_local_artifact as add_research_artifact,
     add_ioc as add_research_ioc,
     add_subject as add_research_subject,
     create_case as create_research_case,
@@ -86,6 +87,7 @@ from secopsai.research_cases import (
     link_finding as link_research_finding,
     list_cases as list_research_cases,
     retract_item as retract_research_item,
+    start_package_case as start_research_package_case,
     update_case as update_research_case,
 )
 from secopsai.sessions import (
@@ -987,6 +989,26 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     case_subject.add_argument("--actor", default="analyst")
     case_subject.add_argument("--db-path", default=None)
 
+    case_start_package = research_case_sub.add_parser(
+        "start-package",
+        help="Start a package research case from analyst metadata without fetching or executing anything",
+    )
+    case_start_package.add_argument("--package", required=True)
+    case_start_package.add_argument("--ecosystem", required=True)
+    case_start_package.add_argument("--version", default="")
+    case_start_package.add_argument("--title", default="")
+    case_start_package.add_argument("--summary", default="")
+    case_start_package.add_argument("--type", dest="case_type", choices=sorted(CASE_TYPES), default="malicious_package")
+    case_start_package.add_argument("--severity", choices=sorted(RESEARCH_SEVERITIES), default="medium")
+    case_start_package.add_argument("--confidence", default="0", help="0-100 or low/medium/high/confirmed")
+    case_start_package.add_argument("--owner", default="")
+    case_start_package.add_argument("--publisher", default="")
+    case_start_package.add_argument("--source-url", default="", help="Record a public source URL without fetching it")
+    case_start_package.add_argument("--artifact", default="", help="Hash a local regular file without executing or unpacking it")
+    case_start_package.add_argument("--artifact-title", default="")
+    case_start_package.add_argument("--actor", default="analyst")
+    case_start_package.add_argument("--db-path", default=None)
+
     case_evidence = research_case_sub.add_parser("add-evidence", help="Attach a source or analysis evidence record")
     case_evidence.add_argument("case_id")
     case_evidence.add_argument("--evidence-type", required=True, choices=sorted(EVIDENCE_TYPES))
@@ -998,6 +1020,19 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     case_evidence.add_argument("--collected-at", default=None)
     case_evidence.add_argument("--actor", default="analyst")
     case_evidence.add_argument("--db-path", default=None)
+
+    case_artifact = research_case_sub.add_parser(
+        "add-artifact",
+        help="Hash a local regular file as package evidence without executing or unpacking it",
+    )
+    case_artifact.add_argument("case_id")
+    case_artifact.add_argument("--artifact", required=True)
+    case_artifact.add_argument("--title", default="")
+    case_artifact.add_argument("--locator", default="")
+    case_artifact.add_argument("--provenance", default="")
+    case_artifact.add_argument("--notes", default="")
+    case_artifact.add_argument("--actor", default="analyst")
+    case_artifact.add_argument("--db-path", default=None)
 
     case_ioc = research_case_sub.add_parser("add-ioc", help="Attach a normalized indicator of compromise")
     case_ioc.add_argument("case_id")
@@ -1576,6 +1611,24 @@ def _run_research_case_command(args: argparse.Namespace) -> int:
                 owner=args.owner,
                 db_path=args.db_path,
             )
+        elif command == "start-package":
+            payload = start_research_package_case(
+                package=args.package,
+                ecosystem=args.ecosystem,
+                version=args.version,
+                title=args.title,
+                summary=args.summary,
+                case_type=args.case_type,
+                severity=args.severity,
+                confidence=args.confidence,
+                owner=args.owner,
+                publisher=args.publisher,
+                source_url=args.source_url,
+                artifact_path=args.artifact,
+                artifact_title=args.artifact_title,
+                actor=args.actor,
+                db_path=args.db_path,
+            )
         elif command == "list":
             payload = {
                 "cases": list_research_cases(
@@ -1623,6 +1676,17 @@ def _run_research_case_command(args: argparse.Namespace) -> int:
                 provenance=args.provenance,
                 notes=args.notes,
                 collected_at=args.collected_at,
+                actor=args.actor,
+                db_path=args.db_path,
+            )
+        elif command == "add-artifact":
+            payload = add_research_artifact(
+                args.case_id,
+                artifact_path=args.artifact,
+                title=args.title,
+                locator=args.locator,
+                provenance=args.provenance,
+                notes=args.notes,
                 actor=args.actor,
                 db_path=args.db_path,
             )
@@ -1693,6 +1757,7 @@ def _run_research_case_command(args: argparse.Namespace) -> int:
         print(f"CASE_ID: {payload['case_id']}")
         print(f"JSON_REPORT: {payload['json_report']}")
         print(f"MARKDOWN_REPORT: {payload['markdown_report']}")
+        print(f"MANIFEST: {payload['manifest']}")
         print(f"PUBLICATION_READY: {str(payload['publication_readiness']['ready']).lower()}")
     elif command == "draft-blog":
         print(f"CASE_ID: {payload['case_id']}")
