@@ -56,6 +56,7 @@ from secopsai.blog import (
 from secopsai.edge_sync import import_bundle as import_edge_bundle
 from secopsai.edge_sync import load_bundle as load_edge_bundle
 from secopsai.edge_sync import sync_from_api as sync_edge_from_api
+from secopsai.edge_actions import normalize_edge_scan_payload, queue_edge_scan
 from secopsai.formatters import fmt_finding, fmt_list, to_json
 from secopsai.graph_store import list_assets as list_graph_assets
 from secopsai.graph_store import list_changes as list_graph_changes
@@ -696,6 +697,7 @@ def _apply_session_approval(
     queue_file: Optional[str] = None,
     db_path: Optional[str] = None,
     author: Optional[str] = None,
+    edge_root: Optional[str] = None,
 ) -> Dict[str, Any]:
     session = load_session(session_id, session_dir)
     approval = _find_approval(session, approval_id)
@@ -787,6 +789,48 @@ def _apply_session_approval(
                 message=f"Session closed after approved disposition for {finding_id}.",
                 path=session_dir,
             )
+        return {"kind": payload_kind, "result": result}
+
+    if payload_kind == "edge_scan":
+        normalized = normalize_edge_scan_payload(payload)
+        try:
+            result = queue_edge_scan(normalized, edge_root=edge_root)
+        except Exception as exc:
+            add_session_event(
+                session_id,
+                event_type="edge_scan_queue_failed",
+                message="Approved Edge scan could not be queued.",
+                data={"approval_id": approval_id, "error_type": type(exc).__name__},
+                author=author,
+                path=session_dir,
+            )
+            update_session_step(
+                session_id,
+                step="Queue approved Edge scan",
+                status="blocked",
+                note="The local Edge helper did not queue the scan.",
+                path=session_dir,
+            )
+            raise
+        add_session_event(
+            session_id,
+            event_type="edge_scan_queued",
+            message=f"Queued approved Edge scan for {result['target_cidr']}.",
+            data={
+                "approval_id": approval_id,
+                "target_cidr": result["target_cidr"],
+                "include_wifi": result["include_wifi"],
+            },
+            author=author,
+            path=session_dir,
+        )
+        update_session_step(
+            session_id,
+            step="Queue approved Edge scan",
+            status="completed",
+            note=f"Queued {result['target_cidr']} through the local Edge worker.",
+            path=session_dir,
+        )
         return {"kind": payload_kind, "result": result}
 
     raise ValueError(f"unsupported approval payload kind: {payload_kind}")
@@ -1532,6 +1576,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     session_resolve.add_argument("--queue-file", default=None, help="Override triage action queue JSON path")
     session_resolve.add_argument("--db-path", default=None, help="Override SQLite database path")
     session_resolve.add_argument("--session-dir", default=None, help="Override session storage directory")
+    session_resolve.add_argument("--edge-root", default=None, help="SecOpsAI Edge root used by approved Edge actions")
     decision_group = session_resolve.add_mutually_exclusive_group(required=True)
     decision_group.add_argument("--approve", action="store_true")
     decision_group.add_argument("--reject", action="store_true")
@@ -2580,6 +2625,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                         payload["kind"] = "custom"
                     if not summary:
                         raise ValueError("--summary is required for custom approvals")
+                    if payload.get("kind") == "edge_scan":
+                        payload = normalize_edge_scan_payload(payload)
 
                 approval = request_session_approval(
                     args.session_id,
@@ -2631,6 +2678,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         queue_file=args.queue_file,
                         db_path=args.db_path,
                         author=args.decided_by,
+                        edge_root=args.edge_root,
                     )
                 payload = {"approval": approval, "applied": applied}
             except Exception as exc:

@@ -92,6 +92,29 @@ The Edge source identity is scoped to its organization and remains stable when
 the Edge API version changes, preventing routine upgrades from creating a new
 sync cursor.
 
+## Approval-Gated Edge Scan Requests
+
+OpenClaw can request a scan without being allowed to run Nmap or mutate the
+Edge service directly. The request creates a Core session and a pending
+approval:
+
+```text
+secopsai_edge_request_scan targetCidr=192.168.1.0/24 includeWifi=false
+secopsai_session_show sessionId=SES-...
+secopsai_session_resolve_approval sessionId=SES-... approvalId=APR-... decision=approved apply=true
+```
+
+The plugin passes its configured `edgePath` to Core. When the approval is
+applied, Core invokes only `<edgePath>/scripts/edge queue <cidr> --cloud` with
+structured arguments. Edge validates the RFC1918 `/24` boundary again, uses
+its local scoped cloud credentials, and creates a queued job for the local
+worker. The worker remains the only component that executes discovery.
+
+Core stores only the normalized target, Wi-Fi flag, approval ID, and queue
+status in the session. It does not store the helper stdout, raw Nmap output,
+packet data, or sensor/admin credentials. Rejected approvals do not queue a
+job. Operators must explicitly allow the optional write tools in OpenClaw.
+
 ## Ownership Boundary
 
 | Surface | Owner |

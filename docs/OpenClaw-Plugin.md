@@ -41,6 +41,7 @@ Add to your OpenClaw config:
         "enabled": true,
         "config": {
           "secopsaiPath": "~/secopsai",
+          "edgePath": "~/secopsai-edge",
           "socDbPath": "~/secopsai/data/openclaw/findings/openclaw_soc.db",
           "sessionDir": "~/secopsai/data/sessions"
         }
@@ -52,6 +53,7 @@ Add to your OpenClaw config:
       "secopsai_close_finding",
       "secopsai_triage_orchestrate",
       "secopsai_triage_apply_action",
+      "secopsai_edge_request_scan",
       "secopsai_session_request_close_approval",
       "secopsai_session_request_action_approval",
       "secopsai_session_resolve_approval"
@@ -65,6 +67,7 @@ Add to your OpenClaw config:
 | Key | Default | Description |
 |---|---|---|
 | `secopsaiPath` | `~/secopsai` | Path to the SecOpsAI repo / install |
+| `edgePath` | `~/secopsai-edge` | Path to the Edge install used for worker checks, previews, and approval-gated scan queueing |
 | `socDbPath` | `~/secopsai/data/openclaw/findings/openclaw_soc.db` | SOC findings SQLite DB |
 | `sessionDir` | `~/secopsai/data/sessions` | Investigation session storage |
 
@@ -78,7 +81,10 @@ Add to your OpenClaw config:
 - `secopsai_research_finding`
 - `secopsai_research_package`
 - `secopsai_edge_assets`
+- `secopsai_edge_worker_status`
+- `secopsai_edge_scan_preview`
 - `secopsai_edge_changes`
+- `secopsai_edge_sync_status`
 - `secopsai_edge_findings`
 - `secopsai_review_release_with_sources`
 - `secopsai_supply_chain_suggest_fp_action`
@@ -92,6 +98,7 @@ Add to your OpenClaw config:
 - `secopsai_close_finding`
 - `secopsai_triage_orchestrate`
 - `secopsai_triage_apply_action`
+- `secopsai_edge_request_scan`
 - `secopsai_session_request_close_approval`
 - `secopsai_session_request_action_approval`
 - `secopsai_session_resolve_approval`
@@ -109,6 +116,7 @@ The plugin write-facing tools are intentionally approval-gated:
 - `secopsai_triage_apply_action` requests a `triage_action` approval instead of applying directly.
 - `secopsai_triage_orchestrate` runs with auto-apply disabled so resulting actions stay reviewable.
 - `secopsai_session_resolve_approval` is the only tool that can apply an approved session payload.
+- `secopsai_edge_request_scan` creates an `edge_scan` approval; it never runs Nmap directly.
 
 ## Example flow
 
@@ -131,12 +139,27 @@ secopsai_research_package ecosystem=npm packageName=@ant-design/x-skill version=
 
 ```text
 secopsai_edge_assets limit=50
+secopsai_edge_worker_status
+secopsai_edge_scan_preview targetCidr=192.168.1.0/24
 secopsai_edge_changes limit=20
 secopsai_edge_findings status=open limit=50
 ```
 
 These tools read the Core-canonical asset graph and Edge-origin finding store.
-They do not run Nmap, queue scans, or change finding state.
+The worker status and preview tools do not run Nmap or queue scans.
+
+### Approval-gated Edge scan flow
+
+```text
+secopsai_edge_request_scan targetCidr=192.168.1.0/24 includeWifi=false
+secopsai_session_show sessionId=SES-...
+secopsai_session_resolve_approval sessionId=SES-... approvalId=APR-... decision=approved apply=true
+```
+
+This queues a remote job through the local Edge helper only after explicit
+approval. Core validates private `/24` or narrower targets, Edge validates the
+same boundary again, and the local worker executes the scan. Raw command
+output and credentials remain outside Core session state.
 
 ### Guarded queued-action flow
 
