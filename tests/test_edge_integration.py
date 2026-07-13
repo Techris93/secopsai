@@ -1,13 +1,15 @@
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 import soc_store
 from secopsai import cli
-from secopsai.edge_sync import import_bundle
+from secopsai.edge_sync import import_bundle, sync_from_api
 from secopsai.graph_store import list_assets, show_node
 from secopsai.triage import list_triage_findings
 
@@ -159,6 +161,23 @@ class EdgeIntegrationTests(unittest.TestCase):
             payload = json.loads(stdout.getvalue())
             self.assertEqual(rc, 0)
             self.assertEqual(payload["assets"][0]["ip_address"], "192.168.1.50")
+
+    @patch("secopsai.edge_sync.fetch_bundle")
+    def test_sync_prefers_scoped_access_token_environment(self, fetch_bundle):
+        fetch_bundle.return_value = _bundle()
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {
+                "SECOPSAI_EDGE_API_URL": "https://edge.example.test",
+                "SECOPSAI_EDGE_ACCESS_TOKEN": "scoped-core-export-token",
+                "SECOPSAI_EDGE_ADMIN_TOKEN": "legacy-admin-token",
+            },
+        ):
+            sync_from_api(db_path=str(Path(temp_dir) / "soc.db"))
+
+        fetch_bundle.assert_called_once_with(
+            "https://edge.example.test", "scoped-core-export-token"
+        )
 
 
 if __name__ == "__main__":

@@ -42,7 +42,7 @@ secopsai edge import --bundle edge-bundle.json --db-path /path/to/openclaw_soc.d
 
 ```bash
 SECOPSAI_EDGE_API_URL=https://secopsai-edge-api.onrender.com \
-SECOPSAI_EDGE_ADMIN_TOKEN=<admin-token> \
+SECOPSAI_EDGE_ACCESS_TOKEN=<workspace-core-export-token> \
 secopsai edge sync
 ```
 
@@ -51,8 +51,13 @@ Or pass values directly:
 ```bash
 secopsai edge sync \
   --edge-api-url https://secopsai-edge-api.onrender.com \
-  --admin-token <admin-token>
+  --access-token <workspace-core-export-token>
 ```
+
+Create this expiring, revocable token from the Edge dashboard Settings page.
+It grants only `core:export` for the selected workspace. The legacy admin-token
+environment variable and CLI alias remain temporarily supported for existing
+single-workspace installations, but new services should not use them.
 
 ## Inspect The Graph
 

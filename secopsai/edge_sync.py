@@ -36,11 +36,11 @@ def load_bundle(path: str | Path) -> dict[str, Any]:
     return payload
 
 
-def fetch_bundle(edge_api_url: str, admin_token: str) -> dict[str, Any]:
+def fetch_bundle(edge_api_url: str, access_token: str) -> dict[str, Any]:
     base_url = edge_api_url.rstrip("/")
     response = requests.get(
         f"{base_url}/api/v1/core/export",
-        headers={"Authorization": f"Bearer {admin_token}"},
+        headers={"Authorization": f"Bearer {access_token}"},
         timeout=30,
     )
     response.raise_for_status()
@@ -77,15 +77,21 @@ def import_bundle(bundle: dict[str, Any], *, db_path: str | None = None) -> dict
 def sync_from_api(
     *,
     edge_api_url: str | None = None,
+    access_token: str | None = None,
     admin_token: str | None = None,
     db_path: str | None = None,
 ) -> dict[str, Any]:
     resolved_url = edge_api_url or os.environ.get("SECOPSAI_EDGE_API_URL")
-    resolved_token = admin_token or os.environ.get("SECOPSAI_EDGE_ADMIN_TOKEN")
+    resolved_token = (
+        access_token
+        or admin_token
+        or os.environ.get("SECOPSAI_EDGE_ACCESS_TOKEN")
+        or os.environ.get("SECOPSAI_EDGE_ADMIN_TOKEN")
+    )
     if not resolved_url:
         raise ValueError("--edge-api-url or SECOPSAI_EDGE_API_URL is required")
     if not resolved_token:
-        raise ValueError("--admin-token or SECOPSAI_EDGE_ADMIN_TOKEN is required")
+        raise ValueError("--access-token or SECOPSAI_EDGE_ACCESS_TOKEN is required")
     return import_bundle(fetch_bundle(resolved_url, resolved_token), db_path=db_path)
 
 

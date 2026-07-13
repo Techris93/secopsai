@@ -896,7 +896,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     edge_import.add_argument("--db-path", default=None, help="Override SQLite SOC/graph database path")
     edge_sync = edge_sub.add_parser("sync", help="Fetch Edge export from an API and import it locally")
     edge_sync.add_argument("--edge-api-url", default=None, help="SecOpsAI Edge API URL")
-    edge_sync.add_argument("--admin-token", default=None, help="Edge API admin token")
+    edge_sync.add_argument(
+        "--access-token",
+        "--admin-token",
+        dest="access_token",
+        default=None,
+        help="Workspace-scoped Edge Core export token",
+    )
     edge_sync.add_argument("--db-path", default=None, help="Override SQLite SOC/graph database path")
 
     graph = sub.add_parser("graph", help="Inspect the local SecOpsAI asset graph")
@@ -2185,7 +2191,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             elif args.edge_cmd == "sync":
                 payload = sync_edge_from_api(
                     edge_api_url=args.edge_api_url,
-                    admin_token=args.admin_token,
+                    access_token=args.access_token,
                     db_path=args.db_path,
                 )
             else:
