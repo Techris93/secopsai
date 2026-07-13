@@ -247,6 +247,102 @@ class SessionCliTests(unittest.TestCase):
             session = load_session(session_id, session_dir)
             self.assertEqual(session["status"], "closed")
 
+    def test_approved_edge_scan_queues_through_local_helper_without_raw_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            session_dir = str(temp_path / "sessions")
+            edge_root = temp_path / "edge"
+            edge_script = edge_root / "scripts" / "edge"
+            edge_script.parent.mkdir(parents=True)
+            edge_script.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$@\" > '" + str(temp_path / "edge-args.txt") + "'\n"
+                "printf '%s' 'raw nmap output must never enter Core'\n",
+                encoding="utf-8",
+            )
+            edge_script.chmod(0o700)
+
+            create_stdout = io.StringIO()
+            with redirect_stdout(create_stdout):
+                self.assertEqual(
+                    cli.main(
+                        [
+                            "--json",
+                            "session",
+                            "create",
+                            "--kind",
+                            "edge_scan",
+                            "--title",
+                            "Approved Edge scan",
+                            "--session-dir",
+                            session_dir,
+                        ]
+                    ),
+                    0,
+                )
+            session_id = json.loads(create_stdout.getvalue())["session"]["session_id"]
+
+            request_stdout = io.StringIO()
+            with redirect_stdout(request_stdout):
+                self.assertEqual(
+                    cli.main(
+                        [
+                            "--json",
+                            "session",
+                            "request-approval",
+                            session_id,
+                            "--type",
+                            "custom",
+                            "--summary",
+                            "Queue approved Edge scan",
+                            "--payload",
+                            json.dumps(
+                                {
+                                    "kind": "edge_scan",
+                                    "target_cidr": "10.20.30.7/24",
+                                    "include_wifi": True,
+                                }
+                            ),
+                            "--session-dir",
+                            session_dir,
+                        ]
+                    ),
+                    0,
+                )
+            approval_id = json.loads(request_stdout.getvalue())["approval"]["approval_id"]
+
+            resolve_stdout = io.StringIO()
+            with redirect_stdout(resolve_stdout):
+                self.assertEqual(
+                    cli.main(
+                        [
+                            "--json",
+                            "session",
+                            "resolve-approval",
+                            session_id,
+                            approval_id,
+                            "--approve",
+                            "--apply",
+                            "--edge-root",
+                            str(edge_root),
+                            "--session-dir",
+                            session_dir,
+                        ]
+                    ),
+                    0,
+                )
+
+            resolved = json.loads(resolve_stdout.getvalue())
+            self.assertEqual(resolved["applied"]["kind"], "edge_scan")
+            self.assertEqual(resolved["applied"]["result"]["status"], "queued")
+            self.assertEqual(
+                (temp_path / "edge-args.txt").read_text(encoding="utf-8").splitlines(),
+                ["queue", "10.20.30.0/24", "--cloud", "--wifi"],
+            )
+            serialized = json.dumps(load_session(session_id, session_dir))
+            self.assertNotIn("raw nmap output", serialized)
+            self.assertIn("edge_scan_queued", serialized)
+
 
 if __name__ == "__main__":
     unittest.main()
