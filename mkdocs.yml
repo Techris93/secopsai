@@ -28,9 +28,11 @@ extra_css:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - SecOpsAI Edge: edge-integration.md
   - Operator Runbook: operator-runbook.md
   - Findings Triage Guide: findings-triage-guide.md
   - Research And Verification: research-and-verification.md
+  - Research Cases: research-cases.md
   - Triage Orchestrator: triage-orchestrator.md
   - Adaptive Response Layer: adaptive-response.md
   - Rules Registry: rules-registry.md

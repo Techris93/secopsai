@@ -1,0 +1,133 @@
+# Research Cases
+
+SecOpsAI Research Cases turn discovery leads, package analysis, SOC findings,
+and public-source evidence into a durable investigation record. Cases are
+local-first and stored in the Core SQLite SOC database.
+
+## Ownership Boundary
+
+- Supply-chain discovery and scanners produce leads and technical evidence.
+- Research Cases own analyst workflow, provenance, disclosure, and publication
+  readiness.
+- Core findings can be linked to a case without changing their triage state.
+- Blog Ops receives review-only drafts. It never publishes directly from a
+  research case.
+
+## Case Lifecycle
+
+Statuses are:
+
+`draft` → `investigating` → `validation` → `disclosure_pending` →
+`ready_to_publish` → `published` or `closed`.
+
+Disclosure is tracked separately as `not_started`, `not_required`,
+`preparing`, `reported`, `coordinating`, `disclosed`, or `closed`.
+
+Every mutation appends an immutable case event. Subjects, evidence, IOCs, and
+finding links remain structured instead of being hidden in a prose report.
+
+Incorrect structured records are retracted, not deleted:
+
+```bash
+secopsai research case retract RSC-... \
+  --item-type evidence \
+  --item-id EVD-... \
+  --reason "Registry record belonged to a different namespace"
+```
+
+Retractions require a reason, remain visible in the case history, and are
+excluded from readiness, exports, and publication. An active IOC linked to
+retracted evidence blocks publication until its provenance is corrected.
+
+## Create And Build A Case
+
+```bash
+secopsai research case create \
+  --title "NuGet payment SDK typosquat investigation" \
+  --type typosquatting \
+  --severity critical \
+  --confidence 80 \
+  --owner "SecOpsAI Research" \
+  --summary "A suspicious package copied legitimate branding and introduced attacker-controlled checkout telemetry."
+
+secopsai research case add-subject RSC-... \
+  --subject-type package \
+  --ecosystem nuget \
+  --name Braintree.Payments.SDK \
+  --version 4.2.1
+
+secopsai research case add-evidence RSC-... \
+  --evidence-type source \
+  --title "Public registry package record" \
+  --locator https://example.com/package \
+  --provenance "public package registry"
+
+secopsai research case add-ioc RSC-... \
+  --ioc-type domain \
+  --value checkout-telemetry.example \
+  --confidence 90
+
+secopsai research case link-finding RSC-... SCM-... --relationship derived_from
+```
+
+Use `secopsai research case list` and `secopsai research case show RSC-...`
+to inspect the queue and full timeline.
+
+## Publication Readiness
+
+A case cannot create a blog draft until all deterministic gates pass:
+
+- clear title and substantial executive summary
+- at least one structured subject
+- at least two evidence records
+- at least one public source or registry record with a locator
+- confidence of 60 or greater
+- disclosure completed or explicitly marked not required
+- case status set to `ready_to_publish`
+
+Missing IOCs or linked findings are warnings, not automatic blockers, because a
+valid investigation may produce no attacker infrastructure or local exposure.
+
+```bash
+secopsai research case update RSC-... \
+  --status ready_to_publish \
+  --disclosure-status disclosed \
+  --confidence 90
+
+secopsai research case export RSC-...
+secopsai research case draft-blog RSC-...
+```
+
+Exports are deterministic JSON and Markdown under
+`reports/research/cases/`. Draft handoff produces an **Original Research** Blog
+Ops item with `review_status=needs_review`; editorial approval and deployment
+remain separate actions.
+
+## Dashboard
+
+Open **Research** in the canonical SecOpsAI dashboard to:
+
+- review the case queue and publication blockers
+- manage status, severity, confidence, owner, and disclosure
+- add subjects, evidence, IOCs, notes, and finding links
+- download a Markdown case report
+- create a review-only blog draft when readiness passes
+
+Reads do not require a write token. Protected actions use the same
+`TRIAGE_OPS_ADMIN_TOKEN` boundary as Triage Ops. The token stays in browser
+session storage and is forwarded only to the authenticated helper.
+
+## Safety And Ethics
+
+- Collect public metadata and artifacts or data you are authorized to inspect.
+- Prefer static analysis in isolated directories.
+- Run dynamic analysis only in disposable, network-controlled sandboxes.
+- Never execute untrusted packages on the operator workstation.
+- Record provenance, hashes, timestamps, and limitations.
+- Coordinate with affected vendors, registries, and maintainers before public
+  disclosure when publication could increase harm.
+- Do not include live credentials, private victim data, or unnecessary personal
+  information in evidence or reports.
+
+Structured cryptographic hash IOCs are preserved in public drafts. Unstructured
+secret-like values remain redacted.

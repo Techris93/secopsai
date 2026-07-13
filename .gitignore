@@ -18,6 +18,7 @@ dist/
 .npmrc
 *.tgz
 .wrangler/
+.playwright-cli/
 .DS_Store
 
 # Local OpenClaw findings artifacts

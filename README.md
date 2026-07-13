@@ -3,13 +3,14 @@
 [![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/Techris93/secopsai)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-> **Local-first detection, investigation, and triage orchestration for OpenClaw, Hermes Agent, macOS, Linux, and Windows.**
+> **Local-first detection, investigation, network discovery, and triage orchestration for OpenClaw, Hermes Agent, macOS, Linux, Windows, and SecOpsAI Edge.**
 
 SecOpsAI is a local-first security monitoring, investigation, and triage platform. It ingests OpenClaw audit telemetry, Hermes Agent telemetry, and host OS security events, normalizes them into a unified schema, persists findings in a local SOC store, and now includes a native triage engine with queued analyst actions and supply-chain policy controls.
 
 ## What SecOpsAI does
 
 - Collects telemetry from **OpenClaw**, **Hermes Agent**, **macOS**, **Linux**, and **Windows**
+- Imports normalized SecOpsAI Edge asset graphs and network-origin findings without importing raw scan logs
 - Normalizes events into a **unified schema** for shared detection logic
 - Detects suspicious behavior and stores findings in a local **SQLite SOC store**
 - Correlates findings across platforms by **IP**, **user**, **time window**, and **file hash**
@@ -29,6 +30,7 @@ SecOpsAI is a local-first security monitoring, investigation, and triage platfor
 | macOS    | Unified logging     | ✅ Production | Auth, process, and host activity |
 | Linux    | journalctl / auditd |       ✅ Beta | Ready for Linux deployment       |
 | Windows  | Event Logs / Sysmon |       ✅ Beta | Ready for Windows deployment     |
+| SecOpsAI Edge | LAN discovery / Wi-Fi inventory | ✅ Pilot | Separate sensor module with versioned Core sync |
 
 ## Cross-Platform Correlation
 

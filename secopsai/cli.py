@@ -53,13 +53,40 @@ from secopsai.blog import (
     publish as publish_blog_post,
     rebuild as rebuild_blog,
 )
+from secopsai.edge_sync import import_bundle as import_edge_bundle
+from secopsai.edge_sync import load_bundle as load_edge_bundle
+from secopsai.edge_sync import sync_from_api as sync_edge_from_api
 from secopsai.formatters import fmt_finding, fmt_list, to_json
+from secopsai.graph_store import list_assets as list_graph_assets
+from secopsai.graph_store import list_changes as list_graph_changes
+from secopsai.graph_store import show_node as show_graph_node
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
 from secopsai.pipeline import refresh as refresh_pipeline
 from secopsai.research import (
     build_preflight_report,
     research_finding as research_finding_report,
     research_package as research_package_report,
+)
+from secopsai.research_cases import (
+    CASE_STATUSES,
+    CASE_TYPES,
+    DISCLOSURE_STATUSES,
+    EVIDENCE_TYPES,
+    IOC_TYPES,
+    SEVERITIES as RESEARCH_SEVERITIES,
+    SUBJECT_TYPES,
+    add_case_note,
+    add_evidence as add_research_evidence,
+    add_ioc as add_research_ioc,
+    add_subject as add_research_subject,
+    create_case as create_research_case,
+    draft_case_blog,
+    export_case as export_research_case,
+    get_case as get_research_case,
+    link_finding as link_research_finding,
+    list_cases as list_research_cases,
+    retract_item as retract_research_item,
+    update_case as update_research_case,
 )
 from secopsai.sessions import (
     add_artifact as add_session_artifact,
@@ -862,6 +889,34 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Block correlation when telemetry or intel freshness checks fail",
     )
 
+    edge = sub.add_parser("edge", help="Import or sync SecOpsAI Edge graph and findings")
+    edge_sub = edge.add_subparsers(dest="edge_cmd", required=True)
+    edge_import = edge_sub.add_parser("import", help="Import a SecOpsAI Edge bundle JSON file")
+    edge_import.add_argument("--bundle", required=True, help="Path to secopsai.edge.bundle.v1 JSON")
+    edge_import.add_argument("--db-path", default=None, help="Override SQLite SOC/graph database path")
+    edge_sync = edge_sub.add_parser("sync", help="Fetch Edge export from an API and import it locally")
+    edge_sync.add_argument("--edge-api-url", default=None, help="SecOpsAI Edge API URL")
+    edge_sync.add_argument(
+        "--access-token",
+        "--admin-token",
+        dest="access_token",
+        default=None,
+        help="Workspace-scoped Edge Core export token",
+    )
+    edge_sync.add_argument("--db-path", default=None, help="Override SQLite SOC/graph database path")
+
+    graph = sub.add_parser("graph", help="Inspect the local SecOpsAI asset graph")
+    graph_sub = graph.add_subparsers(dest="graph_cmd", required=True)
+    graph_assets = graph_sub.add_parser("assets", help="List assets discovered by Edge")
+    graph_assets.add_argument("--db-path", default=None, help="Override SQLite SOC/graph database path")
+    graph_assets.add_argument("--limit", type=int, default=50)
+    graph_show = graph_sub.add_parser("show", help="Show a graph node, source id, label, or asset IP")
+    graph_show.add_argument("identifier")
+    graph_show.add_argument("--db-path", default=None, help="Override SQLite SOC/graph database path")
+    graph_changes = graph_sub.add_parser("changes", help="Show recently updated graph nodes and edges")
+    graph_changes.add_argument("--db-path", default=None, help="Override SQLite SOC/graph database path")
+    graph_changes.add_argument("--limit", type=int, default=20)
+
     research = sub.add_parser("research", help="Generate source-backed research reports and preflight checks")
     research_sub = research.add_subparsers(dest="research_cmd", required=True)
 
@@ -885,6 +940,106 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     research_package_cmd.add_argument("--report-dir", default=None, help="Directory to write research reports")
     research_package_cmd.add_argument("--session-id", default=None, help="Attach the report to an existing session")
     research_package_cmd.add_argument("--session-dir", default=None, help="Override session storage directory")
+
+    research_case = research_sub.add_parser("case", help="Manage durable independent-research cases")
+    research_case_sub = research_case.add_subparsers(dest="research_case_cmd", required=True)
+
+    case_create = research_case_sub.add_parser("create", help="Create a research case")
+    case_create.add_argument("--title", required=True)
+    case_create.add_argument("--summary", default="")
+    case_create.add_argument("--type", dest="case_type", choices=sorted(CASE_TYPES), default="other")
+    case_create.add_argument("--severity", choices=sorted(RESEARCH_SEVERITIES), default="medium")
+    case_create.add_argument("--confidence", default="0", help="0-100 or low/medium/high/confirmed")
+    case_create.add_argument("--owner", default="")
+    case_create.add_argument("--db-path", default=None)
+
+    case_list = research_case_sub.add_parser("list", help="List research cases")
+    case_list.add_argument("--status", choices=sorted(CASE_STATUSES), default=None)
+    case_list.add_argument("--type", dest="case_type", choices=sorted(CASE_TYPES), default=None)
+    case_list.add_argument("--limit", type=int, default=100)
+    case_list.add_argument("--db-path", default=None)
+
+    case_show = research_case_sub.add_parser("show", help="Show one research case with evidence and timeline")
+    case_show.add_argument("case_id")
+    case_show.add_argument("--db-path", default=None)
+
+    case_update = research_case_sub.add_parser("update", help="Update research case state and disclosure")
+    case_update.add_argument("case_id")
+    case_update.add_argument("--title")
+    case_update.add_argument("--summary")
+    case_update.add_argument("--type", dest="case_type", choices=sorted(CASE_TYPES))
+    case_update.add_argument("--severity", choices=sorted(RESEARCH_SEVERITIES))
+    case_update.add_argument("--confidence", help="0-100 or low/medium/high/confirmed")
+    case_update.add_argument("--status", choices=sorted(CASE_STATUSES))
+    case_update.add_argument("--owner")
+    case_update.add_argument("--disclosure-status", choices=sorted(DISCLOSURE_STATUSES))
+    case_update.add_argument("--embargo-until")
+    case_update.add_argument("--actor", default="analyst")
+    case_update.add_argument("--db-path", default=None)
+
+    case_subject = research_case_sub.add_parser("add-subject", help="Attach a package, brand, repository, or infrastructure subject")
+    case_subject.add_argument("case_id")
+    case_subject.add_argument("--subject-type", required=True, choices=sorted(SUBJECT_TYPES))
+    case_subject.add_argument("--name", required=True)
+    case_subject.add_argument("--ecosystem", default="")
+    case_subject.add_argument("--version", default="")
+    case_subject.add_argument("--publisher", default="")
+    case_subject.add_argument("--actor", default="analyst")
+    case_subject.add_argument("--db-path", default=None)
+
+    case_evidence = research_case_sub.add_parser("add-evidence", help="Attach a source or analysis evidence record")
+    case_evidence.add_argument("case_id")
+    case_evidence.add_argument("--evidence-type", required=True, choices=sorted(EVIDENCE_TYPES))
+    case_evidence.add_argument("--title", required=True)
+    case_evidence.add_argument("--locator", default="")
+    case_evidence.add_argument("--sha256", default="")
+    case_evidence.add_argument("--provenance", default="")
+    case_evidence.add_argument("--notes", default="")
+    case_evidence.add_argument("--collected-at", default=None)
+    case_evidence.add_argument("--actor", default="analyst")
+    case_evidence.add_argument("--db-path", default=None)
+
+    case_ioc = research_case_sub.add_parser("add-ioc", help="Attach a normalized indicator of compromise")
+    case_ioc.add_argument("case_id")
+    case_ioc.add_argument("--ioc-type", required=True, choices=sorted(IOC_TYPES))
+    case_ioc.add_argument("--value", required=True)
+    case_ioc.add_argument("--confidence", default="50")
+    case_ioc.add_argument("--source-evidence-id", default=None)
+    case_ioc.add_argument("--first-seen", default=None)
+    case_ioc.add_argument("--last-seen", default=None)
+    case_ioc.add_argument("--tag", action="append", default=[])
+    case_ioc.add_argument("--actor", default="analyst")
+    case_ioc.add_argument("--db-path", default=None)
+
+    case_link = research_case_sub.add_parser("link-finding", help="Link a SOC finding to a research case")
+    case_link.add_argument("case_id")
+    case_link.add_argument("finding_id")
+    case_link.add_argument("--relationship", choices=["supports", "related", "derived_from", "impacts"], default="supports")
+    case_link.add_argument("--actor", default="analyst")
+    case_link.add_argument("--db-path", default=None)
+
+    case_note = research_case_sub.add_parser("note", help="Add an immutable analyst note to the case timeline")
+    case_note.add_argument("case_id")
+    case_note.add_argument("--note", required=True)
+    case_note.add_argument("--actor", default="analyst")
+    case_note.add_argument("--db-path", default=None)
+
+    case_retract = research_case_sub.add_parser("retract", help="Retract an incorrect subject, evidence record, or IOC without deleting history")
+    case_retract.add_argument("case_id")
+    case_retract.add_argument("--item-type", required=True, choices=["subject", "evidence", "ioc"])
+    case_retract.add_argument("--item-id", required=True)
+    case_retract.add_argument("--reason", required=True)
+    case_retract.add_argument("--actor", default="analyst")
+    case_retract.add_argument("--db-path", default=None)
+
+    case_export = research_case_sub.add_parser("export", help="Export deterministic JSON and Markdown case reports")
+    case_export.add_argument("case_id")
+    case_export.add_argument("--output-dir", default=None)
+    case_export.add_argument("--db-path", default=None)
+
+    case_draft = research_case_sub.add_parser("draft-blog", help="Create a review-only blog draft after readiness checks pass")
+    case_draft.add_argument("case_id")
+    case_draft.add_argument("--db-path", default=None)
 
     blog = sub.add_parser("blog", help="Draft, publish, and verify SecOpsAI security blog posts")
     blog_sub = blog.add_subparsers(dest="blog_cmd", required=True)
@@ -1213,6 +1368,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     triage_list = triage_sub.add_parser("list", help="List findings for triage")
     triage_list.add_argument("--severity", choices=["info", "low", "medium", "high", "critical"])
     triage_list.add_argument("--status", choices=["open", "in_review", "triaged", "closed"])
+    triage_list.add_argument("--source", default=None, help="Filter findings by source, for example secopsai_edge")
     triage_list.add_argument("--category", choices=["supply_chain", "policy_denial", "exfiltration", "host"])
     triage_list.add_argument("--limit", type=int, default=50)
     triage_list.add_argument("--db-path", default=None, help="Override SQLite database path")
@@ -1407,6 +1563,150 @@ def maybe_refresh(args: argparse.Namespace) -> Optional[Dict[str, Any]]:
     return result.__dict__
 
 
+def _run_research_case_command(args: argparse.Namespace) -> int:
+    command = args.research_case_cmd
+    try:
+        if command == "create":
+            payload: Dict[str, Any] = create_research_case(
+                title=args.title,
+                summary=args.summary,
+                case_type=args.case_type,
+                severity=args.severity,
+                confidence=args.confidence,
+                owner=args.owner,
+                db_path=args.db_path,
+            )
+        elif command == "list":
+            payload = {
+                "cases": list_research_cases(
+                    db_path=args.db_path,
+                    status=args.status,
+                    case_type=args.case_type,
+                    limit=args.limit,
+                )
+            }
+        elif command == "show":
+            payload = get_research_case(args.case_id, db_path=args.db_path)
+        elif command == "update":
+            payload = update_research_case(
+                args.case_id,
+                db_path=args.db_path,
+                actor=args.actor,
+                title=args.title,
+                summary=args.summary,
+                case_type=args.case_type,
+                severity=args.severity,
+                confidence=args.confidence,
+                status=args.status,
+                owner=args.owner,
+                disclosure_status=args.disclosure_status,
+                embargo_until=args.embargo_until,
+            )
+        elif command == "add-subject":
+            payload = add_research_subject(
+                args.case_id,
+                subject_type=args.subject_type,
+                name=args.name,
+                ecosystem=args.ecosystem,
+                version=args.version,
+                publisher=args.publisher,
+                actor=args.actor,
+                db_path=args.db_path,
+            )
+        elif command == "add-evidence":
+            payload = add_research_evidence(
+                args.case_id,
+                evidence_type=args.evidence_type,
+                title=args.title,
+                locator=args.locator,
+                sha256=args.sha256,
+                provenance=args.provenance,
+                notes=args.notes,
+                collected_at=args.collected_at,
+                actor=args.actor,
+                db_path=args.db_path,
+            )
+        elif command == "add-ioc":
+            payload = add_research_ioc(
+                args.case_id,
+                ioc_type=args.ioc_type,
+                value=args.value,
+                confidence=args.confidence,
+                source_evidence_id=args.source_evidence_id,
+                first_seen=args.first_seen,
+                last_seen=args.last_seen,
+                tags=args.tag,
+                actor=args.actor,
+                db_path=args.db_path,
+            )
+        elif command == "link-finding":
+            payload = link_research_finding(
+                args.case_id,
+                args.finding_id,
+                relationship=args.relationship,
+                actor=args.actor,
+                db_path=args.db_path,
+            )
+        elif command == "note":
+            payload = add_case_note(
+                args.case_id,
+                args.note,
+                actor=args.actor,
+                db_path=args.db_path,
+            )
+        elif command == "retract":
+            payload = retract_research_item(
+                args.case_id,
+                item_type=args.item_type,
+                item_id=args.item_id,
+                reason=args.reason,
+                actor=args.actor,
+                db_path=args.db_path,
+            )
+        elif command == "export":
+            payload = export_research_case(
+                args.case_id,
+                output_dir=args.output_dir,
+                db_path=args.db_path,
+            )
+        elif command == "draft-blog":
+            payload = draft_case_blog(args.case_id, db_path=args.db_path)
+        else:  # pragma: no cover - argparse enforces the command set
+            raise ValueError(f"unsupported research case command: {command}")
+    except Exception as exc:
+        if args.json:
+            print(to_json({"error": str(exc)}))
+        else:
+            print(f"error: {exc}")
+        return 1
+
+    if args.json:
+        print(to_json(payload))
+    elif command == "list":
+        for item in payload["cases"]:
+            print(
+                f"{item['case_id']} | {item['severity'].upper():8s} | "
+                f"status={item['status']} | confidence={item['confidence']:3d} | {item['title']}"
+            )
+        print(f"total_cases={len(payload['cases'])}")
+    elif command == "export":
+        print(f"CASE_ID: {payload['case_id']}")
+        print(f"JSON_REPORT: {payload['json_report']}")
+        print(f"MARKDOWN_REPORT: {payload['markdown_report']}")
+        print(f"PUBLICATION_READY: {str(payload['publication_readiness']['ready']).lower()}")
+    elif command == "draft-blog":
+        print(f"CASE_ID: {payload['case_id']}")
+        print(f"DRAFT_PATH: {payload.get('draft_path')}")
+        print("REVIEW_REQUIRED: true")
+    else:
+        readiness = payload.get("publication_readiness") or {}
+        print(f"CASE_ID: {payload['case_id']}")
+        print(f"STATUS: {payload['status']}")
+        print(f"TITLE: {payload['title']}")
+        print(f"PUBLICATION_READY: {str(bool(readiness.get('ready'))).lower()}")
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
 
@@ -1531,6 +1831,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                     for item in payload["recommendations"]:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
+
+        if args.research_cmd == "case":
+            return _run_research_case_command(args)
 
         try:
             if args.research_cmd == "finding":
@@ -1880,6 +2183,96 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"STATUS: {payload['status']}")
                 print(f"PATH: {payload['path']}")
             return 0
+
+    if args.cmd == "edge":
+        try:
+            if args.edge_cmd == "import":
+                payload = import_edge_bundle(load_edge_bundle(args.bundle), db_path=args.db_path)
+            elif args.edge_cmd == "sync":
+                payload = sync_edge_from_api(
+                    edge_api_url=args.edge_api_url,
+                    access_token=args.access_token,
+                    db_path=args.db_path,
+                )
+            else:
+                raise ValueError(f"unsupported edge command: {args.edge_cmd}")
+        except Exception as exc:
+            if args.json:
+                print(to_json({"error": str(exc), "command": args.edge_cmd}))
+            else:
+                print(f"error: {exc}")
+            return 1
+
+        if args.json:
+            print(to_json(payload))
+        else:
+            print(
+                "EDGE_SYNC: schema={schema} nodes={nodes} edges={edges} findings={findings}".format(
+                    schema=payload["schema_version"],
+                    nodes=payload["nodes"],
+                    edges=payload["edges"],
+                    findings=payload["findings"],
+                )
+            )
+            print(f"DB: {payload['db_path']}")
+        return 0
+
+    if args.cmd == "graph":
+        try:
+            if args.graph_cmd == "assets":
+                payload = {"assets": list_graph_assets(db_path=args.db_path, limit=args.limit)}
+            elif args.graph_cmd == "show":
+                node = show_graph_node(args.identifier, db_path=args.db_path)
+                if node is None:
+                    if args.json:
+                        print(to_json({"error": "graph node not found", "identifier": args.identifier}))
+                    else:
+                        print(f"error: graph node not found: {args.identifier}")
+                    return 1
+                payload = node
+            elif args.graph_cmd == "changes":
+                payload = list_graph_changes(db_path=args.db_path, limit=args.limit)
+            else:
+                raise ValueError(f"unsupported graph command: {args.graph_cmd}")
+        except Exception as exc:
+            if args.json:
+                print(to_json({"error": str(exc), "command": args.graph_cmd}))
+            else:
+                print(f"error: {exc}")
+            return 1
+
+        if args.json:
+            print(to_json(payload))
+        elif args.graph_cmd == "assets":
+            rows = payload["assets"]
+            if not rows:
+                print("No Edge assets found in the SecOpsAI graph.")
+            for row in rows:
+                print(
+                    "{ip} | {status} | {vendor} | {host} | {node}".format(
+                        ip=row.get("ip_address") or "unknown-ip",
+                        status=row.get("status") or "unknown",
+                        vendor=row.get("vendor") or "unknown-vendor",
+                        host=row.get("hostname") or row.get("label") or "unknown-host",
+                        node=row.get("node_id"),
+                    )
+                )
+        elif args.graph_cmd == "show":
+            node = payload["node"]
+            print(f"NODE: {node['node_id']} | {node['type']} | {node['label']}")
+            for key, value in node.get("properties", {}).items():
+                print(f"{key}={value}")
+            print("EDGES:")
+            for edge in payload.get("edges", []):
+                print(f"- {edge['type']} | {edge['from']} -> {edge['to']}")
+        else:
+            print("NODES:")
+            for node in payload.get("nodes", []):
+                print(f"- {node['updated_at']} | {node['type']} | {node['label']} | {node['node_id']}")
+            print("EDGES:")
+            for edge in payload.get("edges", []):
+                print(f"- {edge['last_seen']} | {edge['type']} | {edge['from']} -> {edge['to']}")
+        return 0
 
     if args.cmd == "sync-findings":
         try:
@@ -2321,6 +2714,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 db_path=args.db_path,
                 severity=args.severity,
                 status=args.status,
+                source=args.source,
                 category=args.category,
                 limit=args.limit,
             )

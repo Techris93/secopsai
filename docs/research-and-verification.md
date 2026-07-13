@@ -28,6 +28,13 @@ That flow can attach:
 - research JSON and Markdown reports
 - session events, plan steps, and approval history
 
+## Durable independent research
+
+Use [Research Cases](research-cases.md) when an investigation must outlive one
+finding or report. Cases add structured subjects, evidence provenance, IOCs,
+disclosure state, publication readiness, deterministic export, and a
+review-only Blog Ops handoff.
+
 ## Preflight before triage or correlation
 
 Use preflight when you want to block low-quality automation runs caused by stale telemetry or bad source coverage:
