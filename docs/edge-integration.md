@@ -80,7 +80,12 @@ Core stores Edge findings with stable `EDGE-...` identifiers and preserves analy
 | Raw scan minimization | Edge agent |
 | Canonical findings and analyst disposition | Core |
 | Asset graph and long-term change context | Core |
-| Pilot sensor administration | Edge dashboard |
+| Unified asset/finding operator workspace | SecOpsAI dashboard |
+| Scan, schedule, and sensor administration | Edge dashboard |
 | Local automation and approval-gated actions | OpenClaw plugin |
 
-The Edge dashboard remains the pilot operations console. A future unified SecOpsAI operator console should consume Core as the source of truth instead of duplicating findings and reports indefinitely.
+The canonical SecOpsAI dashboard now consumes Core graph assets, graph changes,
+and Edge-origin findings, with optional server-side enrichment from the Edge
+API for live sensor operations. The Edge dashboard remains the administration
+surface for scans, schedules, and sensor recovery. Edge credentials are held by
+the helper service and are never exposed to the browser.
