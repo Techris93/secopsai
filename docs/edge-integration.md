@@ -4,6 +4,10 @@ SecOpsAI Edge is the network discovery and sensor module for the SecOpsAI platfo
 
 The repositories remain separate and do not share a database. They exchange a versioned `secopsai.edge.bundle.v1` contract containing normalized graph nodes, graph edges, and findings. Raw Nmap output, packet captures, and raw scan logs are excluded.
 
+Core now also exposes a protected HTTP ingestion/read boundary. See
+[`core-api.md`](core-api.md) for the local service, scoped credentials, API
+contract limits, and persistent deployment model.
+
 ## One-Step Sync From The Edge Repo
 
 From the SecOpsAI Edge repo:
@@ -75,6 +79,9 @@ secopsai triage investigate EDGE-...
 ```
 
 Core stores Edge findings with stable `EDGE-...` identifiers and preserves analyst triage state on re-sync.
+The Edge source identity is scoped to its organization and remains stable when
+the Edge API version changes, preventing routine upgrades from creating a new
+sync cursor.
 
 ## Ownership Boundary
 

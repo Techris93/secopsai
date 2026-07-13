@@ -1,11 +1,14 @@
 # SecOpsAI runtime has no mandatory third-party libraries for core detection.
 # Python 3.10+
 # Optional evaluation harness dependencies.
+fastapi>=0.139,<0.140
 psutil>=6,<7
 PyYAML>=6,<7
 requests>=2.33.1,<3
 feedparser>=6,<7
 defusedxml>=0.7,<1
 tomli>=2,<3; python_version < "3.11"
+uvicorn[standard]>=0.41,<0.52
 # Test runner used by setup validation and CI smoke checks.
+httpx>=0.28,<0.29
 pytest>=9.0.3,<10

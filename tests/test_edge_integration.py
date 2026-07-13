@@ -22,6 +22,7 @@ def _bundle(edge_status: str = "open") -> dict:
             "product": "secopsai_edge",
             "api": "secopsai-edge-api",
             "version": "0.1.0",
+            "organization_id": "org-pilot-1",
         },
         "cursor": {"mode": "full", "last_observed_at": "2026-06-28T10:00:00Z"},
         "graph": {
@@ -114,6 +115,32 @@ class EdgeIntegrationTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertTrue(rows[0]["finding_id"].startswith("EDGE-"))
             self.assertEqual(rows[0]["source"], "secopsai_edge")
+
+    def test_source_identity_is_stable_across_edge_version_upgrades(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = str(Path(temp_dir) / "soc.db")
+            first_bundle = _bundle()
+            upgraded_bundle = _bundle()
+            upgraded_bundle["source_instance"]["version"] = "99.0.0"
+
+            first = import_bundle(first_bundle, db_path=db_path)
+            second = import_bundle(upgraded_bundle, db_path=db_path)
+
+            self.assertEqual(first["source_instance"], second["source_instance"])
+            self.assertEqual(
+                first["source_instance"],
+                "secopsai_edge:secopsai-edge-api:org-pilot-1",
+            )
+            with soc_store.connect(db_path) as connection:
+                count = connection.execute("SELECT COUNT(*) FROM edge_sync_state").fetchone()[0]
+            self.assertEqual(count, 1)
+
+    def test_import_rejects_raw_scanner_telemetry(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle = _bundle()
+            bundle["graph"]["nodes"][0]["properties"]["nmap_xml"] = "<nmaprun />"
+            with self.assertRaisesRegex(ValueError, "forbidden raw telemetry"):
+                import_bundle(bundle, db_path=str(Path(temp_dir) / "soc.db"))
 
     def test_edge_status_can_close_unmodified_core_finding(self):
         with tempfile.TemporaryDirectory() as temp_dir:
