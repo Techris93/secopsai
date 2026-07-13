@@ -56,7 +56,14 @@ from secopsai.blog import (
 from secopsai.edge_sync import import_bundle as import_edge_bundle
 from secopsai.edge_sync import load_bundle as load_edge_bundle
 from secopsai.edge_sync import sync_from_api as sync_edge_from_api
-from secopsai.edge_actions import normalize_edge_scan_payload, queue_edge_scan
+from secopsai.edge_actions import (
+    apply_edge_worker_action,
+    generate_edge_report,
+    normalize_edge_scan_payload,
+    normalize_edge_report_payload,
+    normalize_edge_worker_payload,
+    queue_edge_scan,
+)
 from secopsai.formatters import fmt_finding, fmt_list, to_json
 from secopsai.graph_store import list_assets as list_graph_assets
 from secopsai.graph_store import list_changes as list_graph_changes
@@ -829,6 +836,52 @@ def _apply_session_approval(
             step="Queue approved Edge scan",
             status="completed",
             note=f"Queued {result['target_cidr']} through the local Edge worker.",
+            path=session_dir,
+        )
+        return {"kind": payload_kind, "result": result}
+
+    if payload_kind in {"edge_report", "edge_worker"}:
+        normalized = (
+            normalize_edge_report_payload(payload)
+            if payload_kind == "edge_report"
+            else normalize_edge_worker_payload(payload)
+        )
+        try:
+            result = (
+                generate_edge_report(normalized, edge_root=edge_root)
+                if payload_kind == "edge_report"
+                else apply_edge_worker_action(normalized, edge_root=edge_root)
+            )
+        except Exception as exc:
+            add_session_event(
+                session_id,
+                event_type="edge_operation_failed",
+                message="Approved Edge operation could not be applied.",
+                data={"approval_id": approval_id, "kind": payload_kind, "error_type": type(exc).__name__},
+                author=author,
+                path=session_dir,
+            )
+            update_session_step(
+                session_id,
+                step="Apply approved Edge operation",
+                status="blocked",
+                note="The local Edge helper did not complete the operation.",
+                path=session_dir,
+            )
+            raise
+        add_session_event(
+            session_id,
+            event_type="edge_operation_applied",
+            message=f"Applied approved {payload_kind} operation.",
+            data={"approval_id": approval_id, **result},
+            author=author,
+            path=session_dir,
+        )
+        update_session_step(
+            session_id,
+            step="Apply approved Edge operation",
+            status="completed",
+            note=f"Applied {payload_kind} through the local Edge helper.",
             path=session_dir,
         )
         return {"kind": payload_kind, "result": result}
@@ -2627,6 +2680,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                         raise ValueError("--summary is required for custom approvals")
                     if payload.get("kind") == "edge_scan":
                         payload = normalize_edge_scan_payload(payload)
+                    elif payload.get("kind") == "edge_report":
+                        payload = normalize_edge_report_payload(payload)
+                    elif payload.get("kind") == "edge_worker":
+                        payload = normalize_edge_worker_payload(payload)
 
                 approval = request_session_approval(
                     args.session_id,

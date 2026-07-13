@@ -59,17 +59,82 @@ def queue_edge_scan(
     if not edge_root:
         raise ValueError("--edge-root is required to apply an Edge scan approval")
 
+    command = ["queue", normalized["target_cidr"], "--cloud"]
+    if normalized["include_wifi"]:
+        command.append("--wifi")
+    _run_edge_helper(command, edge_root=edge_root, timeout_seconds=timeout_seconds)
+    return {
+        "status": "queued",
+        "target_cidr": normalized["target_cidr"],
+        "include_wifi": normalized["include_wifi"],
+    }
+
+
+def normalize_edge_report_payload(payload: dict[str, Any]) -> dict[str, str]:
+    if not isinstance(payload, dict) or payload.get("kind") != "edge_report":
+        raise ValueError("unsupported Edge report approval payload")
+    return {"kind": "edge_report"}
+
+
+def generate_edge_report(
+    payload: dict[str, Any],
+    *,
+    edge_root: str | None,
+    timeout_seconds: int = 180,
+) -> dict[str, str]:
+    normalized = normalize_edge_report_payload(payload)
+    completed = _run_edge_helper(
+        ["report", "--cloud"],
+        edge_root=edge_root,
+        timeout_seconds=timeout_seconds,
+    )
+    return {"status": "generated", "kind": normalized["kind"], "exit_code": str(completed)}
+
+
+def normalize_edge_worker_payload(payload: dict[str, Any]) -> dict[str, str]:
+    if not isinstance(payload, dict) or payload.get("kind") != "edge_worker":
+        raise ValueError("unsupported Edge worker approval payload")
+    action = str(payload.get("action") or "").strip().lower()
+    if action not in {"start", "stop"}:
+        raise ValueError("Edge worker action must be start or stop")
+    return {"kind": "edge_worker", "action": action}
+
+
+def apply_edge_worker_action(
+    payload: dict[str, Any],
+    *,
+    edge_root: str | None,
+    timeout_seconds: int = 60,
+) -> dict[str, str]:
+    normalized = normalize_edge_worker_payload(payload)
+    completed = _run_edge_helper(
+        ["worker", normalized["action"]],
+        edge_root=edge_root,
+        timeout_seconds=timeout_seconds,
+    )
+    return {
+        "status": "applied",
+        "kind": normalized["kind"],
+        "action": normalized["action"],
+        "exit_code": str(completed),
+    }
+
+
+def _run_edge_helper(
+    args: list[str],
+    *,
+    edge_root: str | None,
+    timeout_seconds: int,
+) -> int:
+    if not edge_root:
+        raise ValueError("--edge-root is required to apply an Edge approval")
     root = Path(edge_root).expanduser().resolve()
     script = root / "scripts" / "edge"
     if not root.is_dir() or not script.is_file() or not os.access(script, os.X_OK):
         raise ValueError("configured Edge root does not contain an executable scripts/edge helper")
-
-    command = [str(script), "queue", normalized["target_cidr"], "--cloud"]
-    if normalized["include_wifi"]:
-        command.append("--wifi")
     try:
         completed = subprocess.run(
-            command,
+            [str(script), *args],
             cwd=root,
             capture_output=True,
             text=True,
@@ -78,14 +143,9 @@ def queue_edge_scan(
             env=os.environ.copy(),
         )
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("Edge scan queue command timed out") from exc
+        raise RuntimeError("Edge helper command timed out") from exc
     except OSError as exc:
-        raise RuntimeError("Edge scan queue command could not start") from exc
-
+        raise RuntimeError("Edge helper command could not start") from exc
     if completed.returncode != 0:
-        raise RuntimeError(f"Edge scan queue command failed with exit code {completed.returncode}")
-    return {
-        "status": "queued",
-        "target_cidr": normalized["target_cidr"],
-        "include_wifi": normalized["include_wifi"],
-    }
+        raise RuntimeError(f"Edge helper command failed with exit code {completed.returncode}")
+    return completed.returncode

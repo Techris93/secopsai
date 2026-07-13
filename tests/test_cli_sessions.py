@@ -343,6 +343,59 @@ class SessionCliTests(unittest.TestCase):
             self.assertNotIn("raw nmap output", serialized)
             self.assertIn("edge_scan_queued", serialized)
 
+            for payload, expected_args, expected_kind in (
+                ({"kind": "edge_report"}, ["report", "--cloud"], "edge_report"),
+                ({"kind": "edge_worker", "action": "stop"}, ["worker", "stop"], "edge_worker"),
+            ):
+                request_stdout = io.StringIO()
+                with redirect_stdout(request_stdout):
+                    self.assertEqual(
+                        cli.main(
+                            [
+                                "--json",
+                                "session",
+                                "request-approval",
+                                session_id,
+                                "--type",
+                                "custom",
+                                "--summary",
+                                f"Apply {expected_kind}",
+                                "--payload",
+                                json.dumps(payload),
+                                "--session-dir",
+                                session_dir,
+                            ]
+                        ),
+                        0,
+                    )
+                operation_approval_id = json.loads(request_stdout.getvalue())["approval"]["approval_id"]
+
+                operation_stdout = io.StringIO()
+                with redirect_stdout(operation_stdout):
+                    self.assertEqual(
+                        cli.main(
+                            [
+                                "--json",
+                                "session",
+                                "resolve-approval",
+                                session_id,
+                                operation_approval_id,
+                                "--approve",
+                                "--apply",
+                                "--edge-root",
+                                str(edge_root),
+                                "--session-dir",
+                                session_dir,
+                            ]
+                        ),
+                        0,
+                    )
+                self.assertEqual(json.loads(operation_stdout.getvalue())["applied"]["kind"], expected_kind)
+                self.assertEqual(
+                    (temp_path / "edge-args.txt").read_text(encoding="utf-8").splitlines(),
+                    expected_args,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
