@@ -13,6 +13,27 @@ from secopsai.graph_store import SOURCE_EDGE, save_sync_state, upsert_graph
 
 
 SCHEMA_VERSION = "secopsai.edge.bundle.v1"
+MAX_GRAPH_NODES = 100_000
+MAX_GRAPH_EDGES = 200_000
+MAX_FINDINGS = 50_000
+NODE_TYPES = {"site", "sensor", "scan", "asset", "service", "wifi_network"}
+EDGE_TYPES = {
+    "site_has_sensor",
+    "sensor_ran_scan",
+    "scan_observed_asset",
+    "asset_exposes_service",
+    "sensor_observed_wifi",
+}
+FORBIDDEN_RAW_KEYS = {
+    "nmap_xml",
+    "packet_capture",
+    "pcap",
+    "raw_nmap_output",
+    "raw_output",
+    "raw_packet_data",
+    "raw_scan_log",
+    "raw_scan_logs",
+}
 SEVERITY_SCORES = {
     "critical": 95,
     "high": 80,
@@ -51,7 +72,7 @@ def fetch_bundle(edge_api_url: str, access_token: str) -> dict[str, Any]:
 
 
 def import_bundle(bundle: dict[str, Any], *, db_path: str | None = None) -> dict[str, Any]:
-    _validate_bundle(bundle)
+    validate_bundle(bundle)
     graph = bundle["graph"]
     graph_counts = upsert_graph(nodes=graph["nodes"], edges=graph["edges"], db_path=db_path)
     findings = [_normalize_finding(finding) for finding in bundle.get("findings", [])]
@@ -95,7 +116,7 @@ def sync_from_api(
     return import_bundle(fetch_bundle(resolved_url, resolved_token), db_path=db_path)
 
 
-def _validate_bundle(bundle: dict[str, Any]) -> None:
+def validate_bundle(bundle: dict[str, Any]) -> None:
     if bundle.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(f"Unsupported Edge bundle schema: {bundle.get('schema_version')}")
     graph = bundle.get("graph")
@@ -105,6 +126,49 @@ def _validate_bundle(bundle: dict[str, Any]) -> None:
         raise ValueError("Edge bundle graph must contain nodes and edges arrays")
     if not isinstance(bundle.get("findings"), list):
         raise ValueError("Edge bundle findings must be an array")
+    source_instance = bundle.get("source_instance")
+    if not isinstance(source_instance, dict):
+        raise ValueError("Edge bundle source_instance must be an object")
+    for field in ("product", "api", "organization_id", "instance_id"):
+        value = source_instance.get(field)
+        if value is not None and (not isinstance(value, str) or len(value) > 256):
+            raise ValueError(f"Edge bundle source_instance.{field} must be a short string")
+    if len(graph["nodes"]) > MAX_GRAPH_NODES:
+        raise ValueError(f"Edge bundle exceeds the {MAX_GRAPH_NODES} node limit")
+    if len(graph["edges"]) > MAX_GRAPH_EDGES:
+        raise ValueError(f"Edge bundle exceeds the {MAX_GRAPH_EDGES} edge limit")
+    if len(bundle["findings"]) > MAX_FINDINGS:
+        raise ValueError(f"Edge bundle exceeds the {MAX_FINDINGS} finding limit")
+
+    node_ids: set[str] = set()
+    for node in graph["nodes"]:
+        if not isinstance(node, dict) or not str(node.get("id") or ""):
+            raise ValueError("Every Edge graph node must be an object with an id")
+        node_id = str(node["id"])
+        if len(node_id) > 512 or node_id in node_ids:
+            raise ValueError(f"Edge graph node id is invalid or duplicated: {node_id[:100]}")
+        node_ids.add(node_id)
+        if str(node.get("type") or "") not in NODE_TYPES:
+            raise ValueError(f"Unsupported Edge graph node type: {node.get('type')}")
+    edge_ids: set[str] = set()
+    for edge in graph["edges"]:
+        if not isinstance(edge, dict) or not all(str(edge.get(key) or "") for key in ("id", "from", "to")):
+            raise ValueError("Every Edge graph edge must include id, from, and to")
+        edge_id = str(edge["id"])
+        if len(edge_id) > 1024 or edge_id in edge_ids:
+            raise ValueError(f"Edge graph edge id is invalid or duplicated: {edge_id[:100]}")
+        edge_ids.add(edge_id)
+        if str(edge.get("type") or "") not in EDGE_TYPES:
+            raise ValueError(f"Unsupported Edge graph edge type: {edge.get('type')}")
+        if str(edge["from"]) not in node_ids or str(edge["to"]) not in node_ids:
+            raise ValueError(f"Edge graph edge references an unknown node: {edge_id[:100]}")
+    for finding in bundle["findings"]:
+        if not isinstance(finding, dict) or not str(finding.get("id") or ""):
+            raise ValueError("Every Edge finding must be an object with an id")
+
+    forbidden = _find_forbidden_raw_key(bundle)
+    if forbidden:
+        raise ValueError(f"Edge bundle contains forbidden raw telemetry field: {forbidden}")
 
 
 def _normalize_finding(finding: dict[str, Any]) -> dict[str, Any]:
@@ -258,9 +322,26 @@ def _source_instance_id(source_instance: Any) -> str:
     if isinstance(source_instance, dict):
         product = str(source_instance.get("product") or "secopsai_edge")
         api = str(source_instance.get("api") or "edge-api")
-        version = str(source_instance.get("version") or "unknown")
-        return f"{product}:{api}:{version}"
-    return "secopsai_edge:edge-api:unknown"
+        organization_id = str(source_instance.get("organization_id") or "").strip()
+        instance_id = str(source_instance.get("instance_id") or "").strip()
+        stable_scope = organization_id or instance_id or "legacy"
+        return f"{product}:{api}:{stable_scope}"
+    return "secopsai_edge:edge-api:legacy"
+
+
+def _find_forbidden_raw_key(value: Any) -> str | None:
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, dict):
+            for key, nested in item.items():
+                normalized = str(key).strip().lower()
+                if normalized in FORBIDDEN_RAW_KEYS:
+                    return normalized
+                pending.append(nested)
+        elif isinstance(item, list):
+            pending.extend(item)
+    return None
 
 
 def _recommended_actions(finding_type: str) -> list[str]:

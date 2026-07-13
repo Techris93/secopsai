@@ -8,6 +8,10 @@ the next tagged release.
 
 ### Added
 
+- Added a protected Core HTTP boundary for organization-scoped Edge bundle
+  ingestion, minimized operator workspace reads, and import audit history.
+- Added a one-command local Core API setup and a validated, persistent-disk
+  Render Blueprint for controlled hosted pilots.
 - Added the versioned SecOpsAI Edge graph/finding import path and made Edge a
   first-class pilot sensor module across Core docs and public product surfaces.
 - Added first-pass multi-ecosystem supply-chain protection for crates.io,
@@ -38,6 +42,10 @@ the next tagged release.
 
 ### Security
 
+- Added separate Core ingest/read credentials, strict host and CORS policy,
+  request size and graph limits, duplicate-key rejection, raw-telemetry field
+  rejection, stable organization-scoped sync identity, and redacted workspace
+  responses.
 - Removed the default Telegram report recipient; report delivery now requires
   an explicit `--chat-id` or `TELEGRAM_CHAT_ID`.
 - Made release tests and high/critical security scans block publish/deploy

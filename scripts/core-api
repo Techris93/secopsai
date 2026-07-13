@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="${SECOPSAI_CORE_ENV_FILE:-$ROOT_DIR/.core-api.env}"
+PYTHON_BIN="${SECOPSAI_CORE_PYTHON:-$ROOT_DIR/.venv/bin/python}"
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/core-api <command>
+
+Commands:
+  configure-local   Create owner-only local API credentials.
+  run               Start the Core API on 127.0.0.1:8010 by default.
+  check             Check /healthz and /readyz.
+  status            Show safe local configuration status.
+
+Environment overrides:
+  SECOPSAI_CORE_ENV_FILE, SECOPSAI_CORE_PYTHON, HOST, PORT,
+  SECOPSAI_CORE_API_URL
+EOF
+}
+
+load_environment() {
+  if [[ -f "$ENV_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+  fi
+}
+
+require_python() {
+  if [[ ! -x "$PYTHON_BIN" ]]; then
+    printf 'Core Python environment not found: %s\n' "$PYTHON_BIN" >&2
+    printf 'Create it with: python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"\n' >&2
+    exit 1
+  fi
+}
+
+configure_local() {
+  require_python
+  if [[ -e "$ENV_FILE" ]]; then
+    printf 'Core API environment already exists: %s\n' "$ENV_FILE"
+    printf 'Remove it explicitly before rotating both local credentials.\n'
+    return 0
+  fi
+  umask 077
+  "$PYTHON_BIN" - "$ENV_FILE" "$ROOT_DIR" <<'PY'
+import secrets
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1]).expanduser()
+root = Path(sys.argv[2]).resolve()
+db_path = root / "data" / "core-api" / "core.db"
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(
+    "\n".join(
+        [
+            "SECOPSAI_CORE_ENVIRONMENT=local",
+            "SECOPSAI_CORE_ORGANIZATION_ID=",
+            f"SECOPSAI_CORE_DB_PATH={db_path}",
+            f"SECOPSAI_CORE_INGEST_TOKEN={secrets.token_urlsafe(48)}",
+            f"SECOPSAI_CORE_READ_TOKEN={secrets.token_urlsafe(48)}",
+            "SECOPSAI_CORE_CORS_ORIGINS=http://127.0.0.1:8788,http://localhost:8788",
+            "SECOPSAI_CORE_TRUSTED_HOSTS=127.0.0.1,localhost",
+            "",
+        ]
+    ),
+    encoding="utf-8",
+)
+path.chmod(0o600)
+PY
+  printf 'Created owner-only Core API configuration: %s\n' "$ENV_FILE"
+  printf 'Start it with: ./scripts/core-api run\n'
+}
+
+run_api() {
+  require_python
+  load_environment
+  : "${SECOPSAI_CORE_INGEST_TOKEN:?Run ./scripts/core-api configure-local first}"
+  : "${SECOPSAI_CORE_READ_TOKEN:?Run ./scripts/core-api configure-local first}"
+  export SECOPSAI_CORE_INGEST_TOKEN SECOPSAI_CORE_READ_TOKEN
+  export SECOPSAI_CORE_ENVIRONMENT="${SECOPSAI_CORE_ENVIRONMENT:-local}"
+  export SECOPSAI_CORE_ORGANIZATION_ID="${SECOPSAI_CORE_ORGANIZATION_ID:-}"
+  export SECOPSAI_CORE_DB_PATH="${SECOPSAI_CORE_DB_PATH:-$ROOT_DIR/data/core-api/core.db}"
+  export SECOPSAI_CORE_CORS_ORIGINS="${SECOPSAI_CORE_CORS_ORIGINS:-}"
+  export SECOPSAI_CORE_TRUSTED_HOSTS="${SECOPSAI_CORE_TRUSTED_HOSTS:-127.0.0.1,localhost}"
+  exec "$PYTHON_BIN" -m uvicorn secopsai.core_api:app \
+    --host "${HOST:-127.0.0.1}" \
+    --port "${PORT:-8010}" \
+    --no-server-header \
+    --limit-concurrency 50 \
+    --timeout-keep-alive 5
+}
+
+check_api() {
+  local base_url="${SECOPSAI_CORE_API_URL:-http://127.0.0.1:8010}"
+  curl --fail --silent --show-error "$base_url/healthz"
+  printf '\n'
+  curl --fail --silent --show-error "$base_url/readyz"
+  printf '\n'
+}
+
+show_status() {
+  load_environment
+  printf 'environment_file=%s\n' "$ENV_FILE"
+  printf 'configured=%s\n' "$([[ -f "$ENV_FILE" ]] && printf yes || printf no)"
+  printf 'environment=%s\n' "${SECOPSAI_CORE_ENVIRONMENT:-local}"
+  printf 'organization_id=%s\n' "${SECOPSAI_CORE_ORGANIZATION_ID:-not-pinned-local}"
+  printf 'db_path=%s\n' "${SECOPSAI_CORE_DB_PATH:-$ROOT_DIR/data/core-api/core.db}"
+  printf 'ingest_token_configured=%s\n' "$([[ -n "${SECOPSAI_CORE_INGEST_TOKEN:-}" ]] && printf yes || printf no)"
+  printf 'read_token_configured=%s\n' "$([[ -n "${SECOPSAI_CORE_READ_TOKEN:-}" ]] && printf yes || printf no)"
+}
+
+case "${1:-}" in
+  configure-local) configure_local ;;
+  run) run_api ;;
+  check) check_api ;;
+  status) show_status ;;
+  -h|--help|help|"") usage ;;
+  *)
+    printf 'Unknown command: %s\n' "$1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

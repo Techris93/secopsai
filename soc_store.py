@@ -40,9 +40,10 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
     except OSError:
         pass
 
-    connection = sqlite3.connect(resolved_path)
+    connection = sqlite3.connect(resolved_path, timeout=30)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 30000")
     try:
         os.chmod(resolved_path, 0o600)  # nosec B103
     except OSError:
@@ -129,6 +130,17 @@ def init_db(db_path: str | None = None) -> None:
                 last_synced_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS core_api_audit_logs (
+                audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                action TEXT NOT NULL,
+                actor_role TEXT NOT NULL,
+                result TEXT NOT NULL,
+                source_instance TEXT,
+                details_json TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_asset_graph_nodes_type_label
                 ON asset_graph_nodes (node_type, label);
             CREATE INDEX IF NOT EXISTS idx_asset_graph_nodes_source_id
@@ -137,6 +149,8 @@ def init_db(db_path: str | None = None) -> None:
                 ON asset_graph_edges (edge_type, from_node_id);
             CREATE INDEX IF NOT EXISTS idx_asset_graph_edges_to
                 ON asset_graph_edges (to_node_id);
+            CREATE INDEX IF NOT EXISTS idx_core_api_audit_time
+                ON core_api_audit_logs (occurred_at DESC, audit_id DESC);
 
             CREATE TABLE IF NOT EXISTS research_cases (
                 case_id TEXT PRIMARY KEY,

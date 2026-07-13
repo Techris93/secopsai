@@ -11,6 +11,7 @@ SecOpsAI is a local-first security monitoring, investigation, and triage platfor
 
 - Collects telemetry from **OpenClaw**, **Hermes Agent**, **macOS**, **Linux**, and **Windows**
 - Imports normalized SecOpsAI Edge asset graphs and network-origin findings without importing raw scan logs
+- Serves a protected Core ingestion/read API with separate Edge and operator credentials
 - Normalizes events into a **unified schema** for shared detection logic
 - Detects suspicious behavior and stores findings in a local **SQLite SOC store**
 - Correlates findings across platforms by **IP**, **user**, **time window**, and **file hash**
@@ -420,6 +421,7 @@ On macOS, launchd-based execution is supported via helper scripts, including:
 
 - [Docs site](https://docs.secopsai.dev)
 - [Getting Started](docs/getting-started.md)
+- [Core API and hosted Edge ingestion](docs/core-api.md)
 - [Universal Adapters](docs/universal-adapters.md)
 - [Rules Registry](docs/rules-registry.md)
 - [Deployment Guide](docs/deployment-guide.md)
