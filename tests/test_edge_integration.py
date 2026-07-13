@@ -10,7 +10,7 @@ from unittest.mock import patch
 import soc_store
 from secopsai import cli
 from secopsai.edge_sync import import_bundle, sync_from_api
-from secopsai.graph_store import list_assets, show_node
+from secopsai.graph_store import list_assets, list_sync_state, show_node
 from secopsai.triage import list_triage_findings
 
 
@@ -110,6 +110,13 @@ class EdgeIntegrationTests(unittest.TestCase):
             self.assertEqual(len(assets), 1)
             self.assertEqual(assets[0]["ip_address"], "192.168.1.50")
             self.assertIsNotNone(show_node("192.168.1.50", db_path=db_path))
+            sync_state = list_sync_state(db_path=db_path)
+            self.assertEqual(len(sync_state), 1)
+            self.assertEqual(
+                sync_state[0]["source_instance"],
+                "secopsai_edge:secopsai-edge-api:org-pilot-1",
+            )
+            self.assertEqual(sync_state[0]["cursor"]["mode"], "full")
 
             rows = list_triage_findings(db_path=db_path, source="secopsai_edge")
             self.assertEqual(len(rows), 1)
@@ -188,6 +195,13 @@ class EdgeIntegrationTests(unittest.TestCase):
             payload = json.loads(stdout.getvalue())
             self.assertEqual(rc, 0)
             self.assertEqual(payload["assets"][0]["ip_address"], "192.168.1.50")
+
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                rc = cli.main(["--json", "edge", "status", "--db-path", db_path])
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["sync_state"][0]["schema_version"], "secopsai.edge.bundle.v1")
 
     @patch("secopsai.edge_sync.fetch_bundle")
     def test_sync_prefers_scoped_access_token_environment(self, fetch_bundle):

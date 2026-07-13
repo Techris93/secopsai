@@ -59,6 +59,7 @@ from secopsai.edge_sync import sync_from_api as sync_edge_from_api
 from secopsai.formatters import fmt_finding, fmt_list, to_json
 from secopsai.graph_store import list_assets as list_graph_assets
 from secopsai.graph_store import list_changes as list_graph_changes
+from secopsai.graph_store import list_sync_state as list_edge_sync_state
 from secopsai.graph_store import show_node as show_graph_node
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
 from secopsai.pipeline import refresh as refresh_pipeline
@@ -906,6 +907,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Workspace-scoped Edge Core export token",
     )
     edge_sync.add_argument("--db-path", default=None, help="Override SQLite SOC/graph database path")
+    edge_status = edge_sub.add_parser("status", help="Show recent Edge-to-Core sync state")
+    edge_status.add_argument("--db-path", default=None, help="Override SQLite SOC/graph database path")
+    edge_status.add_argument("--limit", type=int, default=20, help="Maximum sync records to show")
 
     graph = sub.add_parser("graph", help="Inspect the local SecOpsAI asset graph")
     graph_sub = graph.add_subparsers(dest="graph_cmd", required=True)
@@ -2259,6 +2263,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     access_token=args.access_token,
                     db_path=args.db_path,
                 )
+            elif args.edge_cmd == "status":
+                payload = {"sync_state": list_edge_sync_state(db_path=args.db_path, limit=args.limit)}
             else:
                 raise ValueError(f"unsupported edge command: {args.edge_cmd}")
         except Exception as exc:
@@ -2270,6 +2276,19 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         if args.json:
             print(to_json(payload))
+        elif args.edge_cmd == "status":
+            records = payload["sync_state"]
+            if not records:
+                print("No Edge-to-Core sync records found.")
+            for record in records:
+                print(
+                    "SYNC: {source} | last={last} | bundle={bundle} | schema={schema}".format(
+                        source=record["source_instance"],
+                        last=record["last_synced_at"],
+                        bundle=record["bundle_exported_at"] or "unknown",
+                        schema=record["schema_version"],
+                    )
+                )
         else:
             print(
                 "EDGE_SYNC: schema={schema} nodes={nodes} edges={edges} findings={findings}".format(
