@@ -14,6 +14,18 @@ From the SecOpsAI Edge repo:
 
 This exports the normalized Edge bundle, saves it for audit/review, and imports it into this Core local SOC/graph store.
 
+## Supervised Automatic Sync
+
+From the Edge repo, install the platform service that repeats the same versioned export/import safely:
+
+```bash
+./scripts/edge core sync-service install --cloud --core-root "$HOME/secopsai" --interval 300
+./scripts/edge core sync-service start
+./scripts/edge core sync-service status
+```
+
+Use `logs`, `run-now`, `stop`, and `uninstall` for recovery. The service uses launchd on macOS and a systemd user timer on Linux. It has a separate lifecycle from the scanner worker, skips overlapping runs, and stores no API credential in its owner-only JSON configuration.
+
 ## Import A Bundle
 
 ```bash
