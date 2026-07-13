@@ -184,6 +184,31 @@ def save_sync_state(
         connection.commit()
 
 
+def list_sync_state(*, db_path: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    """Return recent Edge-to-Core sync records without raw telemetry."""
+    soc_store.init_db(db_path)
+    with soc_store.connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT source_instance, schema_version, cursor_json, bundle_exported_at, last_synced_at
+            FROM edge_sync_state
+            ORDER BY last_synced_at DESC
+            LIMIT ?
+            """,
+            (max(1, min(int(limit), 500)),),
+        ).fetchall()
+    return [
+        {
+            "source_instance": str(row["source_instance"]),
+            "schema_version": str(row["schema_version"]),
+            "cursor": _loads(row["cursor_json"]),
+            "bundle_exported_at": row["bundle_exported_at"],
+            "last_synced_at": row["last_synced_at"],
+        }
+        for row in rows
+    ]
+
+
 def _find_node(identifier: str, *, db_path: str | None = None) -> dict[str, Any] | None:
     with soc_store.connect(db_path) as connection:
         direct = connection.execute(

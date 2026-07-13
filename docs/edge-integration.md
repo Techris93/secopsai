@@ -71,6 +71,15 @@ secopsai graph show 192.168.1.50
 secopsai graph changes
 ```
 
+Inspect Edge-to-Core freshness without running another sync:
+
+```bash
+secopsai edge status
+```
+
+The status output includes the Edge source identity, contract version, bundle
+timestamp, local sync timestamp, and cursor. It contains no raw scanner data.
+
 ## Review Edge Findings
 
 ```bash
