@@ -55,10 +55,11 @@ only import metadata and counts, never bearer credentials or bundle contents.
 
 ## Hosted deployment
 
-`render-core.yaml` is a separate Render Blueprint for the Core API. Select it
-explicitly when creating the Blueprint. It uses one Starter instance and a
-1 GB persistent disk because SQLite data must survive deploys and Render disks
-cannot be attached to a free service.
+`render.yaml` is the canonical root Render Blueprint for the Core API. Create a
+new Blueprint from the `Techris93/secopsai` repository, select `main`, and use
+the root Blueprint path. It creates one Starter instance and a 1 GB persistent
+disk because SQLite data must survive deploys and Render disks cannot be
+attached to a free service.
 
 Before creating it:
 
@@ -73,6 +74,27 @@ The Blueprint intentionally uses one process and one persistent disk. Do not
 increase the worker or instance count while Core uses SQLite. The later SaaS
 architecture should move canonical Core state to managed PostgreSQL before
 horizontal scaling or multi-tenant production.
+
+After the service deploys, save its `onrender.com` origin and run the
+secret-safe hosted preflight from the Core repository:
+
+```bash
+cd /Users/chrixchange/secopsai
+SECOPSAI_CORE_API_URL='https://secopsai-core-api.onrender.com' \
+SECOPSAI_CORE_READ_TOKEN='use-the-owner-only-render-secret' \
+./scripts/core-api hosted-check
+```
+
+The command checks `/healthz`, `/readyz`, and the authenticated workspace
+schema. It prints only status, version, schema, summary-key, and non-secret
+error information. It never prints the bearer token or workspace response
+body. Do not record the token in shell history; prefer an environment file with
+mode `0600` or an approved secret manager.
+
+The check must report `"ok": true` before configuring the canonical dashboard
+Pages Worker with `SECOPSAI_CORE_API_URL` and `SECOPSAI_CORE_READ_TOKEN`. The
+dashboard then calls Core server-side and keeps the read credential out of the
+browser.
 
 ## Backup and recovery
 

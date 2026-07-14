@@ -13,11 +13,13 @@ Commands:
   configure-local   Create owner-only local API credentials.
   run               Start the Core API on 127.0.0.1:8010 by default.
   check             Check /healthz and /readyz.
+  hosted-check      Check a hosted Core API and its authenticated workspace.
   status            Show safe local configuration status.
 
 Environment overrides:
   SECOPSAI_CORE_ENV_FILE, SECOPSAI_CORE_PYTHON, HOST, PORT,
-  SECOPSAI_CORE_API_URL
+  SECOPSAI_CORE_API_URL, SECOPSAI_CORE_READ_TOKEN,
+  SECOPSAI_CORE_CHECK_TIMEOUT
 EOF
 }
 
@@ -101,6 +103,16 @@ check_api() {
   printf '\n'
 }
 
+hosted_check() {
+  require_python
+  load_environment
+  : "${SECOPSAI_CORE_API_URL:?Set SECOPSAI_CORE_API_URL to the hosted Core API origin}"
+  : "${SECOPSAI_CORE_READ_TOKEN:?Set SECOPSAI_CORE_READ_TOKEN for the authenticated workspace check}"
+  export SECOPSAI_CORE_API_URL SECOPSAI_CORE_READ_TOKEN
+  export SECOPSAI_CORE_CHECK_TIMEOUT="${SECOPSAI_CORE_CHECK_TIMEOUT:-12}"
+  exec "$PYTHON_BIN" -m secopsai.core_api_check
+}
+
 show_status() {
   load_environment
   printf 'environment_file=%s\n' "$ENV_FILE"
@@ -116,6 +128,7 @@ case "${1:-}" in
   configure-local) configure_local ;;
   run) run_api ;;
   check) check_api ;;
+  hosted-check) hosted_check ;;
   status) show_status ;;
   -h|--help|help|"") usage ;;
   *)

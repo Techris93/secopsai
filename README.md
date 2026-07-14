@@ -425,6 +425,13 @@ On macOS, launchd-based execution is supported via helper scripts, including:
 - [Universal Adapters](docs/universal-adapters.md)
 - [Rules Registry](docs/rules-registry.md)
 - [Deployment Guide](docs/deployment-guide.md)
+
+The hosted Core API has its own root Render Blueprint at
+[`render.yaml`](render.yaml). It is intentionally separate from the existing
+SecOpsAI worker service because the Core API owns the canonical Edge graph and
+triage read boundary. Follow [`docs/core-api.md`](docs/core-api.md) to create
+the Blueprint, configure its two unrelated secrets, and run the secret-safe
+`./scripts/core-api hosted-check` before connecting the dashboard.
 - [API Reference](docs/api-reference.md)
 - [AI Dependency Guard](docs/ai-dependency-guard.md)
 - [Findings Triage Guide](docs/findings-triage-guide.md)
