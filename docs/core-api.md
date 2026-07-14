@@ -96,6 +96,22 @@ Pages Worker with `SECOPSAI_CORE_API_URL` and `SECOPSAI_CORE_READ_TOKEN`. The
 dashboard then calls Core server-side and keeps the read credential out of the
 browser.
 
+For the first Edge-to-hosted-Core import, use the separate ingest credential
+with Core's existing Edge sync command:
+
+```bash
+SECOPSAI_EDGE_API_URL='https://secopsai-edge-api.onrender.com' \
+SECOPSAI_EDGE_ACCESS_TOKEN='use-the-scoped-edge-export-token' \
+SECOPSAI_CORE_API_URL='https://secopsai-core-api.onrender.com' \
+SECOPSAI_CORE_INGEST_TOKEN='use-the-owner-only-core-ingest-secret' \
+secopsai edge sync --remote-only
+```
+
+The read token used by the dashboard and the ingest token used by Edge are
+unrelated. Rotate either independently. `--remote-only` avoids creating a
+local SQLite mirror; omit it when the operator also wants local graph/triage
+inspection. The hosted endpoint is idempotent for repeated bundle imports.
+
 ## Backup and recovery
 
 Render snapshots the attached disk, but SQLite still needs an application-level

@@ -71,6 +71,39 @@ def fetch_bundle(edge_api_url: str, access_token: str) -> dict[str, Any]:
     return payload
 
 
+def push_bundle(bundle: dict[str, Any], core_api_url: str, ingest_token: str) -> dict[str, Any]:
+    """Send a validated normalized bundle to the protected hosted Core API."""
+
+    validate_bundle(bundle)
+    response = requests.post(
+        f"{core_api_url.rstrip('/')}/api/v1/edge/bundles",
+        headers={"Authorization": f"Bearer {ingest_token}", "Accept": "application/json"},
+        json=bundle,
+        timeout=30,
+        allow_redirects=False,
+    )
+    if response.status_code >= 300:
+        raise ValueError(f"Core API returned HTTP {response.status_code} while ingesting the Edge bundle")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ValueError("Core API returned invalid JSON while ingesting the Edge bundle") from exc
+    if not isinstance(payload, dict) or payload.get("status") != "imported":
+        raise ValueError("Core API returned an unsupported Edge import response")
+    counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
+    return {
+        "status": "imported",
+        "schema_version": payload.get("schema_version"),
+        "source_instance": payload.get("source_instance"),
+        "counts": {
+            "nodes": int(counts.get("nodes", 0)),
+            "edges": int(counts.get("edges", 0)),
+            "findings": int(counts.get("findings", 0)),
+        },
+        "request_id": str(payload.get("request_id") or ""),
+    }
+
+
 def import_bundle(bundle: dict[str, Any], *, db_path: str | None = None) -> dict[str, Any]:
     validate_bundle(bundle)
     graph = bundle["graph"]
@@ -100,6 +133,9 @@ def sync_from_api(
     edge_api_url: str | None = None,
     access_token: str | None = None,
     admin_token: str | None = None,
+    core_api_url: str | None = None,
+    core_ingest_token: str | None = None,
+    remote_only: bool = False,
     db_path: str | None = None,
 ) -> dict[str, Any]:
     resolved_url = edge_api_url or os.environ.get("SECOPSAI_EDGE_API_URL")
@@ -113,7 +149,26 @@ def sync_from_api(
         raise ValueError("--edge-api-url or SECOPSAI_EDGE_API_URL is required")
     if not resolved_token:
         raise ValueError("--access-token or SECOPSAI_EDGE_ACCESS_TOKEN is required")
-    return import_bundle(fetch_bundle(resolved_url, resolved_token), db_path=db_path)
+    resolved_core_url = core_api_url or os.environ.get("SECOPSAI_CORE_API_URL")
+    resolved_core_token = core_ingest_token or os.environ.get("SECOPSAI_CORE_INGEST_TOKEN")
+    if bool(resolved_core_url) != bool(resolved_core_token):
+        raise ValueError("SECOPSAI_CORE_API_URL and SECOPSAI_CORE_INGEST_TOKEN must be provided together")
+    if remote_only and not resolved_core_url:
+        raise ValueError("--remote-only requires SECOPSAI_CORE_API_URL and SECOPSAI_CORE_INGEST_TOKEN")
+
+    bundle = fetch_bundle(resolved_url, resolved_token)
+    remote_result = (
+        push_bundle(bundle, resolved_core_url, resolved_core_token)
+        if resolved_core_url and resolved_core_token
+        else None
+    )
+    local_result = None if remote_only else import_bundle(bundle, db_path=db_path)
+    if remote_result is None:
+        return local_result or {}
+    result = dict(local_result or {})
+    result["core"] = remote_result
+    result["remote_only"] = remote_only
+    return result
 
 
 def validate_bundle(bundle: dict[str, Any]) -> None:

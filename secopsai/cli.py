@@ -994,7 +994,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     edge_import = edge_sub.add_parser("import", help="Import a SecOpsAI Edge bundle JSON file")
     edge_import.add_argument("--bundle", required=True, help="Path to secopsai.edge.bundle.v1 JSON")
     edge_import.add_argument("--db-path", default=None, help="Override SQLite SOC/graph database path")
-    edge_sync = edge_sub.add_parser("sync", help="Fetch Edge export from an API and import it locally")
+    edge_sync = edge_sub.add_parser("sync", help="Fetch Edge export and import it locally and/or into hosted Core")
     edge_sync.add_argument("--edge-api-url", default=None, help="SecOpsAI Edge API URL")
     edge_sync.add_argument(
         "--access-token",
@@ -1002,6 +1002,21 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         dest="access_token",
         default=None,
         help="Workspace-scoped Edge Core export token",
+    )
+    edge_sync.add_argument(
+        "--core-api-url",
+        default=None,
+        help="Hosted Core API URL; defaults to SECOPSAI_CORE_API_URL",
+    )
+    edge_sync.add_argument(
+        "--core-ingest-token",
+        default=None,
+        help="Core ingest credential; prefer SECOPSAI_CORE_INGEST_TOKEN",
+    )
+    edge_sync.add_argument(
+        "--remote-only",
+        action="store_true",
+        help="Send the bundle to hosted Core without updating local SQLite",
     )
     edge_sync.add_argument("--db-path", default=None, help="Override SQLite SOC/graph database path")
     edge_status = edge_sub.add_parser("status", help="Show recent Edge-to-Core sync state")
@@ -2359,6 +2374,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 payload = sync_edge_from_api(
                     edge_api_url=args.edge_api_url,
                     access_token=args.access_token,
+                    core_api_url=args.core_api_url,
+                    core_ingest_token=args.core_ingest_token,
+                    remote_only=args.remote_only,
                     db_path=args.db_path,
                 )
             elif args.edge_cmd == "status":
