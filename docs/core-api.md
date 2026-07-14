@@ -96,6 +96,12 @@ Pages Worker with `SECOPSAI_CORE_API_URL` and `SECOPSAI_CORE_READ_TOKEN`. The
 dashboard then calls Core server-side and keeps the read credential out of the
 browser.
 
+The current pilot service is deployed at
+`https://secopsai-core-api.onrender.com`. The first hosted Edge bundle import
+has been verified against the pilot workspace. Treat a transient `502` during
+Render cold start as a retryable deployment event; repeated failures require
+checking the service logs and readiness before sending customer data.
+
 For the first Edge-to-hosted-Core import, use the separate ingest credential
 with Core's existing Edge sync command:
 
