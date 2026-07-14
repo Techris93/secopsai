@@ -63,6 +63,24 @@ It grants only `core:export` for the selected workspace. The legacy admin-token
 environment variable and CLI alias remain temporarily supported for existing
 single-workspace installations, but new services should not use them.
 
+To push the normalized bundle into a hosted Core API, keep the two credentials
+separate and prefer environment variables so they do not appear in process
+arguments:
+
+```bash
+SECOPSAI_EDGE_API_URL=https://secopsai-edge-api.onrender.com \
+SECOPSAI_EDGE_ACCESS_TOKEN=<workspace-core-export-token> \
+SECOPSAI_CORE_API_URL=https://secopsai-core-api.onrender.com \
+SECOPSAI_CORE_INGEST_TOKEN=<core-ingest-token> \
+secopsai edge sync --remote-only
+```
+
+Use `--remote-only` when the sensor host should not maintain a second local
+Core SQLite mirror. Omit it to update both the local Core store and hosted Core
+in one idempotent operation. The command returns only import counts, status,
+schema, source identity, and request ID; it never prints either credential or
+the bundle body.
+
 ## Inspect The Graph
 
 ```bash

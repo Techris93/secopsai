@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import soc_store
 from secopsai import cli
-from secopsai.edge_sync import import_bundle, sync_from_api
+from secopsai.edge_sync import import_bundle, push_bundle, sync_from_api
 from secopsai.graph_store import list_assets, list_sync_state, show_node
 from secopsai.triage import list_triage_findings
 
@@ -218,6 +218,61 @@ class EdgeIntegrationTests(unittest.TestCase):
 
         fetch_bundle.assert_called_once_with(
             "https://edge.example.test", "scoped-core-export-token"
+        )
+
+    @patch("secopsai.edge_sync.requests.post")
+    def test_push_bundle_returns_minimized_core_import_evidence(self, post):
+        response = post.return_value
+        response.status_code = 200
+        response.json.return_value = {
+            "status": "imported",
+            "schema_version": "secopsai.edge.bundle.v1",
+            "source_instance": "secopsai_edge:api:org-pilot-1",
+            "counts": {"nodes": 5, "edges": 4, "findings": 1},
+            "request_id": "req-1",
+        }
+
+        result = push_bundle(_bundle(), "https://core.example.test", "core-ingest-secret")
+
+        self.assertEqual(result["status"], "imported")
+        self.assertEqual(result["counts"]["findings"], 1)
+        self.assertNotIn("core-ingest-secret", json.dumps(result))
+        post.assert_called_once()
+        self.assertEqual(post.call_args.kwargs["allow_redirects"], False)
+        self.assertEqual(
+            post.call_args.kwargs["headers"]["Authorization"],
+            "Bearer core-ingest-secret",
+        )
+
+    @patch("secopsai.edge_sync.push_bundle")
+    @patch("secopsai.edge_sync.fetch_bundle")
+    def test_sync_can_push_remote_only_from_environment(self, fetch_bundle, push_bundle_mock):
+        fetch_bundle.return_value = _bundle()
+        push_bundle_mock.return_value = {
+            "status": "imported",
+            "schema_version": "secopsai.edge.bundle.v1",
+            "source_instance": "source",
+            "counts": {"nodes": 5, "edges": 4, "findings": 1},
+            "request_id": "req-1",
+        }
+        with patch.dict(
+            os.environ,
+            {
+                "SECOPSAI_EDGE_API_URL": "https://edge.example.test",
+                "SECOPSAI_EDGE_ACCESS_TOKEN": "edge-export-token",
+                "SECOPSAI_CORE_API_URL": "https://core.example.test",
+                "SECOPSAI_CORE_INGEST_TOKEN": "core-ingest-token",
+            },
+        ):
+            result = sync_from_api(remote_only=True)
+
+        self.assertEqual(result["remote_only"], True)
+        self.assertEqual(result["core"]["status"], "imported")
+        fetch_bundle.assert_called_once_with("https://edge.example.test", "edge-export-token")
+        push_bundle_mock.assert_called_once_with(
+            fetch_bundle.return_value,
+            "https://core.example.test",
+            "core-ingest-token",
         )
 
 
