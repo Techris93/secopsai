@@ -117,6 +117,9 @@ The read token used by the dashboard and the ingest token used by Edge are
 unrelated. Rotate either independently. `--remote-only` avoids creating a
 local SQLite mirror; omit it when the operator also wants local graph/triage
 inspection. The hosted endpoint is idempotent for repeated bundle imports.
+The Edge/Core client retries bounded transient `500`, `502`, `503`, `504`, and
+network failures up to three times with short backoff; authentication and
+validation errors are not retried.
 
 ## Backup and recovery
 

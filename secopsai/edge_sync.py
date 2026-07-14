@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,9 @@ SCHEMA_VERSION = "secopsai.edge.bundle.v1"
 MAX_GRAPH_NODES = 100_000
 MAX_GRAPH_EDGES = 200_000
 MAX_FINDINGS = 50_000
+CORE_PUSH_ATTEMPTS = 3
+CORE_RETRYABLE_STATUS_CODES = {500, 502, 503, 504}
+CORE_RETRY_BACKOFF_SECONDS = 0.5
 NODE_TYPES = {"site", "sensor", "scan", "asset", "service", "wifi_network"}
 EDGE_TYPES = {
     "site_has_sensor",
@@ -75,13 +79,29 @@ def push_bundle(bundle: dict[str, Any], core_api_url: str, ingest_token: str) ->
     """Send a validated normalized bundle to the protected hosted Core API."""
 
     validate_bundle(bundle)
-    response = requests.post(
-        f"{core_api_url.rstrip('/')}/api/v1/edge/bundles",
-        headers={"Authorization": f"Bearer {ingest_token}", "Accept": "application/json"},
-        json=bundle,
-        timeout=30,
-        allow_redirects=False,
-    )
+    request_url = f"{core_api_url.rstrip('/')}/api/v1/edge/bundles"
+    request_headers = {"Authorization": f"Bearer {ingest_token}", "Accept": "application/json"}
+    response = None
+    for attempt in range(CORE_PUSH_ATTEMPTS):
+        try:
+            response = requests.post(
+                request_url,
+                headers=request_headers,
+                json=bundle,
+                timeout=30,
+                allow_redirects=False,
+            )
+        except requests.RequestException as exc:
+            if attempt == CORE_PUSH_ATTEMPTS - 1:
+                raise ValueError("Core API request failed while ingesting the Edge bundle") from exc
+        else:
+            if response.status_code not in CORE_RETRYABLE_STATUS_CODES:
+                break
+        if attempt < CORE_PUSH_ATTEMPTS - 1:
+            time.sleep(CORE_RETRY_BACKOFF_SECONDS * (attempt + 1))
+
+    if response is None:
+        raise ValueError("Core API request failed while ingesting the Edge bundle")
     if response.status_code >= 300:
         raise ValueError(f"Core API returned HTTP {response.status_code} while ingesting the Edge bundle")
     try:

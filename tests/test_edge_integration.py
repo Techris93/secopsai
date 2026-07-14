@@ -244,6 +244,38 @@ class EdgeIntegrationTests(unittest.TestCase):
             "Bearer core-ingest-secret",
         )
 
+    @patch("secopsai.edge_sync.time.sleep")
+    @patch("secopsai.edge_sync.requests.post")
+    def test_push_bundle_retries_transient_hosted_core_failure(self, post, sleep):
+        first = post.return_value
+        first.status_code = 502
+
+        successful = type("Response", (), {})()
+        successful.status_code = 200
+        successful.json = lambda: {
+            "status": "imported",
+            "schema_version": "secopsai.edge.bundle.v1",
+            "source_instance": "source",
+            "counts": {"nodes": 5, "edges": 4, "findings": 1},
+        }
+        post.side_effect = [first, successful]
+
+        result = push_bundle(_bundle(), "https://core.example.test", "core-ingest-secret")
+
+        self.assertEqual(result["status"], "imported")
+        self.assertEqual(post.call_count, 2)
+        sleep.assert_called_once_with(0.5)
+
+    @patch("secopsai.edge_sync.requests.post")
+    def test_push_bundle_does_not_retry_authentication_failure(self, post):
+        response = post.return_value
+        response.status_code = 401
+
+        with self.assertRaisesRegex(ValueError, "HTTP 401"):
+            push_bundle(_bundle(), "https://core.example.test", "core-ingest-secret")
+
+        post.assert_called_once()
+
     @patch("secopsai.edge_sync.push_bundle")
     @patch("secopsai.edge_sync.fetch_bundle")
     def test_sync_can_push_remote_only_from_environment(self, fetch_bundle, push_bundle_mock):
