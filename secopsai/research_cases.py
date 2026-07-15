@@ -411,6 +411,59 @@ def get_case(case_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
             value = dict(item)
             value["data"] = _decode(value.pop("data_json", "{}"), {})
             result["timeline"].append(value)
+        result["jobs"] = []
+        for item in connection.execute(
+            "SELECT job_id, action, status, requested_by, attempt, queued_at, started_at, completed_at, updated_at, error_code, error_message, config_json, result_json FROM research_jobs WHERE case_id = ? ORDER BY updated_at DESC",
+            (case_id,),
+        ).fetchall():
+            value = dict(item)
+            value["config"] = _decode(value.pop("config_json", "{}"), {})
+            value["result"] = _decode(value.pop("result_json", "{}"), {})
+            result["jobs"].append(value)
+        result["claims"] = []
+        for item in connection.execute(
+            "SELECT * FROM research_claims WHERE case_id = ? ORDER BY updated_at DESC",
+            (case_id,),
+        ).fetchall():
+            value = dict(item)
+            for key in ("supporting_evidence_json", "contradicting_evidence_json", "missing_evidence_json", "limitations_json"):
+                value[key[:-5]] = _decode(value.pop(key, "[]"), [])
+            result["claims"].append(value)
+        result["verdicts"] = []
+        for item in connection.execute(
+            "SELECT * FROM research_verdicts WHERE case_id = ? ORDER BY created_at DESC",
+            (case_id,),
+        ).fetchall():
+            value = dict(item)
+            value["evidence_ids"] = _decode(value.pop("evidence_ids_json", "[]"), [])
+            result["verdicts"].append(value)
+        result["disclosures"] = []
+        for item in connection.execute(
+            "SELECT * FROM research_disclosures WHERE case_id = ? ORDER BY updated_at DESC",
+            (case_id,),
+        ).fetchall():
+            value = dict(item)
+            value["affected_scope"] = _decode(value.pop("affected_scope_json", "[]"), [])
+            value["attachments"] = _decode(value.pop("attachments_json", "[]"), [])
+            result["disclosures"].append(value)
+        result["publication_reviews"] = []
+        for item in connection.execute(
+            "SELECT * FROM research_publication_reviews WHERE case_id = ? ORDER BY updated_at DESC",
+            (case_id,),
+        ).fetchall():
+            value = dict(item)
+            for key in ("blockers_json", "warnings_json", "checks_json", "waivers_json"):
+                value[key[:-5]] = _decode(value.pop(key, "[]"), {})
+            result["publication_reviews"].append(value)
+        result["sandbox_requests"] = []
+        for item in connection.execute(
+            "SELECT * FROM research_sandbox_requests WHERE case_id = ? ORDER BY updated_at DESC",
+            (case_id,),
+        ).fetchall():
+            value = dict(item)
+            value["requested_behaviors"] = _decode(value.pop("requested_behaviors_json", "[]"), [])
+            value["result"] = _decode(value.pop("result_json", "{}"), {})
+            result["sandbox_requests"].append(value)
     result["publication_readiness"] = publication_readiness(result)
     return result
 
@@ -1154,6 +1207,9 @@ def draft_case_blog(case_id: str, *, db_path: Optional[str] = None) -> Dict[str,
     readiness = publication_readiness(case)
     if not readiness["ready"]:
         raise ValueError("research case is not publication-ready: " + "; ".join(readiness["blockers"]))
+    publication_reviews = case.get("publication_reviews") or []
+    if publication_reviews and publication_reviews[0].get("status") != "approved":
+        raise ValueError("latest publication safety review is not approved")
     result = draft_research_case(case)
     with closing(soc_store.connect(db_path)) as connection:
         _record_event(

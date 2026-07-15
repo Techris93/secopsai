@@ -435,6 +435,7 @@ the Blueprint, configure its two unrelated secrets, and run the secret-safe
 - [API Reference](docs/api-reference.md)
 - [AI Dependency Guard](docs/ai-dependency-guard.md)
 - [Findings Triage Guide](docs/findings-triage-guide.md)
+- [Research Automation](docs/research-automation.md)
 - [Triage Orchestrator](docs/triage-orchestrator.md)
 - [Threat Intel](docs/threat-intel.md)
 - [Threat Model](docs/threat-model.md)

@@ -30,6 +30,8 @@ That flow can attach:
 
 ## Durable independent research
 
+For the guided package-intake, evidence, disclosure, sandbox-approval, and publication workflow, see [Research Automation](research-automation.md).
+
 Use [Research Cases](research-cases.md) when an investigation must outlive one
 finding or report. Cases add structured subjects, evidence provenance, IOCs,
 disclosure state, publication readiness, deterministic export, and a
