@@ -102,6 +102,7 @@ from secopsai.research_cases import (
     start_package_case as start_research_package_case,
     update_case as update_research_case,
 )
+from secopsai.research_watchlists import promote_watchlist_packages
 from secopsai.sessions import (
     add_artifact as add_session_artifact,
     add_event as add_session_event,
@@ -1128,6 +1129,22 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     case_start_package.add_argument("--actor", default="analyst")
     case_start_package.add_argument("--db-path", default=None)
 
+    case_from_watchlist = research_case_sub.add_parser(
+        "from-watchlist",
+        help="Preview or promote selected npm campaign-watchlist packages into research cases",
+    )
+    case_from_watchlist.add_argument("--ecosystem", required=True, choices=["npm"])
+    case_from_watchlist.add_argument("--package", action="append", default=[], help="Watchlist package; repeat for multiple packages")
+    case_from_watchlist.add_argument("--all", dest="select_all", action="store_true", help="Select every npm package in the watchlist")
+    case_from_watchlist.add_argument("--create", action="store_true", help="Create cases; without this flag only preview the selection")
+    case_from_watchlist.add_argument("--title-prefix", default="Watchlist research")
+    case_from_watchlist.add_argument("--severity", choices=sorted(RESEARCH_SEVERITIES), default="medium")
+    case_from_watchlist.add_argument("--owner", default="")
+    case_from_watchlist.add_argument("--source-url", default="", help="Optional public source URL to record without fetching")
+    case_from_watchlist.add_argument("--actor", default="analyst")
+    case_from_watchlist.add_argument("--watchlist-path", default=None, help="Override campaign watchlist JSON path")
+    case_from_watchlist.add_argument("--db-path", default=None)
+
     case_evidence = research_case_sub.add_parser("add-evidence", help="Attach a source or analysis evidence record")
     case_evidence.add_argument("case_id")
     case_evidence.add_argument("--evidence-type", required=True, choices=sorted(EVIDENCE_TYPES))
@@ -1764,6 +1781,20 @@ def _run_research_case_command(args: argparse.Namespace) -> int:
                 actor=args.actor,
                 db_path=args.db_path,
             )
+        elif command == "from-watchlist":
+            payload = promote_watchlist_packages(
+                ecosystem=args.ecosystem,
+                packages=args.package,
+                select_all=args.select_all,
+                create=args.create,
+                title_prefix=args.title_prefix,
+                severity=args.severity,
+                owner=args.owner,
+                source_url=args.source_url,
+                actor=args.actor,
+                db_path=args.db_path,
+                watchlist_path=args.watchlist_path,
+            )
         elif command == "list":
             payload = {
                 "cases": list_research_cases(
@@ -1910,6 +1941,14 @@ def _run_research_case_command(args: argparse.Namespace) -> int:
         print(f"CASE_ID: {payload['case_id']}")
         print(f"DRAFT_PATH: {payload.get('draft_path')}")
         print("REVIEW_REQUIRED: true")
+    elif command == "from-watchlist":
+        print(f"ECOSYSTEM: {payload['ecosystem']}")
+        print(f"DRY_RUN: {str(payload['dry_run']).lower()}")
+        print(f"SELECTED: {len(payload['selected'])}")
+        print(f"CREATED: {len(payload['created'])}")
+        print(f"EXISTING: {len(payload['existing'])}")
+        for item in [*payload["created"], *payload["existing"]]:
+            print(f"{item['package']} -> {item['case_id']} ({item['status']})")
     else:
         readiness = payload.get("publication_readiness") or {}
         print(f"CASE_ID: {payload['case_id']}")
