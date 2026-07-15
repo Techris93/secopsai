@@ -520,6 +520,30 @@ body {
   color: #f9d17d;
 }
 
+.secops-home__contact-address {
+  display: inline-block;
+  margin-top: 0.9rem;
+  color: var(--secops-accent-soft);
+  font-family: var(--md-code-font);
+  font-size: 0.82rem;
+}
+
+@media screen and (min-width: 60em) {
+  /* Keep the homepage's custom desktop composition while retaining the
+     navigation markup for the mobile drawer. */
+  body:has(.secops-home) .md-sidebar--primary {
+    display: none;
+  }
+
+  body:has(.secops-home) .md-main__inner {
+    display: block;
+  }
+
+  body:has(.secops-home) .md-content {
+    max-width: none;
+  }
+}
+
 @media (max-width: 76.2344em) {
   .secops-home__hero-grid,
   .secops-home__quickstart {

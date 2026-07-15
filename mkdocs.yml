@@ -27,6 +27,7 @@ extra_css:
 
 nav:
   - Home: index.md
+  - Contact: contact.md
   - Getting Started: getting-started.md
   - SecOpsAI Edge: edge-integration.md
   - Operator Runbook: operator-runbook.md

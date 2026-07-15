@@ -3100,6 +3100,8 @@ def _render_site_footer() -> str:
             <a href="/#topics">Topics</a>
             <a href="/posts/">Latest</a>
             <a href="https://docs.secopsai.dev/">Docs</a>
+            <a href="mailto:security@secopsai.dev">Security contact</a>
+            <a href="mailto:research@secopsai.dev">Research contact</a>
             <a href="/feed.xml">RSS</a>
             <a href="/json-feed">JSON Feed</a>
           </nav>

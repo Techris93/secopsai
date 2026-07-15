@@ -2,7 +2,6 @@
 title: Home
 template: home.html
 hide:
-  - navigation
   - toc
 description: Local-first cross-platform SecOps docs for OpenClaw, Hermes Agent, macOS, Linux, and Windows.
 ---
