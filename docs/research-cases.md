@@ -103,6 +103,39 @@ secopsai research case add-artifact RSC-... \
   --notes "Hash-only collection from the isolated evidence directory"
 ```
 
+### Promote A Watchlist Lead
+
+The first automated watchlist workflow is intentionally narrow: it supports
+explicitly selected npm package leads from the local campaign watchlist. The
+default is a read-only preview. It does not query a registry, download an
+artifact, unpack a package, or execute package code.
+
+Preview one lead:
+
+```bash
+secopsai research case from-watchlist \
+  --ecosystem npm \
+  --package npm:chalk-tempalte \
+  --watchlist-path data/supply_chain/campaign_discovery/watchlist.json
+```
+
+Create the case only after reviewing the preview:
+
+```bash
+secopsai research case from-watchlist \
+  --ecosystem npm \
+  --package npm:chalk-tempalte \
+  --owner "SecOpsAI Research" \
+  --create
+```
+
+Promotion is idempotent for an active npm package subject, records local
+watchlist provenance, and leaves the case in `draft` with validation open.
+Use `--all --create` only after reviewing the complete npm watchlist. Other
+ecosystems are rejected by this first workflow rather than being silently
+treated as npm packages. Add public source URLs later with the evidence
+workflow; the promotion command never fetches them.
+
 ```bash
 secopsai research case create \
   --title "NuGet payment SDK typosquat investigation" \

@@ -34,6 +34,7 @@ from secopsai.research_cases import (
     start_package_case,
     update_case,
 )
+from secopsai.research_watchlists import promote_watchlist_packages, select_watchlist_packages
 
 
 SUMMARY = (
@@ -155,6 +156,91 @@ class ResearchCaseTests(unittest.TestCase):
                 report_bytes = (Path(exported["json_report"]).parent / item["name"]).read_bytes()
                 self.assertEqual(item["bytes"], len(report_bytes))
                 self.assertEqual(item["sha256"], hashlib.sha256(report_bytes).hexdigest())
+
+    def test_npm_watchlist_selection_excludes_other_ecosystems(self) -> None:
+        watchlist = {
+            "packages": ["npm:chalk-tempalte", "pypi:requests-lookalike", "axios-utils", "npm:chalk-tempalte"],
+        }
+        selected = select_watchlist_packages(
+            watchlist,
+            ecosystem="npm",
+            packages=["npm:chalk-tempalte", "axios-utils"],
+        )
+        self.assertEqual([item["package"] for item in selected], ["chalk-tempalte", "axios-utils"])
+        with self.assertRaisesRegex(ValueError, "invalid npm package"):
+            select_watchlist_packages(watchlist, ecosystem="npm", packages=["pypi:requests-lookalike"])
+
+    def test_watchlist_promotion_is_previewable_idempotent_and_provenance_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = str(root / "soc.db")
+            watchlist_path = root / "watchlist.json"
+            watchlist_path.write_text(
+                json.dumps({"packages": ["npm:chalk-tempalte", "pypi:other-package"]}),
+                encoding="utf-8",
+            )
+
+            preview = promote_watchlist_packages(
+                ecosystem="npm",
+                packages=["npm:chalk-tempalte"],
+                db_path=db_path,
+                watchlist_path=str(watchlist_path),
+            )
+            self.assertTrue(preview["dry_run"])
+            self.assertEqual(preview["selected"][0]["package"], "chalk-tempalte")
+            self.assertEqual(preview["created"], [])
+
+            created = promote_watchlist_packages(
+                ecosystem="npm",
+                packages=["npm:chalk-tempalte"],
+                create=True,
+                owner="research-team",
+                actor="watchlist-test",
+                db_path=db_path,
+                watchlist_path=str(watchlist_path),
+            )
+            self.assertEqual(len(created["created"]), 1)
+            case = get_case(created["created"][0]["case_id"], db_path=db_path)
+            self.assertEqual(case["subjects"][0]["ecosystem"], "npm")
+            self.assertEqual(case["evidence"][0]["locator"], "local://secopsai/campaign-watchlist")
+            self.assertIn("execution=false", case["evidence"][0]["notes"])
+
+            repeated = promote_watchlist_packages(
+                ecosystem="npm",
+                packages=["chalk-tempalte"],
+                create=True,
+                db_path=db_path,
+                watchlist_path=str(watchlist_path),
+            )
+            self.assertEqual(repeated["created"], [])
+            self.assertEqual(repeated["existing"][0]["case_id"], created["created"][0]["case_id"])
+
+    def test_cli_watchlist_promotion_requires_create_for_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "soc.db"
+            watchlist_path = root / "watchlist.json"
+            watchlist_path.write_text(json.dumps({"packages": ["npm:demo-package"]}), encoding="utf-8")
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = cli.main([
+                    "--json",
+                    "research",
+                    "case",
+                    "from-watchlist",
+                    "--ecosystem",
+                    "npm",
+                    "--package",
+                    "npm:demo-package",
+                    "--watchlist-path",
+                    str(watchlist_path),
+                    "--db-path",
+                    str(db_path),
+                ])
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertTrue(payload["dry_run"])
+            self.assertEqual(payload["created"], [])
 
     def test_case_links_existing_soc_finding(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
