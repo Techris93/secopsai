@@ -82,17 +82,20 @@ from secopsai.research_cases import (
     DISCLOSURE_STATUSES,
     EVIDENCE_TYPES,
     IOC_TYPES,
+    RULE_TYPES,
     SEVERITIES as RESEARCH_SEVERITIES,
     SUBJECT_TYPES,
     add_case_note,
     add_evidence as add_research_evidence,
     add_local_artifact as add_research_artifact,
     add_ioc as add_research_ioc,
+    add_rule as add_research_rule,
     add_subject as add_research_subject,
     create_case as create_research_case,
     draft_case_blog,
     export_case as export_research_case,
     get_case as get_research_case,
+    load_rule_file as load_research_rule_file,
     link_finding as link_research_finding,
     list_cases as list_research_cases,
     retract_item as retract_research_item,
@@ -1162,6 +1165,21 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     case_ioc.add_argument("--actor", default="analyst")
     case_ioc.add_argument("--db-path", default=None)
 
+    case_rule = research_case_sub.add_parser(
+        "add-rule",
+        help="Attach a YARA, Sigma, or Semgrep rule after structural validation",
+    )
+    case_rule.add_argument("case_id")
+    case_rule.add_argument("--rule-type", required=True, choices=sorted(RULE_TYPES))
+    case_rule.add_argument("--name", required=True)
+    content_group = case_rule.add_mutually_exclusive_group(required=True)
+    content_group.add_argument("--content", default="")
+    content_group.add_argument("--file", default="", help="Read rule text from a UTF-8 file")
+    case_rule.add_argument("--purpose", default="")
+    case_rule.add_argument("--source-evidence-id", default=None)
+    case_rule.add_argument("--actor", default="analyst")
+    case_rule.add_argument("--db-path", default=None)
+
     case_link = research_case_sub.add_parser("link-finding", help="Link a SOC finding to a research case")
     case_link.add_argument("case_id")
     case_link.add_argument("finding_id")
@@ -1177,7 +1195,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     case_retract = research_case_sub.add_parser("retract", help="Retract an incorrect subject, evidence record, or IOC without deleting history")
     case_retract.add_argument("case_id")
-    case_retract.add_argument("--item-type", required=True, choices=["subject", "evidence", "ioc"])
+    case_retract.add_argument("--item-type", required=True, choices=["subject", "evidence", "ioc", "rule"])
     case_retract.add_argument("--item-id", required=True)
     case_retract.add_argument("--reason", required=True)
     case_retract.add_argument("--actor", default="analyst")
@@ -1817,6 +1835,18 @@ def _run_research_case_command(args: argparse.Namespace) -> int:
                 first_seen=args.first_seen,
                 last_seen=args.last_seen,
                 tags=args.tag,
+                actor=args.actor,
+                db_path=args.db_path,
+            )
+        elif command == "add-rule":
+            content = load_research_rule_file(args.file) if args.file else args.content
+            payload = add_research_rule(
+                args.case_id,
+                rule_type=args.rule_type,
+                name=args.name,
+                content=content,
+                purpose=args.purpose,
+                source_evidence_id=args.source_evidence_id,
                 actor=args.actor,
                 db_path=args.db_path,
             )
