@@ -103,6 +103,26 @@ from secopsai.research_cases import (
     update_case as update_research_case,
 )
 from secopsai.research_watchlists import promote_watchlist_packages
+from secopsai.research_intake import ADAPTERS as RESEARCH_INTAKE_ADAPTERS, preview_package as preview_research_package
+from secopsai.research_workflow import (
+    attach_intake_job,
+    build_evidence_matrix,
+    generate_analyst_brief,
+    get_research_job,
+    get_sandbox_request,
+    list_research_jobs,
+    approve_publication_review,
+    cancel_research_job,
+    recover_stale_jobs,
+    retry_research_job,
+    prepare_disclosure,
+    publication_safety_check,
+    record_verdict,
+    request_sandbox,
+    run_intake_job,
+    set_disclosure_status,
+    set_sandbox_status,
+)
 from secopsai.sessions import (
     add_artifact as add_session_artifact,
     add_event as add_session_event,
@@ -1227,6 +1247,105 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     case_draft.add_argument("case_id")
     case_draft.add_argument("--db-path", default=None)
 
+    intake = research_sub.add_parser("intake", help="Safely collect and statically inspect a package without executing it")
+    intake_sub = intake.add_subparsers(dest="research_intake_cmd", required=True)
+    intake_preview = intake_sub.add_parser("preview", help="Fetch official metadata only and show the planned intake")
+    intake_preview.add_argument("--ecosystem", required=True, choices=sorted(RESEARCH_INTAKE_ADAPTERS))
+    intake_preview.add_argument("--package", required=True)
+    intake_preview.add_argument("--version", default="")
+    intake_run = intake_sub.add_parser("run", help="Collect an artifact into quarantine and run bounded static inspection")
+    intake_run.add_argument("--case", required=True, dest="case_id")
+    intake_run.add_argument("--ecosystem", required=True, choices=sorted(RESEARCH_INTAKE_ADAPTERS))
+    intake_run.add_argument("--package", required=True)
+    intake_run.add_argument("--version", default="")
+    intake_run.add_argument("--attach", action="store_true", help="Attach normalized evidence immediately; omit for operator review")
+    intake_run.add_argument("--actor", default="operator")
+    intake_run.add_argument("--db-path", default=None)
+    intake_attach = intake_sub.add_parser("attach", help="Attach a reviewed quarantined intake result to its case")
+    intake_attach.add_argument("job_id")
+    intake_attach.add_argument("--actor", default="operator")
+    intake_attach.add_argument("--db-path", default=None)
+
+    jobs = research_sub.add_parser("jobs", help="Inspect durable research jobs")
+    jobs_sub = jobs.add_subparsers(dest="research_jobs_cmd", required=True)
+    jobs_list = jobs_sub.add_parser("list")
+    jobs_list.add_argument("--case", dest="case_id", default=None)
+    jobs_list.add_argument("--status", choices=["queued", "running", "awaiting_review", "awaiting_approval", "succeeded", "failed", "canceled", "expired"], default=None)
+    jobs_list.add_argument("--limit", type=int, default=100)
+    jobs_list.add_argument("--db-path", default=None)
+    jobs_show = jobs_sub.add_parser("show")
+    jobs_show.add_argument("job_id")
+    jobs_show.add_argument("--db-path", default=None)
+    jobs_retry = jobs_sub.add_parser("retry")
+    jobs_retry.add_argument("job_id")
+    jobs_retry.add_argument("--actor", default="operator")
+    jobs_retry.add_argument("--db-path", default=None)
+    jobs_cancel = jobs_sub.add_parser("cancel")
+    jobs_cancel.add_argument("job_id")
+    jobs_cancel.add_argument("--actor", default="operator")
+    jobs_cancel.add_argument("--db-path", default=None)
+    jobs_recover = jobs_sub.add_parser("recover")
+    jobs_recover.add_argument("--max-age-seconds", type=int, default=3600)
+    jobs_recover.add_argument("--actor", default="research-worker")
+    jobs_recover.add_argument("--db-path", default=None)
+
+    workflow = research_sub.add_parser("workflow", help="Evidence, verdict, disclosure, publication, and sandbox gates")
+    workflow_sub = workflow.add_subparsers(dest="research_workflow_cmd", required=True)
+    matrix = workflow_sub.add_parser("evidence-matrix")
+    matrix.add_argument("case_id")
+    matrix.add_argument("--no-persist", action="store_true")
+    matrix.add_argument("--actor", default="analyst")
+    matrix.add_argument("--db-path", default=None)
+    brief = workflow_sub.add_parser("analyst-brief")
+    brief.add_argument("case_id")
+    brief.add_argument("--actor", default="analyst")
+    brief.add_argument("--db-path", default=None)
+    verdict = workflow_sub.add_parser("verdict")
+    verdict.add_argument("case_id")
+    verdict.add_argument("--verdict", required=True, choices=["credible", "likely", "inconclusive", "not_substantiated", "benign", "retracted"])
+    verdict.add_argument("--confidence", required=True, type=int)
+    verdict.add_argument("--rationale", required=True)
+    verdict.add_argument("--evidence-id", action="append", required=True)
+    verdict.add_argument("--actor", default="analyst")
+    verdict.add_argument("--db-path", default=None)
+    pubcheck = workflow_sub.add_parser("publication-check")
+    pubcheck.add_argument("case_id")
+    pubcheck.add_argument("--actor", default="analyst")
+    pubcheck.add_argument("--db-path", default=None)
+    pubapprove = workflow_sub.add_parser("publication-approve")
+    pubapprove.add_argument("case_id")
+    pubapprove.add_argument("--review-id", default="")
+    pubapprove.add_argument("--waiver", action="append", default=[])
+    pubapprove.add_argument("--actor", default="publisher")
+    pubapprove.add_argument("--db-path", default=None)
+    disclosure = workflow_sub.add_parser("prepare-disclosure")
+    disclosure.add_argument("case_id")
+    disclosure.add_argument("--recipient", required=True)
+    disclosure.add_argument("--subject", default="")
+    disclosure.add_argument("--body", default="")
+    disclosure.add_argument("--embargo-until", default=None)
+    disclosure.add_argument("--actor", default="analyst")
+    disclosure.add_argument("--db-path", default=None)
+    disclosure_status = workflow_sub.add_parser("disclosure-status")
+    disclosure_status.add_argument("disclosure_id")
+    disclosure_status.add_argument("--status", required=True, choices=["draft", "approved", "sent", "acknowledged", "coordinating", "closed", "canceled"])
+    disclosure_status.add_argument("--actor", default="analyst")
+    disclosure_status.add_argument("--db-path", default=None)
+    sandbox = workflow_sub.add_parser("request-sandbox")
+    sandbox.add_argument("case_id")
+    sandbox.add_argument("--artifact-sha256", required=True)
+    sandbox.add_argument("--justification", required=True)
+    sandbox.add_argument("--behavior", action="append", default=[])
+    sandbox.add_argument("--provider", choices=["manual-result-import", "disabled", "external-isolated-runner"], default="manual-result-import")
+    sandbox.add_argument("--actor", default="analyst")
+    sandbox.add_argument("--db-path", default=None)
+    sandbox_status = workflow_sub.add_parser("sandbox-status")
+    sandbox_status.add_argument("request_id")
+    sandbox_status.add_argument("--status", required=True, choices=["pending_approval", "approved", "submitted", "completed", "rejected", "failed"])
+    sandbox_status.add_argument("--result-json", default="")
+    sandbox_status.add_argument("--actor", default="analyst")
+    sandbox_status.add_argument("--db-path", default=None)
+
     blog = sub.add_parser("blog", help="Draft, publish, and verify SecOpsAI security blog posts")
     blog_sub = blog.add_subparsers(dest="blog_cmd", required=True)
 
@@ -1750,6 +1869,68 @@ def maybe_refresh(args: argparse.Namespace) -> Optional[Dict[str, Any]]:
     return result.__dict__
 
 
+def _run_research_automation_command(args: argparse.Namespace) -> int:
+    try:
+        if args.research_cmd == "intake":
+            if args.research_intake_cmd == "preview":
+                payload = preview_research_package(ecosystem=args.ecosystem, package=args.package, version=args.version)
+            elif args.research_intake_cmd == "run":
+                payload = run_intake_job(case_id=args.case_id, ecosystem=args.ecosystem, package=args.package, version=args.version, attach=args.attach, requested_by=args.actor, db_path=args.db_path)
+            else:
+                payload = attach_intake_job(args.job_id, actor=args.actor, db_path=args.db_path)
+        elif args.research_cmd == "jobs":
+            if args.research_jobs_cmd == "list":
+                payload = {"jobs": list_research_jobs(case_id=args.case_id, status=args.status, limit=args.limit, db_path=args.db_path)}
+            elif args.research_jobs_cmd == "show":
+                payload = get_research_job(args.job_id, db_path=args.db_path)
+            elif args.research_jobs_cmd == "retry":
+                payload = retry_research_job(args.job_id, actor=args.actor, db_path=args.db_path)
+            elif args.research_jobs_cmd == "cancel":
+                payload = cancel_research_job(args.job_id, actor=args.actor, db_path=args.db_path)
+            else:
+                payload = recover_stale_jobs(max_age_seconds=args.max_age_seconds, actor=args.actor, db_path=args.db_path)
+        elif args.research_cmd == "workflow":
+            command = args.research_workflow_cmd
+            if command == "evidence-matrix":
+                payload = build_evidence_matrix(args.case_id, persist=not args.no_persist, actor=args.actor, db_path=args.db_path)
+            elif command == "analyst-brief":
+                payload = generate_analyst_brief(args.case_id, actor=args.actor, db_path=args.db_path)
+            elif command == "verdict":
+                payload = record_verdict(args.case_id, verdict=args.verdict, confidence=args.confidence, rationale=args.rationale, evidence_ids=args.evidence_id, actor=args.actor, db_path=args.db_path)
+            elif command == "publication-check":
+                payload = publication_safety_check(args.case_id, actor=args.actor, db_path=args.db_path)
+            elif command == "publication-approve":
+                payload = approve_publication_review(args.case_id, review_id=args.review_id, waivers=args.waiver, actor=args.actor, db_path=args.db_path)
+            elif command == "prepare-disclosure":
+                payload = prepare_disclosure(args.case_id, recipient=args.recipient, subject=args.subject, body=args.body, embargo_until=args.embargo_until, actor=args.actor, db_path=args.db_path)
+            elif command == "disclosure-status":
+                payload = set_disclosure_status(args.disclosure_id, args.status, actor=args.actor, db_path=args.db_path)
+            elif command == "request-sandbox":
+                payload = request_sandbox(args.case_id, artifact_sha256=args.artifact_sha256, justification=args.justification, behaviors=args.behavior, provider=args.provider, actor=args.actor, db_path=args.db_path)
+            elif command == "sandbox-status":
+                result = None
+                if args.result_json:
+                    result = json.loads(args.result_json)
+                    if not isinstance(result, dict):
+                        raise ValueError("sandbox result must be a JSON object")
+                payload = set_sandbox_status(args.request_id, args.status, actor=args.actor, result=result, db_path=args.db_path)
+            else:  # pragma: no cover
+                raise ValueError(f"unsupported research workflow command: {command}")
+        else:  # pragma: no cover
+            raise ValueError("unsupported research automation command")
+    except Exception as exc:
+        if getattr(args, "json", False):
+            print(to_json({"ok": False, "error": str(exc)}))
+        else:
+            print(f"error: {exc}")
+        return 1
+    if getattr(args, "json", False):
+        print(to_json(payload))
+    else:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def _run_research_case_command(args: argparse.Namespace) -> int:
     command = args.research_case_cmd
     try:
@@ -2082,6 +2263,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                     for item in payload["recommendations"]:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
+
+        if args.research_cmd in {"intake", "jobs", "workflow"}:
+            return _run_research_automation_command(args)
 
         if args.research_cmd == "case":
             return _run_research_case_command(args)

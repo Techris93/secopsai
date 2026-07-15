@@ -270,6 +270,114 @@ def init_db(db_path: str | None = None) -> None:
                 ON research_rules (case_id, rule_type, status);
             CREATE INDEX IF NOT EXISTS idx_research_events_case_time
                 ON research_case_events (case_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS research_jobs (
+                job_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                status TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                requested_by TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 0,
+                queued_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL,
+                error_code TEXT,
+                error_message TEXT,
+                config_json TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_claims (
+                claim_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                statement TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                supporting_evidence_json TEXT NOT NULL,
+                contradicting_evidence_json TEXT NOT NULL,
+                missing_evidence_json TEXT NOT NULL,
+                limitations_json TEXT NOT NULL,
+                rationale TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_verdicts (
+                verdict_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                rationale TEXT NOT NULL,
+                evidence_ids_json TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_disclosures (
+                disclosure_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                recipient TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                body TEXT NOT NULL,
+                affected_scope_json TEXT NOT NULL,
+                attachments_json TEXT NOT NULL,
+                embargo_until TEXT,
+                approved_by TEXT,
+                sent_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_publication_reviews (
+                review_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                blockers_json TEXT NOT NULL,
+                warnings_json TEXT NOT NULL,
+                checks_json TEXT NOT NULL,
+                waivers_json TEXT NOT NULL,
+                approved_by TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_sandbox_requests (
+                request_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                artifact_sha256 TEXT NOT NULL,
+                justification TEXT NOT NULL,
+                requested_behaviors_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                approved_by TEXT,
+                result_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_research_jobs_case_status
+                ON research_jobs (case_id, status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_jobs_status_time
+                ON research_jobs (status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_claims_case
+                ON research_claims (case_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_verdicts_case
+                ON research_verdicts (case_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_disclosures_case
+                ON research_disclosures (case_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_publication_reviews_case
+                ON research_publication_reviews (case_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_sandbox_case
+                ON research_sandbox_requests (case_id, updated_at DESC);
             """
         )
 
