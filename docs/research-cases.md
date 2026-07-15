@@ -39,6 +39,43 @@ Retractions require a reason, remain visible in the case history, and are
 excluded from readiness, exports, and publication. An active IOC linked to
 retracted evidence blocks publication until its provenance is corrected.
 
+## Detection Rules
+
+Research cases can carry defensive YARA, Sigma, and Semgrep artifacts. Rules
+are stored as text with their purpose, source evidence, structural validation
+result, and case timeline event. SecOpsAI never executes a submitted rule.
+Sigma and Semgrep documents are parsed with safe YAML loading; YARA receives a
+bounded structural preflight (declaration, braces, and condition) rather than
+claiming compiler-level validation.
+
+Attach a rule from inline content or a local UTF-8 file:
+
+```bash
+secopsai research case add-rule RSC-... \
+  --rule-type sigma \
+  --name suspicious-package-execution \
+  --file ./rules/suspicious-package.yml \
+  --purpose "Detect process execution associated with package installation." \
+  --source-evidence-id EVD-...
+```
+
+Each active rule must pass structural validation before a case can become
+publication-ready. Failed rules remain visible for analyst review and can be
+replaced idempotently by repeating the same case, type, and name. Retract a
+replaced rule without deleting its history:
+
+```bash
+secopsai research case retract RSC-... \
+  --item-type rule \
+  --item-id RUL-... \
+  --reason "Replaced with the reviewed production rule"
+```
+
+Case JSON and Markdown exports include active rule content and validation
+status, making published detections reproducible alongside the research
+evidence. Rules are optional for publication; when present, every active rule
+must pass the structural gate.
+
 ## Create And Build A Case
 
 For a fast, safe package-research start, use the guided command. It records a
@@ -109,6 +146,7 @@ A case cannot create a blog draft until all deterministic gates pass:
 - confidence of 60 or greater
 - disclosure completed or explicitly marked not required
 - case status set to `ready_to_publish`
+- every attached active detection rule passes structural validation
 
 Missing IOCs or linked findings are warnings, not automatic blockers, because a
 valid investigation may produce no attacker infrastructure or local exposure.
@@ -140,6 +178,7 @@ Open **Research** in the canonical SecOpsAI dashboard to:
 - review the case queue and publication blockers
 - manage status, severity, confidence, owner, and disclosure
 - add subjects, evidence, IOCs, notes, and finding links
+- review attached detection rules and their validation status
 - download a Markdown case report
 - create a review-only blog draft when readiness passes
 

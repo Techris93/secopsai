@@ -218,6 +218,24 @@ def init_db(db_path: str | None = None) -> None:
                 FOREIGN KEY (source_evidence_id) REFERENCES research_evidence (evidence_id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS research_rules (
+                rule_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                rule_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                content TEXT NOT NULL,
+                validation_status TEXT NOT NULL,
+                validation_json TEXT NOT NULL,
+                source_evidence_id TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (case_id, rule_type, name),
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE,
+                FOREIGN KEY (source_evidence_id) REFERENCES research_evidence (evidence_id) ON DELETE SET NULL
+            );
+
             CREATE TABLE IF NOT EXISTS research_case_findings (
                 case_id TEXT NOT NULL,
                 finding_id TEXT NOT NULL,
@@ -248,6 +266,8 @@ def init_db(db_path: str | None = None) -> None:
                 ON research_evidence (case_id, evidence_type);
             CREATE INDEX IF NOT EXISTS idx_research_iocs_case_type
                 ON research_iocs (case_id, ioc_type);
+            CREATE INDEX IF NOT EXISTS idx_research_rules_case_type
+                ON research_rules (case_id, rule_type, status);
             CREATE INDEX IF NOT EXISTS idx_research_events_case_time
                 ON research_case_events (case_id, created_at);
             """

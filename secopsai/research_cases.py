@@ -11,12 +11,18 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import soc_store
 
+try:
+    import yaml
+except ImportError:  # pragma: no cover - exercised by minimal system Python
+    yaml = None  # type: ignore[assignment]
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REPORT_DIR = ROOT / "reports" / "research" / "cases"
 RESEARCH_EXPORT_SCHEMA_VERSION = "secopsai.research.case.v1"
 RESEARCH_EXPORT_MANIFEST_VERSION = "secopsai.research.export-manifest.v1"
 LOCAL_ARTIFACT_MAX_BYTES = 250 * 1024 * 1024
+RULE_MAX_BYTES = 512 * 1024
 
 CASE_TYPES = {
     "malicious_package",
@@ -61,6 +67,9 @@ EVIDENCE_TYPES = {
 }
 IOC_TYPES = {"domain", "url", "ipv4", "ipv6", "sha256", "sha1", "md5", "email", "wallet", "file_path", "other"}
 CONFIDENCE_LEVELS = {"low": 25, "medium": 55, "high": 80, "confirmed": 100}
+RULE_TYPES = {"yara", "sigma", "semgrep"}
+RULE_STATUSES = {"active", "retracted"}
+RULE_VALIDATION_STATUSES = {"passed", "failed"}
 CASE_ID_RE = re.compile(r"^RSC-[A-F0-9]{12}$")
 SHA256_RE = re.compile(r"^[a-fA-F0-9]{64}$")
 
@@ -139,6 +148,80 @@ def _sha256_file(path: Path, *, max_bytes: int = LOCAL_ARTIFACT_MAX_BYTES) -> tu
     except OSError as exc:
         raise ValueError(f"could not read artifact: {exc}") from exc
     return digest.hexdigest(), total
+
+
+def load_rule_file(path_value: str, *, max_bytes: int = RULE_MAX_BYTES) -> str:
+    """Read a local rule file without executing or interpreting it as code."""
+    raw_path = _clean(path_value, field="rule_path", required=True, limit=4096)
+    path = Path(raw_path).expanduser()
+    if path.is_symlink():
+        raise ValueError("rule file must not be a symbolic link")
+    try:
+        file_stat = path.stat()
+    except FileNotFoundError as exc:
+        raise ValueError(f"rule file not found: {path}") from exc
+    if not stat.S_ISREG(file_stat.st_mode):
+        raise ValueError("rule file must be a regular file")
+    if file_stat.st_size > max_bytes:
+        raise ValueError(f"rule file exceeds the {max_bytes} byte safety limit")
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"could not read rule file: {exc}") from exc
+
+
+def validate_rule(rule_type: str, content: str) -> Dict[str, Any]:
+    """Perform bounded structural checks; never execute a submitted rule."""
+    rule_type = _choice(rule_type, field="rule_type", allowed=RULE_TYPES)
+    content = _clean(content, field="content", required=True, limit=RULE_MAX_BYTES)
+    errors: List[str] = []
+    validator = "structural"
+    try:
+        if rule_type == "yara":
+            if not re.search(r"\brule\s+[A-Za-z_][A-Za-z0-9_]*\s*\{", content):
+                errors.append("YARA rule declaration is missing")
+            if content.count("{") != content.count("}"):
+                errors.append("YARA braces are unbalanced")
+            if not re.search(r"\bcondition\s*:", content):
+                errors.append("YARA condition section is missing")
+        else:
+            if yaml is None:
+                errors.append("PyYAML is required for Sigma and Semgrep validation")
+                parsed = None
+            else:
+                parsed = yaml.safe_load(content)
+            if not isinstance(parsed, dict):
+                errors.append(f"{rule_type} document must be a mapping")
+            elif rule_type == "sigma":
+                for field in ("title", "logsource", "detection"):
+                    if field not in parsed:
+                        errors.append(f"Sigma field is missing: {field}")
+                if "detection" in parsed and not isinstance(parsed["detection"], dict):
+                    errors.append("Sigma detection must be a mapping")
+            else:
+                rules = parsed.get("rules") if isinstance(parsed, dict) else None
+                if not isinstance(rules, list) or not rules:
+                    errors.append("Semgrep document must contain a non-empty rules list")
+                else:
+                    for index, item in enumerate(rules):
+                        if not isinstance(item, dict):
+                            errors.append(f"Semgrep rule {index + 1} must be a mapping")
+                            continue
+                        if not item.get("id"):
+                            errors.append(f"Semgrep rule {index + 1} is missing id")
+                        pattern_keys = {"pattern", "patterns", "pattern-either", "pattern-regex", "metavariable-regex", "paths"}
+                        if not pattern_keys.intersection(item):
+                            errors.append(f"Semgrep rule {index + 1} has no supported pattern selector")
+    except Exception as exc:
+        if yaml is not None and isinstance(exc, yaml.YAMLError):
+            errors.append(f"{rule_type} YAML could not be parsed: {exc.__class__.__name__}")
+        else:
+            raise
+    return {
+        "status": "passed" if not errors else "failed",
+        "validator": validator,
+        "errors": errors,
+    }
 
 
 def _decode(value: Any, default: Any) -> Any:
@@ -261,6 +344,7 @@ def list_cases(
                        (SELECT COUNT(*) FROM research_subjects s WHERE s.case_id = c.case_id AND s.status = 'active') AS subject_count,
                        (SELECT COUNT(*) FROM research_evidence e WHERE e.case_id = c.case_id AND e.status = 'active') AS evidence_count,
                        (SELECT COUNT(*) FROM research_iocs i WHERE i.case_id = c.case_id AND i.status = 'active') AS ioc_count,
+                       (SELECT COUNT(*) FROM research_rules r WHERE r.case_id = c.case_id AND r.status = 'active') AS rule_count,
                        (SELECT COUNT(*) FROM research_case_findings f WHERE f.case_id = c.case_id) AS finding_count
                 FROM research_cases c
                 """
@@ -306,6 +390,13 @@ def get_case(case_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
             value = dict(item)
             value["tags"] = _decode(value.pop("tags_json", "[]"), [])
             result["iocs"].append(value)
+        result["rules"] = []
+        for item in connection.execute(
+            "SELECT * FROM research_rules WHERE case_id = ? ORDER BY rule_type, name, rule_id", (case_id,)
+        ).fetchall():
+            value = dict(item)
+            value["validation"] = _decode(value.pop("validation_json", "{}"), {})
+            result["rules"].append(value)
         result["findings"] = [
             dict(item)
             for item in connection.execute(
@@ -513,6 +604,80 @@ def add_local_artifact(
         db_path=db_path,
         actor=actor,
     )
+
+
+def add_rule(
+    case_id: str,
+    *,
+    rule_type: str,
+    name: str,
+    content: str,
+    purpose: str = "",
+    source_evidence_id: Optional[str] = None,
+    db_path: Optional[str] = None,
+    actor: str = "analyst",
+) -> Dict[str, Any]:
+    """Attach a defensive detection rule after bounded structural validation."""
+    case_id = _case_id(case_id)
+    get_case(case_id, db_path=db_path)
+    rule_type = _choice(rule_type, field="rule_type", allowed=RULE_TYPES)
+    name = _clean(name, field="name", required=True, limit=240)
+    content = _clean(content, field="content", required=True, limit=RULE_MAX_BYTES)
+    purpose = _clean(purpose, field="purpose", limit=2000)
+    source_evidence_id = _clean(source_evidence_id, field="source_evidence_id", limit=32) or None
+    validation = validate_rule(rule_type, content)
+    stable = hashlib.sha256(f"{case_id}|{rule_type}|{name}".encode()).hexdigest()[:16].upper()
+    rule_id = f"RUL-{stable}"
+    now = soc_store.utc_now()
+    with closing(soc_store.connect(db_path)) as connection:
+        if source_evidence_id:
+            exists = connection.execute(
+                "SELECT 1 FROM research_evidence WHERE evidence_id = ? AND case_id = ? AND status = 'active'",
+                (source_evidence_id, case_id),
+            ).fetchone()
+            if exists is None:
+                raise ValueError(f"source evidence does not belong to case: {source_evidence_id}")
+        connection.execute(
+            """
+            INSERT INTO research_rules (
+                rule_id, case_id, rule_type, name, purpose, content,
+                validation_status, validation_json, source_evidence_id,
+                status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+            ON CONFLICT(case_id, rule_type, name) DO UPDATE SET
+                purpose = excluded.purpose,
+                content = excluded.content,
+                validation_status = excluded.validation_status,
+                validation_json = excluded.validation_json,
+                source_evidence_id = excluded.source_evidence_id,
+                status = 'active',
+                updated_at = excluded.updated_at
+            """,
+            (
+                rule_id,
+                case_id,
+                rule_type,
+                name,
+                purpose,
+                content,
+                validation["status"],
+                _json(validation),
+                source_evidence_id,
+                now,
+                now,
+            ),
+        )
+        _record_event(
+            connection,
+            case_id,
+            "rule_added",
+            f"Attached {rule_type} detection rule {name} ({validation['status']}).",
+            actor=actor,
+            data={"rule_id": rule_id, "rule_type": rule_type, "validation": validation},
+        )
+        connection.execute("UPDATE research_cases SET updated_at = ? WHERE case_id = ?", (now, case_id))
+        connection.commit()
+    return get_case(case_id, db_path=db_path)
 
 
 def start_package_case(
@@ -736,13 +901,14 @@ def retract_item(
 ) -> Dict[str, Any]:
     case_id = _case_id(case_id)
     get_case(case_id, db_path=db_path)
-    item_type = _choice(item_type, field="item_type", allowed={"subject", "evidence", "ioc"})
+    item_type = _choice(item_type, field="item_type", allowed={"subject", "evidence", "ioc", "rule"})
     item_id = _clean(item_id, field="item_id", required=True, limit=40).upper()
     reason = _clean(reason, field="reason", required=True, limit=2000)
     table, id_column, prefix = {
         "subject": ("research_subjects", "subject_id", "SUB-"),
         "evidence": ("research_evidence", "evidence_id", "EVD-"),
         "ioc": ("research_iocs", "ioc_id", "IOC-"),
+        "rule": ("research_rules", "rule_id", "RUL-"),
     }[item_type]
     if not item_id.startswith(prefix):
         raise ValueError(f"invalid {item_type} item id")
@@ -776,6 +942,7 @@ def publication_readiness(case: Dict[str, Any]) -> Dict[str, Any]:
     source_evidence = [item for item in evidence if item.get("evidence_type") in {"source", "registry_metadata"} and item.get("locator")]
     active_evidence_ids = {item.get("evidence_id") for item in evidence}
     active_iocs = [item for item in (case.get("iocs") or []) if item.get("status", "active") == "active"]
+    active_rules = [item for item in (case.get("rules") or []) if item.get("status", "active") == "active"]
     if len(str(case.get("title") or "").strip()) < 12:
         blockers.append("title must clearly identify the research subject")
     if len(summary) < 80:
@@ -794,6 +961,8 @@ def publication_readiness(case: Dict[str, Any]) -> Dict[str, Any]:
         blockers.append("case status must be ready_to_publish or published")
     if any(item.get("source_evidence_id") and item.get("source_evidence_id") not in active_evidence_ids for item in active_iocs):
         blockers.append("an active IOC references retracted or missing evidence")
+    if any(item.get("validation_status") != "passed" for item in active_rules):
+        blockers.append("every active detection rule must pass structural validation")
     if not active_iocs:
         warnings.append("no structured IOCs are attached; explicitly state that none were found in the article")
     if not case.get("findings"):
@@ -847,6 +1016,20 @@ def _case_markdown(case: Dict[str, Any], *, readiness: Optional[Dict[str, Any]] 
         lines.append(f"- `{item['ioc_type']}`: `{item['value']}` (confidence {item['confidence']})")
     if not [item for item in (case.get("iocs") or []) if item.get("status", "active") == "active"]:
         lines.append("- No structured IOCs recorded.")
+    lines.extend(["", "## Detection Rules", ""])
+    active_rules = [item for item in (case.get("rules") or []) if item.get("status", "active") == "active"]
+    if not active_rules:
+        lines.append("- No detection rules recorded.")
+    for item in active_rules:
+        lines.append(
+            f"### {item['name']} (`{item['rule_type']}`, validation `{item['validation_status']}`)"
+        )
+        if item.get("purpose"):
+            lines.extend(["", item["purpose"]])
+        content = str(item.get("content") or "")
+        longest_fence = max((len(match.group(0)) for match in re.finditer(r"`+", content)), default=2)
+        fence = "`" * max(3, longest_fence + 1)
+        lines.extend(["", fence + item["rule_type"], content, fence, ""])
     lines.extend(["", "## Related SecOpsAI Findings", ""])
     for item in case.get("findings") or []:
         lines.append(f"- `{item['finding_id']}` ({item['relationship']})")

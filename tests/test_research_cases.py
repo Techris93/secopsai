@@ -22,6 +22,7 @@ from secopsai.research_cases import (
     add_evidence,
     add_local_artifact,
     add_ioc,
+    add_rule,
     add_subject,
     create_case,
     draft_case_blog,
@@ -180,6 +181,110 @@ class ResearchCaseTests(unittest.TestCase):
 
             self.assertEqual(linked["findings"][0]["finding_id"], "SCM-CASE-LINK")
             self.assertEqual(linked["findings"][0]["relationship"], "derived_from")
+
+    def test_detection_rules_are_validated_exported_and_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = str(Path(temp_dir) / "soc.db")
+            case = self._build_ready_case(db_path)
+            sigma = """title: Suspicious package execution\nlogsource:\n  product: application\ndetection:\n  selection:\n    EventID: 1\n  condition: selection\n"""
+            yara = """rule SuspiciousPackage {\n  strings:\n    $domain = \"telemetry.example\"\n  condition:\n    $domain\n}\n"""
+            semgrep = """rules:\n  - id: suspicious-package-egress\n    message: Detects suspicious package egress\n    severity: WARNING\n    pattern: requests.post($URL, ...)\n"""
+
+            case = add_rule(
+                case["case_id"],
+                rule_type="sigma",
+                name="suspicious-package-execution",
+                content=sigma,
+                purpose="Detect process execution associated with package installation.",
+                db_path=db_path,
+            )
+            case = add_rule(case["case_id"], rule_type="yara", name="suspicious-package", content=yara, db_path=db_path)
+            case = add_rule(case["case_id"], rule_type="semgrep", name="suspicious-package-egress", content=semgrep, db_path=db_path)
+
+            self.assertEqual(len(case["rules"]), 3)
+            self.assertTrue(all(item["validation_status"] == "passed" for item in case["rules"]))
+            self.assertTrue(case["publication_readiness"]["ready"])
+
+            exported = export_case(case["case_id"], db_path=db_path, output_dir=str(Path(temp_dir) / "reports"))
+            export_payload = json.loads(Path(exported["json_report"]).read_text(encoding="utf-8"))
+            self.assertEqual(len(export_payload["rules"]), 3)
+            markdown = Path(exported["markdown_report"]).read_text(encoding="utf-8")
+            self.assertIn("Detection Rules", markdown)
+            self.assertIn("suspicious-package-egress", markdown)
+            self.assertIn("telemetry.example", markdown)
+
+            repeated = export_case(case["case_id"], db_path=db_path, output_dir=str(Path(temp_dir) / "repeat"))
+            self.assertEqual(Path(exported["json_report"]).read_bytes(), Path(repeated["json_report"]).read_bytes())
+            self.assertEqual(Path(exported["markdown_report"]).read_bytes(), Path(repeated["markdown_report"]).read_bytes())
+
+            updated = add_rule(
+                case["case_id"],
+                rule_type="sigma",
+                name="suspicious-package-execution",
+                content=sigma.replace("EventID: 1", "EventID: 7"),
+                db_path=db_path,
+            )
+            self.assertEqual(len(updated["rules"]), 3)
+            self.assertIn("EventID: 7", next(item for item in updated["rules"] if item["rule_type"] == "sigma")["content"])
+
+    def test_failed_rule_validation_blocks_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = str(Path(temp_dir) / "soc.db")
+            case = self._build_ready_case(db_path)
+            invalid = add_rule(
+                case["case_id"],
+                rule_type="sigma",
+                name="incomplete-rule",
+                content="title: Missing required fields\n",
+                db_path=db_path,
+            )
+
+            rule = invalid["rules"][0]
+            self.assertEqual(rule["validation_status"], "failed")
+            self.assertFalse(invalid["publication_readiness"]["ready"])
+            self.assertIn("every active detection rule must pass structural validation", invalid["publication_readiness"]["blockers"])
+
+            retracted = retract_item(
+                invalid["case_id"],
+                item_type="rule",
+                item_id=rule["rule_id"],
+                reason="Replaced with a reviewed rule.",
+                db_path=db_path,
+            )
+            self.assertEqual(retracted["rules"][0]["status"], "retracted")
+            self.assertTrue(retracted["publication_readiness"]["ready"])
+
+    def test_cli_add_rule_reads_a_local_file_without_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = str(root / "soc.db")
+            case = create_case(title="CLI detection rule case", db_path=db_path)
+            rule_file = root / "rule.yml"
+            rule_file.write_text(
+                "title: CLI rule\nlogsource:\n  product: app\ndetection:\n  selection:\n    EventID: 1\n  condition: selection\n",
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = cli.main([
+                    "--json",
+                    "research",
+                    "case",
+                    "add-rule",
+                    case["case_id"],
+                    "--rule-type",
+                    "sigma",
+                    "--name",
+                    "cli-rule",
+                    "--file",
+                    str(rule_file),
+                    "--db-path",
+                    db_path,
+                ])
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["rules"][0]["name"], "cli-rule")
+            self.assertEqual(payload["rules"][0]["validation_status"], "passed")
 
     def test_retraction_preserves_history_and_excludes_inactive_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
