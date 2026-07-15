@@ -304,7 +304,8 @@ class PackagistAdapter(RegistryAdapter):
     artifact_hosts = ("repo.packagist.org", "github.com", "codeload.github.com")
 
     def metadata_url(self, package: str) -> str:
-        return f"https://repo.packagist.org/p2/{urllib.parse.quote(package, safe="/")}.json"
+        encoded = urllib.parse.quote(package, safe="/")
+        return f"https://repo.packagist.org/p2/{encoded}.json"
 
     def resolve(self, package: str, requested_version: str, fetcher: SafeFetcher) -> RegistryMetadata:
         package = _safe_package(package)
@@ -325,7 +326,8 @@ class GoAdapter(RegistryAdapter):
     artifact_hosts = ("proxy.golang.org",)
 
     def metadata_url(self, package: str) -> str:
-        return f"https://proxy.golang.org/{urllib.parse.quote(package, safe="/@")}/@v/list"
+        encoded = urllib.parse.quote(package, safe="/@")
+        return f"https://proxy.golang.org/{encoded}/@v/list"
 
     def resolve(self, package: str, requested_version: str, fetcher: SafeFetcher) -> RegistryMetadata:
         package = _safe_package(package)
@@ -367,7 +369,8 @@ class OpenVSXAdapter(RegistryAdapter):
     def metadata_url(self, package: str) -> str:
         if "/" not in package:
             raise IntakeError("Open VSX package must use namespace/name notation")
-        return f"https://open-vsx.org/api/{urllib.parse.quote(package, safe="/")}"
+        encoded = urllib.parse.quote(package, safe="/")
+        return f"https://open-vsx.org/api/{encoded}"
 
     def resolve(self, package: str, requested_version: str, fetcher: SafeFetcher) -> RegistryMetadata:
         package = _safe_package(package)
