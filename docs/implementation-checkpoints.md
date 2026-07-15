@@ -26,8 +26,8 @@ Added request, approval, status, and sanitized-result records. The default provi
 
 ## Verification
 
-- Core virtualenv suite: 265 passed, 13 warnings, 4 subtests passed.
-- New intake/workflow suite: 6 passed.
+- Core virtualenv suite: 266 passed, 14 warnings, 4 subtests passed.
+- New intake/workflow suite: 7 passed.
 - Dashboard research automation suite: 3 passed.
 - Dashboard JavaScript and Worker syntax checks: passed.
 - Dashboard repository has no `build` script; its supported deployment is static Pages/Worker serving and is validated with `npm run check` plus Cloudflare deployment checks.
