@@ -30,6 +30,7 @@ secopsai turns OpenClaw, Hermes Agent, and host OS telemetry into repeatable, ex
 - [Operator Runbook](operator-runbook.md)
 - [Findings Triage Guide](findings-triage-guide.md)
 - [Research And Verification](research-and-verification.md)
+- [Research Discovery Platform](research-discovery.md)
 - [Triage Orchestrator](triage-orchestrator.md)
 - [Adaptive Response Layer](adaptive-response.md)
 - [Rules Registry](rules-registry.md)

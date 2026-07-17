@@ -534,6 +534,40 @@ def _metadata_summary(metadata: RegistryMetadata) -> Dict[str, Any]:
     }
 
 
+def collect_package_intake(
+    *,
+    ecosystem: str,
+    package: str,
+    version: str = "",
+    fetcher: Optional[SafeFetcher] = None,
+) -> Dict[str, Any]:
+    """Collect one package into quarantine without requiring a research case."""
+    adapter = get_adapter(ecosystem)
+    fetcher = fetcher or SafeFetcher()
+    metadata = adapter.resolve(package, version, fetcher)
+    final_url, _headers, artifact = fetcher.get(metadata.artifact_url, allowed_hosts=adapter.artifact_hosts, max_bytes=MAX_ARTIFACT_BYTES)
+    digest = hashlib.sha256(artifact).hexdigest()
+    filename = Path(urllib.parse.urlparse(final_url).path).name or f"{metadata.package}-{metadata.version}.artifact"
+    quarantine = _quarantine_path(digest, filename)
+    if not quarantine.exists():
+        quarantine.write_bytes(artifact)
+        try:
+            os.chmod(quarantine, 0o600)
+        except OSError:
+            pass
+    analysis = inspect_archive(artifact, filename)
+    package_summary = _metadata_summary(metadata)
+    package_summary.update({"artifact_sha256": digest, "artifact_bytes": len(artifact), "artifact_url_final": final_url})
+    return {
+        "ok": True,
+        "metadata": package_summary,
+        "analysis": analysis,
+        "quarantine": {"artifact_id": digest, "bytes": len(artifact), "locator": f"quarantine://{digest}"},
+        "attached": False,
+        "safety": {"execution_performed": False, "extracted_to_filesystem": False, "raw_artifact_sent_to_ai": False},
+    }
+
+
 def run_package_intake(
     *,
     case_id: str,
@@ -547,32 +581,9 @@ def run_package_intake(
 ) -> Dict[str, Any]:
     """Collect and statically inspect one package; attach only when requested."""
     get_case(case_id, db_path=db_path)
-    adapter = get_adapter(ecosystem)
-    fetcher = fetcher or SafeFetcher()
-    metadata = adapter.resolve(package, version, fetcher)
-    final_url, headers, artifact = fetcher.get(metadata.artifact_url, allowed_hosts=adapter.artifact_hosts, max_bytes=MAX_ARTIFACT_BYTES)
-    digest = hashlib.sha256(artifact).hexdigest()
-    filename = Path(urllib.parse.urlparse(final_url).path).name or f"{metadata.package}-{metadata.version}.artifact"
-    quarantine = _quarantine_path(digest, filename)
-    if not quarantine.exists():
-        quarantine.write_bytes(artifact)
-        try:
-            os.chmod(quarantine, 0o600)
-        except OSError:
-            pass
-    analysis = inspect_archive(artifact, filename)
-    package_summary = _metadata_summary(metadata)
-    package_summary.update({"artifact_sha256": digest, "artifact_bytes": len(artifact), "artifact_url_final": final_url})
-    result: Dict[str, Any] = {
-        "ok": True,
-        "case_id": case_id,
-        "metadata": package_summary,
-        "analysis": analysis,
-        "quarantine": {"artifact_id": digest, "bytes": len(artifact), "locator": f"quarantine://{digest}"},
-        "attached": False,
-        "evidence_ids": [],
-        "safety": {"execution_performed": False, "extracted_to_filesystem": False, "raw_artifact_sent_to_ai": False},
-    }
+    result = collect_package_intake(ecosystem=ecosystem, package=package, version=version, fetcher=fetcher)
+    result["case_id"] = case_id
+    result["evidence_ids"] = []
     if attach:
         result.update(attach_intake_result(result, db_path=db_path, actor=actor))
     return result

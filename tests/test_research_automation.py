@@ -17,6 +17,7 @@ from secopsai.research_workflow import (
     run_intake_job,
     set_disclosure_status,
     set_sandbox_status,
+    approve_sandbox_submission,
 )
 from secopsai.research_cases import create_case, get_case
 
@@ -131,7 +132,9 @@ def test_workflow_records_human_gates(tmp_path, monkeypatch):
     assert set_disclosure_status(disclosure["disclosure_id"], "approved", db_path=db)["status"] == "approved"
     artifact = next(item for item in get_case(case["case_id"], db_path=db)["evidence"] if item["evidence_type"] == "package_artifact")
     sandbox = request_sandbox(case["case_id"], artifact_sha256=artifact["sha256"], justification="Need runtime confirmation before publication.", behaviors=["network"], db_path=db)
-    assert set_sandbox_status(sandbox["request_id"], "approved", db_path=db)["status"] == "approved"
+    with pytest.raises(ValueError, match="acknowledgment"):
+        approve_sandbox_submission(sandbox["request_id"], db_path=db)
+    assert approve_sandbox_submission(sandbox["request_id"], public_submission_acknowledged=True, db_path=db)["status"] == "approved"
     review = publication_safety_check(case["case_id"], db_path=db)
     assert review["approval_required"] is True
     assert review["status"] in {"needs_approval", "blocked"}

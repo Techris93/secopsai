@@ -104,6 +104,23 @@ from secopsai.research_cases import (
 )
 from secopsai.research_watchlists import promote_watchlist_packages
 from secopsai.research_intake import ADAPTERS as RESEARCH_INTAKE_ADAPTERS, preview_package as preview_research_package
+from secopsai.research_discovery import (
+    capability_registry as research_capability_registry,
+    create_monitor as create_research_monitor,
+    create_watchlist as create_research_watchlist,
+    get_candidate as get_research_candidate,
+    ingest_registry_metadata,
+    list_candidates as list_research_candidates,
+    list_alerts as list_research_alerts,
+    list_monitors as list_research_monitors,
+    list_watchlists as list_research_watchlists,
+    run_monitor as run_research_monitor,
+    run_due_monitors as run_due_research_monitors,
+    recover_stale_monitor_runs,
+)
+from secopsai.research_analysis import compare_intakes, compare_packages, correlate_candidates, inspect_nuget_archive, list_campaigns
+from secopsai.research_sandbox import poll_sandbox_request, submit_sandbox_request, provider_status as sandbox_provider_status
+from secopsai.research_delivery import send_approved_disclosure, send_research_alert
 from secopsai.research_workflow import (
     attach_intake_job,
     build_evidence_matrix,
@@ -112,6 +129,7 @@ from secopsai.research_workflow import (
     get_sandbox_request,
     list_research_jobs,
     approve_publication_review,
+    approve_sandbox_submission,
     cancel_research_job,
     recover_stale_jobs,
     retry_research_job,
@@ -1062,6 +1080,105 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     research = sub.add_parser("research", help="Generate source-backed research reports and preflight checks")
     research_sub = research.add_subparsers(dest="research_cmd", required=True)
 
+    research_ecosystems = research_sub.add_parser("ecosystems", help="Show research ecosystem capabilities and coverage modes")
+
+    research_watchlist = research_sub.add_parser("watchlist", help="Manage cross-ecosystem research watchlists")
+    research_watchlist_sub = research_watchlist.add_subparsers(dest="research_watchlist_cmd", required=True)
+    research_watchlist_sub.add_parser("list", help="List active research watchlists").add_argument("--ecosystem", default=None)
+    research_watchlist_add = research_watchlist_sub.add_parser("add", help="Add a package, brand, publisher, or namespace watchlist")
+    research_watchlist_add.add_argument("--ecosystem", required=True)
+    research_watchlist_add.add_argument("--watch-type", choices=["package", "namespace", "publisher", "brand", "repository", "organization"], default="package")
+    research_watchlist_add.add_argument("--identifier", required=True)
+    research_watchlist_add.add_argument("--brand", default="")
+    research_watchlist_add.add_argument("--known-publisher", action="append", default=[])
+    research_watchlist_add.add_argument("--known-repository", action="append", default=[])
+    research_watchlist_add.add_argument("--threshold", type=float, default=70.0)
+    research_watchlist_add.add_argument("--priority", choices=["low", "normal", "high", "critical"], default="normal")
+    research_watchlist_add.add_argument("--owner", default="")
+    research_watchlist_add.add_argument("--reason", default="")
+    research_watchlist_add.add_argument("--db-path", default=None)
+
+    research_monitor = research_sub.add_parser("monitor", help="Manage durable registry monitors")
+    research_monitor_sub = research_monitor.add_subparsers(dest="research_monitor_cmd", required=True)
+    monitor_list = research_monitor_sub.add_parser("list")
+    monitor_list.add_argument("--ecosystem", default=None)
+    monitor_list.add_argument("--db-path", default=None)
+    monitor_create = research_monitor_sub.add_parser("create")
+    monitor_create.add_argument("--ecosystem", required=True)
+    monitor_create.add_argument("--watchlist-id", default=None)
+    monitor_create.add_argument("--name", default="")
+    monitor_create.add_argument("--interval-seconds", type=int, default=3600)
+    monitor_create.add_argument("--priority", choices=["low", "normal", "high", "critical"], default="normal")
+    monitor_create.add_argument("--db-path", default=None)
+    monitor_run = research_monitor_sub.add_parser("run")
+    monitor_run.add_argument("monitor_id")
+    monitor_run.add_argument("--db-path", default=None)
+    monitor_due = research_monitor_sub.add_parser("run-due")
+    monitor_due.add_argument("--limit", type=int, default=25)
+    monitor_due.add_argument("--db-path", default=None)
+    monitor_recover = research_monitor_sub.add_parser("recover-stale")
+    monitor_recover.add_argument("--max-age-seconds", type=int, default=3600)
+    monitor_recover.add_argument("--db-path", default=None)
+
+    research_candidate = research_sub.add_parser("candidate", help="Review registry research candidates")
+    research_candidate_sub = research_candidate.add_subparsers(dest="research_candidate_cmd", required=True)
+    candidate_list = research_candidate_sub.add_parser("list")
+    candidate_list.add_argument("--status", default=None)
+    candidate_list.add_argument("--ecosystem", default=None)
+    candidate_list.add_argument("--limit", type=int, default=100)
+    candidate_list.add_argument("--db-path", default=None)
+    candidate_show = research_candidate_sub.add_parser("show")
+    candidate_show.add_argument("candidate_id")
+    candidate_show.add_argument("--db-path", default=None)
+
+    research_compare = research_sub.add_parser("compare", help="Compare two normalized, statically collected package intake JSON files")
+    research_compare.add_argument("--left", required=True, help="Path to the first normalized intake JSON")
+    research_compare.add_argument("--right", required=True, help="Path to the second normalized intake JSON")
+    research_compare.add_argument("--db-path", default=None)
+    research_compare_packages = research_sub.add_parser("compare-packages", help="Safely collect and compare two exact package targets")
+    for prefix in ("left", "right"):
+        research_compare_packages.add_argument(f"--{prefix}-ecosystem", required=True)
+        research_compare_packages.add_argument(f"--{prefix}-package", required=True)
+        research_compare_packages.add_argument(f"--{prefix}-version", default="")
+    research_compare_packages.add_argument("--db-path", default=None)
+
+    research_campaign = research_sub.add_parser("campaign", help="Correlate candidate evidence into reviewable campaign links")
+    research_campaign_sub = research_campaign.add_subparsers(dest="research_campaign_cmd", required=True)
+    campaign_correlate = research_campaign_sub.add_parser("correlate")
+    campaign_correlate.add_argument("--db-path", default=None)
+    campaign_list = research_campaign_sub.add_parser("list")
+    campaign_list.add_argument("--limit", type=int, default=100)
+    campaign_list.add_argument("--db-path", default=None)
+
+    research_sandbox = research_sub.add_parser("sandbox", help="Inspect and operate approval-gated sandbox requests")
+    research_sandbox_sub = research_sandbox.add_subparsers(dest="research_sandbox_cmd", required=True)
+    research_sandbox_sub.add_parser("status")
+    sandbox_submit = research_sandbox_sub.add_parser("submit")
+    sandbox_submit.add_argument("request_id")
+    sandbox_submit.add_argument("--public-submission-acknowledged", action="store_true")
+    sandbox_submit.add_argument("--db-path", default=None)
+    sandbox_poll = research_sandbox_sub.add_parser("poll")
+    sandbox_poll.add_argument("request_id")
+    sandbox_poll.add_argument("--db-path", default=None)
+
+    research_disclosure = research_sub.add_parser("disclosure", help="Deliver approved research disclosures")
+    research_disclosure_sub = research_disclosure.add_subparsers(dest="research_disclosure_cmd", required=True)
+    disclosure_send = research_disclosure_sub.add_parser("send")
+    disclosure_send.add_argument("disclosure_id")
+    disclosure_send.add_argument("--channel", choices=["email", "webhook"], default="email")
+    disclosure_send.add_argument("--db-path", default=None)
+
+    research_alert = research_sub.add_parser("alert", help="Review research discovery alerts")
+    research_alert_sub = research_alert.add_subparsers(dest="research_alert_cmd", required=True)
+    alert_list = research_alert_sub.add_parser("list")
+    alert_list.add_argument("--status", default=None)
+    alert_list.add_argument("--limit", type=int, default=100)
+    alert_list.add_argument("--db-path", default=None)
+    alert_deliver = research_alert_sub.add_parser("deliver")
+    alert_deliver.add_argument("alert_id")
+    alert_deliver.add_argument("--channel", choices=["email", "webhook"], default="email")
+    alert_deliver.add_argument("--db-path", default=None)
+
     research_preflight = research_sub.add_parser("preflight", help="Run telemetry and intel preflight checks")
     research_preflight.add_argument("--workspace-logs", default=None, help="Override adaptive-intel logs directory")
     research_preflight.add_argument("--openclaw-home", default=None, help="Override OpenClaw home directory")
@@ -1345,6 +1462,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     sandbox_status.add_argument("--result-json", default="")
     sandbox_status.add_argument("--actor", default="analyst")
     sandbox_status.add_argument("--db-path", default=None)
+    sandbox_approve = workflow_sub.add_parser("approve-sandbox")
+    sandbox_approve.add_argument("request_id")
+    sandbox_approve.add_argument("--public-submission-acknowledged", action="store_true")
+    sandbox_approve.add_argument("--actor", default="reviewer")
+    sandbox_approve.add_argument("--db-path", default=None)
 
     blog = sub.add_parser("blog", help="Draft, publish, and verify SecOpsAI security blog posts")
     blog_sub = blog.add_subparsers(dest="blog_cmd", required=True)
@@ -1871,7 +1993,75 @@ def maybe_refresh(args: argparse.Namespace) -> Optional[Dict[str, Any]]:
 
 def _run_research_automation_command(args: argparse.Namespace) -> int:
     try:
-        if args.research_cmd == "intake":
+        if args.research_cmd == "ecosystems":
+            payload = research_capability_registry()
+        elif args.research_cmd == "watchlist":
+            if args.research_watchlist_cmd == "list":
+                payload = {"watchlists": list_research_watchlists(ecosystem=args.ecosystem, db_path=getattr(args, "db_path", None))}
+            else:
+                payload = create_research_watchlist(
+                    ecosystem=args.ecosystem,
+                    watch_type=args.watch_type,
+                    identifier=args.identifier,
+                    brand=args.brand,
+                    known_publishers=args.known_publisher,
+                    known_repositories=args.known_repository,
+                    threshold=args.threshold,
+                    priority=args.priority,
+                    owner=args.owner,
+                    reason=args.reason,
+                    db_path=args.db_path,
+                )
+        elif args.research_cmd == "monitor":
+            if args.research_monitor_cmd == "list":
+                payload = {"monitors": list_research_monitors(ecosystem=args.ecosystem, db_path=args.db_path)}
+            elif args.research_monitor_cmd == "create":
+                payload = create_research_monitor(ecosystem=args.ecosystem, watchlist_id=args.watchlist_id, name=args.name, interval_seconds=args.interval_seconds, priority=args.priority, db_path=args.db_path)
+            elif args.research_monitor_cmd == "run-due":
+                payload = run_due_research_monitors(limit=args.limit, db_path=args.db_path)
+            elif args.research_monitor_cmd == "recover-stale":
+                payload = recover_stale_monitor_runs(max_age_seconds=args.max_age_seconds, db_path=args.db_path)
+            else:
+                payload = run_research_monitor(args.monitor_id, db_path=args.db_path)
+        elif args.research_cmd == "candidate":
+            if args.research_candidate_cmd == "list":
+                payload = {"candidates": list_research_candidates(status=args.status, ecosystem=args.ecosystem, limit=args.limit, db_path=args.db_path)}
+            else:
+                payload = get_research_candidate(args.candidate_id, db_path=args.db_path)
+        elif args.research_cmd == "compare":
+            with open(args.left, "r", encoding="utf-8") as left_handle:
+                left_payload = json.load(left_handle)
+            with open(args.right, "r", encoding="utf-8") as right_handle:
+                right_payload = json.load(right_handle)
+            if not isinstance(left_payload, dict) or not isinstance(right_payload, dict):
+                raise ValueError("comparison inputs must be JSON objects")
+            payload = compare_intakes(left_payload, right_payload, db_path=args.db_path)
+        elif args.research_cmd == "compare-packages":
+            payload = compare_packages(left_ecosystem=args.left_ecosystem, left_package=args.left_package, left_version=args.left_version, right_ecosystem=args.right_ecosystem, right_package=args.right_package, right_version=args.right_version, db_path=args.db_path)
+        elif args.research_cmd == "campaign":
+            if args.research_campaign_cmd == "correlate":
+                payload = {"campaigns": correlate_candidates(db_path=args.db_path)}
+            elif args.research_campaign_cmd == "list":
+                payload = {"campaigns": list_campaigns(db_path=args.db_path, limit=args.limit)}
+            else:
+                raise ValueError("unsupported campaign command")
+        elif args.research_cmd == "sandbox":
+            if args.research_sandbox_cmd == "status":
+                payload = sandbox_provider_status()
+            elif args.research_sandbox_cmd == "submit":
+                payload = submit_sandbox_request(args.request_id, db_path=args.db_path, public_acknowledged=args.public_submission_acknowledged)
+            else:
+                payload = poll_sandbox_request(args.request_id, db_path=args.db_path)
+        elif args.research_cmd == "disclosure":
+            if args.research_disclosure_cmd != "send":
+                raise ValueError("unsupported disclosure command")
+            payload = send_approved_disclosure(args.disclosure_id, channel=args.channel, db_path=args.db_path)
+        elif args.research_cmd == "alert":
+            if args.research_alert_cmd == "list":
+                payload = {"alerts": list_research_alerts(status=args.status, limit=args.limit, db_path=args.db_path)}
+            else:
+                payload = send_research_alert(args.alert_id, channel=args.channel, db_path=args.db_path)
+        elif args.research_cmd == "intake":
             if args.research_intake_cmd == "preview":
                 payload = preview_research_package(ecosystem=args.ecosystem, package=args.package, version=args.version)
             elif args.research_intake_cmd == "run":
@@ -1914,6 +2104,8 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                     if not isinstance(result, dict):
                         raise ValueError("sandbox result must be a JSON object")
                 payload = set_sandbox_status(args.request_id, args.status, actor=args.actor, result=result, db_path=args.db_path)
+            elif command == "approve-sandbox":
+                payload = approve_sandbox_submission(args.request_id, actor=args.actor, public_submission_acknowledged=args.public_submission_acknowledged, db_path=args.db_path)
             else:  # pragma: no cover
                 raise ValueError(f"unsupported research workflow command: {command}")
         else:  # pragma: no cover
@@ -2264,7 +2456,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
 
-        if args.research_cmd in {"intake", "jobs", "workflow"}:
+        if args.research_cmd in {"ecosystems", "watchlist", "monitor", "candidate", "compare", "compare-packages", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "workflow"}:
             return _run_research_automation_command(args)
 
         if args.research_cmd == "case":
