@@ -96,7 +96,8 @@ def send_approved_disclosure(disclosure_id: str, *, channel: str = "email", db_p
     destination = disclosure["recipient"]
     try:
         if channel == "email":
-            result = send_email(recipient=destination, subject=disclosure["subject"], body=disclosure["body"])
+            sender = os.environ.get("SECOPSAI_DISCLOSURE_FROM_EMAIL", "security@secopsai.dev")
+            result = send_email(recipient=destination, subject=disclosure["subject"], body=disclosure["body"], sender=sender)
         elif channel == "webhook":
             endpoint = os.environ.get("SECOPSAI_DISCLOSURE_WEBHOOK_URL", "")
             secret = os.environ.get("SECOPSAI_DISCLOSURE_WEBHOOK_SECRET", "")
@@ -137,7 +138,8 @@ def send_research_alert(alert_id: str, *, channel: str = "email", db_path: str |
             "evidence": _redact(alert.get("evidence_json", "")),
         }
         if channel == "email":
-            result = send_email(recipient=destination, subject=f"SecOpsAI research alert: {alert.get('severity', 'review')}", body=json.dumps(event, indent=2))
+            sender = os.environ.get("SECOPSAI_RESEARCH_FROM_EMAIL", "research@secopsai.dev")
+            result = send_email(recipient=destination, subject=f"SecOpsAI research alert: {alert.get('severity', 'review')}", body=json.dumps(event, indent=2), sender=sender)
         elif channel == "webhook":
             endpoint = os.environ.get("SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL", "")
             secret = os.environ.get("SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET", "")

@@ -62,6 +62,77 @@ def test_all_requested_ecosystems_have_adapters():
     assert {"npm", "pypi", "nuget", "maven", "rubygems", "packagist", "go", "open-vsx"} <= set(ADAPTERS)
 
 
+def test_rubygems_adapter_uses_current_metadata_api():
+    payload = {
+        "name": "stripe",
+        "version": "18.2.0",
+        "authors": "Stripe",
+        "version_created_at": "2026-07-01T00:00:00Z",
+        "sha": "abc123",
+        "dependencies": {"runtime": []},
+    }
+
+    def fetch(url, max_bytes):
+        assert url == "https://rubygems.org/api/v1/gems/stripe.json"
+        return 200, {"content-type": "application/json"}, json.dumps(payload).encode()
+
+    metadata = ADAPTERS["rubygems"].resolve("stripe", "", SafeFetcher(fetch=fetch))
+    assert metadata.version == "18.2.0"
+    assert metadata.artifact_url.endswith("/stripe-18.2.0.gem")
+    assert metadata.integrity == {"sha": "abc123"}
+
+
+def test_packagist_adapter_accepts_p2_version_lists_and_selects_latest():
+    payload = {
+        "packages": {
+            "stripe/stripe-php": [
+                {"version": "v17.4.0", "time": "2026-07-01T00:00:00Z", "dist": {"url": "https://api.github.com/repos/stripe/stripe-php/zipball/current", "shasum": "new"}},
+                {"version": "v17.3.0", "time": "2026-06-01T00:00:00Z", "dist": {"url": "https://api.github.com/repos/stripe/stripe-php/zipball/previous", "shasum": "old"}},
+            ]
+        }
+    }
+
+    def fetch(url, max_bytes):
+        assert url == "https://repo.packagist.org/p2/stripe/stripe-php.json"
+        return 200, {"content-type": "application/json"}, json.dumps(payload).encode()
+
+    metadata = ADAPTERS["packagist"].resolve("stripe/stripe-php", "", SafeFetcher(fetch=fetch))
+    assert metadata.version == "v17.4.0"
+    assert metadata.artifact_url.endswith("/current")
+    assert metadata.integrity == {"shasum": "new"}
+
+
+def test_packagist_adapter_skips_prerelease_by_default():
+    payload = {
+        "packages": {
+            "stripe/stripe-php": [
+                {"version": "v21.1.0-alpha.1", "dist": {"url": "https://api.github.com/repos/stripe/stripe-php/zipball/alpha"}},
+                {"version": "v21.0.0", "dist": {"url": "https://api.github.com/repos/stripe/stripe-php/zipball/stable"}},
+            ]
+        }
+    }
+
+    def fetch(url, max_bytes):
+        return 200, {"content-type": "application/json"}, json.dumps(payload).encode()
+
+    metadata = ADAPTERS["packagist"].resolve("stripe/stripe-php", "", SafeFetcher(fetch=fetch))
+    assert metadata.version == "v21.0.0"
+    explicit = ADAPTERS["packagist"].resolve("stripe/stripe-php", "v21.1.0-alpha.1", SafeFetcher(fetch=fetch))
+    assert explicit.version == "v21.1.0-alpha.1"
+
+
+def test_maven_adapter_ignores_prerelease_release_marker_by_default():
+    payload = b"""<metadata><versioning><release>33.2.0-beta.1</release><versions><version>33.1.0</version><version>33.2.0-beta.1</version></versions></versioning></metadata>"""
+
+    def fetch(url, max_bytes):
+        return 200, {"content-type": "application/xml"}, payload
+
+    metadata = ADAPTERS["maven"].resolve("com.stripe:stripe-java", "", SafeFetcher(fetch=fetch))
+    assert metadata.version == "33.1.0"
+    explicit = ADAPTERS["maven"].resolve("com.stripe:stripe-java", "33.2.0-beta.1", SafeFetcher(fetch=fetch))
+    assert explicit.version == "33.2.0-beta.1"
+
+
 def test_intake_is_non_executing_and_can_be_attached(tmp_path, monkeypatch):
     db = str(tmp_path / "research.db")
     monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(tmp_path / "quarantine"))

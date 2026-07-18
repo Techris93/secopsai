@@ -94,6 +94,10 @@ def _version(value: Any) -> str:
     return value
 
 
+def _is_prerelease(value: str) -> bool:
+    return bool(re.search(r"(?i)(?:^|[._+\-])(alpha|beta|rc|preview|pre|dev|snapshot|nightly)(?:[._+\-]|\d|$)", str(value or "")))
+
+
 def _safe_member_name(name: str) -> str:
     normalized = str(name or "").replace("\\", "/")
     if not normalized or normalized.startswith("/") or "\x00" in normalized:
@@ -212,7 +216,8 @@ class RegistryAdapter:
             return requested
         if not versions:
             raise IntakeError("registry returned no package versions")
-        return str(versions[-1])
+        stable = [str(item) for item in versions if not _is_prerelease(str(item))]
+        return stable[-1] if stable else str(versions[-1])
 
 
 class NpmAdapter(RegistryAdapter):
@@ -288,20 +293,22 @@ class RubyGemsAdapter(RegistryAdapter):
     artifact_hosts = ("rubygems.org", "rubygems.global.ssl.fastly.net")
 
     def metadata_url(self, package: str) -> str:
-        return f"https://rubygems.org/api/v2/rubygems/{urllib.parse.quote(package)}.json"
+        return f"https://rubygems.org/api/v1/gems/{urllib.parse.quote(package)}.json"
 
     def resolve(self, package: str, requested_version: str, fetcher: SafeFetcher) -> RegistryMetadata:
         package = _safe_package(package)
         url, payload = self._json(self.metadata_url(package), fetcher)
         version = _version(requested_version) or str(payload.get("version") or "")
+        if not version:
+            raise IntakeError("RubyGems metadata did not include a package version")
         artifact = f"https://rubygems.org/downloads/{urllib.parse.quote(package)}-{urllib.parse.quote(version)}.gem"
-        return RegistryMetadata(self.ecosystem, package, version, url, artifact, str(payload.get("authors") or ""), "", payload.get("dependencies") or {}, {}, payload)
+        return RegistryMetadata(self.ecosystem, package, version, url, artifact, str(payload.get("authors") or ""), str(payload.get("version_created_at") or ""), payload.get("dependencies") or {}, {"sha": payload.get("sha") or ""}, payload)
 
 
 class PackagistAdapter(RegistryAdapter):
     ecosystem = "packagist"
     metadata_hosts = ("repo.packagist.org",)
-    artifact_hosts = ("repo.packagist.org", "github.com", "codeload.github.com")
+    artifact_hosts = ("repo.packagist.org", "api.github.com", "github.com", "codeload.github.com")
 
     def metadata_url(self, package: str) -> str:
         encoded = urllib.parse.quote(package, safe="/")
@@ -310,9 +317,16 @@ class PackagistAdapter(RegistryAdapter):
     def resolve(self, package: str, requested_version: str, fetcher: SafeFetcher) -> RegistryMetadata:
         package = _safe_package(package)
         url, payload = self._json(self.metadata_url(package), fetcher)
-        versions = list((payload.get("packages") or {}).get(package, {}).keys())
-        version = self._pick_version(versions, requested_version)
-        item = (payload.get("packages") or {}).get(package, {}).get(version) or {}
+        entries = (payload.get("packages") or {}).get(package) or []
+        if not isinstance(entries, list):
+            raise IntakeError("Packagist metadata did not contain a version list")
+        versions = [str(item.get("version") or "") for item in entries if isinstance(item, dict) and item.get("version")]
+        if requested_version:
+            version = self._pick_version(versions, requested_version)
+        else:
+            version = next((item for item in versions if not _is_prerelease(item)), versions[0] if versions else "")
+            version = self._pick_version(versions, version)
+        item = next((entry for entry in entries if isinstance(entry, dict) and str(entry.get("version") or "") == version), {})
         dist = item.get("dist") or {}
         artifact = str(dist.get("url") or "")
         if not artifact:
@@ -355,7 +369,10 @@ class MavenAdapter(RegistryAdapter):
         package = _safe_package(package)
         url, _, body = fetcher.get(self.metadata_url(package), allowed_hosts=self.metadata_hosts, max_bytes=MAX_METADATA_BYTES)
         versions = re.findall(rb"<version>([^<]+)</version>", body)
-        version = self._pick_version([item.decode("utf-8", "ignore") for item in versions], requested_version)
+        release = re.search(rb"<release>([^<]+)</release>", body)
+        advertised_release = release.group(1).decode("utf-8", "ignore") if release else ""
+        preferred = requested_version or (advertised_release if not _is_prerelease(advertised_release) else "")
+        version = self._pick_version([item.decode("utf-8", "ignore") for item in versions], preferred)
         group, artifact_name = package.split(":", 1)
         path = f"{group.replace('.', '/')}/{artifact_name}/{version}/{artifact_name}-{version}.jar"
         return RegistryMetadata(self.ecosystem, package, version, url, f"https://repo.maven.apache.org/maven2/{path}", "", "", {}, {}, {"metadata_sha256": hashlib.sha256(body).hexdigest()})

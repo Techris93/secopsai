@@ -14,6 +14,8 @@ The first implementation supports npm, PyPI, NuGet, Maven, RubyGems, Packagist, 
 
 The initial monitor mode is intentionally watchlist-scoped. A successful watchlist poll is not a clean registry result. Incomplete coverage, stale cursors, and adapter failures remain visible to operators.
 
+An exact-package monitor creates a version baseline and records subsequent version changes as informational alerts. It does not classify the legitimate watched package as a typosquat. Lookalike candidates enter through registry event/search observations and are scored separately against watchlists. Exact approved names and explicit exclusions are suppressed unless an expected publisher is configured and the observed publisher differs.
+
 ## Watchlist and monitor workflow
 
 ```bash
@@ -35,6 +37,17 @@ secopsai research campaign list
 
 The dashboard provides the same actions under Research Discovery. Use **Add watchlist**, **Create monitor**, **Run due monitors**, **Compare exact packages**, and **Correlate campaigns**. Protected writes require the research action token.
 
+On macOS, install the local due-monitor trigger as a background service:
+
+```bash
+bash scripts/install_research_monitor_launchd.sh install
+bash scripts/install_research_monitor_launchd.sh status
+bash scripts/install_research_monitor_launchd.sh run-now
+bash scripts/install_research_monitor_launchd.sh logs
+```
+
+The trigger runs every 15 minutes by default and executes only monitors whose own schedule is due. Override the trigger at install time with `SECOPSAI_RESEARCH_MONITOR_TRIGGER_SECONDS`; values below five minutes are rejected. The service survives login/reboot and retains owner-only logs under `~/Library/Logs/SecOpsAI/`.
+
 ## Safe package intake and comparison
 
 Intake resolves official metadata and artifact URLs through ecosystem-specific HTTPS allowlists, enforces response and archive limits, calculates SHA-256, stores the artifact in quarantine, and performs bounded static inspection. Package code is never installed, imported, decompiled by loading, or executed on Core, the dashboard host, or the MacBook helper.
@@ -53,7 +66,7 @@ NuGet analysis provides safe package inventory and byte-level API signal detecti
 
 ## Provider configuration
 
-Keep `TRIAGE_API_TOKEN`, SMTP credentials, webhook secrets, and registry credentials server-side. Cloudflare Email Routing is inbound routing; outbound disclosure requires an SMTP or transactional provider with SPF, DKIM, and DMARC. Tria.ge is a public provider: do not submit confidential customer data, private credentials, or artifacts whose disclosure is not authorized.
+Keep `TRIAGE_API_TOKEN`, SMTP credentials, webhook secrets, and registry credentials server-side. Cloudflare Email Routing is inbound routing; outbound disclosure requires an SMTP or transactional provider with SPF, DKIM, and DMARC. Approved vulnerability disclosures default to `security@secopsai.dev`; research alerts default to `research@secopsai.dev`. Tria.ge is a public provider: do not submit confidential customer data, private credentials, or artifacts whose disclosure is not authorized.
 
 ## Recovery
 

@@ -278,6 +278,68 @@ def _candidate_reason(score: Dict[str, Any]) -> str:
     return f"similarity={score['score']}; Damerau distance={components['damerau_distance']}; publisher_match={components['publisher_match']}"
 
 
+def _record_registry_event(*, metadata: RegistryMetadata, source_id: str, coverage_mode: str, db_path: Optional[str]) -> Dict[str, Any]:
+    """Persist one normalized registry observation without classifying it."""
+    now = _now()
+    event_key = hashlib.sha256(f"{source_id}|{metadata.ecosystem}|{metadata.package}|{metadata.version}|{metadata.artifact_url}".encode()).hexdigest()
+    event_id = _id("REV")
+    with closing(soc_store.connect(db_path)) as connection:
+        prior = connection.execute(
+            "SELECT event_id, version, observed_at FROM research_registry_events WHERE source_id = ? AND ecosystem = ? AND package = ? ORDER BY observed_at DESC LIMIT 1",
+            (source_id, metadata.ecosystem, metadata.package),
+        ).fetchone()
+        cursor = connection.execute(
+            """INSERT INTO research_registry_events
+            (event_id, source_id, ecosystem, package, version, publisher, source_url, artifact_url, artifact_sha256, observed_at, provenance_json, idempotency_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)
+            ON CONFLICT(idempotency_key) DO NOTHING""",
+            (event_id, source_id, metadata.ecosystem, metadata.package, metadata.version, metadata.publisher[:240], metadata.metadata_url, metadata.artifact_url, now, _json({"schema_version": "secopsai.research.registry-event.v1", "source": source_id, "coverage_mode": coverage_mode}), event_key),
+        )
+        created = cursor.rowcount == 1
+        row = connection.execute("SELECT event_id, observed_at FROM research_registry_events WHERE idempotency_key = ?", (event_key,)).fetchone()
+        connection.commit()
+    return {
+        "event_id": row["event_id"],
+        "observed_at": row["observed_at"],
+        "created": created,
+        "previous_version": prior["version"] if prior else None,
+    }
+
+
+def _record_watchlist_observation(*, monitor: Dict[str, Any], watchlist: Dict[str, Any], metadata: RegistryMetadata, db_path: Optional[str]) -> Dict[str, Any]:
+    """Record an exact watched package as a baseline, never as a typosquat."""
+    event = _record_registry_event(metadata=metadata, source_id=monitor["source_id"], coverage_mode=monitor["coverage_mode"], db_path=db_path)
+    changed = bool(event["created"] and event["previous_version"] and event["previous_version"] != metadata.version)
+    alert_id = None
+    if changed:
+        now = _now()
+        alert_id = _id("RAL")
+        dedupe_key = f"watched-version:{monitor['monitor_id']}:{metadata.package}:{metadata.version}"
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                """INSERT INTO research_alerts
+                (alert_id, alert_type, severity, candidate_id, campaign_id, case_id, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at)
+                VALUES (?, 'watched_package_version', 'info', NULL, NULL, NULL, ?, ?, ?, 'open', ?, ?, ?)
+                ON CONFLICT(dedupe_key) DO NOTHING""",
+                (alert_id, dedupe_key, f"Watched package {metadata.package} changed from {event['previous_version']} to {metadata.version}", _json({"event_id": event["event_id"], "ecosystem": metadata.ecosystem, "package": metadata.package, "previous_version": event["previous_version"], "version": metadata.version, "watchlist_id": watchlist["watchlist_id"]}), watchlist.get("owner", ""), now, now),
+            )
+            stored = connection.execute("SELECT alert_id FROM research_alerts WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
+            connection.commit()
+        alert_id = stored["alert_id"] if stored else None
+    return {
+        "schema_version": "secopsai.research.registry-event.v1",
+        "event_id": event["event_id"],
+        "ecosystem": metadata.ecosystem,
+        "package": metadata.package,
+        "version": metadata.version,
+        "previous_version": event["previous_version"],
+        "baseline_created": bool(event["created"] and not event["previous_version"]),
+        "version_changed": changed,
+        "alert_id": alert_id,
+        "coverage": {"mode": monitor["coverage_mode"], "complete": False, "scope": "exact_package_version"},
+    }
+
+
 def _watch_value(watchlist: Dict[str, Any], metadata: RegistryMetadata) -> str:
     """Choose the normalized field appropriate to the watchlist type."""
     watch_type = watchlist.get("watch_type")
@@ -301,19 +363,17 @@ def _record_candidate(*, monitor: Dict[str, Any], watchlist: Dict[str, Any], met
     score = similarity_score(observed_value, watchlist["identifier"], candidate_publisher=metadata.publisher, reference_publisher=(watchlist.get("known_publishers") or [""])[0] if watchlist.get("known_publishers") else "")
     threshold = float(watchlist["threshold"])
     now = _now()
-    event_key = hashlib.sha256(f"{source_id}|{metadata.ecosystem}|{metadata.package}|{metadata.version}|{metadata.artifact_url}".encode()).hexdigest()
-    event_id = _id("REV")
+    event = _record_registry_event(metadata=metadata, source_id=source_id, coverage_mode=monitor["coverage_mode"], db_path=db_path)
+    event_id = event["event_id"]
+    normalized_package = normalize_identifier(metadata.ecosystem, metadata.package)
+    normalized_reference = normalize_identifier(metadata.ecosystem, watchlist["identifier"])
+    exclusions = {normalize_identifier(metadata.ecosystem, item) for item in watchlist.get("exclusions", [])}
+    known_publishers = {normalize_identifier("", item) for item in watchlist.get("known_publishers", []) if item}
+    publisher_mismatch = bool(known_publishers and normalize_identifier("", metadata.publisher) not in known_publishers)
+    if normalized_package in exclusions or (normalized_package == normalized_reference and not publisher_mismatch):
+        return {"matched": False, "score": score, "event_id": event_id, "suppressed": "approved_exact_name_or_exclusion"}
     candidate_id = _id("CAN")
     with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """INSERT INTO research_registry_events
-            (event_id, source_id, ecosystem, package, version, publisher, source_url, artifact_url, artifact_sha256, observed_at, provenance_json, idempotency_key)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)
-            ON CONFLICT(idempotency_key) DO NOTHING""",
-            (event_id, source_id, metadata.ecosystem, metadata.package, metadata.version, metadata.publisher[:240], metadata.metadata_url, metadata.artifact_url, now, _json({"schema_version": "secopsai.research.registry-event.v1", "source": source_id, "coverage_mode": monitor["coverage_mode"]}), event_key),
-        )
-        event_row = connection.execute("SELECT event_id FROM research_registry_events WHERE idempotency_key = ?", (event_key,)).fetchone()
-        event_id = event_row["event_id"]
         if score["score"] >= threshold:
             connection.execute(
                 """INSERT INTO research_candidates
@@ -377,7 +437,7 @@ def run_monitor(monitor_id: str, *, db_path: Optional[str] = None, fetcher: Opti
     results: List[Dict[str, Any]] = []
     try:
         metadata = adapter.resolve(watchlist["identifier"], "", fetcher or SafeFetcher())
-        results.append(ingest_registry_metadata(metadata=metadata, source_id=monitor["source_id"], db_path=db_path, monitor=monitor))
+        results.append(_record_watchlist_observation(monitor=monitor, watchlist=watchlist, metadata=metadata, db_path=db_path))
         next_run = (datetime.now(timezone.utc) + timedelta(seconds=monitor["interval_seconds"])).isoformat().replace("+00:00", "Z")
         with closing(soc_store.connect(db_path)) as connection:
             connection.execute("UPDATE research_monitors SET last_run_at = ?, last_success_at = ?, last_error = NULL, next_run_at = ?, updated_at = ? WHERE monitor_id = ?", (started, started, next_run, _now(), monitor_id))

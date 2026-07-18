@@ -59,6 +59,8 @@ Console.WriteLine(JsonSerializer.Serialize(new
     assemblies
 }));
 
+return 0;
+
 static byte[] ReadEntry(ZipArchiveEntry entry)
 {
     using var source = entry.Open();

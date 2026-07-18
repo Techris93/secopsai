@@ -19,15 +19,15 @@ from secopsai.research_discovery import (
 from secopsai.research_intake import RegistryMetadata, SafeFetcher
 
 
-def _metadata_fetcher():
+def _metadata_fetcher(version="1.2.0"):
     payload = {
         "name": "chalk-tempalte",
-        "dist-tags": {"latest": "1.2.0"},
+        "dist-tags": {"latest": version},
         "versions": {
-            "1.2.0": {
-                "version": "1.2.0",
+            version: {
+                "version": version,
                 "author": {"name": "Unexpected publisher"},
-                "dist": {"tarball": "https://registry.npmjs.org/chalk-tempalte/-/chalk-tempalte-1.2.0.tgz"},
+                "dist": {"tarball": f"https://registry.npmjs.org/chalk-tempalte/-/chalk-tempalte-{version}.tgz"},
             }
         },
     }
@@ -89,3 +89,27 @@ def test_due_monitor_runner_records_success_and_next_run(tmp_path):
     assert result["failed"] == 0
     assert list_monitors(db_path=db)[0]["last_success_at"]
     assert list_monitors(db_path=db)[0]["next_run_at"]
+    assert list_candidates(db_path=db) == []
+    assert list_alerts(db_path=db) == []
+
+
+def test_due_monitor_records_version_change_without_false_typosquat(tmp_path):
+    db = str(tmp_path / "research.db")
+    soc_store.init_db(db)
+    watchlist = create_watchlist(ecosystem="npm", watch_type="package", identifier="chalk-tempalte", db_path=db)
+    create_monitor(ecosystem="npm", watchlist_id=watchlist["watchlist_id"], interval_seconds=900, db_path=db)
+
+    first = run_due_monitors(db_path=db, fetcher=_metadata_fetcher("1.2.0"))
+    assert first["results"][0]["results"][0]["baseline_created"] is True
+    with soc_store.connect(db) as connection:
+        connection.execute("UPDATE research_monitors SET next_run_at = NULL")
+        connection.commit()
+
+    second = run_due_monitors(db_path=db, fetcher=_metadata_fetcher("1.3.0"))
+    observation = second["results"][0]["results"][0]
+    assert observation["version_changed"] is True
+    assert observation["previous_version"] == "1.2.0"
+    assert list_candidates(db_path=db) == []
+    alerts = list_alerts(db_path=db)
+    assert len(alerts) == 1
+    assert alerts[0]["alert_type"] == "watched_package_version"

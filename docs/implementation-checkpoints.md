@@ -1,5 +1,17 @@
 # Implementation Checkpoints
 
+## 097 Research Provider Activation And Monitor Hardening
+
+Status: local scheduler and eight watchlist-scoped registry baselines active; external credentials remain provider-controlled.
+
+Corrected exact-package monitors so legitimate baselines do not become typosquat candidates, added deduplicated watched-version alerts, honored exact-name/exclusion suppression, and made stable releases the default when registries advertise prereleases as latest. Repaired the RubyGems v1 metadata endpoint and Packagist P2 list parsing, including current GitHub distribution hosts.
+
+Configured and verified hourly baselines for npm, PyPI, NuGet, Maven, RubyGems, Packagist, Go, and Open VSX. The first live run completed 8/8 with incomplete, watchlist-scoped coverage reported explicitly. Added a managed macOS launchd installer with a 15-minute due-run trigger and lifecycle/status/log commands. Built and smoke-tested the non-root, network-disabled NuGet metadata worker image after correcting its C# entry-point return path.
+
+Outbound identities are separated: vulnerability disclosure defaults to `security@secopsai.dev` and research alerts default to `research@secopsai.dev`. SMTP/webhook sending remains disabled until authenticated provider credentials are supplied. Tria.ge API activation remains pending Researcher-license approval.
+
+Verification: Core suite 280 passed with 14 warnings and 4 subtests; focused research suites 17 passed; NuGet analyzer container build and no-argument safety smoke test passed; launchd plist validation and due-run exit status passed.
+
 ## 090-096 Research Discovery Platform
 
 Status: implemented on `codex/research-discovery-platform`; external provider configuration remains deployment-specific.
@@ -40,7 +52,7 @@ Added request, approval, status, and sanitized-result records. The default provi
 
 ## Verification
 
-- Core virtualenv suite: 274 passed, 14 warnings, 4 subtests passed.
+- Core virtualenv suite: 280 passed, 14 warnings, 4 subtests passed.
 - New intake/workflow suite: 7 passed.
 - Dashboard research automation suite: 3 passed.
 - Dashboard JavaScript and Worker syntax checks: passed.
