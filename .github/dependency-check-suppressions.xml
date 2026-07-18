@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.4.xsd">
+  <suppress until="2027-07-18Z">
+    <notes><![CDATA[
+      Mono.Cecil 0.11.6 is an ECMA CIL inspection library. CVE-2015-2318 affects
+      the Mono runtime TLS stack; Dependency-Check matched it through an
+      unrelated Mono CPE. Review this exception before expiry.
+    ]]></notes>
+    <packageUrl regex="true">^pkg:nuget/Mono\.Cecil@0\.11\.6$</packageUrl>
+    <vulnerabilityName>CVE-2015-2318</vulnerabilityName>
+  </suppress>
+  <suppress until="2027-07-18Z">
+    <notes><![CDATA[
+      Mono.Cecil 0.11.6 is an ECMA CIL inspection library. CVE-2015-2319 affects
+      the Mono runtime TLS stack; Dependency-Check matched it through an
+      unrelated Mono CPE. Review this exception before expiry.
+    ]]></notes>
+    <packageUrl regex="true">^pkg:nuget/Mono\.Cecil@0\.11\.6$</packageUrl>
+    <vulnerabilityName>CVE-2015-2319</vulnerabilityName>
+  </suppress>
+  <suppress until="2027-07-18Z">
+    <notes><![CDATA[
+      Mono.Cecil 0.11.6 is an ECMA CIL inspection library. CVE-2015-2320 affects
+      the Mono runtime TLS stack; Dependency-Check matched it through an
+      unrelated Mono CPE. Review this exception before expiry.
+    ]]></notes>
+    <packageUrl regex="true">^pkg:nuget/Mono\.Cecil@0\.11\.6$</packageUrl>
+    <vulnerabilityName>CVE-2015-2320</vulnerabilityName>
+  </suppress>
+  <suppress until="2027-07-18Z">
+    <notes><![CDATA[
+      CVE-2023-4914 affects the cecilapp/cecil web application before 7.47.1,
+      not the Mono.Cecil NuGet assembly library. Review this exception before
+      expiry.
+    ]]></notes>
+    <packageUrl regex="true">^pkg:nuget/Mono\.Cecil@0\.11\.6$</packageUrl>
+    <vulnerabilityName>CVE-2023-4914</vulnerabilityName>
+  </suppress>
+</suppressions>

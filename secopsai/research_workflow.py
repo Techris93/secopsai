@@ -409,9 +409,11 @@ def get_sandbox_request(request_id: str, *, db_path: Optional[str] = None) -> Di
     return result
 
 
-def set_sandbox_status(request_id: str, status: str, *, actor: str = "analyst", result: Optional[Dict[str, Any]] = None, db_path: Optional[str] = None) -> Dict[str, Any]:
+def set_sandbox_status(request_id: str, status: str, *, actor: str = "analyst", result: Optional[Dict[str, Any]] = None, db_path: Optional[str] = None, _approval_acknowledged: bool = False) -> Dict[str, Any]:
     if status not in SANDBOX_STATUSES:
         raise ValueError("invalid sandbox status")
+    if status == "approved" and not _approval_acknowledged:
+        raise ValueError("sandbox approval requires explicit public-submission acknowledgment")
     current = get_sandbox_request(request_id, db_path=db_path)
     if status in {"submitted", "completed"} and current["status"] != "approved" and status != "completed":
         raise ValueError("sandbox request must be approved before submission")
@@ -422,3 +424,13 @@ def set_sandbox_status(request_id: str, status: str, *, actor: str = "analyst", 
         _event(connection, current["case_id"], "sandbox_status_changed", f"Sandbox request moved to {status}.", actor, {"request_id": request_id, "status": status})
         connection.commit()
     return get_sandbox_request(request_id, db_path=db_path)
+
+
+def approve_sandbox_submission(request_id: str, *, actor: str = "reviewer", public_submission_acknowledged: bool = False, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Approve a sandbox request only after the public-data warning is accepted."""
+    if not public_submission_acknowledged:
+        raise ValueError("public sandbox submission acknowledgment is required")
+    current = get_sandbox_request(request_id, db_path=db_path)
+    if current["status"] != "pending_approval":
+        raise ValueError("only pending sandbox requests can be approved")
+    return set_sandbox_status(request_id, "approved", actor=actor, db_path=db_path, _approval_acknowledged=True)

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+import xml.etree.ElementTree as ET
 
 import yaml
 
@@ -126,6 +127,7 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
     assert "safety check" not in security
     assert "--enablePackageAudit" not in security
     assert "--failOnCVSS 7.0" in security
+    assert "--suppression .github/dependency-check-suppressions.xml" in security
     assert "--severity-level high" in security
     assert "pip-audit --desc || true" not in security
     assert "safety check -r requirements.txt --output json > safety-report.json ||" not in security
@@ -136,6 +138,9 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
 
     workflow = yaml.safe_load(security)
     security_steps = workflow["jobs"]["security"]["steps"]
+    trivy_steps = [step for step in security_steps if step.get("uses", "").startswith("aquasecurity/trivy-action")]
+    assert len(trivy_steps) == 3
+    assert all(step["with"].get("limit-severities-for-sarif") is True for step in trivy_steps)
     upload_steps = [step for step in security_steps if str(step.get("name", "")).startswith("Upload Trivy")]
     assert len(upload_steps) == 3
     for step in upload_steps:
@@ -153,6 +158,24 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
     assert "trivy-secret" in categories
     assert "trivy-config" in categories
     assert "dependency-check" in categories
+
+    suppression_path = ROOT / ".github" / "dependency-check-suppressions.xml"
+    suppression_root = ET.parse(suppression_path).getroot()
+    namespace = {"dc": "https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.4.xsd"}
+    suppressions = suppression_root.findall("dc:suppress", namespace)
+    assert len(suppressions) == 4
+    expected_cves = {"CVE-2015-2318", "CVE-2015-2319", "CVE-2015-2320", "CVE-2023-4914"}
+    actual_cves = set()
+    for suppression in suppressions:
+        assert suppression.attrib == {"until": "2027-07-18Z"}
+        package_url = suppression.find("dc:packageUrl", namespace)
+        vulnerability = suppression.find("dc:vulnerabilityName", namespace)
+        assert package_url is not None
+        assert package_url.attrib == {"regex": "true"}
+        assert package_url.text == r"^pkg:nuget/Mono\.Cecil@0\.11\.6$"
+        assert vulnerability is not None and vulnerability.text
+        actual_cves.add(vulnerability.text)
+    assert actual_cves == expected_cves
 
     build_workflow = yaml.safe_load(test_build)
     build_steps = build_workflow["jobs"]["build-container"]["steps"]

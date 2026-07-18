@@ -364,6 +364,208 @@ def init_db(db_path: str | None = None) -> None:
                 FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS research_registry_sources (
+                source_id TEXT PRIMARY KEY,
+                ecosystem TEXT NOT NULL,
+                name TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                capabilities_json TEXT NOT NULL,
+                coverage_mode TEXT NOT NULL,
+                terms_url TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (ecosystem, name)
+            );
+
+            CREATE TABLE IF NOT EXISTS research_watchlists (
+                watchlist_id TEXT PRIMARY KEY,
+                ecosystem TEXT NOT NULL,
+                watch_type TEXT NOT NULL,
+                identifier TEXT NOT NULL,
+                normalized_identifier TEXT NOT NULL,
+                brand TEXT NOT NULL,
+                known_publishers_json TEXT NOT NULL,
+                known_repositories_json TEXT NOT NULL,
+                known_namespaces_json TEXT NOT NULL,
+                threshold REAL NOT NULL,
+                exclusions_json TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                expires_at TEXT,
+                reason TEXT NOT NULL,
+                source_evidence_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (ecosystem, watch_type, normalized_identifier)
+            );
+
+            CREATE TABLE IF NOT EXISTS research_monitors (
+                monitor_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                watchlist_id TEXT,
+                ecosystem TEXT NOT NULL,
+                name TEXT NOT NULL,
+                interval_seconds INTEGER NOT NULL,
+                priority TEXT NOT NULL,
+                coverage_mode TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                last_run_at TEXT,
+                last_success_at TEXT,
+                last_error TEXT,
+                next_run_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (source_id) REFERENCES research_registry_sources (source_id),
+                FOREIGN KEY (watchlist_id) REFERENCES research_watchlists (watchlist_id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_monitor_cursors (
+                monitor_id TEXT PRIMARY KEY,
+                cursor_json TEXT NOT NULL,
+                rate_limit_json TEXT NOT NULL,
+                coverage_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (monitor_id) REFERENCES research_monitors (monitor_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_monitor_runs (
+                run_id TEXT PRIMARY KEY,
+                monitor_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                error_message TEXT,
+                coverage_json TEXT NOT NULL,
+                FOREIGN KEY (monitor_id) REFERENCES research_monitors (monitor_id) ON DELETE CASCADE
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_research_monitor_one_running
+                ON research_monitor_runs (monitor_id) WHERE status = 'running';
+
+            CREATE TABLE IF NOT EXISTS research_registry_events (
+                event_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                ecosystem TEXT NOT NULL,
+                package TEXT NOT NULL,
+                version TEXT NOT NULL,
+                publisher TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                artifact_url TEXT NOT NULL,
+                artifact_sha256 TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                provenance_json TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                FOREIGN KEY (source_id) REFERENCES research_registry_sources (source_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS research_candidates (
+                candidate_id TEXT PRIMARY KEY,
+                event_id TEXT,
+                watchlist_id TEXT,
+                ecosystem TEXT NOT NULL,
+                package TEXT NOT NULL,
+                version TEXT NOT NULL,
+                reference_identifier TEXT NOT NULL,
+                score REAL NOT NULL,
+                score_components_json TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                status TEXT NOT NULL,
+                case_id TEXT,
+                evidence_json TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                algorithm_version TEXT NOT NULL,
+                UNIQUE (ecosystem, package, version, reference_identifier),
+                FOREIGN KEY (event_id) REFERENCES research_registry_events (event_id) ON DELETE SET NULL,
+                FOREIGN KEY (watchlist_id) REFERENCES research_watchlists (watchlist_id) ON DELETE SET NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_campaigns (
+                campaign_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                attribution TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_campaign_links (
+                campaign_id TEXT NOT NULL,
+                left_type TEXT NOT NULL,
+                left_id TEXT NOT NULL,
+                right_type TEXT NOT NULL,
+                right_id TEXT NOT NULL,
+                relationship TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                evidence_json TEXT NOT NULL,
+                algorithm_version TEXT NOT NULL,
+                human_state TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (campaign_id, left_type, left_id, right_type, right_id, relationship),
+                FOREIGN KEY (campaign_id) REFERENCES research_campaigns (campaign_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_alerts (
+                alert_id TEXT PRIMARY KEY,
+                alert_type TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                candidate_id TEXT,
+                campaign_id TEXT,
+                case_id TEXT,
+                dedupe_key TEXT NOT NULL UNIQUE,
+                reason TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_notification_deliveries (
+                delivery_id TEXT PRIMARY KEY,
+                alert_id TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                destination TEXT NOT NULL,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                provider_id TEXT,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (alert_id) REFERENCES research_alerts (alert_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_disclosure_deliveries (
+                delivery_id TEXT PRIMARY KEY,
+                disclosure_id TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                destination TEXT NOT NULL,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                provider_id TEXT,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (disclosure_id) REFERENCES research_disclosures (disclosure_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_comparisons (
+                comparison_id TEXT PRIMARY KEY,
+                left_ecosystem TEXT NOT NULL,
+                left_package TEXT NOT NULL,
+                left_version TEXT NOT NULL,
+                right_ecosystem TEXT NOT NULL,
+                right_package TEXT NOT NULL,
+                right_version TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE (left_ecosystem, left_package, left_version, right_ecosystem, right_package, right_version)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_research_jobs_case_status
                 ON research_jobs (case_id, status, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_research_jobs_status_time
@@ -378,6 +580,14 @@ def init_db(db_path: str | None = None) -> None:
                 ON research_publication_reviews (case_id, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_research_sandbox_case
                 ON research_sandbox_requests (case_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_candidates_status_score
+                ON research_candidates (status, score DESC, last_seen DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_candidates_ecosystem_package
+                ON research_candidates (ecosystem, package, version);
+            CREATE INDEX IF NOT EXISTS idx_research_monitors_due
+                ON research_monitors (enabled, next_run_at);
+            CREATE INDEX IF NOT EXISTS idx_research_alerts_status_time
+                ON research_alerts (status, created_at DESC);
             """
         )
 
