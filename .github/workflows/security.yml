@@ -37,6 +37,7 @@ jobs:
           severity: "HIGH,CRITICAL"
           exit-code: "1"
           format: "sarif"
+          limit-severities-for-sarif: true
           output: "trivy-fs-results.sarif"
 
       - name: Run Trivy secret scan
@@ -48,6 +49,7 @@ jobs:
           severity: "HIGH,CRITICAL"
           exit-code: "1"
           format: "sarif"
+          limit-severities-for-sarif: true
           output: "trivy-secret-results.sarif"
 
       - name: Run Trivy dependency scan
@@ -58,6 +60,7 @@ jobs:
           severity: "HIGH,CRITICAL"
           exit-code: "1"
           format: "sarif"
+          limit-severities-for-sarif: true
           output: "trivy-config-results.sarif"
 
       - name: Upload Trivy filesystem SARIF
