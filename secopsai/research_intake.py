@@ -136,9 +136,13 @@ class SafeFetcher:
         self.max_redirects = max(0, min(int(max_redirects), 5))
         self._injected = fetch
 
-    def get(self, url: str, *, allowed_hosts: Iterable[str], max_bytes: int) -> Tuple[str, Dict[str, str], bytes]:
+    def get(self, url: str, *, allowed_hosts: Iterable[str], max_bytes: int,
+            headers: Optional[Dict[str, str]] = None) -> Tuple[str, Dict[str, str], bytes]:
         current = url
         hosts = {str(host).lower() for host in allowed_hosts}
+        request_headers = {"Accept": "application/json, application/octet-stream", "User-Agent": USER_AGENT}
+        if headers:
+            request_headers.update(headers)
         for redirect_count in range(self.max_redirects + 1):
             parsed = urllib.parse.urlparse(current)
             if parsed.scheme != "https" or parsed.username or parsed.password or not parsed.hostname:
@@ -150,7 +154,7 @@ class SafeFetcher:
                 _validate_public_host(host)
                 request = urllib.request.Request(
                     current,
-                    headers={"Accept": "application/json, application/octet-stream", "User-Agent": USER_AGENT},
+                    headers=request_headers,
                 )
                 opener = urllib.request.build_opener(_NoRedirectHandler())
                 try:

@@ -1,0 +1,12 @@
+{
+  "meta": {
+    "api-version": "1.0",
+    "_last-serial": 101
+  },
+  "projects": [
+    {"name": "alpha-lib"},
+    {"name": "beta-tools"},
+    {"name": "delta-sdk"},
+    {"name": "epsilon-client"}
+  ]
+}

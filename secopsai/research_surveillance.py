@@ -18,6 +18,8 @@ import sqlite3
 import time
 import urllib.parse
 import uuid
+import zlib
+import hashlib
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -30,14 +32,19 @@ NUGET_CATALOG_INDEX_URL = "https://api.nuget.org/v3/catalog0/index.json"
 NUGET_ALLOWED_HOSTS: Tuple[str, ...] = ("api.nuget.org",)
 PACKAGIST_CHANGES_URL = "https://packagist.org/metadata/changes.json"
 PACKAGIST_ALLOWED_HOSTS: Tuple[str, ...] = ("packagist.org",)
+PYPI_SIMPLE_INDEX_URL = "https://pypi.org/simple/"
+PYPI_ALLOWED_HOSTS: Tuple[str, ...] = ("pypi.org",)
+PYPI_SIMPLE_JSON_ACCEPT = "application/vnd.pypi.simple.v1+json"
 
 MAX_CATALOG_INDEX_BYTES = 8 * 1024 * 1024
 MAX_CATALOG_PAGE_BYTES = 32 * 1024 * 1024
 MAX_CHANGES_BYTES = 32 * 1024 * 1024
+MAX_SIMPLE_INDEX_BYTES = 128 * 1024 * 1024
 MAX_LEAF_BYTES = 2 * 1024 * 1024
 DEFAULT_MAX_PAGES = 10
 DEFAULT_LOOKBACK_HOURS = 24
 MAX_DEAD_LETTER_ATTEMPTS = 8
+DEFAULT_MAX_DIFF_EVENTS = 10000
 ALGORITHM_VERSION = "registry-surveillance.v1"
 PACKAGIST_BOOTSTRAP_CURSOR = "0"
 
@@ -68,6 +75,21 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "overlap_seconds": 300,
         "retention_seconds": 86400,
         "retention_safety_seconds": 64800,
+    },
+    "pypi": {
+        "collector_id": "COL-PYPI-INDEX",
+        "source_id": "REG-PYPI",
+        "name": "PyPI Simple Index",
+        "feed_url": PYPI_SIMPLE_INDEX_URL,
+        "mode": "index_reconcile",
+        "allowed_hosts": PYPI_ALLOWED_HOSTS,
+        "coverage_mode": "simple_index_reconciliation",
+        # PyPI exposes no chronological event feed; the simple index serial
+        # only signals that something changed. Reconciliation diffs full
+        # index snapshots, so project add/remove events are complete but
+        # per-release detection needs watchlist polling or backfill.
+        "cursor_seed": "zero",
+        "cursor_multiplier": 1,
     },
 }
 
@@ -148,7 +170,7 @@ def ensure_collectors(*, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
                     now,
                 ),
             )
-            if definition.get("cursor_seed") == "bootstrap":
+            if definition.get("cursor_seed") in {"bootstrap", "zero"}:
                 cursor_seed = PACKAGIST_BOOTSTRAP_CURSOR
             else:
                 cursor_seed = _format_ts(_utcnow() - timedelta(hours=DEFAULT_LOOKBACK_HOURS))
@@ -212,14 +234,26 @@ def _idempotency_key(ecosystem: str, package: str, version: str, timestamp: str,
 
 
 def _fetch_json(fetcher: SafeFetcher, url: str, *, allowed_hosts: Iterable[str], max_bytes: int) -> Dict[str, Any]:
-    _final_url, _headers, body = fetcher.get(url, allowed_hosts=allowed_hosts, max_bytes=max_bytes)
+    payload, _headers = _fetch_json_response(fetcher, url, allowed_hosts=allowed_hosts, max_bytes=max_bytes)
+    return payload
+
+
+def _fetch_json_response(
+    fetcher: SafeFetcher,
+    url: str,
+    *,
+    allowed_hosts: Iterable[str],
+    max_bytes: int,
+    headers: Optional[Dict[str, str]] = None,
+) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    _final_url, response_headers, body = fetcher.get(url, allowed_hosts=allowed_hosts, max_bytes=max_bytes, headers=headers)
     try:
         payload = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise IntakeError("registry response was not valid JSON") from exc
     if not isinstance(payload, dict):
         raise IntakeError("registry response was not a JSON object")
-    return payload
+    return payload, response_headers
 
 
 def _record_dead_letter(
@@ -463,6 +497,8 @@ def _empty_outcome(cursor_before: str) -> Dict[str, Any]:
         "events_stored": 0,
         "events_duplicate": 0,
         "leaf_failures": 0,
+        "anomalies": [],
+        "diff_truncated": False,
         "error": None,
     }
 
@@ -662,6 +698,183 @@ def _ingest_packagist_changes(
     return outcome
 
 
+def _latest_snapshot(connection: sqlite3.Connection, collector_id: str) -> Optional[sqlite3.Row]:
+    return connection.execute(
+        "SELECT * FROM registry_snapshots WHERE collector_id = ? ORDER BY created_at DESC LIMIT 1",
+        (collector_id,),
+    ).fetchone()
+
+
+def _snapshot_names(snapshot: sqlite3.Row) -> List[str]:
+    try:
+        payload = json.loads(zlib.decompress(snapshot["names_blob"]).decode("utf-8"))
+    except (zlib.error, UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    return [str(name) for name in payload] if isinstance(payload, list) else []
+
+
+def _insert_index_event(
+    connection: sqlite3.Connection,
+    *,
+    collector: Dict[str, Any],
+    name: str,
+    event_type: str,
+    serial: str,
+    now: str,
+) -> bool:
+    key = _idempotency_key(collector["ecosystem"], name, "", serial, event_type)
+    metadata = {"change": event_type, "serial": serial, "algorithm_version": ALGORITHM_VERSION}
+    cursor = connection.execute(
+        """INSERT INTO registry_feed_events
+        (feed_event_id, collector_id, ecosystem, package, version, event_type,
+         registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
+         idempotency_key, collected_at, processing_state)
+        VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 0, ?, ?, ?, 'pending')
+        ON CONFLICT(idempotency_key) DO NOTHING""",
+        (
+            _id("RFE"),
+            collector["collector_id"],
+            collector["ecosystem"],
+            name,
+            event_type,
+            now,
+            collector["feed_url"],
+            f"https://pypi.org/pypi/{name}/json",
+            _json(metadata),
+            key,
+            now,
+        ),
+    )
+    return cursor.rowcount > 0
+
+
+def _ingest_pypi_index(
+    *,
+    collector: Dict[str, Any],
+    cursor_before: str,
+    fetcher: SafeFetcher,
+    run_id: str,
+    db_path: Optional[str],
+    max_diff_events: int,
+) -> Dict[str, Any]:
+    """Reconcile the PyPI simple index against the last stored snapshot.
+
+    PyPI exposes no chronological event feed, so coverage is honestly
+    limited to project additions and removals between snapshots. The first
+    run stores a baseline and emits no events.
+    """
+    config = _decode(collector["config_json"], {})
+    allowed_hosts = config.get("allowed_hosts", [])
+    outcome = _empty_outcome(cursor_before)
+    outcome["pages_selected"] = 1
+    try:
+        payload, response_headers = _fetch_json_response(
+            fetcher,
+            collector["feed_url"],
+            allowed_hosts=allowed_hosts,
+            max_bytes=MAX_SIMPLE_INDEX_BYTES,
+            headers={"Accept": PYPI_SIMPLE_JSON_ACCEPT},
+        )
+    except (IntakeError, CollectorError) as exc:
+        outcome["error"] = f"simple index fetch failed: {exc}"
+        with closing(soc_store.connect(db_path)) as connection:
+            with connection:
+                _record_dead_letter(
+                    connection,
+                    collector_id=collector["collector_id"],
+                    run_id=run_id,
+                    url=collector["feed_url"],
+                    item_kind="feed",
+                    payload={"feed": "pypi_simple_index"},
+                    error=str(exc),
+                )
+        return outcome
+
+    serial = str(response_headers.get("x-pypi-last-serial") or "").strip()
+    if not serial:
+        meta = payload.get("meta")
+        if isinstance(meta, dict):
+            serial = str(meta.get("_last-serial") or "").strip()
+    if not serial.isdigit():
+        outcome["error"] = "simple index response did not expose a valid serial"
+        return outcome
+    projects = payload.get("projects")
+    if not isinstance(projects, list):
+        outcome["error"] = "simple index response did not contain a projects list"
+        return outcome
+    names = sorted({str(item["name"]).strip() for item in projects if isinstance(item, dict) and item.get("name")})
+    if not names:
+        outcome["error"] = "simple index response contained no projects"
+        return outcome
+
+    # A serial regression is a registry-side anomaly; never overwrite newer state.
+    if cursor_before.isdigit() and int(serial) < int(cursor_before):
+        outcome["anomalies"] = [f"serial regressed from {cursor_before} to {serial}; snapshot skipped"]
+        outcome["pages_processed"] = 1
+        return outcome
+
+    names_hash = hashlib.sha256("\n".join(names).encode("utf-8")).hexdigest()
+    now = _format_ts(_utcnow())
+    added: List[str] = []
+    removed: List[str] = []
+    with closing(soc_store.connect(db_path)) as connection:
+        previous = _latest_snapshot(connection, collector["collector_id"])
+        if previous is not None and str(previous["serial"]) == serial and str(previous["names_hash"]) == names_hash:
+            # Unchanged index: no new snapshot, no events, cursor already correct.
+            with connection:
+                connection.execute(
+                    "UPDATE registry_cursors SET last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                    (run_id, now, collector["collector_id"]),
+                )
+            outcome["pages_processed"] = 1
+            outcome["cursor_after"] = serial
+            return outcome
+
+        if previous is not None:
+            previous_names = set(_snapshot_names(previous))
+            added = sorted(set(names) - previous_names)
+            removed = sorted(previous_names - set(names))
+        if len(added) + len(removed) > max_diff_events:
+            outcome["diff_truncated"] = True
+            added = added[:max_diff_events]
+            removed = removed[: max(0, max_diff_events - len(added))]
+
+        with connection:
+            for name in added:
+                outcome["events_seen"] += 1
+                if _insert_index_event(connection, collector=collector, name=name, event_type="project_added", serial=serial, now=now):
+                    outcome["events_stored"] += 1
+                else:
+                    outcome["events_duplicate"] += 1
+            for name in removed:
+                outcome["events_seen"] += 1
+                if _insert_index_event(connection, collector=collector, name=name, event_type="project_removed", serial=serial, now=now):
+                    outcome["events_stored"] += 1
+                else:
+                    outcome["events_duplicate"] += 1
+            connection.execute(
+                """INSERT INTO registry_snapshots
+                (snapshot_id, collector_id, serial, item_count, names_hash, names_blob, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    _id("RST"),
+                    collector["collector_id"],
+                    serial,
+                    len(names),
+                    names_hash,
+                    sqlite3.Binary(zlib.compress(json.dumps(names).encode("utf-8"))),
+                    now,
+                ),
+            )
+            connection.execute(
+                "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                (serial, now, run_id, now, collector["collector_id"]),
+            )
+    outcome["pages_processed"] = 1
+    outcome["cursor_after"] = serial
+    return outcome
+
+
 def _effective_cursor(collector: Dict[str, Any], since: Optional[str]) -> str:
     definition = COLLECTOR_DEFINITIONS[collector["ecosystem"]]
     current = str((collector.get("cursor") or {}).get("cursor_value") or "")
@@ -671,6 +884,13 @@ def _effective_cursor(collector: Dict[str, Any], since: Optional[str]) -> str:
             current = str(int(time.time()) * multiplier)
         if since:
             requested = _parse_packagist_since(since, multiplier)
+            if int(requested) < int(current):
+                current = requested
+        return current
+    if definition.get("cursor_seed") == "zero":
+        current = current or PACKAGIST_BOOTSTRAP_CURSOR
+        if since:
+            requested = _parse_packagist_since(since, int(definition.get("cursor_multiplier", 1)))
             if int(requested) < int(current):
                 current = requested
         return current
@@ -725,6 +945,7 @@ def run_registry_collector(
     since: Optional[str] = None,
     max_pages: int = DEFAULT_MAX_PAGES,
     fetch_leaves: bool = False,
+    max_diff_events: int = DEFAULT_MAX_DIFF_EVENTS,
     db_path: Optional[str] = None,
     fetcher: Optional[SafeFetcher] = None,
 ) -> Dict[str, Any]:
@@ -748,6 +969,15 @@ def run_registry_collector(
             run_id=run_id,
             db_path=db_path,
         )
+    elif collector["ecosystem"] == "pypi":
+        outcome = _ingest_pypi_index(
+            collector=collector,
+            cursor_before=cursor_before,
+            fetcher=fetcher,
+            run_id=run_id,
+            db_path=db_path,
+            max_diff_events=max(1, int(max_diff_events)),
+        )
     else:
         outcome = _ingest_nuget_catalog(
             collector=collector,
@@ -760,6 +990,10 @@ def run_registry_collector(
         )
 
     result = _close_run(collector=collector, run_id=run_id, cursor_before=cursor_before, outcome=outcome, db_path=db_path)
+    if outcome.get("anomalies"):
+        result["anomalies"] = outcome["anomalies"]
+    if outcome.get("diff_truncated"):
+        result["diff_truncated"] = True
     retention = _retention_state(collector, result["cursor_after"])
     if retention is not None:
         result["retention"] = retention
@@ -888,6 +1122,11 @@ def collector_status(*, ecosystem: Optional[str] = None, db_path: Optional[str] 
                 "SELECT COUNT(*) AS total FROM registry_coverage_windows WHERE collector_id = ? AND state = 'gap'",
                 (collector_id,),
             ).fetchone()
+            snapshot = connection.execute(
+                """SELECT snapshot_id, serial, item_count, created_at FROM registry_snapshots
+                WHERE collector_id = ? ORDER BY created_at DESC LIMIT 1""",
+                (collector_id,),
+            ).fetchone()
             cursor_value = str(cursor["cursor_value"]) if cursor else ""
             lag_seconds: Optional[float] = None
             retention = _retention_state(collector, cursor_value)
@@ -895,7 +1134,7 @@ def collector_status(*, ecosystem: Optional[str] = None, db_path: Optional[str] 
                 lag_seconds = retention["cursor_age_seconds"]
                 if retention["retention_risk"]:
                     _raise_retention_alert(collector=collector, state=retention, db_path=db_path)
-            elif cursor_value and cursor_value != PACKAGIST_BOOTSTRAP_CURSOR:
+            elif cursor_value and COLLECTOR_DEFINITIONS.get(collector["ecosystem"], {}).get("cursor_seed") == "lookback":
                 lag_seconds = max(0.0, (now - _parse_ts(cursor_value)).total_seconds())
             report.append(
                 {
@@ -910,6 +1149,7 @@ def collector_status(*, ecosystem: Optional[str] = None, db_path: Optional[str] 
                     "pending_dead_letters": int(dead_letters["total"]),
                     "coverage_gaps": int(gaps["total"]),
                     "last_run": dict(last_run) if last_run else None,
+                    "last_snapshot": dict(snapshot) if snapshot else None,
                     "retention": retention,
                     "algorithm_version": ALGORITHM_VERSION,
                 }
