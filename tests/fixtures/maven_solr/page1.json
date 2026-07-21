@@ -1,0 +1,33 @@
+{
+  "responseHeader": {"status": 0},
+  "response": {
+    "numFound": 4,
+    "start": 0,
+    "docs": [
+      {
+        "id": "com.acme:acme-core:10.0.0",
+        "g": "com.acme",
+        "a": "acme-core",
+        "v": "10.0.0",
+        "p": "jar",
+        "timestamp": 1782000100000
+      },
+      {
+        "id": "org.evil:paypa1-sdk:1.0.0",
+        "g": "org.evil",
+        "a": "paypa1-sdk",
+        "v": "1.0.0",
+        "p": "jar",
+        "timestamp": 1782000050000
+      },
+      {
+        "id": "com.acme:acme-utils:2.1.0",
+        "g": "com.acme",
+        "a": "acme-utils",
+        "v": "2.1.0",
+        "p": "pom",
+        "timestamp": 1782000000000
+      }
+    ]
+  }
+}

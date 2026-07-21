@@ -42,6 +42,8 @@ NPM_REPLICATE_ROOT_URL = "https://replicate.npmjs.com/"
 NPM_ALLOWED_HOSTS: Tuple[str, ...] = ("replicate.npmjs.com",)
 GO_INDEX_URL = "https://index.golang.org/index"
 GO_ALLOWED_HOSTS: Tuple[str, ...] = ("index.golang.org",)
+MAVEN_SOLR_URL = "https://search.maven.org/solrsearch/select"
+MAVEN_ALLOWED_HOSTS: Tuple[str, ...] = ("search.maven.org",)
 
 MAX_CATALOG_INDEX_BYTES = 8 * 1024 * 1024
 MAX_CATALOG_PAGE_BYTES = 32 * 1024 * 1024
@@ -50,12 +52,14 @@ MAX_SIMPLE_INDEX_BYTES = 128 * 1024 * 1024
 MAX_TIMEFRAME_PAGE_BYTES = 8 * 1024 * 1024
 MAX_NPM_CHANGES_BYTES = 32 * 1024 * 1024
 MAX_GO_INDEX_BYTES = 16 * 1024 * 1024
+MAX_MAVEN_PAGE_BYTES = 8 * 1024 * 1024
 MAX_LEAF_BYTES = 2 * 1024 * 1024
 DEFAULT_MAX_PAGES = 10
 DEFAULT_LOOKBACK_HOURS = 24
 DEFAULT_MAX_WINDOW_HOURS = 24
 DEFAULT_NPM_PAGE_LIMIT = 5000
 DEFAULT_GO_PAGE_LIMIT = 2000
+DEFAULT_MAVEN_PAGE_LIMIT = 200
 MAX_DEAD_LETTER_ATTEMPTS = 8
 DEFAULT_MAX_DIFF_EVENTS = 10000
 ALGORITHM_VERSION = "registry-surveillance.v1"
@@ -158,6 +162,25 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "cursor_seed": "lookback",
         "page_limit": DEFAULT_GO_PAGE_LIMIT,
         "interval_seconds": 900,
+    },
+    "maven": {
+        "collector_id": "COL-MAVEN-SOLR",
+        "source_id": "REG-MAVEN",
+        "name": "Maven Central Solr tail",
+        "feed_url": MAVEN_SOLR_URL,
+        "mode": "event_feed",
+        "allowed_hosts": MAVEN_ALLOWED_HOSTS,
+        "coverage_mode": "search_derived_tail",
+        # Measured against the live deployment: sort parameters are ignored
+        # (results are always newest-first) and two-sided timestamp ranges
+        # return nothing, so the collector tails an open-ended range and
+        # advances the cursor only when the backlog fully drains. The Solr
+        # index can lag the live repository by days to weeks; coverage is
+        # search-derived, never a census.
+        "cursor_seed": "zero",
+        "cursor_multiplier": 1000,
+        "page_limit": DEFAULT_MAVEN_PAGE_LIMIT,
+        "interval_seconds": 3600,
     },
 }
 
@@ -1382,6 +1405,178 @@ def _ingest_go_index(
     return outcome
 
 
+def _maven_repo_url(group: str, artifact: str, version: str) -> str:
+    group_path = group.replace(".", "/")
+    return f"https://repo1.maven.org/maven2/{group_path}/{artifact}/{version}/"
+
+
+def _ingest_maven_solr(
+    *,
+    collector: Dict[str, Any],
+    cursor_before: str,
+    max_pages: int,
+    fetcher: SafeFetcher,
+    run_id: str,
+    db_path: Optional[str],
+) -> Dict[str, Any]:
+    """Tail the Maven Central Solr gav core with an epoch-millis cursor.
+
+    The live deployment ignores sort parameters and answers newest-first,
+    so the collector pages through the backlog and advances the cursor
+    only when the backlog fully drains; an undrained backlog holds the
+    cursor and surfaces window_incomplete instead of skipping versions.
+    """
+    config = _decode(collector["config_json"], {})
+    allowed_hosts = config.get("allowed_hosts", [])
+    page_limit = max(1, min(int(config.get("page_limit", DEFAULT_MAVEN_PAGE_LIMIT)), 200))
+    outcome = _empty_outcome(cursor_before)
+
+    def _query(params: str) -> Dict[str, Any]:
+        url = f"{collector['feed_url']}?{params}&core=gav&wt=json"
+        return _fetch_json(fetcher, url, allowed_hosts=allowed_hosts, max_bytes=MAX_MAVEN_PAGE_BYTES), url
+
+    if cursor_before == PACKAGIST_BOOTSTRAP_CURSOR:
+        try:
+            payload, _url = _query("q=" + urllib.parse.quote("*:*") + "&rows=1")
+        except (IntakeError, CollectorError) as exc:
+            outcome["error"] = f"solr bootstrap fetch failed: {exc}"
+            with closing(soc_store.connect(db_path)) as connection:
+                with connection:
+                    _record_dead_letter(
+                        connection,
+                        collector_id=collector["collector_id"],
+                        run_id=run_id,
+                        url=collector["feed_url"],
+                        item_kind="feed",
+                        payload={"bootstrap": True},
+                        error=str(exc),
+                    )
+            return outcome
+        docs = (payload.get("response") or {}).get("docs") or []
+        newest = docs[0].get("timestamp") if docs and isinstance(docs[0], dict) else None
+        if not isinstance(newest, int):
+            outcome["error"] = "solr bootstrap did not expose a newest timestamp"
+            return outcome
+        now = _format_ts(_utcnow())
+        with closing(soc_store.connect(db_path)) as connection:
+            with connection:
+                connection.execute(
+                    "UPDATE registry_cursors SET cursor_value = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                    (str(newest), run_id, now, collector["collector_id"]),
+                )
+        outcome["cursor_after"] = str(newest)
+        return outcome
+
+    drained = False
+    start = 0
+    num_found: Optional[int] = None
+    newest_seen: Optional[int] = None
+    with closing(soc_store.connect(db_path)) as connection:
+        for page_number in range(1, max(1, min(int(max_pages), 500)) + 1):
+            query = urllib.parse.quote(f"timestamp:[{cursor_before} TO *]")
+            page_url = f"{collector['feed_url']}?q={query}&core=gav&rows={page_limit}&start={start}&wt=json"
+            outcome["pages_selected"] += 1
+            try:
+                payload = _fetch_json(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_MAVEN_PAGE_BYTES)
+            except (IntakeError, CollectorError) as exc:
+                outcome["error"] = f"solr page fetch failed: {exc}"
+                with connection:
+                    _record_dead_letter(
+                        connection,
+                        collector_id=collector["collector_id"],
+                        run_id=run_id,
+                        url=page_url,
+                        item_kind="page",
+                        payload={"cursor": cursor_before, "start": start},
+                        error=str(exc),
+                    )
+                break
+            response = payload.get("response")
+            if not isinstance(response, dict) or not isinstance(response.get("docs"), list):
+                outcome["error"] = "solr response did not contain a docs list"
+                break
+            if num_found is None:
+                found = response.get("numFound")
+                if not isinstance(found, int):
+                    outcome["error"] = "solr response did not expose numFound"
+                    break
+                num_found = found
+            docs = [doc for doc in response["docs"] if isinstance(doc, dict)]
+            if not docs:
+                drained = True
+                break
+            now = _format_ts(_utcnow())
+            with connection:
+                for doc in docs:
+                    group = str(doc.get("g") or "").strip()
+                    artifact = str(doc.get("a") or "").strip()
+                    version = str(doc.get("v") or "").strip()
+                    timestamp = doc.get("timestamp")
+                    if not group or not artifact or not version or not isinstance(timestamp, int):
+                        continue
+                    outcome["events_seen"] += 1
+                    newest_seen = max(newest_seen or 0, timestamp)
+                    package = f"{group}:{artifact}"
+                    registry_ts = _format_ts(datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc))
+                    key = _idempotency_key(collector["ecosystem"], package, version, registry_ts, "published")
+                    metadata = {
+                        "packaging": doc.get("p") or "",
+                        "repository_id": doc.get("repositoryId") or "",
+                        "search_derived": True,
+                        "algorithm_version": ALGORITHM_VERSION,
+                    }
+                    cursor = connection.execute(
+                        """INSERT INTO registry_feed_events
+                        (feed_event_id, collector_id, ecosystem, package, version, event_type,
+                         registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
+                         idempotency_key, collected_at, processing_state)
+                        VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, 0, ?, ?, ?, 'pending')
+                        ON CONFLICT(idempotency_key) DO NOTHING""",
+                        (
+                            _id("RFE"),
+                            collector["collector_id"],
+                            collector["ecosystem"],
+                            package,
+                            version,
+                            registry_ts,
+                            page_url,
+                            _maven_repo_url(group, artifact, version),
+                            _json(metadata),
+                            key,
+                            now,
+                        ),
+                    )
+                    if cursor.rowcount == 0:
+                        outcome["events_duplicate"] += 1
+                    else:
+                        outcome["events_stored"] += 1
+            outcome["pages_processed"] += 1
+            start += len(docs)
+            if num_found is not None and start >= num_found:
+                drained = True
+                break
+
+    if outcome["error"]:
+        return outcome
+    if drained and newest_seen is not None:
+        now = _format_ts(_utcnow())
+        with closing(soc_store.connect(db_path)) as connection:
+            with connection:
+                connection.execute(
+                    "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                    (str(newest_seen), _format_ts(datetime.fromtimestamp(newest_seen / 1000, tz=timezone.utc)), run_id, now, collector["collector_id"]),
+                )
+        outcome["cursor_after"] = str(newest_seen)
+    elif drained:
+        outcome["cursor_after"] = cursor_before
+    else:
+        # Backlog larger than the page budget: the cursor holds and the
+        # next run resumes the same range; idempotency absorbs the refetch.
+        outcome["window_incomplete"] = True
+        outcome["cursor_after"] = cursor_before
+    return outcome
+
+
 def _effective_cursor(collector: Dict[str, Any], since: Optional[str]) -> str:
     definition = COLLECTOR_DEFINITIONS[collector["ecosystem"]]
     current = str((collector.get("cursor") or {}).get("cursor_value") or "")
@@ -1505,6 +1700,15 @@ def run_registry_collector(
         )
     elif collector["ecosystem"] == "go":
         outcome = _ingest_go_index(
+            collector=collector,
+            cursor_before=cursor_before,
+            max_pages=max_pages,
+            fetcher=fetcher,
+            run_id=run_id,
+            db_path=db_path,
+        )
+    elif collector["ecosystem"] == "maven":
+        outcome = _ingest_maven_solr(
             collector=collector,
             cursor_before=cursor_before,
             max_pages=max_pages,
