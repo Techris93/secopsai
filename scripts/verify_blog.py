@@ -41,6 +41,13 @@ def main() -> int:
     for marker in ["Security Research & Advisories", "SECURITY NEWS", "Featured Research", "Follow SecOpsAI advisories and research", "Traditional syndication", "Structured automation"]:
         if marker not in index:
             raise AssertionError(f"blog index missing advanced blog marker: {marker}")
+    for marker in [
+        '<section class="hero">\n        <div class="shell">',
+        '<div class="content-section">\n        <div class="shell">',
+        '<section class="subscribe-section" id="subscribe" aria-labelledby="subscribe-heading">\n        <div class="shell">',
+    ]:
+        if marker not in index:
+            raise AssertionError("blog index section is missing the shared responsive content container")
     for marker in ["Latest posts", "data-topic-filter", "post-sort", "post-search", "latest-grid"]:
         if marker not in latest:
             raise AssertionError(f"latest posts page missing listing marker: {marker}")
@@ -93,6 +100,8 @@ def main() -> int:
         raise AssertionError("news source registry must include direct government/vendor/project sources")
     if "Raw JSON" not in json_landing:
         raise AssertionError("JSON feed landing page must link to the raw JSON endpoint")
+    if '<section class="hero">\n        <div class="shell">' not in json_landing:
+        raise AssertionError("JSON feed hero is missing the shared responsive content container")
     for marker in ["post-search", "data-nav-toggle", "aria-expanded", "nav-open"]:
         if marker not in blog_js:
             raise AssertionError(f"blog script missing navigation/search marker: {marker}")
@@ -100,6 +109,8 @@ def main() -> int:
     for marker in [".nav-toggle", ".nav.nav-open .nav-links", "@media (max-width: 840px)"]:
         if marker not in blog_css:
             raise AssertionError(f"blog stylesheet missing responsive navigation marker: {marker}")
+    if ".shell { padding: 0 16px; }" in blog_css:
+        raise AssertionError("blog mobile gutters must remain aligned with the 24px main-site and docs container")
     if "post-search" not in blog_js:
         raise AssertionError("blog search script must be served as a local asset")
     if "textContent" not in comments_js:

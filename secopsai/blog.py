@@ -3196,6 +3196,7 @@ def _render_category_cards(posts: Optional[List[Dict[str, Any]]] = None) -> str:
 
 def _render_subscribe_panel(posts: Optional[List[Dict[str, Any]]] = None) -> str:
     return f"""<section class="subscribe-section" id="subscribe" aria-labelledby="subscribe-heading">
+        <div class="shell">
         <div class="subscribe-top">
           <div>
             <p class="section-label">Subscribe</p>
@@ -3225,6 +3226,7 @@ def _render_subscribe_panel(posts: Optional[List[Dict[str, Any]]] = None) -> str
           )}
         </div>
         {_render_category_cards(posts)}
+        </div>
       </section>"""
 
 
@@ -3545,19 +3547,23 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
     ])}
     <main>
       <section class="hero">
-        <p class="eyebrow">Security Research & Advisories</p>
-        <h1>Security intelligence operators can act on quickly.</h1>
-        <p class="lede">Fast incident posts from the SecOpsAI side of the console:
-          affected packages, IOCs, detection logic, mitigations, timelines,
-          and source-backed updates.</p>
-        <div class="feed-actions">
-          <a class="button" href="#subscribe">Subscribe</a>
-          <a class="button secondary" href="/json-feed">JSON Feed</a>
+        <div class="shell">
+          <p class="eyebrow">Security Research & Advisories</p>
+          <h1>Security intelligence operators can act on quickly.</h1>
+          <p class="lede">Fast incident posts from the SecOpsAI side of the console:
+            affected packages, IOCs, detection logic, mitigations, timelines,
+            and source-backed updates.</p>
+          <div class="feed-actions">
+            <a class="button" href="#subscribe">Subscribe</a>
+            <a class="button secondary" href="/json-feed">JSON Feed</a>
+          </div>
+          <div class="scroll-indicator" aria-hidden="true"></div>
         </div>
-        <div class="scroll-indicator" aria-hidden="true"></div>
       </section>
       <div class="content-section">
-        {featured_html}
+        <div class="shell">
+          {featured_html}
+        </div>
       </div>
       {_render_subscribe_panel(posts)}
     </main>
@@ -3729,13 +3735,15 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
     ])}
     <main>
       <section class="hero">
-        <p class="eyebrow">Programmatic feed</p>
-        <h1>SecOpsAI JSON Feed</h1>
-        <p class="lede">A structured JSON feed for applications, scripts, and
-          automation workflows that consume SecOpsAI advisories and research.</p>
-        <div class="feed-actions">
-          <a class="button" href="/feed.json?raw=1">Open raw JSON</a>
-          <a class="button secondary" href="/feed.xml">Open RSS</a>
+        <div class="shell">
+          <p class="eyebrow">Programmatic feed</p>
+          <h1>SecOpsAI JSON Feed</h1>
+          <p class="lede">A structured JSON feed for applications, scripts, and
+            automation workflows that consume SecOpsAI advisories and research.</p>
+          <div class="feed-actions">
+            <a class="button" href="/feed.json?raw=1">Open raw JSON</a>
+            <a class="button secondary" href="/feed.xml">Open RSS</a>
+          </div>
         </div>
       </section>
       {_render_subscribe_panel(posts)}

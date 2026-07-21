@@ -611,7 +611,6 @@ button.button {
   .hero h1, .article-hero h1 { font-size: 26px; }
 }
 @media (max-width: 560px) {
-  .shell { padding: 0 16px; }
   .hero { padding: 32px 0 24px; }
   .feed-url-row { flex-direction: column; }
   .copy-url { padding: 8px 12px; }

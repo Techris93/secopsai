@@ -62,6 +62,12 @@ class BlogPublishingTests(unittest.TestCase):
             self.assertIn("Follow SecOpsAI advisories and research", index)
             self.assertIn("Traditional syndication", index)
             self.assertIn("Structured automation", index)
+            self.assertIn('<section class="hero">\n        <div class="shell">', index)
+            self.assertIn('<div class="content-section">\n        <div class="shell">', index)
+            self.assertIn(
+                '<section class="subscribe-section" id="subscribe" aria-labelledby="subscribe-heading">\n        <div class="shell">',
+                index,
+            )
             self.assertIn("security workflow", index)
             self.assertIn("Intelligence Categories", index)
             self.assertIn("/posts/", index)
@@ -81,6 +87,7 @@ class BlogPublishingTests(unittest.TestCase):
             self.assertIn("twitter:card", post_html)
             self.assertIn("article:published_time", post_html)
             self.assertIn("/feed.json?raw=1", json_landing)
+            self.assertIn('<section class="hero">\n        <div class="shell">', json_landing)
             self.assertNotIn("Review Checklist", (paths.root / "feed.json").read_text(encoding="utf-8"))
             self.assertNotIn("Review Checklist", (paths.root / "feed.xml").read_text(encoding="utf-8"))
             self.assertTrue((paths.root / "assets" / "social" / "secopsai-blog.svg").exists())
