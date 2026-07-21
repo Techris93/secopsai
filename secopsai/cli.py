@@ -128,6 +128,12 @@ from secopsai.research_surveillance import (
     set_collector_enabled as set_registry_collector_enabled,
 )
 from secopsai.research_scoring import score_pending_events as score_pending_feed_events
+from secopsai.research_worker import (
+    collector_schedules as research_collector_schedules,
+    due_collectors as research_due_collectors,
+    run_worker_cycle,
+    run_worker_loop,
+)
 from secopsai.research_analysis import compare_intakes, compare_packages, correlate_candidates, inspect_nuget_archive, list_campaigns
 from secopsai.research_sandbox import poll_sandbox_request, submit_sandbox_request, provider_status as sandbox_provider_status
 from secopsai.research_delivery import send_approved_disclosure, send_research_alert
@@ -1180,6 +1186,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     score_run.add_argument("--limit", type=int, default=200)
     score_run.add_argument("--db-path", default=None)
 
+    research_worker = research_sub.add_parser("worker", help="Run the continuous surveillance worker")
+    research_worker_sub = research_worker.add_subparsers(dest="research_worker_cmd", required=True)
+    worker_run = research_worker_sub.add_parser("run", help="Run worker cycles")
+    worker_run.add_argument("--once", action="store_true", help="Run a single cycle and exit")
+    worker_run.add_argument("--interval", type=int, default=60, help="Seconds between cycles in loop mode")
+    worker_run.add_argument("--max-cycles", type=int, default=None, help="Stop after N cycles (loop mode)")
+    worker_run.add_argument("--db-path", default=None)
+    worker_due = research_worker_sub.add_parser("due", help="Show which collectors are due")
+    worker_due.add_argument("--db-path", default=None)
+
     research_compare = research_sub.add_parser("compare", help="Compare two normalized, statically collected package intake JSON files")
     research_compare.add_argument("--left", required=True, help="Path to the first normalized intake JSON")
     research_compare.add_argument("--right", required=True, help="Path to the second normalized intake JSON")
@@ -2096,6 +2112,13 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = recover_interrupted_collector_runs(max_age_seconds=args.max_age_seconds, db_path=args.db_path)
         elif args.research_cmd == "score":
             payload = score_pending_feed_events(ecosystem=args.ecosystem, limit=args.limit, db_path=args.db_path)
+        elif args.research_cmd == "worker":
+            if args.research_worker_cmd == "due":
+                payload = {"schedules": research_collector_schedules(), "collectors": research_due_collectors(db_path=args.db_path)}
+            elif args.once:
+                payload = run_worker_cycle(db_path=args.db_path)
+            else:
+                payload = run_worker_loop(db_path=args.db_path, interval_seconds=args.interval, max_cycles=args.max_cycles, on_cycle=lambda summary: print(json.dumps({"cycle": summary}, sort_keys=True), flush=True))
         elif args.research_cmd == "compare":
             with open(args.left, "r", encoding="utf-8") as left_handle:
                 left_payload = json.load(left_handle)
@@ -2524,7 +2547,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
 
-        if args.research_cmd in {"ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "compare", "compare-packages", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "workflow"}:
+        if args.research_cmd in {"ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "compare", "compare-packages", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "workflow"}:
             return _run_research_automation_command(args)
 
         if args.research_cmd == "case":

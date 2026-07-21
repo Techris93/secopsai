@@ -16,6 +16,40 @@ The initial monitor mode is intentionally watchlist-scoped. A successful watchli
 
 An exact-package monitor creates a version baseline and records subsequent version changes as informational alerts. It does not classify the legitimate watched package as a typosquat. Lookalike candidates enter through registry event/search observations and are scored separately against watchlists. Exact approved names and explicit exclusions are suppressed unless an expected publisher is configured and the observed publisher differs.
 
+## Global surveillance collectors
+
+Beyond watchlist monitors, SecOpsAI runs registry-wide collectors that record every observable package event into an append-only ledger before scoring:
+
+- **NuGet**: chronological V3 Catalog cursor ingestion (publish/delete events, optional leaf enrichment).
+- **Packagist**: `metadata/changes.json` with the composite server cursor, bounded-retention safety alarms, and skew overlap.
+- **PyPI**: simple-index reconciliation with serial headers; snapshots detect project additions and removals. Per-release detection still needs watchlist polling or backfill — the capability registry says so honestly.
+- **RubyGems**: `timeframe_versions` sliding windows; the cursor advances only when a window fully drains, so bursts cannot be skipped.
+
+```bash
+secopsai research collect status                 # collector health, cursor lag, gaps
+secopsai research collect run --ecosystem nuget  # one bounded ingestion pass
+secopsai research collect pause --ecosystem pypi # pause without losing the cursor
+secopsai research collect resume --ecosystem pypi
+secopsai research collect retry-failures         # dead-letter retries with backoff
+secopsai research collect coverage --days 7      # windows, gaps first
+secopsai research collect events --limit 50      # the raw ledger
+secopsai research score run                      # ledger -> watchlist candidates
+```
+
+A failed fetch never advances the cursor, so history cannot be skipped silently. A **coverage gap** is an operator-visible replay request, not a clean result.
+
+## Continuous worker
+
+`secopsai research worker run` executes due collectors on their own schedules (NuGet 15 min, Packagist 15 min, PyPI 1 hour, RubyGems 30 min), scores new events, retries dead letters, and recovers interrupted runs. One failing registry never stops the cycle.
+
+```bash
+secopsai research worker due           # which collectors are due and why
+secopsai research worker run --once    # single cycle (cron-friendly)
+secopsai research worker run           # loop mode with SIGTERM handling
+```
+
+On Render, the `secopsai-research-worker` background worker in `render.yaml` runs loop mode against a persistent disk (`SECOPS_FINDINGS_DIR=/var/data/secopsai-research`). The worker database is independent of the API database so collection can scale separately.
+
 ## Watchlist and monitor workflow
 
 ```bash

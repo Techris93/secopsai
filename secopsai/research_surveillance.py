@@ -62,6 +62,7 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "allowed_hosts": NUGET_ALLOWED_HOSTS,
         "coverage_mode": "catalog_chronological",
         "cursor_seed": "lookback",
+        "interval_seconds": 900,
     },
     "packagist": {
         "collector_id": "COL-PACKAGIST-CHANGES",
@@ -79,6 +80,7 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "overlap_seconds": 300,
         "retention_seconds": 86400,
         "retention_safety_seconds": 64800,
+        "interval_seconds": 900,
     },
     "pypi": {
         "collector_id": "COL-PYPI-INDEX",
@@ -94,6 +96,9 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         # per-release detection needs watchlist polling or backfill.
         "cursor_seed": "zero",
         "cursor_multiplier": 1,
+        # The simple index is a multi-megabyte full-document fetch; hourly
+        # reconciliation is the respectful default.
+        "interval_seconds": 3600,
     },
     "rubygems": {
         "collector_id": "COL-RUBYGEMS-TIMEFRAME",
@@ -110,6 +115,7 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "cursor_seed": "lookback",
         "overlap_seconds": 300,
         "max_window_hours": DEFAULT_MAX_WINDOW_HOURS,
+        "interval_seconds": 1800,
     },
 }
 
@@ -169,7 +175,7 @@ def ensure_collectors(*, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
                 "allowed_hosts": list(definition["allowed_hosts"]),
                 "algorithm_version": ALGORITHM_VERSION,
             }
-            for key in ("cursor_multiplier", "overlap_seconds", "retention_seconds", "retention_safety_seconds", "max_window_hours"):
+            for key in ("cursor_multiplier", "overlap_seconds", "retention_seconds", "retention_safety_seconds", "max_window_hours", "interval_seconds"):
                 if key in definition:
                     config[key] = definition[key]
             connection.execute(
