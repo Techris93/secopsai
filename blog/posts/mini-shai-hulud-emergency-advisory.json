@@ -62,7 +62,6 @@
   ],
   "extracted": {},
   "featured": true,
-  "images": [],
   "iocs": [
     "git-tanstack.com/transformers.pyz",
     "83.142.209.194/transformers.pyz",

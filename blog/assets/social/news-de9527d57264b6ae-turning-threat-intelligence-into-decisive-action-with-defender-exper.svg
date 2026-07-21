@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="Turning threat intelligence into decisive action with Defender Experts">
+  <desc>SecOpsAI technical-publication social card for Turning threat intelligence into decisive action with Defender Experts</desc>
+  <rect width="1200" height="630" fill="#FBFAF6"/>
+  <rect x="42" y="42" width="1116" height="546" fill="#FFFFFF" stroke="#8B939D" stroke-width="2"/>
+  <rect x="42" y="42" width="10" height="546" fill="#8A5A00"/>
+  <text x="92" y="94" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="800" fill="#16191D">SecOpsAI</text>
+  <text x="1110" y="91" text-anchor="end" font-family="Courier New, monospace" font-size="17" font-weight="700" letter-spacing="2" fill="#56606B">DOC-SECOPS-RESEARCH-001</text>
+  <line x1="92" y1="120" x2="1110" y2="120" stroke="#8B939D" stroke-width="2"/>
+  <text x="92" y="157" font-family="Courier New, monospace" font-size="16" font-weight="700" letter-spacing="3" fill="#56606B">SECURITY RESEARCH AND ADVISORIES</text>
+  <rect x="92" y="178" width="168" height="42" fill="#FFF4CE" stroke="#8A5A00" stroke-width="1"/>
+  <text x="176" y="206" text-anchor="middle" font-family="Courier New, monospace" font-size="18" font-weight="700" letter-spacing="2" fill="#8A5A00">MEDIUM</text>
+  <text x="284" y="205" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#3E4650">Security News, Threat Intelligence</text>
+  <text x="92" y="286" font-family="Arial, Helvetica, sans-serif" font-size="54" font-weight="800" fill="#16191D"><tspan x="92" dy="0">Turning threat intelligence into</tspan>
+<tspan x="92" dy="61">decisive action with Defender</tspan>
+<tspan x="92" dy="61">Experts</tspan></text>
+  <line x1="92" y1="522" x2="1110" y2="522" stroke="#C9CDD2" stroke-width="2"/>
+  <text x="92" y="558" font-family="Courier New, monospace" font-size="17" font-weight="700" letter-spacing="1" fill="#56606B">blog.secopsai.dev</text>
+  <text x="1110" y="558" text-anchor="end" font-family="Courier New, monospace" font-size="17" font-weight="700" letter-spacing="1" fill="#56606B">ISSUE 2026-07-15</text>
+</svg>

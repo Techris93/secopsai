@@ -1,0 +1,80 @@
+{
+  "affected_artifacts": [],
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "affected_products": [],
+  "author": "Microsoft Security Blog",
+  "body_markdown": "## Source Metadata\n\n- Source: Microsoft Security Blog\n- Canonical URL: https://www.microsoft.com/en-us/security/blog/2026/06/24/cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-management-platforms/\n- Additional references: none\n- Published at: Wed, 24 Jun 2026 18:00:00 +0000\n- Fetched at: 2026-06-25T12:22:10Z\n- Trust level: vendor\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, and track any source-backed detections or mitigations added during review.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- None found deterministically; reviewer should add source-backed affected assets if present.\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Compare the source-backed claim against local assets and current SOC findings.\n- Create a follow-up triage task if the affected technology is present.\n- Document whether this item requires a new advisory, detection, or mitigation note.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-f98371c262a7a90c-cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-managem\n```\n\n## References\n\n- https://www.microsoft.com/en-us/security/blog/2026/06/24/cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-management-platforms/",
+  "canonical_url": "https://www.microsoft.com/en-us/security/blog/2026/06/24/cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-management-platforms/",
+  "categories": [
+    "Security News",
+    "Threat Intelligence"
+  ],
+  "deployed_at": "2026-06-25T12:26:21Z",
+  "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [],
+    "products": [],
+    "severity_signals": [],
+    "urls": []
+  },
+  "featured": false,
+  "fetched_at": "2026-06-25T12:22:10Z",
+  "iocs": [],
+  "news_key": "f98371c262a7a90c",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-f98371c262a7a90c-cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-managem"
+  ],
+  "primary_references": [
+    "https://www.microsoft.com/en-us/security/blog/2026/06/24/cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-management-platforms/"
+  ],
+  "published_at": "Wed, 24 Jun 2026 18:00:00 +0000",
+  "published_post_path": "blog/posts/news-f98371c262a7a90c-cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-managem.json",
+  "published_url": "https://blog.secopsai.dev/posts/news-f98371c262a7a90c-cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-managem.html",
+  "readiness_blockers": [],
+  "readiness_score": 95,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [
+    "no CVEs, IOCs, packages, or products were extracted deterministically"
+  ],
+  "reading_time": 1,
+  "references": [
+    "https://www.microsoft.com/en-us/security/blog/2026/06/24/cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-management-platforms/"
+  ],
+  "related_posts": [],
+  "review_status": "deployed",
+  "reviewed_at": "2026-06-25T12:23:08Z",
+  "severity": "medium",
+  "severity_reason": "Security-relevant vulnerability/news signal.",
+  "slug": "news-f98371c262a7a90c-cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-managem",
+  "social_image": "/assets/social/news-f98371c262a7a90c-cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-managem.svg",
+  "social_image_alt": "SecOpsAI social preview card for CNAPP evolution: How Microsoft aligns with leading cloud risk management platforms",
+  "social_image_height": 630,
+  "social_image_width": 1200,
+  "source_category": "Threat Intelligence",
+  "source_links": [
+    "https://www.microsoft.com/en-us/security/blog/2026/06/24/cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-management-platforms/"
+  ],
+  "source_name": "Microsoft Security Blog",
+  "source_trust_level": "vendor",
+  "source_url": "https://www.microsoft.com/en-us/security/blog/",
+  "sources": [
+    "https://www.microsoft.com/en-us/security/blog/2026/06/24/cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-management-platforms/"
+  ],
+  "status": "published",
+  "summary": "Learn how CNAPP platforms are helping organizations prioritize exploitable risks, reduce exposure, and operationalize security across the application lifecycle. The post CNAPP evolution: How Microsoft aligns with leading cloud risk management platforms appeared first on Microsoft Security Blog .",
+  "tags": [
+    "Security News",
+    "Threat Intelligence"
+  ],
+  "title": "CNAPP evolution: How Microsoft aligns with leading cloud risk management platforms",
+  "updated_at": "2026-06-25T12:26:21Z"
+}

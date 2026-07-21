@@ -1,0 +1,102 @@
+{
+  "affected_artifacts": [],
+  "affected_ecosystems": [
+    "npm",
+    "composer",
+    "go"
+  ],
+  "affected_packages": [
+    "npm"
+  ],
+  "affected_products": [
+    "Packagist"
+  ],
+  "author": "Socket Blog",
+  "body_markdown": "## Source Metadata\n\n- Source: Socket Blog\n- Canonical URL: https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands\n- Additional references: none\n- Published at: 2026-07-01T17:53:56.469Z\n- Fetched at: 2026-07-02T15:43:18Z\n- Trust level: external_research\n\n## Why It Matters\n\n- Source type: Security News\n- Severity hint: info (Default source severity.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can compare affected package names and versions against emergency advisories, lockfiles, package manifests, package registry changes, and supply-chain SOC findings.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- npm\n- Packagist\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Block affected package names or versions when source-backed version details are available.\n- Inspect lockfiles, manifests, and CI dependency caches for affected package references.\n- Rotate package-manager, CI, and registry credentials if compromise or token theft is reported.\n- Run SecOpsAI supply-chain advisory checks for extracted package names.\n- Review extracted package references: npm.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o\n```\n\n## References\n\n- https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands",
+  "canonical_url": "https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands",
+  "categories": [
+    "Security News",
+    "Supply Chain",
+    "Research",
+    "npm",
+    "composer",
+    "go"
+  ],
+  "deployed_at": "2026-07-02T15:45:15Z",
+  "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [
+      "npm",
+      "composer",
+      "go"
+    ],
+    "hashes": [],
+    "ips": [],
+    "packages": [
+      "npm"
+    ],
+    "products": [
+      "Packagist"
+    ],
+    "severity_signals": [],
+    "urls": []
+  },
+  "featured": false,
+  "fetched_at": "2026-07-02T15:43:18Z",
+  "iocs": [],
+  "news_key": "80d28381a6d4f840",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o"
+  ],
+  "primary_references": [
+    "https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands"
+  ],
+  "published_at": "2026-07-01T17:53:56.469Z",
+  "published_post_path": "blog/posts/news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o.json",
+  "published_url": "https://blog.secopsai.dev/posts/news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o.html",
+  "readiness_blockers": [],
+  "readiness_score": 100,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [],
+  "reading_time": 1,
+  "references": [
+    "https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands"
+  ],
+  "related_posts": [],
+  "review_status": "deployed",
+  "reviewed_at": "2026-07-02T15:44:18Z",
+  "severity": "info",
+  "severity_reason": "Default source severity.",
+  "slug": "news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o",
+  "social_image": "/assets/social/news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o.svg",
+  "social_image_alt": "SecOpsAI social preview card for PolinRider: North Korea-Linked Supply Chain Campaign Expands Across Open Source Ecosystems",
+  "social_image_height": 630,
+  "social_image_width": 1200,
+  "source_category": "Security News",
+  "source_links": [
+    "https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands"
+  ],
+  "source_name": "Socket Blog",
+  "source_trust_level": "external_research",
+  "source_url": "https://socket.dev/blog",
+  "sources": [
+    "https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands"
+  ],
+  "status": "published",
+  "summary": "PolinRider expands across npm, Packagist, Go modules, and Chrome extensions, using hidden loaders to target developer environments.",
+  "tags": [
+    "Security News",
+    "Supply Chain",
+    "Research",
+    "npm",
+    "composer",
+    "go"
+  ],
+  "title": "PolinRider: North Korea-Linked Supply Chain Campaign Expands Across Open Source Ecosystems",
+  "updated_at": "2026-07-02T15:45:15Z"
+}

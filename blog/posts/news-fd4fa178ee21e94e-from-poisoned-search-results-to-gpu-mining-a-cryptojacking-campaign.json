@@ -1,0 +1,80 @@
+{
+  "affected_artifacts": [],
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "affected_products": [],
+  "author": "Microsoft Security Blog",
+  "body_markdown": "## Source Metadata\n\n- Source: Microsoft Security Blog\n- Canonical URL: https://www.microsoft.com/en-us/security/blog/2026/05/26/poisoned-search-results-gpu-mining-cryptojacking-campaign-abusing-screenconnect-microsoft-net-utilities/\n- Additional references: none\n- Published at: Tue, 26 May 2026 21:35:34 +0000\n- Fetched at: 2026-05-31T21:15:24Z\n- Trust level: vendor\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, and track any source-backed detections or mitigations added during review.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- None found deterministically; reviewer should add source-backed affected assets if present.\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Compare the source-backed claim against local assets and current SOC findings.\n- Create a follow-up triage task if the affected technology is present.\n- Document whether this item requires a new advisory, detection, or mitigation note.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-fd4fa178ee21e94e-from-poisoned-search-results-to-gpu-mining-a-cryptojacking-campaign\n```\n\n## References\n\n- https://www.microsoft.com/en-us/security/blog/2026/05/26/poisoned-search-results-gpu-mining-cryptojacking-campaign-abusing-screenconnect-microsoft-net-utilities/",
+  "canonical_url": "https://www.microsoft.com/en-us/security/blog/2026/05/26/poisoned-search-results-gpu-mining-cryptojacking-campaign-abusing-screenconnect-microsoft-net-utilities/",
+  "categories": [
+    "Security News",
+    "Threat Intelligence"
+  ],
+  "deployed_at": "2026-06-01T20:20:55Z",
+  "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [],
+    "products": [],
+    "severity_signals": [],
+    "urls": []
+  },
+  "featured": false,
+  "fetched_at": "2026-05-31T21:15:24Z",
+  "iocs": [],
+  "news_key": "fd4fa178ee21e94e",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-fd4fa178ee21e94e-from-poisoned-search-results-to-gpu-mining-a-cryptojacking-campaign"
+  ],
+  "primary_references": [
+    "https://www.microsoft.com/en-us/security/blog/2026/05/26/poisoned-search-results-gpu-mining-cryptojacking-campaign-abusing-screenconnect-microsoft-net-utilities/"
+  ],
+  "published_at": "Tue, 26 May 2026 21:35:34 +0000",
+  "published_post_path": "blog/posts/news-fd4fa178ee21e94e-from-poisoned-search-results-to-gpu-mining-a-cryptojacking-campaign.json",
+  "published_url": "https://blog.secopsai.dev/posts/news-fd4fa178ee21e94e-from-poisoned-search-results-to-gpu-mining-a-cryptojacking-campaign.html",
+  "readiness_blockers": [],
+  "readiness_score": 95,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [
+    "no CVEs, IOCs, packages, or products were extracted deterministically"
+  ],
+  "reading_time": 1,
+  "references": [
+    "https://www.microsoft.com/en-us/security/blog/2026/05/26/poisoned-search-results-gpu-mining-cryptojacking-campaign-abusing-screenconnect-microsoft-net-utilities/"
+  ],
+  "related_posts": [],
+  "review_status": "deployed",
+  "reviewed_at": "2026-06-01T20:19:05Z",
+  "severity": "medium",
+  "severity_reason": "Security-relevant vulnerability/news signal.",
+  "slug": "news-fd4fa178ee21e94e-from-poisoned-search-results-to-gpu-mining-a-cryptojacking-campaign",
+  "social_image": "/assets/social/news-fd4fa178ee21e94e-from-poisoned-search-results-to-gpu-mining-a-cryptojacking-campaign.svg",
+  "social_image_alt": "SecOpsAI social preview card for From poisoned search results to GPU mining: A cryptojacking campaign abusing ScreenConnect and Microsoft .NET utilities",
+  "social_image_height": 630,
+  "social_image_width": 1200,
+  "source_category": "Threat Intelligence",
+  "source_links": [
+    "https://www.microsoft.com/en-us/security/blog/2026/05/26/poisoned-search-results-gpu-mining-cryptojacking-campaign-abusing-screenconnect-microsoft-net-utilities/"
+  ],
+  "source_name": "Microsoft Security Blog",
+  "source_trust_level": "vendor",
+  "source_url": "https://www.microsoft.com/en-us/security/blog/",
+  "sources": [
+    "https://www.microsoft.com/en-us/security/blog/2026/05/26/poisoned-search-results-gpu-mining-cryptojacking-campaign-abusing-screenconnect-microsoft-net-utilities/"
+  ],
+  "status": "published",
+  "summary": "Microsoft exposes a cryptojacking campaign using SEO poisoning and ScreenConnect to target high-performance PCs, with malicious sites also surfaced through AI chatbots. The post From poisoned search results to GPU mining: A cryptojacking campaign abusing ScreenConnect and Microsoft .NET utilities appeared first on Microsoft Security Blog .",
+  "tags": [
+    "Security News",
+    "Threat Intelligence"
+  ],
+  "title": "From poisoned search results to GPU mining: A cryptojacking campaign abusing ScreenConnect and Microsoft .NET utilities",
+  "updated_at": "2026-06-01T20:20:55Z"
+}

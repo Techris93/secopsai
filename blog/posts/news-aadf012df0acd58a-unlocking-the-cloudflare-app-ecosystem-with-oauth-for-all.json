@@ -1,0 +1,86 @@
+{
+  "affected_artifacts": [],
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "affected_products": [
+    "Cloudflare",
+    "OAuth"
+  ],
+  "author": "Cloudflare Security Blog",
+  "body_markdown": "## Source Metadata\n\n- Source: Cloudflare Security Blog\n- Canonical URL: https://blog.cloudflare.com/oauth-for-all/\n- Additional references: none\n- Published at: Wed, 24 Jun 2026 06:00:00 GMT\n- Fetched at: 2026-06-25T12:22:09Z\n- Trust level: vendor\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can help operators review token exposure, credential-rotation tasks, CI/CD workflow risk, and SOC findings related to secret leakage or suspicious authentication activity.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- Cloudflare\n- OAuth\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Rotate affected tokens or credentials if exposure is plausible.\n- Review GitHub Actions, OIDC trust relationships, OAuth grants, and cloud roles.\n- Check audit logs for suspicious use of impacted credentials or identities.\n- Tighten token scopes and remove stale non-human identities where possible.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all\n```\n\n## References\n\n- https://blog.cloudflare.com/oauth-for-all/",
+  "canonical_url": "https://blog.cloudflare.com/oauth-for-all/",
+  "categories": [
+    "Security News",
+    "Threat Intelligence",
+    "Cloudflare"
+  ],
+  "deployed_at": "2026-06-25T12:26:21Z",
+  "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [],
+    "products": [
+      "Cloudflare",
+      "OAuth"
+    ],
+    "severity_signals": [],
+    "urls": []
+  },
+  "featured": false,
+  "fetched_at": "2026-06-25T12:22:09Z",
+  "iocs": [],
+  "news_key": "aadf012df0acd58a",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all"
+  ],
+  "primary_references": [
+    "https://blog.cloudflare.com/oauth-for-all/"
+  ],
+  "published_at": "Wed, 24 Jun 2026 06:00:00 GMT",
+  "published_post_path": "blog/posts/news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all.json",
+  "published_url": "https://blog.secopsai.dev/posts/news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all.html",
+  "readiness_blockers": [],
+  "readiness_score": 100,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [],
+  "reading_time": 1,
+  "references": [
+    "https://blog.cloudflare.com/oauth-for-all/"
+  ],
+  "related_posts": [],
+  "review_status": "deployed",
+  "reviewed_at": "2026-06-25T12:24:51Z",
+  "severity": "medium",
+  "severity_reason": "Security-relevant vulnerability/news signal.",
+  "slug": "news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all",
+  "social_image": "/assets/social/news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all.svg",
+  "social_image_alt": "SecOpsAI social preview card for Unlocking the Cloudflare app ecosystem with OAuth for all",
+  "social_image_height": 630,
+  "social_image_width": 1200,
+  "source_category": "Threat Intelligence",
+  "source_links": [
+    "https://blog.cloudflare.com/oauth-for-all/"
+  ],
+  "source_name": "Cloudflare Security Blog",
+  "source_trust_level": "vendor",
+  "source_url": "https://blog.cloudflare.com/tag/security/",
+  "sources": [
+    "https://blog.cloudflare.com/oauth-for-all/"
+  ],
+  "status": "published",
+  "summary": "Self-Managed OAuth is now available to all developers on Cloudflare. Here's how we executed a zero-downtime migration of our core OAuth engine to make it happen.",
+  "tags": [
+    "Security News",
+    "Threat Intelligence",
+    "Cloudflare"
+  ],
+  "title": "Unlocking the Cloudflare app ecosystem with OAuth for all",
+  "updated_at": "2026-06-25T12:26:21Z"
+}

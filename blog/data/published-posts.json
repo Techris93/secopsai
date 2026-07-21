@@ -1,7 +1,678 @@
 {
   "description": "Canonical public-post archive used to rebuild generated blog output without losing older posts.",
-  "generated_at": "2026-07-02T13:25:34Z",
+  "generated_at": "2026-07-21T23:02:19Z",
   "posts": [
+    {
+      "affected_artifacts": [],
+      "affected_ecosystems": [],
+      "affected_packages": [],
+      "affected_products": [],
+      "author": "CERT/CC Vulnerability Notes",
+      "body_markdown": "## Source Metadata\n\n- Source: CERT/CC Vulnerability Notes\n- Canonical URL: https://kb.cert.org/vuls/id/529388\n- Additional references: none\n- Published at: 2026-07-15T17:08:59.351349+00:00\n- Fetched at: 2026-07-15T18:01:11Z\n- Trust level: government\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can track affected product names, related CVEs, local SOC findings, advisory matches, and OpenClaw telemetry that mention this vulnerability or impacted component.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- None found deterministically; reviewer should add source-backed affected assets if present.\n\n## IOCs\n\n- Tdelo64.sys\n- tdeio64.sys\n\n## Recommended Actions\n\n- Inventory affected product or component names from the source.\n- Check whether exposed systems, dependencies, or services use the affected component.\n- Prioritize vendor mitigation or patch guidance and record the remediation deadline.\n- Add monitoring terms for extracted CVEs and product names.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-3d2e7f8fefa18de1-vu-529388-privilege-escalation-vulnerability-via-unprotected-ioctl-i\n```\n\n## References\n\n- https://kb.cert.org/vuls/id/529388",
+      "canonical_url": "https://kb.cert.org/vuls/id/529388",
+      "categories": [
+        "Security News",
+        "Threat Intelligence",
+        "CERT/CC",
+        "Vulnerability"
+      ],
+      "deployed_at": "2026-07-15T18:04:45Z",
+      "external_news": true,
+      "extracted": {
+        "cves": [],
+        "domains": [
+          "Tdelo64.sys",
+          "tdeio64.sys"
+        ],
+        "ecosystems": [],
+        "hashes": [],
+        "ips": [],
+        "packages": [],
+        "products": [],
+        "severity_signals": [],
+        "urls": []
+      },
+      "featured": false,
+      "fetched_at": "2026-07-15T18:01:11Z",
+      "iocs": [
+        "Tdelo64.sys",
+        "tdeio64.sys"
+      ],
+      "news_key": "3d2e7f8fefa18de1",
+      "operator_commands": [
+        "secopsai triage summary",
+        "secopsai research preflight",
+        "secopsai supply-chain advisory list",
+        "secopsai blog news-review show news-3d2e7f8fefa18de1-vu-529388-privilege-escalation-vulnerability-via-unprotected-ioctl-i"
+      ],
+      "primary_references": [
+        "https://kb.cert.org/vuls/id/529388"
+      ],
+      "published_at": "2026-07-15T17:08:59.351349+00:00",
+      "published_post_path": "blog/posts/news-3d2e7f8fefa18de1-vu-529388-privilege-escalation-vulnerability-via-unprotected-ioctl-i.json",
+      "published_url": "https://blog.secopsai.dev/posts/news-3d2e7f8fefa18de1-vu-529388-privilege-escalation-vulnerability-via-unprotected-ioctl-i.html",
+      "readiness_blockers": [],
+      "readiness_score": 100,
+      "readiness_status": "ready_to_review",
+      "readiness_warnings": [],
+      "reading_time": 1,
+      "references": [
+        "https://kb.cert.org/vuls/id/529388"
+      ],
+      "related_posts": [],
+      "review_status": "deployed",
+      "reviewed_at": "2026-07-15T18:03:52Z",
+      "severity": "medium",
+      "severity_reason": "Security-relevant vulnerability/news signal.",
+      "slug": "news-3d2e7f8fefa18de1-vu-529388-privilege-escalation-vulnerability-via-unprotected-ioctl-i",
+      "social_image": "/assets/social/news-3d2e7f8fefa18de1-vu-529388-privilege-escalation-vulnerability-via-unprotected-ioctl-i.svg",
+      "social_image_alt": "SecOpsAI social preview card for VU#529388: Privilege escalation vulnerability via unprotected IOCTL interface in Pegatron Tdelo64.sys",
+      "social_image_height": 630,
+      "social_image_width": 1200,
+      "source_category": "Threat Intelligence",
+      "source_links": [
+        "https://kb.cert.org/vuls/id/529388"
+      ],
+      "source_name": "CERT/CC Vulnerability Notes",
+      "source_trust_level": "government",
+      "source_url": "https://kb.cert.org/vuls/",
+      "sources": [
+        "https://kb.cert.org/vuls/id/529388"
+      ],
+      "status": "published",
+      "summary": "Overview A privilege escalation vulnerability exists in the tdeio64.sys driver due to an unprotected input/output control (IOCTL) dispatch routine that fails to validate the origin and permissions of user-supplied requests. An unprivileged local attacker can abuse exposed IOCTL dispatch routines [RM1.1][MB1.2]to perform arbitrary kernel memory read and write operations, ultimately obtaining NT AUTHORITY\\SYSTEM privileges and compromising the security of the affected system. Description The tdeio",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "CERT/CC",
+        "Vulnerability"
+      ],
+      "title": "VU#529388: Privilege escalation vulnerability via unprotected IOCTL interface in Pegatron Tdelo64.sys",
+      "updated_at": "2026-07-15T18:04:45Z"
+    },
+    {
+      "affected_artifacts": [],
+      "affected_ecosystems": [],
+      "affected_packages": [],
+      "affected_products": [],
+      "author": "Microsoft Security Blog",
+      "body_markdown": "## Source Metadata\n\n- Source: Microsoft Security Blog\n- Canonical URL: https://www.microsoft.com/en-us/security/blog/2026/07/15/turning-threat-intelligence-into-decisive-action-with-defender-experts/\n- Additional references: none\n- Published at: Wed, 15 Jul 2026 16:00:35 +0000\n- Fetched at: 2026-07-15T18:01:19Z\n- Trust level: vendor\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, and track any source-backed detections or mitigations added during review.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- None found deterministically; reviewer should add source-backed affected assets if present.\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Compare the source-backed claim against local assets and current SOC findings.\n- Create a follow-up triage task if the affected technology is present.\n- Document whether this item requires a new advisory, detection, or mitigation note.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-de9527d57264b6ae-turning-threat-intelligence-into-decisive-action-with-defender-exper\n```\n\n## References\n\n- https://www.microsoft.com/en-us/security/blog/2026/07/15/turning-threat-intelligence-into-decisive-action-with-defender-experts/",
+      "canonical_url": "https://www.microsoft.com/en-us/security/blog/2026/07/15/turning-threat-intelligence-into-decisive-action-with-defender-experts/",
+      "categories": [
+        "Security News",
+        "Threat Intelligence"
+      ],
+      "deployed_at": "2026-07-15T18:04:45Z",
+      "external_news": true,
+      "extracted": {
+        "cves": [],
+        "domains": [],
+        "ecosystems": [],
+        "hashes": [],
+        "ips": [],
+        "packages": [],
+        "products": [],
+        "severity_signals": [],
+        "urls": []
+      },
+      "featured": false,
+      "fetched_at": "2026-07-15T18:01:19Z",
+      "hero_image": {
+        "alt": "Turning threat intelligence into decisive action with Defender Experts",
+        "approved": true,
+        "caption": "Source image candidate from Microsoft Security Blog",
+        "height": 630,
+        "kind": "source-image",
+        "license": "operator-approved",
+        "source_name": "Microsoft Security Blog",
+        "source_url": "https://www.microsoft.com/en-us/security/blog/2026/07/15/turning-threat-intelligence-into-decisive-action-with-defender-experts/",
+        "src": "/assets/posts/news-de9527d57264b6ae-turning-threat-intelligence-into-decisive-action-with-defender-exper/ac08ca059944-source-media.jpg",
+        "width": 1200
+      },
+      "images": [
+        {
+          "alt": "Turning threat intelligence into decisive action with Defender Experts",
+          "approved": true,
+          "caption": "Source image candidate from Microsoft Security Blog",
+          "height": 630,
+          "kind": "source-image",
+          "license": "operator-approved",
+          "source_name": "Microsoft Security Blog",
+          "source_url": "https://www.microsoft.com/en-us/security/blog/2026/07/15/turning-threat-intelligence-into-decisive-action-with-defender-experts/",
+          "src": "/assets/posts/news-de9527d57264b6ae-turning-threat-intelligence-into-decisive-action-with-defender-exper/ac08ca059944-source-media.jpg",
+          "width": 1200
+        }
+      ],
+      "iocs": [],
+      "news_key": "de9527d57264b6ae",
+      "operator_commands": [
+        "secopsai triage summary",
+        "secopsai research preflight",
+        "secopsai supply-chain advisory list",
+        "secopsai blog news-review show news-de9527d57264b6ae-turning-threat-intelligence-into-decisive-action-with-defender-exper"
+      ],
+      "primary_references": [
+        "https://www.microsoft.com/en-us/security/blog/2026/07/15/turning-threat-intelligence-into-decisive-action-with-defender-experts/"
+      ],
+      "published_at": "Wed, 15 Jul 2026 16:00:35 +0000",
+      "published_post_path": "blog/posts/news-de9527d57264b6ae-turning-threat-intelligence-into-decisive-action-with-defender-exper.json",
+      "published_url": "https://blog.secopsai.dev/posts/news-de9527d57264b6ae-turning-threat-intelligence-into-decisive-action-with-defender-exper.html",
+      "readiness_blockers": [],
+      "readiness_score": 95,
+      "readiness_status": "ready_to_review",
+      "readiness_warnings": [
+        "no CVEs, IOCs, packages, or products were extracted deterministically"
+      ],
+      "reading_time": 1,
+      "references": [
+        "https://www.microsoft.com/en-us/security/blog/2026/07/15/turning-threat-intelligence-into-decisive-action-with-defender-experts/"
+      ],
+      "related_posts": [],
+      "review_status": "deployed",
+      "reviewed_at": "2026-07-15T18:02:30Z",
+      "severity": "medium",
+      "severity_reason": "Security-relevant vulnerability/news signal.",
+      "slug": "news-de9527d57264b6ae-turning-threat-intelligence-into-decisive-action-with-defender-exper",
+      "social_image": "/assets/posts/news-de9527d57264b6ae-turning-threat-intelligence-into-decisive-action-with-defender-exper/ac08ca059944-source-media.jpg",
+      "social_image_alt": "Turning threat intelligence into decisive action with Defender Experts",
+      "social_image_height": 630,
+      "social_image_width": 1200,
+      "source_category": "Threat Intelligence",
+      "source_links": [
+        "https://www.microsoft.com/en-us/security/blog/2026/07/15/turning-threat-intelligence-into-decisive-action-with-defender-experts/"
+      ],
+      "source_name": "Microsoft Security Blog",
+      "source_trust_level": "vendor",
+      "source_url": "https://www.microsoft.com/en-us/security/blog/",
+      "sources": [
+        "https://www.microsoft.com/en-us/security/blog/2026/07/15/turning-threat-intelligence-into-decisive-action-with-defender-experts/"
+      ],
+      "status": "published",
+      "summary": "Security teams have never had more visibility, yet rarely have they felt more uncertain. Signal pours in from endpoints, identities, cloud workloads, and a sprawling mix of third-party tools. The post Turning threat intelligence into decisive action with Defender Experts appeared first on Microsoft Security Blog .",
+      "tags": [
+        "Security News",
+        "Threat Intelligence"
+      ],
+      "title": "Turning threat intelligence into decisive action with Defender Experts",
+      "updated_at": "2026-07-15T18:04:45Z"
+    },
+    {
+      "affected_artifacts": [],
+      "affected_ecosystems": [],
+      "affected_packages": [],
+      "affected_products": [
+        "Balbooa Forms"
+      ],
+      "author": "CISA Known Exploited Vulnerabilities",
+      "body_markdown": "## Source Metadata\n\n- Source: CISA Known Exploited Vulnerabilities\n- Canonical URL: https://www.balbooa.com/joomla-forms\n- Additional references: https://www.cisa.gov/news-events/directives/bod-26-04-prioritizing-security-updates-based-risk, https://www.cisa.gov/news-events/directives/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk, https://nvd.nist.gov/vuln/detail/CVE-2026-56291\n- Published at: 2026-07-10\n- Fetched at: 2026-07-11T21:42:40Z\n- Trust level: government\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: high (CISA KEV or active exploitation signal.)\n- Extracted signals: CISA KEV, RCE\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can track affected product names, related CVEs, local SOC findings, advisory matches, and OpenClaw telemetry that mention this vulnerability or impacted component.\n\n## Extracted Intelligence\n\n### CVEs\n\n- CVE-2026-56291\n\n### Affected Packages Or Products\n\n- Balbooa Forms\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Inventory affected product or component names from the source.\n- Check whether exposed systems, dependencies, or services use the affected component.\n- Prioritize vendor mitigation or patch guidance and record the remediation deadline.\n- Add monitoring terms for extracted CVEs and product names.\n- Track extracted CVEs: CVE-2026-56291.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-5b21d7ae67da2ae4-cisa-kev-balbooa-forms-cve-2026-56291\n```\n\n## References\n\n- https://www.balbooa.com/joomla-forms\n- https://www.cisa.gov/news-events/directives/bod-26-04-prioritizing-security-updates-based-risk\n- https://www.cisa.gov/news-events/directives/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk\n- https://nvd.nist.gov/vuln/detail/CVE-2026-56291",
+      "canonical_url": "https://www.balbooa.com/joomla-forms",
+      "categories": [
+        "Security News",
+        "Threat Intelligence",
+        "CISA KEV",
+        "Vulnerability",
+        "CVE-2026-56291",
+        "RCE"
+      ],
+      "deployed_at": "2026-07-11T21:47:53Z",
+      "external_news": true,
+      "extracted": {
+        "cves": [
+          "CVE-2026-56291"
+        ],
+        "domains": [],
+        "ecosystems": [],
+        "hashes": [],
+        "ips": [],
+        "packages": [],
+        "products": [
+          "Balbooa Forms"
+        ],
+        "severity_signals": [
+          "CISA KEV",
+          "RCE"
+        ],
+        "urls": []
+      },
+      "featured": false,
+      "fetched_at": "2026-07-11T21:42:40Z",
+      "iocs": [],
+      "news_key": "5b21d7ae67da2ae4",
+      "operator_commands": [
+        "secopsai triage summary",
+        "secopsai research preflight",
+        "secopsai supply-chain advisory list",
+        "secopsai blog news-review show news-5b21d7ae67da2ae4-cisa-kev-balbooa-forms-cve-2026-56291"
+      ],
+      "primary_references": [
+        "https://www.balbooa.com/joomla-forms",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-prioritizing-security-updates-based-risk",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk",
+        "https://nvd.nist.gov/vuln/detail/CVE-2026-56291"
+      ],
+      "published_at": "2026-07-10",
+      "published_post_path": "blog/posts/news-5b21d7ae67da2ae4-cisa-kev-balbooa-forms-cve-2026-56291.json",
+      "published_url": "https://blog.secopsai.dev/posts/news-5b21d7ae67da2ae4-cisa-kev-balbooa-forms-cve-2026-56291.html",
+      "readiness_blockers": [],
+      "readiness_score": 100,
+      "readiness_status": "ready_to_review",
+      "readiness_warnings": [],
+      "reading_time": 1,
+      "references": [
+        "https://www.balbooa.com/joomla-forms",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-prioritizing-security-updates-based-risk",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk",
+        "https://nvd.nist.gov/vuln/detail/CVE-2026-56291"
+      ],
+      "related_posts": [],
+      "review_status": "deployed",
+      "reviewed_at": "2026-07-11T21:46:33Z",
+      "severity": "high",
+      "severity_reason": "CISA KEV or active exploitation signal.",
+      "slug": "news-5b21d7ae67da2ae4-cisa-kev-balbooa-forms-cve-2026-56291",
+      "social_image": "/assets/social/news-5b21d7ae67da2ae4-cisa-kev-balbooa-forms-cve-2026-56291.svg",
+      "social_image_alt": "SecOpsAI social preview card for CISA KEV: Balbooa Forms CVE-2026-56291",
+      "social_image_height": 630,
+      "social_image_width": 1200,
+      "source_category": "Threat Intelligence",
+      "source_links": [
+        "https://www.balbooa.com/joomla-forms",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-prioritizing-security-updates-based-risk",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk",
+        "https://nvd.nist.gov/vuln/detail/CVE-2026-56291"
+      ],
+      "source_name": "CISA Known Exploited Vulnerabilities",
+      "source_trust_level": "government",
+      "source_url": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "sources": [
+        "https://www.balbooa.com/joomla-forms",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-prioritizing-security-updates-based-risk",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk",
+        "https://nvd.nist.gov/vuln/detail/CVE-2026-56291"
+      ],
+      "status": "published",
+      "summary": "Balbooa Forms contains an unrestricted upload of file with dangerous type vulnerability that allows an unauthenticated arbitrary file upload which could allow uploading of executable files leading to full RCE.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "CISA KEV",
+        "Vulnerability",
+        "CVE-2026-56291",
+        "RCE"
+      ],
+      "title": "CISA KEV: Balbooa Forms CVE-2026-56291",
+      "updated_at": "2026-07-11T21:47:53Z"
+    },
+    {
+      "affected_artifacts": [],
+      "affected_ecosystems": [],
+      "affected_packages": [],
+      "affected_products": [],
+      "author": "Microsoft Security Blog",
+      "body_markdown": "## Source Metadata\n\n- Source: Microsoft Security Blog\n- Canonical URL: https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/\n- Additional references: none\n- Published at: Thu, 09 Jul 2026 15:00:00 +0000\n- Fetched at: 2026-07-11T21:42:50Z\n- Trust level: vendor\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: high (Compromise, credential-theft, malware, or supply-chain signal.)\n- Extracted signals: malware\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can track listed IOCs, suspicious URLs/domains/IPs, file paths, hashes, process behavior, and matching OpenClaw replay telemetry.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- None found deterministically; reviewer should add source-backed affected assets if present.\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Search telemetry for extracted domains, IPs, URLs, hashes, and file names.\n- Block source-backed indicators where appropriate for your environment.\n- Investigate matching endpoints and preserve relevant artifacts before cleanup.\n- Create a SecOpsAI/OpenClaw triage task for any local indicator match.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple\n```\n\n## References\n\n- https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/",
+      "canonical_url": "https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/",
+      "categories": [
+        "Security News",
+        "Threat Intelligence",
+        "malware"
+      ],
+      "deployed_at": "2026-07-11T21:47:53Z",
+      "external_news": true,
+      "extracted": {
+        "cves": [],
+        "domains": [],
+        "ecosystems": [],
+        "hashes": [],
+        "ips": [],
+        "packages": [],
+        "products": [],
+        "severity_signals": [
+          "malware"
+        ],
+        "urls": []
+      },
+      "featured": false,
+      "fetched_at": "2026-07-11T21:42:50Z",
+      "iocs": [],
+      "news_key": "9312933a6fc09ae5",
+      "operator_commands": [
+        "secopsai triage summary",
+        "secopsai research preflight",
+        "secopsai supply-chain advisory list",
+        "secopsai blog news-review show news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple"
+      ],
+      "primary_references": [
+        "https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/"
+      ],
+      "published_at": "Thu, 09 Jul 2026 15:00:00 +0000",
+      "published_post_path": "blog/posts/news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple.json",
+      "published_url": "https://blog.secopsai.dev/posts/news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple.html",
+      "readiness_blockers": [],
+      "readiness_score": 95,
+      "readiness_status": "ready_to_review",
+      "readiness_warnings": [
+        "no CVEs, IOCs, packages, or products were extracted deterministically"
+      ],
+      "reading_time": 1,
+      "references": [
+        "https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/"
+      ],
+      "related_posts": [],
+      "review_status": "deployed",
+      "reviewed_at": "2026-07-11T21:44:55Z",
+      "severity": "high",
+      "severity_reason": "Compromise, credential-theft, malware, or supply-chain signal.",
+      "slug": "news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple",
+      "social_image": "/assets/social/news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple.svg",
+      "social_image_alt": "SecOpsAI social preview card for GigaWiper: Anatomy of a destructive backdoor assembled from multiple malware",
+      "social_image_height": 630,
+      "social_image_width": 1200,
+      "source_category": "Threat Intelligence",
+      "source_links": [
+        "https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/"
+      ],
+      "source_name": "Microsoft Security Blog",
+      "source_trust_level": "vendor",
+      "source_url": "https://www.microsoft.com/en-us/security/blog/",
+      "sources": [
+        "https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/"
+      ],
+      "status": "published",
+      "summary": "GigaWiper is a destructive backdoor that combines multiple wiping and ransomware-like capabilities into a single operational platform. This blog analyzes how the malware incorporates code from several previously separate malware families and provides guidance to help defenders detect and defend against similar threats. The post GigaWiper: Anatomy of a destructive backdoor assembled from multiple malware appeared first on Microsoft Security Blog .",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "malware"
+      ],
+      "title": "GigaWiper: Anatomy of a destructive backdoor assembled from multiple malware",
+      "updated_at": "2026-07-11T21:47:53Z"
+    },
+    {
+      "affected_artifacts": [],
+      "affected_ecosystems": [],
+      "affected_packages": [],
+      "affected_products": [
+        "JoomShaper SP Page Builder"
+      ],
+      "author": "CISA Known Exploited Vulnerabilities",
+      "body_markdown": "## Source Metadata\n\n- Source: CISA Known Exploited Vulnerabilities\n- Canonical URL: https://extensions.joomla.org/extension/sp-page-builder/\n- Additional references: https://www.cisa.gov/news-events/directives/bod-26-04-prioritizing-security-updates-based-risk, https://www.cisa.gov/news-events/directives/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk, https://nvd.nist.gov/vuln/detail/CVE-2026-48908\n- Published at: 2026-07-07\n- Fetched at: 2026-07-09T06:58:46Z\n- Trust level: government\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: high (CISA KEV or active exploitation signal.)\n- Extracted signals: CISA KEV\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can track affected product names, related CVEs, local SOC findings, advisory matches, and OpenClaw telemetry that mention this vulnerability or impacted component.\n\n## Extracted Intelligence\n\n### CVEs\n\n- CVE-2026-48908\n\n### Affected Packages Or Products\n\n- JoomShaper SP Page Builder\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Inventory affected product or component names from the source.\n- Check whether exposed systems, dependencies, or services use the affected component.\n- Prioritize vendor mitigation or patch guidance and record the remediation deadline.\n- Add monitoring terms for extracted CVEs and product names.\n- Track extracted CVEs: CVE-2026-48908.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-94f5cd4204d5ac65-cisa-kev-joomshaper-sp-page-builder-cve-2026-48908\n```\n\n## References\n\n- https://extensions.joomla.org/extension/sp-page-builder/\n- https://www.cisa.gov/news-events/directives/bod-26-04-prioritizing-security-updates-based-risk\n- https://www.cisa.gov/news-events/directives/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk\n- https://nvd.nist.gov/vuln/detail/CVE-2026-48908",
+      "canonical_url": "https://extensions.joomla.org/extension/sp-page-builder/",
+      "categories": [
+        "Security News",
+        "Threat Intelligence",
+        "CISA KEV",
+        "Vulnerability",
+        "CVE-2026-48908"
+      ],
+      "deployed_at": "2026-07-09T07:02:27Z",
+      "external_news": true,
+      "extracted": {
+        "cves": [
+          "CVE-2026-48908"
+        ],
+        "domains": [],
+        "ecosystems": [],
+        "hashes": [],
+        "ips": [],
+        "packages": [],
+        "products": [
+          "JoomShaper SP Page Builder"
+        ],
+        "severity_signals": [
+          "CISA KEV"
+        ],
+        "urls": []
+      },
+      "featured": false,
+      "fetched_at": "2026-07-09T06:58:46Z",
+      "iocs": [],
+      "news_key": "94f5cd4204d5ac65",
+      "operator_commands": [
+        "secopsai triage summary",
+        "secopsai research preflight",
+        "secopsai supply-chain advisory list",
+        "secopsai blog news-review show news-94f5cd4204d5ac65-cisa-kev-joomshaper-sp-page-builder-cve-2026-48908"
+      ],
+      "primary_references": [
+        "https://extensions.joomla.org/extension/sp-page-builder/",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-prioritizing-security-updates-based-risk",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk",
+        "https://nvd.nist.gov/vuln/detail/CVE-2026-48908"
+      ],
+      "published_at": "2026-07-07",
+      "published_post_path": "blog/posts/news-94f5cd4204d5ac65-cisa-kev-joomshaper-sp-page-builder-cve-2026-48908.json",
+      "published_url": "https://blog.secopsai.dev/posts/news-94f5cd4204d5ac65-cisa-kev-joomshaper-sp-page-builder-cve-2026-48908.html",
+      "readiness_blockers": [],
+      "readiness_score": 100,
+      "readiness_status": "ready_to_review",
+      "readiness_warnings": [],
+      "reading_time": 1,
+      "references": [
+        "https://extensions.joomla.org/extension/sp-page-builder/",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-prioritizing-security-updates-based-risk",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk",
+        "https://nvd.nist.gov/vuln/detail/CVE-2026-48908"
+      ],
+      "related_posts": [],
+      "review_status": "deployed",
+      "reviewed_at": "2026-07-09T07:00:21Z",
+      "severity": "high",
+      "severity_reason": "CISA KEV or active exploitation signal.",
+      "slug": "news-94f5cd4204d5ac65-cisa-kev-joomshaper-sp-page-builder-cve-2026-48908",
+      "social_image": "/assets/social/news-94f5cd4204d5ac65-cisa-kev-joomshaper-sp-page-builder-cve-2026-48908.svg",
+      "social_image_alt": "SecOpsAI social preview card for CISA KEV: JoomShaper SP Page Builder CVE-2026-48908",
+      "social_image_height": 630,
+      "social_image_width": 1200,
+      "source_category": "Threat Intelligence",
+      "source_links": [
+        "https://extensions.joomla.org/extension/sp-page-builder/",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-prioritizing-security-updates-based-risk",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk",
+        "https://nvd.nist.gov/vuln/detail/CVE-2026-48908"
+      ],
+      "source_name": "CISA Known Exploited Vulnerabilities",
+      "source_trust_level": "government",
+      "source_url": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+      "sources": [
+        "https://extensions.joomla.org/extension/sp-page-builder/",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-prioritizing-security-updates-based-risk",
+        "https://www.cisa.gov/news-events/directives/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk",
+        "https://nvd.nist.gov/vuln/detail/CVE-2026-48908"
+      ],
+      "status": "published",
+      "summary": "JoomShaper SP Page Builder contains an unrestricted upload of file with dangerous type vulnerability that allows unauthenticated users to upload arbitrary files, ultimately resulting in the upload and execution of PHP code.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "CISA KEV",
+        "Vulnerability",
+        "CVE-2026-48908"
+      ],
+      "title": "CISA KEV: JoomShaper SP Page Builder CVE-2026-48908",
+      "updated_at": "2026-07-09T07:02:27Z"
+    },
+    {
+      "affected_artifacts": [],
+      "affected_ecosystems": [],
+      "affected_packages": [],
+      "affected_products": [],
+      "author": "Microsoft Security Blog",
+      "body_markdown": "## Source Metadata\n\n- Source: Microsoft Security Blog\n- Canonical URL: https://www.microsoft.com/en-us/security/blog/2026/07/08/protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-cloud/\n- Additional references: none\n- Published at: Wed, 08 Jul 2026 17:00:00 +0000\n- Fetched at: 2026-07-09T06:58:56Z\n- Trust level: vendor\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, and track any source-backed detections or mitigations added during review.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- None found deterministically; reviewer should add source-backed affected assets if present.\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Compare the source-backed claim against local assets and current SOC findings.\n- Create a follow-up triage task if the affected technology is present.\n- Document whether this item requires a new advisory, detection, or mitigation note.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo\n```\n\n## References\n\n- https://www.microsoft.com/en-us/security/blog/2026/07/08/protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-cloud/",
+      "canonical_url": "https://www.microsoft.com/en-us/security/blog/2026/07/08/protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-cloud/",
+      "categories": [
+        "Security News",
+        "Threat Intelligence"
+      ],
+      "deployed_at": "2026-07-09T07:02:27Z",
+      "external_news": true,
+      "extracted": {
+        "cves": [],
+        "domains": [],
+        "ecosystems": [],
+        "hashes": [],
+        "ips": [],
+        "packages": [],
+        "products": [],
+        "severity_signals": [],
+        "urls": []
+      },
+      "featured": false,
+      "fetched_at": "2026-07-09T06:58:56Z",
+      "iocs": [],
+      "news_key": "b87e2a66e042cb52",
+      "operator_commands": [
+        "secopsai triage summary",
+        "secopsai research preflight",
+        "secopsai supply-chain advisory list",
+        "secopsai blog news-review show news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo"
+      ],
+      "primary_references": [
+        "https://www.microsoft.com/en-us/security/blog/2026/07/08/protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-cloud/"
+      ],
+      "published_at": "Wed, 08 Jul 2026 17:00:00 +0000",
+      "published_post_path": "blog/posts/news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo.json",
+      "published_url": "https://blog.secopsai.dev/posts/news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo.html",
+      "readiness_blockers": [],
+      "readiness_score": 95,
+      "readiness_status": "ready_to_review",
+      "readiness_warnings": [
+        "no CVEs, IOCs, packages, or products were extracted deterministically"
+      ],
+      "reading_time": 1,
+      "references": [
+        "https://www.microsoft.com/en-us/security/blog/2026/07/08/protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-cloud/"
+      ],
+      "related_posts": [],
+      "review_status": "deployed",
+      "reviewed_at": "2026-07-09T07:01:14Z",
+      "severity": "medium",
+      "severity_reason": "Security-relevant vulnerability/news signal.",
+      "slug": "news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo",
+      "social_image": "/assets/social/news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo.svg",
+      "social_image_alt": "SecOpsAI social preview card for Protecting Microsoft at AI speed: How SFI proactively hardens our cloud",
+      "social_image_height": 630,
+      "social_image_width": 1200,
+      "source_category": "Threat Intelligence",
+      "source_links": [
+        "https://www.microsoft.com/en-us/security/blog/2026/07/08/protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-cloud/"
+      ],
+      "source_name": "Microsoft Security Blog",
+      "source_trust_level": "vendor",
+      "source_url": "https://www.microsoft.com/en-us/security/blog/",
+      "sources": [
+        "https://www.microsoft.com/en-us/security/blog/2026/07/08/protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-cloud/"
+      ],
+      "status": "published",
+      "summary": "At Microsoft we encompass these security requirements, along with threat knowledge, and operational frameworks in our Secure Future Initiative (SFI), to guide what a well-defended cloud service looks like. But defining the requirements is only the start. Meeting the requirements means continuously evaluating our live services against them, at AI speed. The post Protecting Microsoft at AI speed: How SFI proactively hardens our cloud appeared first on Microsoft Security Blog .",
+      "tags": [
+        "Security News",
+        "Threat Intelligence"
+      ],
+      "title": "Protecting Microsoft at AI speed: How SFI proactively hardens our cloud",
+      "updated_at": "2026-07-09T07:02:27Z"
+    },
+    {
+      "affected_artifacts": [],
+      "affected_ecosystems": [
+        "npm",
+        "composer",
+        "go"
+      ],
+      "affected_packages": [
+        "npm"
+      ],
+      "affected_products": [
+        "Packagist"
+      ],
+      "author": "Socket Blog",
+      "body_markdown": "## Source Metadata\n\n- Source: Socket Blog\n- Canonical URL: https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands\n- Additional references: none\n- Published at: 2026-07-01T17:53:56.469Z\n- Fetched at: 2026-07-02T15:43:18Z\n- Trust level: external_research\n\n## Why It Matters\n\n- Source type: Security News\n- Severity hint: info (Default source severity.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can compare affected package names and versions against emergency advisories, lockfiles, package manifests, package registry changes, and supply-chain SOC findings.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- npm\n- Packagist\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Block affected package names or versions when source-backed version details are available.\n- Inspect lockfiles, manifests, and CI dependency caches for affected package references.\n- Rotate package-manager, CI, and registry credentials if compromise or token theft is reported.\n- Run SecOpsAI supply-chain advisory checks for extracted package names.\n- Review extracted package references: npm.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o\n```\n\n## References\n\n- https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands",
+      "canonical_url": "https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands",
+      "categories": [
+        "Security News",
+        "Supply Chain",
+        "Research",
+        "npm",
+        "composer",
+        "go"
+      ],
+      "deployed_at": "2026-07-02T15:45:15Z",
+      "external_news": true,
+      "extracted": {
+        "cves": [],
+        "domains": [],
+        "ecosystems": [
+          "npm",
+          "composer",
+          "go"
+        ],
+        "hashes": [],
+        "ips": [],
+        "packages": [
+          "npm"
+        ],
+        "products": [
+          "Packagist"
+        ],
+        "severity_signals": [],
+        "urls": []
+      },
+      "featured": false,
+      "fetched_at": "2026-07-02T15:43:18Z",
+      "iocs": [],
+      "news_key": "80d28381a6d4f840",
+      "operator_commands": [
+        "secopsai triage summary",
+        "secopsai research preflight",
+        "secopsai supply-chain advisory list",
+        "secopsai blog news-review show news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o"
+      ],
+      "primary_references": [
+        "https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands"
+      ],
+      "published_at": "2026-07-01T17:53:56.469Z",
+      "published_post_path": "blog/posts/news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o.json",
+      "published_url": "https://blog.secopsai.dev/posts/news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o.html",
+      "readiness_blockers": [],
+      "readiness_score": 100,
+      "readiness_status": "ready_to_review",
+      "readiness_warnings": [],
+      "reading_time": 1,
+      "references": [
+        "https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands"
+      ],
+      "related_posts": [],
+      "review_status": "deployed",
+      "reviewed_at": "2026-07-02T15:44:18Z",
+      "severity": "info",
+      "severity_reason": "Default source severity.",
+      "slug": "news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o",
+      "social_image": "/assets/social/news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o.svg",
+      "social_image_alt": "SecOpsAI social preview card for PolinRider: North Korea-Linked Supply Chain Campaign Expands Across Open Source Ecosystems",
+      "social_image_height": 630,
+      "social_image_width": 1200,
+      "source_category": "Security News",
+      "source_links": [
+        "https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands"
+      ],
+      "source_name": "Socket Blog",
+      "source_trust_level": "external_research",
+      "source_url": "https://socket.dev/blog",
+      "sources": [
+        "https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands"
+      ],
+      "status": "published",
+      "summary": "PolinRider expands across npm, Packagist, Go modules, and Chrome extensions, using hidden loaders to target developer environments.",
+      "tags": [
+        "Security News",
+        "Supply Chain",
+        "Research",
+        "npm",
+        "composer",
+        "go"
+      ],
+      "title": "PolinRider: North Korea-Linked Supply Chain Campaign Expands Across Open Source Ecosystems",
+      "updated_at": "2026-07-02T15:45:15Z"
+    },
     {
       "affected_artifacts": [],
       "affected_ecosystems": [],
@@ -88,6 +759,10 @@
       "severity": "medium",
       "severity_reason": "Security-relevant vulnerability/news signal.",
       "slug": "news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights",
+      "social_image": "/assets/posts/news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights/f34c012663ad-source-media.png",
+      "social_image_alt": "Unmasking the crawls with Attribution Business Insights",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://blog.cloudflare.com/attribution-business-insights/"
@@ -191,6 +866,10 @@
       "severity": "medium",
       "severity_reason": "Security-relevant vulnerability/news signal.",
       "slug": "news-c22df4db94d27507-microsoft-a-leader-in-the-forrester-wave-for-endpoint-management-pla",
+      "social_image": "/assets/posts/news-c22df4db94d27507-microsoft-a-leader-in-the-forrester-wave-for-endpoint-management-pla/0ec3e7d4aa34-source-media.png",
+      "social_image_alt": "Microsoft a Leader in The Forrester Wave\u2122 for Endpoint Management Platforms",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://www.microsoft.com/en-us/security/blog/2026/06/25/microsoft-a-leader-in-the-forrester-wave-for-endpoint-management-platforms/"
@@ -270,6 +949,10 @@
       "severity": "medium",
       "severity_reason": "Security-relevant vulnerability/news signal.",
       "slug": "news-93bac72c6eeb497e-the-post-quantum-eo-is-an-important-milestone-now-it-s-time-to-get-t",
+      "social_image": "/assets/social/news-93bac72c6eeb497e-the-post-quantum-eo-is-an-important-milestone-now-it-s-time-to-get-t.svg",
+      "social_image_alt": "SecOpsAI social preview card for The post-quantum EO is an important milestone. Now it\u2019s time to get to work",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://blog.cloudflare.com/post-quantum-eo-2026/"
@@ -347,6 +1030,10 @@
       "severity": "medium",
       "severity_reason": "Security-relevant vulnerability/news signal.",
       "slug": "news-a7ec3f04af1bba91-stealc-and-amadey-breaking-down-infostealers-and-the-cybercrime-serv",
+      "social_image": "/assets/social/news-a7ec3f04af1bba91-stealc-and-amadey-breaking-down-infostealers-and-the-cybercrime-serv.svg",
+      "social_image_alt": "SecOpsAI social preview card for StealC and Amadey: Breaking down infostealers and the cybercrime services that deliver them",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://www.microsoft.com/en-us/security/blog/2026/06/24/stealc-and-amadey-breaking-down-infostealers-and-the-cybercrime-services-that-deliver-them/"
@@ -428,6 +1115,10 @@
       "severity": "medium",
       "severity_reason": "Security-relevant vulnerability/news signal.",
       "slug": "news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all",
+      "social_image": "/assets/social/news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all.svg",
+      "social_image_alt": "SecOpsAI social preview card for Unlocking the Cloudflare app ecosystem with OAuth for all",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://blog.cloudflare.com/oauth-for-all/"
@@ -506,6 +1197,10 @@
       "severity": "info",
       "severity_reason": "Default source severity.",
       "slug": "news-ce7ca11b68c6c09e-new-cisa-guide-assists-federal-agencies-with-transitioning-to-modern",
+      "social_image": "/assets/social/news-ce7ca11b68c6c09e-new-cisa-guide-assists-federal-agencies-with-transitioning-to-modern.svg",
+      "social_image_alt": "SecOpsAI social preview card for New CISA Guide Assists Federal Agencies with Transitioning to Modernized Zero Trust Architectures",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://www.cisa.gov/news-events/news/new-cisa-guide-assists-federal-agencies-transitioning-modernized-zero-trust-architectures"
@@ -583,6 +1278,10 @@
       "severity": "medium",
       "severity_reason": "Security-relevant vulnerability/news signal.",
       "slug": "news-f98371c262a7a90c-cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-managem",
+      "social_image": "/assets/social/news-f98371c262a7a90c-cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-managem.svg",
+      "social_image_alt": "SecOpsAI social preview card for CNAPP evolution: How Microsoft aligns with leading cloud risk management platforms",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://www.microsoft.com/en-us/security/blog/2026/06/24/cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-management-platforms/"
@@ -660,6 +1359,10 @@
       "severity": "medium",
       "severity_reason": "Security-relevant vulnerability/news signal.",
       "slug": "news-89c4d4432e164c06-critical-chaos-mesh-vulnerabilities-kubernetes-cluster-takeover",
+      "social_image": "/assets/social/news-89c4d4432e164c06-critical-chaos-mesh-vulnerabilities-kubernetes-cluster-takeover.svg",
+      "social_image_alt": "SecOpsAI social preview card for Critical Chaos-Mesh vulnerabilities Kubernetes cluster takeover",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Supply Chain",
       "source_links": [
         "https://jfrog.com/blog/chaotic-deputy-critical-vulnerabilities-in-chaos-mesh-lead-to-kubernetes-cluster-takeover/"
@@ -751,6 +1454,10 @@
       "severity": "high",
       "severity_reason": "Compromise, credential-theft, malware, or supply-chain signal.",
       "slug": "news-351daec4f3181d58-preinstall-to-persistence-inside-the-red-hat-npm-miasma-credential-s",
+      "social_image": "/assets/social/news-351daec4f3181d58-preinstall-to-persistence-inside-the-red-hat-npm-miasma-credential-s.svg",
+      "social_image_alt": "SecOpsAI social preview card for Preinstall to persistence: Inside the Red Hat npm Miasma credential-stealing campaign",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://www.microsoft.com/en-us/security/blog/2026/06/02/preinstall-persistence-inside-red-hat-npm-miasma-credential-stealing-campaign/"
@@ -844,6 +1551,10 @@
       "severity": "high",
       "severity_reason": "CISA KEV or active exploitation signal.",
       "slug": "news-59a28be6252f41c8-cisa-kev-mirasvit-full-page-cache-warmer-cve-2026-45247",
+      "social_image": "/assets/social/news-59a28be6252f41c8-cisa-kev-mirasvit-full-page-cache-warmer-cve-2026-45247.svg",
+      "social_image_alt": "SecOpsAI social preview card for CISA KEV: Mirasvit Full Page Cache Warmer CVE-2026-45247",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://mirasvit.com/package/changelog/?package=mirasvit/module-cache-warmer",
@@ -927,6 +1638,10 @@
       "severity": "medium",
       "severity_reason": "Security-relevant vulnerability/news signal.",
       "slug": "news-413a00607dd9c1c0-microsoft-build-2026-securing-code-agents-and-models-across-the-deve",
+      "social_image": "/assets/social/news-413a00607dd9c1c0-microsoft-build-2026-securing-code-agents-and-models-across-the-deve.svg",
+      "social_image_alt": "SecOpsAI social preview card for Microsoft Build 2026: Securing code, agents, and models across the development lifecycle",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://www.microsoft.com/en-us/security/blog/2026/06/02/microsoft-build-2026-securing-code-agents-and-models-across-the-development-lifecycle/"
@@ -1015,6 +1730,10 @@
       "severity": "high",
       "severity_reason": "CISA KEV or active exploitation signal.",
       "slug": "news-2e28681f9abdc9d2-cisa-kev-oracle-weblogic-server-cve-2024-21182",
+      "social_image": "/assets/social/news-2e28681f9abdc9d2-cisa-kev-oracle-weblogic-server-cve-2024-21182.svg",
+      "social_image_alt": "SecOpsAI social preview card for CISA KEV: Oracle WebLogic Server CVE-2024-21182",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://www.oracle.com/security-alerts/cpujul2024.html",
@@ -1096,6 +1815,10 @@
       "severity": "medium",
       "severity_reason": "Security-relevant vulnerability/news signal.",
       "slug": "news-656afebf3aea47e6-the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor",
+      "social_image": "/assets/social/news-656afebf3aea47e6-the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor.svg",
+      "social_image_alt": "SecOpsAI social preview card for The Gentlemen ransomware: Dissecting a self-propagating Go encryptor",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://www.microsoft.com/en-us/security/blog/2026/05/28/the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor/"
@@ -1172,6 +1895,10 @@
       "severity": "medium",
       "severity_reason": "Security-relevant vulnerability/news signal.",
       "slug": "news-fd4fa178ee21e94e-from-poisoned-search-results-to-gpu-mining-a-cryptojacking-campaign",
+      "social_image": "/assets/social/news-fd4fa178ee21e94e-from-poisoned-search-results-to-gpu-mining-a-cryptojacking-campaign.svg",
+      "social_image_alt": "SecOpsAI social preview card for From poisoned search results to GPU mining: A cryptojacking campaign abusing ScreenConnect and Microsoft .NET utilities",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://www.microsoft.com/en-us/security/blog/2026/05/26/poisoned-search-results-gpu-mining-cryptojacking-campaign-abusing-screenconnect-microsoft-net-utilities/"
@@ -1259,6 +1986,10 @@
       "severity": "high",
       "severity_reason": "CISA KEV or active exploitation signal.",
       "slug": "news-023f9f16270b8b4d-cisa-kev-palo-alto-networks-pan-os-cve-2026-0257",
+      "social_image": "/assets/social/news-023f9f16270b8b4d-cisa-kev-palo-alto-networks-pan-os-cve-2026-0257.svg",
+      "social_image_alt": "SecOpsAI social preview card for CISA KEV: Palo Alto Networks PAN-OS CVE-2026-0257",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://security.paloaltonetworks.com/CVE-2026-0257",
@@ -1341,6 +2072,10 @@
       "severity": "medium",
       "severity_reason": "Security-relevant vulnerability/news signal.",
       "slug": "news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt",
+      "social_image": "/assets/social/news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt.svg",
+      "social_image_alt": "SecOpsAI social preview card for Google Workspace\u2019s continuous approach to mitigating indirect prompt injections",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "http://security.googleblog.com/feeds/7611943504123181983/comments/default"
@@ -1422,6 +2157,10 @@
       "severity": "high",
       "severity_reason": "CISA KEV or active exploitation signal.",
       "slug": "news-0361c07f135b13ef-cisa-enhances-known-exploited-vulnerabilities-catalog-to-include-new",
+      "social_image": "/assets/social/news-0361c07f135b13ef-cisa-enhances-known-exploited-vulnerabilities-catalog-to-include-new.svg",
+      "social_image_alt": "SecOpsAI social preview card for CISA Enhances Known Exploited Vulnerabilities Catalog to Include New Nomination Form",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://www.cisa.gov/news-events/news/cisa-enhances-known-exploited-vulnerabilities-catalog-include-new-nomination-form"
@@ -1503,6 +2242,10 @@
       "severity": "medium",
       "severity_reason": "Security-relevant vulnerability/news signal.",
       "slug": "news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available",
+      "social_image": "/assets/social/news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available.svg",
+      "social_image_alt": "SecOpsAI social preview card for Post-quantum encryption for Cloudflare IPsec is generally available",
+      "social_image_height": 630,
+      "social_image_width": 1200,
       "source_category": "Threat Intelligence",
       "source_links": [
         "https://blog.cloudflare.com/post-quantum-ipsec/"

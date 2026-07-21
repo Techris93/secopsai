@@ -425,38 +425,37 @@ def _write_social_card(post: Dict[str, Any], paths: BlogPaths) -> str:
     slug = slugify(str(post.get("slug") or post.get("title") or "secopsai-post"))
     paths.social.mkdir(parents=True, exist_ok=True)
     title_lines = _wrap_card_text(post.get("title"), width=34, lines=4)
-    severity = _safe_text(str(post.get("severity") or "info").upper(), fallback="INFO")
-    category = _safe_text(", ".join(_post_categories(post)[:2]), fallback="Security Research")
+    severity_key = _safe_text(str(post.get("severity") or "info").lower(), fallback="info")
+    severity = severity_key.upper()
+    category = _safe_text(", ".join(_post_categories(post)[:2]), fallback="Security Research")[:56]
     date = _post_date(post.get("published_at") or post.get("updated_at") or _utc_now())
+    severity_background, severity_foreground = {
+        "critical": ("#FDE8E7", "#B42318"),
+        "high": ("#FCEBDD", "#B54708"),
+        "medium": ("#FFF4CE", "#8A5A00"),
+        "low": ("#E7F0FA", "#175CD3"),
+        "info": ("#E8F3EE", "#176B4D"),
+    }.get(severity_key, ("#E7F0FA", "#175CD3"))
     title_tspans = "\n".join(
-        f'<tspan x="86" dy="{0 if index == 0 else 64}">{html.escape(line)}</tspan>'
+        f'<tspan x="92" dy="{0 if index == 0 else 61}">{html.escape(line)}</tspan>'
         for index, line in enumerate(title_lines)
     )
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{SOCIAL_CARD_WIDTH}" height="{SOCIAL_CARD_HEIGHT}" viewBox="0 0 {SOCIAL_CARD_WIDTH} {SOCIAL_CARD_HEIGHT}" role="img" aria-label="{html.escape(_safe_text(post.get('title'), fallback='SecOpsAI Security Blog'))}">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#061711"/>
-      <stop offset="0.54" stop-color="#08251c"/>
-      <stop offset="1" stop-color="#03100c"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="18%" cy="18%" r="74%">
-      <stop offset="0" stop-color="#2dd4a8" stop-opacity="0.55"/>
-      <stop offset="1" stop-color="#2dd4a8" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-  <rect width="1200" height="630" rx="0" fill="url(#bg)"/>
-  <rect width="1200" height="630" fill="url(#glow)"/>
-  <circle cx="1010" cy="112" r="190" fill="#67e8f9" opacity="0.12"/>
-  <rect x="58" y="50" width="1084" height="530" rx="42" fill="#ffffff" fill-opacity="0.045" stroke="#2dd4a8" stroke-opacity="0.34"/>
-  <rect x="86" y="82" width="78" height="78" rx="22" fill="#123d2f" stroke="#2dd4a8" stroke-opacity="0.5"/>
-  <text x="125" y="134" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="900" fill="#e5f0f7">S</text>
-  <text x="184" y="116" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="900" fill="#e5f0f7">SecOpsAI</text>
-  <text x="184" y="148" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#93a6b8" letter-spacing="3">SECURITY BLOG</text>
-  <text x="86" y="256" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="900" fill="#f4fbf8">{title_tspans}</text>
-  <rect x="86" y="488" width="168" height="44" rx="22" fill="#2dd4a8"/>
-  <text x="170" y="517" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="900" fill="#03100c">{html.escape(severity)}</text>
-  <text x="278" y="517" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#c9d8e3">{html.escape(category)}</text>
-  <text x="86" y="558" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#93a6b8">blog.secopsai.dev • {html.escape(date)}</text>
+  <desc>SecOpsAI technical-publication social card for {html.escape(_safe_text(post.get('title'), fallback='SecOpsAI Security Blog'))}</desc>
+  <rect width="1200" height="630" fill="#FBFAF6"/>
+  <rect x="42" y="42" width="1116" height="546" fill="#FFFFFF" stroke="#8B939D" stroke-width="2"/>
+  <rect x="42" y="42" width="10" height="546" fill="{severity_foreground}"/>
+  <text x="92" y="94" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="800" fill="#16191D">SecOpsAI</text>
+  <text x="1110" y="91" text-anchor="end" font-family="Courier New, monospace" font-size="17" font-weight="700" letter-spacing="2" fill="#56606B">DOC-SECOPS-RESEARCH-001</text>
+  <line x1="92" y1="120" x2="1110" y2="120" stroke="#8B939D" stroke-width="2"/>
+  <text x="92" y="157" font-family="Courier New, monospace" font-size="16" font-weight="700" letter-spacing="3" fill="#56606B">SECURITY RESEARCH AND ADVISORIES</text>
+  <rect x="92" y="178" width="168" height="42" fill="{severity_background}" stroke="{severity_foreground}" stroke-width="1"/>
+  <text x="176" y="206" text-anchor="middle" font-family="Courier New, monospace" font-size="18" font-weight="700" letter-spacing="2" fill="{severity_foreground}">{html.escape(severity)}</text>
+  <text x="284" y="205" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#3E4650">{html.escape(category)}</text>
+  <text x="92" y="286" font-family="Arial, Helvetica, sans-serif" font-size="54" font-weight="800" fill="#16191D">{title_tspans}</text>
+  <line x1="92" y1="522" x2="1110" y2="522" stroke="#C9CDD2" stroke-width="2"/>
+  <text x="92" y="558" font-family="Courier New, monospace" font-size="17" font-weight="700" letter-spacing="1" fill="#56606B">blog.secopsai.dev</text>
+  <text x="1110" y="558" text-anchor="end" font-family="Courier New, monospace" font-size="17" font-weight="700" letter-spacing="1" fill="#56606B">ISSUE {html.escape(date)}</text>
 </svg>
 """
     _social_card_path(slug, paths).write_text(svg, encoding="utf-8")
@@ -546,8 +545,20 @@ def _post_severity_rank(post: Dict[str, Any]) -> int:
 
 
 def _post_date(value: Any) -> str:
-    text = str(value or "")
-    return text[:10] if len(text) >= 10 else text
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    try:
+        return _dt.datetime.fromisoformat(text.replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        pass
+
+    try:
+        return email.utils.parsedate_to_datetime(text).date().isoformat()
+    except (TypeError, ValueError):
+        match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", text)
+        return match.group(0) if match else text[:10]
 
 
 def _normalize_post(post: Dict[str, Any]) -> Dict[str, Any]:
@@ -3759,7 +3770,9 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     feed_items = []
     rss_items = []
     for post in posts:
-        post = _ensure_social_image(_drop_missing_local_media(_public_post(post), paths), paths)
+        post = _drop_missing_local_media(_public_post(post), paths)
+        _write_social_card(post, paths)
+        post = _ensure_social_image(post, paths)
         slug = str(post["slug"])
         url = _post_url(slug)
         _post_html_path(slug, paths).write_text(_render_post_html(post), encoding="utf-8")

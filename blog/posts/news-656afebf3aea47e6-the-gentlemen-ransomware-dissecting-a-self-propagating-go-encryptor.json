@@ -1,0 +1,80 @@
+{
+  "affected_artifacts": [],
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "affected_products": [],
+  "author": "Microsoft Security Blog",
+  "body_markdown": "## Source Metadata\n\n- Source: Microsoft Security Blog\n- Canonical URL: https://www.microsoft.com/en-us/security/blog/2026/05/28/the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor/\n- Additional references: none\n- Published at: Thu, 28 May 2026 15:00:00 +0000\n- Fetched at: 2026-06-01T19:52:49Z\n- Trust level: vendor\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, and track any source-backed detections or mitigations added during review.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- None found deterministically; reviewer should add source-backed affected assets if present.\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Compare the source-backed claim against local assets and current SOC findings.\n- Create a follow-up triage task if the affected technology is present.\n- Document whether this item requires a new advisory, detection, or mitigation note.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-656afebf3aea47e6-the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor\n```\n\n## References\n\n- https://www.microsoft.com/en-us/security/blog/2026/05/28/the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor/",
+  "canonical_url": "https://www.microsoft.com/en-us/security/blog/2026/05/28/the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor/",
+  "categories": [
+    "Security News",
+    "Threat Intelligence"
+  ],
+  "deployed_at": "2026-06-01T20:20:55Z",
+  "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [],
+    "products": [],
+    "severity_signals": [],
+    "urls": []
+  },
+  "featured": false,
+  "fetched_at": "2026-06-01T19:52:49Z",
+  "iocs": [],
+  "news_key": "656afebf3aea47e6",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-656afebf3aea47e6-the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor"
+  ],
+  "primary_references": [
+    "https://www.microsoft.com/en-us/security/blog/2026/05/28/the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor/"
+  ],
+  "published_at": "Thu, 28 May 2026 15:00:00 +0000",
+  "published_post_path": "blog/posts/news-656afebf3aea47e6-the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor.json",
+  "published_url": "https://blog.secopsai.dev/posts/news-656afebf3aea47e6-the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor.html",
+  "readiness_blockers": [],
+  "readiness_score": 95,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [
+    "no CVEs, IOCs, packages, or products were extracted deterministically"
+  ],
+  "reading_time": 1,
+  "references": [
+    "https://www.microsoft.com/en-us/security/blog/2026/05/28/the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor/"
+  ],
+  "related_posts": [],
+  "review_status": "deployed",
+  "reviewed_at": "2026-06-01T20:20:05Z",
+  "severity": "medium",
+  "severity_reason": "Security-relevant vulnerability/news signal.",
+  "slug": "news-656afebf3aea47e6-the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor",
+  "social_image": "/assets/social/news-656afebf3aea47e6-the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor.svg",
+  "social_image_alt": "SecOpsAI social preview card for The Gentlemen ransomware: Dissecting a self-propagating Go encryptor",
+  "social_image_height": 630,
+  "social_image_width": 1200,
+  "source_category": "Threat Intelligence",
+  "source_links": [
+    "https://www.microsoft.com/en-us/security/blog/2026/05/28/the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor/"
+  ],
+  "source_name": "Microsoft Security Blog",
+  "source_trust_level": "vendor",
+  "source_url": "https://www.microsoft.com/en-us/security/blog/",
+  "sources": [
+    "https://www.microsoft.com/en-us/security/blog/2026/05/28/the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor/"
+  ],
+  "status": "published",
+  "summary": "Microsoft Threat Intelligence presents a comprehensive analysis of The Gentlemen, a Go-based ransomware deployed by affiliates of Storm-2697 that combines per-file ephemeral key encryption with an aggressive self-propagation module to deploy itself across an entire network using series of simultaneous lateral movement techniques per target. The post The Gentlemen ransomware: Dissecting a self-propagating Go encryptor appeared first on Microsoft Security Blog .",
+  "tags": [
+    "Security News",
+    "Threat Intelligence"
+  ],
+  "title": "The Gentlemen ransomware: Dissecting a self-propagating Go encryptor",
+  "updated_at": "2026-06-01T20:20:55Z"
+}

@@ -1,0 +1,84 @@
+{
+  "affected_artifacts": [],
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "affected_products": [
+    "Cloudflare"
+  ],
+  "author": "Cloudflare Security Blog",
+  "body_markdown": "## Source Metadata\n\n- Source: Cloudflare Security Blog\n- Canonical URL: https://blog.cloudflare.com/post-quantum-ipsec/\n- Additional references: none\n- Published at: Thu, 30 Apr 2026 14:00:00 GMT\n- Fetched at: 2026-05-20T10:14:35Z\n- Trust level: vendor\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, and track any source-backed detections or mitigations added during review.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- Cloudflare\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Compare the source-backed claim against local assets and current SOC findings.\n- Create a follow-up triage task if the affected technology is present.\n- Document whether this item requires a new advisory, detection, or mitigation note.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available\n```\n\n## References\n\n- https://blog.cloudflare.com/post-quantum-ipsec/",
+  "canonical_url": "https://blog.cloudflare.com/post-quantum-ipsec/",
+  "categories": [
+    "Security News",
+    "Threat Intelligence",
+    "Cloudflare"
+  ],
+  "deployed_at": "2026-05-22T15:47:09Z",
+  "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [],
+    "products": [
+      "Cloudflare"
+    ],
+    "severity_signals": [],
+    "urls": []
+  },
+  "featured": false,
+  "fetched_at": "2026-05-20T10:14:35Z",
+  "iocs": [],
+  "news_key": "0ef6a321a230a811",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available"
+  ],
+  "primary_references": [
+    "https://blog.cloudflare.com/post-quantum-ipsec/"
+  ],
+  "published_at": "Thu, 30 Apr 2026 14:00:00 GMT",
+  "published_post_path": "blog/posts/news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available.json",
+  "published_url": "https://blog.secopsai.dev/posts/news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available.html",
+  "readiness_blockers": [],
+  "readiness_score": 100,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [],
+  "reading_time": 1,
+  "references": [
+    "https://blog.cloudflare.com/post-quantum-ipsec/"
+  ],
+  "related_posts": [],
+  "review_status": "deployed",
+  "reviewed_at": "2026-05-20T10:18:25Z",
+  "severity": "medium",
+  "severity_reason": "Security-relevant vulnerability/news signal.",
+  "slug": "news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available",
+  "social_image": "/assets/social/news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available.svg",
+  "social_image_alt": "SecOpsAI social preview card for Post-quantum encryption for Cloudflare IPsec is generally available",
+  "social_image_height": 630,
+  "social_image_width": 1200,
+  "source_category": "Threat Intelligence",
+  "source_links": [
+    "https://blog.cloudflare.com/post-quantum-ipsec/"
+  ],
+  "source_name": "Cloudflare Security Blog",
+  "source_trust_level": "vendor",
+  "source_url": "https://blog.cloudflare.com/tag/security/",
+  "sources": [
+    "https://blog.cloudflare.com/post-quantum-ipsec/"
+  ],
+  "status": "published",
+  "summary": "Cloudflare IPsec now has generally available support for post-quantum encryption via hybrid ML-KEM. We\u2019ve confirmed interoperability with Cisco and Fortinet.",
+  "tags": [
+    "Security News",
+    "Threat Intelligence",
+    "Cloudflare"
+  ],
+  "title": "Post-quantum encryption for Cloudflare IPsec is generally available",
+  "updated_at": "2026-05-22T15:47:09Z"
+}

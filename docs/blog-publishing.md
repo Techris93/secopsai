@@ -107,7 +107,7 @@ The media helper copies the file into `blog/assets/posts/<slug>/`, records struc
 
 External RSS/feed images are stored only as draft metadata candidates. They are not published automatically. If an image is safe and licensed for reuse, download/redact it yourself and attach it with `secopsai blog attach-media`.
 
-Every public post gets Open Graph and X/Twitter Card metadata. If no approved hero image exists, `secopsai blog rebuild-feeds` generates a local SecOpsAI social card under `blog/assets/social/<slug>.svg` and uses it as the preview image.
+Every public post gets Open Graph and X/Twitter Card metadata. `secopsai blog rebuild-feeds` generates a deterministic technical-publication card under `blog/assets/social/<slug>.svg` for every archived post. An approved hero image can remain the active preview, but the local fallback card stays current and uses the same paper palette, severity language, document identifier, and issue date as the public SecOpsAI design system.
 
 ### Becoming The Originator
 
