@@ -1,0 +1,36 @@
+{
+  "offset": 0,
+  "totalSize": 3,
+  "extensions": [
+    {
+      "url": "https://open-vsx.org/api/acme/tools",
+      "name": "tools",
+      "namespace": "acme",
+      "version": "2.1.0",
+      "timestamp": "2026-07-21T12:00:00.000000Z",
+      "verified": true,
+      "displayName": "Acme Tools",
+      "deprecated": false
+    },
+    {
+      "url": "https://open-vsx.org/api/evil/theme",
+      "name": "theme",
+      "namespace": "evil",
+      "version": "0.1.0",
+      "timestamp": "2026-07-21T09:00:00.000000Z",
+      "verified": false,
+      "displayName": "Dark Theme",
+      "deprecated": false
+    },
+    {
+      "url": "https://open-vsx.org/api/newcomer/helper",
+      "name": "helper",
+      "namespace": "newcomer",
+      "version": "0.0.1",
+      "timestamp": "2026-07-21T11:00:00.000000Z",
+      "verified": false,
+      "displayName": "Helper",
+      "deprecated": false
+    }
+  ]
+}

@@ -44,6 +44,8 @@ GO_INDEX_URL = "https://index.golang.org/index"
 GO_ALLOWED_HOSTS: Tuple[str, ...] = ("index.golang.org",)
 MAVEN_SOLR_URL = "https://search.maven.org/solrsearch/select"
 MAVEN_ALLOWED_HOSTS: Tuple[str, ...] = ("search.maven.org",)
+OPENVSX_SEARCH_URL = "https://open-vsx.org/api/-/search"
+OPENVSX_ALLOWED_HOSTS: Tuple[str, ...] = ("open-vsx.org",)
 
 MAX_CATALOG_INDEX_BYTES = 8 * 1024 * 1024
 MAX_CATALOG_PAGE_BYTES = 32 * 1024 * 1024
@@ -53,6 +55,7 @@ MAX_TIMEFRAME_PAGE_BYTES = 8 * 1024 * 1024
 MAX_NPM_CHANGES_BYTES = 32 * 1024 * 1024
 MAX_GO_INDEX_BYTES = 16 * 1024 * 1024
 MAX_MAVEN_PAGE_BYTES = 8 * 1024 * 1024
+MAX_OPENVSX_PAGE_BYTES = 8 * 1024 * 1024
 MAX_LEAF_BYTES = 2 * 1024 * 1024
 DEFAULT_MAX_PAGES = 10
 DEFAULT_LOOKBACK_HOURS = 24
@@ -60,6 +63,8 @@ DEFAULT_MAX_WINDOW_HOURS = 24
 DEFAULT_NPM_PAGE_LIMIT = 5000
 DEFAULT_GO_PAGE_LIMIT = 2000
 DEFAULT_MAVEN_PAGE_LIMIT = 200
+DEFAULT_OPENVSX_PAGE_LIMIT = 200
+OPENVSX_PARTITIONS = tuple("abcdefghijklmnopqrstuvwxyz0123456789")
 MAX_DEAD_LETTER_ATTEMPTS = 8
 DEFAULT_MAX_DIFF_EVENTS = 10000
 ALGORITHM_VERSION = "registry-surveillance.v1"
@@ -180,6 +185,25 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "cursor_seed": "zero",
         "cursor_multiplier": 1000,
         "page_limit": DEFAULT_MAVEN_PAGE_LIMIT,
+        "interval_seconds": 3600,
+    },
+    "open-vsx": {
+        "collector_id": "COL-OPENVSX-SEARCH",
+        "source_id": "REG-OPEN_VSX",
+        "name": "Open VSX search reconciliation",
+        "feed_url": OPENVSX_SEARCH_URL,
+        "mode": "index_reconcile",
+        "allowed_hosts": OPENVSX_ALLOWED_HOSTS,
+        "coverage_mode": "search_enumeration_reconciliation",
+        # Open VSX exposes no changes feed; full search enumeration is
+        # reconciled against the previous snapshot. Extension timestamps
+        # are real publish times; the snapshot cursor is the registry's
+        # newest extension timestamp, which makes reruns idempotent. The
+        # public search API caps offsets at 10,000, so enumeration is
+        # letter-partitioned; it is a best-effort census, not a guarantee.
+        "cursor_seed": "zero",
+        "cursor_multiplier": 1,
+        "page_limit": DEFAULT_OPENVSX_PAGE_LIMIT,
         "interval_seconds": 3600,
     },
 }
@@ -1577,6 +1601,248 @@ def _ingest_maven_solr(
     return outcome
 
 
+def _snapshot_map(snapshot: Optional[sqlite3.Row]) -> Dict[str, str]:
+    if snapshot is None:
+        return {}
+    try:
+        payload = json.loads(zlib.decompress(snapshot["names_blob"]).decode("utf-8"))
+    except (zlib.error, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {str(key): value for key, value in payload.items()}
+
+
+def _ingest_openvsx_search(
+    *,
+    collector: Dict[str, Any],
+    cursor_before: str,
+    max_pages: int,
+    fetcher: SafeFetcher,
+    run_id: str,
+    db_path: Optional[str],
+    max_diff_events: int,
+) -> Dict[str, Any]:
+    """Reconcile a full Open VSX search enumeration against the last snapshot.
+
+    Emits extension_added, extension_removed, and version_updated events
+    with real publish timestamps where the registry provides them. The
+    cursor is the registry's newest extension timestamp, so an unchanged
+    registry produces an unchanged cursor and idempotent reruns.
+    """
+    config = _decode(collector["config_json"], {})
+    allowed_hosts = config.get("allowed_hosts", [])
+    page_limit = max(1, min(int(config.get("page_limit", DEFAULT_OPENVSX_PAGE_LIMIT)), 200))
+    outcome = _empty_outcome(cursor_before)
+
+    members: Dict[str, Dict[str, Any]] = {}
+    newest_ts: Optional[str] = None
+    partitions_completed = 0
+    with closing(soc_store.connect(db_path)) as connection:
+        page_budget = max(1, min(int(max_pages), 500))
+        for partition in OPENVSX_PARTITIONS:
+            if page_budget <= 0:
+                break
+            partition_total: Optional[int] = None
+            offset = 0
+            partition_drained = False
+            while page_budget > 0:
+                page_url = f"{collector['feed_url']}?query={partition}&size={page_limit}&offset={offset}"
+                outcome["pages_selected"] += 1
+                page_budget -= 1
+                try:
+                    payload = _fetch_json(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_OPENVSX_PAGE_BYTES)
+                except (IntakeError, CollectorError) as exc:
+                    outcome["error"] = f"search enumeration fetch failed: {exc}"
+                    with connection:
+                        _record_dead_letter(
+                            connection,
+                            collector_id=collector["collector_id"],
+                            run_id=run_id,
+                            url=page_url,
+                            item_kind="page",
+                            payload={"partition": partition, "offset": offset},
+                            error=str(exc),
+                        )
+                    break
+                extensions = payload.get("extensions")
+                if not isinstance(extensions, list):
+                    outcome["error"] = "search response did not contain an extensions list"
+                    break
+                if partition_total is None:
+                    found = payload.get("totalSize")
+                    if not isinstance(found, int):
+                        outcome["error"] = "search response did not expose totalSize"
+                        break
+                    partition_total = found
+                for ext in extensions:
+                    if not isinstance(ext, dict):
+                        continue
+                    namespace = str(ext.get("namespace") or "").strip()
+                    name = str(ext.get("name") or "").strip()
+                    if not namespace or not name:
+                        continue
+                    ext_id = f"{namespace}/{name}"
+                    timestamp = str(ext.get("timestamp") or "")
+                    members[ext_id] = {
+                        "version": str(ext.get("version") or ""),
+                        "timestamp": timestamp,
+                        "verified": bool(ext.get("verified")),
+                        "display_name": str(ext.get("displayName") or "")[:240],
+                        "deprecated": bool(ext.get("deprecated")),
+                        "url": str(ext.get("url") or ""),
+                    }
+                    if timestamp:
+                        normalized = _format_ts(_parse_ts(timestamp))
+                        newest_ts = max(newest_ts, normalized) if newest_ts else normalized
+                outcome["pages_processed"] += 1
+                offset += len(extensions)
+                if not extensions or offset >= partition_total:
+                    partition_drained = True
+                    break
+            if outcome["error"] or not partition_drained:
+                break
+            partitions_completed += 1
+
+    if outcome["error"]:
+        return outcome
+    outcome["partitions_completed"] = partitions_completed
+    if partitions_completed < len(OPENVSX_PARTITIONS):
+        # Enumeration incomplete: keep the previous snapshot and cursor so
+        # no removals are inferred from partial data.
+        outcome["window_incomplete"] = True
+        outcome["cursor_after"] = cursor_before
+        return outcome
+    if newest_ts is None:
+        outcome["error"] = "search enumeration returned no usable extensions"
+        return outcome
+
+    snapshot_serial = newest_ts
+    now = _format_ts(_utcnow())
+    with closing(soc_store.connect(db_path)) as connection:
+        previous = _latest_snapshot(connection, collector["collector_id"])
+        previous_map = _snapshot_map(previous)
+        names_hash = hashlib.sha256(_json(members).encode("utf-8")).hexdigest()
+        if previous is not None and str(previous["names_hash"]) == names_hash:
+            with connection:
+                connection.execute(
+                    "UPDATE registry_cursors SET last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                    (run_id, now, collector["collector_id"]),
+                )
+            outcome["cursor_after"] = str(previous["serial"])
+            return outcome
+
+        # First run is a baseline: store the census without emitting events.
+        added: List[str] = []
+        removed: List[str] = []
+        updated: List[str] = []
+        previous_versions = {
+            ext_id: str(info.get("version") or "") if isinstance(info, dict) else str(info)
+            for ext_id, info in previous_map.items()
+        }
+        if previous is not None:
+            added = sorted(set(members) - set(previous_versions))
+            removed = sorted(set(previous_versions) - set(members))
+            updated = sorted(
+                ext_id
+                for ext_id in set(members) & set(previous_versions)
+                if members[ext_id]["version"] != previous_versions[ext_id]
+            )
+        if len(added) + len(removed) + len(updated) > max_diff_events:
+            outcome["diff_truncated"] = True
+            added = added[:max_diff_events]
+            removed = removed[: max(0, max_diff_events - len(added))]
+            updated = updated[: max(0, max_diff_events - len(added) - len(removed))]
+
+        def _record_event(event_type: str, ext_id: str, version: str, registry_ts: str, extra: Dict[str, Any]) -> None:
+            key = _idempotency_key(collector["ecosystem"], ext_id, f"{version}|{event_type}", snapshot_serial, event_type)
+            metadata = {
+                "change": event_type,
+                "snapshot_serial": snapshot_serial,
+                "algorithm_version": ALGORITHM_VERSION,
+                **extra,
+            }
+            cursor = connection.execute(
+                """INSERT INTO registry_feed_events
+                (feed_event_id, collector_id, ecosystem, package, version, event_type,
+                 registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
+                 idempotency_key, collected_at, processing_state)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'pending')
+                ON CONFLICT(idempotency_key) DO NOTHING""",
+                (
+                    _id("RFE"),
+                    collector["collector_id"],
+                    collector["ecosystem"],
+                    ext_id,
+                    version,
+                    event_type,
+                    registry_ts,
+                    collector["feed_url"],
+                    extra.get("url") or collector["feed_url"],
+                    _json(metadata),
+                    key,
+                    now,
+                ),
+            )
+            if cursor.rowcount == 0:
+                outcome["events_duplicate"] += 1
+            else:
+                outcome["events_stored"] += 1
+
+        with connection:
+            for ext_id in added:
+                info = members[ext_id]
+                outcome["events_seen"] += 1
+                _record_event(
+                    "extension_added",
+                    ext_id,
+                    info["version"],
+                    _format_ts(_parse_ts(info["timestamp"])) if info["timestamp"] else now,
+                    info,
+                )
+            for ext_id in updated:
+                info = members[ext_id]
+                outcome["events_seen"] += 1
+                _record_event(
+                    "version_updated",
+                    ext_id,
+                    info["version"],
+                    _format_ts(_parse_ts(info["timestamp"])) if info["timestamp"] else now,
+                    info | {"previous_version": previous_versions[ext_id]},
+                )
+            for ext_id in removed:
+                previous_info = previous_map.get(ext_id)
+                previous_version = previous_versions.get(ext_id, "")
+                outcome["events_seen"] += 1
+                _record_event(
+                    "extension_removed",
+                    ext_id,
+                    previous_version,
+                    now,
+                    {"url": previous_info.get("url", "") if isinstance(previous_info, dict) else ""},
+                )
+            connection.execute(
+                """INSERT INTO registry_snapshots
+                (snapshot_id, collector_id, serial, item_count, names_hash, names_blob, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    _id("RST"),
+                    collector["collector_id"],
+                    snapshot_serial,
+                    len(members),
+                    names_hash,
+                    sqlite3.Binary(zlib.compress(_json(members).encode("utf-8"))),
+                    now,
+                ),
+            )
+            connection.execute(
+                "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                (snapshot_serial, newest_ts, run_id, now, collector["collector_id"]),
+            )
+    outcome["cursor_after"] = snapshot_serial
+    return outcome
+
+
 def _effective_cursor(collector: Dict[str, Any], since: Optional[str]) -> str:
     definition = COLLECTOR_DEFINITIONS[collector["ecosystem"]]
     current = str((collector.get("cursor") or {}).get("cursor_value") or "")
@@ -1716,6 +1982,16 @@ def run_registry_collector(
             run_id=run_id,
             db_path=db_path,
         )
+    elif collector["ecosystem"] == "open-vsx":
+        outcome = _ingest_openvsx_search(
+            collector=collector,
+            cursor_before=cursor_before,
+            max_pages=max_pages,
+            fetcher=fetcher,
+            run_id=run_id,
+            db_path=db_path,
+            max_diff_events=max(1, int(max_diff_events)),
+        )
     else:
         outcome = _ingest_nuget_catalog(
             collector=collector,
@@ -1734,6 +2010,8 @@ def run_registry_collector(
         result["diff_truncated"] = True
     if outcome.get("window_incomplete"):
         result["window_incomplete"] = True
+    if outcome.get("partitions_completed") is not None and collector["ecosystem"] == "open-vsx":
+        result["partitions_completed"] = outcome["partitions_completed"]
     retention = _retention_state(collector, result["cursor_after"])
     if retention is not None:
         result["retention"] = retention

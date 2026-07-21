@@ -145,7 +145,7 @@ CAPABILITIES: Dict[str, Dict[str, Any]] = {
         ("rubygems", "RubyGems.org", False, "timeframe_feed_or_watchlist", ["Timeframe polling covers recent versions within its page budget; compact-index census reconciliation is a later checkpoint."], "https://guides.rubygems.org/rubygems-org-api/"),
         ("packagist", "Packagist", False, "changes_feed_or_watchlist", ["The metadata change log has bounded retention; stale cursors can miss events and raise coverage alerts."], "https://packagist.org/apidoc"),
         ("go", "Go Modules", False, "module_index_or_watchlist", ["The module index records new versions only; retractions and deletions are not index events."], "https://go.dev/ref/mod"),
-        ("open-vsx", "Open VSX", False, "publisher_or_extension_poll", ["Publisher and extension scopes are explicit."], "https://open-vsx.org/"),
+        ("open-vsx", "Open VSX", False, "search_reconcile_or_watchlist", ["Public search caps offsets at 10000; letter-partitioned enumeration is a best-effort census, not a publish-time feed."], "https://open-vsx.org/"),
     )
 }
 

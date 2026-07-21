@@ -1107,6 +1107,126 @@ def test_maven_rerun_is_idempotent(tmp_path):
     assert len(list_feed_events(db_path=db_path)) == 4
 
 
+OPENVSX_FIXTURES = Path(__file__).parent / "fixtures" / "openvsx_search"
+
+
+def _openvsx_fetcher(captured_urls, variant="base", fail_letters=()):
+    def fetch(url, max_bytes):
+        captured_urls.append(url)
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        letter = params.get("query", [""])[0]
+        offset = int(params.get("offset", ["0"])[0])
+        if letter in fail_letters:
+            return 500, {"content-type": "application/json"}, b'{"error": "registry down"}'
+        if letter != "a":
+            return 200, {"content-type": "application/json"}, b'{"offset": 0, "totalSize": 0, "extensions": []}'
+        name = ("page1_changed.json" if variant == "changed" else "page1.json") if offset == 0 else "page2.json"
+        return 200, {"content-type": "application/json"}, (OPENVSX_FIXTURES / name).read_bytes()
+
+    return SafeFetcher(fetch=fetch)
+
+
+def _openvsx_snapshots(db_path):
+    connection = soc_store.connect(db_path)
+    try:
+        rows = connection.execute(
+            "SELECT * FROM registry_snapshots WHERE collector_id = 'COL-OPENVSX-SEARCH' ORDER BY created_at"
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        connection.close()
+
+
+def test_openvsx_collector_seeds_with_zero_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    collectors = ensure_collectors(db_path=db_path)
+    openvsx = next(item for item in collectors if item["collector_id"] == "COL-OPENVSX-SEARCH")
+    assert openvsx["mode"] == "index_reconcile"
+    assert openvsx["cursor"]["cursor_value"] == "0"
+
+
+def test_openvsx_baseline_stores_snapshot_without_events(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(ecosystem="open-vsx", max_pages=60, db_path=db_path, fetcher=_openvsx_fetcher(urls))
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 0
+    assert result["cursor_after"] == "2026-07-21T09:00:00.000Z"
+    assert result["partitions_completed"] == 36
+    snapshots = _openvsx_snapshots(db_path)
+    assert len(snapshots) == 1
+    assert snapshots[0]["item_count"] == 3
+
+
+def test_openvsx_reconciliation_emits_added_updated_removed(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    run_registry_collector(ecosystem="open-vsx", max_pages=60, db_path=db_path, fetcher=_openvsx_fetcher(urls))
+    result = run_registry_collector(
+        ecosystem="open-vsx", max_pages=60, db_path=db_path, fetcher=_openvsx_fetcher(urls, variant="changed")
+    )
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 3
+    assert result["cursor_after"] == "2026-07-21T12:00:00.000Z"
+
+    events = list_feed_events(db_path=db_path)
+    by_package = {event["package"]: event for event in events}
+    added = by_package["newcomer/helper"]
+    assert added["event_type"] == "extension_added"
+    assert added["registry_timestamp"] == "2026-07-21T11:00:00.000Z"
+    assert added["leaf_url"] == "https://open-vsx.org/api/newcomer/helper"
+    updated = by_package["acme/tools"]
+    assert updated["event_type"] == "version_updated"
+    assert updated["version"] == "2.1.0"
+    assert updated["metadata"]["previous_version"] == "2.0.0"
+    removed = by_package["acme/linter"]
+    assert removed["event_type"] == "extension_removed"
+    assert removed["version"] == "1.5.0"
+
+
+def test_openvsx_unchanged_registry_skips_snapshot(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    run_registry_collector(ecosystem="open-vsx", max_pages=60, db_path=db_path, fetcher=_openvsx_fetcher(urls))
+    run_registry_collector(ecosystem="open-vsx", max_pages=60, db_path=db_path, fetcher=_openvsx_fetcher(urls, variant="changed"))
+    result = run_registry_collector(
+        ecosystem="open-vsx", max_pages=60, db_path=db_path, fetcher=_openvsx_fetcher(urls, variant="changed")
+    )
+    assert result["events_stored"] == 0
+    assert len(_openvsx_snapshots(db_path)) == 2
+    assert len(list_feed_events(db_path=db_path)) == 3
+
+
+def test_openvsx_partial_enumeration_holds_cursor_and_snapshot(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    run_registry_collector(ecosystem="open-vsx", max_pages=60, db_path=db_path, fetcher=_openvsx_fetcher(urls))
+    result = run_registry_collector(
+        ecosystem="open-vsx",
+        max_pages=2,
+        db_path=db_path,
+        fetcher=_openvsx_fetcher(urls),
+    )
+    assert result["status"] == "completed"
+    assert result["window_incomplete"] is True
+    # Partial data must never infer removals or replace the snapshot.
+    assert len(_openvsx_snapshots(db_path)) == 1
+    assert list_feed_events(db_path=db_path) == []
+
+
+def test_openvsx_page_failure_dead_letters_and_records_gap(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(
+        ecosystem="open-vsx", db_path=db_path, fetcher=_openvsx_fetcher(urls, fail_letters={"a"})
+    )
+    assert result["status"] == "failed"
+    assert result["coverage"] == "gap"
+    letters = _dead_letters(db_path)
+    assert len(letters) == 1
+    assert letters[0]["item_kind"] == "page"
+
+
 def test_paused_collector_refuses_runs_and_keeps_cursor(tmp_path):
     db_path = _db(tmp_path)
     ensure_collectors(db_path=db_path)
