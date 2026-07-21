@@ -125,6 +125,7 @@ from secopsai.research_surveillance import (
     recover_interrupted_runs as recover_interrupted_collector_runs,
     retry_dead_letters as retry_registry_dead_letters,
     run_registry_collector,
+    set_collector_enabled as set_registry_collector_enabled,
 )
 from secopsai.research_scoring import score_pending_events as score_pending_feed_events
 from secopsai.research_analysis import compare_intakes, compare_packages, correlate_candidates, inspect_nuget_archive, list_campaigns
@@ -1165,6 +1166,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     collect_events.add_argument("--package", default=None)
     collect_events.add_argument("--limit", type=int, default=100)
     collect_events.add_argument("--db-path", default=None)
+    collect_pause = research_collect_sub.add_parser("pause", help="Pause a collector without losing its cursor")
+    collect_pause.add_argument("--ecosystem", required=True)
+    collect_pause.add_argument("--db-path", default=None)
+    collect_resume = research_collect_sub.add_parser("resume", help="Resume a paused collector")
+    collect_resume.add_argument("--ecosystem", required=True)
+    collect_resume.add_argument("--db-path", default=None)
 
     research_score = research_sub.add_parser("score", help="Score pending feed events into candidates")
     research_score_sub = research_score.add_subparsers(dest="research_score_cmd", required=True)
@@ -2081,6 +2088,10 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = {"windows": registry_coverage_report(days=args.days, db_path=args.db_path)}
             elif args.research_collect_cmd == "events":
                 payload = {"events": registry_list_feed_events(collector_id=args.collector_id, package=args.package, limit=args.limit, db_path=args.db_path)}
+            elif args.research_collect_cmd == "pause":
+                payload = set_registry_collector_enabled(ecosystem=args.ecosystem, enabled=False, db_path=args.db_path)
+            elif args.research_collect_cmd == "resume":
+                payload = set_registry_collector_enabled(ecosystem=args.ecosystem, enabled=True, db_path=args.db_path)
             else:
                 payload = recover_interrupted_collector_runs(max_age_seconds=args.max_age_seconds, db_path=args.db_path)
         elif args.research_cmd == "score":

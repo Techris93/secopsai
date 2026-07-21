@@ -231,6 +231,26 @@ def get_collector(collector_id: str, *, db_path: Optional[str] = None) -> Dict[s
     return dict(row) | {"cursor": dict(cursor) if cursor else None}
 
 
+def set_collector_enabled(*, ecosystem: str, enabled: bool, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Pause or resume a collector. A paused collector keeps its cursor,
+    coverage history, and dead letters; runs are refused until resumed."""
+    collector = _collector_for_ecosystem(ecosystem, db_path=db_path)
+    now = _format_ts(_utcnow())
+    with closing(soc_store.connect(db_path)) as connection:
+        with connection:
+            connection.execute(
+                "UPDATE registry_collectors SET enabled = ?, updated_at = ? WHERE collector_id = ?",
+                (1 if enabled else 0, now, collector["collector_id"]),
+            )
+    updated = get_collector(collector["collector_id"], db_path=db_path)
+    return {
+        "collector_id": updated["collector_id"],
+        "ecosystem": updated["ecosystem"],
+        "enabled": bool(updated["enabled"]),
+        "cursor": (updated.get("cursor") or {}).get("cursor_value"),
+    }
+
+
 def _collector_for_ecosystem(ecosystem: str, *, db_path: Optional[str]) -> Dict[str, Any]:
     key = str(ecosystem or "").strip().lower()
     if key not in COLLECTOR_DEFINITIONS:
