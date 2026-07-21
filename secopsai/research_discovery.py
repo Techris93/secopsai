@@ -144,7 +144,7 @@ CAPABILITIES: Dict[str, Dict[str, Any]] = {
         ("maven", "Maven Central", False, "search_or_watchlist", ["Search polling does not guarantee a complete repository census."], "https://central.sonatype.org/"),
         ("rubygems", "RubyGems.org", False, "timeframe_feed_or_watchlist", ["Timeframe polling covers recent versions within its page budget; compact-index census reconciliation is a later checkpoint."], "https://guides.rubygems.org/rubygems-org-api/"),
         ("packagist", "Packagist", False, "changes_feed_or_watchlist", ["The metadata change log has bounded retention; stale cursors can miss events and raise coverage alerts."], "https://packagist.org/apidoc"),
-        ("go", "Go Modules", False, "module_poll", ["Module proxy polling is scoped to configured modules."], "https://go.dev/ref/mod"),
+        ("go", "Go Modules", False, "module_index_or_watchlist", ["The module index records new versions only; retractions and deletions are not index events."], "https://go.dev/ref/mod"),
         ("open-vsx", "Open VSX", False, "publisher_or_extension_poll", ["Publisher and extension scopes are explicit."], "https://open-vsx.org/"),
     )
 }

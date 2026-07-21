@@ -882,6 +882,108 @@ def test_npm_rerun_is_idempotent(tmp_path):
     assert len(list_feed_events(db_path=db_path)) == 3
 
 
+GO_FIXTURES = Path(__file__).parent / "fixtures" / "go_index"
+
+
+def _go_fetcher(captured_urls, fail_sinces=()):
+    def fetch(url, max_bytes):
+        captured_urls.append(url)
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        since = params.get("since", [""])[0]
+        if since in fail_sinces:
+            return 500, {"content-type": "text/plain"}, b"internal error"
+        if since < "2026-07-21T12:03:00.999Z":
+            return 200, {"content-type": "text/plain"}, (GO_FIXTURES / "page1.ndjson").read_bytes()
+        if since == "2026-07-21T12:03:00.999Z":
+            return 200, {"content-type": "text/plain"}, (GO_FIXTURES / "page2.ndjson").read_bytes()
+        return 200, {"content-type": "text/plain"}, b""
+
+    return SafeFetcher(fetch=fetch)
+
+
+@pytest.fixture
+def _go_page_limit_3(monkeypatch):
+    from secopsai import research_surveillance
+
+    monkeypatch.setitem(research_surveillance.COLLECTOR_DEFINITIONS["go"], "page_limit", 3)
+
+
+def test_go_collector_seeds_with_lookback_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    collectors = ensure_collectors(db_path=db_path)
+    go = next(item for item in collectors if item["collector_id"] == "COL-GO-INDEX")
+    assert go["mode"] == "event_feed"
+    assert "T" in go["cursor"]["cursor_value"]
+
+
+def test_go_run_stores_module_versions_and_advances_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(
+        ecosystem="go", since="2026-07-21T12:00:00Z", db_path=db_path, fetcher=_go_fetcher(urls)
+    )
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 3
+    assert result["cursor_after"] == "2026-07-21T12:03:00.999Z"
+
+    events = list_feed_events(db_path=db_path)
+    by_version = {(event["package"], event["version"]): event for event in events}
+    toolkit = by_version[("github.com/acme/toolkit", "v1.2.0")]
+    assert toolkit["event_type"] == "published"
+    assert toolkit["registry_timestamp"] == "2026-07-21T12:01:00.123Z"
+    assert toolkit["leaf_url"] == "https://proxy.golang.org/github.com/acme/toolkit/@v/v1.2.0.info"
+
+
+def test_go_multi_page_walk_persists_batches(tmp_path, _go_page_limit_3):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(
+        ecosystem="go", since="2026-07-21T12:00:00Z", db_path=db_path, fetcher=_go_fetcher(urls)
+    )
+    assert result["events_stored"] == 4
+    assert result["pages_processed"] == 2
+    assert result["cursor_after"] == "2026-07-21T12:04:00.000Z"
+
+
+def test_go_page_failure_holds_cursor_at_last_batch(tmp_path, _go_page_limit_3):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(
+        ecosystem="go",
+        since="2026-07-21T12:00:00Z",
+        db_path=db_path,
+        fetcher=_go_fetcher(urls, fail_sinces={"2026-07-21T12:03:00.999Z"}),
+    )
+    assert result["status"] == "failed"
+    assert result["coverage"] == "gap"
+    assert result["events_stored"] == 3
+    assert result["cursor_after"] == "2026-07-21T12:03:00.999Z"
+    letters = _dead_letters(db_path)
+    assert len(letters) == 1
+    assert letters[0]["item_kind"] == "page"
+
+
+def test_go_caught_up_run_keeps_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+    _set_cursor(db_path, "COL-GO-INDEX", "2026-07-21T12:04:00.000Z")
+    urls = []
+    result = run_registry_collector(ecosystem="go", db_path=db_path, fetcher=_go_fetcher(urls))
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 0
+    assert result["cursor_after"] == "2026-07-21T12:04:00.000Z"
+
+
+def test_go_rerun_is_idempotent(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    run_registry_collector(ecosystem="go", since="2026-07-21T12:00:00Z", db_path=db_path, fetcher=_go_fetcher(urls))
+    result = run_registry_collector(ecosystem="go", since="2026-07-21T12:00:00Z", db_path=db_path, fetcher=_go_fetcher(urls))
+    assert result["events_stored"] == 0
+    assert result["events_duplicate"] == 3
+    assert len(list_feed_events(db_path=db_path)) == 3
+
+
 def test_paused_collector_refuses_runs_and_keeps_cursor(tmp_path):
     db_path = _db(tmp_path)
     ensure_collectors(db_path=db_path)
