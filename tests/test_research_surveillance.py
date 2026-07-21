@@ -228,7 +228,7 @@ def test_recover_interrupted_runs_marks_old_running(tmp_path):
         connection.close()
     result = recover_interrupted_runs(max_age_seconds=3600, db_path=db_path)
     assert result["interrupted"] == 1
-    status = collector_status(db_path=db_path)[0]
+    status = collector_status(ecosystem="nuget", db_path=db_path)[0]
     assert status["last_run"]["status"] == "interrupted"
 
 
@@ -281,7 +281,7 @@ def test_collector_status_reports_lag_gaps_and_counts(tmp_path):
 
 def test_unknown_ecosystem_is_rejected(tmp_path):
     with pytest.raises(CollectorError):
-        run_registry_collector(ecosystem="npm", db_path=_db(tmp_path), fetcher=_fetcher())
+        run_registry_collector(ecosystem="maven", db_path=_db(tmp_path), fetcher=_fetcher())
 
 
 def test_registry_hosts_outside_allowlist_are_refused(tmp_path):
@@ -746,6 +746,140 @@ def test_rubygems_request_overlaps_cursor(tmp_path):
     urls = []
     run_registry_collector(ecosystem="rubygems", db_path=db_path, fetcher=_rubygems_fetcher(urls))
     assert _window_from_param(urls[0]) == "2026-07-20T11:55:00.000Z"
+
+
+NPM_FIXTURES = Path(__file__).parent / "fixtures" / "npm_changes"
+
+
+def _npm_fetcher(captured_urls, fail=()):
+    def fetch(url, max_bytes):
+        captured_urls.append(url)
+        if url == "https://replicate.npmjs.com/":
+            if "root" in fail:
+                return 500, {"content-type": "application/json"}, b'{"error": "down"}'
+            return 200, {"content-type": "application/json"}, (NPM_FIXTURES / "root.json").read_bytes()
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        since = int(params.get("since", ["0"])[0])
+        if since in fail:
+            return 500, {"content-type": "application/json"}, b'{"error": "down"}'
+        if since < 98:
+            name = "page1.json"
+        elif since == 98:
+            name = "page2.json"
+        else:
+            name = "empty.json"
+        return 200, {"content-type": "application/json"}, (NPM_FIXTURES / name).read_bytes()
+
+    return SafeFetcher(fetch=fetch)
+
+
+@pytest.fixture
+def _npm_page_limit_3(monkeypatch):
+    # ensure_collectors rebuilds config_json from COLLECTOR_DEFINITIONS on
+    # every call, so the definition is the only durable override point.
+    from secopsai import research_surveillance
+
+    monkeypatch.setitem(research_surveillance.COLLECTOR_DEFINITIONS["npm"], "page_limit", 3)
+
+
+def _set_npm_page_limit(db_path, limit):
+    ensure_collectors(db_path=db_path)
+    connection = soc_store.connect(db_path)
+    try:
+        row = connection.execute(
+            "SELECT config_json FROM registry_collectors WHERE collector_id = 'COL-NPM-CHANGES'"
+        ).fetchone()
+        config = json.loads(row["config_json"])
+        config["page_limit"] = limit
+        connection.execute(
+            "UPDATE registry_collectors SET config_json = ? WHERE collector_id = 'COL-NPM-CHANGES'",
+            (json.dumps(config),),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_npm_collector_seeds_with_zero_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    collectors = ensure_collectors(db_path=db_path)
+    npm = next(item for item in collectors if item["collector_id"] == "COL-NPM-CHANGES")
+    assert npm["mode"] == "event_feed"
+    assert npm["cursor"]["cursor_value"] == "0"
+
+
+def test_npm_bootstrap_adopts_registry_sequence(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(ecosystem="npm", db_path=db_path, fetcher=_npm_fetcher(urls))
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 0
+    assert result["cursor_after"] == "9000"
+    assert urls == ["https://replicate.npmjs.com/"]
+
+
+def test_npm_bootstrap_failure_dead_letters_without_cursor_move(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(ecosystem="npm", db_path=db_path, fetcher=_npm_fetcher(urls, fail={"root"}))
+    assert result["status"] == "failed"
+    assert result["cursor_after"] == "0"
+    letters = _dead_letters(db_path)
+    assert len(letters) == 1
+    assert letters[0]["item_kind"] == "feed"
+
+
+def test_npm_backfill_stores_changes_and_maps_deleted(tmp_path, _npm_page_limit_3):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(ecosystem="npm", since="95", db_path=db_path, fetcher=_npm_fetcher(urls))
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 4
+    assert result["pages_processed"] == 2
+    assert result["cursor_after"] == "99"
+
+    events = list_feed_events(db_path=db_path)
+    by_name = {event["package"]: event for event in events}
+    assert by_name["chalk-tempalte"]["event_type"] == "published"
+    assert by_name["chalk-tempalte"]["metadata"]["timestamp_source"] == "collector"
+    assert by_name["chalk-tempalte"]["leaf_url"] == "https://registry.npmjs.org/chalk-tempalte"
+    assert by_name["deleted-package"]["event_type"] == "deleted"
+    assert "@scope/nested-package" in by_name
+
+
+def test_npm_page_failure_holds_cursor_at_last_persisted_batch(tmp_path, _npm_page_limit_3):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(ecosystem="npm", since="95", db_path=db_path, fetcher=_npm_fetcher(urls, fail={98}))
+    assert result["status"] == "failed"
+    assert result["coverage"] == "gap"
+    assert result["events_stored"] == 3
+    assert result["cursor_after"] == "98"
+    assert _cursor_value(db_path, collector_id="COL-NPM-CHANGES") == "98"
+    letters = _dead_letters(db_path)
+    assert len(letters) == 1
+    assert letters[0]["item_kind"] == "page"
+
+
+def test_npm_idle_run_advances_cursor_without_events(tmp_path):
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+    _set_cursor(db_path, "COL-NPM-CHANGES", "99")
+    urls = []
+    result = run_registry_collector(ecosystem="npm", db_path=db_path, fetcher=_npm_fetcher(urls))
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 0
+    assert result["cursor_after"] == "102"
+
+
+def test_npm_rerun_is_idempotent(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    run_registry_collector(ecosystem="npm", since="95", db_path=db_path, fetcher=_npm_fetcher(urls))
+    result = run_registry_collector(ecosystem="npm", since="95", db_path=db_path, fetcher=_npm_fetcher(urls))
+    assert result["events_stored"] == 0
+    assert result["events_duplicate"] == 3
+    assert len(list_feed_events(db_path=db_path)) == 3
 
 
 def test_paused_collector_refuses_runs_and_keeps_cursor(tmp_path):

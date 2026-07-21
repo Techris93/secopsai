@@ -1,0 +1,21 @@
+{
+  "results": [
+    {
+      "seq": 96,
+      "id": "chalk-tempalte",
+      "changes": [{"rev": "1-aaa111"}]
+    },
+    {
+      "seq": 97,
+      "id": "legit-library",
+      "changes": [{"rev": "5-bbb222"}]
+    },
+    {
+      "seq": 98,
+      "id": "deleted-package",
+      "changes": [{"rev": "3-ccc333"}],
+      "deleted": true
+    }
+  ],
+  "last_seq": 98
+}

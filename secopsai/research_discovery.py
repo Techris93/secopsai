@@ -138,7 +138,7 @@ CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "terms_url": terms,
     }
     for ecosystem, display, deep, mode, limitations, terms in (
-        ("npm", "npm", False, "watchlist_poll", ["Global completeness depends on scoped registry queries."], "https://docs.npmjs.com/"),
+        ("npm", "npm", False, "changes_feed_or_watchlist", ["The replica changes feed has no per-event timestamps; ledger times are collection times."], "https://docs.npmjs.com/"),
         ("pypi", "PyPI", False, "index_reconcile_or_watchlist", ["Index reconciliation detects project additions and removals; per-release detection requires watchlist polling or backfill."], "https://docs.pypi.org/"),
         ("nuget", "NuGet", True, "catalog_or_watchlist", ["Catalog coverage and rate limits must be reported per run."], "https://learn.microsoft.com/en-us/nuget/api/overview"),
         ("maven", "Maven Central", False, "search_or_watchlist", ["Search polling does not guarantee a complete repository census."], "https://central.sonatype.org/"),
