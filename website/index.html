@@ -17,7 +17,8 @@
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet">
+    <script src="/assets/site.js" defer></script>
     <style>
         /* ──────────────────────────────────────────────────────────
            SecOpsAI public document — ASD S1000D publication style
@@ -476,13 +477,13 @@
         <p>Select your platform. Run the command. The install takes less than five minutes.</p>
 
         <div class="tabs" role="tablist" aria-label="Platform">
-            <button class="tab" role="tab" aria-selected="true" data-tab="macos">macOS</button>
-            <button class="tab" role="tab" aria-selected="false" data-tab="linux">LINUX</button>
-            <button class="tab" role="tab" aria-selected="false" data-tab="windows">WINDOWS</button>
-            <button class="tab" role="tab" aria-selected="false" data-tab="openclaw">OPENCLAW</button>
+            <button class="tab" id="tab-macos" role="tab" aria-controls="panel-macos" aria-selected="true" data-tab="macos">macOS</button>
+            <button class="tab" id="tab-linux" role="tab" aria-controls="panel-linux" aria-selected="false" data-tab="linux" tabindex="-1">LINUX</button>
+            <button class="tab" id="tab-windows" role="tab" aria-controls="panel-windows" aria-selected="false" data-tab="windows" tabindex="-1">WINDOWS</button>
+            <button class="tab" id="tab-openclaw" role="tab" aria-controls="panel-openclaw" aria-selected="false" data-tab="openclaw" tabindex="-1">OPENCLAW</button>
         </div>
 
-        <div class="tab-panel" data-panel="macos">
+        <div class="tab-panel" id="panel-macos" role="tabpanel" aria-labelledby="tab-macos" data-panel="macos">
             <div class="procedure">
                 <div class="procedure-title"><span>PROC-01</span><span>INSTALL — macOS 12+</span></div>
                 <div class="procedure-body">
@@ -494,7 +495,7 @@
                 </div>
             </div>
         </div>
-        <div class="tab-panel" data-panel="linux" hidden>
+        <div class="tab-panel" id="panel-linux" role="tabpanel" aria-labelledby="tab-linux" data-panel="linux" hidden>
             <div class="procedure">
                 <div class="procedure-title"><span>PROC-02</span><span>INSTALL — Debian / Ubuntu / RHEL</span></div>
                 <div class="procedure-body">
@@ -506,7 +507,7 @@
                 </div>
             </div>
         </div>
-        <div class="tab-panel" data-panel="windows" hidden>
+        <div class="tab-panel" id="panel-windows" role="tabpanel" aria-labelledby="tab-windows" data-panel="windows" hidden>
             <div class="procedure">
                 <div class="procedure-title"><span>PROC-03</span><span>INSTALL — Windows (WSL2)</span></div>
                 <div class="procedure-body">
@@ -518,7 +519,7 @@
                 </div>
             </div>
         </div>
-        <div class="tab-panel" data-panel="openclaw" hidden>
+        <div class="tab-panel" id="panel-openclaw" role="tabpanel" aria-labelledby="tab-openclaw" data-panel="openclaw" hidden>
             <div class="procedure">
                 <div class="procedure-title"><span>PROC-04</span><span>INSTALL — OpenClaw plugin</span></div>
                 <div class="procedure-body">
@@ -725,29 +726,5 @@
 
 </div>
 
-<script>
-    // Platform tabs — one panel visible at a time.
-    const tabs = document.querySelectorAll('.tab');
-    tabs.forEach((tab) => {
-        tab.addEventListener('click', () => {
-            tabs.forEach((t) => t.setAttribute('aria-selected', String(t === tab)));
-            document.querySelectorAll('.tab-panel').forEach((panel) => {
-                panel.hidden = panel.dataset.panel !== tab.dataset.tab;
-            });
-        });
-    });
-    // Copy buttons on install commands.
-    document.querySelectorAll('.copy-btn').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-            try {
-                await navigator.clipboard.writeText(btn.dataset.copy || '');
-                btn.textContent = 'COPIED';
-                setTimeout(() => { btn.textContent = 'COPY'; }, 1600);
-            } catch (err) {
-                btn.textContent = 'SELECT TEXT';
-            }
-        });
-    });
-</script>
 </body>
 </html>
