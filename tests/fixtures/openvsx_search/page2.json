@@ -1,0 +1,16 @@
+{
+  "offset": 2,
+  "totalSize": 3,
+  "extensions": [
+    {
+      "url": "https://open-vsx.org/api/acme/linter",
+      "name": "linter",
+      "namespace": "acme",
+      "version": "1.5.0",
+      "timestamp": "2026-07-19T08:00:00.000000Z",
+      "verified": true,
+      "displayName": "Acme Linter",
+      "deprecated": false
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "offset": 0,
+  "totalSize": 3,
+  "extensions": [
+    {
+      "url": "https://open-vsx.org/api/acme/tools",
+      "name": "tools",
+      "namespace": "acme",
+      "version": "2.0.0",
+      "timestamp": "2026-07-20T10:00:00.000000Z",
+      "verified": true,
+      "displayName": "Acme Tools",
+      "deprecated": false
+    },
+    {
+      "url": "https://open-vsx.org/api/evil/theme",
+      "name": "theme",
+      "namespace": "evil",
+      "version": "0.1.0",
+      "timestamp": "2026-07-21T09:00:00.000000Z",
+      "verified": false,
+      "displayName": "Dark Theme",
+      "deprecated": false
+    }
+  ]
+}

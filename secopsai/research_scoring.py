@@ -20,9 +20,9 @@ from secopsai.research_intake import RegistryMetadata
 from secopsai.research_surveillance import ensure_collectors
 
 # Event types that describe something newly present in the ecosystem.
-# Removals (deleted, yanked, project_removed) stay in the ledger for
-# audit but never produce candidates.
-SCORABLE_EVENT_TYPES = {"published", "project_added"}
+# Removals (deleted, yanked, project_removed, extension_removed) stay
+# in the ledger for audit but never produce candidates.
+SCORABLE_EVENT_TYPES = {"published", "project_added", "extension_added", "version_updated"}
 
 _ARTIFACT_SUFFIXES = (".gem", ".nupkg", ".tgz", ".whl", ".tar.gz", ".zip", ".vsix")
 
