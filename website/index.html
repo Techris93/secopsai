@@ -368,6 +368,14 @@
         .doc-footer a { color: var(--note); text-decoration: none; }
 
         @media (max-width: 640px) {
+            .doc-header { align-items: flex-start; }
+            .doc-nav {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 10px 14px;
+                width: 100%;
+            }
+            .doc-nav a { white-space: nowrap; }
             .dm-title { font-size: 26px; }
             .notice { flex-direction: column; }
             .notice-label { border-right: 0; border-bottom: 1px solid; }
@@ -425,6 +433,41 @@
         <p class="lead">Two questions decide the security posture of most organizations: what is on the network, and what is in the software. SecOpsAI answers both, on your own hardware.</p>
         <p>SecOpsAI Edge discovers every device on your network and flags risky changes. SecOpsAI Research watches eight package registries for typosquats and suspicious releases. The platform correlates this telemetry into findings with evidence, severity, and a next action.</p>
         <p>All analysis runs on your hardware. Telemetry stays in a local store. Cloud reports contain minimized findings only.</p>
+    </section>
+
+    <!-- 2. Architecture -->
+    <section class="spec" id="architecture">
+        <h2>Architecture</h2>
+        <p>SecOpsAI is one platform with four components. Each component has one clear responsibility.</p>
+        <table class="spec-table">
+            <caption>TABLE 1 — PLATFORM COMPONENTS</caption>
+            <thead>
+                <tr><th>COMPONENT</th><th>RESPONSIBILITY</th><th>RUNS ON</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>edge-sensor</td>
+                    <td>Collects network telemetry: asset discovery, service exposure, Wi-Fi observation, scan jobs, sensor heartbeat.</td>
+                    <td>MacBook, Linux host, or Raspberry Pi on the customer LAN</td>
+                </tr>
+                <tr>
+                    <td>core</td>
+                    <td>Owns the canonical store: findings, asset graph, triage, research cases, correlation, and reports.</td>
+                    <td>Local workstation or hosted API</td>
+                </tr>
+                <tr>
+                    <td>research-engine</td>
+                    <td>Monitors package registries, scores events against watchlists, and manages disclosure and publication workflows.</td>
+                    <td>Local worker or hosted collector service</td>
+                </tr>
+                <tr>
+                    <td>console</td>
+                    <td>Operator dashboard for findings, assets, research, schedules, and reports.</td>
+                    <td>Browser, served statically</td>
+                </tr>
+            </tbody>
+        </table>
+        <p style="margin-top:14px;">The OpenClaw plugin connects the platform to local automation runtimes. It can start scans, read findings, and prepare actions. Approval-gated actions always need an operator.</p>
     </section>
 
     <!-- 2. Installation -->
@@ -498,24 +541,34 @@
     <section class="spec" id="capabilities">
         <h2>Capabilities</h2>
         <table class="spec-table">
-            <caption>TABLE 1 — PLATFORM MODULES</caption>
+            <caption>TABLE 2 — PLATFORM MODULES</caption>
             <thead>
                 <tr><th>MODULE</th><th>FUNCTION</th><th>STATUS</th></tr>
             </thead>
             <tbody>
                 <tr>
                     <td>secopsai-edge</td>
-                    <td>Discovers network assets, open services, and Wi-Fi networks. Flags new devices and risky changes.</td>
+                    <td>Discovers network assets, open services, and Wi-Fi networks. Flags new devices, missing devices, and risky changes. Builds the asset inventory automatically.</td>
                     <td>Live <span class="status-tag tag-live">LIVE</span></td>
                 </tr>
                 <tr>
                     <td>secopsai-research</td>
-                    <td>Monitors eight package registries for typosquats and suspicious releases. Scores events against your watchlists.</td>
+                    <td>Monitors eight package registries for typosquats and suspicious releases. Scores every event against your watchlists. Feeds research cases, disclosure, and published advisories.</td>
+                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                </tr>
+                <tr>
+                    <td>supply-chain-scanner</td>
+                    <td>Scans project dependencies for known vulnerabilities, malicious packages, and policy violations across supported ecosystems.</td>
                     <td>Live <span class="status-tag tag-live">LIVE</span></td>
                 </tr>
                 <tr>
                     <td>triage-engine</td>
-                    <td>Correlates findings across hosts and platforms. Tracks status, disposition, and evidence.</td>
+                    <td>Correlates findings across hosts and platforms. Tracks status, disposition, notes, and evidence. Prevents duplicate work.</td>
+                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                </tr>
+                <tr>
+                    <td>asset-graph</td>
+                    <td>Links sites, sensors, assets, services, and Wi-Fi networks into one queryable graph. Answers what changed, when, and where.</td>
                     <td>Live <span class="status-tag tag-live">LIVE</span></td>
                 </tr>
                 <tr>
@@ -529,10 +582,71 @@
                     <td>Live <span class="status-tag tag-live">LIVE</span></td>
                 </tr>
                 <tr>
+                    <td>reports</td>
+                    <td>Generates executive and technical reports from findings and graph context. Exports printable, client-ready documents.</td>
+                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                </tr>
+                <tr>
+                    <td>splunk-hec</td>
+                    <td>Exports normalized findings and report summaries to Splunk HEC. Raw telemetry never leaves the local store.</td>
+                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                </tr>
+                <tr>
                     <td>secopsai-cloud</td>
                     <td>Hosted dashboard, scheduled scans, and multi-site workflows for teams and service providers.</td>
                     <td>Pilot <span class="status-tag tag-beta">PILOT</span></td>
                 </tr>
+            </tbody>
+        </table>
+    </section>
+
+    <!-- Deployment models -->
+    <section class="spec" id="deployment">
+        <h2>Deployment models</h2>
+        <table class="spec-table">
+            <caption>TABLE 3 — SUPPORTED DEPLOYMENTS</caption>
+            <thead>
+                <tr><th>MODEL</th><th>DESCRIPTION</th><th>BEST FOR</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>local-cli</td>
+                    <td>Run SecOpsAI as a terminal tool. Local store, local analysis, no external services required.</td>
+                    <td>Individual operators and evaluation</td>
+                </tr>
+                <tr>
+                    <td>macbook-sensor</td>
+                    <td>A MacBook acts as the Edge sensor. Nmap discovery, Wi-Fi observation, scheduled scans.</td>
+                    <td>First pilot and proof of value</td>
+                </tr>
+                <tr>
+                    <td>appliance</td>
+                    <td>A Raspberry Pi or mini PC runs as a permanent Edge sensor with a background service.</td>
+                    <td>Offices and customer sites</td>
+                </tr>
+                <tr>
+                    <td>hosted-pilot</td>
+                    <td>Hosted API and dashboard with local sensors. Central findings, reports, and schedules.</td>
+                    <td>Teams and managed service providers</td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+
+    <!-- Data and AI boundaries -->
+    <section class="spec" id="data-boundaries">
+        <h2>Data and AI boundaries</h2>
+        <p>SecOpsAI uses AI where it helps: summaries, explanations, and report text. The platform never lets AI decide what is true.</p>
+        <table class="spec-table">
+            <caption>TABLE 4 — DATA HANDLING RULES</caption>
+            <thead>
+                <tr><th>DATA TYPE</th><th>LOCATION</th><th>LEAVES YOUR SYSTEM?</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>raw-scans</td><td>Local store only</td><td>Never</td></tr>
+                <tr><td>package-artifacts</td><td>Local quarantine</td><td>Never executed; sandbox upload needs approval</td></tr>
+                <tr><td>findings</td><td>Local store; minimized copy for reports</td><td>Only as minimized findings</td></tr>
+                <tr><td>ai-inputs</td><td>Normalized finding fields only</td><td>Identifiers are redacted or hashed first</td></tr>
             </tbody>
         </table>
     </section>
@@ -583,7 +697,7 @@
     <section class="spec" id="references">
         <h2>References</h2>
         <table class="spec-table">
-            <caption>TABLE 2 — RELATED DOCUMENTS</caption>
+            <caption>TABLE 5 — RELATED DOCUMENTS</caption>
             <thead>
                 <tr><th>REF</th><th>DOCUMENT</th><th>LOCATION</th></tr>
             </thead>
@@ -592,6 +706,8 @@
                 <tr><td>[R2]</td><td>Security research and advisories</td><td><a href="https://blog.secopsai.dev">blog.secopsai.dev</a></td></tr>
                 <tr><td>[R3]</td><td>Source code and issue tracker</td><td><a href="https://github.com/Techris93/secopsai">github.com/Techris93/secopsai</a></td></tr>
                 <tr><td>[R4]</td><td>SecOpsAI Edge deployment guide</td><td><a href="https://docs.secopsai.dev/edge-integration/">docs.secopsai.dev/edge-integration</a></td></tr>
+                <tr><td>[R5]</td><td>Research discovery and surveillance operations</td><td><a href="https://docs.secopsai.dev/research-discovery/">docs.secopsai.dev/research-discovery</a></td></tr>
+                <tr><td>[R6]</td><td>Research cases and disclosure workflow</td><td><a href="https://docs.secopsai.dev/research-cases/">docs.secopsai.dev/research-cases</a></td></tr>
             </tbody>
         </table>
     </section>
