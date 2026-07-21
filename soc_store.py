@@ -566,6 +566,97 @@ def init_db(db_path: str | None = None) -> None:
                 UNIQUE (left_ecosystem, left_package, left_version, right_ecosystem, right_package, right_version)
             );
 
+            CREATE TABLE IF NOT EXISTS registry_collectors (
+                collector_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                ecosystem TEXT NOT NULL,
+                name TEXT NOT NULL,
+                feed_url TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                config_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (source_id) REFERENCES research_registry_sources (source_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS registry_cursors (
+                collector_id TEXT PRIMARY KEY,
+                cursor_value TEXT NOT NULL,
+                last_event_at TEXT,
+                last_run_id TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (collector_id) REFERENCES registry_collectors (collector_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS registry_feed_events (
+                feed_event_id TEXT PRIMARY KEY,
+                collector_id TEXT NOT NULL,
+                ecosystem TEXT NOT NULL,
+                package TEXT NOT NULL,
+                version TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                registry_timestamp TEXT NOT NULL,
+                page_url TEXT NOT NULL,
+                leaf_url TEXT NOT NULL,
+                leaf_fetched INTEGER NOT NULL DEFAULT 0,
+                metadata_json TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                collected_at TEXT NOT NULL,
+                processing_state TEXT NOT NULL,
+                FOREIGN KEY (collector_id) REFERENCES registry_collectors (collector_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS registry_ingestion_runs (
+                run_id TEXT PRIMARY KEY,
+                collector_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                cursor_before TEXT NOT NULL,
+                cursor_after TEXT NOT NULL,
+                pages_processed INTEGER NOT NULL DEFAULT 0,
+                events_seen INTEGER NOT NULL DEFAULT 0,
+                events_stored INTEGER NOT NULL DEFAULT 0,
+                events_duplicate INTEGER NOT NULL DEFAULT 0,
+                failures INTEGER NOT NULL DEFAULT 0,
+                coverage_mode TEXT NOT NULL,
+                error_message TEXT,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY (collector_id) REFERENCES registry_collectors (collector_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS registry_coverage_windows (
+                window_id TEXT PRIMARY KEY,
+                collector_id TEXT NOT NULL,
+                run_id TEXT,
+                window_start TEXT NOT NULL,
+                window_end TEXT NOT NULL,
+                expected_pages INTEGER NOT NULL,
+                processed_pages INTEGER NOT NULL,
+                events_stored INTEGER NOT NULL,
+                state TEXT NOT NULL,
+                gap_reason TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (collector_id) REFERENCES registry_collectors (collector_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS registry_dead_letters (
+                dead_letter_id TEXT PRIMARY KEY,
+                collector_id TEXT NOT NULL,
+                run_id TEXT,
+                url TEXT NOT NULL,
+                item_kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                error_message TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_retry_at TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (collector_id) REFERENCES registry_collectors (collector_id) ON DELETE CASCADE
+            );
+
             CREATE INDEX IF NOT EXISTS idx_research_jobs_case_status
                 ON research_jobs (case_id, status, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_research_jobs_status_time
@@ -588,6 +679,16 @@ def init_db(db_path: str | None = None) -> None:
                 ON research_monitors (enabled, next_run_at);
             CREATE INDEX IF NOT EXISTS idx_research_alerts_status_time
                 ON research_alerts (status, created_at DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_registry_one_running
+                ON registry_ingestion_runs (collector_id) WHERE status = 'running';
+            CREATE INDEX IF NOT EXISTS idx_registry_feed_events_cursor
+                ON registry_feed_events (collector_id, registry_timestamp);
+            CREATE INDEX IF NOT EXISTS idx_registry_feed_events_package
+                ON registry_feed_events (ecosystem, package, version);
+            CREATE INDEX IF NOT EXISTS idx_registry_dead_letters_due
+                ON registry_dead_letters (status, next_retry_at);
+            CREATE INDEX IF NOT EXISTS idx_registry_coverage_state
+                ON registry_coverage_windows (collector_id, state, window_start);
             """
         )
 

@@ -1,0 +1,16 @@
+{
+  "commitTimestamp": "2026-07-20T12:00:00.000Z",
+  "count": 2,
+  "items": [
+    {
+      "@id": "https://api.nuget.org/v3/catalog0/page0.json",
+      "commitTimestamp": "2026-07-19T10:00:00.000Z",
+      "count": 3
+    },
+    {
+      "@id": "https://api.nuget.org/v3/catalog0/page1.json",
+      "commitTimestamp": "2026-07-20T12:00:00.000Z",
+      "count": 2
+    }
+  ]
+}
