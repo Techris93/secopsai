@@ -1,0 +1,20 @@
+{
+  "actions": [
+    {
+      "type": "update",
+      "package": "acme/payments",
+      "time": 1784640000
+    },
+    {
+      "type": "update",
+      "package": "acme/payments~dev",
+      "time": 1784640060
+    },
+    {
+      "type": "delete",
+      "package": "acme/abandoned",
+      "time": 1784640120
+    }
+  ],
+  "timestamp": 17846401200017
+}

@@ -143,7 +143,7 @@ CAPABILITIES: Dict[str, Dict[str, Any]] = {
         ("nuget", "NuGet", True, "catalog_or_watchlist", ["Catalog coverage and rate limits must be reported per run."], "https://learn.microsoft.com/en-us/nuget/api/overview"),
         ("maven", "Maven Central", False, "search_or_watchlist", ["Search polling does not guarantee a complete repository census."], "https://central.sonatype.org/"),
         ("rubygems", "RubyGems.org", False, "watchlist_poll", ["Global enumeration is not assumed."], "https://guides.rubygems.org/rubygems-org-api/"),
-        ("packagist", "Packagist", False, "watchlist_poll", ["Package-level monitoring is the default."], "https://packagist.org/apidoc"),
+        ("packagist", "Packagist", False, "changes_feed_or_watchlist", ["The metadata change log has bounded retention; stale cursors can miss events and raise coverage alerts."], "https://packagist.org/apidoc"),
         ("go", "Go Modules", False, "module_poll", ["Module proxy polling is scoped to configured modules."], "https://go.dev/ref/mod"),
         ("open-vsx", "Open VSX", False, "publisher_or_extension_poll", ["Publisher and extension scopes are explicit."], "https://open-vsx.org/"),
     )

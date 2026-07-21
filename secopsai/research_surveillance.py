@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import random
 import sqlite3
+import time
 import urllib.parse
 import uuid
 from contextlib import closing
@@ -27,14 +28,18 @@ from secopsai.research_intake import IntakeError, SafeFetcher
 
 NUGET_CATALOG_INDEX_URL = "https://api.nuget.org/v3/catalog0/index.json"
 NUGET_ALLOWED_HOSTS: Tuple[str, ...] = ("api.nuget.org",)
+PACKAGIST_CHANGES_URL = "https://packagist.org/metadata/changes.json"
+PACKAGIST_ALLOWED_HOSTS: Tuple[str, ...] = ("packagist.org",)
 
 MAX_CATALOG_INDEX_BYTES = 8 * 1024 * 1024
 MAX_CATALOG_PAGE_BYTES = 32 * 1024 * 1024
+MAX_CHANGES_BYTES = 32 * 1024 * 1024
 MAX_LEAF_BYTES = 2 * 1024 * 1024
 DEFAULT_MAX_PAGES = 10
 DEFAULT_LOOKBACK_HOURS = 24
 MAX_DEAD_LETTER_ATTEMPTS = 8
 ALGORITHM_VERSION = "registry-surveillance.v1"
+PACKAGIST_BOOTSTRAP_CURSOR = "0"
 
 COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     "nuget": {
@@ -45,7 +50,25 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "mode": "event_feed",
         "allowed_hosts": NUGET_ALLOWED_HOSTS,
         "coverage_mode": "catalog_chronological",
-    }
+        "cursor_seed": "lookback",
+    },
+    "packagist": {
+        "collector_id": "COL-PACKAGIST-CHANGES",
+        "source_id": "REG-PACKAGIST",
+        "name": "Packagist metadata changes",
+        "feed_url": PACKAGIST_CHANGES_URL,
+        "mode": "event_feed",
+        "allowed_hosts": PACKAGIST_ALLOWED_HOSTS,
+        "coverage_mode": "changes_feed_bounded_retention",
+        # Packagist keeps the metadata change log for a bounded window only;
+        # the cursor must stay comfortably inside it or events are lost
+        # silently. The safety window alarms well before that happens.
+        "cursor_seed": "bootstrap",
+        "cursor_multiplier": 10000,
+        "overlap_seconds": 300,
+        "retention_seconds": 86400,
+        "retention_safety_seconds": 64800,
+    },
 }
 
 
@@ -100,12 +123,19 @@ def ensure_collectors(*, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
     seeded: List[Dict[str, Any]] = []
     with closing(soc_store.connect(db_path)) as connection:
         for ecosystem, definition in COLLECTOR_DEFINITIONS.items():
+            config = {
+                "allowed_hosts": list(definition["allowed_hosts"]),
+                "algorithm_version": ALGORITHM_VERSION,
+            }
+            for key in ("cursor_multiplier", "overlap_seconds", "retention_seconds", "retention_safety_seconds"):
+                if key in definition:
+                    config[key] = definition[key]
             connection.execute(
                 """INSERT INTO registry_collectors
                 (collector_id, source_id, ecosystem, name, feed_url, mode, enabled, config_json, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
                 ON CONFLICT(collector_id) DO UPDATE SET feed_url=excluded.feed_url,
-                mode=excluded.mode, updated_at=excluded.updated_at""",
+                mode=excluded.mode, config_json=excluded.config_json, updated_at=excluded.updated_at""",
                 (
                     definition["collector_id"],
                     definition["source_id"],
@@ -113,18 +143,22 @@ def ensure_collectors(*, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
                     definition["name"],
                     definition["feed_url"],
                     definition["mode"],
-                    _json({"allowed_hosts": list(definition["allowed_hosts"]), "algorithm_version": ALGORITHM_VERSION}),
+                    _json(config),
                     now,
                     now,
                 ),
             )
+            if definition.get("cursor_seed") == "bootstrap":
+                cursor_seed = PACKAGIST_BOOTSTRAP_CURSOR
+            else:
+                cursor_seed = _format_ts(_utcnow() - timedelta(hours=DEFAULT_LOOKBACK_HOURS))
             connection.execute(
                 """INSERT INTO registry_cursors (collector_id, cursor_value, updated_at)
                 VALUES (?, ?, ?)
                 ON CONFLICT(collector_id) DO NOTHING""",
                 (
                     definition["collector_id"],
-                    _format_ts(_utcnow() - timedelta(hours=DEFAULT_LOOKBACK_HOURS)),
+                    cursor_seed,
                     now,
                 ),
             )
@@ -327,37 +361,7 @@ def _persist_page_events(
     return counts
 
 
-def run_registry_collector(
-    *,
-    ecosystem: str = "nuget",
-    since: Optional[str] = None,
-    max_pages: int = DEFAULT_MAX_PAGES,
-    fetch_leaves: bool = False,
-    db_path: Optional[str] = None,
-    fetcher: Optional[SafeFetcher] = None,
-) -> Dict[str, Any]:
-    """Run one bounded ingestion pass for a global registry feed.
-
-    Pages are processed in chronological order. The first failing page stops
-    the run so the durable cursor never jumps over unprocessed history; the
-    failed page is dead-lettered and the uncovered window is flagged as a
-    coverage gap for replay.
-    """
-    collector = _collector_for_ecosystem(ecosystem, db_path=db_path)
-    if not int(collector["enabled"]):
-        raise CollectorError(f"collector {collector['collector_id']} is paused")
-    fetcher = fetcher or SafeFetcher()
-    allowed_hosts = _decode(collector["config_json"], {}).get("allowed_hosts", [])
-    max_pages = max(1, min(int(max_pages), 500))
-
-    cursor_before = str((collector.get("cursor") or {}).get("cursor_value") or "")
-    if not cursor_before:
-        cursor_before = _format_ts(_utcnow() - timedelta(hours=DEFAULT_LOOKBACK_HOURS))
-    if since:
-        requested = _format_ts(_parse_ts(since))
-        if requested < cursor_before:
-            cursor_before = requested
-
+def _open_run(*, collector: Dict[str, Any], cursor_before: str, db_path: Optional[str]) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
     run_id = _id("RIR")
     now = _format_ts(_utcnow())
     with closing(soc_store.connect(db_path)) as connection:
@@ -369,20 +373,114 @@ def run_registry_collector(
                     VALUES (?, ?, 'running', ?, ?, ?, ?)""",
                     (run_id, collector["collector_id"], cursor_before, cursor_before, collector["mode"], now),
                 )
-        except sqlite3.IntegrityError as exc:
-            return {
+        except sqlite3.IntegrityError:
+            return None, {
                 "run_id": None,
                 "collector_id": collector["collector_id"],
                 "status": "rejected",
                 "reason": "collector already has an active run",
             }
+    return run_id, None
 
-    totals = {"seen": 0, "stored": 0, "duplicate": 0, "leaf_failures": 0}
-    pages_processed = 0
-    pages_selected = 0
-    error_message: Optional[str] = None
-    cursor_after = cursor_before
 
+def _close_run(
+    *,
+    collector: Dict[str, Any],
+    run_id: str,
+    cursor_before: str,
+    outcome: Dict[str, Any],
+    db_path: Optional[str],
+) -> Dict[str, Any]:
+    error_message = outcome.get("error")
+    status = "failed" if error_message else "completed"
+    finished = _format_ts(_utcnow())
+    gap = error_message is not None and outcome["pages_processed"] < outcome["pages_selected"]
+    with closing(soc_store.connect(db_path)) as connection:
+        with connection:
+            connection.execute(
+                """UPDATE registry_ingestion_runs
+                SET status = ?, cursor_after = ?, pages_processed = ?, events_seen = ?,
+                    events_stored = ?, events_duplicate = ?, failures = ?, error_message = ?, completed_at = ?
+                WHERE run_id = ?""",
+                (
+                    status,
+                    outcome["cursor_after"],
+                    outcome["pages_processed"],
+                    outcome["events_seen"],
+                    outcome["events_stored"],
+                    outcome["events_duplicate"],
+                    outcome["leaf_failures"] + (1 if error_message else 0),
+                    error_message,
+                    finished,
+                    run_id,
+                ),
+            )
+            connection.execute(
+                """INSERT INTO registry_coverage_windows
+                (window_id, collector_id, run_id, window_start, window_end, expected_pages,
+                 processed_pages, events_stored, state, gap_reason, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    _id("RCW"),
+                    collector["collector_id"],
+                    run_id,
+                    cursor_before,
+                    outcome["cursor_after"],
+                    outcome["pages_selected"],
+                    outcome["pages_processed"],
+                    outcome["events_stored"],
+                    "gap" if gap else "complete",
+                    error_message if gap else None,
+                    finished,
+                    finished,
+                ),
+            )
+    return {
+        "run_id": run_id,
+        "collector_id": collector["collector_id"],
+        "ecosystem": collector["ecosystem"],
+        "status": status,
+        "cursor_before": cursor_before,
+        "cursor_after": outcome["cursor_after"],
+        "pages_selected": outcome["pages_selected"],
+        "pages_processed": outcome["pages_processed"],
+        "events_seen": outcome["events_seen"],
+        "events_stored": outcome["events_stored"],
+        "events_duplicate": outcome["events_duplicate"],
+        "leaf_failures": outcome["leaf_failures"],
+        "coverage": "gap" if gap else "complete",
+        "error": error_message,
+        "algorithm_version": ALGORITHM_VERSION,
+    }
+
+
+def _empty_outcome(cursor_before: str) -> Dict[str, Any]:
+    return {
+        "cursor_after": cursor_before,
+        "pages_selected": 0,
+        "pages_processed": 0,
+        "events_seen": 0,
+        "events_stored": 0,
+        "events_duplicate": 0,
+        "leaf_failures": 0,
+        "error": None,
+    }
+
+
+def _ingest_nuget_catalog(
+    *,
+    collector: Dict[str, Any],
+    cursor_before: str,
+    max_pages: int,
+    fetch_leaves: bool,
+    fetcher: SafeFetcher,
+    run_id: str,
+    db_path: Optional[str],
+) -> Dict[str, Any]:
+    """Walk chronological catalog pages. The first failing page stops the
+    run so the durable cursor never jumps over unprocessed history."""
+    allowed_hosts = _decode(collector["config_json"], {}).get("allowed_hosts", [])
+    outcome = _empty_outcome(cursor_before)
     try:
         index = _fetch_json(fetcher, collector["feed_url"], allowed_hosts=allowed_hosts, max_bytes=MAX_CATALOG_INDEX_BYTES)
         pages = [
@@ -393,7 +491,7 @@ def run_registry_collector(
         pages.sort(key=lambda item: _format_ts(_parse_ts(str(item["commitTimestamp"]))))
         pending_pages = [item for item in pages if _format_ts(_parse_ts(str(item["commitTimestamp"]))) > cursor_before]
         selected = pending_pages[:max_pages]
-        pages_selected = len(selected)
+        outcome["pages_selected"] = len(selected)
 
         with closing(soc_store.connect(db_path)) as connection:
             for page_ref in selected:
@@ -401,7 +499,7 @@ def run_registry_collector(
                 try:
                     page = _fetch_json(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_CATALOG_PAGE_BYTES)
                 except (IntakeError, CollectorError) as exc:
-                    error_message = f"page fetch failed: {exc}"
+                    outcome["error"] = f"page fetch failed: {exc}"
                     with connection:
                         _record_dead_letter(
                             connection,
@@ -418,79 +516,256 @@ def run_registry_collector(
                     collector=collector,
                     page_url=page_url,
                     page=page,
-                    cursor_before=cursor_after,
+                    cursor_before=outcome["cursor_after"],
                     fetch_leaves=fetch_leaves,
                     fetcher=fetcher,
                     run_id=run_id,
                 )
-                for key in totals:
-                    totals[key] += counts.get(key, 0)
-                pages_processed += 1
-                cursor_after = _format_ts(_parse_ts(str(page.get("commitTimestamp"))))
+                outcome["events_seen"] += counts.get("seen", 0)
+                outcome["events_stored"] += counts.get("stored", 0)
+                outcome["events_duplicate"] += counts.get("duplicate", 0)
+                outcome["leaf_failures"] += counts.get("leaf_failures", 0)
+                outcome["pages_processed"] += 1
+                outcome["cursor_after"] = _format_ts(_parse_ts(str(page.get("commitTimestamp"))))
     except (IntakeError, CollectorError) as exc:
-        error_message = str(exc)
+        outcome["error"] = str(exc)
+    return outcome
 
-    status = "failed" if error_message else "completed"
-    finished = _format_ts(_utcnow())
-    gap = error_message is not None and pages_processed < pages_selected
+
+def _parse_packagist_since(value: str, multiplier: int) -> str:
+    """Accept a raw composite cursor or an ISO datetime for convenience."""
+    text = str(value).strip()
+    if text.isdigit():
+        return text
+    return str(int(_parse_ts(text).timestamp()) * multiplier)
+
+
+def _packagist_event_type(raw_type: str) -> str:
+    normalized = str(raw_type or "").strip().lower()
+    if normalized == "update":
+        return "published"
+    if normalized == "delete":
+        return "deleted"
+    return "unknown"
+
+
+def _ingest_packagist_changes(
+    *,
+    collector: Dict[str, Any],
+    cursor_before: str,
+    fetcher: SafeFetcher,
+    run_id: str,
+    db_path: Optional[str],
+) -> Dict[str, Any]:
+    """Ingest the Packagist metadata change log in a single bounded fetch.
+
+    The server returns every retained action after the composite cursor and
+    a new authoritative cursor. Because the change log has bounded
+    retention, the cursor is requested with a small overlap to tolerate
+    clock skew; idempotency keys absorb the duplicated actions.
+    """
+    config = _decode(collector["config_json"], {})
+    allowed_hosts = config.get("allowed_hosts", [])
+    multiplier = int(config.get("cursor_multiplier", 10000))
+    overlap = int(config.get("overlap_seconds", 300)) * multiplier
+    outcome = _empty_outcome(cursor_before)
+    outcome["pages_selected"] = 1
+
+    since_value = max(0, int(cursor_before) - overlap)
+    feed_url = f"{collector['feed_url']}?since={since_value}"
+    try:
+        payload = _fetch_json(fetcher, feed_url, allowed_hosts=allowed_hosts, max_bytes=MAX_CHANGES_BYTES)
+    except (IntakeError, CollectorError) as exc:
+        outcome["error"] = f"changes feed fetch failed: {exc}"
+        with closing(soc_store.connect(db_path)) as connection:
+            with connection:
+                _record_dead_letter(
+                    connection,
+                    collector_id=collector["collector_id"],
+                    run_id=run_id,
+                    url=feed_url,
+                    item_kind="feed",
+                    payload={"since": since_value},
+                    error=str(exc),
+                )
+        return outcome
+
+    actions = payload.get("actions")
+    if not isinstance(actions, list):
+        outcome["error"] = "changes feed response did not contain an actions list"
+        return outcome
+    response_cursor = str(payload.get("timestamp") or "").strip()
+    if not response_cursor.isdigit():
+        outcome["error"] = "changes feed response did not contain a valid cursor"
+        return outcome
+    # A stale or anomalous server response must never rewind the cursor.
+    new_cursor = str(max(int(response_cursor), int(cursor_before)))
+
+    now = _format_ts(_utcnow())
+    last_event_ts: Optional[str] = None
+    with closing(soc_store.connect(db_path)) as connection:
+        with connection:
+            for action in actions:
+                if not isinstance(action, dict):
+                    continue
+                package_raw = str(action.get("package") or "").strip()
+                action_time = action.get("time")
+                if not package_raw or not isinstance(action_time, (int, float)):
+                    continue
+                outcome["events_seen"] += 1
+                channel = "release"
+                package = package_raw
+                if package_raw.endswith("~dev"):
+                    channel = "dev"
+                    package = package_raw[: -len("~dev")]
+                event_type = _packagist_event_type(str(action.get("type") or ""))
+                registry_ts = _format_ts(datetime.fromtimestamp(float(action_time), tz=timezone.utc))
+                last_event_ts = registry_ts
+                key = _idempotency_key(collector["ecosystem"], f"{package}|{channel}", "", registry_ts, event_type)
+                metadata = {
+                    "action_type": action.get("type"),
+                    "channel": channel,
+                    "raw_package": package_raw,
+                    "algorithm_version": ALGORITHM_VERSION,
+                }
+                cursor = connection.execute(
+                    """INSERT INTO registry_feed_events
+                    (feed_event_id, collector_id, ecosystem, package, version, event_type,
+                     registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
+                     idempotency_key, collected_at, processing_state)
+                    VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 0, ?, ?, ?, 'pending')
+                    ON CONFLICT(idempotency_key) DO NOTHING""",
+                    (
+                        _id("RFE"),
+                        collector["collector_id"],
+                        collector["ecosystem"],
+                        package,
+                        event_type,
+                        registry_ts,
+                        feed_url,
+                        f"https://repo.packagist.org/p2/{package}.json",
+                        _json(metadata),
+                        key,
+                        now,
+                    ),
+                )
+                if cursor.rowcount == 0:
+                    outcome["events_duplicate"] += 1
+                else:
+                    outcome["events_stored"] += 1
+            connection.execute(
+                "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                (new_cursor, last_event_ts, run_id, now, collector["collector_id"]),
+            )
+    outcome["pages_processed"] = 1
+    outcome["cursor_after"] = new_cursor
+    return outcome
+
+
+def _effective_cursor(collector: Dict[str, Any], since: Optional[str]) -> str:
+    definition = COLLECTOR_DEFINITIONS[collector["ecosystem"]]
+    current = str((collector.get("cursor") or {}).get("cursor_value") or "")
+    if definition.get("cursor_seed") == "bootstrap":
+        multiplier = int(definition.get("cursor_multiplier", 10000))
+        if not current or current == PACKAGIST_BOOTSTRAP_CURSOR:
+            current = str(int(time.time()) * multiplier)
+        if since:
+            requested = _parse_packagist_since(since, multiplier)
+            if int(requested) < int(current):
+                current = requested
+        return current
+    if not current:
+        current = _format_ts(_utcnow() - timedelta(hours=DEFAULT_LOOKBACK_HOURS))
+    if since:
+        requested = _format_ts(_parse_ts(since))
+        if requested < current:
+            current = requested
+    return current
+
+
+def _retention_state(collector: Dict[str, Any], cursor_value: str) -> Optional[Dict[str, Any]]:
+    definition = COLLECTOR_DEFINITIONS.get(collector["ecosystem"], {})
+    retention = definition.get("retention_seconds")
+    if not retention or not cursor_value or cursor_value == PACKAGIST_BOOTSTRAP_CURSOR:
+        return None
+    try:
+        cursor_unix = int(cursor_value) // int(definition.get("cursor_multiplier", 10000))
+    except (TypeError, ValueError):
+        return None
+    age = max(0.0, time.time() - cursor_unix)
+    return {
+        "cursor_age_seconds": round(age, 3),
+        "retention_seconds": retention,
+        "retention_risk": age > float(definition.get("retention_safety_seconds", retention)),
+    }
+
+
+def _raise_retention_alert(*, collector: Dict[str, Any], state: Dict[str, Any], db_path: Optional[str]) -> None:
+    now = _format_ts(_utcnow())
+    dedupe = f"retention|{collector['collector_id']}|{now[:10]}"
+    reason = (
+        f"{collector['name']} cursor is {int(state['cursor_age_seconds'])}s old, outside the "
+        f"{int(state['retention_seconds'])}s change-log retention safety window; silent event loss is possible"
+    )
     with closing(soc_store.connect(db_path)) as connection:
         with connection:
             connection.execute(
-                """UPDATE registry_ingestion_runs
-                SET status = ?, cursor_after = ?, pages_processed = ?, events_seen = ?,
-                    events_stored = ?, events_duplicate = ?, failures = ?, error_message = ?, completed_at = ?
-                WHERE run_id = ?""",
-                (
-                    status,
-                    cursor_after,
-                    pages_processed,
-                    totals["seen"],
-                    totals["stored"],
-                    totals["duplicate"],
-                    totals["leaf_failures"] + (1 if error_message else 0),
-                    error_message,
-                    finished,
-                    run_id,
-                ),
-            )
-            connection.execute(
-                """INSERT INTO registry_coverage_windows
-                (window_id, collector_id, run_id, window_start, window_end, expected_pages,
-                 processed_pages, events_stored, state, gap_reason, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    _id("RCW"),
-                    collector["collector_id"],
-                    run_id,
-                    cursor_before,
-                    cursor_after,
-                    pages_selected,
-                    pages_processed,
-                    totals["stored"],
-                    "gap" if gap else "complete",
-                    error_message if gap else None,
-                    finished,
-                    finished,
-                ),
+                """INSERT INTO research_alerts
+                (alert_id, alert_type, severity, candidate_id, campaign_id, case_id, dedupe_key,
+                 reason, evidence_json, status, owner, created_at, updated_at)
+                VALUES (?, 'collector_retention_risk', 'high', NULL, NULL, NULL, ?, ?, ?, 'open', '', ?, ?)
+                ON CONFLICT(dedupe_key) DO NOTHING""",
+                (_id("RAL"), dedupe, reason, _json(state | {"collector_id": collector["collector_id"]}), now, now),
             )
 
-    return {
-        "run_id": run_id,
-        "collector_id": collector["collector_id"],
-        "ecosystem": collector["ecosystem"],
-        "status": status,
-        "cursor_before": cursor_before,
-        "cursor_after": cursor_after,
-        "pages_selected": pages_selected,
-        "pages_processed": pages_processed,
-        "events_seen": totals["seen"],
-        "events_stored": totals["stored"],
-        "events_duplicate": totals["duplicate"],
-        "leaf_failures": totals["leaf_failures"],
-        "coverage": "gap" if gap else "complete",
-        "error": error_message,
-        "algorithm_version": ALGORITHM_VERSION,
-    }
+
+def run_registry_collector(
+    *,
+    ecosystem: str = "nuget",
+    since: Optional[str] = None,
+    max_pages: int = DEFAULT_MAX_PAGES,
+    fetch_leaves: bool = False,
+    db_path: Optional[str] = None,
+    fetcher: Optional[SafeFetcher] = None,
+) -> Dict[str, Any]:
+    """Run one bounded ingestion pass for a global registry feed."""
+    collector = _collector_for_ecosystem(ecosystem, db_path=db_path)
+    if not int(collector["enabled"]):
+        raise CollectorError(f"collector {collector['collector_id']} is paused")
+    fetcher = fetcher or SafeFetcher()
+    max_pages = max(1, min(int(max_pages), 500))
+    cursor_before = _effective_cursor(collector, since)
+
+    run_id, rejection = _open_run(collector=collector, cursor_before=cursor_before, db_path=db_path)
+    if rejection is not None:
+        return rejection
+
+    if collector["ecosystem"] == "packagist":
+        outcome = _ingest_packagist_changes(
+            collector=collector,
+            cursor_before=cursor_before,
+            fetcher=fetcher,
+            run_id=run_id,
+            db_path=db_path,
+        )
+    else:
+        outcome = _ingest_nuget_catalog(
+            collector=collector,
+            cursor_before=cursor_before,
+            max_pages=max_pages,
+            fetch_leaves=fetch_leaves,
+            fetcher=fetcher,
+            run_id=run_id,
+            db_path=db_path,
+        )
+
+    result = _close_run(collector=collector, run_id=run_id, cursor_before=cursor_before, outcome=outcome, db_path=db_path)
+    retention = _retention_state(collector, result["cursor_after"])
+    if retention is not None:
+        result["retention"] = retention
+        if retention["retention_risk"]:
+            _raise_retention_alert(collector=collector, state=retention, db_path=db_path)
+    return result
 
 
 def retry_dead_letters(
@@ -615,7 +890,12 @@ def collector_status(*, ecosystem: Optional[str] = None, db_path: Optional[str] 
             ).fetchone()
             cursor_value = str(cursor["cursor_value"]) if cursor else ""
             lag_seconds: Optional[float] = None
-            if cursor_value:
+            retention = _retention_state(collector, cursor_value)
+            if retention is not None:
+                lag_seconds = retention["cursor_age_seconds"]
+                if retention["retention_risk"]:
+                    _raise_retention_alert(collector=collector, state=retention, db_path=db_path)
+            elif cursor_value and cursor_value != PACKAGIST_BOOTSTRAP_CURSOR:
                 lag_seconds = max(0.0, (now - _parse_ts(cursor_value)).total_seconds())
             report.append(
                 {
@@ -630,6 +910,7 @@ def collector_status(*, ecosystem: Optional[str] = None, db_path: Optional[str] 
                     "pending_dead_letters": int(dead_letters["total"]),
                     "coverage_gaps": int(gaps["total"]),
                     "last_run": dict(last_run) if last_run else None,
+                    "retention": retention,
                     "algorithm_version": ALGORITHM_VERSION,
                 }
             )
