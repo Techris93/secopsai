@@ -369,19 +369,29 @@ def _record_candidate(*, monitor: Dict[str, Any], watchlist: Dict[str, Any], met
     normalized_reference = normalize_identifier(metadata.ecosystem, watchlist["identifier"])
     exclusions = {normalize_identifier(metadata.ecosystem, item) for item in watchlist.get("exclusions", [])}
     known_publishers = {normalize_identifier("", item) for item in watchlist.get("known_publishers", []) if item}
-    publisher_mismatch = bool(known_publishers and normalize_identifier("", metadata.publisher) not in known_publishers)
+    # Missing publisher evidence is not evidence of mismatch: feeds that do
+    # not carry publisher data must not flag the legitimate exact-name
+    # package as an impersonator.
+    publisher_mismatch = bool(known_publishers and metadata.publisher and normalize_identifier("", metadata.publisher) not in known_publishers)
     if normalized_package in exclusions or (normalized_package == normalized_reference and not publisher_mismatch):
         return {"matched": False, "score": score, "event_id": event_id, "suppressed": "approved_exact_name_or_exclusion"}
     candidate_id = _id("CAN")
+    # Exact-name observation from an unexpected publisher is an
+    # impersonation signal in its own right; the name-similarity gate
+    # must not suppress it when brand observation dilutes the score.
+    exact_name_publisher_mismatch = normalized_package == normalized_reference and publisher_mismatch
     with closing(soc_store.connect(db_path)) as connection:
-        if score["score"] >= threshold:
+        if score["score"] >= threshold or exact_name_publisher_mismatch:
+            reason = _candidate_reason(score)
+            if exact_name_publisher_mismatch and score["score"] < threshold:
+                reason = "exact package name observed with an unexpected publisher; verify ownership before trusting this release"
             connection.execute(
                 """INSERT INTO research_candidates
                 (candidate_id, event_id, watchlist_id, ecosystem, package, version, reference_identifier, score, score_components_json, reason, status, case_id, evidence_json, first_seen, last_seen, algorithm_version)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', NULL, ?, ?, ?, ?)
                 ON CONFLICT(ecosystem, package, version, reference_identifier) DO UPDATE SET score=excluded.score,
                 score_components_json=excluded.score_components_json, reason=excluded.reason, last_seen=excluded.last_seen""",
-            (candidate_id, event_id, watchlist["watchlist_id"], metadata.ecosystem, metadata.package, metadata.version, watchlist["identifier"], score["score"], _json(score["components"]), _candidate_reason(score), _json({"metadata_url": metadata.metadata_url, "artifact_url": metadata.artifact_url, "publisher": metadata.publisher, "observed_value": observed_value, "watch_type": watchlist.get("watch_type")}), now, now, score["algorithm_version"]),
+                (candidate_id, event_id, watchlist["watchlist_id"], metadata.ecosystem, metadata.package, metadata.version, watchlist["identifier"], score["score"], _json(score["components"]), reason, _json({"metadata_url": metadata.metadata_url, "artifact_url": metadata.artifact_url, "publisher": metadata.publisher, "observed_value": observed_value, "watch_type": watchlist.get("watch_type")}), now, now, score["algorithm_version"]),
             )
         connection.commit()
         row = connection.execute("SELECT * FROM research_candidates WHERE ecosystem = ? AND package = ? AND version = ? AND reference_identifier = ?", (metadata.ecosystem, metadata.package, metadata.version, watchlist["identifier"])).fetchone()

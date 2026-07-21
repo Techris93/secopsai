@@ -126,6 +126,7 @@ from secopsai.research_surveillance import (
     retry_dead_letters as retry_registry_dead_letters,
     run_registry_collector,
 )
+from secopsai.research_scoring import score_pending_events as score_pending_feed_events
 from secopsai.research_analysis import compare_intakes, compare_packages, correlate_candidates, inspect_nuget_archive, list_campaigns
 from secopsai.research_sandbox import poll_sandbox_request, submit_sandbox_request, provider_status as sandbox_provider_status
 from secopsai.research_delivery import send_approved_disclosure, send_research_alert
@@ -1165,6 +1166,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     collect_events.add_argument("--limit", type=int, default=100)
     collect_events.add_argument("--db-path", default=None)
 
+    research_score = research_sub.add_parser("score", help="Score pending feed events into candidates")
+    research_score_sub = research_score.add_subparsers(dest="research_score_cmd", required=True)
+    score_run = research_score_sub.add_parser("run", help="Score pending surveillance events against active watchlists")
+    score_run.add_argument("--ecosystem", default=None)
+    score_run.add_argument("--limit", type=int, default=200)
+    score_run.add_argument("--db-path", default=None)
+
     research_compare = research_sub.add_parser("compare", help="Compare two normalized, statically collected package intake JSON files")
     research_compare.add_argument("--left", required=True, help="Path to the first normalized intake JSON")
     research_compare.add_argument("--right", required=True, help="Path to the second normalized intake JSON")
@@ -2075,6 +2083,8 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = {"events": registry_list_feed_events(collector_id=args.collector_id, package=args.package, limit=args.limit, db_path=args.db_path)}
             else:
                 payload = recover_interrupted_collector_runs(max_age_seconds=args.max_age_seconds, db_path=args.db_path)
+        elif args.research_cmd == "score":
+            payload = score_pending_feed_events(ecosystem=args.ecosystem, limit=args.limit, db_path=args.db_path)
         elif args.research_cmd == "compare":
             with open(args.left, "r", encoding="utf-8") as left_handle:
                 left_payload = json.load(left_handle)
@@ -2503,7 +2513,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
 
-        if args.research_cmd in {"ecosystems", "watchlist", "monitor", "candidate", "collect", "compare", "compare-packages", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "workflow"}:
+        if args.research_cmd in {"ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "compare", "compare-packages", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "workflow"}:
             return _run_research_automation_command(args)
 
         if args.research_cmd == "case":
