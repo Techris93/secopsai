@@ -1,0 +1,10 @@
+{
+  "results": [
+    {
+      "seq": 99,
+      "id": "@scope/nested-package",
+      "changes": [{"rev": "2-ddd444"}]
+    }
+  ],
+  "last_seq": 99
+}

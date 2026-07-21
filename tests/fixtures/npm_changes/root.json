@@ -1,0 +1,6 @@
+{
+  "db_name": "registry",
+  "engine": "npm-replicate",
+  "doc_count": 4226690,
+  "update_seq": 9000
+}

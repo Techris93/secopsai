@@ -37,16 +37,21 @@ PYPI_ALLOWED_HOSTS: Tuple[str, ...] = ("pypi.org",)
 PYPI_SIMPLE_JSON_ACCEPT = "application/vnd.pypi.simple.v1+json"
 RUBYGEMS_TIMEFRAME_URL = "https://rubygems.org/api/v1/timeframe_versions.json"
 RUBYGEMS_ALLOWED_HOSTS: Tuple[str, ...] = ("rubygems.org",)
+NPM_REPLICATE_URL = "https://replicate.npmjs.com/_changes"
+NPM_REPLICATE_ROOT_URL = "https://replicate.npmjs.com/"
+NPM_ALLOWED_HOSTS: Tuple[str, ...] = ("replicate.npmjs.com",)
 
 MAX_CATALOG_INDEX_BYTES = 8 * 1024 * 1024
 MAX_CATALOG_PAGE_BYTES = 32 * 1024 * 1024
 MAX_CHANGES_BYTES = 32 * 1024 * 1024
 MAX_SIMPLE_INDEX_BYTES = 128 * 1024 * 1024
 MAX_TIMEFRAME_PAGE_BYTES = 8 * 1024 * 1024
+MAX_NPM_CHANGES_BYTES = 32 * 1024 * 1024
 MAX_LEAF_BYTES = 2 * 1024 * 1024
 DEFAULT_MAX_PAGES = 10
 DEFAULT_LOOKBACK_HOURS = 24
 DEFAULT_MAX_WINDOW_HOURS = 24
+DEFAULT_NPM_PAGE_LIMIT = 5000
 MAX_DEAD_LETTER_ATTEMPTS = 8
 DEFAULT_MAX_DIFF_EVENTS = 10000
 ALGORITHM_VERSION = "registry-surveillance.v1"
@@ -117,6 +122,23 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "max_window_hours": DEFAULT_MAX_WINDOW_HOURS,
         "interval_seconds": 1800,
     },
+    "npm": {
+        "collector_id": "COL-NPM-CHANGES",
+        "source_id": "REG-NPM",
+        "name": "npm replicate changes",
+        "feed_url": NPM_REPLICATE_URL,
+        "mode": "event_feed",
+        "allowed_hosts": NPM_ALLOWED_HOSTS,
+        "coverage_mode": "couchdb_changes_seq",
+        # The CouchDB-style replica feed is totally ordered by sequence.
+        # Cursor "0" bootstraps live from update_seq; --since backfills.
+        # The feed carries no per-event timestamps, so ledger timestamps
+        # are collection times and say so in event metadata.
+        "cursor_seed": "zero",
+        "cursor_multiplier": 1,
+        "page_limit": DEFAULT_NPM_PAGE_LIMIT,
+        "interval_seconds": 900,
+    },
 }
 
 
@@ -175,7 +197,7 @@ def ensure_collectors(*, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
                 "allowed_hosts": list(definition["allowed_hosts"]),
                 "algorithm_version": ALGORITHM_VERSION,
             }
-            for key in ("cursor_multiplier", "overlap_seconds", "retention_seconds", "retention_safety_seconds", "max_window_hours", "interval_seconds"):
+            for key in ("cursor_multiplier", "overlap_seconds", "retention_seconds", "retention_safety_seconds", "max_window_hours", "interval_seconds", "page_limit"):
                 if key in definition:
                     config[key] = definition[key]
             connection.execute(
@@ -1071,6 +1093,148 @@ def _ingest_rubygems_timeframe(
     return outcome
 
 
+def _ingest_npm_changes(
+    *,
+    collector: Dict[str, Any],
+    cursor_before: str,
+    max_pages: int,
+    fetcher: SafeFetcher,
+    run_id: str,
+    db_path: Optional[str],
+) -> Dict[str, Any]:
+    """Ingest the npm CouchDB-style replica changes feed by sequence.
+
+    Each response batch is a contiguous sequence range, so persisting a
+    batch and advancing the cursor happen in one transaction; an
+    interruption can never skip sequences. The feed has no per-event
+    timestamps, so ledger timestamps are collection times and the event
+    metadata says so explicitly.
+    """
+    config = _decode(collector["config_json"], {})
+    allowed_hosts = config.get("allowed_hosts", [])
+    page_limit = max(1, min(int(config.get("page_limit", DEFAULT_NPM_PAGE_LIMIT)), 10000))
+    outcome = _empty_outcome(cursor_before)
+
+    if cursor_before == PACKAGIST_BOOTSTRAP_CURSOR:
+        # Live-only bootstrap: adopt the registry's current sequence as
+        # the baseline instead of replaying years of history.
+        try:
+            root = _fetch_json(fetcher, NPM_REPLICATE_ROOT_URL, allowed_hosts=allowed_hosts, max_bytes=MAX_CHANGES_BYTES)
+        except (IntakeError, CollectorError) as exc:
+            outcome["error"] = f"replica root fetch failed: {exc}"
+            with closing(soc_store.connect(db_path)) as connection:
+                with connection:
+                    _record_dead_letter(
+                        connection,
+                        collector_id=collector["collector_id"],
+                        run_id=run_id,
+                        url=NPM_REPLICATE_ROOT_URL,
+                        item_kind="feed",
+                        payload={"bootstrap": True},
+                        error=str(exc),
+                    )
+            return outcome
+        update_seq = root.get("update_seq")
+        if not isinstance(update_seq, int):
+            outcome["error"] = "replica root did not expose a valid update_seq"
+            return outcome
+        now = _format_ts(_utcnow())
+        with closing(soc_store.connect(db_path)) as connection:
+            with connection:
+                connection.execute(
+                    "UPDATE registry_cursors SET cursor_value = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                    (str(update_seq), run_id, now, collector["collector_id"]),
+                )
+        outcome["cursor_after"] = str(update_seq)
+        outcome["pages_processed"] = 0
+        outcome["pages_selected"] = 0
+        outcome["anomalies"] = []
+        return outcome
+
+    since = int(cursor_before)
+    with closing(soc_store.connect(db_path)) as connection:
+        for page_number in range(1, max(1, min(int(max_pages), 500)) + 1):
+            page_url = f"{collector['feed_url']}?since={since}&limit={page_limit}"
+            outcome["pages_selected"] += 1
+            try:
+                payload = _fetch_json(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_NPM_CHANGES_BYTES)
+            except (IntakeError, CollectorError) as exc:
+                outcome["error"] = f"changes page fetch failed: {exc}"
+                with connection:
+                    _record_dead_letter(
+                        connection,
+                        collector_id=collector["collector_id"],
+                        run_id=run_id,
+                        url=page_url,
+                        item_kind="page",
+                        payload={"since": since},
+                        error=str(exc),
+                    )
+                break
+            results = payload.get("results")
+            if not isinstance(results, list):
+                outcome["error"] = "changes response did not contain a results list"
+                break
+            last_seq = payload.get("last_seq")
+            if not isinstance(last_seq, int):
+                outcome["error"] = "changes response did not expose a valid last_seq"
+                break
+            now = _format_ts(_utcnow())
+            with connection:
+                for item in results:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get("id") or "").strip()
+                    seq = item.get("seq")
+                    if not name or not isinstance(seq, int):
+                        continue
+                    outcome["events_seen"] += 1
+                    deleted = bool(item.get("deleted"))
+                    event_type = "deleted" if deleted else "published"
+                    key = _idempotency_key(collector["ecosystem"], name, "", str(seq), event_type)
+                    metadata = {
+                        "seq": seq,
+                        "rev": (item.get("changes") or [{}])[0].get("rev") if isinstance(item.get("changes"), list) and item.get("changes") else "",
+                        "timestamp_source": "collector",
+                        "algorithm_version": ALGORITHM_VERSION,
+                    }
+                    cursor = connection.execute(
+                        """INSERT INTO registry_feed_events
+                        (feed_event_id, collector_id, ecosystem, package, version, event_type,
+                         registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
+                         idempotency_key, collected_at, processing_state)
+                        VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 0, ?, ?, ?, 'pending')
+                        ON CONFLICT(idempotency_key) DO NOTHING""",
+                        (
+                            _id("RFE"),
+                            collector["collector_id"],
+                            collector["ecosystem"],
+                            name,
+                            event_type,
+                            now,
+                            page_url,
+                            f"https://registry.npmjs.org/{name}",
+                            _json(metadata),
+                            key,
+                            now,
+                        ),
+                    )
+                    if cursor.rowcount == 0:
+                        outcome["events_duplicate"] += 1
+                    else:
+                        outcome["events_stored"] += 1
+                connection.execute(
+                    "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                    (str(last_seq), now, run_id, now, collector["collector_id"]),
+                )
+            outcome["pages_processed"] += 1
+            outcome["cursor_after"] = str(last_seq)
+            since = last_seq
+            if len(results) < page_limit:
+                break
+    return outcome
+
+
 def _effective_cursor(collector: Dict[str, Any], since: Optional[str]) -> str:
     definition = COLLECTOR_DEFINITIONS[collector["ecosystem"]]
     current = str((collector.get("cursor") or {}).get("cursor_value") or "")
@@ -1087,7 +1251,7 @@ def _effective_cursor(collector: Dict[str, Any], since: Optional[str]) -> str:
         current = current or PACKAGIST_BOOTSTRAP_CURSOR
         if since:
             requested = _parse_packagist_since(since, int(definition.get("cursor_multiplier", 1)))
-            if int(requested) < int(current):
+            if current == PACKAGIST_BOOTSTRAP_CURSOR or int(requested) < int(current):
                 current = requested
         return current
     if not current:
@@ -1176,6 +1340,15 @@ def run_registry_collector(
         )
     elif collector["ecosystem"] == "rubygems":
         outcome = _ingest_rubygems_timeframe(
+            collector=collector,
+            cursor_before=cursor_before,
+            max_pages=max_pages,
+            fetcher=fetcher,
+            run_id=run_id,
+            db_path=db_path,
+        )
+    elif collector["ecosystem"] == "npm":
+        outcome = _ingest_npm_changes(
             collector=collector,
             cursor_before=cursor_before,
             max_pages=max_pages,
