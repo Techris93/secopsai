@@ -300,3 +300,173 @@ def test_registry_hosts_outside_allowlist_are_refused(tmp_path):
     assert result["status"] == "failed"
     assert "allowlist" in (result["error"] or "")
     assert _dead_letters(db_path)[0]["item_kind"] == "page"
+
+
+PACKAGIST_FIXTURES = Path(__file__).parent / "fixtures" / "packagist_changes"
+PACKAGIST_SINCE = "17846400000000"
+
+
+def _packagist_fetcher(captured_urls, fail=False, fixture="changes.json"):
+    def fetch(url, max_bytes):
+        captured_urls.append(url)
+        if fail:
+            return 500, {"content-type": "application/json"}, b'{"error": "registry unavailable"}'
+        if "changes.json" in url:
+            return 200, {"content-type": "application/json"}, (PACKAGIST_FIXTURES / fixture).read_bytes()
+        return 404, {"content-type": "application/json"}, b'{"error": "not found"}'
+
+    return SafeFetcher(fetch=fetch)
+
+
+def _alerts(db_path, alert_type="collector_retention_risk"):
+    connection = soc_store.connect(db_path)
+    try:
+        rows = connection.execute(
+            "SELECT * FROM research_alerts WHERE alert_type = ?", (alert_type,)
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        connection.close()
+
+
+def test_packagist_collector_seeds_with_bootstrap_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    collectors = ensure_collectors(db_path=db_path)
+    packagist = next(item for item in collectors if item["collector_id"] == "COL-PACKAGIST-CHANGES")
+    assert packagist["mode"] == "event_feed"
+    assert packagist["cursor"]["cursor_value"] == "0"
+
+
+def test_packagist_bootstrap_run_starts_live(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(
+        ecosystem="packagist", db_path=db_path, fetcher=_packagist_fetcher(urls, fixture="changes_empty.json")
+    )
+    assert result["status"] == "completed"
+    assert result["events_seen"] == 0
+    assert result["cursor_after"].isdigit()
+    assert int(result["cursor_after"]) > 0
+    assert urls and "since=" in urls[0]
+
+
+def test_packagist_run_stores_actions_and_maps_types(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(
+        ecosystem="packagist", since=PACKAGIST_SINCE, db_path=db_path, fetcher=_packagist_fetcher(urls)
+    )
+    assert result["status"] == "completed"
+    assert result["events_seen"] == 3
+    assert result["events_stored"] == 3
+    assert result["cursor_after"] == "17846401200017"
+    # The request overlaps the cursor by the configured skew window.
+    assert f"since={int(PACKAGIST_SINCE) - 300 * 10000}" in urls[0]
+
+    events = list_feed_events(db_path=db_path)
+    assert len(events) == 3
+    by_time = {event["registry_timestamp"]: event for event in events}
+    release = by_time["2026-07-21T13:20:00.000Z"]
+    assert release["package"] == "acme/payments"
+    assert release["event_type"] == "published"
+    assert release["metadata"]["channel"] == "release"
+    assert release["leaf_url"] == "https://repo.packagist.org/p2/acme/payments.json"
+    dev = by_time["2026-07-21T13:21:00.000Z"]
+    assert dev["package"] == "acme/payments"
+    assert dev["metadata"]["channel"] == "dev"
+    deleted = by_time["2026-07-21T13:22:00.000Z"]
+    assert deleted["package"] == "acme/abandoned"
+    assert deleted["event_type"] == "deleted"
+
+
+def test_packagist_rerun_is_idempotent(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    run_registry_collector(ecosystem="packagist", since=PACKAGIST_SINCE, db_path=db_path, fetcher=_packagist_fetcher(urls))
+    result = run_registry_collector(
+        ecosystem="packagist", since=PACKAGIST_SINCE, db_path=db_path, fetcher=_packagist_fetcher(urls)
+    )
+    assert result["events_stored"] == 0
+    assert result["events_duplicate"] == 3
+    assert len(list_feed_events(db_path=db_path)) == 3
+
+
+def test_packagist_feed_failure_keeps_cursor_and_records_gap(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(
+        ecosystem="packagist", since=PACKAGIST_SINCE, db_path=db_path, fetcher=_packagist_fetcher(urls, fail=True)
+    )
+    assert result["status"] == "failed"
+    assert result["coverage"] == "gap"
+    assert result["cursor_after"] == PACKAGIST_SINCE
+    letters = _dead_letters(db_path)
+    assert len(letters) == 1
+    assert letters[0]["item_kind"] == "feed"
+    assert _cursor_value(db_path, collector_id="COL-PACKAGIST-CHANGES") == "0"
+
+
+def test_packagist_empty_feed_still_advances_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(
+        ecosystem="packagist",
+        since=PACKAGIST_SINCE,
+        db_path=db_path,
+        fetcher=_packagist_fetcher(urls, fixture="changes_empty.json"),
+    )
+    assert result["status"] == "completed"
+    assert result["events_seen"] == 0
+    # An idle registry still advances the cursor so it stays inside retention.
+    assert result["cursor_after"] == "17846424000042"
+
+
+def test_packagist_cursor_never_moves_backward(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    # First run lands on the later cursor from the empty fixture.
+    run_registry_collector(
+        ecosystem="packagist",
+        since=PACKAGIST_SINCE,
+        db_path=db_path,
+        fetcher=_packagist_fetcher(urls, fixture="changes_empty.json"),
+    )
+    # A later run against an older response must not rewind the cursor.
+    result = run_registry_collector(ecosystem="packagist", db_path=db_path, fetcher=_packagist_fetcher(urls))
+    assert result["cursor_after"] == "17846424000042"
+
+
+def test_packagist_retention_risk_raises_deduped_alert(tmp_path):
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+    # Cursor 70,000 seconds old: beyond the 64,800s safety window.
+    stale = str((int(__import__("time").time()) - 70000) * 10000)
+    connection = soc_store.connect(db_path)
+    try:
+        connection.execute(
+            "UPDATE registry_cursors SET cursor_value = ? WHERE collector_id = 'COL-PACKAGIST-CHANGES'",
+            (stale,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    status = collector_status(ecosystem="packagist", db_path=db_path)[0]
+    assert status["retention"]["retention_risk"] is True
+    assert status["retention"]["cursor_age_seconds"] >= 70000
+    alerts = _alerts(db_path)
+    assert len(alerts) == 1
+    assert alerts[0]["severity"] == "high"
+    assert "silent event loss" in alerts[0]["reason"]
+
+    collector_status(ecosystem="packagist", db_path=db_path)
+    assert len(_alerts(db_path)) == 1
+
+
+def test_packagist_since_accepts_iso_datetime(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(
+        ecosystem="packagist", since="2026-07-21T13:20:00Z", db_path=db_path, fetcher=_packagist_fetcher(urls)
+    )
+    assert result["cursor_before"] == "17846400000000"
