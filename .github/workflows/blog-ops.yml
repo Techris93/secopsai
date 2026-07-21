@@ -275,6 +275,10 @@ jobs:
             git add -A blog/drafts
             git add -f blog/drafts/*.json 2>/dev/null || true
           fi
+          git add blog/posts blog/assets/social blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml
+          if [ -d blog/assets/posts ]; then
+            git add blog/assets/posts
+          fi
           git add blog/data/published-posts.json 2>/dev/null || true
 
           if git diff --cached --quiet; then

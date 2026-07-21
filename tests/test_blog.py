@@ -658,6 +658,9 @@ class BlogPublishingTests(unittest.TestCase):
         mark_step = workflow.index("python -m secopsai.cli blog news-mark-deployed --json")
         self.assertLess(rebuild_step, deploy_step)
         self.assertGreater(mark_step, deploy_step)
+        deployed_commit = workflow.split("- name: Commit deployed draft state", 1)[1]
+        self.assertIn("git add blog/posts blog/assets/social", deployed_commit)
+        self.assertIn("git add blog/assets/posts", deployed_commit)
 
     def test_publish_with_approved_media_renders_hero_and_og_image(self):
         with tempfile.TemporaryDirectory() as temp_dir:
