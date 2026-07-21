@@ -422,8 +422,8 @@
     <!-- 1. Purpose -->
     <section class="spec" id="purpose">
         <h2>Purpose</h2>
-        <p class="lead">SecOpsAI answers two questions security teams ask every day: what is on my network, and what is in my software.</p>
-        <p>SecOpsAI Edge discovers every device on your network and flags risky changes. SecOpsAI Research watches eight package registries for typosquats and suspicious releases. The platform correlates all of it into findings with evidence, severity, and a next action.</p>
+        <p class="lead">Two questions decide the security posture of most organizations: what is on the network, and what is in the software. SecOpsAI answers both, on your own hardware.</p>
+        <p>SecOpsAI Edge discovers every device on your network and flags risky changes. SecOpsAI Research watches eight package registries for typosquats and suspicious releases. The platform correlates this telemetry into findings with evidence, severity, and a next action.</p>
         <p>All analysis runs on your hardware. Telemetry stays in a local store. Cloud reports contain minimized findings only.</p>
     </section>
 
@@ -447,7 +447,7 @@
                         <code>curl -fsSL https://secopsai.dev/install.sh | bash</code>
                         <button class="copy-btn" data-copy="curl -fsSL https://secopsai.dev/install.sh | bash">COPY</button>
                     </div>
-                    <p class="install-note">Requires macOS 12 or later. Nmap is required for Edge discovery. The installer checks for it.</p>
+                    <p class="install-note">Requires macOS 12 or later. Edge discovery requires Nmap. The installer checks for it.</p>
                 </div>
             </div>
         </div>
@@ -520,17 +520,17 @@
                 </tr>
                 <tr>
                     <td>adaptive-response</td>
-                    <td>Evaluates response posture from signal memory. Guides containment without automated damage.</td>
+                    <td>Evaluates response posture from signal memory. Recommends containment actions. An operator approves every action.</td>
                     <td>Live <span class="status-tag tag-live">LIVE</span></td>
                 </tr>
                 <tr>
                     <td>ai-dependency-guard</td>
-                    <td>Checks AI-suggested packages for hallucination and slopsquatting risk before you install them.</td>
+                    <td>Checks AI-suggested packages for hallucinated names and lookalike (slopsquatting) risk before installation.</td>
                     <td>Live <span class="status-tag tag-live">LIVE</span></td>
                 </tr>
                 <tr>
                     <td>secopsai-cloud</td>
-                    <td>Hosted dashboard, scheduled scans, and team workflows on Render and Cloudflare.</td>
+                    <td>Hosted dashboard, scheduled scans, and multi-site workflows for teams and service providers.</td>
                     <td>Pilot <span class="status-tag tag-beta">PILOT</span></td>
                 </tr>
             </tbody>
@@ -563,7 +563,7 @@
     <!-- 5. Safety -->
     <section class="spec" id="safety">
         <h2>Safety boundaries</h2>
-        <p>SecOpsAI is built to collect and analyze. It does not attack. These rules apply everywhere in the platform.</p>
+        <p>SecOpsAI collects and analyzes. It takes no offensive action. These rules apply everywhere in the platform.</p>
 
         <div class="notice note">
             <div class="notice-label">NOTE</div>
@@ -571,11 +571,11 @@
         </div>
         <div class="notice caution">
             <div class="notice-label">CAUTION</div>
-            <div class="notice-body">Package code is never executed during analysis. Static analysis is the default. Sandbox analysis needs your explicit approval.</div>
+            <div class="notice-body">The platform never executes package code during analysis. Static analysis is the default. Sandbox analysis needs your explicit approval.</div>
         </div>
         <div class="notice warning">
             <div class="notice-label">WARNING</div>
-            <div class="notice-body">Do not scan networks you do not own. Unauthorized scanning can break the law in your jurisdiction. Use the dry-run preview before every scan.</div>
+            <div class="notice-body">Do not scan networks you do not own or do not have written permission to test. Unauthorized scanning can be a criminal offense. Use the dry-run preview before every scan.</div>
         </div>
     </section>
 
