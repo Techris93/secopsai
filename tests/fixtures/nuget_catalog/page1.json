@@ -1,0 +1,21 @@
+{
+  "commitTimestamp": "2026-07-20T12:00:00.000Z",
+  "count": 2,
+  "parent": "https://api.nuget.org/v3/catalog0/index.json",
+  "items": [
+    {
+      "@id": "https://api.nuget.org/v3/catalog0/data/2026.07.20.11.00.00/adventureworks.core.2.0.0.json",
+      "@type": ["nuget:PackageDetails"],
+      "commitTimestamp": "2026-07-20T11:00:00.000Z",
+      "nuget:id": "AdventureWorks.Core",
+      "nuget:version": "2.0.0"
+    },
+    {
+      "@id": "https://api.nuget.org/v3/catalog0/data/2026.07.20.12.00.00/adventureworks.core.2.0.1.json",
+      "@type": ["nuget:PackageDetails"],
+      "commitTimestamp": "2026-07-20T12:00:00.000Z",
+      "nuget:id": "AdventureWorks.Core",
+      "nuget:version": "2.0.1"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "commitTimestamp": "2026-07-19T10:00:00.000Z",
+  "count": 3,
+  "parent": "https://api.nuget.org/v3/catalog0/index.json",
+  "items": [
+    {
+      "@id": "https://api.nuget.org/v3/catalog0/data/2026.07.19.09.00.00/contoso.library.1.0.0.json",
+      "@type": ["nuget:PackageDetails", "catalog:Permalink"],
+      "commitTimestamp": "2026-07-19T09:00:00.000Z",
+      "nuget:id": "Contoso.Library",
+      "nuget:version": "1.0.0"
+    },
+    {
+      "@id": "https://api.nuget.org/v3/catalog0/data/2026.07.19.09.30.00/contoso.library.1.0.1.json",
+      "@type": "nuget:PackageDetails",
+      "commitTimestamp": "2026-07-19T09:30:00.000Z",
+      "nuget:id": "Contoso.Library",
+      "nuget:version": "1.0.1"
+    },
+    {
+      "@id": "https://api.nuget.org/v3/catalog0/data/2026.07.19.10.00.00/fabrikam.bad.0.1.0.json",
+      "@type": ["nuget:PackageDelete"],
+      "commitTimestamp": "2026-07-19T10:00:00.000Z",
+      "nuget:id": "Fabrikam.Bad",
+      "nuget:version": "0.1.0"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "@type": ["PackageDetails", "catalog:Permalink"],
+  "authors": "Contoso",
+  "description": "A legitimate library used for fixture testing.",
+  "listed": true,
+  "published": "2026-07-19T09:00:00.000Z",
+  "projectUrl": "https://example.com/contoso.library",
+  "tags": ["fixture", "library"]
+}

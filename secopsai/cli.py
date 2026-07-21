@@ -118,6 +118,14 @@ from secopsai.research_discovery import (
     run_due_monitors as run_due_research_monitors,
     recover_stale_monitor_runs,
 )
+from secopsai.research_surveillance import (
+    collector_status as registry_collector_status,
+    coverage_report as registry_coverage_report,
+    list_feed_events as registry_list_feed_events,
+    recover_interrupted_runs as recover_interrupted_collector_runs,
+    retry_dead_letters as retry_registry_dead_letters,
+    run_registry_collector,
+)
 from secopsai.research_analysis import compare_intakes, compare_packages, correlate_candidates, inspect_nuget_archive, list_campaigns
 from secopsai.research_sandbox import poll_sandbox_request, submit_sandbox_request, provider_status as sandbox_provider_status
 from secopsai.research_delivery import send_approved_disclosure, send_research_alert
@@ -1131,6 +1139,32 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     candidate_show.add_argument("candidate_id")
     candidate_show.add_argument("--db-path", default=None)
 
+    research_collect = research_sub.add_parser("collect", help="Run global registry feed collectors")
+    research_collect_sub = research_collect.add_subparsers(dest="research_collect_cmd", required=True)
+    collect_status = research_collect_sub.add_parser("status", help="Show collector cursors, lag, gaps, and failures")
+    collect_status.add_argument("--ecosystem", default=None)
+    collect_status.add_argument("--db-path", default=None)
+    collect_run = research_collect_sub.add_parser("run", help="Run one bounded global feed ingestion pass")
+    collect_run.add_argument("--ecosystem", default="nuget")
+    collect_run.add_argument("--since", default=None, help="Backfill cursor start (ISO 8601); can only move the cursor backward")
+    collect_run.add_argument("--max-pages", type=int, default=10)
+    collect_run.add_argument("--fetch-leaves", action="store_true", help="Enrich stored events with catalog leaf metadata")
+    collect_run.add_argument("--db-path", default=None)
+    collect_retry = research_collect_sub.add_parser("retry-failures", help="Retry due dead-lettered pages and leaves")
+    collect_retry.add_argument("--limit", type=int, default=25)
+    collect_retry.add_argument("--db-path", default=None)
+    collect_coverage = research_collect_sub.add_parser("coverage", help="Show recent coverage windows, gaps first")
+    collect_coverage.add_argument("--days", type=int, default=7)
+    collect_coverage.add_argument("--db-path", default=None)
+    collect_recover = research_collect_sub.add_parser("recover-stale", help="Mark dead collector runs as interrupted")
+    collect_recover.add_argument("--max-age-seconds", type=int, default=3600)
+    collect_recover.add_argument("--db-path", default=None)
+    collect_events = research_collect_sub.add_parser("events", help="Inspect the stored feed-event ledger")
+    collect_events.add_argument("--collector-id", default=None)
+    collect_events.add_argument("--package", default=None)
+    collect_events.add_argument("--limit", type=int, default=100)
+    collect_events.add_argument("--db-path", default=None)
+
     research_compare = research_sub.add_parser("compare", help="Compare two normalized, statically collected package intake JSON files")
     research_compare.add_argument("--left", required=True, help="Path to the first normalized intake JSON")
     research_compare.add_argument("--right", required=True, help="Path to the second normalized intake JSON")
@@ -2028,6 +2062,19 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = {"candidates": list_research_candidates(status=args.status, ecosystem=args.ecosystem, limit=args.limit, db_path=args.db_path)}
             else:
                 payload = get_research_candidate(args.candidate_id, db_path=args.db_path)
+        elif args.research_cmd == "collect":
+            if args.research_collect_cmd == "status":
+                payload = {"collectors": registry_collector_status(ecosystem=args.ecosystem, db_path=args.db_path)}
+            elif args.research_collect_cmd == "run":
+                payload = run_registry_collector(ecosystem=args.ecosystem, since=args.since, max_pages=args.max_pages, fetch_leaves=args.fetch_leaves, db_path=args.db_path)
+            elif args.research_collect_cmd == "retry-failures":
+                payload = retry_registry_dead_letters(limit=args.limit, db_path=args.db_path)
+            elif args.research_collect_cmd == "coverage":
+                payload = {"windows": registry_coverage_report(days=args.days, db_path=args.db_path)}
+            elif args.research_collect_cmd == "events":
+                payload = {"events": registry_list_feed_events(collector_id=args.collector_id, package=args.package, limit=args.limit, db_path=args.db_path)}
+            else:
+                payload = recover_interrupted_collector_runs(max_age_seconds=args.max_age_seconds, db_path=args.db_path)
         elif args.research_cmd == "compare":
             with open(args.left, "r", encoding="utf-8") as left_handle:
                 left_payload = json.load(left_handle)
@@ -2456,7 +2503,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
 
-        if args.research_cmd in {"ecosystems", "watchlist", "monitor", "candidate", "compare", "compare-packages", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "workflow"}:
+        if args.research_cmd in {"ecosystems", "watchlist", "monitor", "candidate", "collect", "compare", "compare-packages", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "workflow"}:
             return _run_research_automation_command(args)
 
         if args.research_cmd == "case":
