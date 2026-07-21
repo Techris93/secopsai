@@ -35,14 +35,18 @@ PACKAGIST_ALLOWED_HOSTS: Tuple[str, ...] = ("packagist.org",)
 PYPI_SIMPLE_INDEX_URL = "https://pypi.org/simple/"
 PYPI_ALLOWED_HOSTS: Tuple[str, ...] = ("pypi.org",)
 PYPI_SIMPLE_JSON_ACCEPT = "application/vnd.pypi.simple.v1+json"
+RUBYGEMS_TIMEFRAME_URL = "https://rubygems.org/api/v1/timeframe_versions.json"
+RUBYGEMS_ALLOWED_HOSTS: Tuple[str, ...] = ("rubygems.org",)
 
 MAX_CATALOG_INDEX_BYTES = 8 * 1024 * 1024
 MAX_CATALOG_PAGE_BYTES = 32 * 1024 * 1024
 MAX_CHANGES_BYTES = 32 * 1024 * 1024
 MAX_SIMPLE_INDEX_BYTES = 128 * 1024 * 1024
+MAX_TIMEFRAME_PAGE_BYTES = 8 * 1024 * 1024
 MAX_LEAF_BYTES = 2 * 1024 * 1024
 DEFAULT_MAX_PAGES = 10
 DEFAULT_LOOKBACK_HOURS = 24
+DEFAULT_MAX_WINDOW_HOURS = 24
 MAX_DEAD_LETTER_ATTEMPTS = 8
 DEFAULT_MAX_DIFF_EVENTS = 10000
 ALGORITHM_VERSION = "registry-surveillance.v1"
@@ -90,6 +94,22 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         # per-release detection needs watchlist polling or backfill.
         "cursor_seed": "zero",
         "cursor_multiplier": 1,
+    },
+    "rubygems": {
+        "collector_id": "COL-RUBYGEMS-TIMEFRAME",
+        "source_id": "REG-RUBYGEMS",
+        "name": "RubyGems timeframe versions",
+        "feed_url": RUBYGEMS_TIMEFRAME_URL,
+        "mode": "timeframe_poll",
+        "allowed_hosts": RUBYGEMS_ALLOWED_HOSTS,
+        "coverage_mode": "timeframe_windowed_pagination",
+        # timeframe_versions returns version-created events with real
+        # timestamps inside a bounded window. The cursor only advances
+        # when the window drains (an empty page), so heavy publication
+        # bursts cannot be skipped silently.
+        "cursor_seed": "lookback",
+        "overlap_seconds": 300,
+        "max_window_hours": DEFAULT_MAX_WINDOW_HOURS,
     },
 }
 
@@ -149,7 +169,7 @@ def ensure_collectors(*, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
                 "allowed_hosts": list(definition["allowed_hosts"]),
                 "algorithm_version": ALGORITHM_VERSION,
             }
-            for key in ("cursor_multiplier", "overlap_seconds", "retention_seconds", "retention_safety_seconds"):
+            for key in ("cursor_multiplier", "overlap_seconds", "retention_seconds", "retention_safety_seconds", "max_window_hours"):
                 if key in definition:
                     config[key] = definition[key]
             connection.execute(
@@ -254,6 +274,23 @@ def _fetch_json_response(
     if not isinstance(payload, dict):
         raise IntakeError("registry response was not a JSON object")
     return payload, response_headers
+
+
+def _fetch_json_array(
+    fetcher: SafeFetcher,
+    url: str,
+    *,
+    allowed_hosts: Iterable[str],
+    max_bytes: int,
+) -> List[Any]:
+    _final_url, _headers, body = fetcher.get(url, allowed_hosts=allowed_hosts, max_bytes=max_bytes)
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise IntakeError("registry response was not valid JSON") from exc
+    if not isinstance(payload, list):
+        raise IntakeError("registry response was not a JSON array")
+    return payload
 
 
 def _record_dead_letter(
@@ -499,6 +536,7 @@ def _empty_outcome(cursor_before: str) -> Dict[str, Any]:
         "leaf_failures": 0,
         "anomalies": [],
         "diff_truncated": False,
+        "window_incomplete": False,
         "error": None,
     }
 
@@ -875,6 +913,138 @@ def _ingest_pypi_index(
     return outcome
 
 
+def _ingest_rubygems_timeframe(
+    *,
+    collector: Dict[str, Any],
+    cursor_before: str,
+    max_pages: int,
+    fetcher: SafeFetcher,
+    run_id: str,
+    db_path: Optional[str],
+) -> Dict[str, Any]:
+    """Poll the timeframe_versions feed over one bounded window.
+
+    The window walks forward from the cursor with a small overlap. The
+    cursor only advances when the window fully drains (an empty page), so
+    a publication burst larger than the per-run page budget cannot be
+    skipped; the next run resumes the same window and idempotency keys
+    absorb the refetch.
+    """
+    config = _decode(collector["config_json"], {})
+    allowed_hosts = config.get("allowed_hosts", [])
+    overlap_seconds = int(config.get("overlap_seconds", 300))
+    max_window = timedelta(hours=int(config.get("max_window_hours", DEFAULT_MAX_WINDOW_HOURS)))
+    outcome = _empty_outcome(cursor_before)
+
+    now_dt = _utcnow()
+    from_dt = _parse_ts(cursor_before) - timedelta(seconds=overlap_seconds)
+    to_dt = min(now_dt, from_dt + max_window)
+    window_from = _format_ts(from_dt)
+    window_to = _format_ts(to_dt)
+
+    drained = False
+    with closing(soc_store.connect(db_path)) as connection:
+        for page_number in range(1, max(1, min(int(max_pages), 500)) + 1):
+            page_url = (
+                f"{collector['feed_url']}?from={urllib.parse.quote(window_from)}"
+                f"&to={urllib.parse.quote(window_to)}&page={page_number}"
+            )
+            try:
+                items = _fetch_json_array(
+                    fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_TIMEFRAME_PAGE_BYTES
+                )
+            except (IntakeError, CollectorError) as exc:
+                outcome["error"] = f"timeframe page fetch failed: {exc}"
+                with connection:
+                    _record_dead_letter(
+                        connection,
+                        collector_id=collector["collector_id"],
+                        run_id=run_id,
+                        url=page_url,
+                        item_kind="page",
+                        payload={"window_from": window_from, "window_to": window_to, "page": page_number},
+                        error=str(exc),
+                    )
+                break
+            outcome["pages_processed"] += 1
+            if not items:
+                drained = True
+                break
+            now = _format_ts(_utcnow())
+            with connection:
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get("name") or "").strip()
+                    version = str(item.get("version") or "").strip()
+                    created_at = str(item.get("version_created_at") or "").strip()
+                    if not name or not version or not created_at:
+                        continue
+                    registry_ts = _format_ts(_parse_ts(created_at))
+                    outcome["events_seen"] += 1
+                    platform = str(item.get("platform") or "ruby")
+                    yanked = bool(item.get("yanked"))
+                    event_type = "yanked" if yanked else "published"
+                    key = _idempotency_key(collector["ecosystem"], name, f"{version}|{platform}", registry_ts, event_type)
+                    metadata = {
+                        "authors": item.get("authors") or "",
+                        "licenses": item.get("licenses") or [],
+                        "platform": platform,
+                        "yanked": yanked,
+                        "sha256": item.get("sha") or "",
+                        "homepage": (item.get("metadata") or {}).get("homepage_uri") or "",
+                        "algorithm_version": ALGORITHM_VERSION,
+                    }
+                    leaf_url = str(item.get("gem_uri") or f"https://rubygems.org/gems/{name}/versions/{version}")
+                    cursor = connection.execute(
+                        """INSERT INTO registry_feed_events
+                        (feed_event_id, collector_id, ecosystem, package, version, event_type,
+                         registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
+                         idempotency_key, collected_at, processing_state)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'pending')
+                        ON CONFLICT(idempotency_key) DO NOTHING""",
+                        (
+                            _id("RFE"),
+                            collector["collector_id"],
+                            collector["ecosystem"],
+                            name,
+                            version,
+                            event_type,
+                            registry_ts,
+                            page_url,
+                            leaf_url,
+                            _json(metadata),
+                            key,
+                            now,
+                        ),
+                    )
+                    if cursor.rowcount == 0:
+                        outcome["events_duplicate"] += 1
+                    else:
+                        outcome["events_stored"] += 1
+
+    if outcome["error"]:
+        # The failed page was expected, so the window records a gap.
+        outcome["pages_selected"] = outcome["pages_processed"] + 1
+        return outcome
+    outcome["pages_selected"] = outcome["pages_processed"]
+    if drained:
+        now = _format_ts(_utcnow())
+        with closing(soc_store.connect(db_path)) as connection:
+            with connection:
+                connection.execute(
+                    "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                    (window_to, now, run_id, now, collector["collector_id"]),
+                )
+        outcome["cursor_after"] = window_to
+    else:
+        # The window did not drain within the page budget; nothing was
+        # skipped because the cursor stays at the window start.
+        outcome["window_incomplete"] = True
+        outcome["cursor_after"] = cursor_before
+    return outcome
+
+
 def _effective_cursor(collector: Dict[str, Any], since: Optional[str]) -> str:
     definition = COLLECTOR_DEFINITIONS[collector["ecosystem"]]
     current = str((collector.get("cursor") or {}).get("cursor_value") or "")
@@ -978,6 +1148,15 @@ def run_registry_collector(
             db_path=db_path,
             max_diff_events=max(1, int(max_diff_events)),
         )
+    elif collector["ecosystem"] == "rubygems":
+        outcome = _ingest_rubygems_timeframe(
+            collector=collector,
+            cursor_before=cursor_before,
+            max_pages=max_pages,
+            fetcher=fetcher,
+            run_id=run_id,
+            db_path=db_path,
+        )
     else:
         outcome = _ingest_nuget_catalog(
             collector=collector,
@@ -994,6 +1173,8 @@ def run_registry_collector(
         result["anomalies"] = outcome["anomalies"]
     if outcome.get("diff_truncated"):
         result["diff_truncated"] = True
+    if outcome.get("window_incomplete"):
+        result["window_incomplete"] = True
     retention = _retention_state(collector, result["cursor_after"])
     if retention is not None:
         result["retention"] = retention
