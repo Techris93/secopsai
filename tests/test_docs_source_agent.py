@@ -9,6 +9,15 @@ from scripts.docs_source_agent import build_report, write_report
 
 
 class DocsSourceAgentTests(unittest.TestCase):
+    def test_footer_attribution_has_explicit_contrast_and_focus_styles(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        stylesheet = (root / "docs" / "assets" / "stylesheets" / "extra.css").read_text(encoding="utf-8")
+
+        self.assertIn(".md-footer-meta.md-typeset .md-copyright a {", stylesheet)
+        self.assertIn("color: var(--secops-note);", stylesheet)
+        self.assertIn(".md-footer-meta.md-typeset .md-copyright a:focus-visible {", stylesheet)
+        self.assertIn("outline: 2px solid var(--secops-note);", stylesheet)
+
     def test_build_report_collects_verifier_result(self) -> None:
         with mock.patch("scripts.docs_source_agent.run_command", return_value={"ok": True, "command": ["python"], "returncode": 0, "stdout": "{}", "stderr": ""}):
             payload = build_report(run_build=False)

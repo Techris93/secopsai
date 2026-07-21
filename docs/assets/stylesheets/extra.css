@@ -241,7 +241,22 @@ body {
   background: #FFFFFF;
   border-top: 1px solid var(--secops-rule);
 }
-.md-copyright { color: var(--secops-muted); }
+.md-copyright { color: var(--secops-ink-2); }
+.md-footer-meta.md-typeset .md-copyright a {
+  color: var(--secops-note);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.md-footer-meta.md-typeset .md-copyright a:hover {
+  color: var(--secops-ink);
+}
+.md-footer-meta.md-typeset .md-copyright a:focus-visible {
+  color: var(--secops-ink);
+  outline: 2px solid var(--secops-note);
+  outline-offset: 3px;
+}
 
 /* ── Home page (overrides/home.html) ─────────────────────── */
 .secops-home__hero {
