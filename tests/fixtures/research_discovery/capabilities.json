@@ -4,7 +4,7 @@
     {"ecosystem": "npm", "source_registry": "https://registry.npmjs.org/", "monitoring_mode": "changes_feed_or_watchlist"},
     {"ecosystem": "pypi", "source_registry": "https://pypi.org/", "monitoring_mode": "index_reconcile_or_watchlist"},
     {"ecosystem": "nuget", "source_registry": "https://api.nuget.org/", "monitoring_mode": "catalog_or_watchlist"},
-    {"ecosystem": "maven", "source_registry": "https://repo.maven.apache.org/", "monitoring_mode": "search_or_watchlist"},
+    {"ecosystem": "maven", "source_registry": "https://repo.maven.apache.org/", "monitoring_mode": "search_tail_or_watchlist"},
     {"ecosystem": "rubygems", "source_registry": "https://rubygems.org/", "monitoring_mode": "timeframe_feed_or_watchlist"},
     {"ecosystem": "packagist", "source_registry": "https://repo.packagist.org/", "monitoring_mode": "changes_feed_or_watchlist"},
     {"ecosystem": "go", "source_registry": "https://proxy.golang.org/", "monitoring_mode": "module_index_or_watchlist"},

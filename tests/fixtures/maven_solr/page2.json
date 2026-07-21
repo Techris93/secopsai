@@ -1,0 +1,17 @@
+{
+  "responseHeader": {"status": 0},
+  "response": {
+    "numFound": 4,
+    "start": 3,
+    "docs": [
+      {
+        "id": "com.acme:acme-core:9.9.9",
+        "g": "com.acme",
+        "a": "acme-core",
+        "v": "9.9.9",
+        "p": "jar",
+        "timestamp": 1781999900000
+      }
+    ]
+  }
+}

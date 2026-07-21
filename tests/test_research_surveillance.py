@@ -281,7 +281,7 @@ def test_collector_status_reports_lag_gaps_and_counts(tmp_path):
 
 def test_unknown_ecosystem_is_rejected(tmp_path):
     with pytest.raises(CollectorError):
-        run_registry_collector(ecosystem="maven", db_path=_db(tmp_path), fetcher=_fetcher())
+        run_registry_collector(ecosystem="cpan", db_path=_db(tmp_path), fetcher=_fetcher())
 
 
 def test_registry_hosts_outside_allowlist_are_refused(tmp_path):
@@ -982,6 +982,129 @@ def test_go_rerun_is_idempotent(tmp_path):
     assert result["events_stored"] == 0
     assert result["events_duplicate"] == 3
     assert len(list_feed_events(db_path=db_path)) == 3
+
+
+MAVEN_FIXTURES = Path(__file__).parent / "fixtures" / "maven_solr"
+
+
+def _maven_fetcher(captured_urls, fail_starts=(), backlog=False):
+    def fetch(url, max_bytes):
+        captured_urls.append(url)
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        query = params.get("q", [""])[0]
+        start = int(params.get("start", ["0"])[0])
+        if query == "*:*":
+            return 200, {"content-type": "application/json"}, (MAVEN_FIXTURES / "bootstrap.json").read_bytes()
+        if start in fail_starts:
+            return 500, {"content-type": "application/json"}, b'{"error": "solr down"}'
+        if backlog:
+            name = "page1.json" if start == 0 else "page1.json"
+        elif start == 0:
+            name = "page1.json"
+        elif start == 3:
+            name = "page2.json"
+        else:
+            name = "empty.json"
+        return 200, {"content-type": "application/json"}, (MAVEN_FIXTURES / name).read_bytes()
+
+    return SafeFetcher(fetch=fetch)
+
+
+@pytest.fixture
+def _maven_backlog_fetcher(monkeypatch):
+    # numFound 4 with only 3 docs per page repeated: page budget of 1
+    # cannot drain the backlog, so the cursor must hold.
+    from secopsai import research_surveillance
+
+    monkeypatch.setitem(research_surveillance.COLLECTOR_DEFINITIONS["maven"], "page_limit", 3)
+
+
+def test_maven_collector_seeds_with_zero_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    collectors = ensure_collectors(db_path=db_path)
+    maven = next(item for item in collectors if item["collector_id"] == "COL-MAVEN-SOLR")
+    assert maven["mode"] == "event_feed"
+    assert maven["cursor"]["cursor_value"] == "0"
+
+
+def test_maven_bootstrap_adopts_newest_timestamp(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(ecosystem="maven", db_path=db_path, fetcher=_maven_fetcher(urls))
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 0
+    assert result["cursor_after"] == "1782000000000"
+
+
+def test_maven_tail_stores_versions_and_drains(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(ecosystem="maven", since="1781999900000", db_path=db_path, fetcher=_maven_fetcher(urls))
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 4
+    assert result["pages_processed"] == 2
+    assert result["cursor_after"] == "1782000100000"
+    assert "window_incomplete" not in result
+
+    events = list_feed_events(db_path=db_path)
+    by_id = {f"{event['package']}:{event['version']}": event for event in events}
+    imposter = by_id["org.evil:paypa1-sdk:1.0.0"]
+    assert imposter["event_type"] == "published"
+    assert imposter["registry_timestamp"] == "2026-06-21T00:00:50.000Z"
+    assert imposter["metadata"]["search_derived"] is True
+    assert imposter["leaf_url"] == "https://repo1.maven.org/maven2/org/evil/paypa1-sdk/1.0.0/"
+
+
+def test_maven_undrained_backlog_holds_cursor(tmp_path, _maven_backlog_fetcher):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(
+        ecosystem="maven", since="1781999900000", max_pages=1, db_path=db_path,
+        fetcher=_maven_fetcher(urls, backlog=True),
+    )
+    assert result["status"] == "completed"
+    assert result["window_incomplete"] is True
+    assert result["events_stored"] == 3
+    assert result["cursor_after"] == "1781999900000"
+
+
+def test_maven_page_failure_dead_letters_and_holds_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    result = run_registry_collector(
+        ecosystem="maven", since="1781999900000", db_path=db_path,
+        fetcher=_maven_fetcher(urls, fail_starts={3}),
+    )
+    assert result["status"] == "failed"
+    assert result["coverage"] == "gap"
+    assert result["cursor_after"] == "1781999900000"
+    letters = _dead_letters(db_path)
+    assert len(letters) == 1
+    assert letters[0]["item_kind"] == "page"
+
+
+def test_maven_caught_up_run_keeps_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+    _set_cursor(db_path, "COL-MAVEN-SOLR", "1782000100000")
+
+    def empty_fetch(url, max_bytes):
+        return 200, {"content-type": "application/json"}, (MAVEN_FIXTURES / "empty.json").read_bytes()
+
+    result = run_registry_collector(ecosystem="maven", db_path=db_path, fetcher=SafeFetcher(fetch=empty_fetch))
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 0
+    assert result["cursor_after"] == "1782000100000"
+
+
+def test_maven_rerun_is_idempotent(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    run_registry_collector(ecosystem="maven", since="1781999900000", db_path=db_path, fetcher=_maven_fetcher(urls))
+    result = run_registry_collector(ecosystem="maven", since="1781999900000", db_path=db_path, fetcher=_maven_fetcher(urls))
+    assert result["events_stored"] == 0
+    assert result["events_duplicate"] == 4
+    assert len(list_feed_events(db_path=db_path)) == 4
 
 
 def test_paused_collector_refuses_runs_and_keeps_cursor(tmp_path):
