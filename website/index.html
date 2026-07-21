@@ -3,1336 +3,628 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SecOpsAI | Local-first security operations</title>
-    <meta name="description" content="Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, and Windows. Detect supply chain attacks, AI slopsquatting risk, correlate findings, and protect your infrastructure.">
+    <title>SecOpsAI — Local-first security operations platform</title>
+    <meta name="description" content="SecOpsAI is a local-first security operations platform. It discovers network assets, monitors package registries, and turns telemetry into findings you can act on. macOS, Linux, Windows, and edge sensors.">
     <link rel="canonical" href="https://secopsai.dev/">
     <link rel="icon" type="image/png" href="/assets/favicon-512.png">
     <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
-    
-    <!-- Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        /* ──────────────────────────────────────────────────────────
+           SecOpsAI public document — ASD S1000D publication style
+           Rules-based layout. Color is used for meaning only.
+           ────────────────────────────────────────────────────────── */
+        :root {
+            --paper: #FBFAF6;
+            --panel: #FFFFFF;
+            --ink: #16191D;
+            --ink-2: #3E4650;
+            --muted: #67707B;
+            --rule: #C9CDD2;
+            --rule-dark: #9BA2AA;
+            --note: #0F4C81;
+            --note-bg: #EDF3F9;
+            --caution: #8A5A00;
+            --caution-bg: #FBF3E2;
+            --warning: #9E1B1B;
+            --warning-bg: #FAECEC;
+            --ok: #1E6B3A;
+            --ok-bg: #EBF4EE;
+            --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+            --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         }
-        
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html { scroll-behavior: smooth; }
+
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: #0a0a0a;
-            color: #e5e5e5;
-            line-height: 1.6;
-        }
-        
-        /* Header */
-        header {
-            background: rgba(10, 10, 10, 0.8);
-            backdrop-filter: blur(10px);
-            border-bottom: 1px solid #1a1a1a;
-            padding: 16px 0;
-            position: sticky;
-            top: 0;
-            z-index: 100;
-        }
-        
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 24px;
-        }
-        
-        nav {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .logo {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 24px;
-            font-weight: 700;
-            background: linear-gradient(135deg, #57df91, #3bb873);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .nav-links {
-            display: flex;
-            gap: 32px;
-            align-items: center;
-        }
-        
-        .nav-links a {
-            color: #a0a0a0;
-            text-decoration: none;
-            font-size: 14px;
-            font-weight: 500;
-            transition: color 0.2s;
-        }
-        
-        .nav-links a:hover {
-            color: #57df91;
-        }
-        
-        .btn-nav {
-            background: linear-gradient(135deg, #57df91, #3bb873);
-            color: #0a0a0a !important;
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-weight: 600;
-        }
-        
-        /* Hero */
-        .hero {
-            padding: 100px 0 60px;
-            text-align: center;
-            background: radial-gradient(ellipse at top, #0d1f15 0%, #0a0a0a 50%);
-        }
-        
-        .badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            background: rgba(87, 223, 145, 0.1);
-            border: 1px solid rgba(87, 223, 145, 0.2);
-            color: #57df91;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-size: 13px;
-            font-weight: 500;
-            margin-bottom: 32px;
-        }
-        
-        .badge .new {
-            background: #57df91;
-            color: #0a0a0a;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: 700;
-        }
-        
-        .hero h1 {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 56px;
-            font-weight: 700;
-            line-height: 1.1;
-            margin-bottom: 24px;
-            background: linear-gradient(180deg, #fff 0%, #a0a0a0 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-        
-        .hero h1 span {
-            background: linear-gradient(135deg, #57df91, #3bb873);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-        
-        .hero p {
-            font-size: 20px;
-            color: #808080;
-            max-width: 600px;
-            margin: 0 auto 40px;
-            line-height: 1.6;
-        }
-        
-        .hero-cta {
-            display: flex;
-            gap: 16px;
-            justify-content: center;
-            margin-bottom: 60px;
-        }
-        
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 14px 28px;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: 600;
+            font-family: var(--sans);
+            background: var(--paper);
+            color: var(--ink);
+            line-height: 1.55;
             font-size: 15px;
-            transition: all 0.2s;
-            border: none;
-            cursor: pointer;
+            counter-reset: sec;
         }
-        
-        .btn-primary {
-            background: linear-gradient(135deg, #57df91, #3bb873);
-            color: #0a0a0a;
-            box-shadow: 0 4px 20px rgba(87, 223, 145, 0.3);
-        }
-        
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 30px rgba(87, 223, 145, 0.4);
-        }
-        
-        .btn-secondary {
-            background: rgba(255, 255, 255, 0.05);
-            color: #e5e5e5;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        .btn-secondary:hover {
-            background: rgba(255, 255, 255, 0.1);
-            border-color: rgba(255, 255, 255, 0.2);
-        }
-        
-        /* Feature Pills */
-        .feature-pills {
-            display: flex;
-            gap: 16px;
-            justify-content: center;
-            flex-wrap: wrap;
-            margin-bottom: 60px;
-        }
-        
-        .pill {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            padding: 10px 18px;
-            border-radius: 20px;
-            font-size: 13px;
-            color: #808080;
-        }
-        
-        .pill svg {
-            width: 16px;
-            height: 16px;
-            color: #57df91;
-        }
-        
-        /* Terminal Demo */
-        .terminal-section {
-            padding: 40px 0 80px;
-        }
-        
-        .terminal {
-            background: #111;
-            border-radius: 16px;
-            border: 1px solid #222;
-            max-width: 800px;
+
+        ::selection { background: var(--note); color: #fff; }
+
+        .page {
+            max-width: 880px;
             margin: 0 auto;
-            overflow: hidden;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            padding: 0 24px 96px;
         }
-        
-        .terminal-header {
-            background: #1a1a1a;
-            padding: 16px 20px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        
-        .terminal-title {
-            font-size: 13px;
-            color: #666;
-            margin-left: 8px;
-        }
-        
-        .terminal-dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-        }
-        
-        .dot-red { background: #ff5f56; }
-        .dot-yellow { background: #ffbd2e; }
-        .dot-green { background: #27c93f; }
-        
-        .terminal-body {
-            padding: 24px;
-            font-family: 'JetBrains Mono', 'Monaco', 'Menlo', monospace;
-            font-size: 14px;
-            line-height: 1.8;
-        }
-        
-        .terminal-line {
-            margin: 4px 0;
-        }
-        
-        .prompt { color: #57df91; }
-        .command { color: #e5e5e5; }
-        .output { color: #808080; }
-        .success { color: #57df91; }
-        .warning { color: #f5a623; }
-        .error { color: #ff5f56; }
-        
-        /* Install Section */
-        .install-section {
-            padding: 80px 0;
-            background: linear-gradient(180deg, #0a0a0a 0%, #0d1110 100%);
-            border-top: 1px solid #1a1a1a;
-        }
-        
-        .section-header {
-            text-align: center;
-            margin-bottom: 48px;
-        }
-        
-        .section-header h2 {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 36px;
-            font-weight: 700;
-            margin-bottom: 12px;
-        }
-        
-        .section-header p {
-            color: #666;
-            font-size: 16px;
-        }
-        
-        /* Install Tabs */
-        .install-tabs {
-            display: flex;
-            gap: 8px;
-            justify-content: center;
-            margin-bottom: 24px;
-            flex-wrap: wrap;
-        }
-        
-        .install-tab {
-            padding: 10px 20px;
-            border-radius: 6px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            border: 1px solid transparent;
-            background: transparent;
-            color: #666;
-            transition: all 0.2s;
-        }
-        
-        .install-tab:hover {
-            color: #e5e5e5;
-            background: rgba(255, 255, 255, 0.03);
-        }
-        
-        .install-tab.active {
-            background: rgba(87, 223, 145, 0.1);
-            border-color: rgba(87, 223, 145, 0.3);
-            color: #57df91;
-        }
-        
-        .install-tab .recommended {
-            font-size: 10px;
-            background: #57df91;
-            color: #0a0a0a;
-            padding: 2px 6px;
-            border-radius: 4px;
-            margin-left: 6px;
-            font-weight: 700;
-        }
-        
-        /* Install Panels */
-        .install-panels {
-            max-width: 700px;
-            margin: 0 auto;
-        }
-        
-        .install-panel {
-            display: none;
-            background: #111;
-            border: 1px solid #222;
-            border-radius: 12px;
-            padding: 24px;
-        }
-        
-        .install-panel.active {
-            display: block;
-            animation: fadeIn 0.3s ease;
-        }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .install-panel h3 {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: #e5e5e5;
-        }
-        
-        .install-panel .description {
-            font-size: 14px;
-            color: #666;
-            margin-bottom: 16px;
-        }
-        
-        .code-block {
-            background: #0a0a0a;
-            border: 1px solid #1a1a1a;
-            border-radius: 8px;
-            padding: 16px 20px;
-            font-family: 'JetBrains Mono', 'Monaco', 'Menlo', monospace;
-            font-size: 14px;
-            color: #e5e5e5;
+
+        /* ── Document header ─────────────────────────────────── */
+        .doc-header {
+            border-bottom: 2px solid var(--ink);
+            padding: 18px 0 14px;
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            align-items: baseline;
             gap: 16px;
+            flex-wrap: wrap;
         }
-        
-        .code-block code {
-            flex: 1;
-            overflow-x: auto;
+        .wordmark {
+            font-family: var(--mono);
+            font-weight: 700;
+            font-size: 18px;
+            letter-spacing: 0.12em;
+            text-decoration: none;
+            color: var(--ink);
         }
-        
-        .copy-btn {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: #808080;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 12px;
-            cursor: pointer;
-            transition: all 0.2s;
+        .doc-nav {
             display: flex;
-            align-items: center;
-            gap: 6px;
+            gap: 20px;
+            font-family: var(--mono);
+            font-size: 12px;
+            letter-spacing: 0.06em;
+        }
+        .doc-nav a {
+            color: var(--ink-2);
+            text-decoration: none;
+            border-bottom: 1px solid transparent;
+            padding-bottom: 2px;
+        }
+        .doc-nav a:hover { color: var(--note); border-bottom-color: var(--note); }
+
+        /* ── Data-module identification block ────────────────── */
+        .dm-ident {
+            border: 1px solid var(--rule-dark);
+            background: var(--panel);
+            margin: 32px 0 40px;
+        }
+        .dm-ident-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            border-bottom: 1px solid var(--rule);
+            padding: 10px 16px;
+            font-family: var(--mono);
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            flex-wrap: wrap;
+        }
+        .dm-ident-body { padding: 28px 16px 24px; }
+        .dm-title {
+            font-size: 34px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            line-height: 1.15;
+        }
+        .dm-subtitle {
+            margin-top: 10px;
+            font-size: 16px;
+            color: var(--ink-2);
+            max-width: 60ch;
+        }
+        .dm-meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            border-top: 1px solid var(--rule);
+        }
+        .dm-meta-item {
+            padding: 10px 16px;
+            border-right: 1px solid var(--rule);
+            font-size: 12.5px;
+        }
+        .dm-meta-item:last-child { border-right: 0; }
+        .dm-meta-key {
+            font-family: var(--mono);
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            color: var(--muted);
+            display: block;
+            margin-bottom: 3px;
+        }
+
+        /* ── Numbered sections ───────────────────────────────── */
+        section.spec { margin-top: 48px; }
+        section.spec > h2 {
+            font-size: 20px;
+            font-weight: 700;
+            border-bottom: 1px solid var(--rule-dark);
+            padding-bottom: 8px;
+            margin-bottom: 18px;
+        }
+        section.spec > h2::before {
+            counter-increment: sec;
+            content: counter(sec) ".\2002";
+            font-family: var(--mono);
+            color: var(--muted);
+            font-weight: 500;
+        }
+        section.spec p { max-width: 68ch; color: var(--ink-2); }
+        section.spec p + p { margin-top: 10px; }
+        section.spec .lead { font-size: 16px; color: var(--ink); }
+
+        /* ── Procedure blocks ────────────────────────────────── */
+        .procedure {
+            border: 1px solid var(--rule);
+            background: var(--panel);
+            margin-top: 18px;
+        }
+        .procedure-title {
+            font-family: var(--mono);
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            color: var(--muted);
+            border-bottom: 1px solid var(--rule);
+            padding: 8px 14px;
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .procedure-body { padding: 14px; }
+        .procedure-body pre {
+            font-family: var(--mono);
+            font-size: 12.5px;
+            line-height: 1.7;
+            overflow-x: auto;
+            white-space: pre;
+        }
+        .prompt { color: var(--note); font-weight: 700; }
+        .ok-line { color: var(--ok); }
+        .warn-line { color: var(--warning); }
+        .dim-line { color: var(--muted); }
+
+        /* ── Platform tabs ───────────────────────────────────── */
+        .tabs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0;
+            border: 1px solid var(--rule-dark);
+            width: fit-content;
+            margin-top: 16px;
+            background: var(--panel);
+        }
+        .tab {
+            font-family: var(--mono);
+            font-size: 12px;
+            letter-spacing: 0.05em;
+            padding: 9px 16px;
+            background: transparent;
+            border: 0;
+            border-right: 1px solid var(--rule);
+            cursor: pointer;
+            color: var(--ink-2);
+        }
+        .tab:last-child { border-right: 0; }
+        .tab:hover { background: var(--note-bg); }
+        .tab[aria-selected="true"] {
+            background: var(--ink);
+            color: var(--paper);
+        }
+        .tab-panel { margin-top: -1px; }
+        .tab-panel[hidden] { display: none; }
+        .install-cmd {
+            display: flex;
+            align-items: stretch;
+            border: 1px solid var(--rule-dark);
+            background: var(--panel);
+        }
+        .install-cmd code {
+            flex: 1;
+            font-family: var(--mono);
+            font-size: 13px;
+            padding: 12px 14px;
+            overflow-x: auto;
             white-space: nowrap;
         }
-        
-        .copy-btn:hover {
-            background: rgba(87, 223, 145, 0.1);
-            border-color: rgba(87, 223, 145, 0.3);
-            color: #57df91;
+        .copy-btn {
+            font-family: var(--mono);
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            border: 0;
+            border-left: 1px solid var(--rule-dark);
+            background: var(--paper);
+            color: var(--ink-2);
+            padding: 0 14px;
+            cursor: pointer;
         }
-        
-        .copy-btn.copied {
-            background: rgba(87, 223, 145, 0.2);
-            color: #57df91;
+        .copy-btn:hover { background: var(--note-bg); color: var(--note); }
+        .install-note { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+
+        /* ── Tables ──────────────────────────────────────────── */
+        .spec-table {
+            width: 100%;
+            border-collapse: collapse;
+            border: 1px solid var(--rule-dark);
+            background: var(--panel);
+            margin-top: 18px;
+            font-size: 13.5px;
         }
-        
-        .requirements {
+        .spec-table caption {
+            text-align: left;
+            font-family: var(--mono);
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            color: var(--muted);
+            padding: 8px 0;
+            caption-side: top;
+        }
+        .spec-table th {
+            font-family: var(--mono);
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            font-weight: 700;
+            text-align: left;
+            padding: 8px 12px;
+            border-bottom: 1.5px solid var(--ink);
+            background: var(--paper);
+        }
+        .spec-table td {
+            padding: 9px 12px;
+            border-bottom: 1px solid var(--rule);
+            vertical-align: top;
+        }
+        .spec-table tr:last-child td { border-bottom: 0; }
+        .spec-table td:first-child {
+            font-family: var(--mono);
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        .spec-table a { color: var(--note); }
+
+        /* ── Notices (S1000D WARNING / CAUTION / NOTE) ───────── */
+        .notice {
+            display: flex;
+            border: 1px solid;
             margin-top: 16px;
-            padding-top: 16px;
-            border-top: 1px solid #1a1a1a;
-            font-size: 13px;
-            color: #666;
+            background: var(--panel);
         }
-        
-        .requirements strong {
-            color: #808080;
-        }
-        
-        /* Supply Chain Highlight */
-        .supply-chain-section {
-            padding: 100px 0;
-            background: radial-gradient(ellipse at bottom right, #0d1f15 0%, #0a0a0a 50%);
-        }
-        
-        .supply-chain-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 80px;
-            align-items: center;
-        }
-        
-        .supply-chain-content h2 {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 40px;
+        .notice-label {
+            font-family: var(--mono);
             font-weight: 700;
-            margin-bottom: 20px;
-            line-height: 1.2;
-        }
-        
-        .supply-chain-content h2 span {
-            background: linear-gradient(135deg, #57df91, #3bb873);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-        
-        .supply-chain-content > p {
-            color: #808080;
-            font-size: 18px;
-            line-height: 1.6;
-            margin-bottom: 32px;
-        }
-        
-        .threat-list {
-            list-style: none;
-            margin-bottom: 32px;
-        }
-        
-        .threat-list li {
+            font-size: 11px;
+            letter-spacing: 0.12em;
+            padding: 12px 14px;
+            border-right: 1px solid;
             display: flex;
             align-items: center;
-            gap: 12px;
-            padding: 12px 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            color: #a0a0a0;
-        }
-        
-        .threat-list li:last-child {
-            border-bottom: none;
-        }
-        
-        .threat-icon {
-            width: 32px;
-            height: 32px;
-            background: rgba(87, 223, 145, 0.1);
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
+            min-width: 96px;
             justify-content: center;
-            font-size: 16px;
         }
-        
-        .supply-chain-terminal {
-            background: #111;
-            border: 1px solid #222;
-            border-radius: 16px;
-            overflow: hidden;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-        }
-        
-        .supply-chain-terminal pre {
-            font-family: 'JetBrains Mono', 'Monaco', 'Menlo', monospace;
-            font-size: 13px;
-            line-height: 1.8;
-            color: #e5e5e5;
-            margin: 0;
-        }
-        
-        .supply-chain-terminal .terminal-body {
-            padding: 24px;
-        }
-        
-        /* Stats Section */
-        .stats-section {
-            padding: 80px 0;
-            background: #0a0a0a;
-            border-top: 1px solid #1a1a1a;
-            border-bottom: 1px solid #1a1a1a;
-        }
-        
-        .stats-grid {
+        .notice-body { padding: 12px 14px; font-size: 13.5px; color: var(--ink-2); }
+        .notice.note { border-color: var(--note); }
+        .notice.note .notice-label { background: var(--note-bg); color: var(--note); border-color: var(--note); }
+        .notice.caution { border-color: var(--caution); }
+        .notice.caution .notice-label { background: var(--caution-bg); color: var(--caution); border-color: var(--caution); }
+        .notice.warning { border-color: var(--warning); }
+        .notice.warning .notice-label { background: var(--warning-bg); color: var(--warning); border-color: var(--warning); }
+
+        /* ── Status list ─────────────────────────────────────── */
+        .status-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 40px;
-            text-align: center;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1px;
+            background: var(--rule);
+            border: 1px solid var(--rule);
+            margin-top: 18px;
         }
-        
-        .stat-item {
-            padding: 24px;
+        .status-cell {
+            background: var(--panel);
+            padding: 14px;
+            font-size: 13.5px;
         }
-        
-        .stat-number {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 48px;
-            font-weight: 700;
-            background: linear-gradient(135deg, #57df91, #3bb873);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 8px;
-        }
-        
-        .stat-label {
-            color: #666;
-            font-size: 14px;
-            font-weight: 500;
-        }
-        
-        /* Features Section */
-        .features-section {
-            padding: 100px 0;
-            background: #0a0a0a;
-        }
-        
-        .features-section .section-header {
-            margin-bottom: 64px;
-        }
-        
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 24px;
-        }
-        
-        .feature-card {
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            border-radius: 16px;
-            padding: 32px;
-            transition: all 0.3s;
-        }
-        
-        .feature-card:hover {
-            background: rgba(255, 255, 255, 0.04);
-            border-color: rgba(87, 223, 145, 0.2);
-            transform: translateY(-4px);
-        }
-        
-        .feature-icon {
-            width: 48px;
-            height: 48px;
-            background: rgba(87, 223, 145, 0.1);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 24px;
-            margin-bottom: 20px;
-        }
-        
-        .feature-card h3 {
-            font-size: 18px;
-            font-weight: 600;
-            margin-bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .feature-card p {
-            color: #666;
-            font-size: 14px;
-            line-height: 1.6;
-        }
-        
-        .new-tag {
+        .status-cell .cell-title { font-weight: 600; display: block; margin-bottom: 4px; }
+        .status-cell .cell-desc { color: var(--muted); font-size: 12.5px; }
+        .status-tag {
+            font-family: var(--mono);
             font-size: 10px;
-            background: #57df91;
-            color: #0a0a0a;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-weight: 700;
+            letter-spacing: 0.1em;
+            padding: 2px 6px;
+            border: 1px solid currentColor;
+            margin-left: 6px;
+            vertical-align: 1px;
         }
-        
-        /* Footer */
-        footer {
-            background: #0a0a0a;
-            border-top: 1px solid #1a1a1a;
-            padding: 60px 0;
-            text-align: center;
-        }
-        
-        .footer-links {
+        .tag-live { color: var(--ok); }
+        .tag-beta { color: var(--note); }
+
+        /* ── Footer ──────────────────────────────────────────── */
+        .doc-footer {
+            margin-top: 64px;
+            border-top: 2px solid var(--ink);
+            padding-top: 16px;
             display: flex;
+            justify-content: space-between;
             gap: 24px;
-            justify-content: center;
-            margin-bottom: 24px;
+            flex-wrap: wrap;
+            font-size: 12.5px;
+            color: var(--muted);
         }
-        
-        .footer-links a {
-            color: #666;
-            text-decoration: none;
-            font-size: 14px;
-            transition: color 0.2s;
+        .doc-footer .footer-id { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; }
+        .doc-footer a { color: var(--note); text-decoration: none; }
+
+        @media (max-width: 640px) {
+            .dm-title { font-size: 26px; }
+            .notice { flex-direction: column; }
+            .notice-label { border-right: 0; border-bottom: 1px solid; }
         }
-        
-        .footer-links a:hover {
-            color: #57df91;
-        }
-        
-        footer p {
-            color: #444;
-            font-size: 14px;
-        }
-        
-        /* Mobile Detection Banner */
-        .detected-device {
-            background: rgba(87, 223, 145, 0.1);
-            border: 1px solid rgba(87, 223, 145, 0.2);
-            border-radius: 8px;
-            padding: 12px 16px;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 14px;
-            color: #57df91;
-        }
-        
-        .detected-device.hidden {
-            display: none;
-        }
-        
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .supply-chain-grid {
-                grid-template-columns: 1fr;
-                gap: 60px;
-            }
-            
-            .features-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-        
-        @media (max-width: 768px) {
-            .hero h1 {
-                font-size: 36px;
-            }
-            
-            .nav-links {
-                display: none;
-            }
-            
-            .features-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-            
-            .supply-chain-content h2 {
-                font-size: 32px;
-            }
-            
-            .install-tabs {
-                overflow-x: auto;
-                flex-wrap: nowrap;
-                padding-bottom: 8px;
-                justify-content: flex-start;
-            }
-            
-            .code-block {
-                flex-direction: column;
-                align-items: flex-start;
-            }
+        @media print {
+            .doc-nav, .copy-btn, .tabs { display: none; }
+            body { background: #fff; }
         }
     </style>
 </head>
 <body>
-    <!-- Header -->
-    <header>
-        <div class="container">
-            <nav>
-                <div class="logo">
-                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                        <path d="M2 17l10 5 10-5"/>
-                        <path d="M2 12l10 5 10-5"/>
-                    </svg>
-                    SecOpsAI
-                </div>
-                <div class="nav-links">
-                    <a href="#features">Features</a>
-                    <a href="#install">Install</a>
-                    <a href="https://docs.secopsai.dev">Docs</a>
-                    <a href="https://blog.secopsai.dev/">Blog</a>
-                    <a href="https://github.com/Techris93/secopsai">GitHub</a>
-                    <a href="#install" class="btn-nav">Install Now</a>
-                </div>
-            </nav>
-        </div>
+<div class="page">
+
+    <header class="doc-header">
+        <a class="wordmark" href="/">SECOPSAI</a>
+        <nav class="doc-nav" aria-label="Document">
+            <a href="#install">INSTALL</a>
+            <a href="#capabilities">CAPABILITIES</a>
+            <a href="https://docs.secopsai.dev">DOCS</a>
+            <a href="https://blog.secopsai.dev">RESEARCH</a>
+            <a href="https://github.com/Techris93/secopsai">GITHUB</a>
+        </nav>
     </header>
 
-    <!-- Hero -->
-    <section class="hero">
-        <div class="container">
-            <div class="badge">
-                <span>🛡️</span>
-                SecOpsAI Edge Network Discovery
+    <!-- Data-module identification block -->
+    <div class="dm-ident">
+        <div class="dm-ident-head">
+            <span>DOC-SECOPS-AI-001</span>
+            <span>ISSUE 2026-07</span>
+            <span>LANGUAGE: EN (STE)</span>
+        </div>
+        <div class="dm-ident-body">
+            <h1 class="dm-title">SecOpsAI</h1>
+            <p class="dm-subtitle">A local-first security operations platform. It discovers network assets, monitors package registries, and turns telemetry into findings you can act on.</p>
+        </div>
+        <div class="dm-meta">
+            <div class="dm-meta-item">
+                <span class="dm-meta-key">APPLICABILITY</span>
+                macOS · Linux · Windows · Edge sensors
             </div>
-            
-            <h1>SecOpsAI<br><span>Local-first security operations.</span></h1>
-            
-            <p>SecOpsAI combines host and agent telemetry with SecOpsAI Edge network discovery, then turns assets, risky changes, supply-chain signals, and security events into findings, correlations, threat memory, response guidance, and reviewable actions.</p>
-            
-            <div class="hero-cta">
-                <a href="#install" class="btn btn-primary">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        <polyline points="7 10 12 15 17 10"/>
-                        <line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                    Install Now
-                </a>
-                <a href="https://docs.secopsai.dev" class="btn btn-secondary">View Documentation</a>
+            <div class="dm-meta-item">
+                <span class="dm-meta-key">DATA POLICY</span>
+                Local-first. No log shipping by default.
             </div>
-            
-            <div class="feature-pills">
-                <div class="pill">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                    </svg>
-                    No log shipping by default
+            <div class="dm-meta-item">
+                <span class="dm-meta-key">LICENSE</span>
+                MIT · Source available on GitHub
+            </div>
+        </div>
+    </div>
+
+    <!-- 1. Purpose -->
+    <section class="spec" id="purpose">
+        <h2>Purpose</h2>
+        <p class="lead">Most small teams do not know which devices are on their network. They also do not know which packages their software depends on. SecOpsAI answers both questions on your own hardware.</p>
+        <p>The platform collects host, network, and registry telemetry. It stores the data in a local SQLite store. It correlates the data into findings. Each finding has evidence, a severity, and a next action.</p>
+        <p>SecOpsAI Edge is the network sensor module. SecOpsAI Research is the package-registry surveillance module. The dashboard is the operator console for both.</p>
+    </section>
+
+    <!-- 2. Installation -->
+    <section class="spec" id="install">
+        <h2>Installation</h2>
+        <p>Select your platform. Run the command. The install takes less than five minutes.</p>
+
+        <div class="tabs" role="tablist" aria-label="Platform">
+            <button class="tab" role="tab" aria-selected="true" data-tab="macos">macOS</button>
+            <button class="tab" role="tab" aria-selected="false" data-tab="linux">LINUX</button>
+            <button class="tab" role="tab" aria-selected="false" data-tab="windows">WINDOWS</button>
+            <button class="tab" role="tab" aria-selected="false" data-tab="openclaw">OPENCLAW</button>
+        </div>
+
+        <div class="tab-panel" data-panel="macos">
+            <div class="procedure">
+                <div class="procedure-title"><span>PROC-01</span><span>INSTALL — macOS 12+</span></div>
+                <div class="procedure-body">
+                    <div class="install-cmd">
+                        <code>curl -fsSL https://secopsai.dev/install.sh | bash</code>
+                        <button class="copy-btn" data-copy="curl -fsSL https://secopsai.dev/install.sh | bash">COPY</button>
+                    </div>
+                    <p class="install-note">Requires macOS 12 or later. Nmap is required for Edge discovery. The installer checks for it.</p>
                 </div>
-                <div class="pill">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <ellipse cx="12" cy="5" rx="9" ry="3"/>
-                        <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
-                        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
-                    </svg>
-                    SQLite SOC store
+            </div>
+        </div>
+        <div class="tab-panel" data-panel="linux" hidden>
+            <div class="procedure">
+                <div class="procedure-title"><span>PROC-02</span><span>INSTALL — Debian / Ubuntu / RHEL</span></div>
+                <div class="procedure-body">
+                    <div class="install-cmd">
+                        <code>curl -fsSL https://secopsai.dev/install.sh | bash</code>
+                        <button class="copy-btn" data-copy="curl -fsSL https://secopsai.dev/install.sh | bash">COPY</button>
+                    </div>
+                    <p class="install-note">Requires Python 3.10 or later. A systemd service keeps the Edge worker running.</p>
                 </div>
-                <div class="pill">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="10"/>
-                        <polyline points="12 6 12 12 16 14"/>
-                    </svg>
-                    Hermes Agent telemetry
+            </div>
+        </div>
+        <div class="tab-panel" data-panel="windows" hidden>
+            <div class="procedure">
+                <div class="procedure-title"><span>PROC-03</span><span>INSTALL — Windows (WSL2)</span></div>
+                <div class="procedure-body">
+                    <div class="install-cmd">
+                        <code>wsl --install -d Ubuntu</code>
+                        <button class="copy-btn" data-copy="wsl --install -d Ubuntu">COPY</button>
+                    </div>
+                    <p class="install-note">SecOpsAI runs in WSL2 on Windows. After WSL is ready, use the Linux procedure.</p>
                 </div>
-                <div class="pill">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                        <path d="M2 17l10 5 10-5"/>
-                        <path d="M2 12l10 5 10-5"/>
-                    </svg>
-                    OpenClaw plugin included
+            </div>
+        </div>
+        <div class="tab-panel" data-panel="openclaw" hidden>
+            <div class="procedure">
+                <div class="procedure-title"><span>PROC-04</span><span>INSTALL — OpenClaw plugin</span></div>
+                <div class="procedure-body">
+                    <div class="install-cmd">
+                        <code>openclaw plugins install secopsai</code>
+                        <button class="copy-btn" data-copy="openclaw plugins install secopsai">COPY</button>
+                    </div>
+                    <p class="install-note">The OpenClaw plugin connects SecOpsAI to your local automation runtime.</p>
                 </div>
-                <div class="pill">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 3l8 4v6c0 5-3.5 8-8 8s-8-3-8-8V7l8-4z"/>
-                        <path d="M9 12l2 2 4-5"/>
-                    </svg>
-                    AI Dependency Guard
-                </div>
-                <div class="pill">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="3"/>
-                        <path d="M3 12h3M18 12h3M12 3v3M12 18v3"/>
-                        <path d="M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>
-                    </svg>
-                    Edge asset discovery
-                </div>
-                <div class="pill">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-                        <line x1="8" y1="21" x2="16" y2="21"/>
-                        <line x1="12" y1="17" x2="12" y2="21"/>
-                    </svg>
-                    macOS / Linux / Windows
-                </div>
-                <div class="pill">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 3C8.13 3 5 6.13 5 10v4c0 3.87 3.13 7 7 7s7-3.13 7-7v-4c0-3.87-3.13-7-7-7z"/>
-                        <path d="M8 10h8"/>
-                        <path d="M8 14h8"/>
-                        <path d="M12 6v12"/>
-                    </svg>
-                    Immune response mode
-                </div>
+            </div>
+        </div>
+
+        <div class="notice note">
+            <div class="notice-label">NOTE</div>
+            <div class="notice-body">Scan only networks you own or have written permission to test. SecOpsAI refuses public IP ranges by default.</div>
+        </div>
+    </section>
+
+    <!-- 3. Capabilities -->
+    <section class="spec" id="capabilities">
+        <h2>Capabilities</h2>
+        <table class="spec-table">
+            <caption>TABLE 1 — PLATFORM MODULES</caption>
+            <thead>
+                <tr><th>MODULE</th><th>FUNCTION</th><th>STATUS</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>secopsai-edge</td>
+                    <td>Discovers network assets, open services, and Wi-Fi networks. Flags new devices and risky changes.</td>
+                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                </tr>
+                <tr>
+                    <td>secopsai-research</td>
+                    <td>Monitors eight package registries for typosquats and suspicious releases. Scores events against your watchlists.</td>
+                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                </tr>
+                <tr>
+                    <td>triage-engine</td>
+                    <td>Correlates findings across hosts and platforms. Tracks status, disposition, and evidence.</td>
+                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                </tr>
+                <tr>
+                    <td>adaptive-response</td>
+                    <td>Evaluates response posture from signal memory. Guides containment without automated damage.</td>
+                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                </tr>
+                <tr>
+                    <td>ai-dependency-guard</td>
+                    <td>Checks AI-suggested packages for hallucination and slopsquatting risk before you install them.</td>
+                    <td>Live <span class="status-tag tag-live">LIVE</span></td>
+                </tr>
+                <tr>
+                    <td>secopsai-cloud</td>
+                    <td>Hosted dashboard, scheduled scans, and team workflows on Render and Cloudflare.</td>
+                    <td>Pilot <span class="status-tag tag-beta">PILOT</span></td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+
+    <!-- 4. Operation -->
+    <section class="spec" id="operation">
+        <h2>Operation</h2>
+        <p>SecOpsAI is terminal-native. The example shows a standard operator session.</p>
+        <div class="procedure">
+            <div class="procedure-title"><span>EXAMPLE 1</span><span>STANDARD OPERATOR SESSION</span></div>
+            <div class="procedure-body">
+<pre><span class="prompt">$</span> secopsai refresh --platform macos,openclaw,hermes
+<span class="ok-line">[OK]</span> <span class="dim-line">Collected host and agent telemetry. Findings persisted to the local store.</span>
+
+<span class="prompt">$</span> secopsai research worker run --once
+<span class="ok-line">[OK]</span> <span class="dim-line">8 collectors due · 6 registries current · 2 coverage gaps queued for replay</span>
+
+<span class="prompt">$</span> secopsai research score run
+<span class="ok-line">[OK]</span> <span class="dim-line">1,204 events scored · 1 candidate above threshold</span>
+
+<span class="prompt">$</span> secopsai list --severity high
+<span class="warn-line">HIGH</span> <span class="dim-line">Possible typosquat package observed on nuget feed</span>
+<span class="dim-line">CAN-… | reference: braintree | status: new | review required</span></pre>
             </div>
         </div>
     </section>
 
-    <!-- Terminal Demo -->
-    <section class="terminal-section">
-        <div class="container">
-            <div class="terminal">
-                <div class="terminal-header">
-                    <div class="terminal-dot dot-red"></div>
-                    <div class="terminal-dot dot-yellow"></div>
-                    <div class="terminal-dot dot-green"></div>
-                    <span class="terminal-title">secopsai — local pipeline</span>
-                </div>
-                <div class="terminal-body">
-                    <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai refresh --platform macos,openclaw,hermes</span></div>
-                    <div class="terminal-line"><span class="success">[OK] Collected host + OpenClaw + Hermes telemetry</span></div>
-                    <div class="terminal-line"><span class="success">[OK] Findings persisted to local SOC store (SQLite)</span></div>
-                    <div class="terminal-line"></div>
-                    <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai-supply-chain check --project-path .</span></div>
-                    <div class="terminal-line"><span class="success">✓ 8 packages scanned</span></div>
-                    <div class="terminal-line"><span class="warning">⚠ 1 suspicious package detected</span></div>
-                    <div class="terminal-line"></div>
-                    <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai supply-chain ai-dependency-guard --path . --json</span></div>
-                    <div class="terminal-line"><span class="success">[OK] AI dependency guard checked hallucinated package risk</span></div>
-                    <div class="terminal-line"></div>
-                    <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai correlate</span></div>
-                    <div class="terminal-line"><span class="success">[OK] Cross-platform correlation complete</span></div>
-                    <div class="terminal-line"></div>
-                    <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai adaptive-response --persist-memory</span></div>
-                    <div class="terminal-line"><span class="success">[OK] Immune response mode evaluated</span></div>
-                    <div class="terminal-line"><span class="output">signals: response posture, confidence memory, signal routing, safe probes, deception controls</span></div>
-                    <div class="terminal-line"></div>
-                    <div class="terminal-line"><span class="prompt">$</span> <span class="command">secopsai list --severity high</span></div>
-                    <div class="terminal-line"><span class="warning">⚠ HIGH: Suspicious execution / policy abuse detected</span></div>
-                    <div class="terminal-line"><span class="output">SCF-… | npm package | status=open | disposition=unreviewed</span></div>
-                </div>
-            </div>
+    <!-- 5. Safety -->
+    <section class="spec" id="safety">
+        <h2>Safety boundaries</h2>
+        <p>SecOpsAI is built to collect and analyze. It does not attack. These rules apply everywhere in the platform.</p>
+
+        <div class="notice note">
+            <div class="notice-label">NOTE</div>
+            <div class="notice-body">Raw scan output and package artifacts stay on your machine. Cloud reports contain minimized findings only.</div>
+        </div>
+        <div class="notice caution">
+            <div class="notice-label">CAUTION</div>
+            <div class="notice-body">Package code is never executed during analysis. Static analysis is the default. Sandbox analysis needs your explicit approval.</div>
+        </div>
+        <div class="notice warning">
+            <div class="notice-label">WARNING</div>
+            <div class="notice-body">Do not scan networks you do not own. Unauthorized scanning can break the law in your jurisdiction. Use the dry-run preview before every scan.</div>
         </div>
     </section>
 
-    <!-- Install Section -->
-    <section class="install-section" id="install">
-        <div class="container">
-            <div class="section-header">
-                <h2>Install SecOpsAI</h2>
-                <p>Works everywhere. Installs everything. Select your platform below.</p>
-            </div>
-            
-            <!-- Install Tabs -->
-            <div class="install-tabs">
-                <button class="install-tab active" data-tab="oneliner">
-                    One-liner
-                    <span class="recommended">RECOMMENDED</span>
-                </button>
-                <button class="install-tab" data-tab="npm">npm</button>
-                <button class="install-tab" data-tab="openclaw">OpenClaw Plugin</button>
-                <button class="install-tab" data-tab="hermes">
-                    Hermes Agent
-                    <span class="recommended" style="background: #eab308; color: #0a0a0a;">BETA</span>
-                </button>
-                <button class="install-tab" data-tab="macos">macOS</button>
-                <button class="install-tab" data-tab="linux">Linux</button>
-                <button class="install-tab" data-tab="windows">Windows</button>
-            </div>
-            
-            <!-- Install Panels -->
-            <div class="install-panels">
-                <!-- One-liner Panel -->
-                <div class="install-panel active" data-panel="oneliner">
-                    <div class="detected-device" id="detected-oneliner">
-                        <span>✓</span>
-                        <span>Detected: <strong id="device-name-oneliner">macOS</strong></span>
-                    </div>
-                    <h3>One-liner install</h3>
-                    <p class="description">The fastest way to get started. Installs Python, dependencies, and everything else for you.</p>
-                    <div class="code-block">
-                        <code id="code-oneliner">curl -fsSL https://secopsai.dev/install.sh | bash</code>
-                        <button class="copy-btn" onclick="copyToClipboard('code-oneliner', this)">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                            </svg>
-                            Copy
-                        </button>
-                    </div>
-                    <div class="requirements">
-                        <strong>Supports:</strong> macOS, Linux, Windows (via WSL2)
-                    </div>
-                </div>
-                
-                <!-- npm Panel -->
-                <div class="install-panel" data-panel="npm">
-                    <div class="detected-device hidden" id="detected-npm">
-                        <span>✓</span>
-                        <span>Detected: Node.js environment</span>
-                    </div>
-                    <h3>Install via npm</h3>
-                    <p class="description">For Node.js users who prefer the public npm package name.</p>
-                    <div class="code-block">
-                        <code id="code-npm">npm install -g secopsai</code>
-                        <button class="copy-btn" onclick="copyToClipboard('code-npm', this)">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                            </svg>
-                            Copy
-                        </button>
-                    </div>
-                    <div class="requirements">
-                        <strong>Requires:</strong> Node.js 18+
-                    </div>
-                </div>
-                
-                <!-- OpenClaw Plugin Panel -->
-                <div class="install-panel" data-panel="openclaw">
-                    <h3>OpenClaw Plugin</h3>
-                    <p class="description">Native TypeScript plugin for seamless OpenClaw integration. Install once, use 8 built-in tools directly from OpenClaw.</p>
-                    <div class="code-block">
-                        <code id="code-openclaw">openclaw plugins install secopsai</code>
-                        <button class="copy-btn" onclick="copyToClipboard('code-openclaw', this)">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                            </svg>
-                            Copy
-                        </button>
-                    </div>
-                    <div class="requirements">
-                        <strong>Requires:</strong> OpenClaw 0.9+
-                    </div>
-                </div>
-                
-                <!-- Hermes Agent Panel -->
-                <div class="install-panel" data-panel="hermes">
-                    <h3>Hermes Agent Telemetry</h3>
-                    <p class="description">Enable read-only telemetry collection from your local Hermes Agent history and session logs.</p>
-                    <div class="code-block">
-                        <code id="code-hermes">secopsai refresh --platform hermes</code>
-                        <button class="copy-btn" onclick="copyToClipboard('code-hermes', this)">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                            </svg>
-                            Copy
-                        </button>
-                    </div>
-                    <div class="requirements">
-                        <strong>Requires:</strong> Hermes Agent installed locally (reads from <code>~/.hermes/</code>)
-                    </div>
-                </div>
-                
-                <!-- macOS Panel -->
-                <div class="install-panel" data-panel="macos">
-                    <div class="detected-device hidden" id="detected-macos">
-                        <span>✓</span>
-                        <span>Detected: <strong>macOS</strong></span>
-                    </div>
-                    <h3>macOS Installation</h3>
-                    <p class="description">Install using the one-liner or Homebrew.</p>
-                    <div class="code-block">
-                        <code id="code-macos">curl -fsSL https://secopsai.dev/install.sh | bash</code>
-                        <button class="copy-btn" onclick="copyToClipboard('code-macos', this)">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                            </svg>
-                            Copy
-                        </button>
-                    </div>
-                    <div class="requirements">
-                        <strong>Supports:</strong> macOS 10.15+ (Intel & Apple Silicon)
-                    </div>
-                </div>
-                
-                <!-- Linux Panel -->
-                <div class="install-panel" data-panel="linux">
-                    <div class="detected-device hidden" id="detected-linux">
-                        <span>✓</span>
-                        <span>Detected: <strong>Linux</strong></span>
-                    </div>
-                    <h3>Linux Installation</h3>
-                    <p class="description">Install using the one-liner on any Linux distribution.</p>
-                    <div class="code-block">
-                        <code id="code-linux">curl -fsSL https://secopsai.dev/install.sh | bash</code>
-                        <button class="copy-btn" onclick="copyToClipboard('code-linux', this)">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                            </svg>
-                            Copy
-                        </button>
-                    </div>
-                    <div class="requirements">
-                        <strong>Supports:</strong> Ubuntu, Debian, Fedora, CentOS, Arch, and more
-                    </div>
-                </div>
-                
-                <!-- Windows Panel -->
-                <div class="install-panel" data-panel="windows">
-                    <div class="detected-device hidden" id="detected-windows">
-                        <span>✓</span>
-                        <span>Detected: <strong>Windows</strong></span>
-                    </div>
-                    <h3>Windows Installation (WSL2 Required)</h3>
-                    <p class="description">SecOpsAI requires a Linux environment. Windows users must use WSL2.</p>
-                    <div class="code-block">
-                        <code id="code-windows">wsl --install -d Ubuntu</code>
-                        <button class="copy-btn" onclick="copyToClipboard('code-windows', this)">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                            </svg>
-                            Copy
-                        </button>
-                    </div>
-                    <div class="requirements">
-                        <strong>Step 1:</strong> Install WSL2 + Ubuntu<br>
-                        <strong>Step 2:</strong> Run the one-liner inside WSL
-                    </div>
-                </div>
-            </div>
-        </div>
+    <!-- 6. References -->
+    <section class="spec" id="references">
+        <h2>References</h2>
+        <table class="spec-table">
+            <caption>TABLE 2 — RELATED DOCUMENTS</caption>
+            <thead>
+                <tr><th>REF</th><th>DOCUMENT</th><th>LOCATION</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>[R1]</td><td>Operator documentation and runbooks</td><td><a href="https://docs.secopsai.dev">docs.secopsai.dev</a></td></tr>
+                <tr><td>[R2]</td><td>Security research and advisories</td><td><a href="https://blog.secopsai.dev">blog.secopsai.dev</a></td></tr>
+                <tr><td>[R3]</td><td>Source code and issue tracker</td><td><a href="https://github.com/Techris93/secopsai">github.com/Techris93/secopsai</a></td></tr>
+                <tr><td>[R4]</td><td>SecOpsAI Edge deployment guide</td><td><a href="https://docs.secopsai.dev/edge-integration/">docs.secopsai.dev/edge-integration</a></td></tr>
+            </tbody>
+        </table>
     </section>
 
-    <!-- Supply Chain Section -->
-    <section class="supply-chain-section" id="features">
-        <div class="container">
-            <div class="supply-chain-grid">
-                <div class="supply-chain-content">
-                    <h2>🛡️ <span>Supply Chain</span> Security</h2>
-                    <p>Detect and mitigate supply chain attacks on npm, PyPI, Vim, Emacs, and more. Protect your dependencies before they compromise your systems.</p>
-                    
-                    <ul class="threat-list">
-                        <li>
-                            <span class="threat-icon">📦</span>
-                            <span>Malicious npm packages (axios@1.14.1)</span>
-                        </li>
-                        <li>
-                            <span class="threat-icon">🐍</span>
-                            <span>PyPI backdoors (litellm@1.82.7)</span>
-                        </li>
-                        <li>
-                            <span class="threat-icon">📝</span>
-                            <span>Editor exploits (Vim, Emacs)</span>
-                        </li>
-                        <li>
-                            <span class="threat-icon">🐭</span>
-                            <span>Runtime droppers and RATs</span>
-                        </li>
-                        <li>
-                            <span class="threat-icon">🔤</span>
-                            <span>Typosquatting attacks</span>
-                        </li>
-                        <li>
-                            <span class="threat-icon">🤖</span>
-                            <span>AI hallucinated package / slopsquatting risk</span>
-                        </li>
-                    </ul>
-                    
-                    <a href="https://docs.secopsai.dev/supply-chain/" class="btn btn-primary">Learn More</a>
-                </div>
-                
-                <div class="supply-chain-terminal">
-                    <div class="terminal-header">
-                        <div class="terminal-dot dot-red"></div>
-                        <div class="terminal-dot dot-yellow"></div>
-                        <div class="terminal-dot dot-green"></div>
-                        <span class="terminal-title">secopsai-supply-chain</span>
-                    </div>
-                    <div class="terminal-body">
-                        <pre><span class="prompt">$</span> <span class="command">secopsai-supply-chain check --project-path .</span>
-
-<span class="output">📦 Supply Chain Security Report</span>
-<span class="output">━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span>
-<span class="success">✓ 8 Sigma detection rules active</span>
-<span class="success">✓ 8 YARA signatures loaded</span>
-<span class="success">✓ npm registry: CONNECTED</span>
-
-<span class="output">🔍 Scan Results:</span>
-  <span class="success">lodash@4.17.21      ✓ CLEAN</span>
-  <span class="success">axios@1.6.0         ✓ CLEAN</span>
-  <span class="success">react@18.2.0        ✓ CLEAN</span>
-  <span class="success">express@4.18.2      ✓ CLEAN</span>
-  
-<span class="success">🛡️ No threats detected!</span></pre>
-                        <pre><span class="prompt">$</span> <span class="command">secopsai supply-chain ai-dependency-guard --path . --json</span>
-<span class="success">✓ AI Dependency Guard: no hallucinated packages found</span></pre>
-                    </div>
-                </div>
-            </div>
+    <footer class="doc-footer">
+        <div>
+            <div class="footer-id">DOC-SECOPS-AI-001 · ISSUE 2026-07</div>
+            <div>SecOpsAI — local-first security operations.</div>
         </div>
-    </section>
-
-    <!-- Stats Section -->
-    <section class="stats-section">
-        <div class="container">
-            <div class="stats-grid">
-                <div class="stat-item">
-                    <div class="stat-number">100+</div>
-                    <div class="stat-label">Detection Rules</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-number">5</div>
-                    <div class="stat-label">Platforms Supported</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-number">50K+</div>
-                    <div class="stat-label">Lines of Code</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-number">0</div>
-                    <div class="stat-label">External API Dependencies</div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Features Section -->
-    <section class="features-section">
-        <div class="container">
-            <div class="section-header">
-                <h2>Detect, triage, and act — locally</h2>
-                <p>Everything you need for local-first security operations</p>
-            </div>
-            
-            <div class="features-grid">
-                <div class="feature-card">
-                    <div class="feature-icon">EDGE</div>
-                    <h3>SecOpsAI Edge <span class="new-tag">PILOT</span></h3>
-                    <p>Discover internal assets, risky services, and Wi-Fi changes with a local sensor, then import normalized graph context and findings into Core without exporting raw scan logs.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">🔌</div>
-                    <h3>OpenClaw Plugin</h3>
-                    <p>Native TypeScript plugin for seamless OpenClaw integration. Install once, use 8 built-in tools directly from OpenClaw.</p>
-                </div>
-                
-                <div class="feature-card">
-                    <div class="feature-icon">🛡️</div>
-                    <h3>Supply Chain Security <span class="new-tag">NEW</span></h3>
-                    <p>Detect malicious npm/PyPI packages, editor exploits (Vim, Emacs), and runtime droppers. 8 Sigma rules + 8 YARA signatures.</p>
-                </div>
-                
-                <div class="feature-card">
-                    <div class="feature-icon">🧠</div>
-                    <h3>Adaptive Intelligence</h3>
-                    <p>Auto-generates detection rules from CVEs and threat feeds. Validates with F1 scores. Only deploys improving rules.</p>
-                </div>
-
-                <div class="feature-card">
-                    <div class="feature-icon">🧠</div>
-                    <h3>Adaptive Response Layer <span class="new-tag">NEW</span></h3>
-                    <p>Combines threat memory, confidence scoring, weak-signal routing, time-aware detection, safe probes, and deception controls to prioritize threats and suggest containment.</p>
-                </div>
-                
-                <div class="feature-card">
-                    <div class="feature-icon">💬</div>
-                    <h3>WhatsApp Workflows</h3>
-                    <p>Use OpenClaw to interact with SecOpsAI from WhatsApp: "check malware", "show OCF-…", "mitigate OCF-…".</p>
-                </div>
-                
-                <div class="feature-card">
-                    <div class="feature-icon">🎯</div>
-                    <h3>Threat Intel (IOCs)</h3>
-                    <p>Pull open-source IOCs, normalize + score them, optional local enrichment (DNS), then match against events.</p>
-                </div>
-                
-                <div class="feature-card">
-                    <div class="feature-icon">🔒</div>
-                    <h3>Local-first</h3>
-                    <p>All data stays on your machine. SQLite SOC store. No log shipping by default. You own your security data.</p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Footer -->
-    <footer>
-        <div class="container">
-            <div class="footer-links">
-                <a href="https://docs.secopsai.dev">Documentation</a>
-                <a href="https://github.com/Techris93/secopsai">GitHub</a>
-                <a href="https://docs.secopsai.dev/supply-chain/">Supply Chain Security</a>
-                <a href="https://x.com/secopsai">X (Twitter)</a>
-            </div>
-            <p>© 2026 SecOpsAI. Open source under MIT License.</p>
+        <div>
+            <div>Security contact: <a href="mailto:security@secopsai.dev">security@secopsai.dev</a></div>
+            <div>Research contact: <a href="mailto:research@secopsai.dev">research@secopsai.dev</a></div>
         </div>
     </footer>
 
-    <script>
-        // Device Detection
-        function detectDevice() {
-            const userAgent = navigator.userAgent.toLowerCase();
-            const platform = navigator.platform.toLowerCase();
-            
-            if (userAgent.includes('win')) return 'windows';
-            if (userAgent.includes('mac') || platform.includes('mac')) return 'macos';
-            if (userAgent.includes('linux')) return 'linux';
-            
-            return 'oneliner'; // Default fallback
-        }
-        
-        // Initialize device detection
-        function initDeviceDetection() {
-            const device = detectDevice();
-            const deviceNames = {
-                'windows': 'Windows',
-                'macos': 'macOS',
-                'linux': 'Linux',
-                'oneliner': 'Universal'
-            };
-            
-            // Update detected device display
-            const detectedEl = document.getElementById('detected-oneliner');
-            const deviceNameEl = document.getElementById('device-name-oneliner');
-            
-            if (detectedEl && deviceNameEl) {
-                deviceNameEl.textContent = deviceNames[device] || 'Your Device';
-            }
-            
-            // Show detected badge for matching platform
-            const platformMap = {
-                'macos': 'detected-macos',
-                'linux': 'detected-linux',
-                'windows': 'detected-windows'
-            };
-            
-            if (platformMap[device]) {
-                const platformEl = document.getElementById(platformMap[device]);
-                if (platformEl) {
-                    platformEl.classList.remove('hidden');
-                }
-            }
-            
-            // Auto-select appropriate tab based on device
-            if (device === 'windows') {
-                switchTab('windows');
-            } else if (device === 'linux') {
-                switchTab('linux');
-            } else if (device === 'macos') {
-                switchTab('macos');
-            }
-        }
-        
-        // Tab Switching
-        function switchTab(tabName) {
-            // Update tab buttons
-            document.querySelectorAll('.install-tab').forEach(tab => {
-                tab.classList.remove('active');
-                if (tab.dataset.tab === tabName) {
-                    tab.classList.add('active');
-                }
-            });
-            
-            // Update panels
-            document.querySelectorAll('.install-panel').forEach(panel => {
-                panel.classList.remove('active');
-                if (panel.dataset.panel === tabName) {
-                    panel.classList.add('active');
-                }
-            });
-        }
-        
-        // Initialize tabs
-        document.querySelectorAll('.install-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                switchTab(tab.dataset.tab);
+</div>
+
+<script>
+    // Platform tabs — one panel visible at a time.
+    const tabs = document.querySelectorAll('.tab');
+    tabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+            tabs.forEach((t) => t.setAttribute('aria-selected', String(t === tab)));
+            document.querySelectorAll('.tab-panel').forEach((panel) => {
+                panel.hidden = panel.dataset.panel !== tab.dataset.tab;
             });
         });
-        
-        // Copy to clipboard
-        function copyToClipboard(elementId, btn) {
-            const code = document.getElementById(elementId).textContent;
-            navigator.clipboard.writeText(code).then(() => {
-                const originalHTML = btn.innerHTML;
-                btn.innerHTML = `
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="20 6 9 17 4 12"/>
-                    </svg>
-                    Copied!
-                `;
-                btn.classList.add('copied');
-                
-                setTimeout(() => {
-                    btn.innerHTML = originalHTML;
-                    btn.classList.remove('copied');
-                }, 2000);
-            });
-        }
-        
-        // Initialize on page load
-        document.addEventListener('DOMContentLoaded', initDeviceDetection);
-        
-        // Smooth scroll for anchor links
-        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-            anchor.addEventListener('click', function (e) {
-                e.preventDefault();
-                const target = document.querySelector(this.getAttribute('href'));
-                if (target) {
-                    target.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'start'
-                    });
-                }
-            });
+    });
+    // Copy buttons on install commands.
+    document.querySelectorAll('.copy-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(btn.dataset.copy || '');
+                btn.textContent = 'COPIED';
+                setTimeout(() => { btn.textContent = 'COPY'; }, 1600);
+            } catch (err) {
+                btn.textContent = 'SELECT TEXT';
+            }
         });
-    </script>
+    });
+</script>
 </body>
 </html>
