@@ -16,6 +16,7 @@ from secopsai.research_surveillance import (
     recover_interrupted_runs,
     retry_dead_letters,
     run_registry_collector,
+    set_collector_enabled,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "nuget_catalog"
@@ -745,3 +746,21 @@ def test_rubygems_request_overlaps_cursor(tmp_path):
     urls = []
     run_registry_collector(ecosystem="rubygems", db_path=db_path, fetcher=_rubygems_fetcher(urls))
     assert _window_from_param(urls[0]) == "2026-07-20T11:55:00.000Z"
+
+
+def test_paused_collector_refuses_runs_and_keeps_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+    cursor_before = _cursor_value(db_path)
+
+    paused = set_collector_enabled(ecosystem="nuget", enabled=False, db_path=db_path)
+    assert paused["enabled"] is False
+    assert paused["cursor"] == cursor_before
+    with pytest.raises(CollectorError, match="paused"):
+        run_registry_collector(ecosystem="nuget", db_path=db_path, fetcher=_fetcher())
+    assert _cursor_value(db_path) == cursor_before
+
+    resumed = set_collector_enabled(ecosystem="nuget", enabled=True, db_path=db_path)
+    assert resumed["enabled"] is True
+    result = run_registry_collector(ecosystem="nuget", since=SINCE_ALL, db_path=db_path, fetcher=_fetcher())
+    assert result["status"] == "completed"
