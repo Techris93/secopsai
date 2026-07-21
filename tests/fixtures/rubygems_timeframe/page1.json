@@ -1,0 +1,28 @@
+[
+  {
+    "name": "acme-tools",
+    "version": "2.1.0",
+    "platform": "ruby",
+    "version_created_at": "2026-07-21T12:00:00.000Z",
+    "authors": "Acme",
+    "info": "A legitimate tools gem.",
+    "licenses": ["MIT"],
+    "metadata": {"homepage_uri": "https://example.com/acme-tools"},
+    "yanked": false,
+    "sha": "abc123",
+    "gem_uri": "https://rubygems.org/gems/acme-tools-2.1.0.gem"
+  },
+  {
+    "name": "evil-skimmer",
+    "version": "0.0.1",
+    "platform": "ruby",
+    "version_created_at": "2026-07-21T12:05:00.000Z",
+    "authors": "Unknown",
+    "info": "Copied description from a legitimate gem.",
+    "licenses": [],
+    "metadata": {},
+    "yanked": true,
+    "sha": "def456",
+    "gem_uri": "https://rubygems.org/gems/evil-skimmer-0.0.1.gem"
+  }
+]

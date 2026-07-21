@@ -1,4 +1,6 @@
 import json
+import re
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -54,7 +56,7 @@ def _db(tmp_path):
 
 
 def _cursor_value(db_path, collector_id="COL-NUGET-CATALOG"):
-    soc_store.init_db(db_path)
+    ensure_collectors(db_path=db_path)
     connection = soc_store.connect(db_path)
     try:
         row = connection.execute(
@@ -618,3 +620,128 @@ def test_pypi_diff_truncation_flag(tmp_path):
     )
     assert result["diff_truncated"] is True
     assert result["events_stored"] == 2
+
+
+RUBYGEMS_FIXTURES = Path(__file__).parent / "fixtures" / "rubygems_timeframe"
+
+
+def _rubygems_fetcher(captured_urls, fail_pages=()):
+    def fetch(url, max_bytes):
+        captured_urls.append(url)
+        match = re.search(r"page=(\d+)", url)
+        page = int(match.group(1)) if match else 1
+        if page in fail_pages:
+            return 500, {"content-type": "application/json"}, b'{"error": "registry unavailable"}'
+        name = f"page{min(page, 3)}.json"
+        return 200, {"content-type": "application/json"}, (RUBYGEMS_FIXTURES / name).read_bytes()
+
+    return SafeFetcher(fetch=fetch)
+
+
+def _set_cursor(db_path, collector_id, value):
+    connection = soc_store.connect(db_path)
+    try:
+        connection.execute("UPDATE registry_cursors SET cursor_value = ? WHERE collector_id = ?", (value, collector_id))
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _window_from_param(url):
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+    return query["from"][0]
+
+
+def test_rubygems_collector_seeds_with_lookback_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    collectors = ensure_collectors(db_path=db_path)
+    rubygems = next(item for item in collectors if item["collector_id"] == "COL-RUBYGEMS-TIMEFRAME")
+    assert rubygems["mode"] == "timeframe_poll"
+    cursor = rubygems["cursor"]["cursor_value"]
+    assert cursor != "0"
+    assert "T" in cursor
+
+
+def test_rubygems_run_stores_version_events_and_advances_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    cursor_before = _cursor_value(db_path, collector_id="COL-RUBYGEMS-TIMEFRAME")
+    result = run_registry_collector(ecosystem="rubygems", db_path=db_path, fetcher=_rubygems_fetcher(urls))
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 3
+    assert result["cursor_after"] > cursor_before
+    assert "window_incomplete" not in result
+
+    events = list_feed_events(db_path=db_path)
+    assert len(events) == 3
+    by_key = {(event["package"], event["version"], event["metadata"]["platform"]): event for event in events}
+    published = by_key[("acme-tools", "2.1.0", "ruby")]
+    assert published["event_type"] == "published"
+    assert published["metadata"]["sha256"] == "abc123"
+    assert published["registry_timestamp"] == "2026-07-21T12:00:00.000Z"
+    yanked = by_key[("evil-skimmer", "0.0.1", "ruby")]
+    assert yanked["event_type"] == "yanked"
+    assert yanked["metadata"]["yanked"] is True
+    java = by_key[("acme-tools", "2.1.0", "java")]
+    assert java["event_type"] == "published"
+    assert java["metadata"]["platform"] == "java"
+
+
+def test_rubygems_rerun_is_idempotent(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    run_registry_collector(ecosystem="rubygems", db_path=db_path, fetcher=_rubygems_fetcher(urls))
+    result = run_registry_collector(ecosystem="rubygems", db_path=db_path, fetcher=_rubygems_fetcher(urls))
+    assert result["events_stored"] == 0
+    assert result["events_duplicate"] == 3
+    assert len(list_feed_events(db_path=db_path)) == 3
+
+
+def test_rubygems_page_budget_flags_incomplete_and_holds_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    cursor_before = _cursor_value(db_path, collector_id="COL-RUBYGEMS-TIMEFRAME")
+    result = run_registry_collector(
+        ecosystem="rubygems", max_pages=1, db_path=db_path, fetcher=_rubygems_fetcher(urls)
+    )
+    assert result["status"] == "completed"
+    assert result["window_incomplete"] is True
+    assert result["events_stored"] == 2
+    # The cursor must not advance past an undrained window.
+    assert result["cursor_after"] == cursor_before
+
+
+def test_rubygems_page_failure_dead_letters_and_records_gap(tmp_path):
+    db_path = _db(tmp_path)
+    urls = []
+    cursor_before = _cursor_value(db_path, collector_id="COL-RUBYGEMS-TIMEFRAME")
+    result = run_registry_collector(
+        ecosystem="rubygems", db_path=db_path, fetcher=_rubygems_fetcher(urls, fail_pages={2})
+    )
+    assert result["status"] == "failed"
+    assert result["coverage"] == "gap"
+    assert result["cursor_after"] == cursor_before
+    letters = _dead_letters(db_path)
+    assert len(letters) == 1
+    assert letters[0]["item_kind"] == "page"
+
+
+def test_rubygems_backfill_window_slices_forward(tmp_path):
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+    _set_cursor(db_path, "COL-RUBYGEMS-TIMEFRAME", "2026-07-18T00:00:00.000Z")
+    urls = []
+    result = run_registry_collector(ecosystem="rubygems", db_path=db_path, fetcher=_rubygems_fetcher(urls))
+    assert result["status"] == "completed"
+    # from = cursor - 300s overlap; to = from + 24h slice (not "now").
+    assert _window_from_param(urls[0]) == "2026-07-17T23:55:00.000Z"
+    assert result["cursor_after"] == "2026-07-18T23:55:00.000Z"
+
+
+def test_rubygems_request_overlaps_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+    _set_cursor(db_path, "COL-RUBYGEMS-TIMEFRAME", "2026-07-20T12:00:00.000Z")
+    urls = []
+    run_registry_collector(ecosystem="rubygems", db_path=db_path, fetcher=_rubygems_fetcher(urls))
+    assert _window_from_param(urls[0]) == "2026-07-20T11:55:00.000Z"
