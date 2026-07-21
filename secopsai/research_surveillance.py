@@ -40,6 +40,8 @@ RUBYGEMS_ALLOWED_HOSTS: Tuple[str, ...] = ("rubygems.org",)
 NPM_REPLICATE_URL = "https://replicate.npmjs.com/_changes"
 NPM_REPLICATE_ROOT_URL = "https://replicate.npmjs.com/"
 NPM_ALLOWED_HOSTS: Tuple[str, ...] = ("replicate.npmjs.com",)
+GO_INDEX_URL = "https://index.golang.org/index"
+GO_ALLOWED_HOSTS: Tuple[str, ...] = ("index.golang.org",)
 
 MAX_CATALOG_INDEX_BYTES = 8 * 1024 * 1024
 MAX_CATALOG_PAGE_BYTES = 32 * 1024 * 1024
@@ -47,11 +49,13 @@ MAX_CHANGES_BYTES = 32 * 1024 * 1024
 MAX_SIMPLE_INDEX_BYTES = 128 * 1024 * 1024
 MAX_TIMEFRAME_PAGE_BYTES = 8 * 1024 * 1024
 MAX_NPM_CHANGES_BYTES = 32 * 1024 * 1024
+MAX_GO_INDEX_BYTES = 16 * 1024 * 1024
 MAX_LEAF_BYTES = 2 * 1024 * 1024
 DEFAULT_MAX_PAGES = 10
 DEFAULT_LOOKBACK_HOURS = 24
 DEFAULT_MAX_WINDOW_HOURS = 24
 DEFAULT_NPM_PAGE_LIMIT = 5000
+DEFAULT_GO_PAGE_LIMIT = 2000
 MAX_DEAD_LETTER_ATTEMPTS = 8
 DEFAULT_MAX_DIFF_EVENTS = 10000
 ALGORITHM_VERSION = "registry-surveillance.v1"
@@ -137,6 +141,22 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "cursor_seed": "zero",
         "cursor_multiplier": 1,
         "page_limit": DEFAULT_NPM_PAGE_LIMIT,
+        "interval_seconds": 900,
+    },
+    "go": {
+        "collector_id": "COL-GO-INDEX",
+        "source_id": "REG-GO",
+        "name": "Go module index",
+        "feed_url": GO_INDEX_URL,
+        "mode": "event_feed",
+        "allowed_hosts": GO_ALLOWED_HOSTS,
+        "coverage_mode": "module_version_index",
+        # The official module index is a chronological NDJSON feed of new
+        # module versions. Each batch persists with its cursor advance in
+        # one transaction. Retractions and deletions are not index events;
+        # the capability registry states that limitation.
+        "cursor_seed": "lookback",
+        "page_limit": DEFAULT_GO_PAGE_LIMIT,
         "interval_seconds": 900,
     },
 }
@@ -339,6 +359,34 @@ def _fetch_json_array(
     if not isinstance(payload, list):
         raise IntakeError("registry response was not a JSON array")
     return payload
+
+
+def _fetch_ndjson(
+    fetcher: SafeFetcher,
+    url: str,
+    *,
+    allowed_hosts: Iterable[str],
+    max_bytes: int,
+) -> List[Dict[str, Any]]:
+    """Fetch a newline-delimited JSON stream. Empty body means caught up."""
+    _final_url, _headers, body = fetcher.get(url, allowed_hosts=allowed_hosts, max_bytes=max_bytes)
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise IntakeError("registry response was not valid UTF-8") from exc
+    records: List[Dict[str, Any]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise IntakeError("registry NDJSON stream contained an invalid record") from exc
+        if not isinstance(record, dict):
+            raise IntakeError("registry NDJSON record was not a JSON object")
+        records.append(record)
+    return records
 
 
 def _record_dead_letter(
@@ -1235,6 +1283,105 @@ def _ingest_npm_changes(
     return outcome
 
 
+def _ingest_go_index(
+    *,
+    collector: Dict[str, Any],
+    cursor_before: str,
+    max_pages: int,
+    fetcher: SafeFetcher,
+    run_id: str,
+    db_path: Optional[str],
+) -> Dict[str, Any]:
+    """Ingest the Go module index NDJSON feed with a timestamp cursor.
+
+    Each fetched page persists with its cursor advance in one transaction,
+    so an interruption can never skip module versions. Cursors are stored
+    at millisecond precision; the tiny overlap against the index's
+    microsecond timestamps is absorbed by idempotency keys.
+    """
+    config = _decode(collector["config_json"], {})
+    allowed_hosts = config.get("allowed_hosts", [])
+    page_limit = max(1, min(int(config.get("page_limit", DEFAULT_GO_PAGE_LIMIT)), 2000))
+    outcome = _empty_outcome(cursor_before)
+
+    since = cursor_before
+    with closing(soc_store.connect(db_path)) as connection:
+        for page_number in range(1, max(1, min(int(max_pages), 500)) + 1):
+            page_url = f"{collector['feed_url']}?since={urllib.parse.quote(since)}&limit={page_limit}"
+            outcome["pages_selected"] += 1
+            try:
+                records = _fetch_ndjson(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_GO_INDEX_BYTES)
+            except (IntakeError, CollectorError) as exc:
+                outcome["error"] = f"module index fetch failed: {exc}"
+                with connection:
+                    _record_dead_letter(
+                        connection,
+                        collector_id=collector["collector_id"],
+                        run_id=run_id,
+                        url=page_url,
+                        item_kind="page",
+                        payload={"since": since},
+                        error=str(exc),
+                    )
+                break
+            if not records:
+                break
+            last_ts: Optional[str] = None
+            now = _format_ts(_utcnow())
+            with connection:
+                for record in records:
+                    path = str(record.get("Path") or "").strip()
+                    version = str(record.get("Version") or "").strip()
+                    timestamp = str(record.get("Timestamp") or "").strip()
+                    if not path or not version or not timestamp:
+                        continue
+                    registry_ts = _format_ts(_parse_ts(timestamp))
+                    outcome["events_seen"] += 1
+                    key = _idempotency_key(collector["ecosystem"], path, version, registry_ts, "published")
+                    metadata = {
+                        "module_path": path,
+                        "algorithm_version": ALGORITHM_VERSION,
+                    }
+                    cursor = connection.execute(
+                        """INSERT INTO registry_feed_events
+                        (feed_event_id, collector_id, ecosystem, package, version, event_type,
+                         registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
+                         idempotency_key, collected_at, processing_state)
+                        VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, 0, ?, ?, ?, 'pending')
+                        ON CONFLICT(idempotency_key) DO NOTHING""",
+                        (
+                            _id("RFE"),
+                            collector["collector_id"],
+                            collector["ecosystem"],
+                            path,
+                            version,
+                            registry_ts,
+                            page_url,
+                            f"https://proxy.golang.org/{path}/@v/{version}.info",
+                            _json(metadata),
+                            key,
+                            now,
+                        ),
+                    )
+                    if cursor.rowcount == 0:
+                        outcome["events_duplicate"] += 1
+                    else:
+                        outcome["events_stored"] += 1
+                    last_ts = registry_ts
+                if last_ts is not None:
+                    connection.execute(
+                        "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                        (last_ts, last_ts, run_id, now, collector["collector_id"]),
+                    )
+            outcome["pages_processed"] += 1
+            if last_ts is not None:
+                outcome["cursor_after"] = last_ts
+                since = last_ts
+            if len(records) < page_limit:
+                break
+    return outcome
+
+
 def _effective_cursor(collector: Dict[str, Any], since: Optional[str]) -> str:
     definition = COLLECTOR_DEFINITIONS[collector["ecosystem"]]
     current = str((collector.get("cursor") or {}).get("cursor_value") or "")
@@ -1349,6 +1496,15 @@ def run_registry_collector(
         )
     elif collector["ecosystem"] == "npm":
         outcome = _ingest_npm_changes(
+            collector=collector,
+            cursor_before=cursor_before,
+            max_pages=max_pages,
+            fetcher=fetcher,
+            run_id=run_id,
+            db_path=db_path,
+        )
+    elif collector["ecosystem"] == "go":
+        outcome = _ingest_go_index(
             collector=collector,
             cursor_before=cursor_before,
             max_pages=max_pages,
