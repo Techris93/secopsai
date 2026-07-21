@@ -657,6 +657,17 @@ def init_db(db_path: str | None = None) -> None:
                 FOREIGN KEY (collector_id) REFERENCES registry_collectors (collector_id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS registry_snapshots (
+                snapshot_id TEXT PRIMARY KEY,
+                collector_id TEXT NOT NULL,
+                serial TEXT NOT NULL,
+                item_count INTEGER NOT NULL,
+                names_hash TEXT NOT NULL,
+                names_blob BLOB NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (collector_id) REFERENCES registry_collectors (collector_id) ON DELETE CASCADE
+            );
+
             CREATE INDEX IF NOT EXISTS idx_research_jobs_case_status
                 ON research_jobs (case_id, status, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_research_jobs_status_time
@@ -689,6 +700,8 @@ def init_db(db_path: str | None = None) -> None:
                 ON registry_dead_letters (status, next_retry_at);
             CREATE INDEX IF NOT EXISTS idx_registry_coverage_state
                 ON registry_coverage_windows (collector_id, state, window_start);
+            CREATE INDEX IF NOT EXISTS idx_registry_snapshots_collector
+                ON registry_snapshots (collector_id, created_at DESC);
             """
         )
 

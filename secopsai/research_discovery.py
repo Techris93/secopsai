@@ -139,7 +139,7 @@ CAPABILITIES: Dict[str, Dict[str, Any]] = {
     }
     for ecosystem, display, deep, mode, limitations, terms in (
         ("npm", "npm", False, "watchlist_poll", ["Global completeness depends on scoped registry queries."], "https://docs.npmjs.com/"),
-        ("pypi", "PyPI", False, "watchlist_poll", ["A watchlist monitor is not a complete PyPI census."], "https://docs.pypi.org/"),
+        ("pypi", "PyPI", False, "index_reconcile_or_watchlist", ["Index reconciliation detects project additions and removals; per-release detection requires watchlist polling or backfill."], "https://docs.pypi.org/"),
         ("nuget", "NuGet", True, "catalog_or_watchlist", ["Catalog coverage and rate limits must be reported per run."], "https://learn.microsoft.com/en-us/nuget/api/overview"),
         ("maven", "Maven Central", False, "search_or_watchlist", ["Search polling does not guarantee a complete repository census."], "https://central.sonatype.org/"),
         ("rubygems", "RubyGems.org", False, "watchlist_poll", ["Global enumeration is not assumed."], "https://guides.rubygems.org/rubygems-org-api/"),

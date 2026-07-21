@@ -470,3 +470,151 @@ def test_packagist_since_accepts_iso_datetime(tmp_path):
         ecosystem="packagist", since="2026-07-21T13:20:00Z", db_path=db_path, fetcher=_packagist_fetcher(urls)
     )
     assert result["cursor_before"] == "17846400000000"
+
+
+PYPI_FIXTURES = Path(__file__).parent / "fixtures" / "pypi_simple"
+
+
+def _pypi_fetcher(fixture="index_s100.json", serial="100", fail=False, include_serial_header=True):
+    def fetch(url, max_bytes):
+        if fail:
+            return 500, {"content-type": "application/json"}, b'{"error": "registry unavailable"}'
+        headers = {"content-type": "application/vnd.pypi.simple.v1+json"}
+        if include_serial_header:
+            headers["x-pypi-last-serial"] = serial
+        return 200, headers, (PYPI_FIXTURES / fixture).read_bytes()
+
+    return SafeFetcher(fetch=fetch)
+
+
+def _snapshots(db_path):
+    connection = soc_store.connect(db_path)
+    try:
+        rows = connection.execute(
+            "SELECT * FROM registry_snapshots WHERE collector_id = 'COL-PYPI-INDEX' ORDER BY created_at"
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        connection.close()
+
+
+def test_pypi_collector_seeds_with_zero_cursor(tmp_path):
+    db_path = _db(tmp_path)
+    collectors = ensure_collectors(db_path=db_path)
+    pypi = next(item for item in collectors if item["collector_id"] == "COL-PYPI-INDEX")
+    assert pypi["mode"] == "index_reconcile"
+    assert pypi["cursor"]["cursor_value"] == "0"
+
+
+def test_pypi_baseline_run_stores_snapshot_without_events(tmp_path):
+    db_path = _db(tmp_path)
+    result = run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher())
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 0
+    assert result["cursor_after"] == "100"
+    snapshots = _snapshots(db_path)
+    assert len(snapshots) == 1
+    assert snapshots[0]["serial"] == "100"
+    assert snapshots[0]["item_count"] == 3
+
+    status = collector_status(ecosystem="pypi", db_path=db_path)[0]
+    assert status["last_snapshot"]["serial"] == "100"
+    assert status["last_snapshot"]["item_count"] == 3
+    assert status["lag_seconds"] is None
+
+
+def test_pypi_unchanged_serial_skips_snapshot(tmp_path):
+    db_path = _db(tmp_path)
+    run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher())
+    result = run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher())
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 0
+    assert len(_snapshots(db_path)) == 1
+
+
+def test_pypi_reconciliation_emits_add_remove_events(tmp_path):
+    db_path = _db(tmp_path)
+    run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher())
+    result = run_registry_collector(
+        ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher(fixture="index_s101.json", serial="101")
+    )
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 3
+    assert result["cursor_after"] == "101"
+    assert len(_snapshots(db_path)) == 2
+
+    events = list_feed_events(db_path=db_path)
+    by_name = {event["package"]: event for event in events}
+    assert by_name["delta-sdk"]["event_type"] == "project_added"
+    assert by_name["epsilon-client"]["event_type"] == "project_added"
+    assert by_name["gamma-utils"]["event_type"] == "project_removed"
+    assert by_name["delta-sdk"]["leaf_url"] == "https://pypi.org/pypi/delta-sdk/json"
+    assert by_name["delta-sdk"]["metadata"]["serial"] == "101"
+
+
+def test_pypi_rerun_same_serial_is_idempotent(tmp_path):
+    db_path = _db(tmp_path)
+    run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher())
+    run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher(fixture="index_s101.json", serial="101"))
+    result = run_registry_collector(
+        ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher(fixture="index_s101.json", serial="101")
+    )
+    assert result["events_stored"] == 0
+    assert len(_snapshots(db_path)) == 2
+    assert len(list_feed_events(db_path=db_path)) == 3
+
+
+def test_pypi_serial_regression_is_flagged_not_fatal(tmp_path):
+    db_path = _db(tmp_path)
+    run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher(fixture="index_s101.json", serial="101"))
+    result = run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher())
+    assert result["status"] == "completed"
+    assert result["anomalies"]
+    assert "serial regressed" in result["anomalies"][0]
+    assert result["cursor_after"] == "101"
+    assert len(_snapshots(db_path)) == 1
+
+
+def test_pypi_fetch_failure_records_dead_letter_and_gap(tmp_path):
+    db_path = _db(tmp_path)
+    result = run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher(fail=True))
+    assert result["status"] == "failed"
+    assert result["coverage"] == "gap"
+    assert result["cursor_after"] == "0"
+    letters = _dead_letters(db_path)
+    assert len(letters) == 1
+    assert letters[0]["item_kind"] == "feed"
+
+
+def test_pypi_malformed_index_errors_without_snapshot(tmp_path):
+    db_path = _db(tmp_path)
+    result = run_registry_collector(
+        ecosystem="pypi",
+        db_path=db_path,
+        fetcher=_pypi_fetcher(fixture="index_malformed.json", serial="102"),
+    )
+    assert result["status"] == "failed"
+    assert "projects list" in result["error"]
+    assert _snapshots(db_path) == []
+
+
+def test_pypi_meta_serial_fallback_when_header_missing(tmp_path):
+    db_path = _db(tmp_path)
+    result = run_registry_collector(
+        ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher(include_serial_header=False)
+    )
+    assert result["status"] == "completed"
+    assert result["cursor_after"] == "100"
+
+
+def test_pypi_diff_truncation_flag(tmp_path):
+    db_path = _db(tmp_path)
+    run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher())
+    result = run_registry_collector(
+        ecosystem="pypi",
+        max_diff_events=2,
+        db_path=db_path,
+        fetcher=_pypi_fetcher(fixture="index_s101.json", serial="101"),
+    )
+    assert result["diff_truncated"] is True
+    assert result["events_stored"] == 2
