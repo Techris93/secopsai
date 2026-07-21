@@ -38,3 +38,19 @@ services:
       name: secopsai-core-data
       mountPath: /var/data/secopsai
       sizeGB: 1
+  - type: worker
+    name: secopsai-research-worker
+    runtime: python
+    plan: starter
+    autoDeployTrigger: checksPass
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m secopsai.cli research worker run --interval 60
+    envVars:
+      - key: SECOPSAI_CORE_ENVIRONMENT
+        value: production
+      - key: SECOPS_FINDINGS_DIR
+        value: /var/data/secopsai-research
+    disk:
+      name: secopsai-research-data
+      mountPath: /var/data/secopsai-research
+      sizeGB: 1
