@@ -10,6 +10,10 @@ from secopsai import blog
 
 
 class BlogPublishingTests(unittest.TestCase):
+    def test_post_date_normalizes_iso_and_rfc_dates(self):
+        self.assertEqual(blog._post_date("2026-07-03T10:20:30Z"), "2026-07-03")
+        self.assertEqual(blog._post_date("Wed, 03 Jul 2026 10:20:30 GMT"), "2026-07-03")
+
     def test_draft_advisory_publish_and_rebuild_feeds(self):
         advisory = {
             "advisory_id": "ADV-UNIT",
@@ -81,6 +85,12 @@ class BlogPublishingTests(unittest.TestCase):
             self.assertNotIn("Review Checklist", (paths.root / "feed.xml").read_text(encoding="utf-8"))
             self.assertTrue((paths.root / "assets" / "social" / "secopsai-blog.svg").exists())
             self.assertTrue((paths.root / "assets" / "social" / "unit-campaign-unit-supply-chain-campaign.svg").exists())
+            social_card = (paths.root / "assets" / "social" / "unit-campaign-unit-supply-chain-campaign.svg").read_text(encoding="utf-8")
+            self.assertIn("DOC-SECOPS-RESEARCH-001", social_card)
+            self.assertIn("#FBFAF6", social_card)
+            self.assertIn("#B42318", social_card)
+            self.assertNotIn("linearGradient", social_card)
+            self.assertNotIn("radialGradient", social_card)
 
     def test_draft_campaign_creates_review_only_blog_post(self):
         campaign = {

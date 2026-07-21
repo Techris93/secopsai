@@ -6,13 +6,13 @@
       <div class="secops-home__hero-copy">
         <div class="secops-home__eyebrow">
           <span class="secops-home__dot"></span>
-          Terminal-native docs for local-first SecOps
+          Operator documentation for the SecOpsAI platform
         </div>
-        <h1>Security operations docs for teams that keep telemetry close.</h1>
+        <h1>Operate SecOpsAI from sensor deployment to published research.</h1>
         <p class="secops-home__lead">
-          Use SecOpsAI to collect from OpenClaw, Hermes Agent, and host systems, correlate
-          findings, orchestrate triage, and deploy monitoring workflows without
-          giving up operator control.
+          Deploy Edge sensors, monitor network and package-registry changes,
+          investigate findings, manage evidence and disclosure, and produce
+          reports without giving up control of raw telemetry.
         </p>
         <div class="secops-home__actions">
           <a class="secops-home__button" href="{{ 'getting-started/' | url }}">
@@ -20,27 +20,24 @@
           </a>
           <a
             class="secops-home__button secops-home__button--ghost"
-            href="{{ config.repo_url }}"
-            rel="noopener noreferrer"
-            target="_blank"
+            href="{{ 'edge-integration/' | url }}"
           >
-            GitHub
+            SecOpsAI Edge
           </a>
           <a
             class="secops-home__button secops-home__button--ghost"
-            href="{{ 'deployment-guide/' | url }}"
+            href="{{ 'research-discovery/' | url }}"
           >
-            Deployment Guide
+            Research Platform
           </a>
         </div>
         <div class="secops-home__pills">
-          <span class="secops-home__pill">OpenClaw</span>
-          <span class="secops-home__pill">Hermes Agent</span>
-          <span class="secops-home__pill">macOS</span>
-          <span class="secops-home__pill">Linux</span>
-          <span class="secops-home__pill">Windows</span>
-          <span class="secops-home__pill">Triage orchestration</span>
-          <span class="secops-home__pill">Threat intel</span>
+          <span class="secops-home__pill">Edge sensors</span>
+          <span class="secops-home__pill">Asset discovery</span>
+          <span class="secops-home__pill">Package surveillance</span>
+          <span class="secops-home__pill">Findings and triage</span>
+          <span class="secops-home__pill">Research cases</span>
+          <span class="secops-home__pill">Reports</span>
         </div>
       </div>
 
@@ -53,15 +50,15 @@
           </div>
           <span class="secops-home__terminal-label">docs.secopsai.dev</span>
         </div>
-        <pre class="secops-home__terminal-body"><code><span class="secops-home__prompt">$</span> secopsai refresh --platform macos,openclaw,hermes
-<span class="secops-home__ok">[OK]</span> host + OpenClaw + Hermes telemetry collected
-<span class="secops-home__ok">[OK]</span> findings persisted to local SOC store
+        <pre class="secops-home__terminal-body"><code><span class="secops-home__prompt">$</span> secopsai edge sync
+<span class="secops-home__ok">[OK]</span> Edge assets and findings imported
+<span class="secops-home__ok">[OK]</span> asset graph updated
 
-<span class="secops-home__prompt">$</span> secopsai correlate
-<span class="secops-home__ok">[OK]</span> cross-platform correlation complete
+<span class="secops-home__prompt">$</span> secopsai research monitor run-due
+<span class="secops-home__ok">[OK]</span> registry monitors completed
 
-<span class="secops-home__prompt">$</span> secopsai triage orchestrate --search-root ~/secopsai
-<span class="secops-home__warn">QUEUED</span> review ACT-0001 (tune_policy)</code></pre>
+<span class="secops-home__prompt">$</span> secopsai triage list --source secopsai_edge
+<span class="secops-home__warn">REVIEW</span> 2 findings require operator action</code></pre>
       </div>
     </div>
   </section>
@@ -73,17 +70,16 @@
       <div class="secops-home__inner">
         <p class="secops-home__section-kicker">Manifesto</p>
         <p class="secops-home__manifesto-copy">
-          Modern threats move across
-          <span>OpenClaw</span>,
-          <span>Hermes Agent</span>,
-          <span>macOS</span>,
-          <span>Linux</span>, and
-          <span>Windows</span>.
-          These docs are organized around the workflows that close the gap:
-          <span>collection</span>,
-          <span>correlation</span>,
-          <span>triage</span>, and
-          <span>human review</span>.
+          SecOpsAI connects
+          <span>network discovery</span>,
+          <span>software supply-chain monitoring</span>,
+          <span>host and agent telemetry</span>,
+          <span>findings triage</span>,
+          <span>research evidence</span>, and
+          <span>reporting</span>.
+          These documents follow the same operating sequence from collection
+          and detection through investigation, remediation, disclosure, and
+          publication.
         </p>
       </div>
     </section>
@@ -92,10 +88,11 @@
       <div class="secops-home__inner">
         <div class="secops-home__section-header">
           <p class="secops-home__section-kicker">Core guides</p>
-          <h2>Open the docs like an operator console.</h2>
+          <h2>Follow the product workflow in operating order.</h2>
           <p>
-            Start with the install path, move into investigation workflows, and
-            keep the deployment and API references nearby as you scale out.
+            Start with deployment and data collection. Continue through
+            findings, research, and reporting. Use the reference material when
+            you integrate or scale the platform.
           </p>
         </div>
 
@@ -108,44 +105,44 @@
               first local pipeline.
             </p>
           </a>
-          <a class="secops-home__card" href="{{ 'findings-triage-guide/' | url }}">
+          <a class="secops-home__card" href="{{ 'edge-integration/' | url }}">
             <span class="secops-home__card-label">Guide 02</span>
-            <h3>Findings Triage Guide</h3>
+            <h3>SecOpsAI Edge</h3>
             <p>
-              Work through finding states, review decisions, and disposition
-              outcomes with a repeatable analyst flow.
+              Register a sensor, discover authorized networks, synchronize the
+              asset graph, and operate scheduled scans safely.
             </p>
           </a>
-          <a class="secops-home__card" href="{{ 'triage-orchestrator/' | url }}">
+          <a class="secops-home__card" href="{{ 'findings-triage-guide/' | url }}">
             <span class="secops-home__card-label">Guide 03</span>
-            <h3>Triage Orchestrator</h3>
+            <h3>Findings Triage</h3>
             <p>
-              Learn how queued actions, search roots, and human review connect
-              inside the native CLI workflow.
+              Review evidence, assign status and disposition, record notes, and
+              verify remediation with a repeatable analyst workflow.
             </p>
           </a>
-          <a class="secops-home__card" href="{{ 'operator-runbook/' | url }}">
+          <a class="secops-home__card" href="{{ 'research-discovery/' | url }}">
             <span class="secops-home__card-label">Guide 04</span>
-            <h3>Operator Runbook</h3>
+            <h3>Research Discovery</h3>
             <p>
-              Keep the day-to-day command surface nearby, from refresh and
-              correlate through list, show, mitigate, and intel workflows.
+              Configure cross-ecosystem watchlists, registry monitors,
+              candidate scoring, package comparison, and campaign correlation.
             </p>
           </a>
-          <a class="secops-home__card" href="{{ 'threat-intel/' | url }}">
+          <a class="secops-home__card" href="{{ 'research-cases/' | url }}">
             <span class="secops-home__card-label">Guide 05</span>
-            <h3>Threat Intel</h3>
+            <h3>Research Cases</h3>
             <p>
-              Understand IOC ingestion, matching behavior, and the operational
-              meaning of stale intel or telemetry.
+              Manage evidence, IOCs, verdicts, sandbox approval, responsible
+              disclosure, publication safety, and case monitoring.
             </p>
           </a>
-          <a class="secops-home__card" href="{{ 'api-reference/' | url }}">
+          <a class="secops-home__card" href="{{ 'deployment-guide/' | url }}">
             <span class="secops-home__card-label">Guide 06</span>
-            <h3>API Reference</h3>
+            <h3>Deployment Guide</h3>
             <p>
-              Jump straight to command surfaces, programmatic touchpoints, and
-              integration details.
+              Choose local, sensor, hosted-pilot, and service-provider
+              deployment patterns with clear security boundaries.
             </p>
           </a>
         </div>
@@ -156,54 +153,55 @@
       <div class="secops-home__inner">
         <div class="secops-home__section-header">
           <p class="secops-home__section-kicker">Capabilities</p>
-          <h2>The stack behind the docs.</h2>
+          <h2>Documentation for each operating surface.</h2>
           <p>
-            These guides map to the core operating surfaces in SecOpsAI, so you
-            can move from first install to mature operations without changing
-            mental models.
+            The information architecture follows product ownership: collection,
+            investigation, research, response, publication, and deployment.
           </p>
         </div>
 
         <div class="secops-home__grid secops-home__grid--stack">
           <article class="secops-home__card secops-home__card--rich">
             <span class="secops-home__card-label">Surface 01</span>
-            <h3>Collect everywhere</h3>
+            <h3>Discover and collect</h3>
             <p>
-              Bring OpenClaw, Hermes Agent, and host telemetry into one local-first pipeline.
+              Collect Edge network observations, host telemetry, and local
+              automation state without sending raw telemetry to a central SIEM.
             </p>
             <ul class="secops-home__link-list">
+              <li><a href="{{ 'edge-integration/' | url }}">SecOpsAI Edge</a></li>
               <li><a href="{{ 'OpenClaw-Integration/' | url }}">OpenClaw Integration</a></li>
               <li><a href="{{ 'Hermes-Integration/' | url }}">Hermes Integration</a></li>
-              <li><a href="{{ 'OpenClaw-Plugin/' | url }}">OpenClaw Plugin</a></li>
-              <li><a href="{{ 'BEGINNER-LIVE-GUIDE/' | url }}">Beginner Live Guide</a></li>
             </ul>
           </article>
 
           <article class="secops-home__card secops-home__card--rich">
             <span class="secops-home__card-label">Surface 02</span>
-            <h3>Investigate clearly</h3>
+            <h3>Triage and investigate</h3>
             <p>
-              Move findings through review with explainable operator steps and
-              queued actions.
+              Move findings and package candidates through evidence-backed
+              review, research cases, and explicit analyst decisions.
             </p>
             <ul class="secops-home__link-list">
               <li><a href="{{ 'findings-triage-guide/' | url }}">Findings Triage Guide</a></li>
-              <li><a href="{{ 'triage-orchestrator/' | url }}">Triage Orchestrator</a></li>
-              <li><a href="{{ 'threat-model/' | url }}">Threat Model</a></li>
+              <li><a href="{{ 'research-discovery/' | url }}">Research Discovery</a></li>
+              <li><a href="{{ 'research-cases/' | url }}">Research Cases</a></li>
+              <li><a href="{{ 'threat-intel/' | url }}">Threat Intelligence</a></li>
             </ul>
           </article>
 
           <article class="secops-home__card secops-home__card--rich">
             <span class="secops-home__card-label">Surface 03</span>
-            <h3>Operate and deploy</h3>
+            <h3>Operate and publish</h3>
             <p>
-              Wire policy, rules, deployment, and APIs into a production-ready
-              workflow.
+              Apply rules, deploy services, export intelligence, and publish
+              reviewed research through approval-gated workflows.
             </p>
             <ul class="secops-home__link-list">
               <li><a href="{{ 'deployment-guide/' | url }}">Deployment Guide</a></li>
               <li><a href="{{ 'rules-registry/' | url }}">Rules Registry</a></li>
-              <li><a href="{{ 'supply-chain/' | url }}">Supply Chain Security</a></li>
+              <li><a href="{{ 'blog-publishing/' | url }}">Blog Publishing</a></li>
+              <li><a href="{{ 'api-reference/' | url }}">API Reference</a></li>
             </ul>
           </article>
         </div>
@@ -218,8 +216,8 @@
               <p class="secops-home__section-kicker">Quick Start</p>
               <h2>Deploy in minutes.</h2>
               <p>
-                Install the environment, refresh telemetry, correlate findings,
-                and run triage from one straightforward command flow.
+                Install Core, collect local telemetry, correlate findings, and
+                open the operator workflow from one command sequence.
               </p>
             </div>
 
@@ -257,38 +255,38 @@ secopsai triage orchestrate --search-root ~/secopsai</code></pre>
           <div class="secops-home__status-list">
             <article class="secops-home__status">
               <div class="secops-home__status-label">
-                <span class="secops-home__status-pill secops-home__status-pill--prod">Production</span>
+                <span class="secops-home__status-pill secops-home__status-pill--prod">Available</span>
+              </div>
+              <h3>SecOpsAI Core</h3>
+              <p>Canonical findings, graph, triage, research, correlation, and reporting store.</p>
+            </article>
+            <article class="secops-home__status">
+              <div class="secops-home__status-label">
+                <span class="secops-home__status-pill secops-home__status-pill--prod">Available</span>
+              </div>
+              <h3>SecOpsAI Edge</h3>
+              <p>Authorized asset discovery, service exposure, Wi-Fi inventory, and sensor jobs.</p>
+            </article>
+            <article class="secops-home__status">
+              <div class="secops-home__status-label">
+                <span class="secops-home__status-pill secops-home__status-pill--prod">Available</span>
+              </div>
+              <h3>SecOpsAI Research</h3>
+              <p>Registry monitoring, candidate scoring, evidence, disclosure, and publication gates.</p>
+            </article>
+            <article class="secops-home__status">
+              <div class="secops-home__status-label">
+                <span class="secops-home__status-pill secops-home__status-pill--prod">Available</span>
               </div>
               <h3>OpenClaw</h3>
-              <p>Primary native telemetry integration and reference workflow.</p>
-            </article>
-            <article class="secops-home__status">
-              <div class="secops-home__status-label">
-                <span class="secops-home__status-pill secops-home__status-pill--prod">Production</span>
-              </div>
-              <h3>macOS</h3>
-              <p>Host telemetry collection and local findings generation.</p>
+              <p>Local automation bridge for approved Core and Edge operator actions.</p>
             </article>
             <article class="secops-home__status">
               <div class="secops-home__status-label">
                 <span class="secops-home__status-pill secops-home__status-pill--beta">Beta</span>
               </div>
-              <h3>Hermes Agent</h3>
-              <p>Read-only Hermes adapter to collect agent logs and state with redaction.</p>
-            </article>
-            <article class="secops-home__status">
-              <div class="secops-home__status-label">
-                <span class="secops-home__status-pill secops-home__status-pill--beta">Beta</span>
-              </div>
-              <h3>Linux</h3>
-              <p>Ready for deployment with journalctl and auditd-backed sources.</p>
-            </article>
-            <article class="secops-home__status">
-              <div class="secops-home__status-label">
-                <span class="secops-home__status-pill secops-home__status-pill--beta">Beta</span>
-              </div>
-              <h3>Windows</h3>
-              <p>Ready for deployment with Event Logs and Sysmon workflows.</p>
+              <h3>Host adapters</h3>
+              <p>macOS, Linux, Windows, and Hermes telemetry adapters with platform-specific coverage.</p>
             </article>
           </div>
         </div>

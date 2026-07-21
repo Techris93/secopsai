@@ -1,9 +1,6 @@
-site_name: secopsai
+site_name: SecOpsAI Documentation
 site_url: https://docs.secopsai.dev/
-site_description: Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, and Windows
-repo_url: https://github.com/Techris93/secopsai
-repo_name: Techris93/secopsai
-
+site_description: Operator documentation for SecOpsAI network discovery, package-registry surveillance, findings triage, security research, reporting, and local-first integrations.
 theme:
   name: material
   custom_dir: overrides
@@ -26,29 +23,40 @@ extra_css:
   - assets/stylesheets/extra.css
 
 nav:
-  - Home: index.md
+  - Start:
+      - Documentation Home: index.md
+      - Getting Started: getting-started.md
+      - Operator Runbook: operator-runbook.md
+      - Beginner Live Guide: BEGINNER-LIVE-GUIDE.md
+  - Network Visibility:
+      - SecOpsAI Edge: edge-integration.md
+  - Findings And Response:
+      - Findings Triage Guide: findings-triage-guide.md
+      - Triage Orchestrator: triage-orchestrator.md
+      - Adaptive Response Layer: adaptive-response.md
+      - Rules Registry: rules-registry.md
+  - Research And Supply Chain:
+      - Research Discovery Platform: research-discovery.md
+      - Research Cases: research-cases.md
+      - Research Automation: research-automation.md
+      - Research And Verification: research-and-verification.md
+      - Supply Chain Security: supply-chain.md
+      - Emergency Advisories: supply-chain-advisories.md
+      - AI Dependency Guard: ai-dependency-guard.md
+      - Threat Intelligence: threat-intel.md
+      - Blog Publishing: blog-publishing.md
+  - Integrations:
+      - OpenClaw Integration: OpenClaw-Integration.md
+      - OpenClaw Plugin: OpenClaw-Plugin.md
+      - Hermes Integration: Hermes-Integration.md
+  - Deploy And Reference:
+      - Deployment Guide: deployment-guide.md
+      - API Reference: api-reference.md
+      - Threat Model: threat-model.md
+      - GitHub Distribution: github-distribution-plan.md
+      - GitHub Marketplace: github-marketplace.md
+      - Marketplace Listing: marketplace-listing.md
+      - npm Name Migration: npm-name-migration.md
+      - Name Reservation: name-reservation.md
+      - GitHub Repository: https://github.com/Techris93/secopsai
   - Contact: contact.md
-  - Getting Started: getting-started.md
-  - SecOpsAI Edge: edge-integration.md
-  - Operator Runbook: operator-runbook.md
-  - Findings Triage Guide: findings-triage-guide.md
-  - Research And Verification: research-and-verification.md
-  - Research Cases: research-cases.md
-  - Triage Orchestrator: triage-orchestrator.md
-  - Adaptive Response Layer: adaptive-response.md
-  - Rules Registry: rules-registry.md
-  - Deployment Guide: deployment-guide.md
-  - API Reference: api-reference.md
-  - GitHub Distribution: github-distribution-plan.md
-  - npm Name Migration: npm-name-migration.md
-  - Name Reservation: name-reservation.md
-  - GitHub Marketplace: github-marketplace.md
-  - Marketplace Listing: marketplace-listing.md
-  - Threat Intel (IOCs): threat-intel.md
-  - Threat Model: threat-model.md
-  - Supply Chain Security: supply-chain.md
-  - AI Dependency Guard: ai-dependency-guard.md
-  - Beginner Live Guide: BEGINNER-LIVE-GUIDE.md
-  - OpenClaw Integration: OpenClaw-Integration.md
-  - Hermes Integration: Hermes-Integration.md
-  - OpenClaw Plugin: OpenClaw-Plugin.md

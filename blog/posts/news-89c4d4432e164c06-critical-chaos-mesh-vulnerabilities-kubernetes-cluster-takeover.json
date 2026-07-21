@@ -1,0 +1,83 @@
+{
+  "affected_artifacts": [],
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "affected_products": [],
+  "author": "JFrog Security Research",
+  "body_markdown": "## Source Metadata\n\n- Source: JFrog Security Research\n- Canonical URL: https://jfrog.com/blog/chaotic-deputy-critical-vulnerabilities-in-chaos-mesh-lead-to-kubernetes-cluster-takeover/\n- Additional references: none\n- Published at: not provided\n- Fetched at: 2026-06-04T14:37:04Z\n- Trust level: external_research\n\n## Why It Matters\n\n- Source type: Supply Chain\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, and track any source-backed detections or mitigations added during review.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- None found deterministically; reviewer should add source-backed affected assets if present.\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Compare the source-backed claim against local assets and current SOC findings.\n- Create a follow-up triage task if the affected technology is present.\n- Document whether this item requires a new advisory, detection, or mitigation note.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-89c4d4432e164c06-critical-chaos-mesh-vulnerabilities-kubernetes-cluster-takeover\n```\n\n## References\n\n- https://jfrog.com/blog/chaotic-deputy-critical-vulnerabilities-in-chaos-mesh-lead-to-kubernetes-cluster-takeover/",
+  "canonical_url": "https://jfrog.com/blog/chaotic-deputy-critical-vulnerabilities-in-chaos-mesh-lead-to-kubernetes-cluster-takeover/",
+  "categories": [
+    "Security News",
+    "Supply Chain",
+    "Research"
+  ],
+  "deployed_at": "2026-06-04T19:11:57Z",
+  "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [],
+    "products": [],
+    "severity_signals": [],
+    "urls": []
+  },
+  "featured": false,
+  "fetched_at": "2026-06-04T14:37:04Z",
+  "iocs": [],
+  "news_key": "89c4d4432e164c06",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-89c4d4432e164c06-critical-chaos-mesh-vulnerabilities-kubernetes-cluster-takeover"
+  ],
+  "primary_references": [
+    "https://jfrog.com/blog/chaotic-deputy-critical-vulnerabilities-in-chaos-mesh-lead-to-kubernetes-cluster-takeover/"
+  ],
+  "published_at": "2026-06-04T14:37:12Z",
+  "published_post_path": "blog/posts/news-89c4d4432e164c06-critical-chaos-mesh-vulnerabilities-kubernetes-cluster-takeover.json",
+  "published_url": "https://blog.secopsai.dev/posts/news-89c4d4432e164c06-critical-chaos-mesh-vulnerabilities-kubernetes-cluster-takeover.html",
+  "readiness_blockers": [],
+  "readiness_score": 95,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [
+    "no CVEs, IOCs, packages, or products were extracted deterministically"
+  ],
+  "reading_time": 1,
+  "references": [
+    "https://jfrog.com/blog/chaotic-deputy-critical-vulnerabilities-in-chaos-mesh-lead-to-kubernetes-cluster-takeover/"
+  ],
+  "related_posts": [],
+  "review_status": "deployed",
+  "reviewed_at": "2026-06-04T14:41:58Z",
+  "severity": "medium",
+  "severity_reason": "Security-relevant vulnerability/news signal.",
+  "slug": "news-89c4d4432e164c06-critical-chaos-mesh-vulnerabilities-kubernetes-cluster-takeover",
+  "social_image": "/assets/social/news-89c4d4432e164c06-critical-chaos-mesh-vulnerabilities-kubernetes-cluster-takeover.svg",
+  "social_image_alt": "SecOpsAI social preview card for Critical Chaos-Mesh vulnerabilities Kubernetes cluster takeover",
+  "social_image_height": 630,
+  "social_image_width": 1200,
+  "source_category": "Supply Chain",
+  "source_links": [
+    "https://jfrog.com/blog/chaotic-deputy-critical-vulnerabilities-in-chaos-mesh-lead-to-kubernetes-cluster-takeover/"
+  ],
+  "source_name": "JFrog Security Research",
+  "source_trust_level": "external_research",
+  "source_url": "https://research.jfrog.com/",
+  "sources": [
+    "https://jfrog.com/blog/chaotic-deputy-critical-vulnerabilities-in-chaos-mesh-lead-to-kubernetes-cluster-takeover/"
+  ],
+  "staged_at": "2026-06-04T19:05:13Z",
+  "status": "published",
+  "summary": "External security-news item queued for analyst review.",
+  "tags": [
+    "Security News",
+    "Supply Chain",
+    "Research"
+  ],
+  "title": "Critical Chaos-Mesh vulnerabilities Kubernetes cluster takeover",
+  "updated_at": "2026-06-04T19:11:57Z"
+}

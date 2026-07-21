@@ -1,0 +1,81 @@
+{
+  "affected_artifacts": [],
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "affected_products": [],
+  "author": "Microsoft Security Blog",
+  "body_markdown": "## Source Metadata\n\n- Source: Microsoft Security Blog\n- Canonical URL: https://www.microsoft.com/en-us/security/blog/2026/06/02/microsoft-build-2026-securing-code-agents-and-models-across-the-development-lifecycle/\n- Additional references: none\n- Published at: Tue, 02 Jun 2026 17:15:18 +0000\n- Fetched at: 2026-06-02T18:23:32Z\n- Trust level: vendor\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, and track any source-backed detections or mitigations added during review.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- None found deterministically; reviewer should add source-backed affected assets if present.\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Compare the source-backed claim against local assets and current SOC findings.\n- Create a follow-up triage task if the affected technology is present.\n- Document whether this item requires a new advisory, detection, or mitigation note.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-413a00607dd9c1c0-microsoft-build-2026-securing-code-agents-and-models-across-the-deve\n```\n\n## References\n\n- https://www.microsoft.com/en-us/security/blog/2026/06/02/microsoft-build-2026-securing-code-agents-and-models-across-the-development-lifecycle/",
+  "canonical_url": "https://www.microsoft.com/en-us/security/blog/2026/06/02/microsoft-build-2026-securing-code-agents-and-models-across-the-development-lifecycle/",
+  "categories": [
+    "Security News",
+    "Threat Intelligence"
+  ],
+  "deployed_at": "2026-06-02T18:37:18Z",
+  "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [],
+    "products": [],
+    "severity_signals": [],
+    "urls": []
+  },
+  "featured": false,
+  "fetched_at": "2026-06-02T18:23:32Z",
+  "iocs": [],
+  "news_key": "413a00607dd9c1c0",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-413a00607dd9c1c0-microsoft-build-2026-securing-code-agents-and-models-across-the-deve"
+  ],
+  "primary_references": [
+    "https://www.microsoft.com/en-us/security/blog/2026/06/02/microsoft-build-2026-securing-code-agents-and-models-across-the-development-lifecycle/"
+  ],
+  "published_at": "Tue, 02 Jun 2026 17:15:18 +0000",
+  "published_post_path": "blog/posts/news-413a00607dd9c1c0-microsoft-build-2026-securing-code-agents-and-models-across-the-deve.json",
+  "published_url": "https://blog.secopsai.dev/posts/news-413a00607dd9c1c0-microsoft-build-2026-securing-code-agents-and-models-across-the-deve.html",
+  "readiness_blockers": [],
+  "readiness_score": 95,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [
+    "no CVEs, IOCs, packages, or products were extracted deterministically"
+  ],
+  "reading_time": 1,
+  "references": [
+    "https://www.microsoft.com/en-us/security/blog/2026/06/02/microsoft-build-2026-securing-code-agents-and-models-across-the-development-lifecycle/"
+  ],
+  "related_posts": [],
+  "review_status": "deployed",
+  "reviewed_at": "2026-06-02T18:24:17Z",
+  "severity": "medium",
+  "severity_reason": "Security-relevant vulnerability/news signal.",
+  "slug": "news-413a00607dd9c1c0-microsoft-build-2026-securing-code-agents-and-models-across-the-deve",
+  "social_image": "/assets/social/news-413a00607dd9c1c0-microsoft-build-2026-securing-code-agents-and-models-across-the-deve.svg",
+  "social_image_alt": "SecOpsAI social preview card for Microsoft Build 2026: Securing code, agents, and models across the development lifecycle",
+  "social_image_height": 630,
+  "social_image_width": 1200,
+  "source_category": "Threat Intelligence",
+  "source_links": [
+    "https://www.microsoft.com/en-us/security/blog/2026/06/02/microsoft-build-2026-securing-code-agents-and-models-across-the-development-lifecycle/"
+  ],
+  "source_name": "Microsoft Security Blog",
+  "source_trust_level": "vendor",
+  "source_url": "https://www.microsoft.com/en-us/security/blog/",
+  "sources": [
+    "https://www.microsoft.com/en-us/security/blog/2026/06/02/microsoft-build-2026-securing-code-agents-and-models-across-the-development-lifecycle/"
+  ],
+  "staged_at": "2026-06-02T18:36:08Z",
+  "status": "published",
+  "summary": "Discover how Microsoft enables fast, secure AI development with MDASH and new security capabilities. The post Microsoft Build 2026: Securing code, agents, and models across the development lifecycle appeared first on Microsoft Security Blog .",
+  "tags": [
+    "Security News",
+    "Threat Intelligence"
+  ],
+  "title": "Microsoft Build 2026: Securing code, agents, and models across the development lifecycle",
+  "updated_at": "2026-06-02T18:37:18Z"
+}

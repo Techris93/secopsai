@@ -1,5 +1,15 @@
 # Implementation Checkpoints
 
+## 098 Public Documentation And Blog Asset Alignment
+
+Status: source, generated output, and deployed blog archive reconciled for release.
+
+Aligned the Docs product story with SecOpsAI Core, Edge, Research, findings, reporting, and local-first integrations. Reorganized the navigation by operator workflow, corrected page metadata, removed the failing GitHub release lookup, and extended the production CSP only for Cloudflare analytics.
+
+Replaced the legacy dark social-card generator with the SecOpsAI technical-publication system. All 27 generated cards now use the paper palette, document identifier, semantic severity strip, ISO issue date, square rules, and bounded title layout. The rebuild path regenerates every archived card, including posts that currently use approved source media. Reconciled the 26-item deployed blog archive with Git so future deployment cannot roll back live content.
+
+Verification: MkDocs strict build passed; docs command verification passed; blog verification passed; 27 blog tests and 4 subtests passed; full Core suite passed with 362 tests, 14 warnings, and 4 subtests; desktop/mobile visual checks covered Docs, Blog navigation, and info/high/critical social cards.
+
 ## 097 Research Provider Activation And Monitor Hardening
 
 Status: local scheduler and eight watchlist-scoped registry baselines active; external credentials remain provider-controlled.

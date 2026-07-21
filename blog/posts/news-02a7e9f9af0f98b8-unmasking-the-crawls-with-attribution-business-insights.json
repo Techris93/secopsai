@@ -1,0 +1,110 @@
+{
+  "affected_artifacts": [],
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "affected_products": [
+    "Cloudflare"
+  ],
+  "author": "Cloudflare Security Blog",
+  "body_markdown": "## Source Metadata\n\n- Source: Cloudflare Security Blog\n- Canonical URL: https://blog.cloudflare.com/attribution-business-insights/\n- Additional references: none\n- Published at: Wed, 01 Jul 2026 06:00:00 GMT\n- Fetched at: 2026-07-02T13:07:20Z\n- Trust level: vendor\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, and track any source-backed detections or mitigations added during review.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- Cloudflare\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Compare the source-backed claim against local assets and current SOC findings.\n- Create a follow-up triage task if the affected technology is present.\n- Document whether this item requires a new advisory, detection, or mitigation note.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights\n```\n\n## References\n\n- https://blog.cloudflare.com/attribution-business-insights/",
+  "canonical_url": "https://blog.cloudflare.com/attribution-business-insights/",
+  "categories": [
+    "Security News",
+    "Threat Intelligence",
+    "Cloudflare"
+  ],
+  "deployed_at": "2026-07-02T13:15:26Z",
+  "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [],
+    "products": [
+      "Cloudflare"
+    ],
+    "severity_signals": [],
+    "urls": []
+  },
+  "featured": false,
+  "fetched_at": "2026-07-02T13:07:20Z",
+  "hero_image": {
+    "alt": "Unmasking the crawls with Attribution Business Insights",
+    "approved": true,
+    "caption": "Source image candidate from Cloudflare Security Blog",
+    "height": 630,
+    "kind": "source-image",
+    "license": "operator-approved",
+    "source_name": "Cloudflare Security Blog",
+    "source_url": "https://blog.cloudflare.com/attribution-business-insights/",
+    "src": "/assets/posts/news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights/f34c012663ad-source-media.png",
+    "width": 1200
+  },
+  "images": [
+    {
+      "alt": "Unmasking the crawls with Attribution Business Insights",
+      "approved": true,
+      "caption": "Source image candidate from Cloudflare Security Blog",
+      "height": 630,
+      "kind": "source-image",
+      "license": "operator-approved",
+      "source_name": "Cloudflare Security Blog",
+      "source_url": "https://blog.cloudflare.com/attribution-business-insights/",
+      "src": "/assets/posts/news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights/f34c012663ad-source-media.png",
+      "width": 1200
+    }
+  ],
+  "iocs": [],
+  "news_key": "02a7e9f9af0f98b8",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights"
+  ],
+  "primary_references": [
+    "https://blog.cloudflare.com/attribution-business-insights/"
+  ],
+  "published_at": "Wed, 01 Jul 2026 06:00:00 GMT",
+  "published_post_path": "blog/posts/news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights.json",
+  "published_url": "https://blog.secopsai.dev/posts/news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights.html",
+  "readiness_blockers": [],
+  "readiness_score": 100,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [],
+  "reading_time": 1,
+  "references": [
+    "https://blog.cloudflare.com/attribution-business-insights/"
+  ],
+  "related_posts": [],
+  "review_status": "deployed",
+  "reviewed_at": "2026-07-02T13:14:26Z",
+  "severity": "medium",
+  "severity_reason": "Security-relevant vulnerability/news signal.",
+  "slug": "news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights",
+  "social_image": "/assets/posts/news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights/f34c012663ad-source-media.png",
+  "social_image_alt": "Unmasking the crawls with Attribution Business Insights",
+  "social_image_height": 630,
+  "social_image_width": 1200,
+  "source_category": "Threat Intelligence",
+  "source_links": [
+    "https://blog.cloudflare.com/attribution-business-insights/"
+  ],
+  "source_name": "Cloudflare Security Blog",
+  "source_trust_level": "vendor",
+  "source_url": "https://blog.cloudflare.com/tag/security/",
+  "sources": [
+    "https://blog.cloudflare.com/attribution-business-insights/"
+  ],
+  "status": "published",
+  "summary": "Cloudflare\u2019s new Attribution Business Insights dashboard helps website owners understand crawler behavior, appetite, and potential value, fueling business-level conversations around crawl compensation.",
+  "tags": [
+    "Security News",
+    "Threat Intelligence",
+    "Cloudflare"
+  ],
+  "title": "Unmasking the crawls with Attribution Business Insights",
+  "updated_at": "2026-07-02T13:15:26Z"
+}

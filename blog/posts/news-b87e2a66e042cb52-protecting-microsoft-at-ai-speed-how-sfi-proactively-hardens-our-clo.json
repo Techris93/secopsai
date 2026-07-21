@@ -1,0 +1,80 @@
+{
+  "affected_artifacts": [],
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "affected_products": [],
+  "author": "Microsoft Security Blog",
+  "body_markdown": "## Source Metadata\n\n- Source: Microsoft Security Blog\n- Canonical URL: https://www.microsoft.com/en-us/security/blog/2026/07/08/protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-cloud/\n- Additional references: none\n- Published at: Wed, 08 Jul 2026 17:00:00 +0000\n- Fetched at: 2026-07-09T06:58:56Z\n- Trust level: vendor\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, and track any source-backed detections or mitigations added during review.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- None found deterministically; reviewer should add source-backed affected assets if present.\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Compare the source-backed claim against local assets and current SOC findings.\n- Create a follow-up triage task if the affected technology is present.\n- Document whether this item requires a new advisory, detection, or mitigation note.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo\n```\n\n## References\n\n- https://www.microsoft.com/en-us/security/blog/2026/07/08/protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-cloud/",
+  "canonical_url": "https://www.microsoft.com/en-us/security/blog/2026/07/08/protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-cloud/",
+  "categories": [
+    "Security News",
+    "Threat Intelligence"
+  ],
+  "deployed_at": "2026-07-09T07:02:27Z",
+  "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [],
+    "products": [],
+    "severity_signals": [],
+    "urls": []
+  },
+  "featured": false,
+  "fetched_at": "2026-07-09T06:58:56Z",
+  "iocs": [],
+  "news_key": "b87e2a66e042cb52",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo"
+  ],
+  "primary_references": [
+    "https://www.microsoft.com/en-us/security/blog/2026/07/08/protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-cloud/"
+  ],
+  "published_at": "Wed, 08 Jul 2026 17:00:00 +0000",
+  "published_post_path": "blog/posts/news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo.json",
+  "published_url": "https://blog.secopsai.dev/posts/news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo.html",
+  "readiness_blockers": [],
+  "readiness_score": 95,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [
+    "no CVEs, IOCs, packages, or products were extracted deterministically"
+  ],
+  "reading_time": 1,
+  "references": [
+    "https://www.microsoft.com/en-us/security/blog/2026/07/08/protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-cloud/"
+  ],
+  "related_posts": [],
+  "review_status": "deployed",
+  "reviewed_at": "2026-07-09T07:01:14Z",
+  "severity": "medium",
+  "severity_reason": "Security-relevant vulnerability/news signal.",
+  "slug": "news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo",
+  "social_image": "/assets/social/news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo.svg",
+  "social_image_alt": "SecOpsAI social preview card for Protecting Microsoft at AI speed: How SFI proactively hardens our cloud",
+  "social_image_height": 630,
+  "social_image_width": 1200,
+  "source_category": "Threat Intelligence",
+  "source_links": [
+    "https://www.microsoft.com/en-us/security/blog/2026/07/08/protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-cloud/"
+  ],
+  "source_name": "Microsoft Security Blog",
+  "source_trust_level": "vendor",
+  "source_url": "https://www.microsoft.com/en-us/security/blog/",
+  "sources": [
+    "https://www.microsoft.com/en-us/security/blog/2026/07/08/protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-cloud/"
+  ],
+  "status": "published",
+  "summary": "At Microsoft we encompass these security requirements, along with threat knowledge, and operational frameworks in our Secure Future Initiative (SFI), to guide what a well-defended cloud service looks like. But defining the requirements is only the start. Meeting the requirements means continuously evaluating our live services against them, at AI speed. The post Protecting Microsoft at AI speed: How SFI proactively hardens our cloud appeared first on Microsoft Security Blog .",
+  "tags": [
+    "Security News",
+    "Threat Intelligence"
+  ],
+  "title": "Protecting Microsoft at AI speed: How SFI proactively hardens our cloud",
+  "updated_at": "2026-07-09T07:02:27Z"
+}

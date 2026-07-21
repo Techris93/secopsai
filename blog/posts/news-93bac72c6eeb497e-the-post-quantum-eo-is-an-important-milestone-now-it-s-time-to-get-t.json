@@ -1,0 +1,84 @@
+{
+  "affected_artifacts": [],
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "affected_products": [
+    "Cloudflare"
+  ],
+  "author": "Cloudflare Security Blog",
+  "body_markdown": "## Source Metadata\n\n- Source: Cloudflare Security Blog\n- Canonical URL: https://blog.cloudflare.com/post-quantum-eo-2026/\n- Additional references: none\n- Published at: Tue, 23 Jun 2026 18:25:18 GMT\n- Fetched at: 2026-06-25T13:44:38Z\n- Trust level: vendor\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: medium (Security-relevant vulnerability/news signal.)\n- Extracted signals: none detected deterministically\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, and track any source-backed detections or mitigations added during review.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- Cloudflare\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Compare the source-backed claim against local assets and current SOC findings.\n- Create a follow-up triage task if the affected technology is present.\n- Document whether this item requires a new advisory, detection, or mitigation note.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-93bac72c6eeb497e-the-post-quantum-eo-is-an-important-milestone-now-it-s-time-to-get-t\n```\n\n## References\n\n- https://blog.cloudflare.com/post-quantum-eo-2026/",
+  "canonical_url": "https://blog.cloudflare.com/post-quantum-eo-2026/",
+  "categories": [
+    "Security News",
+    "Threat Intelligence",
+    "Cloudflare"
+  ],
+  "deployed_at": "2026-06-25T14:00:32Z",
+  "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [],
+    "products": [
+      "Cloudflare"
+    ],
+    "severity_signals": [],
+    "urls": []
+  },
+  "featured": false,
+  "fetched_at": "2026-06-25T13:44:38Z",
+  "iocs": [],
+  "news_key": "93bac72c6eeb497e",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-93bac72c6eeb497e-the-post-quantum-eo-is-an-important-milestone-now-it-s-time-to-get-t"
+  ],
+  "primary_references": [
+    "https://blog.cloudflare.com/post-quantum-eo-2026/"
+  ],
+  "published_at": "Tue, 23 Jun 2026 18:25:18 GMT",
+  "published_post_path": "blog/posts/news-93bac72c6eeb497e-the-post-quantum-eo-is-an-important-milestone-now-it-s-time-to-get-t.json",
+  "published_url": "https://blog.secopsai.dev/posts/news-93bac72c6eeb497e-the-post-quantum-eo-is-an-important-milestone-now-it-s-time-to-get-t.html",
+  "readiness_blockers": [],
+  "readiness_score": 100,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [],
+  "reading_time": 1,
+  "references": [
+    "https://blog.cloudflare.com/post-quantum-eo-2026/"
+  ],
+  "related_posts": [],
+  "review_status": "deployed",
+  "reviewed_at": "2026-06-25T13:58:32Z",
+  "severity": "medium",
+  "severity_reason": "Security-relevant vulnerability/news signal.",
+  "slug": "news-93bac72c6eeb497e-the-post-quantum-eo-is-an-important-milestone-now-it-s-time-to-get-t",
+  "social_image": "/assets/social/news-93bac72c6eeb497e-the-post-quantum-eo-is-an-important-milestone-now-it-s-time-to-get-t.svg",
+  "social_image_alt": "SecOpsAI social preview card for The post-quantum EO is an important milestone. Now it\u2019s time to get to work",
+  "social_image_height": 630,
+  "social_image_width": 1200,
+  "source_category": "Threat Intelligence",
+  "source_links": [
+    "https://blog.cloudflare.com/post-quantum-eo-2026/"
+  ],
+  "source_name": "Cloudflare Security Blog",
+  "source_trust_level": "vendor",
+  "source_url": "https://blog.cloudflare.com/tag/security/",
+  "sources": [
+    "https://blog.cloudflare.com/post-quantum-eo-2026/"
+  ],
+  "status": "published",
+  "summary": "The new post-quantum executive order sets a 2030 migration deadline and establishes a powerful foundation for post-quantum resilience. We look at what it gets right, where it can go further, and our migration playbook for government and industry.",
+  "tags": [
+    "Security News",
+    "Threat Intelligence",
+    "Cloudflare"
+  ],
+  "title": "The post-quantum EO is an important milestone. Now it\u2019s time to get to work",
+  "updated_at": "2026-06-25T14:00:32Z"
+}

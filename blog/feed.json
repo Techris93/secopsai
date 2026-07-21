@@ -4,6 +4,660 @@
   "home_page_url": "https://blog.secopsai.dev/",
   "items": [
     {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "CERT/CC Vulnerability Notes"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-3d2e7f8fefa18de1-vu-529388-privilege-escalation-vulnerability-via-unprotected-ioctl-i.svg",
+      "date_modified": "2026-07-15T18:04:45Z",
+      "date_published": "2026-07-15T17:08:59.351349+00:00",
+      "id": "https://blog.secopsai.dev/posts/news-3d2e7f8fefa18de1-vu-529388-privilege-escalation-vulnerability-via-unprotected-ioctl-i.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-3d2e7f8fefa18de1-vu-529388-privilege-escalation-vulnerability-via-unprotected-ioctl-i.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "Overview A privilege escalation vulnerability exists in the tdeio64.sys driver due to an unprotected input/output control (IOCTL) dispatch routine that fails to validate the origin and permissions of user-supplied requests. An unprivileged local attacker can abuse exposed IOCTL dispatch routines [RM1.1][MB1.2]to perform arbitrary kernel memory read and write operations, ultimately obtaining NT AUTHORITY\\SYSTEM privileges and compromising the security of the affected system. Description The tdeio",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "CERT/CC",
+        "Vulnerability"
+      ],
+      "title": "VU#529388: Privilege escalation vulnerability via unprotected IOCTL interface in Pegatron Tdelo64.sys",
+      "url": "https://blog.secopsai.dev/posts/news-3d2e7f8fefa18de1-vu-529388-privilege-escalation-vulnerability-via-unprotected-ioctl-i.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Microsoft Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/posts/news-de9527d57264b6ae-turning-threat-intelligence-into-decisive-action-with-defender-exper/ac08ca059944-source-media.jpg",
+      "date_modified": "2026-07-15T18:04:45Z",
+      "date_published": "Wed, 15 Jul 2026 16:00:35 +0000",
+      "id": "https://blog.secopsai.dev/posts/news-de9527d57264b6ae-turning-threat-intelligence-into-decisive-action-with-defender-exper.html",
+      "image": "https://blog.secopsai.dev/assets/posts/news-de9527d57264b6ae-turning-threat-intelligence-into-decisive-action-with-defender-exper/ac08ca059944-source-media.jpg",
+      "images": [
+        {
+          "alt": "Turning threat intelligence into decisive action with Defender Experts",
+          "approved": true,
+          "caption": "Source image candidate from Microsoft Security Blog",
+          "height": 630,
+          "kind": "source-image",
+          "license": "operator-approved",
+          "source_name": "Microsoft Security Blog",
+          "source_url": "https://www.microsoft.com/en-us/security/blog/2026/07/15/turning-threat-intelligence-into-decisive-action-with-defender-experts/",
+          "src": "/assets/posts/news-de9527d57264b6ae-turning-threat-intelligence-into-decisive-action-with-defender-exper/ac08ca059944-source-media.jpg",
+          "width": 1200
+        }
+      ],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "Security teams have never had more visibility, yet rarely have they felt more uncertain. Signal pours in from endpoints, identities, cloud workloads, and a sprawling mix of third-party tools. The post Turning threat intelligence into decisive action with Defender Experts appeared first on Microsoft Security Blog .",
+      "tags": [
+        "Security News",
+        "Threat Intelligence"
+      ],
+      "title": "Turning threat intelligence into decisive action with Defender Experts",
+      "url": "https://blog.secopsai.dev/posts/news-de9527d57264b6ae-turning-threat-intelligence-into-decisive-action-with-defender-exper.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "CISA Known Exploited Vulnerabilities"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-5b21d7ae67da2ae4-cisa-kev-balbooa-forms-cve-2026-56291.svg",
+      "date_modified": "2026-07-11T21:47:53Z",
+      "date_published": "2026-07-10",
+      "id": "https://blog.secopsai.dev/posts/news-5b21d7ae67da2ae4-cisa-kev-balbooa-forms-cve-2026-56291.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-5b21d7ae67da2ae4-cisa-kev-balbooa-forms-cve-2026-56291.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "high",
+      "summary": "Balbooa Forms contains an unrestricted upload of file with dangerous type vulnerability that allows an unauthenticated arbitrary file upload which could allow uploading of executable files leading to full RCE.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "CISA KEV",
+        "Vulnerability",
+        "CVE-2026-56291",
+        "RCE"
+      ],
+      "title": "CISA KEV: Balbooa Forms CVE-2026-56291",
+      "url": "https://blog.secopsai.dev/posts/news-5b21d7ae67da2ae4-cisa-kev-balbooa-forms-cve-2026-56291.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Microsoft Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple.svg",
+      "date_modified": "2026-07-11T21:47:53Z",
+      "date_published": "Thu, 09 Jul 2026 15:00:00 +0000",
+      "id": "https://blog.secopsai.dev/posts/news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "high",
+      "summary": "GigaWiper is a destructive backdoor that combines multiple wiping and ransomware-like capabilities into a single operational platform. This blog analyzes how the malware incorporates code from several previously separate malware families and provides guidance to help defenders detect and defend against similar threats. The post GigaWiper: Anatomy of a destructive backdoor assembled from multiple malware appeared first on Microsoft Security Blog .",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "malware"
+      ],
+      "title": "GigaWiper: Anatomy of a destructive backdoor assembled from multiple malware",
+      "url": "https://blog.secopsai.dev/posts/news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "CISA Known Exploited Vulnerabilities"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-94f5cd4204d5ac65-cisa-kev-joomshaper-sp-page-builder-cve-2026-48908.svg",
+      "date_modified": "2026-07-09T07:02:27Z",
+      "date_published": "2026-07-07",
+      "id": "https://blog.secopsai.dev/posts/news-94f5cd4204d5ac65-cisa-kev-joomshaper-sp-page-builder-cve-2026-48908.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-94f5cd4204d5ac65-cisa-kev-joomshaper-sp-page-builder-cve-2026-48908.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "high",
+      "summary": "JoomShaper SP Page Builder contains an unrestricted upload of file with dangerous type vulnerability that allows unauthenticated users to upload arbitrary files, ultimately resulting in the upload and execution of PHP code.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "CISA KEV",
+        "Vulnerability",
+        "CVE-2026-48908"
+      ],
+      "title": "CISA KEV: JoomShaper SP Page Builder CVE-2026-48908",
+      "url": "https://blog.secopsai.dev/posts/news-94f5cd4204d5ac65-cisa-kev-joomshaper-sp-page-builder-cve-2026-48908.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Microsoft Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo.svg",
+      "date_modified": "2026-07-09T07:02:27Z",
+      "date_published": "Wed, 08 Jul 2026 17:00:00 +0000",
+      "id": "https://blog.secopsai.dev/posts/news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "At Microsoft we encompass these security requirements, along with threat knowledge, and operational frameworks in our Secure Future Initiative (SFI), to guide what a well-defended cloud service looks like. But defining the requirements is only the start. Meeting the requirements means continuously evaluating our live services against them, at AI speed. The post Protecting Microsoft at AI speed: How SFI proactively hardens our cloud appeared first on Microsoft Security Blog .",
+      "tags": [
+        "Security News",
+        "Threat Intelligence"
+      ],
+      "title": "Protecting Microsoft at AI speed: How SFI proactively hardens our cloud",
+      "url": "https://blog.secopsai.dev/posts/news-b87e2a66e042cb52-protecting-microsoft-at-ai-speed-how-sfi-proactively-hardens-our-clo.html"
+    },
+    {
+      "affected_packages": [
+        "npm"
+      ],
+      "authors": [
+        {
+          "name": "Socket Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o.svg",
+      "date_modified": "2026-07-02T15:45:15Z",
+      "date_published": "2026-07-01T17:53:56.469Z",
+      "id": "https://blog.secopsai.dev/posts/news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "info",
+      "summary": "PolinRider expands across npm, Packagist, Go modules, and Chrome extensions, using hidden loaders to target developer environments.",
+      "tags": [
+        "Security News",
+        "Supply Chain",
+        "Research",
+        "npm",
+        "composer",
+        "go"
+      ],
+      "title": "PolinRider: North Korea-Linked Supply Chain Campaign Expands Across Open Source Ecosystems",
+      "url": "https://blog.secopsai.dev/posts/news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Cloudflare Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/posts/news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights/f34c012663ad-source-media.png",
+      "date_modified": "2026-07-02T13:15:26Z",
+      "date_published": "Wed, 01 Jul 2026 06:00:00 GMT",
+      "id": "https://blog.secopsai.dev/posts/news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights.html",
+      "image": "https://blog.secopsai.dev/assets/posts/news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights/f34c012663ad-source-media.png",
+      "images": [
+        {
+          "alt": "Unmasking the crawls with Attribution Business Insights",
+          "approved": true,
+          "caption": "Source image candidate from Cloudflare Security Blog",
+          "height": 630,
+          "kind": "source-image",
+          "license": "operator-approved",
+          "source_name": "Cloudflare Security Blog",
+          "source_url": "https://blog.cloudflare.com/attribution-business-insights/",
+          "src": "/assets/posts/news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights/f34c012663ad-source-media.png",
+          "width": 1200
+        }
+      ],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "Cloudflare\u2019s new Attribution Business Insights dashboard helps website owners understand crawler behavior, appetite, and potential value, fueling business-level conversations around crawl compensation.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "Cloudflare"
+      ],
+      "title": "Unmasking the crawls with Attribution Business Insights",
+      "url": "https://blog.secopsai.dev/posts/news-02a7e9f9af0f98b8-unmasking-the-crawls-with-attribution-business-insights.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Microsoft Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/posts/news-c22df4db94d27507-microsoft-a-leader-in-the-forrester-wave-for-endpoint-management-pla/0ec3e7d4aa34-source-media.png",
+      "date_modified": "2026-06-25T22:40:03Z",
+      "date_published": "Thu, 25 Jun 2026 16:00:00 +0000",
+      "id": "https://blog.secopsai.dev/posts/news-c22df4db94d27507-microsoft-a-leader-in-the-forrester-wave-for-endpoint-management-pla.html",
+      "image": "https://blog.secopsai.dev/assets/posts/news-c22df4db94d27507-microsoft-a-leader-in-the-forrester-wave-for-endpoint-management-pla/0ec3e7d4aa34-source-media.png",
+      "images": [
+        {
+          "alt": "Microsoft a Leader in The Forrester Wave\u2122 for Endpoint Management Platforms",
+          "approved": true,
+          "caption": "Source image candidate from Microsoft Security Blog",
+          "height": 630,
+          "kind": "source-image",
+          "license": "operator-approved",
+          "source_name": "Microsoft Security Blog",
+          "source_url": "https://www.microsoft.com/en-us/security/blog/2026/06/25/microsoft-a-leader-in-the-forrester-wave-for-endpoint-management-platforms/",
+          "src": "/assets/posts/news-c22df4db94d27507-microsoft-a-leader-in-the-forrester-wave-for-endpoint-management-pla/0ec3e7d4aa34-source-media.png",
+          "width": 1200
+        }
+      ],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "Microsoft named a Leader in the Forrester Wave\u2122: Endpoint Management Platforms, Q2 2026, with the highest scores in the current offering and strategy categories. The post Microsoft a Leader in The Forrester Wave\u2122 for Endpoint Management Platforms appeared first on Microsoft Security Blog .",
+      "tags": [
+        "Security News",
+        "Threat Intelligence"
+      ],
+      "title": "Microsoft a Leader in The Forrester Wave\u2122 for Endpoint Management Platforms",
+      "url": "https://blog.secopsai.dev/posts/news-c22df4db94d27507-microsoft-a-leader-in-the-forrester-wave-for-endpoint-management-pla.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Cloudflare Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-93bac72c6eeb497e-the-post-quantum-eo-is-an-important-milestone-now-it-s-time-to-get-t.svg",
+      "date_modified": "2026-06-25T14:00:32Z",
+      "date_published": "Tue, 23 Jun 2026 18:25:18 GMT",
+      "id": "https://blog.secopsai.dev/posts/news-93bac72c6eeb497e-the-post-quantum-eo-is-an-important-milestone-now-it-s-time-to-get-t.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-93bac72c6eeb497e-the-post-quantum-eo-is-an-important-milestone-now-it-s-time-to-get-t.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "The new post-quantum executive order sets a 2030 migration deadline and establishes a powerful foundation for post-quantum resilience. We look at what it gets right, where it can go further, and our migration playbook for government and industry.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "Cloudflare"
+      ],
+      "title": "The post-quantum EO is an important milestone. Now it\u2019s time to get to work",
+      "url": "https://blog.secopsai.dev/posts/news-93bac72c6eeb497e-the-post-quantum-eo-is-an-important-milestone-now-it-s-time-to-get-t.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Microsoft Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-a7ec3f04af1bba91-stealc-and-amadey-breaking-down-infostealers-and-the-cybercrime-serv.svg",
+      "date_modified": "2026-06-25T14:00:32Z",
+      "date_published": "Wed, 24 Jun 2026 12:30:00 +0000",
+      "id": "https://blog.secopsai.dev/posts/news-a7ec3f04af1bba91-stealc-and-amadey-breaking-down-infostealers-and-the-cybercrime-serv.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-a7ec3f04af1bba91-stealc-and-amadey-breaking-down-infostealers-and-the-cybercrime-serv.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "On June 24, 2026, Microsoft\u2019s Digital Crimes Unit (DCU) facilitated the takedown, suspension, and blocking of domains that formed the backbone of the StealC and Amadey infrastructure. This blog is a technical breakdown of StealC and Amadey. The post StealC and Amadey: Breaking down infostealers and the cybercrime services that deliver them appeared first on Microsoft Security Blog .",
+      "tags": [
+        "Security News",
+        "Threat Intelligence"
+      ],
+      "title": "StealC and Amadey: Breaking down infostealers and the cybercrime services that deliver them",
+      "url": "https://blog.secopsai.dev/posts/news-a7ec3f04af1bba91-stealc-and-amadey-breaking-down-infostealers-and-the-cybercrime-serv.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Cloudflare Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all.svg",
+      "date_modified": "2026-06-25T12:26:21Z",
+      "date_published": "Wed, 24 Jun 2026 06:00:00 GMT",
+      "id": "https://blog.secopsai.dev/posts/news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "Self-Managed OAuth is now available to all developers on Cloudflare. Here's how we executed a zero-downtime migration of our core OAuth engine to make it happen.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "Cloudflare"
+      ],
+      "title": "Unlocking the Cloudflare app ecosystem with OAuth for all",
+      "url": "https://blog.secopsai.dev/posts/news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "CISA News"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-ce7ca11b68c6c09e-new-cisa-guide-assists-federal-agencies-with-transitioning-to-modern.svg",
+      "date_modified": "2026-06-25T12:26:21Z",
+      "date_published": "Wed, 24 Jun 26 12:00:00 +0000",
+      "id": "https://blog.secopsai.dev/posts/news-ce7ca11b68c6c09e-new-cisa-guide-assists-federal-agencies-with-transitioning-to-modern.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-ce7ca11b68c6c09e-new-cisa-guide-assists-federal-agencies-with-transitioning-to-modern.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "info",
+      "summary": "CISA News reports a security-relevant update titled \"New CISA Guide Assists Federal Agencies with Transitioning to Modernized Zero Trust Architectures\". Operators should validate the source details, map any affected assets, and add SecOpsAI-specific detections or mitigations before publication.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "CISA"
+      ],
+      "title": "New CISA Guide Assists Federal Agencies with Transitioning to Modernized Zero Trust Architectures",
+      "url": "https://blog.secopsai.dev/posts/news-ce7ca11b68c6c09e-new-cisa-guide-assists-federal-agencies-with-transitioning-to-modern.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Microsoft Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-f98371c262a7a90c-cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-managem.svg",
+      "date_modified": "2026-06-25T12:26:21Z",
+      "date_published": "Wed, 24 Jun 2026 18:00:00 +0000",
+      "id": "https://blog.secopsai.dev/posts/news-f98371c262a7a90c-cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-managem.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-f98371c262a7a90c-cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-managem.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "Learn how CNAPP platforms are helping organizations prioritize exploitable risks, reduce exposure, and operationalize security across the application lifecycle. The post CNAPP evolution: How Microsoft aligns with leading cloud risk management platforms appeared first on Microsoft Security Blog .",
+      "tags": [
+        "Security News",
+        "Threat Intelligence"
+      ],
+      "title": "CNAPP evolution: How Microsoft aligns with leading cloud risk management platforms",
+      "url": "https://blog.secopsai.dev/posts/news-f98371c262a7a90c-cnapp-evolution-how-microsoft-aligns-with-leading-cloud-risk-managem.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "JFrog Security Research"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-89c4d4432e164c06-critical-chaos-mesh-vulnerabilities-kubernetes-cluster-takeover.svg",
+      "date_modified": "2026-06-04T19:11:57Z",
+      "date_published": "2026-06-04T14:37:12Z",
+      "id": "https://blog.secopsai.dev/posts/news-89c4d4432e164c06-critical-chaos-mesh-vulnerabilities-kubernetes-cluster-takeover.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-89c4d4432e164c06-critical-chaos-mesh-vulnerabilities-kubernetes-cluster-takeover.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "External security-news item queued for analyst review.",
+      "tags": [
+        "Security News",
+        "Supply Chain",
+        "Research"
+      ],
+      "title": "Critical Chaos-Mesh vulnerabilities Kubernetes cluster takeover",
+      "url": "https://blog.secopsai.dev/posts/news-89c4d4432e164c06-critical-chaos-mesh-vulnerabilities-kubernetes-cluster-takeover.html"
+    },
+    {
+      "affected_packages": [
+        "npm"
+      ],
+      "authors": [
+        {
+          "name": "Microsoft Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-351daec4f3181d58-preinstall-to-persistence-inside-the-red-hat-npm-miasma-credential-s.svg",
+      "date_modified": "2026-06-04T00:28:14Z",
+      "date_published": "Wed, 03 Jun 2026 04:45:06 +0000",
+      "id": "https://blog.secopsai.dev/posts/news-351daec4f3181d58-preinstall-to-persistence-inside-the-red-hat-npm-miasma-credential-s.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-351daec4f3181d58-preinstall-to-persistence-inside-the-red-hat-npm-miasma-credential-s.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "high",
+      "summary": "A large-scale npm supply chain attack compromised over 90 versions of @redhat-cloud-services packages, silently infecting CI/CD environments and developer systems. The malicious code steals credentials from GitHub, cloud platforms, and local machines, then spreads like a worm by republishing trusted packages. Discover how the attack works, what data is at risk, and the steps you can take to protect your organization. The post Preinstall to persistence: Inside the Red Hat npm Miasma credential-st",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "npm",
+        "github",
+        "supply-chain attack"
+      ],
+      "title": "Preinstall to persistence: Inside the Red Hat npm Miasma credential-stealing campaign",
+      "url": "https://blog.secopsai.dev/posts/news-351daec4f3181d58-preinstall-to-persistence-inside-the-red-hat-npm-miasma-credential-s.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "CISA Known Exploited Vulnerabilities"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-59a28be6252f41c8-cisa-kev-mirasvit-full-page-cache-warmer-cve-2026-45247.svg",
+      "date_modified": "2026-06-04T00:28:14Z",
+      "date_published": "2026-06-03",
+      "id": "https://blog.secopsai.dev/posts/news-59a28be6252f41c8-cisa-kev-mirasvit-full-page-cache-warmer-cve-2026-45247.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-59a28be6252f41c8-cisa-kev-mirasvit-full-page-cache-warmer-cve-2026-45247.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "high",
+      "summary": "Mirasvit Full Page Cache Warmer contains a deserialization of untrusted data vulnerability that could allow unauthenticated attackers to achieve remote code execution by supplying a crafted serialized PHP object in the CacheWarmer cookie.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "CISA KEV",
+        "Vulnerability",
+        "CVE-2026-45247",
+        "RCE"
+      ],
+      "title": "CISA KEV: Mirasvit Full Page Cache Warmer CVE-2026-45247",
+      "url": "https://blog.secopsai.dev/posts/news-59a28be6252f41c8-cisa-kev-mirasvit-full-page-cache-warmer-cve-2026-45247.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Microsoft Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-413a00607dd9c1c0-microsoft-build-2026-securing-code-agents-and-models-across-the-deve.svg",
+      "date_modified": "2026-06-02T18:37:18Z",
+      "date_published": "Tue, 02 Jun 2026 17:15:18 +0000",
+      "id": "https://blog.secopsai.dev/posts/news-413a00607dd9c1c0-microsoft-build-2026-securing-code-agents-and-models-across-the-deve.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-413a00607dd9c1c0-microsoft-build-2026-securing-code-agents-and-models-across-the-deve.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "Discover how Microsoft enables fast, secure AI development with MDASH and new security capabilities. The post Microsoft Build 2026: Securing code, agents, and models across the development lifecycle appeared first on Microsoft Security Blog .",
+      "tags": [
+        "Security News",
+        "Threat Intelligence"
+      ],
+      "title": "Microsoft Build 2026: Securing code, agents, and models across the development lifecycle",
+      "url": "https://blog.secopsai.dev/posts/news-413a00607dd9c1c0-microsoft-build-2026-securing-code-agents-and-models-across-the-deve.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "CISA Known Exploited Vulnerabilities"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-2e28681f9abdc9d2-cisa-kev-oracle-weblogic-server-cve-2024-21182.svg",
+      "date_modified": "2026-06-01T20:20:55Z",
+      "date_published": "2026-06-01",
+      "id": "https://blog.secopsai.dev/posts/news-2e28681f9abdc9d2-cisa-kev-oracle-weblogic-server-cve-2024-21182.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-2e28681f9abdc9d2-cisa-kev-oracle-weblogic-server-cve-2024-21182.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "high",
+      "summary": "Oracle WebLogic contains an unspecified vulnerability that could allow an unauthenticated attacker with network access via T3, IIOP to compromise Oracle WebLogic Server. Successful attacks of this vulnerability can result in unauthorized access to critical data or complete access to all Oracle WebLogic Server accessible data.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "CISA KEV",
+        "Vulnerability",
+        "CVE-2024-21182"
+      ],
+      "title": "CISA KEV: Oracle WebLogic Server CVE-2024-21182",
+      "url": "https://blog.secopsai.dev/posts/news-2e28681f9abdc9d2-cisa-kev-oracle-weblogic-server-cve-2024-21182.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Microsoft Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-656afebf3aea47e6-the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor.svg",
+      "date_modified": "2026-06-01T20:20:55Z",
+      "date_published": "Thu, 28 May 2026 15:00:00 +0000",
+      "id": "https://blog.secopsai.dev/posts/news-656afebf3aea47e6-the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-656afebf3aea47e6-the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "Microsoft Threat Intelligence presents a comprehensive analysis of The Gentlemen, a Go-based ransomware deployed by affiliates of Storm-2697 that combines per-file ephemeral key encryption with an aggressive self-propagation module to deploy itself across an entire network using series of simultaneous lateral movement techniques per target. The post The Gentlemen ransomware: Dissecting a self-propagating Go encryptor appeared first on Microsoft Security Blog .",
+      "tags": [
+        "Security News",
+        "Threat Intelligence"
+      ],
+      "title": "The Gentlemen ransomware: Dissecting a self-propagating Go encryptor",
+      "url": "https://blog.secopsai.dev/posts/news-656afebf3aea47e6-the-gentlemen-ransomware-dissecting-a-self-propagating-go-encryptor.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Microsoft Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-fd4fa178ee21e94e-from-poisoned-search-results-to-gpu-mining-a-cryptojacking-campaign.svg",
+      "date_modified": "2026-06-01T20:20:55Z",
+      "date_published": "Tue, 26 May 2026 21:35:34 +0000",
+      "id": "https://blog.secopsai.dev/posts/news-fd4fa178ee21e94e-from-poisoned-search-results-to-gpu-mining-a-cryptojacking-campaign.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-fd4fa178ee21e94e-from-poisoned-search-results-to-gpu-mining-a-cryptojacking-campaign.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "Microsoft exposes a cryptojacking campaign using SEO poisoning and ScreenConnect to target high-performance PCs, with malicious sites also surfaced through AI chatbots. The post From poisoned search results to GPU mining: A cryptojacking campaign abusing ScreenConnect and Microsoft .NET utilities appeared first on Microsoft Security Blog .",
+      "tags": [
+        "Security News",
+        "Threat Intelligence"
+      ],
+      "title": "From poisoned search results to GPU mining: A cryptojacking campaign abusing ScreenConnect and Microsoft .NET utilities",
+      "url": "https://blog.secopsai.dev/posts/news-fd4fa178ee21e94e-from-poisoned-search-results-to-gpu-mining-a-cryptojacking-campaign.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "CISA Known Exploited Vulnerabilities"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-023f9f16270b8b4d-cisa-kev-palo-alto-networks-pan-os-cve-2026-0257.svg",
+      "date_modified": "2026-05-31T21:16:48Z",
+      "date_published": "2026-05-29",
+      "id": "https://blog.secopsai.dev/posts/news-023f9f16270b8b4d-cisa-kev-palo-alto-networks-pan-os-cve-2026-0257.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-023f9f16270b8b4d-cisa-kev-palo-alto-networks-pan-os-cve-2026-0257.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "high",
+      "summary": "Palo Alto Networks PAN-OS contains an authentication bypass vulnerability that allows attackers to bypass security restrictions and establish an unauthorized VPN connection.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "CISA KEV",
+        "Vulnerability",
+        "CVE-2026-0257"
+      ],
+      "title": "CISA KEV: Palo Alto Networks PAN-OS CVE-2026-0257",
+      "url": "https://blog.secopsai.dev/posts/news-023f9f16270b8b4d-cisa-kev-palo-alto-networks-pan-os-cve-2026-0257.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Google Online Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt.svg",
+      "date_modified": "2026-05-31T21:16:48Z",
+      "date_published": "2026-04-02T12:00:00.003-04:00",
+      "id": "https://blog.secopsai.dev/posts/news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "Google Online Security Blog reports a security-relevant update titled \"Google Workspace\u2019s continuous approach to mitigating indirect prompt injections\". Operators should validate the source details, map any affected assets, and add SecOpsAI-specific detections or mitigations before publication.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "Google"
+      ],
+      "title": "Google Workspace\u2019s continuous approach to mitigating indirect prompt injections",
+      "url": "https://blog.secopsai.dev/posts/news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "CISA News"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-0361c07f135b13ef-cisa-enhances-known-exploited-vulnerabilities-catalog-to-include-new.svg",
+      "date_modified": "2026-05-22T15:47:09Z",
+      "date_published": "Thu, 21 May 26 12:00:00 +0000",
+      "id": "https://blog.secopsai.dev/posts/news-0361c07f135b13ef-cisa-enhances-known-exploited-vulnerabilities-catalog-to-include-new.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-0361c07f135b13ef-cisa-enhances-known-exploited-vulnerabilities-catalog-to-include-new.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "high",
+      "summary": "CISA News reports a security-relevant update titled \"CISA Enhances Known Exploited Vulnerabilities Catalog to Include New Nomination Form\". Operators should validate the source details, map any affected assets, and add SecOpsAI-specific detections or mitigations before publication.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "CISA",
+        "CISA KEV"
+      ],
+      "title": "CISA Enhances Known Exploited Vulnerabilities Catalog to Include New Nomination Form",
+      "url": "https://blog.secopsai.dev/posts/news-0361c07f135b13ef-cisa-enhances-known-exploited-vulnerabilities-catalog-to-include-new.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Cloudflare Security Blog"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available.svg",
+      "date_modified": "2026-05-22T15:47:09Z",
+      "date_published": "Thu, 30 Apr 2026 14:00:00 GMT",
+      "id": "https://blog.secopsai.dev/posts/news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available.html",
+      "image": "https://blog.secopsai.dev/assets/social/news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available.svg",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "medium",
+      "summary": "Cloudflare IPsec now has generally available support for post-quantum encryption via hybrid ML-KEM. We\u2019ve confirmed interoperability with Cisco and Fortinet.",
+      "tags": [
+        "Security News",
+        "Threat Intelligence",
+        "Cloudflare"
+      ],
+      "title": "Post-quantum encryption for Cloudflare IPsec is generally available",
+      "url": "https://blog.secopsai.dev/posts/news-0ef6a321a230a811-post-quantum-encryption-for-cloudflare-ipsec-is-generally-available.html"
+    },
+    {
       "affected_packages": [
         "@opensearch-project/opensearch",
         "mistralai",

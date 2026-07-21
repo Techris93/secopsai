@@ -1,0 +1,84 @@
+{
+  "affected_artifacts": [],
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "affected_products": [],
+  "author": "Microsoft Security Blog",
+  "body_markdown": "## Source Metadata\n\n- Source: Microsoft Security Blog\n- Canonical URL: https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/\n- Additional references: none\n- Published at: Thu, 09 Jul 2026 15:00:00 +0000\n- Fetched at: 2026-07-11T21:42:50Z\n- Trust level: vendor\n\n## Why It Matters\n\n- Source type: Threat Intelligence\n- Severity hint: high (Compromise, credential-theft, malware, or supply-chain signal.)\n- Extracted signals: malware\n\n## What SecOpsAI Can Detect\n\nSecOpsAI can track listed IOCs, suspicious URLs/domains/IPs, file paths, hashes, process behavior, and matching OpenClaw replay telemetry.\n\n## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n### Affected Packages Or Products\n\n- None found deterministically; reviewer should add source-backed affected assets if present.\n\n## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n## Recommended Actions\n\n- Search telemetry for extracted domains, IPs, URLs, hashes, and file names.\n- Block source-backed indicators where appropriate for your environment.\n- Investigate matching endpoints and preserve relevant artifacts before cleanup.\n- Create a SecOpsAI/OpenClaw triage task for any local indicator match.\n\n## Operator Commands\n\n```bash\nsecopsai triage summary\nsecopsai research preflight\nsecopsai supply-chain advisory list\nsecopsai blog news-review show news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple\n```\n\n## References\n\n- https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/",
+  "canonical_url": "https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/",
+  "categories": [
+    "Security News",
+    "Threat Intelligence",
+    "malware"
+  ],
+  "deployed_at": "2026-07-11T21:47:53Z",
+  "external_news": true,
+  "extracted": {
+    "cves": [],
+    "domains": [],
+    "ecosystems": [],
+    "hashes": [],
+    "ips": [],
+    "packages": [],
+    "products": [],
+    "severity_signals": [
+      "malware"
+    ],
+    "urls": []
+  },
+  "featured": false,
+  "fetched_at": "2026-07-11T21:42:50Z",
+  "iocs": [],
+  "news_key": "9312933a6fc09ae5",
+  "operator_commands": [
+    "secopsai triage summary",
+    "secopsai research preflight",
+    "secopsai supply-chain advisory list",
+    "secopsai blog news-review show news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple"
+  ],
+  "primary_references": [
+    "https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/"
+  ],
+  "published_at": "Thu, 09 Jul 2026 15:00:00 +0000",
+  "published_post_path": "blog/posts/news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple.json",
+  "published_url": "https://blog.secopsai.dev/posts/news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple.html",
+  "readiness_blockers": [],
+  "readiness_score": 95,
+  "readiness_status": "ready_to_review",
+  "readiness_warnings": [
+    "no CVEs, IOCs, packages, or products were extracted deterministically"
+  ],
+  "reading_time": 1,
+  "references": [
+    "https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/"
+  ],
+  "related_posts": [],
+  "review_status": "deployed",
+  "reviewed_at": "2026-07-11T21:44:55Z",
+  "severity": "high",
+  "severity_reason": "Compromise, credential-theft, malware, or supply-chain signal.",
+  "slug": "news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple",
+  "social_image": "/assets/social/news-9312933a6fc09ae5-gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple.svg",
+  "social_image_alt": "SecOpsAI social preview card for GigaWiper: Anatomy of a destructive backdoor assembled from multiple malware",
+  "social_image_height": 630,
+  "social_image_width": 1200,
+  "source_category": "Threat Intelligence",
+  "source_links": [
+    "https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/"
+  ],
+  "source_name": "Microsoft Security Blog",
+  "source_trust_level": "vendor",
+  "source_url": "https://www.microsoft.com/en-us/security/blog/",
+  "sources": [
+    "https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/"
+  ],
+  "status": "published",
+  "summary": "GigaWiper is a destructive backdoor that combines multiple wiping and ransomware-like capabilities into a single operational platform. This blog analyzes how the malware incorporates code from several previously separate malware families and provides guidance to help defenders detect and defend against similar threats. The post GigaWiper: Anatomy of a destructive backdoor assembled from multiple malware appeared first on Microsoft Security Blog .",
+  "tags": [
+    "Security News",
+    "Threat Intelligence",
+    "malware"
+  ],
+  "title": "GigaWiper: Anatomy of a destructive backdoor assembled from multiple malware",
+  "updated_at": "2026-07-11T21:47:53Z"
+}

@@ -1,21 +1,23 @@
 ---
-title: Home
+title: Platform Overview
 template: home.html
 hide:
   - toc
-description: Local-first cross-platform SecOps docs for OpenClaw, Hermes Agent, macOS, Linux, and Windows.
+description: Operator documentation for SecOpsAI network discovery, package-registry surveillance, findings triage, security research, reporting, and local-first integrations.
 ---
 
-# secopsai
+# SecOpsAI Documentation
 
-Local-first cross-platform SecOps for OpenClaw, Hermes Agent, macOS, Linux, Windows, and SecOpsAI Edge network sensors.
+Deploy SecOpsAI Edge sensors, monitor network and package-registry changes, investigate findings, manage research evidence, and produce reports without giving up control of raw telemetry.
 
-## Why secopsai
+## Why SecOpsAI
 
-secopsai turns OpenClaw, Hermes Agent, and host OS telemetry into repeatable, explainable security findings and now includes a native analyst workflow for investigation, disposition, and queued policy actions.
+SecOpsAI connects network discovery, software supply-chain monitoring, host and agent telemetry, findings triage, research cases, and reporting in one local-first operating model.
 
 - Unified collection across **OpenClaw**, **Hermes Agent**, **macOS**, **Linux**, and **Windows**
 - SecOpsAI Edge asset discovery, service exposure, Wi-Fi inventory, and site sensor context
+- Continuous package-registry monitoring and explainable candidate scoring across supported ecosystems
+- Durable research cases for evidence, IOCs, disclosure, sandbox approval, and publication readiness
 - Local-first pipeline with SQLite-backed findings storage
 - Cross-platform correlation by IP, user, time, and file hash
 - Native CLI triage and orchestrated review workflow
