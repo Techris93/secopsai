@@ -152,6 +152,43 @@ def init_db(db_path: str | None = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_core_api_audit_time
                 ON core_api_audit_logs (occurred_at DESC, audit_id DESC);
 
+            CREATE TABLE IF NOT EXISTS intelligence_jobs (
+                job_id TEXT PRIMARY KEY,
+                action TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                requested_by TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                attempt INTEGER NOT NULL DEFAULT 0,
+                provider TEXT NOT NULL DEFAULT '',
+                queued_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL,
+                error_code TEXT,
+                error_message TEXT,
+                input_json TEXT NOT NULL,
+                result_json TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS intelligence_job_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                message TEXT NOT NULL,
+                data_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (job_id) REFERENCES intelligence_jobs (job_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_intelligence_jobs_status_queued
+                ON intelligence_jobs (status, queued_at, job_id);
+            CREATE INDEX IF NOT EXISTS idx_intelligence_jobs_updated
+                ON intelligence_jobs (updated_at DESC, job_id DESC);
+            CREATE INDEX IF NOT EXISTS idx_intelligence_job_events_job
+                ON intelligence_job_events (job_id, event_id);
+
             CREATE TABLE IF NOT EXISTS research_cases (
                 case_id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,

@@ -1,0 +1,14 @@
+{
+  "schema_version": "secopsai.intelligence.v1",
+  "action": "workspace_summary",
+  "generated_at": "2026-07-22T12:00:00Z",
+  "provider": "secopsai_core",
+  "read_only": true,
+  "data": {
+    "findings": { "total": 2, "by_status": { "open": 2 }, "by_severity": { "high": 1, "medium": 1 } },
+    "assets": { "total": 7 },
+    "research_cases": { "total": 1, "by_status": { "active": 1 } },
+    "intelligence_jobs": { "queued": 1 }
+  },
+  "limitations": ["Results reflect the normalized SecOpsAI records available at generation time."]
+}

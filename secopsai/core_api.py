@@ -21,6 +21,17 @@ import soc_store
 from secopsai import __version__
 from secopsai.edge_sync import import_bundle, validate_bundle
 from secopsai.graph_store import list_assets, list_changes
+from secopsai.intelligence import get_action as get_intelligence_action
+from secopsai.intelligence import list_actions as list_intelligence_actions
+from secopsai.intelligence import prepare_bridge_request, validate_bridge_result
+from secopsai.intelligence import run_read_action as run_intelligence_read_action
+from secopsai.intelligence_jobs import cancel_job as cancel_intelligence_job
+from secopsai.intelligence_jobs import claim_next_job as claim_intelligence_job
+from secopsai.intelligence_jobs import complete_job as complete_intelligence_job
+from secopsai.intelligence_jobs import enqueue_job as enqueue_intelligence_job
+from secopsai.intelligence_jobs import fail_job as fail_intelligence_job
+from secopsai.intelligence_jobs import get_job as get_intelligence_job
+from secopsai.intelligence_jobs import list_jobs as list_intelligence_jobs
 from secopsai.observability import initialize_observability
 
 
@@ -29,6 +40,7 @@ PROTECTED_ENVIRONMENTS = {"pilot", "production"}
 MIN_PROTECTED_TOKEN_LENGTH = 32
 DEFAULT_MAX_BUNDLE_BYTES = 10 * 1024 * 1024
 MAX_RESEARCH_ALERT_BYTES = 64 * 1024
+MAX_INTELLIGENCE_REQUEST_BYTES = 64 * 1024
 RESEARCH_WEBHOOK_MAX_AGE_SECONDS = 300
 RESEARCH_OPERATIONAL_ALERT_TYPES = {"collector_degraded", "collector_retention_risk"}
 REDACTED_KEYS = {
@@ -57,6 +69,8 @@ class CoreAPISettings:
     db_path: str
     ingest_token: str = ""
     read_token: str = ""
+    intelligence_token: str = ""
+    bridge_token: str = ""
     environment: str = "local"
     organization_id: str = ""
     cors_origins: tuple[str, ...] = ()
@@ -70,6 +84,8 @@ class CoreAPISettings:
             db_path=os.environ.get("SECOPSAI_CORE_DB_PATH") or soc_store.default_db_path(),
             ingest_token=os.environ.get("SECOPSAI_CORE_INGEST_TOKEN", "").strip(),
             read_token=os.environ.get("SECOPSAI_CORE_READ_TOKEN", "").strip(),
+            intelligence_token=os.environ.get("SECOPSAI_CORE_INTELLIGENCE_TOKEN", "").strip(),
+            bridge_token=os.environ.get("SECOPSAI_CORE_BRIDGE_TOKEN", "").strip(),
             environment=os.environ.get("SECOPSAI_CORE_ENVIRONMENT", "local").strip().lower(),
             organization_id=os.environ.get("SECOPSAI_CORE_ORGANIZATION_ID", "").strip(),
             cors_origins=_csv_setting("SECOPSAI_CORE_CORS_ORIGINS"),
@@ -93,8 +109,23 @@ class CoreAPISettings:
             raise RuntimeError("SECOPSAI_CORE_INGEST_TOKEN must contain at least 32 characters")
         if len(self.read_token) < MIN_PROTECTED_TOKEN_LENGTH:
             raise RuntimeError("SECOPSAI_CORE_READ_TOKEN must contain at least 32 characters")
+        if self.intelligence_token and len(self.intelligence_token) < MIN_PROTECTED_TOKEN_LENGTH:
+            raise RuntimeError("SECOPSAI_CORE_INTELLIGENCE_TOKEN must contain at least 32 characters when configured")
+        if self.bridge_token and len(self.bridge_token) < MIN_PROTECTED_TOKEN_LENGTH:
+            raise RuntimeError("SECOPSAI_CORE_BRIDGE_TOKEN must contain at least 32 characters when configured")
         if hmac.compare_digest(self.ingest_token, self.read_token):
             raise RuntimeError("Core ingestion and read tokens must be different")
+        if self.intelligence_token and any(
+            hmac.compare_digest(left, right)
+            for left, right in (
+                (self.ingest_token, self.intelligence_token),
+                (self.read_token, self.intelligence_token),
+            )
+        ):
+            raise RuntimeError("Core ingestion, read, and intelligence tokens must be different")
+        configured_tokens = [value for value in (self.ingest_token, self.read_token, self.intelligence_token, self.bridge_token) if value]
+        if len({hashlib.sha256(value.encode()).digest() for value in configured_tokens}) != len(configured_tokens):
+            raise RuntimeError("All configured Core bearer credentials must be different")
         if not self.organization_id:
             raise RuntimeError("SECOPSAI_CORE_ORGANIZATION_ID is required in pilot/production")
         if not self.trusted_hosts or "*" in self.trusted_hosts:
@@ -158,6 +189,8 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
 
     require_ingest = _bearer_dependency(lambda: resolved.ingest_token, "edge_ingest")
     require_read = _bearer_dependency(lambda: resolved.read_token, "operator_read")
+    require_intelligence = _bearer_dependency(lambda: resolved.intelligence_token, "intelligence_operator")
+    require_bridge = _bearer_dependency(lambda: resolved.bridge_token, "intelligence_bridge")
 
     @application.get("/healthz")
     def health() -> dict[str, str]:
@@ -284,6 +317,205 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
         bounded_limit = max(1, min(int(limit), 500))
         return {"audit_logs": _list_audit_logs(resolved.db_path, bounded_limit)}
 
+    @application.get("/api/v1/intelligence/actions")
+    def intelligence_actions(
+        _role: str = Depends(require_read),
+    ) -> dict[str, Any]:
+        return list_intelligence_actions()
+
+    @application.post("/api/v1/intelligence/query")
+    async def intelligence_query(
+        request: Request,
+        _role: str = Depends(require_read),
+    ) -> dict[str, Any]:
+        try:
+            payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "Intelligence query")
+            action = str(payload.get("action") or "").strip()
+            inputs = payload.get("inputs") or {}
+            if not isinstance(inputs, dict):
+                raise ValueError("intelligence inputs must be an object")
+            result = run_intelligence_read_action(action, inputs, db_path=resolved.db_path)
+            _write_audit(
+                resolved.db_path,
+                request_id=request.state.request_id,
+                action="intelligence.query.completed",
+                actor_role="operator_read",
+                result="success",
+                source_instance="secopsai-core",
+                details={"intelligence_action": action},
+            )
+            return {**result, "request_id": request.state.request_id}
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @application.post("/api/v1/intelligence/jobs")
+    async def intelligence_job_create(
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        try:
+            payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "Intelligence job")
+            inputs = payload.get("inputs") or {}
+            if not isinstance(inputs, dict):
+                raise ValueError("intelligence inputs must be an object")
+            action = get_intelligence_action(str(payload.get("action") or ""))
+            if not action.requires_bridge:
+                raise ValueError("only bridge-backed intelligence actions can be queued")
+            job = enqueue_intelligence_job(
+                action=action.name,
+                target_id=str(payload.get("target_id") or ""),
+                inputs=inputs,
+                requested_by=str(payload.get("requested_by") or "dashboard"),
+                idempotency_key=str(payload.get("idempotency_key") or ""),
+                db_path=resolved.db_path,
+            )
+            _write_audit(
+                resolved.db_path,
+                request_id=request.state.request_id,
+                action="intelligence.job.queued",
+                actor_role="intelligence_operator",
+                result="success",
+                source_instance="secopsai-core",
+                details={"job_id": job["job_id"], "intelligence_action": job["action"]},
+            )
+            return {"job": job, "request_id": request.state.request_id}
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @application.get("/api/v1/intelligence/jobs")
+    def intelligence_job_list(
+        status: str = "",
+        limit: int = 100,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        return {"jobs": list_intelligence_jobs(status=status, limit=limit, db_path=resolved.db_path)}
+
+    @application.get("/api/v1/intelligence/jobs/{job_id}")
+    def intelligence_job_show(
+        job_id: str,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        try:
+            return {"job": get_intelligence_job(job_id, db_path=resolved.db_path)}
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @application.post("/api/v1/intelligence/jobs/{job_id}/cancel")
+    def intelligence_job_cancel(
+        job_id: str,
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        try:
+            job = cancel_intelligence_job(job_id, actor="dashboard", db_path=resolved.db_path)
+            _write_audit(
+                resolved.db_path,
+                request_id=request.state.request_id,
+                action="intelligence.job.canceled",
+                actor_role="intelligence_operator",
+                result="success",
+                source_instance="secopsai-core",
+                details={"job_id": job_id},
+            )
+            return {"job": job, "request_id": request.state.request_id}
+        except ValueError as exc:
+            status_code = 404 if "not found" in str(exc).lower() else 409
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+    @application.post("/api/v1/intelligence/bridge/claim")
+    async def intelligence_bridge_claim(
+        request: Request,
+        _role: str = Depends(require_bridge),
+    ) -> dict[str, Any]:
+        try:
+            payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "Bridge claim")
+            worker_id = str(payload.get("worker_id") or "remote-codex-bridge").strip()[:160]
+            if not worker_id:
+                raise ValueError("worker_id is required")
+            async with application.state.ingest_lock:
+                job = claim_intelligence_job(
+                    provider="codex_chatgpt_subscription",
+                    worker_id=worker_id,
+                    db_path=resolved.db_path,
+                )
+                bridge_request = None
+                if job:
+                    inputs = dict(job.get("input") or {})
+                    if job.get("target_id"):
+                        inputs.setdefault("target_id", job["target_id"])
+                    bridge_request = prepare_bridge_request(job["action"], inputs, db_path=resolved.db_path)
+            _write_audit(
+                resolved.db_path,
+                request_id=request.state.request_id,
+                action="intelligence.bridge.claimed" if job else "intelligence.bridge.idle",
+                actor_role="intelligence_bridge",
+                result="success",
+                source_instance=worker_id,
+                details={"job_id": job["job_id"], "intelligence_action": job["action"]} if job else {},
+            )
+            return {
+                "status": "claimed" if job else "idle",
+                "job": ({key: job.get(key) for key in ("job_id", "action", "target_id", "status", "attempt")} if job else None),
+                "bridge_request": bridge_request,
+                "request_id": request.state.request_id,
+            }
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @application.post("/api/v1/intelligence/bridge/jobs/{job_id}/complete")
+    async def intelligence_bridge_complete(
+        job_id: str,
+        request: Request,
+        _role: str = Depends(require_bridge),
+    ) -> dict[str, Any]:
+        try:
+            payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "Bridge result")
+            worker_id = str(payload.get("worker_id") or "remote-codex-bridge").strip()[:160]
+            job = get_intelligence_job(job_id, db_path=resolved.db_path)
+            result = validate_bridge_result(job["action"], payload.get("result") or {})
+            completed = complete_intelligence_job(job_id, result=result, actor=worker_id, db_path=resolved.db_path)
+            _write_audit(
+                resolved.db_path,
+                request_id=request.state.request_id,
+                action="intelligence.bridge.completed",
+                actor_role="intelligence_bridge",
+                result="success",
+                source_instance=worker_id,
+                details={"job_id": job_id, "intelligence_action": job["action"]},
+            )
+            return {"status": "succeeded", "job": completed, "request_id": request.state.request_id}
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @application.post("/api/v1/intelligence/bridge/jobs/{job_id}/fail")
+    async def intelligence_bridge_fail(
+        job_id: str,
+        request: Request,
+        _role: str = Depends(require_bridge),
+    ) -> dict[str, Any]:
+        try:
+            payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "Bridge failure")
+            worker_id = str(payload.get("worker_id") or "remote-codex-bridge").strip()[:160]
+            failed = fail_intelligence_job(
+                job_id,
+                error_code=str(payload.get("error_code") or "remote_bridge_failed")[:80],
+                error_message=str(payload.get("error_message") or "Remote bridge failed")[:2000],
+                actor=worker_id,
+                db_path=resolved.db_path,
+            )
+            _write_audit(
+                resolved.db_path,
+                request_id=request.state.request_id,
+                action="intelligence.bridge.failed",
+                actor_role="intelligence_bridge",
+                result="failed",
+                source_instance=worker_id,
+                details={"job_id": job_id, "error_code": failed.get("error_code")},
+            )
+            return {"status": "failed", "job": failed, "request_id": request.state.request_id}
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     return application
 
 
@@ -305,8 +537,8 @@ def _bearer_dependency(token_provider: Callable[[], str], role: str):
     return authorize
 
 
-async def _read_json_object(request: Request, max_bytes: int) -> dict[str, Any]:
-    return _decode_json_object(await _read_request_bytes(request, max_bytes, "Edge bundle"))
+async def _read_json_object(request: Request, max_bytes: int, label: str = "Edge bundle") -> dict[str, Any]:
+    return _decode_json_object(await _read_request_bytes(request, max_bytes, label))
 
 
 async def _read_request_bytes(request: Request, max_bytes: int, label: str) -> bytes:

@@ -31,7 +31,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-cov flake8 mypy
+          pip install pytest pytest-cov flake8 mypy jsonschema
 
       - name: Prepare test data directories
         run: |
@@ -117,8 +117,37 @@ jobs:
           name: codecov-umbrella
           fail_ci_if_error: false
 
+  chatgpt-app:
+    name: ChatGPT app MCP
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: apps/secopsai-chatgpt/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: apps/secopsai-chatgpt
+        run: npm ci --ignore-scripts
+
+      - name: Check and test MCP server
+        working-directory: apps/secopsai-chatgpt
+        run: |
+          npm run check
+          npm test
+
+      - name: Audit MCP dependencies
+        working-directory: apps/secopsai-chatgpt
+        run: npm audit --audit-level=moderate
+
   build-container:
-    needs: test
+    needs: [test, chatgpt-app]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
@@ -219,7 +248,7 @@ jobs:
             -o /dev/null -w "HTTP %{http_code}\n"
 
   release:
-    needs: [test, build-container]
+    needs: [test, chatgpt-app, build-container]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 

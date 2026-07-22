@@ -1,0 +1,23 @@
+{
+  "name": "@secopsai/chatgpt-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Authenticated read-only MCP server for the SecOpsAI ChatGPT app",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test",
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/core-client.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "jose": "6.2.3",
+    "zod": "4.4.3"
+  },
+  "overrides": {
+    "@hono/node-server": "2.0.11"
+  }
+}

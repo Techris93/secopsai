@@ -1,5 +1,15 @@
 # Implementation Checkpoints
 
+## 102 Subscription Intelligence And ChatGPT App
+
+Status: implementation complete; production OAuth provider configuration remains an external deployment gate.
+
+Added the versioned `secopsai.intelligence.v1` read-only contract, minimized Core query actions, durable intelligence jobs and events, stale-worker recovery, a local Codex bridge that uses the operator's existing ChatGPT login, and user-level launchd/systemd service controls. The bridge accepts only named SecOpsAI actions, invokes Codex with an ephemeral read-only sandbox and fixed JSON output schema, sanitizes inherited environment variables, and never persists ChatGPT credentials.
+
+Added an authenticated stateless MCP server for a SecOpsAI ChatGPT app. It exposes nine read-only tools for findings, assets, changes, research cases, evidence matrices, and publication readiness. It publishes OAuth protected-resource metadata, verifies JWT signature, issuer, audience, expiry, subject, and per-tool scopes, keeps the Core read token server-side, and returns reauthorization challenges for missing scopes. The Render Blueprint includes the service but production startup intentionally fails closed until an established OAuth provider is configured.
+
+Verification: the real local bridge completed a subscription-backed isolated smoke job; the Core full suite passed with 382 tests, 14 warnings, and 4 subtests; the final intelligence/API suite passed with 18 tests; strict docs build, MCP protocol tests, Node syntax checks, dashboard Python/JavaScript suites, desktop/mobile browser review, and dependency audit pass. The MCP dependency tree uses the current fixed MCP SDK with an explicit patched Hono adapter override; npm audit reports zero vulnerabilities.
+
 ## 101 Branded Research Email
 
 Status: complete in production.
