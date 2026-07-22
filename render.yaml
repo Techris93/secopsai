@@ -64,8 +64,14 @@ services:
         value: research@secopsai.dev
       - key: SECOPSAI_RESEARCH_ALERT_MAX_ATTEMPTS
         value: "5"
+      - key: SECOPSAI_SMTP_HOST
+        value: smtp.resend.com
+      - key: SECOPSAI_SMTP_PORT
+        value: "465"
+      - key: SECOPSAI_SMTP_USERNAME
+        value: resend
       - key: SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS
-        value: webhook
+        value: email,webhook
       - key: SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL
         value: https://secopsai-core-api.onrender.com/api/v1/research/alerts/webhook
       - key: SECOPSAI_SENTRY_TRACES_SAMPLE_RATE

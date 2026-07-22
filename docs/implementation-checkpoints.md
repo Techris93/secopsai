@@ -2,7 +2,7 @@
 
 ## 100 Signed Research Alert Ingestion
 
-Status: implementation complete; Blueprint-managed production activation pending.
+Status: complete in production.
 
 Added a bounded signed-webhook path from the managed research worker to the hosted Core API. The sender signs the exact JSON body and Unix timestamp with HMAC-SHA256. Core enforces a five-minute replay window, a 64 KB body limit, strict JSON parsing, an operational-alert type allowlist, evidence minimization, and a minimum 32-character shared secret.
 
@@ -10,11 +10,11 @@ The Render Blueprint now owns a shared `secopsai-research-alerts` environment gr
 
 Core persists webhook deliveries idempotently with stable local IDs and retains existing operator status and ownership on repeat delivery. The canonical workspace response now includes reduced collector coverage and retention alerts. This closes the immediate visibility gap for operational worker health; registry events, candidates, artifacts, and full coverage history still remain on the separate worker disk.
 
-Verification: focused Core API, delivery, worker, and observability suites passed with 22 tests; the full Core suite passed with 372 tests, 14 warnings, and 4 subtests. GitHub checks, production secret configuration, and an end-to-end signed delivery remain release gates.
+Verification: focused Core API, delivery, worker, and observability suites passed with 22 tests; the full Core suite passed with 372 tests, 14 warnings, and 4 subtests. GitHub checks passed. Production Core health returned HTTP 200, unsigned webhook traffic failed closed with HTTP 401, and Render linked the generated shared secret to both services.
 
 ## 099 Managed Research Worker And Operational Alerting
 
-Status: complete in production; automatic external delivery remains disabled until provider credentials are configured.
+Status: complete in production; signed webhook and authenticated Resend email delivery configured.
 
 Provisioned `secopsai-research-worker` on Render Starter compute with a 1 GB persistent disk. The first production cycle completed all eight collectors and persisted registry observations on the worker disk. Added optional privacy-preserving Sentry initialization for the Core API and research worker, plus isolated-exception capture that never makes Sentry mandatory.
 
@@ -22,7 +22,7 @@ Collector failures, coverage gaps, and bounded incomplete windows now create hig
 
 Deployment boundary: the Core API and worker have separate Render persistent disks. Worker surveillance data is therefore not yet a canonical hosted Core/dashboard data source. The next integration checkpoint must push reduced candidates, alerts, and coverage summaries through an authenticated Core ingestion contract or migrate both services to an appropriate shared database; Render disks must not be treated as shareable storage.
 
-Verification: focused worker, delivery, and observability tests passed; the full Core suite passed with 369 tests, 14 warnings, and 4 subtests; MkDocs strict build and repository diff checks passed. GitHub checks passed, PR #72 was merged, and Render deployed commit `9c629fd`. Live worker cycles now expose `operational_alert_ids` and the disabled-by-default `alert_delivery` state.
+Verification: focused worker, delivery, and observability tests passed; the full Core suite passed with 369 tests, 14 warnings, and 4 subtests; MkDocs strict build and repository diff checks passed. GitHub checks passed, PR #72 was merged, and the managed worker is live. The production Resend DKIM, SPF, and return-path MX records resolve publicly; the Blueprint enables `email,webhook` only for operational coverage and retention alerts.
 
 ## 098 Public Documentation And Blog Asset Alignment
 
@@ -42,7 +42,7 @@ Corrected exact-package monitors so legitimate baselines do not become typosquat
 
 Configured and verified hourly baselines for npm, PyPI, NuGet, Maven, RubyGems, Packagist, Go, and Open VSX. The first live run completed 8/8 with incomplete, watchlist-scoped coverage reported explicitly. Added a managed macOS launchd installer with a 15-minute due-run trigger and lifecycle/status/log commands. Built and smoke-tested the non-root, network-disabled NuGet metadata worker image after correcting its C# entry-point return path.
 
-Outbound identities are separated: vulnerability disclosure defaults to `security@secopsai.dev` and research alerts default to `research@secopsai.dev`. SMTP/webhook sending remains disabled until authenticated provider credentials are supplied. Tria.ge API activation remains pending Researcher-license approval.
+Outbound identities are separated: vulnerability disclosure defaults to `security@secopsai.dev` and research alerts default to `research@secopsai.dev`. Signed-webhook delivery is active. Resend SMTP is authenticated with a domain-scoped sending key stored only in Render, and `research@secopsai.dev` remains the alert sender and Cloudflare-routed recipient. Tria.ge API activation remains pending Researcher-license approval.
 
 Verification: Core suite 280 passed with 14 warnings and 4 subtests; focused research suites 17 passed; NuGet analyzer container build and no-argument safety smoke test passed; launchd plist validation and due-run exit status passed.
 
