@@ -1,3 +1,9 @@
+envVarGroups:
+  - name: secopsai-research-alerts
+    envVars:
+      - key: SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET
+        generateValue: true
+
 services:
   - type: web
     name: secopsai-core-api
@@ -18,6 +24,7 @@ services:
       --timeout-graceful-shutdown 30
     healthCheckPath: /readyz
     envVars:
+      - fromGroup: secopsai-research-alerts
       - key: SECOPSAI_CORE_ENVIRONMENT
         value: production
       - key: SECOPSAI_CORE_DB_PATH
@@ -46,6 +53,7 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python -m secopsai.cli research worker run --interval 60
     envVars:
+      - fromGroup: secopsai-research-alerts
       - key: SECOPSAI_CORE_ENVIRONMENT
         value: production
       - key: SECOPS_FINDINGS_DIR
@@ -56,6 +64,8 @@ services:
         value: research@secopsai.dev
       - key: SECOPSAI_RESEARCH_ALERT_MAX_ATTEMPTS
         value: "5"
+      - key: SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS
+        value: webhook
       - key: SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL
         value: https://secopsai-core-api.onrender.com/api/v1/research/alerts/webhook
       - key: SECOPSAI_SENTRY_TRACES_SAMPLE_RATE

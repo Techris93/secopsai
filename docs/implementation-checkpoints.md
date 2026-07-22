@@ -2,9 +2,11 @@
 
 ## 100 Signed Research Alert Ingestion
 
-Status: implementation complete; production secret and delivery-provider configuration pending.
+Status: implementation complete; Blueprint-managed production activation pending.
 
 Added a bounded signed-webhook path from the managed research worker to the hosted Core API. The sender signs the exact JSON body and Unix timestamp with HMAC-SHA256. Core enforces a five-minute replay window, a 64 KB body limit, strict JSON parsing, an operational-alert type allowlist, evidence minimization, and a minimum 32-character shared secret.
+
+The Render Blueprint now owns a shared `secopsai-research-alerts` environment group. Render generates the 256-bit webhook secret once and links the same value to Core and the worker without exposing it in Git or the browser. Automatic worker delivery is enabled only for operational coverage and retention alerts.
 
 Core persists webhook deliveries idempotently with stable local IDs and retains existing operator status and ownership on repeat delivery. The canonical workspace response now includes reduced collector coverage and retention alerts. This closes the immediate visibility gap for operational worker health; registry events, candidates, artifacts, and full coverage history still remain on the separate worker disk.
 
