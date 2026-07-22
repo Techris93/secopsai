@@ -169,6 +169,13 @@ from secopsai.research_workflow import (
     set_disclosure_status,
     set_sandbox_status,
 )
+from secopsai.research_pipeline import (
+    get_pipeline as get_research_pipeline,
+    list_pipelines as list_research_pipelines,
+    resume_investigation_pipeline,
+    review_pipeline_item,
+    start_investigation_pipeline,
+)
 from secopsai.sessions import (
     add_artifact as add_session_artifact,
     add_event as add_session_event,
@@ -1527,6 +1534,38 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     jobs_recover.add_argument("--actor", default="research-worker")
     jobs_recover.add_argument("--db-path", default=None)
 
+    research_pipeline = research_sub.add_parser("pipeline", help="Run and review the resumable Local Codex research pipeline")
+    research_pipeline_sub = research_pipeline.add_subparsers(dest="research_pipeline_cmd", required=True)
+    pipeline_start = research_pipeline_sub.add_parser("start", help="Collect static evidence and queue minimized Local Codex analysis")
+    pipeline_start.add_argument("case_id")
+    pipeline_start.add_argument("--reference-ecosystem", default="")
+    pipeline_start.add_argument("--reference-package", default="")
+    pipeline_start.add_argument("--reference-version", default="")
+    pipeline_start.add_argument("--actor", default="operator")
+    pipeline_start.add_argument("--db-path", default=None)
+    pipeline_resume = research_pipeline_sub.add_parser("resume", help="Resume or retry a durable investigation pipeline")
+    pipeline_resume.add_argument("pipeline_id")
+    pipeline_resume.add_argument("--reference-ecosystem", default="")
+    pipeline_resume.add_argument("--reference-package", default="")
+    pipeline_resume.add_argument("--reference-version", default="")
+    pipeline_resume.add_argument("--actor", default="operator")
+    pipeline_resume.add_argument("--db-path", default=None)
+    pipeline_show = research_pipeline_sub.add_parser("show", help="Show pipeline progress and review proposals")
+    pipeline_show.add_argument("pipeline_id")
+    pipeline_show.add_argument("--db-path", default=None)
+    pipeline_list = research_pipeline_sub.add_parser("list", help="List investigation pipelines")
+    pipeline_list.add_argument("--case", dest="case_id", default="")
+    pipeline_list.add_argument("--limit", type=int, default=50)
+    pipeline_list.add_argument("--db-path", default=None)
+    pipeline_review = research_pipeline_sub.add_parser("review", help="Accept or reject one structured pipeline proposal")
+    pipeline_review.add_argument("pipeline_id")
+    pipeline_review.add_argument("item_id")
+    pipeline_review.add_argument("--decision", required=True, choices=["accepted", "rejected"])
+    pipeline_review.add_argument("--edited-content", default="")
+    pipeline_review.add_argument("--review-note", default="")
+    pipeline_review.add_argument("--actor", default="analyst")
+    pipeline_review.add_argument("--db-path", default=None)
+
     workflow = research_sub.add_parser("workflow", help="Evidence, verdict, disclosure, publication, and sandbox gates")
     workflow_sub = workflow.add_subparsers(dest="research_workflow_cmd", required=True)
     matrix = workflow_sub.add_parser("evidence-matrix")
@@ -2226,6 +2265,39 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = cancel_research_job(args.job_id, actor=args.actor, db_path=args.db_path)
             else:
                 payload = recover_stale_jobs(max_age_seconds=args.max_age_seconds, actor=args.actor, db_path=args.db_path)
+        elif args.research_cmd == "pipeline":
+            if args.research_pipeline_cmd == "start":
+                payload = start_investigation_pipeline(
+                    args.case_id,
+                    reference_ecosystem=args.reference_ecosystem,
+                    reference_package=args.reference_package,
+                    reference_version=args.reference_version,
+                    actor=args.actor,
+                    db_path=args.db_path,
+                )
+            elif args.research_pipeline_cmd == "resume":
+                payload = resume_investigation_pipeline(
+                    args.pipeline_id,
+                    reference_ecosystem=args.reference_ecosystem,
+                    reference_package=args.reference_package,
+                    reference_version=args.reference_version,
+                    actor=args.actor,
+                    db_path=args.db_path,
+                )
+            elif args.research_pipeline_cmd == "show":
+                payload = get_research_pipeline(args.pipeline_id, db_path=args.db_path)
+            elif args.research_pipeline_cmd == "list":
+                payload = {"pipelines": list_research_pipelines(case_id=args.case_id, limit=args.limit, db_path=args.db_path)}
+            else:
+                payload = review_pipeline_item(
+                    args.pipeline_id,
+                    args.item_id,
+                    decision=args.decision,
+                    edited_content=args.edited_content,
+                    review_note=args.review_note,
+                    actor=args.actor,
+                    db_path=args.db_path,
+                )
         elif args.research_cmd == "workflow":
             command = args.research_workflow_cmd
             if command == "evidence-matrix":
@@ -2603,7 +2675,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
 
-        if args.research_cmd in {"ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "compare", "compare-packages", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "workflow"}:
+        if args.research_cmd in {"ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "compare", "compare-packages", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "workflow"}:
             return _run_research_automation_command(args)
 
         if args.research_cmd == "case":

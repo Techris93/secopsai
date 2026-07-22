@@ -1,5 +1,19 @@
 # Implementation Checkpoints
 
+## 103 Local Codex Research Investigation Pipeline
+
+Status: implementation complete; local service activation and end-to-end operator acceptance are release verification gates.
+
+Added a durable, revisioned investigation pipeline that starts from a Core Research Case, performs bounded static package intake, optionally compares a verified legitimate package, builds a preliminary claim matrix, and queues three structured Local Codex Bridge jobs without exports, uploads, copied prompts, API keys, or raw-artifact transfer. All deterministic evidence and model output first enter a human review queue. Accept and reject decisions are typed, audited, idempotent, and concurrency-safe.
+
+The pipeline fails closed. It never executes package code, guesses a legitimate reference, records a maliciousness verdict, submits an artifact to a sandbox, sends disclosure, approves publication, or publishes content. Failed bridge work can be retried as a new revision; old proposals are retained but superseded. Core case responses now include pipeline, step, Intelligence-job, and review state for Mission Control.
+
+Added CLI fallback commands under `secopsai research pipeline`, minimized bridge context, expanded structured research output fields, automatic Intelligence-job reconciliation, and recovery tests covering failed bridge jobs and stale-proposal isolation.
+
+Real subscription-backed verification exposed and closed three integration defects: CLI dispatch for the nested pipeline command, Codex structured-output required-field compatibility, and excessive duplicate review proposals. Model lists are now action-scoped, bounded, deduplicated, and grouped. Browser case-detail responses contain bounded step summaries rather than quarantine locators or full analyzer/model payloads.
+
+Verification: the full Core suite passed with 393 tests, 14 existing warnings, and 4 subtests. Focused research/intelligence/case suites passed. MkDocs strict build passed. A disposable live npm intake and ChatGPT-subscription Codex Bridge run reached `awaiting_review` with all three Intelligence steps complete, no package execution, no raw-artifact model transfer, and 19 grouped review cards from the real structured results.
+
 ## 102 Subscription Intelligence And ChatGPT App
 
 Status: implementation complete; production OAuth provider configuration remains an external deployment gate.

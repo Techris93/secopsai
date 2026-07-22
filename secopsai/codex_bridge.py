@@ -222,7 +222,7 @@ def _invoke_codex(request: dict[str, Any], settings: BridgeSettings, runner: Run
         ]
         completed = runner(command, prompt, _safe_environment(), settings.timeout_seconds)
         if completed.returncode != 0:
-            message = _bounded_output(completed.stderr or completed.stdout or "Codex execution failed")
+            message = _codex_failure_message(completed)
             raise RuntimeError(f"Codex execution failed: {message}")
         if not output_path.exists():
             raise RuntimeError("Codex did not produce a structured result")
@@ -336,6 +336,25 @@ def _safe_command(runner: Runner, command: list[str], *, timeout: int) -> dict[s
 
 def _bounded_output(value: str | None) -> str:
     return str(value or "")[:4000]
+
+
+def _codex_failure_message(completed: subprocess.CompletedProcess[str]) -> str:
+    raw = str(completed.stderr or completed.stdout or "").strip()
+    if not raw:
+        return f"process exited with code {completed.returncode} without a diagnostic"
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    diagnostic = []
+    for line in reversed(lines):
+        lowered = line.lower()
+        if line.startswith(("{", "[")) or '"context":' in line or lowered in {"user", "assistant"}:
+            continue
+        if any(marker in lowered for marker in ("error", "failed", "invalid", "unsupported", "timeout", "timed out")):
+            diagnostic.append(line)
+            if len(diagnostic) == 3:
+                break
+    if not diagnostic:
+        return f"process exited with code {completed.returncode}; no safe diagnostic was returned"
+    return _bounded_output("\n".join(reversed(diagnostic)))
 
 
 def _safe_error(exc: Exception) -> str:

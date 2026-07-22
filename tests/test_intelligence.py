@@ -167,6 +167,31 @@ def test_local_bridge_processes_job_with_injected_runner(tmp_path: Path):
     assert stored["result"]["data"]["summary"].startswith("The finding")
 
 
+def test_local_bridge_failure_keeps_diagnostic_and_drops_echoed_context(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    soc_store.persist_findings([_finding()], source="secopsai_edge", db_path=db)
+    job = enqueue_job(action="explain_finding", target_id="FND-INTEL-1", requested_by="tester", db_path=db)
+
+    def runner(command, stdin, environment, timeout):
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            "",
+            'user\n{"context":{"finding":"private-normalized-context"}}\nERROR: invalid output schema\n',
+        )
+
+    result = run_once(
+        db_path=db,
+        settings=BridgeSettings(codex_binary="codex", worker_id="test-worker"),
+        runner=runner,
+        require_subscription_login=False,
+    )
+    assert result["status"] == "failed"
+    stored = get_job(job["job_id"], db_path=db)
+    assert "invalid output schema" in stored["error_message"]
+    assert "private-normalized-context" not in stored["error_message"]
+
+
 def test_launchd_service_contains_no_credentials(tmp_path: Path):
     calls = []
 
