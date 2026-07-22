@@ -12,7 +12,7 @@ import urllib.request
 import secrets
 from datetime import datetime, timezone
 from email.message import EmailMessage
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 
 def _now() -> str:
@@ -154,3 +154,74 @@ def send_research_alert(alert_id: str, *, channel: str = "email", db_path: str |
         return {"ok": False, "delivery": delivery, "error": "research alert delivery failed"}
     delivery = _record_alert_delivery(alert_id, channel=channel, destination=destination, status="sent", attempts=attempts, provider_id=str(result.get("provider_id") or ""), db_path=db_path)
     return {"ok": True, "delivery": {**result, **delivery}, "alert": alert}
+
+
+def configured_auto_alert_channels() -> List[str]:
+    """Return explicitly enabled automatic channels.
+
+    An empty setting is intentionally disabled. Candidate and campaign alerts
+    remain manual even when operational coverage alerts are enabled.
+    """
+    raw = os.environ.get("SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS", "")
+    channels = []
+    for item in raw.split(","):
+        channel = item.strip().lower()
+        if channel in {"email", "webhook"} and channel not in channels:
+            channels.append(channel)
+    return channels
+
+
+def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datetime | None = None) -> Dict[str, Any]:
+    """Deliver undelivered collector-health alerts with bounded backoff."""
+    import soc_store
+
+    channels = configured_auto_alert_channels()
+    if not channels:
+        return {"enabled": False, "channels": [], "attempted": 0, "sent": 0, "failed": 0, "deferred": 0}
+
+    allowed_types = {"collector_degraded", "collector_retention_risk"}
+    max_attempts = max(1, min(int(os.environ.get("SECOPSAI_RESEARCH_ALERT_MAX_ATTEMPTS", "5")), 10))
+    current = now or datetime.now(timezone.utc)
+    soc_store.init_db(db_path)
+    with soc_store.connect(db_path) as connection:
+        alerts = connection.execute(
+            "SELECT * FROM research_alerts WHERE status = 'open' ORDER BY created_at LIMIT 100"
+        ).fetchall()
+
+    summary = {"enabled": True, "channels": channels, "attempted": 0, "sent": 0, "failed": 0, "deferred": 0}
+    for row in alerts:
+        alert = dict(row)
+        if alert.get("alert_type") not in allowed_types:
+            continue
+        for channel in channels:
+            with soc_store.connect(db_path) as connection:
+                deliveries = connection.execute(
+                    """SELECT status, created_at FROM research_notification_deliveries
+                    WHERE alert_id = ? AND channel = ? ORDER BY created_at DESC""",
+                    (alert["alert_id"], channel),
+                ).fetchall()
+            if any(item["status"] == "sent" for item in deliveries):
+                continue
+            failures = sum(1 for item in deliveries if item["status"] == "failed")
+            if failures >= max_attempts:
+                summary["deferred"] += 1
+                continue
+            if deliveries:
+                latest_text = str(deliveries[0]["created_at"] or "").replace("Z", "+00:00")
+                try:
+                    latest = datetime.fromisoformat(latest_text)
+                    if latest.tzinfo is None:
+                        latest = latest.replace(tzinfo=timezone.utc)
+                    delay = min(3600, 60 * (2 ** max(0, failures - 1)))
+                    if (current - latest).total_seconds() < delay:
+                        summary["deferred"] += 1
+                        continue
+                except ValueError:
+                    pass
+            summary["attempted"] += 1
+            result = send_research_alert(alert["alert_id"], channel=channel, db_path=db_path)
+            if result.get("ok"):
+                summary["sent"] += 1
+            else:
+                summary["failed"] += 1
+    return summary

@@ -50,6 +50,24 @@ secopsai research worker run           # loop mode with SIGTERM handling
 
 On Render, the `secopsai-research-worker` background worker in `render.yaml` runs loop mode against a persistent disk (`SECOPS_FINDINGS_DIR=/var/data/secopsai-research`). The worker database is independent of the API database so collection can scale separately.
 
+The worker creates a deduplicated high-severity `collector_degraded` alert when a registry run fails, leaves a coverage gap, or reaches a bounded collection limit. It creates at most one such alert per ecosystem per UTC day and continues collecting other registries. Delivery is disabled by default. To enable operational email alerts after configuring an authenticated SMTP provider, set:
+
+```text
+SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS=email
+SECOPSAI_SMTP_HOST=<provider SMTP host>
+SECOPSAI_SMTP_PORT=465
+SECOPSAI_SMTP_USERNAME=<server-side username>
+SECOPSAI_SMTP_PASSWORD=<server-side secret>
+SECOPSAI_RESEARCH_ALERT_EMAIL=research@secopsai.dev
+SECOPSAI_RESEARCH_FROM_EMAIL=research@secopsai.dev
+```
+
+Use `webhook` or `email,webhook` only after setting the corresponding signed-webhook URL and secret. Automatic delivery is intentionally restricted to collector coverage and retention alerts. Candidate, campaign, disclosure, sandbox, and publication actions remain operator-reviewed.
+
+Optional Sentry reporting is also disabled until `SECOPSAI_SENTRY_DSN` is present. When enabled, Core sends no default PII, excludes local variables, and records errors with traces and profiling disabled by default. Set a nonzero `SECOPSAI_SENTRY_TRACES_SAMPLE_RATE` only after reviewing the privacy and cost impact.
+
+Important deployment boundary: Render persistent disks cannot be shared. The worker disk currently retains surveillance events, candidates, and operational alerts separately from the Core API disk. Do not describe worker data as visible in the hosted operator console until reduced research records are synchronized through an authenticated Core ingestion API or both services use a supported shared database.
+
 ## Watchlist and monitor workflow
 
 ```bash
