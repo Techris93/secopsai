@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import hashlib
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -44,6 +45,45 @@ SUMMARY = (
 
 
 class ResearchCaseTests(unittest.TestCase):
+    def test_init_db_migrates_legacy_research_status_columns(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = str(Path(temp_dir) / "legacy.db")
+            with sqlite3.connect(db_path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE research_subjects (
+                        subject_id TEXT PRIMARY KEY, case_id TEXT NOT NULL, subject_type TEXT NOT NULL,
+                        ecosystem TEXT NOT NULL, name TEXT NOT NULL, version TEXT NOT NULL,
+                        publisher TEXT NOT NULL, metadata_json TEXT NOT NULL, created_at TEXT NOT NULL
+                    );
+                    CREATE TABLE research_evidence (
+                        evidence_id TEXT PRIMARY KEY, case_id TEXT NOT NULL, evidence_type TEXT NOT NULL,
+                        title TEXT NOT NULL, locator TEXT NOT NULL, sha256 TEXT NOT NULL,
+                        provenance TEXT NOT NULL, notes TEXT NOT NULL, collected_at TEXT NOT NULL,
+                        created_at TEXT NOT NULL, metadata_json TEXT NOT NULL
+                    );
+                    CREATE TABLE research_iocs (
+                        ioc_id TEXT PRIMARY KEY, case_id TEXT NOT NULL, ioc_type TEXT NOT NULL,
+                        value TEXT NOT NULL, confidence INTEGER NOT NULL, first_seen TEXT,
+                        last_seen TEXT, source_evidence_id TEXT, tags_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+                    """
+                )
+
+            soc_store.init_db(db_path)
+
+            with soc_store.connect(db_path) as connection:
+                for table in ("research_subjects", "research_evidence", "research_iocs"):
+                    columns = {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})")}
+                    self.assertIn("status", columns)
+                    status_column = next(
+                        row for row in connection.execute(f"PRAGMA table_info({table})")
+                        if str(row["name"]) == "status"
+                    )
+                    self.assertEqual(str(status_column["dflt_value"]), "'active'")
+            self.assertEqual(list_cases(db_path=db_path), [])
+
     def _build_ready_case(self, db_path: str) -> dict:
         case = create_case(
             title="Typosquatted payment package investigation",

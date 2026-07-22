@@ -51,6 +51,12 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
     return connection
 
 
+def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in columns:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def init_db(db_path: str | None = None) -> None:
     with closing(connect(db_path)) as connection:
         connection.executescript(
@@ -807,6 +813,9 @@ def init_db(db_path: str | None = None) -> None:
                 ON registry_snapshots (collector_id, created_at DESC);
             """
         )
+        for table in ("research_subjects", "research_evidence", "research_iocs"):
+            _ensure_column(connection, table, "status", "TEXT NOT NULL DEFAULT 'active'")
+        connection.commit()
 
 
 def _existing_state(connection: sqlite3.Connection, finding_id: str) -> Dict[str, str] | None:
