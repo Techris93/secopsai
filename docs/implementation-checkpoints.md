@@ -2,7 +2,7 @@
 
 ## 099 Managed Research Worker And Operational Alerting
 
-Status: Render worker live; automatic external delivery remains disabled until provider credentials are configured.
+Status: complete in production; automatic external delivery remains disabled until provider credentials are configured.
 
 Provisioned `secopsai-research-worker` on Render Starter compute with a 1 GB persistent disk. The first production cycle completed all eight collectors and persisted registry observations on the worker disk. Added optional privacy-preserving Sentry initialization for the Core API and research worker, plus isolated-exception capture that never makes Sentry mandatory.
 
@@ -10,7 +10,7 @@ Collector failures, coverage gaps, and bounded incomplete windows now create hig
 
 Deployment boundary: the Core API and worker have separate Render persistent disks. Worker surveillance data is therefore not yet a canonical hosted Core/dashboard data source. The next integration checkpoint must push reduced candidates, alerts, and coverage summaries through an authenticated Core ingestion contract or migrate both services to an appropriate shared database; Render disks must not be treated as shareable storage.
 
-Verification: focused worker, delivery, and observability tests passed; the full Core suite passed with 369 tests, 14 warnings, and 4 subtests; MkDocs strict build and repository diff checks passed. Production redeploy remains the final release gate.
+Verification: focused worker, delivery, and observability tests passed; the full Core suite passed with 369 tests, 14 warnings, and 4 subtests; MkDocs strict build and repository diff checks passed. GitHub checks passed, PR #72 was merged, and Render deployed commit `9c629fd`. Live worker cycles now expose `operational_alert_ids` and the disabled-by-default `alert_delivery` state.
 
 ## 098 Public Documentation And Blog Asset Alignment
 
