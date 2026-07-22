@@ -6,13 +6,27 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import smtplib
 import ssl
+import time
 import urllib.request
-import secrets
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Any, Dict, List
+
+
+SENSITIVE_EVIDENCE_KEYS = {
+    "artifact",
+    "artifact_bytes",
+    "artifact_content",
+    "authorization",
+    "password",
+    "raw_content",
+    "raw_package",
+    "secret",
+    "token",
+}
 
 
 def _now() -> str:
@@ -53,6 +67,20 @@ def _redact(text: str) -> str:
     return value[:30000]
 
 
+def _normalized_alert_evidence(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _normalized_alert_evidence(item)
+            for key, item in value.items()
+            if str(key).strip().lower() not in SENSITIVE_EVIDENCE_KEYS
+        }
+    if isinstance(value, list):
+        return [_normalized_alert_evidence(item) for item in value[:100]]
+    if isinstance(value, str):
+        return _redact(value)[:2000]
+    return value if value is None or isinstance(value, (bool, int, float)) else str(value)[:2000]
+
+
 def send_email(*, recipient: str, subject: str, body: str, sender: str = "research@secopsai.dev") -> Dict[str, Any]:
     host = os.environ.get("SECOPSAI_SMTP_HOST", "")
     if not host:
@@ -77,8 +105,19 @@ def send_signed_webhook(*, endpoint: str, secret: str, event: Dict[str, Any]) ->
     if not endpoint.startswith("https://"):
         raise ValueError("webhook endpoint must use HTTPS")
     payload = json.dumps(event, sort_keys=True, separators=(",", ":")).encode()
-    signature = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-    request = urllib.request.Request(endpoint, data=payload, method="POST", headers={"Content-Type": "application/json", "X-SecOpsAI-Signature": f"sha256={signature}", "X-SecOpsAI-Schema": str(event.get("schema_version") or "secopsai.research.alert.v1")})
+    timestamp = str(int(time.time()))
+    signature = hmac.new(secret.encode(), timestamp.encode() + b"." + payload, hashlib.sha256).hexdigest()
+    request = urllib.request.Request(
+        endpoint,
+        data=payload,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-SecOpsAI-Signature": f"sha256={signature}",
+            "X-SecOpsAI-Schema": str(event.get("schema_version") or "secopsai.research.alert.v1"),
+            "X-SecOpsAI-Timestamp": timestamp,
+        },
+    )
     with urllib.request.urlopen(request, timeout=20) as response:
         status = int(response.status)
     if status < 200 or status >= 300:
@@ -135,7 +174,8 @@ def send_research_alert(alert_id: str, *, channel: str = "email", db_path: str |
             "candidate_id": alert.get("candidate_id"),
             "campaign_id": alert.get("campaign_id"),
             "reason": _redact(alert.get("reason", "")),
-            "evidence": _redact(alert.get("evidence_json", "")),
+            "evidence": _normalized_alert_evidence(_decode_alert_evidence(alert.get("evidence_json", ""))),
+            "occurred_at": alert.get("updated_at") or alert.get("created_at"),
         }
         if channel == "email":
             sender = os.environ.get("SECOPSAI_RESEARCH_FROM_EMAIL", "research@secopsai.dev")
@@ -154,6 +194,15 @@ def send_research_alert(alert_id: str, *, channel: str = "email", db_path: str |
         return {"ok": False, "delivery": delivery, "error": "research alert delivery failed"}
     delivery = _record_alert_delivery(alert_id, channel=channel, destination=destination, status="sent", attempts=attempts, provider_id=str(result.get("provider_id") or ""), db_path=db_path)
     return {"ok": True, "delivery": {**result, **delivery}, "alert": alert}
+
+
+def _decode_alert_evidence(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return {"summary": _redact(value)[:2000]}
 
 
 def configured_auto_alert_channels() -> List[str]:

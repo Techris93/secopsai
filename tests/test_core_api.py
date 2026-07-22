@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -12,6 +15,7 @@ from secopsai.core_api import CoreAPISettings, create_app
 
 INGEST_TOKEN = "ingest-token-with-at-least-thirty-two-characters"
 READ_TOKEN = "read-token-with-at-least-thirty-two-characters--"
+WEBHOOK_SECRET = "research-webhook-secret-with-at-least-thirty-two-characters"
 
 
 def _bundle() -> dict:
@@ -98,6 +102,7 @@ def client(tmp_path: Path):
         cors_origins=("https://console.example.test",),
         trusted_hosts=("testserver",),
         max_bundle_bytes=100_000,
+        research_webhook_secret=WEBHOOK_SECRET,
     )
     with TestClient(create_app(settings)) as test_client:
         yield test_client, settings
@@ -210,6 +215,91 @@ def test_ingest_rejects_oversized_duplicate_and_compressed_json(client):
         headers={**headers, "Content-Encoding": "gzip"},
     )
     assert compressed.status_code == 415
+
+
+def _signed_webhook_headers(body: bytes, *, timestamp: int | None = None, secret: str = WEBHOOK_SECRET):
+    sent_at = str(timestamp if timestamp is not None else int(time.time()))
+    signature = hmac.new(secret.encode(), sent_at.encode() + b"." + body, hashlib.sha256).hexdigest()
+    return {
+        "Content-Type": "application/json",
+        "X-SecOpsAI-Timestamp": sent_at,
+        "X-SecOpsAI-Signature": f"sha256={signature}",
+    }
+
+
+def test_research_alert_webhook_is_verified_sanitized_and_idempotent(client):
+    test_client, settings = client
+    event = {
+        "schema_version": "secopsai.research.alert.v1",
+        "alert_id": "RAL-WORKER-1",
+        "alert_type": "collector_degraded",
+        "severity": "high",
+        "reason": "NuGet registry coverage is degraded",
+        "evidence": {
+            "ecosystem": "nuget",
+            "coverage": "gap",
+            "token": "must-not-persist",
+        },
+        "occurred_at": "2026-07-22T06:30:00Z",
+    }
+    body = json.dumps(event, sort_keys=True, separators=(",", ":")).encode()
+    headers = _signed_webhook_headers(body)
+
+    first = test_client.post("/api/v1/research/alerts/webhook", content=body, headers=headers)
+    second = test_client.post("/api/v1/research/alerts/webhook", content=body, headers=headers)
+    assert first.status_code == 200
+    assert first.json()["created"] is True
+    assert second.status_code == 200
+    assert second.json()["created"] is False
+    assert first.json()["alert_id"] == second.json()["alert_id"]
+
+    workspace = test_client.get(
+        "/api/v1/workspace", headers={"Authorization": f"Bearer {READ_TOKEN}"}
+    ).json()
+    assert workspace["summary"]["operational_research_alerts"] == 1
+    assert workspace["research_alerts"][0]["evidence"]["source"] == "secopsai-research-worker"
+
+    with sqlite3.connect(settings.db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        alerts = connection.execute(
+            "SELECT * FROM research_alerts WHERE alert_type = 'collector_degraded'"
+        ).fetchall()
+        audits = connection.execute(
+            "SELECT action, result FROM core_api_audit_logs WHERE action = 'research.alert.ingested'"
+        ).fetchall()
+    assert len(alerts) == 1
+    assert "must-not-persist" not in alerts[0]["evidence_json"]
+    assert [row["result"] for row in audits] == ["created", "updated"]
+
+
+def test_research_alert_webhook_rejects_tampering_replay_and_nonoperational_types(client):
+    test_client, _ = client
+    event = {
+        "schema_version": "secopsai.research.alert.v1",
+        "alert_id": "RAL-WORKER-2",
+        "alert_type": "collector_degraded",
+        "severity": "high",
+        "reason": "coverage gap",
+        "evidence": {},
+    }
+    body = json.dumps(event, sort_keys=True, separators=(",", ":")).encode()
+    tampered = body.replace(b"coverage gap", b"coverage bad")
+    assert test_client.post(
+        "/api/v1/research/alerts/webhook", content=tampered, headers=_signed_webhook_headers(body)
+    ).status_code == 401
+    assert test_client.post(
+        "/api/v1/research/alerts/webhook",
+        content=body,
+        headers=_signed_webhook_headers(body, timestamp=int(time.time()) - 600),
+    ).status_code == 401
+
+    event["alert_type"] = "candidate_detected"
+    body = json.dumps(event, sort_keys=True, separators=(",", ":")).encode()
+    response = test_client.post(
+        "/api/v1/research/alerts/webhook", content=body, headers=_signed_webhook_headers(body)
+    )
+    assert response.status_code == 422
+    assert "not accepted" in response.json()["detail"]
 
 
 def test_production_settings_fail_closed():

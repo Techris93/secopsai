@@ -64,9 +64,15 @@ SECOPSAI_RESEARCH_FROM_EMAIL=research@secopsai.dev
 
 Use `webhook` or `email,webhook` only after setting the corresponding signed-webhook URL and secret. Automatic delivery is intentionally restricted to collector coverage and retention alerts. Candidate, campaign, disclosure, sandbox, and publication actions remain operator-reviewed.
 
+The hosted Core API exposes `POST /api/v1/research/alerts/webhook` for this operational path. Configure the same randomly generated secret, at least 32 characters, as `SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET` on both the Core API and research worker. Configure the worker URL as `https://secopsai-core-api.onrender.com/api/v1/research/alerts/webhook`, then include `webhook` in `SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS`. The signature covers the exact request body and a Unix timestamp. Core rejects requests outside a five-minute replay window, payloads larger than 64 KB, non-operational alert types, invalid signatures, and duplicate JSON keys.
+
+Webhook retries are idempotent. Core assigns a stable local alert ID from the worker alert ID and preserves the operator-owned status and owner fields when the same alert is delivered again. The Core workspace response includes normalized operational research alerts; raw package artifacts and scanner data are not accepted by this endpoint.
+
+Rotate the webhook secret by temporarily disabling automatic webhook delivery, replacing the secret on both services, redeploying Core first and the worker second, and then re-enabling the channel. A mismatched secret fails closed and produces an audited failed delivery on the worker.
+
 Optional Sentry reporting is also disabled until `SECOPSAI_SENTRY_DSN` is present. When enabled, Core sends no default PII, excludes local variables, and records errors with traces and profiling disabled by default. Set a nonzero `SECOPSAI_SENTRY_TRACES_SAMPLE_RATE` only after reviewing the privacy and cost impact.
 
-Important deployment boundary: Render persistent disks cannot be shared. The worker disk currently retains surveillance events, candidates, and operational alerts separately from the Core API disk. Do not describe worker data as visible in the hosted operator console until reduced research records are synchronized through an authenticated Core ingestion API or both services use a supported shared database.
+Important deployment boundary: Render persistent disks cannot be shared. The signed webhook synchronizes reduced operational alerts only. Registry events, candidates, artifacts, and full coverage history remain on the worker disk until their own authenticated ingestion contracts are implemented.
 
 ## Watchlist and monitor workflow
 

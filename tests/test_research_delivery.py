@@ -1,3 +1,7 @@
+import hashlib
+import hmac
+import json
+
 import soc_store
 
 from secopsai.research_delivery import deliver_pending_operational_alerts, send_research_alert
@@ -79,3 +83,40 @@ def test_operational_alert_failure_is_audited_and_backed_off(tmp_path, monkeypat
         ).fetchone()
     assert delivery["status"] == "failed"
     assert delivery["last_error"] == "smtp unavailable"
+
+
+def test_signed_webhook_uses_timestamped_hmac_and_normalized_evidence(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    alert_id = _record_collector_degraded_alert(
+        {"ecosystem": "nuget", "status": "failed", "coverage": "gap"}, db_path=db
+    )
+    captured = {}
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        return Response()
+
+    monkeypatch.setenv("SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL", "https://core.example.test/api/v1/research/alerts/webhook")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET", "a" * 48)
+    monkeypatch.setattr("secopsai.research_delivery.urllib.request.urlopen", fake_urlopen)
+    result = send_research_alert(alert_id, channel="webhook", db_path=db)
+    assert result["ok"] is True
+    request = captured["request"]
+    timestamp = request.headers["X-secopsai-timestamp"]
+    supplied = request.headers["X-secopsai-signature"].split("=", 1)[1]
+    expected = hmac.new(
+        ("a" * 48).encode(), timestamp.encode() + b"." + request.data, hashlib.sha256
+    ).hexdigest()
+    assert hmac.compare_digest(supplied, expected)
+    payload = json.loads(request.data)
+    assert isinstance(payload["evidence"], dict)
+    assert payload["alert_type"] == "collector_degraded"

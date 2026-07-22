@@ -56,6 +56,8 @@ services:
         value: research@secopsai.dev
       - key: SECOPSAI_RESEARCH_ALERT_MAX_ATTEMPTS
         value: "5"
+      - key: SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL
+        value: https://secopsai-core-api.onrender.com/api/v1/research/alerts/webhook
       - key: SECOPSAI_SENTRY_TRACES_SAMPLE_RATE
         value: "0"
     disk:
