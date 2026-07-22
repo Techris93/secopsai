@@ -52,6 +52,12 @@ Install the bridge as a user-level background service:
 
 The installer creates `~/Library/LaunchAgents/ai.secopsai.codex-bridge.plist` on macOS or `~/.config/systemd/user/secopsai-codex-bridge.service` on Linux. It does not copy or persist a ChatGPT credential. Codex continues to own its local authentication state.
 
+### Automated research investigations
+
+Mission Control's **Run Investigation Pipeline** action uses the same durable bridge queue. Core first performs bounded package collection and deterministic static analysis, then creates three read-only jobs: case analysis, analyst brief, and publication-safety review. The bridge receives normalized case context, hashes, manifests, static indicators, and comparison results. It never receives the quarantined artifact, raw registry responses, local quarantine paths, secrets, or customer telemetry.
+
+Bridge results return to Core as review proposals. They do not become evidence until an operator accepts them, and model-generated text is stored only as an analyst-reviewed case note. A bridge failure leaves the pipeline retryable; retries create a new revision and preserve the previous attempt for audit. Verdicts, sandbox submission, disclosure delivery, and publication remain independent human approvals.
+
 ## ChatGPT app MCP server
 
 The app exposes nine read-only tools:

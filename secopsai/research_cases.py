@@ -231,6 +231,37 @@ def _decode(value: Any, default: Any) -> Any:
         return default
 
 
+def _pipeline_step_summary(step_key: str, value: Any) -> Dict[str, Any]:
+    """Return the bounded case-detail view; full pipeline results remain Core-local."""
+    result = value if isinstance(value, dict) else {}
+    if result.get("message"):
+        return {
+            "message": _clean(result.get("message"), field="pipeline message", limit=1000),
+            **({"required_input": str(result.get("required_input"))[:80]} if result.get("required_input") else {}),
+        }
+    if step_key in {"collect_subject", "collect_reference"}:
+        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        analysis = result.get("analysis") if isinstance(result.get("analysis"), dict) else {}
+        return {
+            "package": str(metadata.get("package") or "")[:512],
+            "version": str(metadata.get("version") or "")[:160],
+            "artifact_sha256": str(metadata.get("artifact_sha256") or "")[:64],
+            "artifact_bytes": int(metadata.get("artifact_bytes") or 0),
+            "indicator_count": len(analysis.get("indicators") or []),
+            "member_count": int(analysis.get("member_count") or 0),
+            "execution_performed": False,
+        }
+    if step_key == "compare_packages":
+        return {"comparison_ready": bool(result), "execution_performed": False}
+    if step_key == "evidence_matrix":
+        return {"summary": result.get("summary") if isinstance(result.get("summary"), dict) else {}}
+    if step_key in {"analyze_research_case", "generate_analyst_brief", "review_publication_safety"}:
+        return {"message": "Structured analysis is available in the pipeline review queue."} if result else {}
+    if step_key == "validate_subject":
+        return {"assumptions_made": bool(result.get("assumptions_made", False))}
+    return {}
+
+
 def _record_event(
     connection: Any,
     case_id: str,
@@ -420,6 +451,39 @@ def get_case(case_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
             value["config"] = _decode(value.pop("config_json", "{}"), {})
             value["result"] = _decode(value.pop("result_json", "{}"), {})
             result["jobs"].append(value)
+        result["pipelines"] = []
+        for pipeline_row in connection.execute(
+            "SELECT * FROM research_pipeline_runs WHERE case_id = ? ORDER BY updated_at DESC",
+            (case_id,),
+        ).fetchall():
+            pipeline = dict(pipeline_row)
+            pipeline["config"] = _decode(pipeline.pop("config_json", "{}"), {})
+            pipeline["summary"] = _decode(pipeline.pop("summary_json", "{}"), {})
+            pipeline["steps"] = []
+            for step_row in connection.execute(
+                "SELECT * FROM research_pipeline_steps WHERE pipeline_id = ? ORDER BY step_order",
+                (pipeline["pipeline_id"],),
+            ).fetchall():
+                step = dict(step_row)
+                step["result"] = _pipeline_step_summary(
+                    str(step.get("step_key") or ""),
+                    _decode(step.pop("result_json", "{}"), {}),
+                )
+                pipeline["steps"].append(step)
+            pipeline["review_items"] = []
+            for review_row in connection.execute(
+                "SELECT * FROM research_review_items WHERE pipeline_id = ? ORDER BY created_at, item_id",
+                (pipeline["pipeline_id"],),
+            ).fetchall():
+                review = dict(review_row)
+                review["evidence_refs"] = _decode(review.pop("evidence_refs_json", "[]"), [])
+                review["metadata"] = _decode(review.pop("metadata_json", "{}"), {})
+                pipeline["review_items"].append(review)
+            pipeline["review_summary"] = {
+                status: sum(item["status"] == status for item in pipeline["review_items"])
+                for status in ("pending", "applying", "accepted", "rejected", "superseded")
+            }
+            result["pipelines"].append(pipeline)
         result["claims"] = []
         for item in connection.execute(
             "SELECT * FROM research_claims WHERE case_id = ? ORDER BY updated_at DESC",

@@ -147,7 +147,7 @@ def minimize(value: Any, *, depth: int = 0) -> Any:
         output: dict[str, Any] = {}
         for key, item in list(value.items())[:MAX_LIST_ITEMS]:
             normalized_key = str(key).strip().lower()
-            if normalized_key in FORBIDDEN_KEYS or any(part in normalized_key for part in ("password", "secret", "token", "private_key", "raw_")):
+            if normalized_key in FORBIDDEN_KEYS or any(part in normalized_key for part in ("password", "secret", "token", "private_key", "raw_", "quarantine")):
                 continue
             output[str(key)[:120]] = minimize(item, depth=depth + 1)
         return output
@@ -247,31 +247,72 @@ def _bridge_context(action: Action, inputs: dict[str, Any], db_path: str | None)
     if action.name in {"analyze_research_case", "generate_analyst_brief", "review_publication_safety"}:
         case = _get_research_case(inputs, db_path)
         matrix = _research_evidence_matrix(inputs, db_path)
-        return {**case, **matrix}
+        context = {**case, **matrix}
+        pipeline_id = _optional(inputs, "pipeline_id")
+        if pipeline_id:
+            from secopsai.research_pipeline import pipeline_intelligence_context
+
+            context["investigation_pipeline"] = pipeline_intelligence_context(pipeline_id, db_path=db_path)
+        return context
     raise ValueError(f"no bridge context builder for action: {action.name}")
 
 
 def _bridge_instructions(action: Action) -> str:
+    action_guidance = {
+        "analyze_research_case": (
+            "Also return confirmed_facts, inferences, unsupported_claims, contradictions, and missing_evidence as arrays. "
+            "A confirmed fact must cite supplied normalized evidence; otherwise classify it as an inference or unsupported claim. "
+        ),
+        "generate_analyst_brief": (
+            "Also return an article_outline array. Keep it suitable for a technical draft, not publication-ready copy. "
+        ),
+        "review_publication_safety": (
+            "Also return publication_risks as an array and disclosure_draft as review-only text. Do not approve or send either. "
+        ),
+    }.get(action.name, "")
     return (
         f"Perform the approved SecOpsAI action '{action.name}'. Use only the supplied normalized context. "
         "Do not claim that missing evidence was observed. Distinguish facts, inferences, and limitations. "
         "Do not execute commands, access files, browse, contact external parties, change product state, or approve publication. "
-        "Return concise JSON matching the required output schema. Human review is mandatory."
+        f"{action_guidance}Return concise JSON matching the required output schema. Human review is mandatory."
     )
 
 
 def bridge_output_schema() -> dict[str, Any]:
+    required = [
+        "summary",
+        "risk_assessment",
+        "evidence",
+        "recommended_actions",
+        "limitations",
+        "confirmed_facts",
+        "inferences",
+        "unsupported_claims",
+        "contradictions",
+        "missing_evidence",
+        "publication_risks",
+        "article_outline",
+        "disclosure_draft",
+    ]
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "additionalProperties": False,
-        "required": ["summary", "risk_assessment", "evidence", "recommended_actions", "limitations"],
+        "required": required,
         "properties": {
             "summary": {"type": "string", "maxLength": 8000},
             "risk_assessment": {"type": "string", "maxLength": 4000},
             "evidence": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 2000}},
             "recommended_actions": {"type": "array", "maxItems": 25, "items": {"type": "string", "maxLength": 2000}},
             "limitations": {"type": "array", "maxItems": 25, "items": {"type": "string", "maxLength": 2000}},
+            "confirmed_facts": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 2000}},
+            "inferences": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 2000}},
+            "unsupported_claims": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 2000}},
+            "contradictions": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 2000}},
+            "missing_evidence": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 2000}},
+            "publication_risks": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 2000}},
+            "article_outline": {"type": "array", "maxItems": 30, "items": {"type": "string", "maxLength": 2000}},
+            "disclosure_draft": {"type": "string", "maxLength": 12000},
         },
     }
 

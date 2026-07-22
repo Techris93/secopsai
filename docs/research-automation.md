@@ -2,7 +2,27 @@
 
 SecOpsAI Research turns a watchlist lead into a defensible investigation without executing the investigated package. The dashboard buttons call the same typed Core workflow as the CLI; command-copy helpers are only a fallback.
 
-## Operator workflow
+## Primary Mission Control workflow
+
+The normal workflow no longer requires an evidence-bundle export, a file upload, or a copied prompt.
+
+1. Open **Research**, select a case, and confirm that it has an active package or extension subject.
+2. When you know the verified legitimate package, enter it under **Legitimate comparison package**. Leave it empty when ownership is not yet verified; SecOpsAI will not guess.
+3. Click **Run Investigation Pipeline**.
+4. Core collects official-registry metadata and the package artifact using bounded static-intake controls. It records hashes, inspects the archive without execution, and performs a deterministic comparison when a trusted reference was supplied.
+5. Core queues three durable Intelligence jobs. The installed Local Codex Bridge reads only minimized case and static-analysis context and writes structured proposals back to the same pipeline record.
+6. Mission Control refreshes the running pipeline automatically.
+7. Review every proposed fact, inference, unsupported claim, contradiction, missing-evidence group, recommended-action group, disclosure draft, and publication-risk group. Related model list items are deduplicated and grouped into one editable review card so the queue remains usable. Click **Accept** or **Reject**.
+8. Accepted static evidence is attached with its pipeline and review provenance. Accepted model text becomes an immutable analyst-reviewed case note. Rejected proposals remain auditable and do not change canonical evidence.
+9. Record the human verdict, approve any sandbox request, send disclosure, and approve publication through their existing separate gates.
+
+If the bridge or collection step fails, click **Retry from checkpoint**. A new pipeline revision is created, stale proposals are superseded, and the previous revision remains auditable. If comparison was incomplete, enter a verified reference and click **Add reference and rerun analysis**.
+
+The pipeline cannot classify a package as malicious, execute it, submit it to a sandbox, send external communication, approve publication, or publish an article.
+
+## Granular recovery controls
+
+Use the individual actions only when diagnosing a step or deliberately running a narrower workflow:
 
 1. Create or open a Research Case from Supply Chain Triage.
 2. Select the ecosystem, package, and optional version.

@@ -253,7 +253,30 @@ def _finish(
             {"error_code": error_code} if error_code else {},
         )
         connection.commit()
+    completed = get_job(job_id, db_path=db_path)
+    _notify_research_pipeline(completed, db_path=db_path)
     return get_job(job_id, db_path=db_path)
+
+
+def _notify_research_pipeline(job: dict[str, Any], *, db_path: str | None) -> None:
+    inputs = job.get("input") if isinstance(job.get("input"), dict) else {}
+    if not inputs.get("pipeline_id"):
+        return
+    try:
+        from secopsai.research_pipeline import reconcile_intelligence_job
+
+        reconcile_intelligence_job(job, db_path=db_path)
+    except Exception as exc:  # The completed AI result remains durable and retryable.
+        with closing(soc_store.connect(db_path)) as connection:
+            _event(
+                connection,
+                job["job_id"],
+                "pipeline_reconcile_failed",
+                "research-pipeline",
+                "The Intelligence result was saved, but pipeline reconciliation needs a retry.",
+                {"error": str(exc)[:500]},
+            )
+            connection.commit()
 
 
 def _event(

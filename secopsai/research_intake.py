@@ -610,7 +610,13 @@ def run_package_intake(
     return result
 
 
-def attach_intake_result(result: Dict[str, Any], *, db_path: Optional[str] = None, actor: str = "analyst") -> Dict[str, Any]:
+def attach_intake_result(
+    result: Dict[str, Any],
+    *,
+    db_path: Optional[str] = None,
+    actor: str = "analyst",
+    metadata_extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """Attach a previously quarantined, operator-reviewed intake result."""
     case_id = _text(result.get("case_id"), 32)
     metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
@@ -628,21 +634,22 @@ def attach_intake_result(result: Dict[str, Any], *, db_path: Optional[str] = Non
     package = _safe_package(metadata.get("package"))
     ecosystem = _text(metadata.get("ecosystem"), 40).lower()
     version = _version(metadata.get("version"))
+    extra = dict(metadata_extra or {})
     subject_case = add_subject(case_id, subject_type="package", name=package, ecosystem=ecosystem,
-                               version=version, publisher=_text(metadata.get("publisher"), 240), metadata=metadata,
+                               version=version, publisher=_text(metadata.get("publisher"), 240), metadata={**metadata, **extra},
                                db_path=db_path, actor=actor)
     metadata_payload = {key: metadata.get(key) for key in ("ecosystem", "package", "version", "publisher", "published_at", "integrity", "artifact_sha256", "artifact_bytes")}
     metadata_bytes = json.dumps(metadata_payload, sort_keys=True).encode()
     metadata_evidence = add_evidence(case_id, evidence_type="registry_metadata", title=f"{ecosystem} registry metadata: {package}@{version}",
                                      locator=_text(metadata.get("metadata_url"), 4000), provenance=f"official {ecosystem} registry metadata fetched by SecOpsAI", notes="Normalized metadata only; raw response is not sent to AI.",
-                                     sha256=hashlib.sha256(metadata_bytes).hexdigest(), metadata=metadata_payload, db_path=db_path, actor=actor)
+                                     sha256=hashlib.sha256(metadata_bytes).hexdigest(), metadata={**metadata_payload, **extra}, db_path=db_path, actor=actor)
     artifact_evidence = add_evidence(case_id, evidence_type="package_artifact", title=f"Quarantined artifact: {package}@{version}",
                                      locator=f"quarantine://{digest}", sha256=digest, provenance=f"official {ecosystem} artifact fetched from an allowlisted host", notes="Stored in local quarantine. Never executed or extracted.",
-                                     metadata={"bytes": int(metadata.get("artifact_bytes") or path.stat().st_size), "filename": analysis.get("filename"), "execution_performed": False, "extracted_to_filesystem": False}, db_path=db_path, actor=actor)
+                                     metadata={"bytes": int(metadata.get("artifact_bytes") or path.stat().st_size), "filename": analysis.get("filename"), "execution_performed": False, "extracted_to_filesystem": False, **extra}, db_path=db_path, actor=actor)
     analysis_bytes = json.dumps(analysis, sort_keys=True, separators=(",", ":")).encode()
     analysis_evidence = add_evidence(case_id, evidence_type="static_analysis", title=f"Static intake analysis: {package}@{version}",
                                       locator=f"quarantine-analysis://{digest}", sha256=hashlib.sha256(analysis_bytes).hexdigest(), provenance="SecOpsAI bounded archive inspection; no package code execution", notes=f"Indicators={len(analysis.get('indicators') or [])}; lifecycle_scripts={len(analysis.get('lifecycle_scripts') or {})}; execution=false.",
-                                      metadata=analysis, db_path=db_path, actor=actor)
+                                      metadata={**analysis, **extra}, db_path=db_path, actor=actor)
     return {
         "attached": True,
         "evidence_ids": [metadata_evidence["evidence"][-1]["evidence_id"], artifact_evidence["evidence"][-1]["evidence_id"], analysis_evidence["evidence"][-1]["evidence_id"]],

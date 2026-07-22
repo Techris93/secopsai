@@ -327,6 +327,64 @@ def init_db(db_path: str | None = None) -> None:
                 FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS research_pipeline_runs (
+                pipeline_id TEXT PRIMARY KEY,
+                schema_version TEXT NOT NULL,
+                case_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                requested_by TEXT NOT NULL,
+                current_step TEXT NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 1,
+                config_json TEXT NOT NULL,
+                summary_json TEXT NOT NULL,
+                error_code TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_pipeline_steps (
+                step_id TEXT PRIMARY KEY,
+                pipeline_id TEXT NOT NULL,
+                step_key TEXT NOT NULL,
+                step_order INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                intelligence_job_id TEXT,
+                result_json TEXT NOT NULL,
+                error_code TEXT,
+                error_message TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL,
+                UNIQUE (pipeline_id, step_key),
+                FOREIGN KEY (pipeline_id) REFERENCES research_pipeline_runs (pipeline_id) ON DELETE CASCADE,
+                FOREIGN KEY (intelligence_job_id) REFERENCES intelligence_jobs (job_id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_review_items (
+                item_id TEXT PRIMARY KEY,
+                pipeline_id TEXT NOT NULL,
+                case_id TEXT NOT NULL,
+                source_key TEXT NOT NULL,
+                item_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                evidence_refs_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                reviewer TEXT,
+                review_note TEXT NOT NULL,
+                edited_content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (pipeline_id, source_key),
+                FOREIGN KEY (pipeline_id) REFERENCES research_pipeline_runs (pipeline_id) ON DELETE CASCADE,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS research_claims (
                 claim_id TEXT PRIMARY KEY,
                 case_id TEXT NOT NULL,
@@ -709,6 +767,14 @@ def init_db(db_path: str | None = None) -> None:
                 ON research_jobs (case_id, status, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_research_jobs_status_time
                 ON research_jobs (status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_pipeline_case_time
+                ON research_pipeline_runs (case_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_pipeline_status_time
+                ON research_pipeline_runs (status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_pipeline_steps_run
+                ON research_pipeline_steps (pipeline_id, step_order);
+            CREATE INDEX IF NOT EXISTS idx_research_review_items_run_status
+                ON research_review_items (pipeline_id, status, created_at);
             CREATE INDEX IF NOT EXISTS idx_research_claims_case
                 ON research_claims (case_id, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_research_verdicts_case
