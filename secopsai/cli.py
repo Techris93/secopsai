@@ -69,6 +69,18 @@ from secopsai.graph_store import list_assets as list_graph_assets
 from secopsai.graph_store import list_changes as list_graph_changes
 from secopsai.graph_store import list_sync_state as list_edge_sync_state
 from secopsai.graph_store import show_node as show_graph_node
+from secopsai.intelligence import ACTIONS as INTELLIGENCE_ACTIONS
+from secopsai.intelligence import list_actions as list_intelligence_actions
+from secopsai.intelligence import run_read_action as run_intelligence_read_action
+from secopsai.intelligence_jobs import cancel_job as cancel_intelligence_job
+from secopsai.intelligence_jobs import enqueue_job as enqueue_intelligence_job
+from secopsai.intelligence_jobs import get_job as get_intelligence_job
+from secopsai.intelligence_jobs import list_jobs as list_intelligence_jobs
+from secopsai.codex_bridge import doctor as codex_bridge_doctor
+from secopsai.codex_bridge import run_loop as run_codex_bridge_loop
+from secopsai.codex_bridge import run_once as run_codex_bridge_once
+from secopsai.codex_bridge_service import install_service as install_codex_bridge_service
+from secopsai.codex_bridge_service import service_action as codex_bridge_service_action
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
 from secopsai.pipeline import refresh as refresh_pipeline
 from secopsai.research import (
@@ -1092,6 +1104,50 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     graph_changes = graph_sub.add_parser("changes", help="Show recently updated graph nodes and edges")
     graph_changes.add_argument("--db-path", default=None, help="Override SQLite SOC/graph database path")
     graph_changes.add_argument("--limit", type=int, default=20)
+
+    intelligence = sub.add_parser("intelligence", help="Run approved read-only intelligence actions and manage the local Codex bridge")
+    intelligence_sub = intelligence.add_subparsers(dest="intelligence_cmd", required=True)
+    intelligence_sub.add_parser("actions", help="List approved intelligence actions and scopes")
+    intelligence_status = intelligence_sub.add_parser("status", help="Show local bridge, service, action, and queue status in one request")
+    intelligence_status.add_argument("--limit", type=int, default=50)
+    intelligence_status.add_argument("--db-path", default=None)
+    intelligence_query = intelligence_sub.add_parser("query", help="Run a deterministic read-only Core intelligence action")
+    intelligence_query.add_argument("action", choices=[name for name, item in INTELLIGENCE_ACTIONS.items() if not item.requires_bridge])
+    intelligence_query.add_argument("--target-id", default="")
+    intelligence_query.add_argument("--inputs-json", default="{}", help="Additional bounded JSON object inputs")
+    intelligence_query.add_argument("--db-path", default=None)
+    intelligence_enqueue = intelligence_sub.add_parser("enqueue", help="Queue an approved action for the local subscription-backed Codex bridge")
+    intelligence_enqueue.add_argument("--action", required=True, choices=[name for name, item in INTELLIGENCE_ACTIONS.items() if item.requires_bridge])
+    intelligence_enqueue.add_argument("--target-id", default="")
+    intelligence_enqueue.add_argument("--inputs-json", default="{}", help="Additional bounded JSON object inputs")
+    intelligence_enqueue.add_argument("--requested-by", default="operator")
+    intelligence_enqueue.add_argument("--idempotency-key", default="")
+    intelligence_enqueue.add_argument("--db-path", default=None)
+    intelligence_jobs = intelligence_sub.add_parser("jobs", help="List, show, or cancel local intelligence jobs")
+    intelligence_jobs_sub = intelligence_jobs.add_subparsers(dest="intelligence_jobs_cmd", required=True)
+    intelligence_jobs_list = intelligence_jobs_sub.add_parser("list")
+    intelligence_jobs_list.add_argument("--status", default="")
+    intelligence_jobs_list.add_argument("--limit", type=int, default=100)
+    intelligence_jobs_list.add_argument("--db-path", default=None)
+    intelligence_jobs_show = intelligence_jobs_sub.add_parser("show")
+    intelligence_jobs_show.add_argument("job_id")
+    intelligence_jobs_show.add_argument("--db-path", default=None)
+    intelligence_jobs_cancel = intelligence_jobs_sub.add_parser("cancel")
+    intelligence_jobs_cancel.add_argument("job_id")
+    intelligence_jobs_cancel.add_argument("--actor", default="operator")
+    intelligence_jobs_cancel.add_argument("--db-path", default=None)
+    intelligence_bridge = intelligence_sub.add_parser("bridge", help="Inspect or run the local ChatGPT subscription-backed Codex bridge")
+    intelligence_bridge_sub = intelligence_bridge.add_subparsers(dest="intelligence_bridge_cmd", required=True)
+    intelligence_bridge_sub.add_parser("doctor")
+    intelligence_bridge_run = intelligence_bridge_sub.add_parser("run")
+    intelligence_bridge_run.add_argument("--once", action="store_true")
+    intelligence_bridge_run.add_argument("--max-iterations", type=int, default=0)
+    intelligence_bridge_run.add_argument("--db-path", default=None)
+    intelligence_bridge_service = intelligence_bridge_sub.add_parser("service", help="Install or control the user-level bridge background service")
+    intelligence_bridge_service.add_argument("action", choices=["install", "start", "stop", "status", "logs", "uninstall"])
+    intelligence_bridge_service.add_argument("--db-path", default=None)
+    intelligence_bridge_service.add_argument("--no-start", action="store_true")
+    intelligence_bridge_service.add_argument("--tail", type=int, default=80)
 
     research = sub.add_parser("research", help="Generate source-backed research reports and preflight checks")
     research_sub = research.add_subparsers(dest="research_cmd", required=True)
@@ -2951,6 +3007,72 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
             )
             print(f"DB: {payload['db_path']}")
+        return 0
+
+    if args.cmd == "intelligence":
+        try:
+            if args.intelligence_cmd == "actions":
+                payload = list_intelligence_actions()
+            elif args.intelligence_cmd == "status":
+                payload = {
+                    "schema_version": "secopsai.intelligence.status.v1",
+                    "generated_at": soc_store.utc_now(),
+                    "actions": list_intelligence_actions(),
+                    "jobs": {"jobs": list_intelligence_jobs(limit=args.limit, db_path=args.db_path)},
+                    "bridge": codex_bridge_doctor(),
+                    "service": codex_bridge_service_action("status"),
+                }
+            elif args.intelligence_cmd == "query":
+                inputs = _json_object(args.inputs_json, label="intelligence inputs")
+                if args.target_id:
+                    inputs.setdefault("target_id", args.target_id)
+                payload = run_intelligence_read_action(args.action, inputs, db_path=args.db_path)
+            elif args.intelligence_cmd == "enqueue":
+                inputs = _json_object(args.inputs_json, label="intelligence inputs")
+                payload = enqueue_intelligence_job(
+                    action=args.action,
+                    target_id=args.target_id,
+                    inputs=inputs,
+                    requested_by=args.requested_by,
+                    idempotency_key=args.idempotency_key,
+                    db_path=args.db_path,
+                )
+            elif args.intelligence_cmd == "jobs":
+                if args.intelligence_jobs_cmd == "list":
+                    payload = {"jobs": list_intelligence_jobs(status=args.status, limit=args.limit, db_path=args.db_path)}
+                elif args.intelligence_jobs_cmd == "show":
+                    payload = get_intelligence_job(args.job_id, db_path=args.db_path)
+                elif args.intelligence_jobs_cmd == "cancel":
+                    payload = cancel_intelligence_job(args.job_id, actor=args.actor, db_path=args.db_path)
+                else:
+                    raise ValueError(f"unsupported intelligence jobs command: {args.intelligence_jobs_cmd}")
+            elif args.intelligence_cmd == "bridge":
+                if args.intelligence_bridge_cmd == "doctor":
+                    payload = codex_bridge_doctor()
+                elif args.intelligence_bridge_cmd == "run":
+                    if args.once:
+                        payload = run_codex_bridge_once(db_path=args.db_path)
+                    else:
+                        payload = run_codex_bridge_loop(db_path=args.db_path, max_iterations=args.max_iterations)
+                elif args.intelligence_bridge_cmd == "service":
+                    if args.action == "install":
+                        payload = install_codex_bridge_service(db_path=args.db_path, start=not args.no_start)
+                    else:
+                        payload = codex_bridge_service_action(args.action, tail=args.tail)
+                else:
+                    raise ValueError(f"unsupported intelligence bridge command: {args.intelligence_bridge_cmd}")
+            else:
+                raise ValueError(f"unsupported intelligence command: {args.intelligence_cmd}")
+        except Exception as exc:
+            if args.json:
+                print(to_json({"error": str(exc), "command": args.intelligence_cmd}))
+            else:
+                print(f"error: {exc}")
+            return 1
+        if args.json:
+            print(to_json(payload))
+        else:
+            print(to_json(payload))
         return 0
 
     if args.cmd == "graph":

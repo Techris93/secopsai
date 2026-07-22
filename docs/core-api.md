@@ -24,14 +24,17 @@ profile to a public interface.
 
 ## Authentication scopes
 
-The API deliberately uses two unrelated bearer credentials:
+The API deliberately uses four unrelated bearer credentials:
 
 - `SECOPSAI_CORE_INGEST_TOKEN` can submit normalized Edge bundles only.
 - `SECOPSAI_CORE_READ_TOKEN` can read the minimized workspace and API audit log.
+- `SECOPSAI_CORE_INTELLIGENCE_TOKEN` can queue, inspect, and cancel approved local intelligence jobs. It cannot read Edge bundles or operate sensors.
+- `SECOPSAI_CORE_BRIDGE_TOKEN` can claim and complete queued intelligence jobs from the local Codex bridge. It cannot create jobs or query Core directly.
 
 Neither token grants scanner control. Edge sensor and dashboard credentials
-remain separate. Pilot and production startup rejects short, missing, reused,
-or wildcard-host credentials.
+remain separate. Pilot and production startup rejects short or reused configured
+credentials and wildcard host/origin settings. Intelligence job routes remain
+unavailable until the third credential is configured.
 
 `SECOPSAI_CORE_ORGANIZATION_ID` binds the Core deployment and ingest token to
 one Edge workspace. A bundle for any other organization is rejected. This
@@ -47,6 +50,14 @@ tenant-aware PostgreSQL design.
 | `POST /api/v1/edge/bundles` | Ingest token | Idempotent normalized Edge import |
 | `GET /api/v1/workspace` | Read token | Minimized Core/Edge operator context |
 | `GET /api/v1/audit-logs` | Read token | Bundle import audit events |
+| `GET /api/v1/intelligence/actions` | Read token | Approved read-only action catalog |
+| `POST /api/v1/intelligence/query` | Read token | Deterministic minimized Core query |
+| `POST /api/v1/intelligence/jobs` | Intelligence token | Queue an approved local Codex action |
+| `GET /api/v1/intelligence/jobs` | Intelligence token | Inspect intelligence queue state |
+| `POST /api/v1/intelligence/jobs/{job_id}/cancel` | Intelligence token | Cancel a non-final job |
+| `POST /api/v1/intelligence/bridge/claim` | Bridge token | Claim one queued job and receive minimized context |
+| `POST /api/v1/intelligence/bridge/jobs/{job_id}/complete` | Bridge token | Return a schema-validated result |
+| `POST /api/v1/intelligence/bridge/jobs/{job_id}/fail` | Bridge token | Record a bounded bridge failure |
 
 The import endpoint requires UTF-8 `application/json`, rejects compressed
 request bodies, enforces a 10 MiB default limit, rejects duplicate JSON keys,
@@ -63,8 +74,8 @@ attached to a free service.
 
 Before creating it:
 
-1. Generate two unrelated secrets of at least 32 characters.
-2. Set `SECOPSAI_CORE_INGEST_TOKEN` and `SECOPSAI_CORE_READ_TOKEN` when prompted.
+1. Generate four unrelated secrets of at least 32 characters.
+2. Set `SECOPSAI_CORE_INGEST_TOKEN`, `SECOPSAI_CORE_READ_TOKEN`, `SECOPSAI_CORE_INTELLIGENCE_TOKEN`, and `SECOPSAI_CORE_BRIDGE_TOKEN` when prompted.
 3. Set `SECOPSAI_CORE_CORS_ORIGINS` to the exact operator dashboard origin.
 4. Set `SECOPSAI_CORE_ORGANIZATION_ID` to the Edge workspace organization ID.
 5. Confirm the expected hostname in `SECOPSAI_CORE_TRUSTED_HOSTS`.

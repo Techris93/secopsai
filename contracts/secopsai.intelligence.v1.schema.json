@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://secopsai.dev/contracts/secopsai.intelligence.v1.schema.json",
+  "title": "SecOpsAI Intelligence Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "action", "generated_at", "provider", "read_only", "data", "limitations"],
+  "properties": {
+    "schema_version": { "const": "secopsai.intelligence.v1" },
+    "action": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "provider": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "read_only": { "const": true },
+    "data": { "type": "object" },
+    "limitations": {
+      "type": "array",
+      "maxItems": 25,
+      "items": { "type": "string", "maxLength": 2000 }
+    },
+    "request_id": { "type": "string", "maxLength": 128 }
+  }
+}

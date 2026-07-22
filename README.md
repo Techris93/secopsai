@@ -422,6 +422,7 @@ On macOS, launchd-based execution is supported via helper scripts, including:
 - [Docs site](https://docs.secopsai.dev)
 - [Getting Started](docs/getting-started.md)
 - [Core API and hosted Edge ingestion](docs/core-api.md)
+- [Local Codex bridge and ChatGPT app](docs/intelligence-integrations.md)
 - [Universal Adapters](docs/universal-adapters.md)
 - [Rules Registry](docs/rules-registry.md)
 - [Deployment Guide](docs/deployment-guide.md)

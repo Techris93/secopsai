@@ -16,6 +16,7 @@ site/
 coverage.xml
 dist/
 .npmrc
+node_modules/
 .core-api.env
 *.tgz
 .wrangler/

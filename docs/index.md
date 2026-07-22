@@ -29,6 +29,7 @@ SecOpsAI connects network discovery, software supply-chain monitoring, host and 
 
 - [Getting Started](getting-started.md)
 - [SecOpsAI Edge](edge-integration.md)
+- [Local Codex bridge and ChatGPT app](intelligence-integrations.md)
 - [Operator Runbook](operator-runbook.md)
 - [Findings Triage Guide](findings-triage-guide.md)
 - [Research And Verification](research-and-verification.md)

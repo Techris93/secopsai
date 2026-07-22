@@ -10,12 +10,15 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+import soc_store
 from secopsai.core_api import CoreAPISettings, create_app
 
 
 INGEST_TOKEN = "ingest-token-with-at-least-thirty-two-characters"
 READ_TOKEN = "read-token-with-at-least-thirty-two-characters--"
 WEBHOOK_SECRET = "research-webhook-secret-with-at-least-thirty-two-characters"
+INTELLIGENCE_TOKEN = "intelligence-token-with-at-least-thirty-two-characters"
+BRIDGE_TOKEN = "bridge-token-with-at-least-thirty-two-characters----"
 
 
 def _bundle() -> dict:
@@ -97,6 +100,8 @@ def client(tmp_path: Path):
         db_path=str(tmp_path / "core.db"),
         ingest_token=INGEST_TOKEN,
         read_token=READ_TOKEN,
+        intelligence_token=INTELLIGENCE_TOKEN,
+        bridge_token=BRIDGE_TOKEN,
         environment="test",
         organization_id="org-pilot-1",
         cors_origins=("https://console.example.test",),
@@ -112,6 +117,134 @@ def test_health_and_readiness_are_public(client):
     test_client, _ = client
     assert test_client.get("/healthz").json()["status"] == "ok"
     assert test_client.get("/readyz").json() == {"status": "ready", "data_store": "sqlite"}
+
+
+def test_intelligence_read_and_job_routes_use_separate_credentials(client):
+    test_client, settings = client
+    actions = test_client.get(
+        "/api/v1/intelligence/actions",
+        headers={"Authorization": f"Bearer {READ_TOKEN}"},
+    )
+    assert actions.status_code == 200
+    assert any(item["name"] == "workspace_summary" for item in actions.json()["actions"])
+
+    query = test_client.post(
+        "/api/v1/intelligence/query",
+        headers={"Authorization": f"Bearer {READ_TOKEN}"},
+        json={"action": "workspace_summary", "inputs": {}},
+    )
+    assert query.status_code == 200
+    assert query.json()["read_only"] is True
+
+    denied = test_client.post(
+        "/api/v1/intelligence/jobs",
+        headers={"Authorization": f"Bearer {READ_TOKEN}"},
+        json={"action": "prioritize_findings"},
+    )
+    assert denied.status_code == 401
+
+    queued = test_client.post(
+        "/api/v1/intelligence/jobs",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+        json={"action": "prioritize_findings", "requested_by": "dashboard"},
+    )
+    assert queued.status_code == 200
+    job_id = queued.json()["job"]["job_id"]
+    listed = test_client.get(
+        "/api/v1/intelligence/jobs",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["jobs"][0]["job_id"] == job_id
+
+    canceled = test_client.post(
+        f"/api/v1/intelligence/jobs/{job_id}/cancel",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+    )
+    assert canceled.status_code == 200
+    assert canceled.json()["job"]["status"] == "canceled"
+
+    with sqlite3.connect(settings.db_path) as connection:
+        audit_actions = [row[0] for row in connection.execute("SELECT action FROM core_api_audit_logs ORDER BY audit_id")]
+    assert "intelligence.query.completed" in audit_actions
+    assert "intelligence.job.queued" in audit_actions
+    assert "intelligence.job.canceled" in audit_actions
+
+
+def test_remote_bridge_claims_and_completes_a_hosted_job(client):
+    test_client, _ = client
+    with soc_store.connect(client[1].db_path) as connection:
+        now = soc_store.utc_now()
+        connection.execute(
+            """INSERT INTO findings
+            (finding_id, title, summary, severity, severity_score, status, disposition,
+             source, first_seen, last_seen, created_at, updated_at, payload_json)
+            VALUES (?, ?, ?, 'high', 80, 'open', 'unreviewed', 'test', ?, ?, ?, ?, ?)""",
+            (
+                "FND-REMOTE-1",
+                "Remote bridge test",
+                "Normalized evidence for the bridge.",
+                now,
+                now,
+                now,
+                now,
+                json.dumps({
+                    "finding_id": "FND-REMOTE-1",
+                    "title": "Remote bridge test",
+                    "summary": "Normalized evidence for the bridge.",
+                    "severity": "high",
+                    "severity_score": 80,
+                    "source": "test",
+                    "first_seen": now,
+                    "last_seen": now,
+                }),
+            ),
+        )
+        connection.commit()
+    queued = test_client.post(
+        "/api/v1/intelligence/jobs",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+        json={"action": "explain_finding", "target_id": "FND-REMOTE-1"},
+    ).json()["job"]
+    assert test_client.post(
+        "/api/v1/intelligence/bridge/claim",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+        json={"worker_id": "wrong-role"},
+    ).status_code == 401
+    claimed = test_client.post(
+        "/api/v1/intelligence/bridge/claim",
+        headers={"Authorization": f"Bearer {BRIDGE_TOKEN}"},
+        json={"worker_id": "macbook-bridge"},
+    )
+    assert claimed.status_code == 200
+    claim_payload = claimed.json()
+    assert claim_payload["job"]["job_id"] == queued["job_id"]
+    assert claim_payload["bridge_request"]["safety"]["raw_telemetry_included"] is False
+
+    running_cancel = test_client.post(
+        f"/api/v1/intelligence/jobs/{queued['job_id']}/cancel",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+    )
+    assert running_cancel.status_code == 409
+    assert "cannot be canceled safely" in running_cancel.json()["detail"]
+
+    completed = test_client.post(
+        f"/api/v1/intelligence/bridge/jobs/{queued['job_id']}/complete",
+        headers={"Authorization": f"Bearer {BRIDGE_TOKEN}"},
+        json={
+            "worker_id": "macbook-bridge",
+            "result": {
+                "summary": "Evidence-grounded summary.",
+                "risk_assessment": "High priority.",
+                "evidence": ["Normalized evidence."],
+                "recommended_actions": ["Review ownership."],
+                "limitations": ["No runtime evidence."],
+            },
+        },
+    )
+    assert completed.status_code == 200
+    assert completed.json()["job"]["status"] == "succeeded"
+    assert completed.json()["job"]["result"]["provider"] == "codex_chatgpt_subscription"
 
 
 def test_ingest_and_workspace_use_separate_scoped_tokens(client):
@@ -319,6 +452,8 @@ def test_production_settings_fail_closed():
         db_path=":memory:",
         ingest_token=INGEST_TOKEN,
         read_token=READ_TOKEN,
+        intelligence_token=INTELLIGENCE_TOKEN,
+        bridge_token=BRIDGE_TOKEN,
         environment="production",
         cors_origins=("https://console.example.test",),
         trusted_hosts=("core.example.test",),
