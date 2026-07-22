@@ -4,7 +4,7 @@ import json
 
 import soc_store
 
-from secopsai.research_delivery import deliver_pending_operational_alerts, send_research_alert
+from secopsai.research_delivery import deliver_pending_operational_alerts, send_email, send_research_alert
 from secopsai.research_discovery import create_candidate_alert
 from secopsai.research_worker import _record_collector_degraded_alert
 
@@ -33,6 +33,85 @@ def test_research_alert_delivery_is_audited_without_exposing_raw_artifacts(tmp_p
     assert row["status"] == "sent"
     assert row["attempts"] == 1
     assert row["destination"] == "research@secopsai.dev"
+
+
+def test_email_uses_branded_multipart_content_and_safe_sender(monkeypatch):
+    captured = {}
+
+    class SMTP:
+        def __init__(self, host, port, context, timeout):
+            captured.update({"host": host, "port": port, "timeout": timeout})
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def login(self, username, password):
+            captured.update({"username": username, "password": password})
+
+        def send_message(self, message):
+            captured["message"] = message
+
+    monkeypatch.setenv("SECOPSAI_SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SECOPSAI_SMTP_PORT", "465")
+    monkeypatch.setenv("SECOPSAI_SMTP_USERNAME", "mailer")
+    monkeypatch.setenv("SECOPSAI_SMTP_PASSWORD", "secret-value")
+    monkeypatch.setattr("secopsai.research_delivery.smtplib.SMTP_SSL", SMTP)
+
+    result = send_email(
+        recipient="analyst@example.test",
+        subject="Research alert",
+        body="Review <script>alert('unsafe')</script>",
+        sender="research@secopsai.dev",
+    )
+
+    assert result["status"] == "sent"
+    message = captured["message"]
+    assert message["From"] == "SecOpsAI Research <research@secopsai.dev>"
+    assert message["Date"]
+    assert message["Message-ID"].endswith("@secopsai.dev>")
+    assert message.get_content_type() == "multipart/alternative"
+    plain, branded = list(message.iter_parts())
+    assert plain.get_content_type() == "text/plain"
+    assert "<script>" in plain.get_content()
+    assert branded.get_content_type() == "text/html"
+    html_body = branded.get_content()
+    assert "https://secopsai.dev/assets/favicon-512.png" in html_body
+    assert 'alt="SecOpsAI"' in html_body
+    assert "&lt;script&gt;" in html_body
+    assert "<script>" not in html_body
+
+
+def test_email_uses_security_display_name_for_disclosures(monkeypatch):
+    captured = {}
+
+    class SMTP:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def login(self, username, password):
+            pass
+
+        def send_message(self, message):
+            captured["from"] = message["From"]
+
+    monkeypatch.setenv("SECOPSAI_SMTP_HOST", "smtp.example.test")
+    monkeypatch.setattr("secopsai.research_delivery.smtplib.SMTP_SSL", SMTP)
+    send_email(
+        recipient="vendor@example.test",
+        subject="Coordinated disclosure",
+        body="Defensive notification",
+        sender="security@secopsai.dev",
+    )
+    assert captured["from"] == "SecOpsAI Security <security@secopsai.dev>"
 
 
 def test_operational_alert_delivery_is_disabled_without_explicit_channels(tmp_path, monkeypatch):
