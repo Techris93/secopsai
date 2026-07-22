@@ -88,35 +88,3 @@ services:
       name: secopsai-research-data
       mountPath: /var/data/secopsai-research
       sizeGB: 1
-  - type: web
-    name: secopsai-chatgpt-app
-    runtime: node
-    plan: starter
-    autoDeployTrigger: checksPass
-    rootDir: apps/secopsai-chatgpt
-    buildCommand: npm ci --ignore-scripts
-    startCommand: npm start
-    healthCheckPath: /readyz
-    envVars:
-      - key: SECOPSAI_MCP_ENVIRONMENT
-        value: production
-      - key: SECOPSAI_MCP_RESOURCE
-        value: https://secopsai-chatgpt-app.onrender.com
-      - key: SECOPSAI_MCP_AUTHORIZATION_SERVER
-        sync: false
-      - key: SECOPSAI_MCP_ISSUER
-        sync: false
-      - key: SECOPSAI_MCP_AUDIENCE
-        value: https://secopsai-chatgpt-app.onrender.com
-      - key: SECOPSAI_MCP_JWKS_URL
-        sync: false
-      - key: SECOPSAI_MCP_ALLOWED_HOSTS
-        value: secopsai-chatgpt-app.onrender.com
-      - key: SECOPSAI_MCP_ALLOWED_ORIGINS
-        value: https://chatgpt.com
-      - key: SECOPSAI_MCP_DOCUMENTATION_URL
-        value: https://docs.secopsai.dev/intelligence-integrations/
-      - key: SECOPSAI_CORE_API_URL
-        value: https://secopsai-core-api.onrender.com
-      - key: SECOPSAI_CORE_READ_TOKEN
-        sync: false

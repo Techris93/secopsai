@@ -85,7 +85,17 @@ Required scopes:
 - `secopsai.assets.read`
 - `secopsai.research.read`
 
-Required Render values:
+The primary `render.yaml` deliberately does not provision this service. This keeps ordinary Core and research-worker Blueprint syncs independent from optional OAuth configuration and avoids an unused paid service. When the ChatGPT app is ready for a pilot, create one Render web service manually with:
+
+- Repository: `Techris93/secopsai`
+- Root directory: `apps/secopsai-chatgpt`
+- Runtime: Node
+- Build command: `npm ci --ignore-scripts`
+- Start command: `npm start`
+- Health path: `/readyz`
+- Instance: Starter or higher for a reliable pilot; free is acceptable only for temporary development
+
+Required service values:
 
 | Variable | Purpose |
 |---|---|
@@ -94,9 +104,21 @@ Required Render values:
 | `SECOPSAI_MCP_JWKS_URL` | Provider signing-key endpoint |
 | `SECOPSAI_CORE_READ_TOKEN` | Same server-side read credential configured on Core |
 
-The Blueprint fixes the production MCP resource and audience to `https://secopsai-chatgpt-app.onrender.com`. Change both together if a custom domain is introduced.
+Also set:
 
-After deployment, verify:
+| Variable | Value |
+|---|---|
+| `SECOPSAI_MCP_ENVIRONMENT` | `production` |
+| `SECOPSAI_MCP_RESOURCE` | Exact public service origin, without `/mcp` |
+| `SECOPSAI_MCP_AUDIENCE` | Same exact public service origin |
+| `SECOPSAI_MCP_ALLOWED_HOSTS` | Public service hostname only |
+| `SECOPSAI_MCP_ALLOWED_ORIGINS` | `https://chatgpt.com` |
+| `SECOPSAI_MCP_DOCUMENTATION_URL` | `https://docs.secopsai.dev/intelligence-integrations/` |
+| `SECOPSAI_CORE_API_URL` | `https://secopsai-core-api.onrender.com` |
+
+Set the production MCP resource and audience to the exact public Render origin. Change both together if a custom domain is introduced.
+
+After the opt-in deployment, verify:
 
 ```bash
 curl -sS https://secopsai-chatgpt-app.onrender.com/readyz
