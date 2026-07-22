@@ -2,7 +2,6 @@
 set -euo pipefail
 
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
-: "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
 : "${RESEND_DKIM_PUBLIC_KEY:?RESEND_DKIM_PUBLIC_KEY is required}"
 
 zone_name="${1:-secopsai.dev}"
@@ -29,7 +28,7 @@ api_call() {
   printf '%s' "$response"
 }
 
-zone_response="$(api_call GET "${api}/zones?name=${zone_name}&account.id=${CLOUDFLARE_ACCOUNT_ID}")"
+zone_response="$(api_call GET "${api}/zones?name=${zone_name}")"
 zone_id="$(jq -r '.result[0].id // empty' <<<"$zone_response")"
 if [[ -z "$zone_id" ]]; then
   echo "Cloudflare zone not found: ${zone_name}" >&2

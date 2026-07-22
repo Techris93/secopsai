@@ -72,7 +72,7 @@ Rotate the webhook secret by temporarily disabling automatic webhook delivery, r
 
 Optional Sentry reporting is also disabled until `SECOPSAI_SENTRY_DSN` is present. When enabled, Core sends no default PII, excludes local variables, and records errors with traces and profiling disabled by default. Set a nonzero `SECOPSAI_SENTRY_TRACES_SAMPLE_RATE` only after reviewing the privacy and cost impact.
 
-The repository includes the manual `Configure Resend DNS` GitHub workflow. It uses the existing server-side `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` Actions secrets plus the public `RESEND_DKIM_PUBLIC_KEY` repository variable to idempotently configure the Resend DKIM record and the `send.secopsai.dev` SPF and return-path records. The token must have Zone read and DNS edit permission for `secopsai.dev`; a Pages-only token fails without changing DNS.
+The repository includes the manual `Configure Resend DNS` GitHub workflow. It uses the existing server-side `CLOUDFLARE_API_TOKEN` Actions secret plus the public `RESEND_DKIM_PUBLIC_KEY` repository variable to locate `secopsai.dev` by exact zone name and idempotently configure the Resend DKIM record and the `send.secopsai.dev` SPF and return-path records. The token must have Zone read and DNS edit permission for `secopsai.dev`; a Pages-only token fails without changing DNS.
 
 Important deployment boundary: Render persistent disks cannot be shared. The signed webhook synchronizes reduced operational alerts only. Registry events, candidates, artifacts, and full coverage history remain on the worker disk until their own authenticated ingestion contracts are implemented.
 
