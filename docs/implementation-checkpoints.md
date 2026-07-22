@@ -1,5 +1,15 @@
 # Implementation Checkpoints
 
+## 100 Signed Research Alert Ingestion
+
+Status: implementation complete; production secret and delivery-provider configuration pending.
+
+Added a bounded signed-webhook path from the managed research worker to the hosted Core API. The sender signs the exact JSON body and Unix timestamp with HMAC-SHA256. Core enforces a five-minute replay window, a 64 KB body limit, strict JSON parsing, an operational-alert type allowlist, evidence minimization, and a minimum 32-character shared secret.
+
+Core persists webhook deliveries idempotently with stable local IDs and retains existing operator status and ownership on repeat delivery. The canonical workspace response now includes reduced collector coverage and retention alerts. This closes the immediate visibility gap for operational worker health; registry events, candidates, artifacts, and full coverage history still remain on the separate worker disk.
+
+Verification: focused Core API, delivery, worker, and observability suites passed with 22 tests; the full Core suite passed with 372 tests, 14 warnings, and 4 subtests. GitHub checks, production secret configuration, and an end-to-end signed delivery remain release gates.
+
 ## 099 Managed Research Worker And Operational Alerting
 
 Status: complete in production; automatic external delivery remains disabled until provider credentials are configured.

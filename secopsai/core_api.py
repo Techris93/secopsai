@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 import logging
@@ -9,6 +10,7 @@ import sqlite3
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -26,18 +28,27 @@ LOGGER = logging.getLogger(__name__)
 PROTECTED_ENVIRONMENTS = {"pilot", "production"}
 MIN_PROTECTED_TOKEN_LENGTH = 32
 DEFAULT_MAX_BUNDLE_BYTES = 10 * 1024 * 1024
+MAX_RESEARCH_ALERT_BYTES = 64 * 1024
+RESEARCH_WEBHOOK_MAX_AGE_SECONDS = 300
+RESEARCH_OPERATIONAL_ALERT_TYPES = {"collector_degraded", "collector_retention_risk"}
 REDACTED_KEYS = {
+    "artifact_bytes",
+    "artifact_content",
+    "authorization",
     "bssid",
     "mac",
     "mac_address",
     "nmap_xml",
     "packet_capture",
     "pcap",
+    "password",
     "raw_nmap_output",
     "raw_output",
     "raw_packet_data",
     "raw_scan_log",
     "raw_scan_logs",
+    "secret",
+    "token",
 }
 
 
@@ -51,6 +62,7 @@ class CoreAPISettings:
     cors_origins: tuple[str, ...] = ()
     trusted_hosts: tuple[str, ...] = ("127.0.0.1", "localhost", "testserver")
     max_bundle_bytes: int = DEFAULT_MAX_BUNDLE_BYTES
+    research_webhook_secret: str = ""
 
     @classmethod
     def from_environment(cls) -> "CoreAPISettings":
@@ -69,6 +81,7 @@ class CoreAPISettings:
                 "SECOPSAI_CORE_MAX_BUNDLE_BYTES",
                 DEFAULT_MAX_BUNDLE_BYTES,
             ),
+            research_webhook_secret=os.environ.get("SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET", "").strip(),
         )
 
     def validate(self) -> None:
@@ -88,6 +101,8 @@ class CoreAPISettings:
             raise RuntimeError("SECOPSAI_CORE_TRUSTED_HOSTS must be explicit in pilot/production")
         if "*" in self.cors_origins:
             raise RuntimeError("SECOPSAI_CORE_CORS_ORIGINS cannot use a wildcard in pilot/production")
+        if self.research_webhook_secret and len(self.research_webhook_secret) < MIN_PROTECTED_TOKEN_LENGTH:
+            raise RuntimeError("SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET must contain at least 32 characters")
 
 
 def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
@@ -221,6 +236,38 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
             )
             raise HTTPException(status_code=503, detail="Core data store is unavailable") from exc
 
+    @application.post("/api/v1/research/alerts/webhook")
+    async def ingest_research_alert_webhook(request: Request) -> dict[str, Any]:
+        secret = resolved.research_webhook_secret
+        if not secret:
+            raise HTTPException(status_code=503, detail="Research alert webhook is not configured")
+        body = await _read_request_bytes(request, MAX_RESEARCH_ALERT_BYTES, "Research alert")
+        _verify_research_webhook(request, body, secret)
+        payload = _decode_json_object(body)
+        alert = _validate_research_alert(payload)
+        async with application.state.ingest_lock:
+            result = _upsert_research_alert(alert, resolved.db_path)
+        _write_audit(
+            resolved.db_path,
+            request_id=request.state.request_id,
+            action="research.alert.ingested",
+            actor_role="research_worker",
+            result="created" if result["created"] else "updated",
+            source_instance="secopsai-research-worker",
+            details={
+                "alert_id": result["alert_id"],
+                "source_alert_id": alert["alert_id"],
+                "alert_type": alert["alert_type"],
+                "severity": alert["severity"],
+            },
+        )
+        return {
+            "status": "accepted",
+            "alert_id": result["alert_id"],
+            "created": result["created"],
+            "request_id": request.state.request_id,
+        }
+
     @application.get("/api/v1/workspace")
     def operator_workspace(
         limit: int = 100,
@@ -259,6 +306,10 @@ def _bearer_dependency(token_provider: Callable[[], str], role: str):
 
 
 async def _read_json_object(request: Request, max_bytes: int) -> dict[str, Any]:
+    return _decode_json_object(await _read_request_bytes(request, max_bytes, "Edge bundle"))
+
+
+async def _read_request_bytes(request: Request, max_bytes: int, label: str) -> bytes:
     content_type = request.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
     if content_type != "application/json":
         raise HTTPException(status_code=415, detail="Content-Type must be application/json")
@@ -268,7 +319,7 @@ async def _read_json_object(request: Request, max_bytes: int) -> dict[str, Any]:
     if content_length:
         try:
             if int(content_length) > max_bytes:
-                raise HTTPException(status_code=413, detail="Edge bundle exceeds the request size limit")
+                raise HTTPException(status_code=413, detail=f"{label} exceeds the request size limit")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Invalid Content-Length header") from exc
 
@@ -277,11 +328,15 @@ async def _read_json_object(request: Request, max_bytes: int) -> dict[str, Any]:
     async for chunk in request.stream():
         received += len(chunk)
         if received > max_bytes:
-            raise HTTPException(status_code=413, detail="Edge bundle exceeds the request size limit")
+            raise HTTPException(status_code=413, detail=f"{label} exceeds the request size limit")
         chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _decode_json_object(body: bytes) -> dict[str, Any]:
     try:
         payload = json.loads(
-            b"".join(chunks).decode("utf-8"),
+            body.decode("utf-8"),
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=lambda value: (_ for _ in ()).throw(ValueError(f"Invalid JSON constant: {value}")),
         )
@@ -290,6 +345,95 @@ async def _read_json_object(request: Request, max_bytes: int) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Request body must be a JSON object")
     return payload
+
+
+def _verify_research_webhook(request: Request, body: bytes, secret: str) -> None:
+    timestamp_text = request.headers.get("X-SecOpsAI-Timestamp", "").strip()
+    signature_header = request.headers.get("X-SecOpsAI-Signature", "").strip()
+    try:
+        timestamp = int(timestamp_text)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid webhook timestamp") from exc
+    if abs(int(datetime.now(timezone.utc).timestamp()) - timestamp) > RESEARCH_WEBHOOK_MAX_AGE_SECONDS:
+        raise HTTPException(status_code=401, detail="Webhook timestamp is outside the replay window")
+    algorithm, separator, supplied = signature_header.partition("=")
+    if separator != "=" or algorithm.lower() != "sha256" or len(supplied) != 64:
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    expected = hmac.new(secret.encode(), timestamp_text.encode() + b"." + body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(supplied.lower(), expected):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+
+def _validate_research_alert(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("schema_version") != "secopsai.research.alert.v1":
+        raise HTTPException(status_code=422, detail="Unsupported research alert schema")
+    alert_id = str(payload.get("alert_id") or "").strip()
+    alert_type = str(payload.get("alert_type") or "").strip()
+    severity = str(payload.get("severity") or "").strip().lower()
+    reason = str(payload.get("reason") or "").strip()
+    evidence = payload.get("evidence")
+    if not alert_id or len(alert_id) > 128:
+        raise HTTPException(status_code=422, detail="Research alert ID is invalid")
+    if alert_type not in RESEARCH_OPERATIONAL_ALERT_TYPES:
+        raise HTTPException(status_code=422, detail="Research alert type is not accepted by this endpoint")
+    if severity not in {"info", "low", "medium", "high", "critical"}:
+        raise HTTPException(status_code=422, detail="Research alert severity is invalid")
+    if not reason or len(reason) > 2000:
+        raise HTTPException(status_code=422, detail="Research alert reason is invalid")
+    if not isinstance(evidence, dict):
+        raise HTTPException(status_code=422, detail="Research alert evidence must be an object")
+    return {
+        "alert_id": alert_id,
+        "alert_type": alert_type,
+        "severity": severity,
+        "reason": reason,
+        "evidence": _sanitize(evidence),
+        "occurred_at": str(payload.get("occurred_at") or soc_store.utc_now())[:64],
+    }
+
+
+def _upsert_research_alert(alert: dict[str, Any], db_path: str) -> dict[str, Any]:
+    now = soc_store.utc_now()
+    digest = hashlib.sha256(alert["alert_id"].encode()).hexdigest()[:24].upper()
+    alert_id = f"RAL-WEB-{digest}"
+    dedupe_key = f"research-worker:{alert['alert_id']}"
+    soc_store.init_db(db_path)
+    with soc_store.connect(db_path) as connection:
+        existing = connection.execute(
+            "SELECT alert_id FROM research_alerts WHERE dedupe_key = ?", (dedupe_key,)
+        ).fetchone()
+        connection.execute(
+            """INSERT INTO research_alerts
+            (alert_id, alert_type, severity, candidate_id, campaign_id, case_id, dedupe_key,
+             reason, evidence_json, status, owner, created_at, updated_at)
+            VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?, 'open', '', ?, ?)
+            ON CONFLICT(dedupe_key) DO UPDATE SET alert_type=excluded.alert_type,
+                severity=excluded.severity, reason=excluded.reason,
+                evidence_json=excluded.evidence_json, updated_at=excluded.updated_at""",
+            (
+                alert_id,
+                alert["alert_type"],
+                alert["severity"],
+                dedupe_key,
+                alert["reason"],
+                json.dumps(
+                    {
+                        **alert["evidence"],
+                        "source_alert_id": alert["alert_id"],
+                        "occurred_at": alert["occurred_at"],
+                        "source": "secopsai-research-worker",
+                    },
+                    sort_keys=True,
+                ),
+                now,
+                now,
+            ),
+        )
+        stored = connection.execute(
+            "SELECT alert_id FROM research_alerts WHERE dedupe_key = ?", (dedupe_key,)
+        ).fetchone()
+        connection.commit()
+    return {"alert_id": stored["alert_id"], "created": existing is None}
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -335,6 +479,15 @@ def _workspace_payload(db_path: str, limit: int) -> dict[str, Any]:
             """,
             (limit,),
         ).fetchall()
+        research_alert_rows = connection.execute(
+            """SELECT alert_id, alert_type, severity, reason, evidence_json, status,
+                      owner, created_at, updated_at
+               FROM research_alerts
+               WHERE alert_type IN ('collector_degraded', 'collector_retention_risk')
+               ORDER BY updated_at DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
 
         total_assets = connection.execute(
             "SELECT COUNT(*) FROM asset_graph_nodes WHERE node_type = 'asset'"
@@ -349,6 +502,11 @@ def _workspace_payload(db_path: str, limit: int) -> dict[str, Any]:
             WHERE status NOT IN ('closed', 'resolved')
               AND lower(severity) IN ('critical', 'high')
             """
+        ).fetchone()[0]
+        total_operational_alerts = connection.execute(
+            """SELECT COUNT(*) FROM research_alerts
+               WHERE status = 'open'
+                 AND alert_type IN ('collector_degraded', 'collector_retention_risk')"""
         ).fetchone()[0]
         graph_counts = {
             str(row["node_type"]): int(row["count"])
@@ -381,6 +539,12 @@ def _workspace_payload(db_path: str, limit: int) -> dict[str, Any]:
         item["cursor"] = _loads_json(item.pop("cursor_json"))
         sync_state.append(item)
 
+    research_alerts = []
+    for row in research_alert_rows:
+        item = dict(row)
+        item["evidence"] = _loads_json(item.pop("evidence_json"))
+        research_alerts.append(_sanitize(item))
+
     return {
         "schema_version": "secopsai.core.workspace.v1",
         "generated_at": soc_store.utc_now(),
@@ -393,11 +557,13 @@ def _workspace_payload(db_path: str, limit: int) -> dict[str, Any]:
             "sensors": graph_counts.get("sensor", 0),
             "sites": graph_counts.get("site", 0),
             "wifi_networks": graph_counts.get("wifi_network", 0),
+            "operational_research_alerts": int(total_operational_alerts),
         },
         "assets": _sanitize(assets),
         "findings": _sanitize(findings),
         "changes": changes,
         "sync_state": sync_state,
+        "research_alerts": research_alerts,
         **nodes,
     }
 
