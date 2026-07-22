@@ -1,5 +1,15 @@
 # Implementation Checkpoints
 
+## 104 Legacy Research Database Migration
+
+Status: complete; CI and production merge are release gates.
+
+Added an idempotent startup migration for research databases created before the active/retracted lifecycle was introduced. Existing `research_subjects`, `research_evidence`, and `research_iocs` tables receive a non-null `status` column with the default `active`, preserving all existing rows. This repairs the Mission Control Research Cases endpoint on long-lived SQLite deployments while leaving fresh databases unchanged.
+
+Verification covers an exact legacy-schema fixture, repeated database initialization, the case-list query, and the live pilot database. The live endpoint now returns an empty valid case list instead of `no such column: s.status`.
+
+Verification: the full Core suite passed with 394 tests, 14 existing warnings, and 4 subtests. MkDocs strict build and repository diff checks passed. All eight live scoped registry monitors then completed successfully with zero monitor failures.
+
 ## 103 Local Codex Research Investigation Pipeline
 
 Status: implementation complete; local service activation and end-to-end operator acceptance are release verification gates.
