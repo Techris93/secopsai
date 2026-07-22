@@ -50,6 +50,14 @@ services:
         value: production
       - key: SECOPS_FINDINGS_DIR
         value: /var/data/secopsai-research
+      - key: SECOPSAI_RESEARCH_ALERT_EMAIL
+        value: research@secopsai.dev
+      - key: SECOPSAI_RESEARCH_FROM_EMAIL
+        value: research@secopsai.dev
+      - key: SECOPSAI_RESEARCH_ALERT_MAX_ATTEMPTS
+        value: "5"
+      - key: SECOPSAI_SENTRY_TRACES_SAMPLE_RATE
+        value: "0"
     disk:
       name: secopsai-research-data
       mountPath: /var/data/secopsai-research

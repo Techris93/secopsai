@@ -19,6 +19,7 @@ import soc_store
 from secopsai import __version__
 from secopsai.edge_sync import import_bundle, validate_bundle
 from secopsai.graph_store import list_assets, list_changes
+from secopsai.observability import initialize_observability
 
 
 LOGGER = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        initialize_observability(service="secopsai-core-api")
         resolved.validate()
         soc_store.init_db(resolved.db_path)
         application.state.ingest_lock = asyncio.Lock()

@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import soc_store
 from secopsai.research_surveillance import ensure_collectors, run_registry_collector
 from secopsai.research_worker import (
+    _record_collector_degraded_alert,
     collector_schedules,
     due_collectors,
     run_worker_cycle,
@@ -87,6 +88,31 @@ def test_worker_cycle_isolates_collector_failures(tmp_path):
     assert "scoring" in result
     assert "retries" in result
     assert "recovery" in result
+    assert len(result["operational_alert_ids"]) == 8
+    assert result["alert_delivery"]["enabled"] is False
+    with soc_store.connect(db_path) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) AS count FROM research_alerts WHERE alert_type = 'collector_degraded'"
+        ).fetchone()["count"]
+    assert count == 8
+
+
+def test_collector_degraded_alert_is_deduplicated_per_day(tmp_path):
+    db_path = _db(tmp_path)
+    result = {
+        "ecosystem": "nuget",
+        "status": "failed",
+        "coverage": "gap",
+        "error": "registry unavailable",
+    }
+    first = _record_collector_degraded_alert(result, db_path=db_path)
+    second = _record_collector_degraded_alert(result, db_path=db_path)
+    assert first == second
+    with soc_store.connect(db_path) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) AS count FROM research_alerts WHERE alert_type = 'collector_degraded'"
+        ).fetchone()["count"]
+    assert count == 1
 
 
 def test_worker_cycle_skips_collectors_not_yet_due(tmp_path):

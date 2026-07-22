@@ -10,12 +10,16 @@ errors are isolated per collector and recorded in the run history.
 from __future__ import annotations
 
 import signal
+import json
+import secrets
 import time
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 import soc_store
+from secopsai.observability import capture_exception, initialize_observability
+from secopsai.research_delivery import deliver_pending_operational_alerts
 from secopsai.research_intake import SafeFetcher
 from secopsai.research_scoring import score_pending_events
 from secopsai.research_surveillance import (
@@ -49,6 +53,42 @@ def _parse_started_at(value: str) -> Optional[datetime]:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _record_collector_degraded_alert(result: Dict[str, Any], *, db_path: Optional[str]) -> Optional[str]:
+    """Create one actionable collector-health alert per ecosystem and day."""
+    status = str(result.get("status") or "unknown")
+    coverage = str(result.get("coverage") or "unknown")
+    incomplete = bool(result.get("window_incomplete") or result.get("diff_truncated"))
+    if status == "completed" and coverage == "complete" and not incomplete:
+        return None
+    ecosystem = str(result.get("ecosystem") or "unknown")
+    now = _utcnow().isoformat().replace("+00:00", "Z")
+    dedupe_key = f"collector-degraded:{ecosystem}:{now[:10]}"
+    reason = f"{ecosystem} registry coverage is degraded: status={status}, coverage={coverage}"
+    evidence = {
+        "ecosystem": ecosystem,
+        "status": status,
+        "coverage": coverage,
+        "run_id": result.get("run_id"),
+        "window_incomplete": bool(result.get("window_incomplete")),
+        "diff_truncated": bool(result.get("diff_truncated")),
+        "error": str(result.get("error") or "")[:1000],
+    }
+    soc_store.init_db(db_path)
+    with closing(soc_store.connect(db_path)) as connection:
+        with connection:
+            connection.execute(
+                """INSERT INTO research_alerts
+                (alert_id, alert_type, severity, candidate_id, campaign_id, case_id, dedupe_key,
+                 reason, evidence_json, status, owner, created_at, updated_at)
+                VALUES (?, 'collector_degraded', 'high', NULL, NULL, NULL, ?, ?, ?, 'open', '', ?, ?)
+                ON CONFLICT(dedupe_key) DO UPDATE SET reason=excluded.reason,
+                    evidence_json=excluded.evidence_json, updated_at=excluded.updated_at""",
+                (f"RAL-{secrets.token_hex(8).upper()}", dedupe_key, reason, json.dumps(evidence, sort_keys=True), now, now),
+            )
+            row = connection.execute("SELECT alert_id FROM research_alerts WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
+    return str(row["alert_id"]) if row else None
 
 
 def collector_schedules() -> Dict[str, int]:
@@ -107,6 +147,7 @@ def run_worker_cycle(
     score_limit: int = SCORE_BATCH_LIMIT,
 ) -> Dict[str, Any]:
     """Run one worker cycle: due collectors, scoring, retries, recovery."""
+    initialize_observability(service="secopsai-research-worker")
     fetcher = fetcher or SafeFetcher()
     selected = {item.lower() for item in ecosystems} if ecosystems else None
     results: List[Dict[str, Any]] = []
@@ -125,26 +166,39 @@ def run_worker_cycle(
             results.append(
                 {
                     "ecosystem": item["ecosystem"],
+                    "run_id": outcome.get("run_id"),
                     "status": outcome.get("status"),
                     "events_stored": outcome.get("events_stored", 0),
                     "coverage": outcome.get("coverage"),
                     "error": outcome.get("error"),
+                    "window_incomplete": bool(outcome.get("window_incomplete")),
+                    "diff_truncated": bool(outcome.get("diff_truncated")),
                 }
             )
         except (CollectorError, ValueError) as exc:
             results.append({"ecosystem": item["ecosystem"], "status": "error", "error": str(exc)})
         except Exception as exc:  # one registry must never stop the cycle
+            capture_exception(exc, context={"component": "research_collector", "ecosystem": item["ecosystem"]})
             results.append({"ecosystem": item["ecosystem"], "status": "error", "error": f"unexpected: {exc}"})
+
+    alert_ids = [alert_id for result in results if (alert_id := _record_collector_degraded_alert(result, db_path=db_path))]
 
     scoring = score_pending_events(limit=score_limit, db_path=db_path)
     retries = retry_dead_letters(limit=50, db_path=db_path, fetcher=fetcher)
     recovery = recover_interrupted_runs(db_path=db_path)
+    try:
+        deliveries = deliver_pending_operational_alerts(db_path=db_path)
+    except Exception as exc:  # alerting must not stop registry surveillance
+        capture_exception(exc, context={"component": "research_alert_delivery"})
+        deliveries = {"enabled": True, "attempted": 0, "sent": 0, "failed": 1, "error": "operational alert delivery failed"}
     return {
         "collectors_run": len(results),
         "collector_results": results,
         "scoring": scoring,
         "retries": retries,
         "recovery": recovery,
+        "operational_alert_ids": alert_ids,
+        "alert_delivery": deliveries,
         "completed_at": _utcnow().isoformat().replace("+00:00", "Z"),
     }
 
@@ -159,6 +213,7 @@ def run_worker_loop(
 ) -> Dict[str, Any]:
     """Run cycles forever until SIGTERM/SIGINT or max_cycles is reached."""
     interval = max(15, int(interval_seconds))
+    initialize_observability(service="secopsai-research-worker")
     stop = {"requested": False}
 
     def _handle_signal(signum, frame):
@@ -175,7 +230,11 @@ def run_worker_loop(
     last_summary: Dict[str, Any] = {}
     try:
         while not stop["requested"]:
-            last_summary = run_worker_cycle(db_path=db_path, fetcher=fetcher)
+            try:
+                last_summary = run_worker_cycle(db_path=db_path, fetcher=fetcher)
+            except Exception as exc:
+                capture_exception(exc, context={"component": "research_worker_cycle"})
+                raise
             cycles += 1
             if on_cycle:
                 on_cycle(last_summary)
