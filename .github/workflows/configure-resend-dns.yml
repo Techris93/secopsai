@@ -1,0 +1,20 @@
+name: Configure Resend DNS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Resend records in Cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RESEND_DKIM_PUBLIC_KEY: ${{ vars.RESEND_DKIM_PUBLIC_KEY }}
+        run: ./scripts/cloudflare-resend-dns secopsai.dev

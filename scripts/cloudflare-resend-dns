@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
+: "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
+: "${RESEND_DKIM_PUBLIC_KEY:?RESEND_DKIM_PUBLIC_KEY is required}"
+
+zone_name="${1:-secopsai.dev}"
+api="https://api.cloudflare.com/client/v4"
+auth_header="Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
+
+api_call() {
+  local method="$1"
+  local url="$2"
+  local data="${3:-}"
+  local response
+  if [[ -n "$data" ]]; then
+    response="$(curl --fail-with-body --silent --show-error --request "$method" \
+      --header "$auth_header" --header "Content-Type: application/json" \
+      --data "$data" "$url")"
+  else
+    response="$(curl --fail-with-body --silent --show-error --request "$method" \
+      --header "$auth_header" "$url")"
+  fi
+  if ! jq -e '.success == true' >/dev/null <<<"$response"; then
+    jq '{success, errors}' <<<"$response" >&2
+    return 1
+  fi
+  printf '%s' "$response"
+}
+
+zone_response="$(api_call GET "${api}/zones?name=${zone_name}&account.id=${CLOUDFLARE_ACCOUNT_ID}")"
+zone_id="$(jq -r '.result[0].id // empty' <<<"$zone_response")"
+if [[ -z "$zone_id" ]]; then
+  echo "Cloudflare zone not found: ${zone_name}" >&2
+  exit 1
+fi
+
+upsert_record() {
+  local type="$1"
+  local name="$2"
+  local content="$3"
+  local priority="${4:-}"
+  local query existing_id payload method endpoint
+  query="$(api_call GET "${api}/zones/${zone_id}/dns_records?type=${type}&name=${name}")"
+  existing_id="$(jq -r '.result[0].id // empty' <<<"$query")"
+  if [[ -n "$priority" ]]; then
+    payload="$(jq -cn --arg type "$type" --arg name "$name" --arg content "$content" \
+      --argjson priority "$priority" '{type:$type,name:$name,content:$content,priority:$priority,ttl:1,proxied:false}')"
+  else
+    payload="$(jq -cn --arg type "$type" --arg name "$name" --arg content "$content" \
+      '{type:$type,name:$name,content:$content,ttl:1,proxied:false}')"
+  fi
+  if [[ -n "$existing_id" ]]; then
+    method="PUT"
+    endpoint="${api}/zones/${zone_id}/dns_records/${existing_id}"
+  else
+    method="POST"
+    endpoint="${api}/zones/${zone_id}/dns_records"
+  fi
+  api_call "$method" "$endpoint" "$payload" >/dev/null
+  echo "Configured ${type} ${name}"
+}
+
+upsert_record TXT "resend._domainkey.${zone_name}" "p=${RESEND_DKIM_PUBLIC_KEY}"
+upsert_record MX "send.${zone_name}" "feedback-smtp.ap-northeast-1.amazonses.com" 10
+upsert_record TXT "send.${zone_name}" "v=spf1 include:amazonses.com ~all"
+
+echo "Resend DNS records configured for ${zone_name}."
