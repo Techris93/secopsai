@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import json
 import os
 import secrets
@@ -13,6 +14,7 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 from email.message import EmailMessage
+from email.utils import formataddr, formatdate, make_msgid, parseaddr
 from typing import Any, Dict, List
 
 
@@ -27,6 +29,9 @@ SENSITIVE_EVIDENCE_KEYS = {
     "secret",
     "token",
 }
+
+DEFAULT_EMAIL_LOGO_URL = "https://secopsai.dev/assets/favicon-512.png"
+DEFAULT_EMAIL_PRODUCT_URL = "https://secopsai.dev/"
 
 
 def _now() -> str:
@@ -67,6 +72,76 @@ def _redact(text: str) -> str:
     return value[:30000]
 
 
+def _formatted_sender(sender: str) -> str:
+    display_name, address = parseaddr(str(sender or "").strip())
+    if not address:
+        return str(sender or "").strip()
+    if display_name:
+        return formataddr((display_name, address))
+    local_part = address.partition("@")[0].lower()
+    names = {
+        "research": "SecOpsAI Research",
+        "security": "SecOpsAI Security",
+    }
+    return formataddr((names.get(local_part, "SecOpsAI"), address))
+
+
+def _branded_email_html(*, subject: str, body: str) -> str:
+    logo_url = html.escape(
+        os.environ.get("SECOPSAI_EMAIL_LOGO_URL", DEFAULT_EMAIL_LOGO_URL).strip()
+        or DEFAULT_EMAIL_LOGO_URL,
+        quote=True,
+    )
+    product_url = html.escape(
+        os.environ.get("SECOPSAI_EMAIL_PRODUCT_URL", DEFAULT_EMAIL_PRODUCT_URL).strip()
+        or DEFAULT_EMAIL_PRODUCT_URL,
+        quote=True,
+    )
+    safe_subject = html.escape(str(subject or ""))
+    safe_body = html.escape(_redact(body))
+    return f"""<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:0;background:#f3f6f5;color:#17201d;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f6f5;padding:24px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid #d6dfdc;">
+            <tr>
+              <td style="padding:20px 24px;border-bottom:1px solid #d6dfdc;">
+                <table role="presentation" cellspacing="0" cellpadding="0">
+                  <tr>
+                    <td style="padding-right:12px;vertical-align:middle;">
+                      <a href="{product_url}" style="text-decoration:none;">
+                        <img src="{logo_url}" width="44" height="44" alt="SecOpsAI" style="display:block;width:44px;height:44px;border:0;" />
+                      </a>
+                    </td>
+                    <td style="vertical-align:middle;">
+                      <div style="font-size:18px;line-height:24px;font-weight:700;color:#123d32;">SecOpsAI</div>
+                      <div style="font-size:12px;line-height:18px;color:#5f6f69;">Security operations and research</div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px;">
+                <h1 style="margin:0 0 16px;font-size:20px;line-height:28px;color:#17201d;font-weight:700;">{safe_subject}</h1>
+                <pre style="margin:0;white-space:pre-wrap;word-wrap:break-word;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:21px;color:#283630;">{safe_body}</pre>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:16px 24px;border-top:1px solid #d6dfdc;font-size:12px;line-height:18px;color:#687771;">
+                Sent by SecOpsAI. No raw package artifacts, scan payloads, or credentials are included.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>"""
+
+
 def _normalized_alert_evidence(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -86,10 +161,13 @@ def send_email(*, recipient: str, subject: str, body: str, sender: str = "resear
     if not host:
         raise RuntimeError("SECOPSAI_SMTP_HOST is not configured")
     message = EmailMessage()
-    message["From"] = sender
+    message["From"] = _formatted_sender(sender)
     message["To"] = recipient
     message["Subject"] = subject[:240]
+    message["Date"] = formatdate(localtime=False)
+    message["Message-ID"] = make_msgid(domain="secopsai.dev")
     message.set_content(_redact(body))
+    message.add_alternative(_branded_email_html(subject=subject[:240], body=body), subtype="html")
     port = int(os.environ.get("SECOPSAI_SMTP_PORT", "465"))
     username = os.environ.get("SECOPSAI_SMTP_USERNAME", "")
     password = os.environ.get("SECOPSAI_SMTP_PASSWORD", "")

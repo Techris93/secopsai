@@ -62,6 +62,10 @@ services:
         value: research@secopsai.dev
       - key: SECOPSAI_RESEARCH_FROM_EMAIL
         value: research@secopsai.dev
+      - key: SECOPSAI_EMAIL_LOGO_URL
+        value: https://secopsai.dev/assets/favicon-512.png
+      - key: SECOPSAI_EMAIL_PRODUCT_URL
+        value: https://secopsai.dev/
       - key: SECOPSAI_RESEARCH_ALERT_MAX_ATTEMPTS
         value: "5"
       - key: SECOPSAI_SMTP_HOST
