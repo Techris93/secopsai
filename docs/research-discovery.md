@@ -50,19 +50,21 @@ secopsai research worker run           # loop mode with SIGTERM handling
 
 On Render, the `secopsai-research-worker` background worker in `render.yaml` runs loop mode against a persistent disk (`SECOPS_FINDINGS_DIR=/var/data/secopsai-research`). The worker database is independent of the API database so collection can scale separately.
 
-The worker creates a deduplicated high-severity `collector_degraded` alert when a registry run fails, leaves a coverage gap, or reaches a bounded collection limit. It creates at most one such alert per ecosystem per UTC day and continues collecting other registries. Delivery is disabled by default. To enable operational email alerts after configuring an authenticated SMTP provider, set:
+The worker creates a deduplicated high-severity `collector_degraded` alert when a registry run fails, leaves a coverage gap, or reaches a bounded collection limit. It creates at most one such alert per ecosystem per UTC day and continues collecting other registries. Delivery is disabled by default outside the production Blueprint. For a standalone deployment, configure:
 
 ```text
-SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS=email
-SECOPSAI_SMTP_HOST=<provider SMTP host>
+SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS=email,webhook
+SECOPSAI_SMTP_HOST=smtp.resend.com
 SECOPSAI_SMTP_PORT=465
-SECOPSAI_SMTP_USERNAME=<server-side username>
+SECOPSAI_SMTP_USERNAME=resend
 SECOPSAI_SMTP_PASSWORD=<server-side secret>
 SECOPSAI_RESEARCH_ALERT_EMAIL=research@secopsai.dev
 SECOPSAI_RESEARCH_FROM_EMAIL=research@secopsai.dev
 ```
 
 Use `webhook` or `email,webhook` only after setting the corresponding signed-webhook URL and secret. Automatic delivery is intentionally restricted to collector coverage and retention alerts. Candidate, campaign, disclosure, sandbox, and publication actions remain operator-reviewed.
+
+The production Blueprint owns the non-secret Resend SMTP endpoint, port, username, sender, recipient, and `email,webhook` channel selection. The domain-scoped Resend sending key remains a manually managed `SECOPSAI_SMTP_PASSWORD` secret in Render and must never be committed to this repository. Healthy collection cycles send no email; delivery occurs only when a new eligible operational alert exists.
 
 The hosted Core API exposes `POST /api/v1/research/alerts/webhook` for this operational path. The Render Blueprint creates the `secopsai-research-alerts` environment group, generates a 256-bit `SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET`, and links it to Core and the worker. The worker URL is `https://secopsai-core-api.onrender.com/api/v1/research/alerts/webhook`, and automatic webhook delivery is enabled in the Blueprint. The signature covers the exact request body and a Unix timestamp. Core rejects requests outside a five-minute replay window, payloads larger than 64 KB, non-operational alert types, invalid signatures, and duplicate JSON keys.
 
