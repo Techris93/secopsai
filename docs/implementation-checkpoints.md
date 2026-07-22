@@ -2,11 +2,11 @@
 
 ## 101 Branded Research Email
 
-Status: implementation complete; production deployment pending.
+Status: complete in production.
 
 Added multipart branded email with the canonical SecOpsAI mark, plain-text fallback, HTML escaping, standards-compliant date and message identifiers, and role-specific sender names for research alerts and coordinated disclosures. The Render Blueprint owns only the public logo and product URLs; SMTP credentials remain server-side secrets. Inbox avatars remain a separate BIMI and DMARC-enforcement project rather than being misrepresented as an HTML-email feature.
 
-Verification: focused delivery tests cover the HTML/plain alternatives, canonical logo URL, sender display names, required headers, and script-tag escaping. Production acceptance requires a post-deploy message rendered in the routed Gmail inbox.
+Verification: focused delivery tests cover the HTML/plain alternatives, canonical logo URL, sender display names, required headers, and script-tag escaping. The full Core suite passed with 374 tests, 14 warnings, and 4 subtests; GitHub tests and security checks passed; Render deployed commit `bf8224f`; and production one-off job `job-d9g88trrjlhs73btljp0` successfully submitted the branded preview through the configured Resend SMTP channel.
 
 ## 100 Signed Research Alert Ingestion
 
