@@ -124,7 +124,12 @@ def prepare_bridge_request(name: str, inputs: dict[str, Any] | None = None, *, d
     }
 
 
-def validate_bridge_result(action_name: str, value: dict[str, Any]) -> dict[str, Any]:
+def validate_bridge_result(
+    action_name: str,
+    value: dict[str, Any],
+    *,
+    provider: str = "opencodex_proxy",
+) -> dict[str, Any]:
     action = get_action(action_name)
     if not action.requires_bridge:
         raise ValueError("bridge result is only valid for bridge actions")
@@ -137,7 +142,8 @@ def validate_bridge_result(action_name: str, value: dict[str, Any]) -> dict[str,
     cleaned = minimize(value)
     if not isinstance(cleaned, dict):
         raise ValueError("bridge result is invalid after minimization")
-    return _envelope(action, cleaned, provider="codex_chatgpt_subscription")
+    provider_name = str(provider or "opencodex_proxy").strip()[:120] or "opencodex_proxy"
+    return _envelope(action, cleaned, provider=provider_name)
 
 
 def minimize(value: Any, *, depth: int = 0) -> Any:

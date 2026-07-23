@@ -14,6 +14,7 @@ from secopsai.research_pipeline import (
     pipeline_intelligence_context,
     resume_investigation_pipeline,
     review_pipeline_item,
+    auto_review_pipeline,
     start_investigation_pipeline,
 )
 
@@ -205,6 +206,31 @@ def test_review_accepts_evidence_and_rejects_advice_without_automatic_verdict(tm
     assert stored_case["disclosures"] == []
     assert stored_case["status"] != "published"
     assert completed["summary"]["published"] is False
+
+
+def test_auto_review_pipeline(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(tmp_path / "quarantine"))
+    case = _case(db)
+    pipeline = start_investigation_pipeline(
+        case["case_id"],
+        reference_ecosystem="npm",
+        reference_package="legitimate-pkg",
+        reference_version="1.0.0",
+        db_path=db,
+        fetcher=_fetcher(),
+    )
+    _complete_bridge_queue(db)
+
+    completed = auto_review_pipeline(
+        pipeline["pipeline_id"],
+        actor="auto-ai-analyst",
+        db_path=db,
+    )
+    assert completed["status"] == "succeeded"
+    assert completed["review_summary"]["pending"] == 0
+    assert completed["review_summary"]["accepted"] > 0
+    assert completed["review_summary"]["rejected"] == 0
 
 
 def test_pipeline_does_not_guess_a_legitimate_reference(tmp_path, monkeypatch):

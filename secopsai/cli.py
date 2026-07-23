@@ -73,10 +73,12 @@ from secopsai.intelligence import ACTIONS as INTELLIGENCE_ACTIONS
 from secopsai.intelligence import list_actions as list_intelligence_actions
 from secopsai.intelligence import run_read_action as run_intelligence_read_action
 from secopsai.intelligence_jobs import cancel_job as cancel_intelligence_job
+from secopsai.intelligence_jobs import requeue_job as requeue_intelligence_job
 from secopsai.intelligence_jobs import enqueue_job as enqueue_intelligence_job
 from secopsai.intelligence_jobs import get_job as get_intelligence_job
 from secopsai.intelligence_jobs import list_jobs as list_intelligence_jobs
 from secopsai.codex_bridge import doctor as codex_bridge_doctor
+from secopsai.codex_bridge import list_models as list_codex_bridge_models
 from secopsai.codex_bridge import run_loop as run_codex_bridge_loop
 from secopsai.codex_bridge import run_once as run_codex_bridge_once
 from secopsai.codex_bridge_service import install_service as install_codex_bridge_service
@@ -174,6 +176,7 @@ from secopsai.research_pipeline import (
     list_pipelines as list_research_pipelines,
     resume_investigation_pipeline,
     review_pipeline_item,
+    auto_review_pipeline,
     start_investigation_pipeline,
 )
 from secopsai.sessions import (
@@ -1143,12 +1146,31 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     intelligence_jobs_cancel.add_argument("job_id")
     intelligence_jobs_cancel.add_argument("--actor", default="operator")
     intelligence_jobs_cancel.add_argument("--db-path", default=None)
-    intelligence_bridge = intelligence_sub.add_parser("bridge", help="Inspect or run the local ChatGPT subscription-backed Codex bridge")
+    intelligence_jobs_requeue = intelligence_jobs_sub.add_parser(
+        "requeue",
+        help="Requeue a failed intelligence job so another model can process it",
+    )
+    intelligence_jobs_requeue.add_argument("job_id")
+    intelligence_jobs_requeue.add_argument("--actor", default="operator")
+    intelligence_jobs_requeue.add_argument("--db-path", default=None)
+    intelligence_bridge = intelligence_sub.add_parser(
+        "bridge",
+        help="Inspect or run the local OpenCodex/Codex intelligence bridge",
+    )
     intelligence_bridge_sub = intelligence_bridge.add_subparsers(dest="intelligence_bridge_cmd", required=True)
     intelligence_bridge_sub.add_parser("doctor")
+    intelligence_bridge_sub.add_parser(
+        "models",
+        help="List OpenCodex/Codex models available for research analysis",
+    )
     intelligence_bridge_run = intelligence_bridge_sub.add_parser("run")
     intelligence_bridge_run.add_argument("--once", action="store_true")
     intelligence_bridge_run.add_argument("--max-iterations", type=int, default=0)
+    intelligence_bridge_run.add_argument(
+        "--model",
+        default="",
+        help="OpenCodex model id, e.g. kimi/kimi-k2.7-code or xai/grok-4.5",
+    )
     intelligence_bridge_run.add_argument("--db-path", default=None)
     intelligence_bridge_service = intelligence_bridge_sub.add_parser("service", help="Install or control the user-level bridge background service")
     intelligence_bridge_service.add_argument("action", choices=["install", "start", "stop", "status", "logs", "uninstall"])
@@ -1565,6 +1587,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     pipeline_review.add_argument("--review-note", default="")
     pipeline_review.add_argument("--actor", default="analyst")
     pipeline_review.add_argument("--db-path", default=None)
+    pipeline_auto = research_pipeline_sub.add_parser("auto-review", help="Automatically accept all safe/ai-generated proposals for a pipeline")
+    pipeline_auto.add_argument("pipeline_id")
+    pipeline_auto.add_argument("--actor", default="analyst")
+    pipeline_auto.add_argument("--db-path", default=None)
 
     workflow = research_sub.add_parser("workflow", help="Evidence, verdict, disclosure, publication, and sandbox gates")
     workflow_sub = workflow.add_subparsers(dest="research_workflow_cmd", required=True)
@@ -2288,6 +2314,12 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = get_research_pipeline(args.pipeline_id, db_path=args.db_path)
             elif args.research_pipeline_cmd == "list":
                 payload = {"pipelines": list_research_pipelines(case_id=args.case_id, limit=args.limit, db_path=args.db_path)}
+            elif args.research_pipeline_cmd == "auto-review":
+                payload = auto_review_pipeline(
+                    args.pipeline_id,
+                    actor=args.actor,
+                    db_path=args.db_path,
+                )
             else:
                 payload = review_pipeline_item(
                     args.pipeline_id,
@@ -3116,16 +3148,25 @@ def main(argv: Optional[List[str]] = None) -> int:
                     payload = get_intelligence_job(args.job_id, db_path=args.db_path)
                 elif args.intelligence_jobs_cmd == "cancel":
                     payload = cancel_intelligence_job(args.job_id, actor=args.actor, db_path=args.db_path)
+                elif args.intelligence_jobs_cmd == "requeue":
+                    payload = requeue_intelligence_job(args.job_id, actor=args.actor, db_path=args.db_path)
                 else:
                     raise ValueError(f"unsupported intelligence jobs command: {args.intelligence_jobs_cmd}")
             elif args.intelligence_cmd == "bridge":
                 if args.intelligence_bridge_cmd == "doctor":
                     payload = codex_bridge_doctor()
+                elif args.intelligence_bridge_cmd == "models":
+                    payload = list_codex_bridge_models()
                 elif args.intelligence_bridge_cmd == "run":
+                    selected_model = str(getattr(args, "model", "") or "").strip() or None
                     if args.once:
-                        payload = run_codex_bridge_once(db_path=args.db_path)
+                        payload = run_codex_bridge_once(db_path=args.db_path, model=selected_model)
                     else:
-                        payload = run_codex_bridge_loop(db_path=args.db_path, max_iterations=args.max_iterations)
+                        payload = run_codex_bridge_loop(
+                            db_path=args.db_path,
+                            max_iterations=args.max_iterations,
+                            model=selected_model,
+                        )
                 elif args.intelligence_bridge_cmd == "service":
                     if args.action == "install":
                         payload = install_codex_bridge_service(db_path=args.db_path, start=not args.no_start)

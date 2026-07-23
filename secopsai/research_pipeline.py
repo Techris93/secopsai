@@ -772,6 +772,29 @@ def _materialize_ai_review_items(pipeline_id: str, *, db_path: Optional[str]) ->
                 )
 
 
+def auto_review_pipeline(
+    pipeline_id: str,
+    *,
+    actor: str = "analyst",
+    db_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    pipeline = get_pipeline(pipeline_id, db_path=db_path)
+    if pipeline["status"] != "awaiting_review":
+        raise ValueError("pipeline proposals can be reviewed only after all analysis is ready")
+    pending = [item for item in pipeline["review_items"] if item["status"] == "pending"]
+    if not pending:
+        return pipeline
+    for item in pending:
+        review_pipeline_item(
+            pipeline_id,
+            item["item_id"],
+            decision="accepted",
+            actor=actor,
+            db_path=db_path,
+        )
+    return get_pipeline(pipeline_id, db_path=db_path)
+
+
 def review_pipeline_item(
     pipeline_id: str,
     item_id: str,

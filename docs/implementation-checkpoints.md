@@ -1,5 +1,34 @@
 # Implementation Checkpoints
 
+## 106 Mission Control Model Picker And Schema-Tolerant Bridge
+
+Status: implementation complete; live pipeline verified end-to-end on Kimi.
+
+Mission Control now exposes the OpenCodex model catalog as a dropdown in the local bridge module. Operators pick Kimi, Grok, Gemini, or any configured provider/model; the selection persists per browser tab and is passed to "Process next job" through the authenticated intelligence API. The bridge detail panel shows the selected model, catalog size, and fallback chain. Failed jobs gained a **Requeue** button, and the jobs table shows the executing provider.
+
+Core fixes that made non-OpenAI models usable: the bridge output parser now strips markdown fences and unwraps adapter envelopes, and a normalizer maps schema-adjacent output (e.g. Kimi's confirmed_facts objects) into the canonical five-field bridge result with readable review-card text. The hosted Core API passes the worker-reported provider through validation and job completion.
+
+Live verification: requeue and three run-once calls through Mission Control's API completed `analyze_research_case`, `generate_analyst_brief`, and `review_publication_safety` on `kimi/kimi-k2.7-code` for case RSC-42C6208F1F22; the pipeline reached awaiting_review with 19 grouped review items. xAI requires `ocx login xai` re-authentication before Grok runs.
+
+Verification: Core suite 397 passed (one pre-existing agent_core failure unrelated), dashboard contract suites passed, server-side model validation rejects injection-shaped IDs, and the unauthenticated API path returns 401.
+
+## 105 OpenCodex Multi-Model Bridge
+
+Status: implementation complete; operator model-selection acceptance remains a release gate.
+
+Extended the local intelligence bridge beyond a single ChatGPT-subscription path. SecOpsAI now discovers models from the local OpenCodex proxy/catalog, lets operators select models such as Kimi, Grok, and Gemini, and falls back automatically on usage/auth limits. Failed jobs can be requeued for another model without recreating the research pipeline.
+
+Selection surfaces:
+
+- `secopsai intelligence bridge models`
+- `secopsai intelligence bridge run --model provider/model`
+- `SECOPSAI_BRIDGE_MODEL`
+- `SECOPSAI_BRIDGE_FALLBACK_MODELS`
+- `secopsai intelligence jobs requeue <job_id>`
+
+Safety boundary unchanged: only minimized SecOpsAI intelligence context is sent, package artifacts remain local, and model output stays advisory until human review.
+
+
 ## 104 Legacy Research Database Migration
 
 Status: complete; CI and production merge are release gates.

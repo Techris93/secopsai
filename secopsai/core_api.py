@@ -472,8 +472,9 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
             payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "Bridge result")
             worker_id = str(payload.get("worker_id") or "remote-codex-bridge").strip()[:160]
             job = get_intelligence_job(job_id, db_path=resolved.db_path)
-            result = validate_bridge_result(job["action"], payload.get("result") or {})
-            completed = complete_intelligence_job(job_id, result=result, actor=worker_id, db_path=resolved.db_path)
+            provider = str(payload.get("provider") or "codex_chatgpt_subscription").strip()[:120] or "codex_chatgpt_subscription"
+            result = validate_bridge_result(job["action"], payload.get("result") or {}, provider=provider)
+            completed = complete_intelligence_job(job_id, result=result, actor=worker_id, provider=provider, db_path=resolved.db_path)
             _write_audit(
                 resolved.db_path,
                 request_id=request.state.request_id,

@@ -11,6 +11,58 @@ SecOpsAI supports two separate model-assisted operating modes. Both use the same
 
 ChatGPT authentication pays for and identifies the model session. SecOpsAI OAuth separately decides which SecOpsAI data that person may read. One never replaces the other.
 
+## Local OpenCodex / multi-model bridge
+
+SecOpsAI can use your local OpenCodex proxy so research analysis is not locked to one ChatGPT account.
+
+Configured on this machine:
+
+- `kimi/kimi-k2.7-code`
+- `xai/grok-4.5`
+- `google-antigravity/gemini-3.5-flash-low`
+- plus the rest of your OpenCodex catalog
+
+### Choose a model
+
+List models:
+
+```bash
+cd /Users/chrixchange/secopsai
+.venv/bin/python -m secopsai.cli intelligence bridge models
+```
+
+Run one job on a selected model:
+
+```bash
+.venv/bin/python -m secopsai.cli intelligence bridge run --once   --model kimi/kimi-k2.7-code   --db-path data/openclaw/findings/openclaw_soc.db
+```
+
+Set a default model for the bridge service:
+
+```bash
+export SECOPSAI_BRIDGE_MODEL=xai/grok-4.5
+export SECOPSAI_BRIDGE_FALLBACK_MODELS=kimi/kimi-k2.7-code,google-antigravity/gemini-3.5-flash-low
+.venv/bin/python -m secopsai.cli intelligence bridge service stop
+.venv/bin/python -m secopsai.cli intelligence bridge service start
+```
+
+If the first model hits a usage/auth limit, the bridge automatically tries the fallback models.
+
+Mission Control model picker: the local bridge module in the dashboard lists the same catalog as a dropdown. Pick a model there and use **Process next job**; failed jobs can be requeued from the jobs table and retried on another model without recreating the pipeline.
+
+Requeue a failed job after switching models:
+
+```bash
+.venv/bin/python -m secopsai.cli intelligence jobs requeue AIJ-...   --db-path data/openclaw/findings/openclaw_soc.db
+```
+
+OpenCodex must be healthy:
+
+```bash
+opencodex status
+opencodex health --json
+```
+
 ## Local Codex bridge
 
 The bridge accepts only named SecOpsAI actions. It does not expose an arbitrary prompt or shell endpoint. Core builds a minimized context, the bridge runs Codex in an ephemeral read-only sandbox, and the structured result returns to the durable job record for human review.

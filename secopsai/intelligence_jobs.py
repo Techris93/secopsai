@@ -125,10 +125,52 @@ def complete_job(
     *,
     result: dict[str, Any],
     actor: str,
+    provider: str = "",
     db_path: str | None = None,
 ) -> dict[str, Any]:
     result_json = _bounded_json(result, MAX_RESULT_BYTES, "job result")
-    return _finish(job_id, "succeeded", actor=actor, result_json=result_json, db_path=db_path)
+    return _finish(
+        job_id,
+        "succeeded",
+        actor=actor,
+        result_json=result_json,
+        provider=provider,
+        db_path=db_path,
+    )
+
+
+def requeue_job(
+    job_id: str,
+    *,
+    actor: str = "operator",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Requeue a failed/canceled job so another bridge model can process it."""
+    job_id = _required(job_id, "job_id", 80)
+    actor = _required(actor, "actor", 160)
+    soc_store.init_db(db_path)
+    now = soc_store.utc_now()
+    with closing(soc_store.connect(db_path)) as connection:
+        row = connection.execute("SELECT status FROM intelligence_jobs WHERE job_id = ?", (job_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"intelligence job not found: {job_id}")
+        status = str(row["status"])
+        if status == "running":
+            raise ValueError("a running intelligence job cannot be requeued; stop the bridge or wait for recovery")
+        if status == "queued":
+            return get_job(job_id, db_path=db_path)
+        if status not in {"failed", "canceled"}:
+            raise ValueError(f"only failed or canceled intelligence jobs can be requeued (status={status})")
+        connection.execute(
+            """UPDATE intelligence_jobs
+               SET status = 'queued', provider = '', started_at = NULL, completed_at = NULL,
+                   updated_at = ?, error_code = NULL, error_message = NULL, result_json = '{}'
+               WHERE job_id = ?""",
+            (now, job_id),
+        )
+        _event(connection, job_id, "requeued", actor, "Intelligence job requeued for another bridge model.", {})
+        connection.commit()
+    return get_job(job_id, db_path=db_path)
 
 
 def fail_job(
@@ -229,21 +271,30 @@ def _finish(
     result_json: str = "{}",
     error_code: str | None = None,
     error_message: str | None = None,
+    provider: str = "",
     db_path: str | None = None,
 ) -> dict[str, Any]:
     job_id = _required(job_id, "job_id", 80)
     now = soc_store.utc_now()
+    provider_name = _clean(provider, 80) if provider else ""
     with closing(soc_store.connect(db_path)) as connection:
         row = connection.execute("SELECT status FROM intelligence_jobs WHERE job_id = ?", (job_id,)).fetchone()
         if row is None:
             raise ValueError(f"intelligence job not found: {job_id}")
         if str(row["status"]) != "running":
             raise ValueError("only a running intelligence job can be completed or failed")
-        connection.execute(
-            """UPDATE intelligence_jobs SET status = ?, result_json = ?, completed_at = ?,
-               updated_at = ?, error_code = ?, error_message = ? WHERE job_id = ?""",
-            (status, result_json, now, now, error_code, error_message, job_id),
-        )
+        if provider_name:
+            connection.execute(
+                """UPDATE intelligence_jobs SET status = ?, result_json = ?, completed_at = ?,
+                   updated_at = ?, error_code = ?, error_message = ?, provider = ? WHERE job_id = ?""",
+                (status, result_json, now, now, error_code, error_message, provider_name, job_id),
+            )
+        else:
+            connection.execute(
+                """UPDATE intelligence_jobs SET status = ?, result_json = ?, completed_at = ?,
+                   updated_at = ?, error_code = ?, error_message = ? WHERE job_id = ?""",
+                (status, result_json, now, now, error_code, error_message, job_id),
+            )
         _event(
             connection,
             job_id,

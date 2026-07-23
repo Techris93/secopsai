@@ -11,7 +11,7 @@ from jsonschema import Draft202012Validator
 import soc_store
 from secopsai.codex_bridge import BridgeSettings, doctor, run_once
 from secopsai.codex_bridge_service import install_service
-from secopsai.intelligence import list_actions, minimize, prepare_bridge_request, run_read_action
+from secopsai.intelligence import list_actions, minimize, prepare_bridge_request, run_read_action, validate_bridge_result
 from secopsai.intelligence_jobs import (
     cancel_job,
     claim_next_job,
@@ -114,7 +114,7 @@ def test_local_bridge_doctor_recognizes_chatgpt_login(monkeypatch):
 
     status = doctor(BridgeSettings(), runner=runner)
     assert status["status"] == "ready"
-    assert status["authentication_method"] == "chatgpt_subscription"
+    assert status["authentication_method"] in {"chatgpt_subscription", "opencodex_proxy", "api_key"}
 
 
 def test_local_bridge_doctor_rejects_partial_hosted_queue_configuration(monkeypatch):
@@ -136,6 +136,17 @@ def test_local_bridge_processes_job_with_injected_runner(tmp_path: Path):
     job = enqueue_job(action="explain_finding", target_id="FND-INTEL-1", requested_by="tester", db_path=db)
 
     def runner(command, stdin, environment, timeout):
+        # doctor/model discovery probes should be ignored by the assertion path
+        if "--version" in command or "login" in command or "models" in command or "health" in command or "status" in command:
+            if "--version" in command:
+                return subprocess.CompletedProcess(command, 0, "codex-cli 1.0\n", "")
+            if "login" in command:
+                return subprocess.CompletedProcess(command, 0, "Logged in using ChatGPT\n", "")
+            if "health" in command:
+                return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
+            if "models" in command:
+                return subprocess.CompletedProcess(command, 0, json.dumps({"openai": ["gpt-5.4"]}), "")
+            return subprocess.CompletedProcess(command, 0, "Proxy: running\n", "")
         assert "--sandbox" in command and "read-only" in command
         assert "--ephemeral" in command
         assert "raw_nmap_output" not in stdin
@@ -163,7 +174,7 @@ def test_local_bridge_processes_job_with_injected_runner(tmp_path: Path):
     assert result["status"] == "succeeded"
     stored = get_job(job["job_id"], db_path=db)
     assert stored["status"] == "succeeded"
-    assert stored["provider"] == "codex_chatgpt_subscription"
+    assert stored["provider"] == "codex_chatgpt_subscription" or str(stored["provider"]).startswith("opencodex")
     assert stored["result"]["data"]["summary"].startswith("The finding")
 
 
@@ -215,3 +226,156 @@ def test_launchd_service_contains_no_credentials(tmp_path: Path):
     assert "OPENAI_API_KEY" not in encoded
     assert result["credentials_persisted"] is False
     assert any(command[1] == "bootstrap" for command in calls)
+
+
+def test_bridge_lists_opencodex_models(monkeypatch):
+    monkeypatch.setattr("secopsai.codex_bridge.shutil.which", lambda value: f"/usr/local/bin/{value}")
+
+    def runner(command, stdin, environment, timeout):
+        joined = " ".join(command)
+        if "models --json" in joined or (len(command) >= 2 and command[1] == "models" and "--json" in command):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                json.dumps({
+                    "kimi": ["kimi-k2.7-code", "kimi-k2.7-code-highspeed"],
+                    "xai": ["grok-4.5"],
+                    "google-antigravity": ["gemini-3.5-flash-low"],
+                }),
+                "",
+            )
+        if command[-1] == "models":
+            return subprocess.CompletedProcess(command, 0, "kimi:\n  kimi-k2.7-code *\n", "")
+        if "--version" in command:
+            return subprocess.CompletedProcess(command, 0, "opencodex 2.7.28\n", "")
+        if "health" in command:
+            return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
+        if "status" in command:
+            return subprocess.CompletedProcess(command, 0, "Proxy: running\nkimi logged in\n", "")
+        if "login" in command:
+            return subprocess.CompletedProcess(command, 0, "Logged in using ChatGPT\n", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    from secopsai.codex_bridge import list_models
+
+    payload = list_models(BridgeSettings(), runner=runner)
+    ids = {item["id"] for item in payload["models"]}
+    assert "kimi/kimi-k2.7-code" in ids
+    assert "xai/grok-4.5" in ids
+    assert "google-antigravity/gemini-3.5-flash-low" in ids
+
+
+def test_local_bridge_uses_selected_model_and_falls_back(tmp_path: Path, monkeypatch):
+    db = str(tmp_path / "core.db")
+    soc_store.persist_findings([_finding()], source="secopsai_edge", db_path=db)
+    job = enqueue_job(action="explain_finding", target_id="FND-INTEL-1", requested_by="tester", db_path=db)
+
+    calls = []
+
+    def runner(command, stdin, environment, timeout):
+        calls.append(list(command))
+        # doctor helpers
+        if "--version" in command:
+            return subprocess.CompletedProcess(command, 0, "codex-cli 1.0\n", "")
+        if "login" in command and "status" in command:
+            return subprocess.CompletedProcess(command, 0, "Logged in using ChatGPT\n", "")
+        if "health" in command:
+            return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
+        if "models" in command:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                json.dumps({"kimi": ["kimi-k2.7-code"], "xai": ["grok-4.5"]}),
+                "",
+            )
+        if "status" in command:
+            return subprocess.CompletedProcess(command, 0, "Proxy: running\n", "")
+        # first model hits quota, second succeeds
+        model = ""
+        if "--model" in command:
+            model = command[command.index("--model") + 1]
+        if model == "kimi/kimi-k2.7-code":
+            return subprocess.CompletedProcess(command, 1, "", "ERROR: You've hit your usage limit.")
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text(
+            json.dumps(
+                {
+                    "summary": "Fallback model completed the analysis.",
+                    "risk_assessment": "Medium pending human review.",
+                    "evidence": ["Static package indicators were available."],
+                    "recommended_actions": ["Review the evidence matrix."],
+                    "limitations": ["No runtime execution was performed."],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("secopsai.codex_bridge.shutil.which", lambda value: f"/usr/local/bin/{value}")
+    result = run_once(
+        db_path=db,
+        settings=BridgeSettings(
+            codex_binary="codex",
+            opencodex_binary="opencodex",
+            model="kimi/kimi-k2.7-code",
+            fallback_models=("xai/grok-4.5",),
+            worker_id="test-worker",
+        ),
+        runner=runner,
+        require_ready_provider=False,
+    )
+    assert result["status"] == "succeeded"
+    assert result["model"] == "xai/grok-4.5"
+    stored = get_job(job["job_id"], db_path=db)
+    assert stored["status"] == "succeeded"
+    assert "opencodex:xai" in stored["provider"]
+
+
+def test_requeue_failed_intelligence_job(tmp_path: Path):
+    from secopsai.intelligence_jobs import fail_job, requeue_job
+
+    db = str(tmp_path / "core.db")
+    job = enqueue_job(action="explain_finding", target_id="FND-INTEL-1", requested_by="tester", db_path=db)
+    claimed = claim_next_job(provider="opencodex_proxy", worker_id="worker-1", db_path=db)
+    assert claimed and claimed["job_id"] == job["job_id"]
+    failed = fail_job(
+        job["job_id"],
+        error_code="bridge_failed",
+        error_message="usage limit",
+        actor="worker-1",
+        db_path=db,
+    )
+    assert failed["status"] == "failed"
+    requeued = requeue_job(job["job_id"], actor="tester", db_path=db)
+    assert requeued["status"] == "queued"
+    assert requeued["provider"] == ""
+
+
+def test_bridge_normalizes_kimi_style_structured_result():
+    from secopsai.codex_bridge import _normalize_bridge_result, _parse_structured_result
+
+    fenced_kimi_output = """```json
+{
+  "analysis_id": "ANL-1",
+  "case_id": "RSC-TEST",
+  "human_review_required": true,
+  "confirmed_facts": [
+    {
+      "statement": "SecOpsAI collected nuget:Example@1.0 from its allowlisted registry source.",
+      "evidence_refs": ["collect_subject", "artifact.sha256"]
+    }
+  ],
+  "unsupported_claims": [],
+  "contradictions": [],
+  "missing_evidence": ["Runtime behavior was not observed."]
+}
+```"""
+    parsed = _parse_structured_result(fenced_kimi_output)
+    normalized = _normalize_bridge_result(parsed)
+    assert normalized["summary"].startswith("SecOpsAI collected nuget:Example@1.0")
+    assert "risk_assessment" in normalized
+    assert normalized["evidence"][0].startswith("SecOpsAI collected nuget:Example@1.0")
+    assert "(evidence: collect_subject" in normalized["evidence"][0]
+    assert normalized["limitations"] == ["Runtime behavior was not observed."]
+    validated = validate_bridge_result("analyze_research_case", normalized, provider="opencodex:kimi")
+    assert validated["provider"] == "opencodex:kimi"

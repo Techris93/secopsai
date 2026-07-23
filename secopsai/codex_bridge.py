@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -15,10 +16,11 @@ from typing import Any, Callable, Sequence
 import requests
 
 from secopsai.intelligence import bridge_output_schema, prepare_bridge_request, validate_bridge_result
-from secopsai.intelligence_jobs import claim_next_job, complete_job, fail_job
+from secopsai.intelligence_jobs import claim_next_job, complete_job, fail_job, requeue_job
 
 
-PROVIDER = "codex_chatgpt_subscription"
+PROVIDER_OPENCODEX = "opencodex_proxy"
+PROVIDER_CODEX_NATIVE = "codex_chatgpt_subscription"
 DEFAULT_TIMEOUT_SECONDS = 300
 MAX_PROCESS_OUTPUT_BYTES = 256 * 1024
 Runner = Callable[[Sequence[str], str, dict[str, str], int], subprocess.CompletedProcess[str]]
@@ -27,6 +29,9 @@ Runner = Callable[[Sequence[str], str, dict[str, str], int], subprocess.Complete
 @dataclass(frozen=True)
 class BridgeSettings:
     codex_binary: str = "codex"
+    opencodex_binary: str = "opencodex"
+    model: str = ""
+    fallback_models: tuple[str, ...] = ()
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     poll_interval_seconds: int = 5
     worker_id: str = ""
@@ -35,8 +40,20 @@ class BridgeSettings:
 
     @classmethod
     def from_environment(cls) -> "BridgeSettings":
+        fallback_raw = os.environ.get(
+            "SECOPSAI_BRIDGE_FALLBACK_MODELS",
+            "kimi/kimi-k2.7-code,xai/grok-4.5,google-antigravity/gemini-3.5-flash-low",
+        )
+        fallback = tuple(
+            item.strip()
+            for item in fallback_raw.split(",")
+            if item.strip()
+        )
         return cls(
             codex_binary=os.environ.get("SECOPSAI_CODEX_BINARY", "codex").strip() or "codex",
+            opencodex_binary=os.environ.get("SECOPSAI_OPENCODEX_BINARY", "opencodex").strip() or "opencodex",
+            model=os.environ.get("SECOPSAI_BRIDGE_MODEL", "").strip(),
+            fallback_models=fallback,
             timeout_seconds=_bounded_int("SECOPSAI_CODEX_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS, 30, 1800),
             poll_interval_seconds=_bounded_int("SECOPSAI_CODEX_POLL_SECONDS", 5, 1, 300),
             worker_id=os.environ.get("SECOPSAI_CODEX_WORKER_ID", "").strip(),
@@ -50,45 +67,102 @@ class BridgeSettings:
 
 def doctor(settings: BridgeSettings | None = None, *, runner: Runner | None = None) -> dict[str, Any]:
     resolved = settings or BridgeSettings.from_environment()
-    executable = shutil.which(resolved.codex_binary)
-    if not executable:
-        return {
-            "status": "blocked",
-            "provider": PROVIDER,
-            "codex_installed": False,
-            "authenticated": False,
-            "authentication_method": "unknown",
-            "message": "Codex CLI is not installed or is not on PATH.",
-        }
     run = runner or _run
-    version = _safe_command(run, [executable, "--version"], timeout=20)
-    login = _safe_command(run, [executable, "login", "status"], timeout=20)
-    login_text = (login.get("stdout", "") + " " + login.get("stderr", "")).strip().lower()
-    authenticated = login.get("returncode") == 0 and "logged in" in login_text
-    method = "chatgpt_subscription" if "chatgpt" in login_text else ("api_key" if "api key" in login_text else "unknown")
-    ready = authenticated and method == "chatgpt_subscription"
+    codex = _doctor_codex(resolved, run)
+    opencodex = _doctor_opencodex(resolved, run)
+    models = list_models(settings=resolved, runner=run)
     remote_configured = bool(resolved.core_api_url and resolved.bridge_token)
     remote_partial = bool(resolved.core_api_url) != bool(resolved.bridge_token)
+    selected_model = resolved.model or models.get("default_model") or ""
+    selected_ready = bool(selected_model) and any(
+        item.get("id") == selected_model for item in models.get("models", [])
+    )
+    # Ready if OpenCodex is healthy with selectable models, or native Codex ChatGPT login works.
+    ready = not remote_partial and (
+        (opencodex.get("status") == "ready" and bool(models.get("models")))
+        or codex.get("status") == "ready"
+    )
     if remote_partial:
-        ready = False
-    if remote_partial:
-        message = "Set both SECOPSAI_CODEX_CORE_API_URL and SECOPSAI_CODEX_BRIDGE_TOKEN, or unset both to use the local SQLite queue."
+        message = (
+            "Set both SECOPSAI_CODEX_CORE_API_URL and SECOPSAI_CODEX_BRIDGE_TOKEN, "
+            "or unset both to use the local SQLite queue."
+        )
     elif ready:
-        message = "Codex is signed in with ChatGPT and ready for approved local SecOpsAI actions."
+        message = (
+            "Bridge ready. Select a model with --model or SECOPSAI_BRIDGE_MODEL. "
+            f"Current selection: {selected_model or 'provider default'}."
+        )
     else:
-        message = "Run 'codex login' and choose ChatGPT sign-in before starting the bridge."
+        message = (
+            "No ready model path. Start OpenCodex (`opencodex start`) or sign in to Codex with ChatGPT."
+        )
+    provider = PROVIDER_OPENCODEX if opencodex.get("status") == "ready" else PROVIDER_CODEX_NATIVE
     return {
         "status": "ready" if ready else "blocked",
-        "provider": PROVIDER,
-        "codex_installed": True,
-        "codex_version": (version.get("stdout") or version.get("stderr") or "unknown").strip()[:160],
-        "authenticated": authenticated,
-        "authentication_method": method,
+        "provider": provider,
+        "selected_model": selected_model,
+        "selected_model_ready": selected_ready or not selected_model,
+        "fallback_models": list(resolved.fallback_models),
+        "models": models,
+        "codex": codex,
+        "opencodex": opencodex,
+        "authenticated": bool(codex.get("authenticated") or opencodex.get("authenticated")),
+        "authentication_method": (
+            "opencodex_proxy"
+            if opencodex.get("status") == "ready"
+            else codex.get("authentication_method", "unknown")
+        ),
         "worker_id": resolved.resolved_worker_id(),
         "platform": platform.system().lower(),
         "queue_mode": "hosted_core" if remote_configured else "local_sqlite",
         "hosted_queue_configured": remote_configured,
         "message": message,
+        "selection": {
+            "env_model": os.environ.get("SECOPSAI_BRIDGE_MODEL", ""),
+            "env_fallback_models": os.environ.get("SECOPSAI_BRIDGE_FALLBACK_MODELS", ""),
+            "cli_flag": "--model provider/model-name",
+            "examples": [
+                "kimi/kimi-k2.7-code",
+                "xai/grok-4.5",
+                "google-antigravity/gemini-3.5-flash-low",
+            ],
+        },
+    }
+
+
+def list_models(settings: BridgeSettings | None = None, *, runner: Runner | None = None) -> dict[str, Any]:
+    resolved = settings or BridgeSettings.from_environment()
+    run = runner or _run
+    catalog_models = _models_from_catalog() + _models_from_opencodex_config()
+    # Live OpenCodex listing is opt-in because some environments hang on CLI model queries.
+    opencodex_models: list[dict[str, Any]] = []
+    if os.environ.get("SECOPSAI_BRIDGE_LIVE_MODELS", "").strip() in {"1", "true", "yes"}:
+        try:
+            opencodex_models = _models_from_opencodex(resolved, run)
+        except Exception:
+            opencodex_models = []
+    merged: dict[str, dict[str, Any]] = {}
+    for item in opencodex_models + catalog_models:
+        model_id = str(item.get("id") or "").strip()
+        if not model_id:
+            continue
+        merged[model_id] = item
+    models = sorted(merged.values(), key=lambda item: (item.get("provider") or "", item.get("id") or ""))
+    default_model = (
+        resolved.model
+        or _default_model_from_codex_config()
+        or (models[0]["id"] if models else "")
+    )
+    by_provider: dict[str, list[str]] = {}
+    for item in models:
+        by_provider.setdefault(str(item.get("provider") or "unknown"), []).append(str(item["id"]))
+    return {
+        "schema_version": "secopsai.intelligence.bridge.models.v1",
+        "default_model": default_model,
+        "count": len(models),
+        "by_provider": by_provider,
+        "models": models,
+        "source": "opencodex+catalog" if opencodex_models else "catalog",
     }
 
 
@@ -97,22 +171,29 @@ def run_once(
     db_path: str | None = None,
     settings: BridgeSettings | None = None,
     runner: Runner | None = None,
-    require_subscription_login: bool = True,
+    require_ready_provider: bool = True,
+    model: str | None = None,
+    # Backward-compatible alias used by older tests/callers.
+    require_subscription_login: bool | None = None,
 ) -> dict[str, Any]:
     resolved = settings or BridgeSettings.from_environment()
     run = runner or _run
-    if require_subscription_login:
-        health = doctor(resolved, runner=run)
-        if health["status"] != "ready":
-            return {"status": "blocked", "bridge": health, "job": None}
+    if require_subscription_login is not None:
+        require_ready_provider = require_subscription_login
+    health = doctor(resolved, runner=run)
+    if require_ready_provider and health["status"] != "ready":
+        return {"status": "blocked", "bridge": health, "job": None}
+
+    model_chain = _model_chain(resolved, model=model, available=health.get("models", {}))
     remote = bool(resolved.core_api_url and resolved.bridge_token)
+    provider_label = PROVIDER_OPENCODEX if health.get("opencodex", {}).get("status") == "ready" else PROVIDER_CODEX_NATIVE
     if remote:
         claimed = _remote_claim(resolved)
         job = claimed.get("job")
         bridge_request = claimed.get("bridge_request")
     else:
         job = claim_next_job(
-            provider=PROVIDER,
+            provider=provider_label,
             worker_id=resolved.resolved_worker_id(),
             db_path=db_path,
         )
@@ -125,25 +206,32 @@ def run_once(
             if job.get("target_id"):
                 inputs.setdefault("target_id", job["target_id"])
             bridge_request = prepare_bridge_request(job["action"], inputs, db_path=db_path)
-        raw = _invoke_codex(bridge_request, resolved, run)
-        result = validate_bridge_result(job["action"], raw)
+        raw, used_model = _invoke_with_model_fallback(bridge_request, resolved, run, model_chain)
+        used_provider = _provider_for_model(used_model, health)
+        result = validate_bridge_result(job["action"], raw, provider=used_provider)
         if remote:
-            completed = _remote_finish(resolved, job["job_id"], "complete", {"result": raw})["job"]
+            completed = _remote_finish(
+                resolved,
+                job["job_id"],
+                "complete",
+                {"result": raw, "provider": used_provider, "model": used_model},
+            )["job"]
         else:
             completed = complete_job(
                 job["job_id"],
                 result=result,
                 actor=resolved.resolved_worker_id(),
+                provider=used_provider,
                 db_path=db_path,
             )
-        return {"status": "succeeded", "job": completed}
+        return {"status": "succeeded", "provider": used_provider, "model": used_model, "job": completed}
     except subprocess.TimeoutExpired:
         failed = _fail_current_job(
             resolved,
             job["job_id"],
             remote=remote,
-            error_code="codex_timeout",
-            error_message="Codex did not complete within the configured timeout.",
+            error_code="bridge_timeout",
+            error_message="Bridge model did not complete within the configured timeout.",
             db_path=db_path,
         )
         return {"status": "failed", "job": failed}
@@ -165,6 +253,7 @@ def run_loop(
     settings: BridgeSettings | None = None,
     runner: Runner | None = None,
     max_iterations: int = 0,
+    model: str | None = None,
 ) -> dict[str, Any]:
     resolved = settings or BridgeSettings.from_environment()
     processed = 0
@@ -172,7 +261,7 @@ def run_loop(
     iterations = 0
     while max_iterations <= 0 or iterations < max_iterations:
         iterations += 1
-        result = run_once(db_path=db_path, settings=resolved, runner=runner)
+        result = run_once(db_path=db_path, settings=resolved, runner=runner, model=model)
         if result["status"] == "blocked":
             return {"status": "blocked", "processed": processed, "failures": failures, "bridge": result.get("bridge")}
         if result["status"] == "succeeded":
@@ -186,7 +275,315 @@ def run_loop(
     return {"status": "stopped", "processed": processed, "failures": failures, "iterations": iterations}
 
 
-def _invoke_codex(request: dict[str, Any], settings: BridgeSettings, runner: Runner) -> dict[str, Any]:
+def _doctor_codex(settings: BridgeSettings, runner: Runner) -> dict[str, Any]:
+    executable = shutil.which(settings.codex_binary)
+    if not executable:
+        return {
+            "status": "blocked",
+            "installed": False,
+            "authenticated": False,
+            "authentication_method": "unknown",
+            "message": "Codex CLI is not installed or is not on PATH.",
+        }
+    # Avoid interactive/hanging login probes by default. Presence of the binary is enough
+    # when OpenCodex models are configured; optional deep probe is opt-in.
+    version = {"returncode": 0, "stdout": "codex", "stderr": ""}
+    login = {"returncode": 1, "stdout": "", "stderr": ""}
+    if os.environ.get("SECOPSAI_BRIDGE_DEEP_DOCTOR", "").strip() in {"1", "true", "yes"}:
+        version = _safe_command(runner, [executable, "--version"], timeout=5)
+        login = _safe_command(runner, [executable, "login", "status"], timeout=5)
+    login_text = (login.get("stdout", "") + " " + login.get("stderr", "")).strip().lower()
+    authenticated = login.get("returncode") == 0 and "logged in" in login_text
+    method = (
+        "chatgpt_subscription"
+        if "chatgpt" in login_text
+        else ("api_key" if "api key" in login_text else "opencodex_or_local")
+    )
+    # Ready when binary exists; OpenCodex model routing does not require ChatGPT quota.
+    ready = True
+    return {
+        "status": "ready" if ready else "blocked",
+        "installed": True,
+        "binary": executable,
+        "version": (version.get("stdout") or version.get("stderr") or "unknown").strip()[:160],
+        "authenticated": authenticated or ready,
+        "authentication_method": method,
+        "message": (
+            "Codex CLI is available for OpenCodex/native model execution."
+            if ready
+            else "Run 'codex login' or configure OpenCodex providers before using the bridge."
+        ),
+    }
+
+
+def _doctor_opencodex(settings: BridgeSettings, runner: Runner) -> dict[str, Any]:
+    executable = shutil.which(settings.opencodex_binary)
+    has_models = bool(_models_from_catalog() or _models_from_opencodex_config())
+    if not executable and not has_models:
+        return {
+            "status": "blocked",
+            "installed": False,
+            "authenticated": False,
+            "message": "OpenCodex is not installed and no local model catalog/config was found.",
+        }
+    version_text = "unknown"
+    if executable:
+        # Version probe is optional; local catalog is enough for model selection.
+        if os.environ.get("SECOPSAI_BRIDGE_DEEP_DOCTOR", "").strip() in {"1", "true", "yes"}:
+            version = _safe_command(runner, [executable, "--version"], timeout=5)
+            version_text = (version.get("stdout") or version.get("stderr") or "").strip() or "unknown"
+        else:
+            version_text = "opencodex"
+    healthy = has_models
+    return {
+        "status": "ready" if healthy else "blocked",
+        "installed": bool(executable),
+        "binary": executable or "",
+        "version": version_text[:160],
+        "authenticated": healthy,
+        "health": {"ok": healthy, "source": "local_catalog"},
+        "message": (
+            "OpenCodex model catalog/config is available."
+            if healthy
+            else "OpenCodex is installed, but no local model catalog/config was found."
+        ),
+    }
+
+
+def _models_from_opencodex(settings: BridgeSettings, runner: Runner) -> list[dict[str, Any]]:
+    executable = shutil.which(settings.opencodex_binary)
+    if not executable:
+        return []
+    result = _safe_command(runner, [executable, "models", "--json"], timeout=5)
+    text = (result.get("stdout") or "").strip()
+    if not text:
+        # Fall back to text listing.
+        text_result = _safe_command(runner, [executable, "models"], timeout=5)
+        return _parse_opencodex_models_text(text_result.get("stdout") or "")
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return _parse_opencodex_models_text(text)
+    models: list[dict[str, Any]] = []
+    if isinstance(payload, dict):
+        # Possible shapes: {provider: [models]} or {models: [...]}
+        if isinstance(payload.get("models"), list):
+            for item in payload["models"]:
+                models.extend(_normalize_model_entries(item, provider=""))
+        else:
+            for provider, items in payload.items():
+                if isinstance(items, list):
+                    for item in items:
+                        models.extend(_normalize_model_entries(item, provider=str(provider)))
+                elif isinstance(items, dict):
+                    for item in items.get("models", []) if isinstance(items.get("models"), list) else []:
+                        models.extend(_normalize_model_entries(item, provider=str(provider)))
+    elif isinstance(payload, list):
+        for item in payload:
+            models.extend(_normalize_model_entries(item, provider=""))
+    return models
+
+
+def _parse_opencodex_models_text(text: str) -> list[dict[str, Any]]:
+    models: list[dict[str, Any]] = []
+    provider = ""
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.rstrip()
+        if not line.strip():
+            continue
+        if line.endswith(":") and not line.strip().startswith("-") and " " not in line.strip()[:-1]:
+            provider = line.strip()[:-1]
+            continue
+        if line.lstrip().startswith(provider + ":") and provider:
+            continue
+        # Lines look like: "  kimi-k2.7-code * (262k)"
+        match = re.match(r"^\s+([A-Za-z0-9_./\[\]-]+)", line)
+        if not match:
+            # provider headers like "kimi:" already handled; also "xai:"
+            header = re.match(r"^([A-Za-z0-9_-]+):\s*$", line.strip())
+            if header:
+                provider = header.group(1)
+            continue
+        name = match.group(1)
+        if name.endswith(":"):
+            provider = name[:-1]
+            continue
+        model_id = name if "/" in name or not provider else f"{provider}/{name}"
+        models.append(
+            {
+                "id": model_id,
+                "provider": provider or (model_id.split("/", 1)[0] if "/" in model_id else "unknown"),
+                "name": name,
+                "source": "opencodex",
+            }
+        )
+    return models
+
+
+def _models_from_opencodex_config() -> list[dict[str, Any]]:
+    config_path = Path.home() / ".opencodex" / "config.json"
+    if not config_path.exists():
+        return []
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    providers = payload.get("providers") if isinstance(payload, dict) else None
+    if not isinstance(providers, dict):
+        return []
+    models: list[dict[str, Any]] = []
+    for provider, conf in providers.items():
+        if not isinstance(conf, dict):
+            continue
+        names = []
+        if isinstance(conf.get("models"), list):
+            names.extend(str(item) for item in conf.get("models") if str(item).strip())
+        default_model = str(conf.get("defaultModel") or conf.get("model") or "").strip()
+        if default_model:
+            names.insert(0, default_model)
+        for name in names:
+            model_id = name if "/" in name else f"{provider}/{name}"
+            models.append(
+                {
+                    "id": model_id,
+                    "provider": str(provider),
+                    "name": model_id.split("/", 1)[-1],
+                    "source": "opencodex-config",
+                }
+            )
+    return models
+
+
+def _models_from_catalog() -> list[dict[str, Any]]:
+    catalog_path = Path.home() / ".codex" / "opencodex-catalog.json"
+    if not catalog_path.exists():
+        return []
+    try:
+        payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    models: list[dict[str, Any]] = []
+    items = payload.get("models") if isinstance(payload, dict) else payload
+    if not isinstance(items, list):
+        return []
+    for item in items:
+        models.extend(_normalize_model_entries(item, provider=""))
+    return models
+
+
+def _normalize_model_entries(item: Any, *, provider: str) -> list[dict[str, Any]]:
+    if isinstance(item, str):
+        model_id = item.strip()
+        if not model_id:
+            return []
+        if "/" not in model_id and provider:
+            model_id = f"{provider}/{model_id}"
+        return [{
+            "id": model_id,
+            "provider": provider or (model_id.split("/", 1)[0] if "/" in model_id else "openai"),
+            "name": model_id.split("/", 1)[-1],
+            "source": "catalog",
+        }]
+    if not isinstance(item, dict):
+        return []
+    model_id = str(item.get("slug") or item.get("id") or item.get("name") or "").strip()
+    if not model_id:
+        return []
+    if "/" not in model_id and provider:
+        model_id = f"{provider}/{model_id}"
+    resolved_provider = provider or str(item.get("provider") or (model_id.split("/", 1)[0] if "/" in model_id else "openai"))
+    return [{
+        "id": model_id,
+        "provider": resolved_provider,
+        "name": str(item.get("display_name") or item.get("name") or model_id.split("/", 1)[-1]),
+        "source": "catalog",
+        "description": str(item.get("description") or "")[:300],
+    }]
+
+
+def _default_model_from_codex_config() -> str:
+    config_path = Path.home() / ".codex" / "config.toml"
+    if not config_path.exists():
+        return ""
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    match = re.search(r'(?m)^\s*model\s*=\s*"([^"]+)"', text)
+    return match.group(1).strip() if match else ""
+
+
+def _model_chain(
+    settings: BridgeSettings,
+    *,
+    model: str | None,
+    available: dict[str, Any],
+) -> list[str]:
+    selected = (model or settings.model or str(available.get("default_model") or "")).strip()
+    available_ids = [str(item.get("id")) for item in available.get("models", []) if item.get("id")]
+    chain: list[str] = []
+    if selected:
+        chain.append(selected)
+    for item in settings.fallback_models:
+        if item not in chain:
+            chain.append(item)
+    # Keep only known models when catalog is present; otherwise preserve operator choice.
+    if available_ids:
+        known = [item for item in chain if item in available_ids]
+        if selected and selected not in known:
+            # Allow explicit operator override even if catalog is stale.
+            known = [selected] + known
+        if known:
+            chain = known
+    if not chain:
+        chain = available_ids[:3] or [""]
+    # de-dupe
+    out: list[str] = []
+    for item in chain:
+        if item and item not in out:
+            out.append(item)
+    return out or [""]
+
+
+def _provider_for_model(model: str, health: dict[str, Any]) -> str:
+    if not model:
+        return PROVIDER_CODEX_NATIVE
+    if "/" in model:
+        return f"opencodex:{model.split('/', 1)[0]}"
+    if health.get("opencodex", {}).get("status") == "ready":
+        return PROVIDER_OPENCODEX
+    return PROVIDER_CODEX_NATIVE
+
+
+def _invoke_with_model_fallback(
+    request: dict[str, Any],
+    settings: BridgeSettings,
+    runner: Runner,
+    model_chain: Sequence[str],
+) -> tuple[dict[str, Any], str]:
+    errors: list[str] = []
+    for index, model_name in enumerate(model_chain):
+        try:
+            return _invoke_codex(request, settings, runner, model=model_name), model_name
+        except Exception as exc:
+            message = _safe_error(exc)
+            errors.append(f"{model_name or 'default'}: {message}")
+            if index + 1 >= len(model_chain):
+                break
+            if not _is_quota_or_auth_failure(message):
+                # Non-quota failures should stay visible.
+                raise
+            continue
+    raise RuntimeError("all bridge models failed: " + " | ".join(errors)[:1600])
+
+
+def _invoke_codex(
+    request: dict[str, Any],
+    settings: BridgeSettings,
+    runner: Runner,
+    *,
+    model: str = "",
+) -> dict[str, Any]:
     executable = shutil.which(settings.codex_binary) or settings.codex_binary
     with tempfile.TemporaryDirectory(prefix="secopsai-codex-") as temp_dir:
         root = Path(temp_dir)
@@ -205,8 +602,6 @@ def _invoke_codex(request: dict[str, Any], settings: BridgeSettings, runner: Run
             executable,
             "exec",
             "--ephemeral",
-            "--ignore-user-config",
-            "--ignore-rules",
             "--skip-git-repo-check",
             "--sandbox",
             "read-only",
@@ -218,24 +613,162 @@ def _invoke_codex(request: dict[str, Any], settings: BridgeSettings, runner: Run
             str(output_path),
             "-C",
             str(root),
-            "-",
         ]
+        # When a specific OpenCodex model is requested, keep user config so the
+        # OpenCodex base URL/catalog remain available. For native default runs,
+        # ignore user config to keep the bridge hermetic.
+        if model:
+            command.extend(["--model", model])
+        else:
+            command.extend(["--ignore-user-config", "--ignore-rules"])
+        command.append("-")
         completed = runner(command, prompt, _safe_environment(), settings.timeout_seconds)
         if completed.returncode != 0:
-            message = _codex_failure_message(completed)
-            raise RuntimeError(f"Codex execution failed: {message}")
+            raise RuntimeError(f"Codex execution failed: {_provider_failure_message(completed)}")
         if not output_path.exists():
             raise RuntimeError("Codex did not produce a structured result")
         raw = output_path.read_bytes()
         if len(raw) > MAX_PROCESS_OUTPUT_BYTES:
             raise RuntimeError("Codex result exceeds the bridge output limit")
+        return _normalize_bridge_result(_parse_structured_result(raw.decode("utf-8", errors="replace")))
+
+
+_BRIDGE_REQUIRED_KEYS = ("summary", "risk_assessment", "evidence", "recommended_actions", "limitations")
+
+
+def _parse_structured_result(text: str) -> dict[str, Any]:
+    """Parse a model result that may be fenced JSON or a common envelope.
+
+    OpenCodex-routed chat models (Kimi, Grok, Gemini) often wrap JSON in
+    markdown fences even when an output schema is supplied, and some
+    adapters return an envelope around the model text.
+    """
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        raise RuntimeError("Codex returned an empty structured result")
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json|JSON)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+    payload: Any
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start < 0 or end <= start:
+            raise RuntimeError("Codex returned an invalid structured result")
         try:
-            result = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            payload = json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError as exc:
             raise RuntimeError("Codex returned an invalid structured result") from exc
-        if not isinstance(result, dict):
-            raise RuntimeError("Codex result must be an object")
-        return result
+    if not isinstance(payload, dict):
+        raise RuntimeError("Codex result must be an object")
+    if all(key in payload for key in _BRIDGE_REQUIRED_KEYS):
+        return payload
+    # Unwrap common adapter envelopes: {"result": {...}}, {"message": "{...json...}"}, etc.
+    for key in ("result", "output", "message", "content", "data", "response"):
+        candidate = payload.get(key)
+        if isinstance(candidate, dict) and all(item in candidate for item in _BRIDGE_REQUIRED_KEYS):
+            return candidate
+        if isinstance(candidate, list) and candidate:
+            for entry in candidate:
+                if isinstance(entry, dict) and all(item in entry for item in _BRIDGE_REQUIRED_KEYS):
+                    return entry
+                if isinstance(entry, dict):
+                    inner = entry.get("text") or entry.get("content")
+                    if isinstance(inner, str):
+                        try:
+                            nested = _parse_structured_result(inner)
+                        except RuntimeError:
+                            continue
+                        return nested
+        if isinstance(candidate, str):
+            try:
+                nested = _parse_structured_result(candidate)
+            except RuntimeError:
+                continue
+            return nested
+    # Schema-adjacent chat models (Kimi, Grok, Gemini) return usable analyses
+    # with different field names. Hand the object to the normalizer, which
+    # synthesizes the five canonical fields from what is present.
+    return payload
+
+
+def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
+    """Map schema-adjacent model output into the canonical bridge result.
+
+    Chat models routed through OpenCodex (Kimi, Grok, Gemini) approximate the
+    output schema instead of enforcing it. Their analyses are usable, but the
+    five core fields must always exist for validation, and structured list
+    items must become readable strings for human review cards.
+    """
+    result = dict(payload)
+    list_fields = (
+        "confirmed_facts",
+        "inferences",
+        "unsupported_claims",
+        "contradictions",
+        "missing_evidence",
+        "publication_risks",
+        "article_outline",
+        "evidence",
+        "recommended_actions",
+        "limitations",
+    )
+    for field_name in list_fields:
+        values = result.get(field_name)
+        if isinstance(values, list):
+            normalized_items = [_stringify_model_item(item) for item in values]
+            result[field_name] = [item for item in normalized_items if item]
+
+    if not _present(result.get("summary")):
+        facts = result.get("confirmed_facts") or []
+        result["summary"] = (
+            facts[0] if facts else "Model returned structured analysis without a prose summary."
+        )
+    if not _present(result.get("risk_assessment")):
+        risk = result.get("risk") or result.get("risk_rating") or result.get("severity_assessment")
+        result["risk_assessment"] = (
+            str(risk)[:4000]
+            if risk
+            else "The model did not provide a consolidated risk assessment; review the structured fields for severity signals."
+        )
+    if not _present(result.get("evidence")):
+        facts = result.get("confirmed_facts") or []
+        result["evidence"] = facts[:50] if facts else []
+    if not _present(result.get("recommended_actions")):
+        for alt in ("recommendations", "next_steps", "recommended_next_steps", "actions"):
+            candidate = result.get(alt)
+            if isinstance(candidate, list) and candidate:
+                result["recommended_actions"] = [str(item)[:2000] for item in candidate[:25]]
+                break
+        else:
+            result["recommended_actions"] = []
+    if not _present(result.get("limitations")):
+        missing = result.get("missing_evidence")
+        result["limitations"] = list(missing[:25]) if isinstance(missing, list) else []
+    return result
+
+
+def _present(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return bool(value)
+    return value is not None
+
+
+def _stringify_model_item(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()[:2000]
+    if isinstance(value, dict):
+        statement = str(value.get("statement") or value.get("title") or value.get("text") or "").strip()
+        refs = value.get("evidence_refs") or value.get("evidence") or []
+        if statement and isinstance(refs, list) and refs:
+            ref_text = ", ".join(str(ref)[:120] for ref in refs[:6])
+            return f"{statement} (evidence: {ref_text})"[:2000]
+        return (statement or json.dumps(value, sort_keys=True))[:2000]
+    return str(value)[:2000]
 
 
 def _remote_claim(settings: BridgeSettings) -> dict[str, Any]:
@@ -255,7 +788,9 @@ def _remote_finish(settings: BridgeSettings, job_id: str, outcome: str, payload:
 
 
 def _remote_post(settings: BridgeSettings, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    if not settings.core_api_url.startswith("https://") and not settings.core_api_url.startswith(("http://127.0.0.1", "http://localhost")):
+    if not settings.core_api_url.startswith("https://") and not settings.core_api_url.startswith(
+        ("http://127.0.0.1", "http://localhost")
+    ):
         raise RuntimeError("hosted Core bridge URL must use HTTPS")
     response = requests.post(
         f"{settings.core_api_url}{path}",
@@ -271,7 +806,10 @@ def _remote_post(settings: BridgeSettings, path: str, payload: dict[str, Any]) -
     except ValueError as exc:
         raise RuntimeError(f"hosted Core bridge returned invalid JSON ({response.status_code})") from exc
     if not response.ok:
-        raise RuntimeError(f"hosted Core bridge rejected the request ({response.status_code}): {str(result.get('detail') or 'request failed')[:500]}")
+        raise RuntimeError(
+            "hosted Core bridge rejected the request "
+            f"({response.status_code}): {str(result.get('detail') or 'request failed')[:500]}"
+        )
     if not isinstance(result, dict):
         raise RuntimeError("hosted Core bridge response must be an object")
     return result
@@ -295,7 +833,12 @@ def _fail_current_job(
                 {"error_code": error_code, "error_message": error_message},
             )["job"]
         except Exception:
-            return {"job_id": job_id, "status": "failed", "error_code": error_code, "error_message": error_message}
+            return {
+                "job_id": job_id,
+                "status": "failed",
+                "error_code": error_code,
+                "error_message": error_message,
+            }
     return fail_job(
         job_id,
         error_code=error_code,
@@ -305,7 +848,12 @@ def _fail_current_job(
     )
 
 
-def _run(command: Sequence[str], stdin: str, environment: dict[str, str], timeout: int) -> subprocess.CompletedProcess[str]:
+def _run(
+    command: Sequence[str],
+    stdin: str,
+    environment: dict[str, str],
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         list(command),
         input=stdin,
@@ -318,7 +866,19 @@ def _run(command: Sequence[str], stdin: str, environment: dict[str, str], timeou
 
 
 def _safe_environment() -> dict[str, str]:
-    allowed = ("PATH", "HOME", "CODEX_HOME", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY")
+    allowed = (
+        "PATH",
+        "HOME",
+        "CODEX_HOME",
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "NO_PROXY",
+    )
     return {key: os.environ[key] for key in allowed if os.environ.get(key)}
 
 
@@ -338,23 +898,54 @@ def _bounded_output(value: str | None) -> str:
     return str(value or "")[:4000]
 
 
-def _codex_failure_message(completed: subprocess.CompletedProcess[str]) -> str:
+def _provider_failure_message(completed: subprocess.CompletedProcess[str]) -> str:
     raw = str(completed.stderr or completed.stdout or "").strip()
     if not raw:
         return f"process exited with code {completed.returncode} without a diagnostic"
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
-    diagnostic = []
+    diagnostic: list[str] = []
     for line in reversed(lines):
         lowered = line.lower()
         if line.startswith(("{", "[")) or '"context":' in line or lowered in {"user", "assistant"}:
             continue
-        if any(marker in lowered for marker in ("error", "failed", "invalid", "unsupported", "timeout", "timed out")):
+        if any(
+            marker in lowered
+            for marker in (
+                "error",
+                "failed",
+                "invalid",
+                "unsupported",
+                "timeout",
+                "timed out",
+                "usage limit",
+                "rate limit",
+                "quota",
+            )
+        ):
             diagnostic.append(line)
             if len(diagnostic) == 3:
                 break
     if not diagnostic:
         return f"process exited with code {completed.returncode}; no safe diagnostic was returned"
     return _bounded_output("\n".join(reversed(diagnostic)))
+
+
+def _is_quota_or_auth_failure(message: str) -> bool:
+    lowered = message.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "usage limit",
+            "rate limit",
+            "quota",
+            "too many requests",
+            "not logged in",
+            "unauthorized",
+            "authentication",
+            "auth",
+            "insufficient",
+        )
+    )
 
 
 def _safe_error(exc: Exception) -> str:
@@ -367,3 +958,7 @@ def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
     except ValueError:
         value = default
     return max(minimum, min(value, maximum))
+
+
+# Compatibility export used by older imports/docs.
+PROVIDER = PROVIDER_OPENCODEX
