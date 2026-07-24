@@ -542,3 +542,18 @@ def list_alerts(*, status: Optional[str] = None, limit: int = 100, db_path: Opti
     with closing(soc_store.connect(db_path)) as connection:
         rows = connection.execute("SELECT * FROM research_alerts WHERE (? IS NULL OR status = ?) ORDER BY created_at DESC LIMIT ?", (status, status, max(1, min(int(limit), 500)))).fetchall()
     return [dict(row) for row in rows]
+
+
+def resolve_alert(alert_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
+    soc_store.init_db(db_path)
+    now = _now()
+    with closing(soc_store.connect(db_path)) as connection:
+        row = connection.execute("SELECT * FROM research_alerts WHERE alert_id = ?", (alert_id,)).fetchone()
+        if not row:
+            raise ValueError(f"Alert not found: {alert_id}")
+        connection.execute(
+            "UPDATE research_alerts SET status = 'resolved', updated_at = ? WHERE alert_id = ?",
+            (now, alert_id),
+        )
+        connection.commit()
+    return {"ok": True, "alert_id": alert_id, "status": "resolved"}

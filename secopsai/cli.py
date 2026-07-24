@@ -126,6 +126,7 @@ from secopsai.research_discovery import (
     ingest_registry_metadata,
     list_candidates as list_research_candidates,
     list_alerts as list_research_alerts,
+    resolve_alert as resolve_research_alert,
     list_monitors as list_research_monitors,
     list_watchlists as list_research_watchlists,
     run_monitor as run_research_monitor,
@@ -1328,6 +1329,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     alert_deliver.add_argument("alert_id")
     alert_deliver.add_argument("--channel", choices=["email", "webhook"], default="email")
     alert_deliver.add_argument("--db-path", default=None)
+    alert_resolve = research_alert_sub.add_parser("resolve", help="Mark a research discovery alert as resolved")
+    alert_resolve.add_argument("alert_id")
+    alert_resolve.add_argument("--db-path", default=None)
 
     research_preflight = research_sub.add_parser("preflight", help="Run telemetry and intel preflight checks")
     research_preflight.add_argument("--workspace-logs", default=None, help="Override adaptive-intel logs directory")
@@ -2271,6 +2275,8 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
         elif args.research_cmd == "alert":
             if args.research_alert_cmd == "list":
                 payload = {"alerts": list_research_alerts(status=args.status, limit=args.limit, db_path=args.db_path)}
+            elif args.research_alert_cmd == "resolve":
+                payload = resolve_research_alert(args.alert_id, db_path=args.db_path)
             else:
                 payload = send_research_alert(args.alert_id, channel=args.channel, db_path=args.db_path)
         elif args.research_cmd == "intake":
