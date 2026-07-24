@@ -106,6 +106,7 @@ def test_job_lifecycle_is_idempotent_and_audited(tmp_path: Path):
 
 def test_local_bridge_doctor_recognizes_chatgpt_login(monkeypatch):
     monkeypatch.setattr("secopsai.codex_bridge.shutil.which", lambda value: "/usr/local/bin/codex")
+    monkeypatch.setenv("SECOPSAI_BRIDGE_DEEP_DOCTOR", "true")
 
     def runner(command, stdin, environment, timeout):
         if "--version" in command:
@@ -230,6 +231,7 @@ def test_launchd_service_contains_no_credentials(tmp_path: Path):
 
 def test_bridge_lists_opencodex_models(monkeypatch):
     monkeypatch.setattr("secopsai.codex_bridge.shutil.which", lambda value: f"/usr/local/bin/{value}")
+    monkeypatch.setenv("SECOPSAI_BRIDGE_LIVE_MODELS", "true")
 
     def runner(command, stdin, environment, timeout):
         joined = " ".join(command)
