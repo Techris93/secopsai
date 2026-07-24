@@ -60,10 +60,50 @@ def _record_collector_degraded_alert(result: Dict[str, Any], *, db_path: Optiona
     status = str(result.get("status") or "unknown")
     coverage = str(result.get("coverage") or "unknown")
     incomplete = bool(result.get("window_incomplete") or result.get("diff_truncated"))
-    if status == "completed" and coverage == "complete" and not incomplete:
-        return None
     ecosystem = str(result.get("ecosystem") or "unknown")
     now = _utcnow().isoformat().replace("+00:00", "Z")
+
+    soc_store.init_db(db_path)
+    if status == "completed" and coverage == "complete" and not incomplete:
+        with closing(soc_store.connect(db_path)) as connection:
+            with connection:
+                connection.execute(
+                    """UPDATE research_alerts
+                       SET status = 'resolved', updated_at = ?
+                       WHERE alert_type = 'collector_degraded'
+                         AND status = 'open'
+                         AND dedupe_key LIKE ?""",
+                    (now, f"collector-degraded:{ecosystem}:%"),
+                )
+        return None
+
+    collector_id = result.get("collector_id")
+    if collector_id:
+        import os
+        threshold = int(os.environ.get("SECOPSAI_COLLECTOR_ALERT_THRESHOLD", "3"))
+        with closing(soc_store.connect(db_path)) as connection:
+            history = connection.execute(
+                """SELECT status, error_message
+                   FROM registry_ingestion_runs
+                   WHERE collector_id = ?
+                   ORDER BY started_at DESC
+                   LIMIT ?""",
+                (collector_id, threshold),
+            ).fetchall()
+        
+        consecutive_degraded = True
+        if len(history) >= threshold:
+            for row in history:
+                r_status = str(row["status"])
+                r_err = row["error_message"]
+                if r_status == 'completed' and not r_err:
+                    consecutive_degraded = False
+                    break
+        else:
+            consecutive_degraded = False
+        if not consecutive_degraded:
+            return None
+
     dedupe_key = f"collector-degraded:{ecosystem}:{now[:10]}"
     reason = f"{ecosystem} registry coverage is degraded: status={status}, coverage={coverage}"
     evidence = {
@@ -75,7 +115,6 @@ def _record_collector_degraded_alert(result: Dict[str, Any], *, db_path: Optiona
         "diff_truncated": bool(result.get("diff_truncated")),
         "error": str(result.get("error") or "")[:1000],
     }
-    soc_store.init_db(db_path)
     with closing(soc_store.connect(db_path)) as connection:
         with connection:
             connection.execute(
@@ -84,7 +123,7 @@ def _record_collector_degraded_alert(result: Dict[str, Any], *, db_path: Optiona
                  reason, evidence_json, status, owner, created_at, updated_at)
                 VALUES (?, 'collector_degraded', 'high', NULL, NULL, NULL, ?, ?, ?, 'open', '', ?, ?)
                 ON CONFLICT(dedupe_key) DO UPDATE SET reason=excluded.reason,
-                    evidence_json=excluded.evidence_json, updated_at=excluded.updated_at""",
+                    evidence_json=excluded.evidence_json, updated_at=excluded.updated_at, status='open'""",
                 (f"RAL-{secrets.token_hex(8).upper()}", dedupe_key, reason, json.dumps(evidence, sort_keys=True), now, now),
             )
             row = connection.execute("SELECT alert_id FROM research_alerts WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
@@ -173,13 +212,24 @@ def run_worker_cycle(
                     "error": outcome.get("error"),
                     "window_incomplete": bool(outcome.get("window_incomplete")),
                     "diff_truncated": bool(outcome.get("diff_truncated")),
+                    "collector_id": item["collector_id"],
                 }
             )
         except (CollectorError, ValueError) as exc:
-            results.append({"ecosystem": item["ecosystem"], "status": "error", "error": str(exc)})
+            results.append({
+                "ecosystem": item["ecosystem"],
+                "status": "error",
+                "error": str(exc),
+                "collector_id": item["collector_id"],
+            })
         except Exception as exc:  # one registry must never stop the cycle
             capture_exception(exc, context={"component": "research_collector", "ecosystem": item["ecosystem"]})
-            results.append({"ecosystem": item["ecosystem"], "status": "error", "error": f"unexpected: {exc}"})
+            results.append({
+                "ecosystem": item["ecosystem"],
+                "status": "error",
+                "error": f"unexpected: {exc}",
+                "collector_id": item["collector_id"],
+            })
 
     alert_ids = [alert_id for result in results if (alert_id := _record_collector_degraded_alert(result, db_path=db_path))]
 

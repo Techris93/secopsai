@@ -76,7 +76,8 @@ def test_due_collectors_respect_intervals_and_pause(tmp_path):
     assert due["packagist"]["due"] is True  # never ran
 
 
-def test_worker_cycle_isolates_collector_failures(tmp_path):
+def test_worker_cycle_isolates_collector_failures(tmp_path, monkeypatch):
+    monkeypatch.setenv("SECOPSAI_COLLECTOR_ALERT_THRESHOLD", "1")
     db_path = _db(tmp_path)
     # Every registry fetch fails; the cycle must complete and record
     # per-collector failures instead of raising.
@@ -95,6 +96,84 @@ def test_worker_cycle_isolates_collector_failures(tmp_path):
             "SELECT COUNT(*) AS count FROM research_alerts WHERE alert_type = 'collector_degraded'"
         ).fetchone()["count"]
     assert count == 8
+
+
+def test_collector_degraded_alert_threshold_and_auto_resolve(tmp_path, monkeypatch):
+    monkeypatch.setenv("SECOPSAI_COLLECTOR_ALERT_THRESHOLD", "3")
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+
+    result_fail = {
+        "ecosystem": "nuget",
+        "collector_id": "COL-NUGET-CATALOG",
+        "status": "failed",
+        "coverage": "gap",
+        "error": "registry unavailable",
+    }
+
+    # 1. First failure - should not alert
+    connection = soc_store.connect(db_path)
+    try:
+        connection.execute(
+            """INSERT INTO registry_ingestion_runs
+               (run_id, collector_id, status, cursor_before, cursor_after, coverage_mode, started_at, error_message)
+               VALUES ('RIR-F1', 'COL-NUGET-CATALOG', 'failed', '0', '0', 'event_feed', '2026-07-24T00:00:00Z', 'err')"""
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    alert_id = _record_collector_degraded_alert(result_fail, db_path=db_path)
+    assert alert_id is None
+
+    # 2. Second failure - should not alert
+    connection = soc_store.connect(db_path)
+    try:
+        connection.execute(
+            """INSERT INTO registry_ingestion_runs
+               (run_id, collector_id, status, cursor_before, cursor_after, coverage_mode, started_at, error_message)
+               VALUES ('RIR-F2', 'COL-NUGET-CATALOG', 'failed', '0', '0', 'event_feed', '2026-07-24T00:05:00Z', 'err')"""
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    alert_id = _record_collector_degraded_alert(result_fail, db_path=db_path)
+    assert alert_id is None
+
+    # 3. Third failure - should alert
+    connection = soc_store.connect(db_path)
+    try:
+        connection.execute(
+            """INSERT INTO registry_ingestion_runs
+               (run_id, collector_id, status, cursor_before, cursor_after, coverage_mode, started_at, error_message)
+               VALUES ('RIR-F3', 'COL-NUGET-CATALOG', 'failed', '0', '0', 'event_feed', '2026-07-24T00:10:00Z', 'err')"""
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    alert_id = _record_collector_degraded_alert(result_fail, db_path=db_path)
+    assert alert_id is not None
+
+    # Verify it is stored as open
+    with soc_store.connect(db_path) as connection:
+        alert = connection.execute("SELECT * FROM research_alerts WHERE alert_id = ?", (alert_id,)).fetchone()
+        assert alert["status"] == "open"
+
+    # 4. Successful run - should auto-resolve the alert
+    result_success = {
+        "ecosystem": "nuget",
+        "collector_id": "COL-NUGET-CATALOG",
+        "status": "completed",
+        "coverage": "complete",
+        "window_incomplete": False,
+        "diff_truncated": False,
+    }
+    res = _record_collector_degraded_alert(result_success, db_path=db_path)
+    assert res is None
+
+    # Verify it is resolved
+    with soc_store.connect(db_path) as connection:
+        alert = connection.execute("SELECT * FROM research_alerts WHERE alert_id = ?", (alert_id,)).fetchone()
+        assert alert["status"] == "resolved"
 
 
 def test_collector_degraded_alert_is_deduplicated_per_day(tmp_path):

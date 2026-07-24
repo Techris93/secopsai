@@ -157,17 +157,30 @@ class SafeFetcher:
                     headers=request_headers,
                 )
                 opener = urllib.request.build_opener(_NoRedirectHandler())
-                try:
-                    with opener.open(request, timeout=self.timeout) as response:
-                        status = int(response.status)
-                        headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
-                        body = response.read(max_bytes + 1)
-                except urllib.error.HTTPError as exc:
-                    status = int(exc.code)
-                    headers = {str(key).lower(): str(value) for key, value in exc.headers.items()}
-                    body = exc.read(max_bytes + 1)
-                except (urllib.error.URLError, TimeoutError, OSError) as exc:
-                    raise IntakeError("registry request failed") from exc
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        with opener.open(request, timeout=self.timeout) as response:
+                            status = int(response.status)
+                            headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
+                            body = response.read(max_bytes + 1)
+                        if status >= 500 and attempt < max_retries - 1:
+                            time.sleep(1.0 * (attempt + 1))
+                            continue
+                        break
+                    except urllib.error.HTTPError as exc:
+                        status = int(exc.code)
+                        headers = {str(key).lower(): str(value) for key, value in exc.headers.items()}
+                        if status >= 500 and attempt < max_retries - 1:
+                            time.sleep(1.0 * (attempt + 1))
+                            continue
+                        body = exc.read(max_bytes + 1)
+                        break
+                    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                        if attempt < max_retries - 1:
+                            time.sleep(1.0 * (attempt + 1))
+                            continue
+                        raise IntakeError("registry request failed") from exc
             else:
                 status, headers, body = self._injected(current, max_bytes)
                 headers = {str(key).lower(): str(value) for key, value in headers.items()}
