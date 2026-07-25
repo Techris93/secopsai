@@ -10,10 +10,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_release_version_is_consistent() -> None:
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "test-and-build.yml").read_text(encoding="utf-8")
     assert 'version = "1.0.0"' in project
     assert '__version__ = "1.0.0"' in (ROOT / "secopsai" / "__init__.py").read_text(encoding="utf-8")
     assert "SecOpsAI v1.0.0" in (ROOT / "README.md").read_text(encoding="utf-8")
     assert 'SECOPSAI_INSTALL_REF:-v1.0.0' in (ROOT / "docs" / "install.sh").read_text(encoding="utf-8")
+    assert "type=sha,prefix=sha-" in workflow
+    assert "type=sha,prefix={{branch}}-" not in workflow
 
 
 def test_shell_installers_are_syntax_valid() -> None:
