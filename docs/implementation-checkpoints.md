@@ -2,13 +2,13 @@
 
 ## 107 Hermes Agent v1.0.0 Integration
 
-Status: implementation and local acceptance complete; GitHub merge, immutable tag, and public endpoint verification remain release gates.
+Status: implementation and local acceptance complete; GitHub merge is complete. Immutable tag and public endpoint verification remain release gates.
 
 Added a first-class Hermes Agent 0.18.2+ installation profile for macOS, Linux, and Windows through WSL2. The dedicated installer deploys SecOpsAI Core, enables the native read-only Hermes plugin, performs a bounded initial refresh, installs a five-minute user-level monitor, and provides focused health, status, log, recovery, update, and uninstall controls. Core now exposes `hermes doctor`, `hermes refresh`, and the complete `hermes service` lifecycle through the CLI.
 
 The native Hermes plugin contains eight fixed, read-only tools for service health, normalized findings, triage summaries, sessions, and asset summaries. It invokes the Core virtual-environment CLI without a shell, enforces identifier validation, timeouts, output limits, a sanitized environment, and secret-key filtering, and cannot execute arbitrary commands, run scans, close findings, submit disclosure, or publish content. Hermes credentials, provider configuration, raw request headers, and raw request bodies remain excluded.
 
-Aligned Core, package metadata, README, changelog, website, docs, and installer delivery on `v1.0.0`. Both tracked website copies now expose a responsive Hermes installation tab and remain byte-identical. The release workflow now listens for version tags and allows the immutable tag to build its container and create the GitHub release.
+Aligned Core, package metadata, README, changelog, website, docs, and installer delivery on `v1.0.0`. Both tracked website copies now expose a responsive Hermes installation tab and remain byte-identical. The release workflow now listens for version tags, uses branch-independent `sha-<commit>` image tags, and allows the immutable tag to build its container and create the GitHub release.
 
 Verification: the full Core suite passed with 419 tests, 16 existing warnings, and 4 subtests; focused Hermes tests passed; the wheel contains the Core runtime and plugin package data; docs command verification and strict MkDocs build passed; shell syntax, website parity, and repository diff checks passed. Live Hermes 0.18.2 validation normalized 16,296 local records without reading credential paths, installed and enabled the plugin, completed a background refresh, and reported a healthy launchd monitor. Desktop and mobile browser review confirmed the public command, copy action, responsive wrapping, and Hermes panel content.
 
