@@ -491,6 +491,26 @@ secopsai triage apply-action ACT-0001 --yes
 curl -fsSL https://secopsai.dev/install.sh | bash
 ```
 
+### `secopsai hermes`
+
+Install the complete Hermes Agent integration with:
+
+```bash
+curl -fsSL https://secopsai.dev/install-hermes.sh | bash
+```
+
+Inspect and refresh the integration:
+
+```bash
+secopsai hermes doctor
+secopsai hermes refresh
+secopsai hermes service status
+secopsai hermes service run-now
+secopsai hermes service logs
+```
+
+Service lifecycle actions are `install`, `start`, `stop`, `status`, `run-now`, `logs`, and `uninstall`. Installation accepts `--interval`, `--hermes-home`, `--db-path`, and `--no-start`. The minimum interval is 60 seconds and the default is 300 seconds.
+
 - Public npm package:
 
 ```bash
@@ -507,4 +527,5 @@ npm install -g secopsai
 - [Findings Triage Guide](findings-triage-guide.md)
 - [Triage Orchestrator](triage-orchestrator.md)
 - [OpenClaw Integration](OpenClaw-Integration.md)
+- [Hermes Agent Integration](Hermes-Integration.md)
 - [Threat Model](threat-model.md)

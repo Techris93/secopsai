@@ -82,6 +82,7 @@ Add to your OpenClaw config:
 - `secopsai_research_package`
 - `secopsai_edge_assets`
 - `secopsai_edge_worker_status`
+- `secopsai_edge_release_check`
 - `secopsai_edge_scan_preview`
 - `secopsai_edge_request_report`
 - `secopsai_edge_request_worker_action`

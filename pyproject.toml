@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "secopsai"
-version = "0.1.0"
-description = "Local-first cross-platform SecOps for OpenClaw, macOS, Linux, and Windows"
+version = "1.0.0"
+description = "Local-first security operations for networks, software supply chains, OpenClaw, Hermes Agent, and host telemetry"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -30,7 +30,6 @@ dev = [
 secopsai = "secopsai.cli:main"
 
 [tool.setuptools]
-packages = ["secopsai", "secopsai.triage", "openclaw_adapters", "adapters"]
 py-modules = [
   "cli",
   "confidence",
@@ -56,3 +55,9 @@ py-modules = [
   "twilio_whatsapp_webhook",
   "whatsapp_openclaw_router",
 ]
+
+[tool.setuptools.packages.find]
+include = ["secopsai*", "openclaw_adapters*", "adapters*", "integrations*"]
+
+[tool.setuptools.package-data]
+"integrations.hermes" = ["plugin.yaml", "after-install.md", "README.md"]

@@ -4,6 +4,7 @@ export default {
 
     const targets = {
       "/install.sh": "https://docs.secopsai.dev/install.sh",
+      "/install-hermes.sh": "https://docs.secopsai.dev/install-hermes.sh",
     };
 
     const target = targets[url.pathname];

@@ -27,6 +27,7 @@ DEFAULT_DOCS = [
     Path("docs/supply-chain-advisories.md"),
     Path("docs/blog-publishing.md"),
     Path("docs/OpenClaw-Plugin.md"),
+    Path("docs/Hermes-Integration.md"),
 ]
 DEFAULT_PLUGIN_INDEX = ROOT.parent / "openclaw-secopsai-plugin" / "index.ts"
 COMMAND_PREFIXES = ("secopsai ",)
@@ -68,6 +69,7 @@ def normalize_example_command(command: str) -> str:
         "<action_id>": "ACT-0001",
         "<SESSION_ID>": "SES-1234567890ab",
         "<session_id>": "SES-1234567890ab",
+        "<finding-id>": "SCM-EXAMPLE0001",
     }
     normalized = command
     for old, new in replacements.items():

@@ -8,6 +8,9 @@ the next tagged release.
 
 ### Added
 
+- Added first-class Hermes Agent 0.18.2+ onboarding with an idempotent public installer, focused setup profile, native read-only Hermes plugin, bounded local telemetry refresh, and persistent launchd/systemd monitoring.
+- Added `secopsai hermes doctor`, `secopsai hermes refresh`, and complete Hermes service lifecycle commands with owner-only state, overlap prevention, explicit degraded health, and retained logs/findings on uninstall.
+- Added eight fixed-command Hermes tools for integration health, findings, sessions, triage summaries, and Edge asset context without arbitrary execution or credential exposure.
 - Added a protected Core HTTP boundary for organization-scoped Edge bundle
   ingestion, minimized operator workspace reads, and import audit history.
 - Added a one-command local Core API setup and a validated, persistent-disk
@@ -71,6 +74,7 @@ the next tagged release.
 
 ### Docs
 
+- Added the Hermes installation tab, one-command guide, plugin tool reference, service operations, data boundaries, recovery, and uninstall documentation.
 - Documented Edge/Core ownership, privacy boundaries, one-step sync, graph
   inspection, and stable Edge-origin triage workflows.
 - Documented the multi-ecosystem support matrix, per-ecosystem CLI examples,

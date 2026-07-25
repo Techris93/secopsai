@@ -237,6 +237,7 @@
         }
         .install-cmd code {
             flex: 1;
+            min-width: 0;
             font-family: var(--mono);
             font-size: 13px;
             padding: 12px 14px;
@@ -378,6 +379,17 @@
             }
             .doc-nav a { white-space: nowrap; }
             .dm-title { font-size: 26px; }
+            .install-cmd { flex-direction: column; }
+            .install-cmd code {
+                white-space: normal;
+                overflow-wrap: anywhere;
+                line-height: 1.6;
+            }
+            .copy-btn {
+                border-left: 0;
+                border-top: 1px solid var(--rule-dark);
+                padding: 10px 14px;
+            }
             .notice { flex-direction: column; }
             .notice-label { border-right: 0; border-bottom: 1px solid; }
         }
@@ -468,7 +480,7 @@
                 </tr>
             </tbody>
         </table>
-        <p style="margin-top:14px;">The OpenClaw plugin connects the platform to local automation runtimes. It can start scans, read findings, and prepare actions. Approval-gated actions always need an operator.</p>
+        <p style="margin-top:14px;">The OpenClaw integration provides approval-gated automation tools. The Hermes Agent integration provides read-only access to normalized findings, asset context, sessions, and service health while a separate local monitor collects Hermes telemetry. Neither integration exposes raw credentials or bypasses operator approval boundaries.</p>
     </section>
 
     <!-- 2. Installation -->
@@ -481,6 +493,7 @@
             <button class="tab" id="tab-linux" role="tab" aria-controls="panel-linux" aria-selected="false" data-tab="linux" tabindex="-1">LINUX</button>
             <button class="tab" id="tab-windows" role="tab" aria-controls="panel-windows" aria-selected="false" data-tab="windows" tabindex="-1">WINDOWS</button>
             <button class="tab" id="tab-openclaw" role="tab" aria-controls="panel-openclaw" aria-selected="false" data-tab="openclaw" tabindex="-1">OPENCLAW</button>
+            <button class="tab" id="tab-hermes" role="tab" aria-controls="panel-hermes" aria-selected="false" data-tab="hermes" tabindex="-1">HERMES</button>
         </div>
 
         <div class="tab-panel" id="panel-macos" role="tabpanel" aria-labelledby="tab-macos" data-panel="macos">
@@ -528,6 +541,18 @@
                         <button class="copy-btn" data-copy="openclaw plugins install secopsai">COPY</button>
                     </div>
                     <p class="install-note">The OpenClaw plugin connects SecOpsAI to your local automation runtime.</p>
+                </div>
+            </div>
+        </div>
+        <div class="tab-panel" id="panel-hermes" role="tabpanel" aria-labelledby="tab-hermes" data-panel="hermes" hidden>
+            <div class="procedure">
+                <div class="procedure-title"><span>PROC-05</span><span>INSTALL — Hermes Agent 0.18.2+</span></div>
+                <div class="procedure-body">
+                    <div class="install-cmd">
+                        <code>curl -fsSL https://secopsai.dev/install-hermes.sh | bash</code>
+                        <button class="copy-btn" data-copy="curl -fsSL https://secopsai.dev/install-hermes.sh | bash">COPY</button>
+                    </div>
+                    <p class="install-note">Installs SecOpsAI Core, enables the read-only Hermes plugin, verifies local telemetry access, and starts the five-minute background monitor. Supports macOS, Linux, and Windows through WSL2.</p>
                 </div>
             </div>
         </div>

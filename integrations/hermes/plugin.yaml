@@ -1,0 +1,19 @@
+manifest_version: 1
+name: secopsai
+version: "1.0.0"
+description: "Read-only SecOpsAI findings, Hermes integration health, sessions, triage state, and Edge asset context for Hermes Agent."
+author: SecOpsAI
+kind: standalone
+platforms:
+  - macos
+  - linux
+provides_tools:
+  - secopsai_hermes_status
+  - secopsai_hermes_findings
+  - secopsai_list_findings
+  - secopsai_show_finding
+  - secopsai_triage_summary
+  - secopsai_session_list
+  - secopsai_session_show
+  - secopsai_asset_summary
+

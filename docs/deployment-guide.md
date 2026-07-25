@@ -248,6 +248,12 @@ bash scripts/install_openclaw_launchd.sh
 
 Use the repo-managed installer scripts instead of hand-editing plist files in `~/Library/LaunchAgents`.
 
+- `secopsai hermes service install`
+  - refreshes only local Hermes Agent telemetry through the bounded Core integration
+  - default cadence: every 300 seconds; minimum: 60 seconds
+  - macOS logs: `~/Library/Logs/SecOpsAI/hermes-monitor.out.log` and `hermes-monitor.err.log`
+  - Linux/WSL2 logs: `journalctl --user -u secopsai-hermes-monitor.service`
+  - controls: `start`, `stop`, `status`, `run-now`, `logs`, and `uninstall`
 - `bash scripts/install_secopsai_agent_launchd.sh`
   - refreshes `secopsai refresh --platform macos,openclaw` by default
   - set `SECOPSAI_REFRESH_PLATFORMS=macos,openclaw,hermes` to include Hermes Agent telemetry

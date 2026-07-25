@@ -17,6 +17,12 @@ Welcome! This guide will get you from telemetry refresh to triage in under 5 min
 - **Detection rules** for dangerous execution, policy abuse, data exfiltration, malware, and supply-chain release review
 - **Reproducible benchmark corpus** for OpenClaw validation
 - **Live telemetry support** for OpenClaw, Hermes Agent, and host adapters
+
+For a complete Hermes Agent 0.18.2+ installation, including the read-only native plugin and five-minute background monitor, run:
+
+```bash
+curl -fsSL https://secopsai.dev/install-hermes.sh | bash
+```
 - **Native triage workflow** with investigation reports and queued analyst actions
 
 ## Install (2 minutes)
