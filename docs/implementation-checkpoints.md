@@ -2,7 +2,7 @@
 
 ## 107 Hermes Agent v1.0.0 Integration
 
-Status: implementation and local acceptance complete; GitHub merge is complete. Immutable tag and public endpoint verification remain release gates.
+Status: complete in production.
 
 Added a first-class Hermes Agent 0.18.2+ installation profile for macOS, Linux, and Windows through WSL2. The dedicated installer deploys SecOpsAI Core, enables the native read-only Hermes plugin, performs a bounded initial refresh, installs a five-minute user-level monitor, and provides focused health, status, log, recovery, update, and uninstall controls. Core now exposes `hermes doctor`, `hermes refresh`, and the complete `hermes service` lifecycle through the CLI.
 
@@ -11,6 +11,10 @@ The native Hermes plugin contains eight fixed, read-only tools for service healt
 Aligned Core, package metadata, README, changelog, website, docs, and installer delivery on `v1.0.0`. Both tracked website copies now expose a responsive Hermes installation tab and remain byte-identical. The release workflow now listens for version tags, uses branch-independent `sha-<commit>` image tags, and allows the immutable tag to build its container and create the GitHub release.
 
 Verification: the full Core suite passed with 419 tests, 16 existing warnings, and 4 subtests; focused Hermes tests passed; the wheel contains the Core runtime and plugin package data; docs command verification and strict MkDocs build passed; shell syntax, website parity, and repository diff checks passed. Live Hermes 0.18.2 validation normalized 16,296 local records without reading credential paths, installed and enabled the plugin, completed a background refresh, and reported a healthy launchd monitor. Desktop and mobile browser review confirmed the public command, copy action, responsive wrapping, and Hermes panel content.
+
+Release acceptance: PRs #84 and #85 were merged after Python 3.10/3.11, MCP, SAST, secret, dependency, container, and Cloudflare checks passed. The immutable `v1.0.0` tag targets the verified release commit, the GitHub release and versioned container are published, and the public site and docs are live. `https://secopsai.dev/install.sh` returns the pinned standard installer and `https://secopsai.dev/install-hermes.sh` returns the Hermes 0.18.2+ installer. Cloudflare Pages now deploys the reviewed `website/` directory explicitly and rejects production deployments when either installer returns HTML or lacks its release marker.
+
+Final production smoke: the plugin installed from `Techris93/secopsai/integrations/hermes`, reported enabled at version 1.0.0, and survived a Hermes gateway restart. Doctor reported Hermes 0.18.2, six readable telemetry sources, excluded `auth.json` and `.env`, a loaded launchd monitor, and a healthy refresh of 16,336 normalized records.
 
 ## 106 Mission Control Model Picker And Schema-Tolerant Bridge
 
