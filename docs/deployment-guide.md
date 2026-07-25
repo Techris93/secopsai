@@ -75,10 +75,15 @@ Use either Redirect Rules or a Worker.
 
 #### Option B1: Cloudflare Redirect Rules
 
-Create one dynamic redirect:
+Create two dynamic redirects:
 
 1. If URL matches `https://secopsai.dev/install.sh`
 2. Forward to `https://docs.secopsai.dev/install.sh` (Status 302 or 301)
+
+and:
+
+1. If URL matches `https://secopsai.dev/install-hermes.sh`
+2. Forward to `https://docs.secopsai.dev/install-hermes.sh` (Status 302 or 301)
 
 #### Option B2: Cloudflare Worker (proxy, no URL change)
 
@@ -86,12 +91,28 @@ If you prefer users to stay on `secopsai.dev` without redirect, use the Worker s
 
 - `scripts/cloudflare-installer-worker.js`
 
-Quick setup:
+Production deployment is automated by `.github/workflows/deploy-installers.yml`.
+It discovers the Worker already bound to the standard installer, publishes the
+reviewed script with the repository's Cloudflare secrets, manages both routes,
+and verifies that each public endpoint returns a shell script.
+
+Required GitHub repository secrets:
+
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN` with Workers Scripts edit and Zone Workers Routes edit/read access
+
+The managed routes are:
+
+- `secopsai.dev/install.sh*`
+- `secopsai.dev/install-hermes.sh*`
+
+Manual recovery:
 
 1. Cloudflare Dashboard -> Workers & Pages -> Create Worker.
 2. Paste script from `scripts/cloudflare-installer-worker.js`.
 3. Deploy Worker.
 4. Add route: `secopsai.dev/install.sh*`
+5. Add route: `secopsai.dev/install-hermes.sh*`
 
 ### Step 4: Validate from terminal
 
@@ -99,7 +120,9 @@ Run all checks below:
 
 ```bash
 curl -fsSLI https://secopsai.dev/install.sh
+curl -fsSLI https://secopsai.dev/install-hermes.sh
 curl -fsSL https://secopsai.dev/install.sh | head -n 5
+curl -fsSL https://secopsai.dev/install-hermes.sh | head -n 5
 ```
 
 Expected results:
