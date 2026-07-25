@@ -43,6 +43,10 @@ def test_public_hermes_installer_and_worker_route_are_wired() -> None:
     standard = (ROOT / "docs" / "install.sh").read_text(encoding="utf-8")
     assert (ROOT / "website" / "install.sh").read_text(encoding="utf-8") == standard
     assert (ROOT / "www" / "install.sh").read_text(encoding="utf-8") == standard
+    deployment = (ROOT / ".github" / "workflows" / "deploy-public-site.yml").read_text(encoding="utf-8")
+    assert "wrangler@4.114.0 pages deploy website" in deployment
+    assert "verify_installer \"install-hermes.sh\"" in deployment
+    assert "CLOUDFLARE_API_TOKEN" in deployment
 
 
 def test_tracked_website_copies_are_identical_and_contain_hermes_tab() -> None:
