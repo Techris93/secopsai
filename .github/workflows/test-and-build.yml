@@ -98,6 +98,10 @@ jobs:
           sh -n docs/install.sh
           sh -n docs/install-hermes.sh
           cmp website/index.html www/index.html
+          cmp docs/install.sh website/install.sh
+          cmp docs/install.sh www/install.sh
+          cmp docs/install-hermes.sh website/install-hermes.sh
+          cmp docs/install-hermes.sh www/install-hermes.sh
           grep -F 'data-tab="hermes"' website/index.html
           grep -F 'https://secopsai.dev/install-hermes.sh' website/index.html
 
