@@ -1,0 +1,59 @@
+name: Deploy Public Site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/deploy-public-site.yml"
+      - "website/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: secopsai-public-site-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+
+      - name: Deploy reviewed website directory
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          npx --yes wrangler@4.114.0 pages deploy website \
+            --project-name website \
+            --branch main \
+            --commit-hash "${GITHUB_SHA}" \
+            --commit-message "Deploy SecOpsAI public site ${GITHUB_SHA}"
+
+      - name: Verify public installer contents
+        run: |
+          set -euo pipefail
+          verify_installer() {
+            installer="$1"
+            marker="$2"
+            output="${RUNNER_TEMP}/${installer}"
+            curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 \
+              "https://secopsai.dev/${installer}?release=${GITHUB_SHA}" \
+              -o "$output"
+            if [ "$(sed -n '1p' "$output")" != "#!/bin/sh" ]; then
+              echo "${installer} did not return a POSIX shell installer" >&2
+              exit 1
+            fi
+            grep -F "$marker" "$output" >/dev/null
+          }
+          verify_installer "install.sh" 'SECOPSAI_INSTALL_REF:-v1.0.0'
+          verify_installer "install-hermes.sh" 'MIN_VERSION="0.18.2"'
