@@ -63,6 +63,26 @@ You should see commands such as:
 - `correlate`
 - `intel`
 
+### Hermes Agent installation
+
+Hermes Agent 0.18.2 or later has a dedicated one-command setup:
+
+```bash
+curl -fsSL https://secopsai.dev/install-hermes.sh | bash
+```
+
+This installs SecOpsAI Core, enables the read-only native Hermes plugin, performs the first telemetry refresh, and starts five-minute background monitoring.
+
+Verify it:
+
+```bash
+cd ~/secopsai
+.venv/bin/python -m secopsai.cli hermes doctor
+hermes plugins list
+```
+
+See [Hermes Agent Integration](Hermes-Integration.md) for service controls, data boundaries, custom paths, recovery, and uninstall.
+
 ---
 
 ## 2. Run your first refresh

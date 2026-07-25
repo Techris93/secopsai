@@ -19,6 +19,7 @@ set -euo pipefail
 
 AUTO_YES=0
 NON_INTERACTIVE=0
+SETUP_PROFILE="default"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -30,6 +31,7 @@ Usage:
   bash setup.sh
   bash setup.sh --yes
   bash setup.sh --non-interactive
+  bash setup.sh --non-interactive --profile hermes
   bash setup.sh --help
 
 What it does:
@@ -41,6 +43,7 @@ What it does:
 Notes:
   - If run via curl pipe, defaults are used automatically
   - OpenClaw CLI is optional for base install
+  - Use --profile hermes for focused Hermes Agent onboarding
 EOF
       exit 0
       ;;
@@ -50,6 +53,14 @@ EOF
     --non-interactive)
       NON_INTERACTIVE=1
       ;;
+    --profile)
+      if [[ $# -lt 2 ]]; then
+        echo "--profile requires a value"
+        exit 2
+      fi
+      SETUP_PROFILE="$2"
+      shift
+      ;;
     *)
       echo "Unknown option: $1"
       echo "Run 'bash setup.sh --help' for usage."
@@ -58,6 +69,11 @@ EOF
   esac
   shift
 done
+
+if [[ "$SETUP_PROFILE" != "default" && "$SETUP_PROFILE" != "hermes" ]]; then
+  echo "Unsupported setup profile: $SETUP_PROFILE"
+  exit 2
+fi
 
 if [[ ! -t 0 ]]; then
   NON_INTERACTIVE=1
@@ -156,7 +172,12 @@ phase_preflight_checks() {
   if command -v python3 &> /dev/null; then
     local python_version
     python_version=$(python3 --version 2>&1 | awk '{print $2}')
-    log_success "Python 3 found (version $python_version)"
+    if python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+      log_success "Python 3 found (version $python_version)"
+    else
+      log_error "Python 3.10 or later is required (found $python_version)"
+      all_passed=false
+    fi
   else
     log_error "Python 3 is required but not installed"
     all_passed=false
@@ -175,6 +196,38 @@ phase_preflight_checks() {
     log_success "OpenClaw CLI found"
   else
     log_warn "OpenClaw CLI not found. Install from: https://docs.openclaw.ai/install"
+  fi
+
+  if [[ "$SETUP_PROFILE" == "hermes" ]]; then
+    if command -v hermes &> /dev/null; then
+      local hermes_version
+      hermes_version=$(hermes --version 2>&1 | head -n 1)
+      if [[ "$hermes_version" =~ Hermes\ Agent\ v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+        local hermes_major="${BASH_REMATCH[1]}"
+        local hermes_minor="${BASH_REMATCH[2]}"
+        local hermes_patch="${BASH_REMATCH[3]}"
+        if (( hermes_major > 0 || (hermes_major == 0 && (hermes_minor > 18 || (hermes_minor == 18 && hermes_patch >= 2))) )); then
+          log_success "$hermes_version"
+        else
+          log_error "Hermes Agent 0.18.2 or later is required (found $hermes_version)"
+          all_passed=false
+        fi
+      else
+        log_error "Could not determine Hermes Agent version: $hermes_version"
+        all_passed=false
+      fi
+    else
+      log_error "Hermes Agent is required for the Hermes setup profile"
+      all_passed=false
+    fi
+
+    local resolved_hermes_home="${HERMES_HOME:-$HOME/.hermes}"
+    if [[ -d "$resolved_hermes_home" ]]; then
+      log_success "Hermes home found ($resolved_hermes_home)"
+    else
+      log_error "Hermes home not found: $resolved_hermes_home"
+      all_passed=false
+    fi
   fi
   
   # Check git
@@ -255,6 +308,15 @@ phase_setup_environment() {
 phase_feature_configuration() {
   log_info "Configuring optional features..."
   echo ""
+
+  if [[ "$SETUP_PROFILE" == "hermes" ]]; then
+    export SECOPS_ENABLE_OPTIONAL_SURFACES=0
+    export SECOPS_ENABLE_BENCHMARK=0
+    export SECOPS_ENABLE_LIVE_EXPORT=0
+    log_success "Hermes profile selected; unrelated OpenClaw prompts and benchmark generation are skipped"
+    echo ""
+    return
+  fi
   
   # Feature 1: Enable optional telemetry surfaces
   log_info "Feature 1: Optional Native Telemetry Surfaces"
@@ -333,31 +395,42 @@ phase_initialization() {
   mkdir -p "$SCRIPT_DIR/data/openclaw/replay/unlabeled"
   log_success "Data directories created"
 
-  # Ensure baseline regression dataset exists for evaluate.py/tests on fresh clones.
-  if [[ ! -f "$SCRIPT_DIR/data/events.json" || ! -f "$SCRIPT_DIR/data/events_unlabeled.json" ]]; then
-    log_info "Generating baseline dataset (data/events*.json)..."
-    if python3 "$SCRIPT_DIR/prepare.py" > "$PREPARE_LOG" 2>&1; then
-      log_success "Baseline dataset generated"
+  # The focused Hermes profile does not need benchmark datasets.
+  if [[ "$SETUP_PROFILE" != "hermes" ]]; then
+    if [[ ! -f "$SCRIPT_DIR/data/events.json" || ! -f "$SCRIPT_DIR/data/events_unlabeled.json" ]]; then
+      log_info "Generating baseline dataset (data/events*.json)..."
+      if python3 "$SCRIPT_DIR/prepare.py" > "$PREPARE_LOG" 2>&1; then
+        log_success "Baseline dataset generated"
+      else
+        log_warn "Failed to generate baseline dataset (install may continue)"
+        log_warn "See $PREPARE_LOG for details"
+      fi
     else
-      log_warn "Failed to generate baseline dataset (install may continue)"
-      log_warn "See $PREPARE_LOG for details"
+      log_success "Baseline dataset already present"
     fi
-  else
-    log_success "Baseline dataset already present"
   fi
   
   # Run validation tests
   log_info "Running validation tests..."
   source "$VENV_DIR/bin/activate"
 
-  # Generate OpenClaw sample fixtures expected by tests (best-effort).
-  if python3 "$SCRIPT_DIR/scripts/generate_openclaw_samples.py" >/dev/null 2>&1; then
-    log_success "OpenClaw sample fixtures ready"
+  local validation_targets=("tests/")
+  if [[ "$SETUP_PROFILE" == "hermes" ]]; then
+    validation_targets=(
+      "tests/test_hermes_adapter.py"
+      "tests/test_hermes_integration.py"
+      "tests/test_hermes_plugin.py"
+    )
   else
-    log_warn "Failed to generate OpenClaw sample fixtures (tests may fail)"
+    # Generate OpenClaw sample fixtures expected by the full suite (best-effort).
+    if python3 "$SCRIPT_DIR/scripts/generate_openclaw_samples.py" >/dev/null 2>&1; then
+      log_success "OpenClaw sample fixtures ready"
+    else
+      log_warn "Failed to generate OpenClaw sample fixtures (tests may fail)"
+    fi
   fi
-  
-  if python3 -m pytest tests/ -q 2>/dev/null; then
+
+  if python3 -m pytest "${validation_targets[@]}" -q 2>/dev/null; then
     log_success "All validation tests passed"
   else
     log_warn "Some validation tests failed (this may be OK on first setup)"
@@ -411,6 +484,21 @@ summary() {
   log_success "Setup complete!"
   echo "======================================================================="
   echo ""
+
+  if [[ "$SETUP_PROFILE" == "hermes" ]]; then
+    echo "Hermes integration profile installed."
+    echo ""
+    echo "The Hermes bootstrap will now install the native plugin, run the first refresh,"
+    echo "and start persistent monitoring."
+    echo ""
+    echo "Core verification:"
+    echo "   ${BLUE}$VENV_DIR/bin/python -m secopsai.cli hermes doctor${NC}"
+    echo ""
+    echo "Documentation:"
+    echo "   ${BLUE}https://docs.secopsai.dev/Hermes-Integration/${NC}"
+    echo ""
+    return
+  fi
   
   echo "Next steps:"
   echo ""
@@ -451,10 +539,9 @@ summary() {
 main() {
   echo ""
   echo "╔════════════════════════════════════════════════════════════════════╗"
-  echo "║          secopsai Setup & Configuration                             ║"
+  echo "║          SecOpsAI Setup & Configuration                             ║"
   echo "║                                                                    ║"
-  echo "║  Installs the OpenClaw security detection pipeline with           ║"
-  echo "║  automated attack detection and benchmark validation.             ║"
+  echo "║  Installs the local-first security operations platform.            ║"
   echo "╚════════════════════════════════════════════════════════════════════╝"
   echo ""
   

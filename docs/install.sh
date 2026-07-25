@@ -11,9 +11,10 @@ set -eu
 #   2. Checks out the requested ref
 #   3. Runs setup.sh from the repo root (non-interactive-safe by default)
 
-INSTALL_REF="${SECOPSAI_INSTALL_REF:-a93a042df0cbe593ea64d9002b9556fe0533d537}"
+INSTALL_REF="${SECOPSAI_INSTALL_REF:-v1.0.0}"
 REPO_URL="https://github.com/Techris93/secopsai.git"
 REPO_DIR="${SECOPSAI_HOME:-"$HOME/secopsai"}"
+SETUP_PROFILE="${SECOPSAI_SETUP_PROFILE:-default}"
 
 if ! command -v git >/dev/null 2>&1; then
   echo "Error: git is required to install secopsai." >&2
@@ -35,9 +36,15 @@ fi
 
 cd "$REPO_DIR"
 
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo "Error: the existing SecOpsAI checkout has local tracked changes." >&2
+  echo "Commit or preserve those changes, or set SECOPSAI_HOME to a dedicated install directory." >&2
+  exit 1
+fi
+
 echo "Checking out $INSTALL_REF..."
-git fetch --tags origin >/dev/null 2>&1 || true
-git checkout "$INSTALL_REF" >/dev/null 2>&1 || git checkout -B main "$INSTALL_REF"
+git fetch --tags origin >/dev/null 2>&1
+git checkout --detach "$INSTALL_REF" >/dev/null 2>&1
 
 echo "Running setup.sh..."
-exec bash setup.sh --non-interactive
+exec bash setup.sh --non-interactive --profile "$SETUP_PROFILE"

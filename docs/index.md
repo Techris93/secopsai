@@ -53,31 +53,43 @@ SecOpsAI connects network discovery, software supply-chain monitoring, host and 
 
 ## Quick Start
 
-```bash
-# 1) Install secopsai
-curl -fsSL https://secopsai.dev/install.sh | bash
+Install the standard Core platform:
 
-# 2) Activate the virtualenv
+```bash
+curl -fsSL https://secopsai.dev/install.sh | bash
+```
+
+For Hermes Agent 0.18.2 or later, use the dedicated installer. It installs Core, the read-only Hermes plugin, and persistent monitoring:
+
+```bash
+curl -fsSL https://secopsai.dev/install-hermes.sh | bash
+```
+
+Then continue with the standard Core workflow:
+
+```bash
+# 1) Activate the installed environment
+
 cd ~/secopsai
 source .venv/bin/activate
 
-# 3) Run the packaged OpenClaw pipeline
+# 2) Run the packaged OpenClaw pipeline
 secopsai refresh
 
-# 4) Try the cross-platform adapter workflow
+# 3) Try the cross-platform adapter workflow
 secopsai refresh --platform macos,openclaw,hermes
 secopsai correlate
 
-# 5) List high-severity findings
+# 4) List high-severity findings
 secopsai list --severity high
 
-# 6) Run the native triage orchestrator
+# 5) Run the native triage orchestrator
 secopsai triage orchestrate --search-root ~/secopsai
 
-# 7) Run adaptive response analysis
+# 6) Run adaptive response analysis
 secopsai adaptive-response --persist-memory
 
-# 8) Check AI-built dependency changes for slopsquatting risk
+# 7) Check AI-built dependency changes for slopsquatting risk
 secopsai supply-chain ai-dependency-guard --path . --json
 ```
 

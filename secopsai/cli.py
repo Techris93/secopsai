@@ -72,6 +72,10 @@ from secopsai.graph_store import show_node as show_graph_node
 from secopsai.intelligence import ACTIONS as INTELLIGENCE_ACTIONS
 from secopsai.intelligence import list_actions as list_intelligence_actions
 from secopsai.intelligence import run_read_action as run_intelligence_read_action
+from secopsai.hermes_integration import doctor as hermes_doctor
+from secopsai.hermes_integration import refresh as refresh_hermes
+from secopsai.hermes_service import install_service as install_hermes_service
+from secopsai.hermes_service import service_action as hermes_service_action
 from secopsai.intelligence_jobs import cancel_job as cancel_intelligence_job
 from secopsai.intelligence_jobs import requeue_job as requeue_intelligence_job
 from secopsai.intelligence_jobs import enqueue_job as enqueue_intelligence_job
@@ -1000,6 +1004,22 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default=None,
         help="Override OpenClaw home directory (default: ~/.openclaw)",
     )
+
+    hermes = sub.add_parser("hermes", help="Inspect, refresh, and manage the Hermes Agent integration")
+    hermes_sub = hermes.add_subparsers(dest="hermes_cmd", required=True)
+    hermes_doctor_cmd = hermes_sub.add_parser("doctor", help="Verify Hermes telemetry, plugin, and service readiness")
+    hermes_doctor_cmd.add_argument("--hermes-home", default=None, help="Override HERMES_HOME (default: ~/.hermes)")
+    hermes_refresh = hermes_sub.add_parser("refresh", help="Collect and detect against local Hermes telemetry once")
+    hermes_refresh.add_argument("--hermes-home", default=None, help="Override HERMES_HOME (default: ~/.hermes)")
+    hermes_refresh.add_argument("--db-path", default=None, help="Override SQLite findings database path")
+    hermes_refresh.add_argument("--max-lines", type=int, default=5000, help="Maximum lines read from each Hermes log")
+    hermes_service = hermes_sub.add_parser("service", help="Install or control persistent Hermes monitoring")
+    hermes_service.add_argument("action", choices=["install", "start", "stop", "status", "run-now", "logs", "uninstall"])
+    hermes_service.add_argument("--hermes-home", default=None, help="Override HERMES_HOME for service installation")
+    hermes_service.add_argument("--db-path", default=None, help="Override SQLite findings database path")
+    hermes_service.add_argument("--interval", type=int, default=None, help="Refresh interval in seconds (default: 300; minimum: 60)")
+    hermes_service.add_argument("--no-start", action="store_true", help="Install service files without starting the service")
+    hermes_service.add_argument("--tail", type=int, default=80, help="Number of service log lines to return")
 
     refresh = sub.add_parser(
         "refresh",
@@ -2645,6 +2665,37 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"latest_replay_event={replay.get('latest_event_ts')}")
             print(f"open_or_in_review={findings.get('open_or_in_review')}")
             print(f"staleness_flags={','.join(payload.get('staleness_flags') or []) or 'none'}")
+        return 0
+
+    if args.cmd == "hermes":
+        try:
+            if args.hermes_cmd == "doctor":
+                payload = hermes_doctor(configured_home=args.hermes_home)
+            elif args.hermes_cmd == "refresh":
+                payload = refresh_hermes(
+                    configured_home=args.hermes_home,
+                    db_path=args.db_path,
+                    max_lines=args.max_lines,
+                )
+            elif args.hermes_cmd == "service":
+                if args.action == "install":
+                    payload = install_hermes_service(
+                        interval=args.interval,
+                        configured_home=args.hermes_home,
+                        db_path=args.db_path,
+                        start=not args.no_start,
+                    )
+                else:
+                    payload = hermes_service_action(args.action, tail=args.tail)
+            else:
+                raise ValueError(f"unsupported Hermes command: {args.hermes_cmd}")
+        except Exception as exc:
+            if args.json:
+                print(to_json({"error": str(exc), "command": args.hermes_cmd}))
+            else:
+                print(f"error: {exc}")
+            return 1
+        print(to_json(payload))
         return 0
 
     if args.cmd == "refresh":

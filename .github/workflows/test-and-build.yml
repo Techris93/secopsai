@@ -3,6 +3,7 @@ name: Test & Build
 on:
   push:
     branches: [main, develop]
+    tags: ["v*"]
   pull_request:
     branches: [main, develop]
 
@@ -91,6 +92,15 @@ jobs:
         run: |
           python scripts/verify_docs_examples.py
 
+      - name: Verify installers and website parity
+        run: |
+          bash -n setup.sh
+          sh -n docs/install.sh
+          sh -n docs/install-hermes.sh
+          cmp website/index.html www/index.html
+          grep -F 'data-tab="hermes"' website/index.html
+          grep -F 'https://secopsai.dev/install-hermes.sh' website/index.html
+
       - name: Lint with flake8
         run: |
           # Stop the build if there are Python syntax errors or undefined names
@@ -149,7 +159,9 @@ jobs:
   build-container:
     needs: [test, chatgpt-app]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
 
     permissions:
       contents: read
@@ -252,6 +264,9 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -261,8 +276,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          tag_name: ${{ github.ref_name }}
+          release_name: Release ${{ github.ref_name }}
           body: |
             See CHANGELOG.md for details.
 

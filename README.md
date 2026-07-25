@@ -1,6 +1,6 @@
-# SecOpsAI v2.0 - Local-First Security Operations
+# SecOpsAI v1.0.0 - Local-First Security Operations
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/Techris93/secopsai)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/Techris93/secopsai/releases/tag/v1.0.0)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 > **Local-first detection, investigation, network discovery, and triage orchestration for OpenClaw, Hermes Agent, macOS, Linux, Windows, and SecOpsAI Edge.**
@@ -48,6 +48,12 @@ SecOpsAI can detect multi-system patterns that are hard to catch from a single l
 
 ```bash
 curl -fsSL https://secopsai.dev/install.sh | bash
+```
+
+For Hermes Agent 0.18.2 or later, install Core, the native read-only plugin, and the persistent monitor together:
+
+```bash
+curl -fsSL https://secopsai.dev/install-hermes.sh | bash
 ```
 
 Security note: only run a `curl | bash` installer if you trust the publisher and the source code. If you prefer a safer path, clone the repo and inspect `docs/install.sh` + `setup.sh` before running.
@@ -226,7 +232,27 @@ Use the plugin in the same order as the CLI:
 
 See [docs/OpenClaw-Plugin.md](docs/OpenClaw-Plugin.md) for the current tool surface and [docs/OpenClaw-Integration.md](docs/OpenClaw-Integration.md) for the Python CLI workflow.
 
-### 3. Optional Notification Workflows
+### 3. Hermes Agent Integration
+
+Install the complete Hermes integration:
+
+```bash
+curl -fsSL https://secopsai.dev/install-hermes.sh | bash
+```
+
+The installer verifies Hermes 0.18.2+, installs and enables the native plugin, performs one bounded read-only telemetry collection, and starts the five-minute user-level monitor.
+
+```bash
+secopsai hermes doctor
+secopsai hermes service status
+secopsai list --platform hermes --no-refresh
+```
+
+The plugin exposes read-only integration health, normalized findings, investigation sessions, triage counts, and Edge asset summaries. It cannot run arbitrary commands, refresh telemetry, scan networks, close findings, disclose research, or publish content.
+
+See [docs/Hermes-Integration.md](docs/Hermes-Integration.md) for data boundaries, tools, service controls, recovery, and uninstall.
+
+### 4. Optional Notification Workflows
 
 When correlations or notable findings are detected, SecOpsAI can send notification workflows through the enabled local surfaces.
 
@@ -237,7 +263,7 @@ Current built-in operator flow is CLI-first. External chat or plugin surfaces re
 ```text
 OpenClaw + Hermes + Host Adapters -> Unified Schema -> Detection Engine -> Correlation Engine -> SQLite SOC Store
                                                             -> Native Triage Engine -> Action Queue / Policy Controls
-                                                            -> CLI / Plugin / Notifications
+                                                            -> CLI / OpenClaw Plugin / Hermes Plugin / Notifications
 ```
 
 Core layers:
@@ -413,6 +439,7 @@ Example operational model:
 
 On macOS, launchd-based execution is supported via helper scripts, including:
 
+- `secopsai hermes service install`
 - `scripts/install_openclaw_launchd.sh`
 - `scripts/install_supply_chain_launchd.sh`
 - `scripts/install_triage_orchestrator_launchd.sh`
