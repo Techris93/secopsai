@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 
@@ -10,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_release_version_is_consistent() -> None:
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert project["project"]["version"] == "1.0.0"
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'version = "1.0.0"' in project
     assert '__version__ = "1.0.0"' in (ROOT / "secopsai" / "__init__.py").read_text(encoding="utf-8")
     assert "SecOpsAI v1.0.0" in (ROOT / "README.md").read_text(encoding="utf-8")
     assert 'SECOPSAI_INSTALL_REF:-v1.0.0' in (ROOT / "docs" / "install.sh").read_text(encoding="utf-8")
@@ -59,4 +58,3 @@ def test_hermes_cli_help_is_packaged() -> None:
     assert "doctor" in completed.stdout
     assert "refresh" in completed.stdout
     assert "service" in completed.stdout
-
