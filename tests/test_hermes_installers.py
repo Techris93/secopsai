@@ -33,11 +33,16 @@ def test_shell_installers_are_syntax_valid() -> None:
 def test_public_hermes_installer_and_worker_route_are_wired() -> None:
     installer = (ROOT / "docs" / "install-hermes.sh").read_text(encoding="utf-8")
     worker = (ROOT / "scripts" / "cloudflare-installer-worker.js").read_text(encoding="utf-8")
+    deployment = (ROOT / ".github" / "workflows" / "deploy-installers.yml").read_text(encoding="utf-8")
     assert 'MIN_VERSION="0.18.2"' in installer
     assert 'PLUGIN="Techris93/secopsai/integrations/hermes"' in installer
     assert "hermes plugins install" in installer
     assert "hermes service install" in installer
     assert '"/install-hermes.sh": "https://docs.secopsai.dev/install-hermes.sh"' in worker
+    assert 'wrangler@4.114.0 deploy scripts/cloudflare-installer-worker.js' in deployment
+    assert '--route "secopsai.dev/install.sh*"' in deployment
+    assert '--route "secopsai.dev/install-hermes.sh*"' in deployment
+    assert "CLOUDFLARE_API_TOKEN" in deployment
 
 
 def test_tracked_website_copies_are_identical_and_contain_hermes_tab() -> None:
