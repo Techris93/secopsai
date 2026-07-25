@@ -55,18 +55,30 @@ You should see HTTP 200.
 
 ### Step 3: Point secopsai.dev to the deployment
 
-You have two simple options.
+The production site publishes installer files directly from both tracked static
+site roots. CI verifies that these files are byte-identical to the canonical
+copies under `docs/`:
 
-Option A (recommended): make `secopsai.dev` itself serve this Pages project.
+- `website/install.sh` and `www/install.sh`
+- `website/install-hermes.sh` and `www/install-hermes.sh`
+
+This is the recommended path because the existing Cloudflare Pages Git
+deployments require no separate Worker credential or manual route update.
+
+You have two fallback options if the apex site is moved away from these Pages
+projects.
+
+Option A: make `secopsai.dev` itself serve this Pages project.
 
 1. In Pages project settings, add custom domain `secopsai.dev`.
 2. Let Cloudflare create/update DNS records automatically.
 3. Wait for SSL status to become Active.
 
-Now this should work directly:
+Now both commands should work directly:
 
 ```bash
 curl -fsSLI https://secopsai.dev/install.sh
+curl -fsSLI https://secopsai.dev/install-hermes.sh
 ```
 
 Option B: keep docs on `docs.secopsai.dev` and route only installer paths from apex domain.
@@ -91,22 +103,12 @@ If you prefer users to stay on `secopsai.dev` without redirect, use the Worker s
 
 - `scripts/cloudflare-installer-worker.js`
 
-Production deployment is automated by `.github/workflows/deploy-installers.yml`.
-It discovers the Worker already bound to the standard installer, publishes the
-reviewed script with the repository's Cloudflare secrets, manages both routes,
-and verifies that each public endpoint returns a shell script.
-
-Required GitHub repository secrets:
-
-- `CLOUDFLARE_ACCOUNT_ID`
-- `CLOUDFLARE_API_TOKEN` with Workers Scripts edit and Zone Workers Routes edit/read access
-
-The managed routes are:
+The Worker source supports both routes:
 
 - `secopsai.dev/install.sh*`
 - `secopsai.dev/install-hermes.sh*`
 
-Manual recovery:
+Worker setup or recovery:
 
 1. Cloudflare Dashboard -> Workers & Pages -> Create Worker.
 2. Paste script from `scripts/cloudflare-installer-worker.js`.
