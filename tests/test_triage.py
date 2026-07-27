@@ -158,6 +158,89 @@ class TriageTests(unittest.TestCase):
                 )
 
             self.assertFalse(result["investigation"]["dependency_presence"]["present"])
+            self.assertEqual(
+                result["investigation"]["exposure_assessment"]["status"],
+                "not_observed_in_scope",
+            )
+            self.assertEqual(result["investigation"]["recommended_disposition"], "needs_review")
+            self.assertEqual(
+                result["investigation"]["actionability"]["package_intelligence"],
+                "actionable",
+            )
+
+    def test_advisory_backed_package_stays_true_positive_without_local_reference(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            db_path = str(temp_path / "soc.db")
+            report_path = temp_path / "npm-widget-1.0.0-to-1.0.1.md"
+            report_path.write_text("fake report", encoding="utf-8")
+            findings = [
+                {
+                    "finding_id": "SCM-ADVISORY001",
+                    "title": "Suspicious npm package release: widget@1.0.1",
+                    "summary": "Source-backed advisory matched the exact version.",
+                    "severity": "critical",
+                    "severity_score": 98,
+                    "status": "open",
+                    "disposition": "unreviewed",
+                    "source": "secopsai-supply-chain",
+                    "first_seen": "2026-04-06T00:00:00Z",
+                    "last_seen": "2026-04-06T00:00:00Z",
+                    "platform": "supply_chain",
+                    "package": "widget",
+                    "ecosystem": "npm",
+                    "new_version": "1.0.1",
+                    "old_version": "1.0.0",
+                    "report_path": str(report_path),
+                    "verdict": "malicious",
+                    "advisory_matches": [
+                        {
+                            "advisory_id": "ADV-TEST-001",
+                            "source_urls": ["https://example.test/advisory"],
+                        }
+                    ],
+                    "advisory_ids": ["ADV-TEST-001"],
+                }
+            ]
+            _write_findings(db_path, findings)
+
+            with mock.patch(
+                "secopsai.triage.supply_chain.supply_chain.explain_policy",
+                return_value={"allow_matches": [], "deny_matches": []},
+            ), mock.patch(
+                "secopsai.triage.supply_chain.supply_chain.explain_verdict",
+                return_value={
+                    "score": 20,
+                    "effective_threshold": 10,
+                    "verdict": "malicious",
+                    "matched_rules": [{"rule": "emergency advisory match"}],
+                },
+            ), mock.patch(
+                "secopsai.triage.supply_chain._reputation_summary",
+                return_value={"release_count": 2},
+            ):
+                result = investigate_finding(
+                    "SCM-ADVISORY001",
+                    db_path=db_path,
+                    search_root=str(temp_path),
+                    report_dir=str(temp_path / "triage"),
+                )
+
+            investigation = result["investigation"]
+            self.assertEqual(investigation["recommended_disposition"], "true_positive")
+            self.assertEqual(
+                investigation["threat_assessment"]["verdict"], "confirmed_malicious"
+            )
+            self.assertEqual(
+                investigation["exposure_assessment"]["status"], "not_observed_in_scope"
+            )
+            self.assertEqual(
+                investigation["actionability"]["local_response"],
+                "verify_enterprise_exposure",
+            )
+            markdown = Path(result["markdown_report"]).read_text(encoding="utf-8")
+            self.assertIn("Package Threat Assessment", markdown)
+            self.assertIn("Environment Exposure Assessment", markdown)
 
     def test_start_close_and_list_triage_findings(self):
         with tempfile.TemporaryDirectory() as temp_dir:

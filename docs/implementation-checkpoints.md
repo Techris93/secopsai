@@ -178,3 +178,23 @@ Added request, approval, status, and sanitized-result records. The default provi
 - Dashboard research automation suite: 3 passed.
 - Dashboard JavaScript and Worker syntax checks: passed.
 - Dashboard repository has no `build` script; its supported deployment is static Pages/Worker serving and is validated with `npm run check` plus Cloudflare deployment checks.
+
+## 098 Package Threat And Environment Exposure Separation
+
+Status: complete.
+
+Supply-chain triage now records package threat verdict, evidence confidence,
+and environment exposure as independent assessments. Missing dependency
+references produce `not_observed_in_scope` with explicit limitations; they do
+not produce `expected_behavior`, false-positive classification, severity
+downgrade, or automatic closure. Advisory-backed and denylisted packages remain
+package-level true positives, while weak or incomplete evidence remains open
+for review and safe Research Case validation.
+
+The orchestrator no longer auto-closes supply-chain findings because a package
+is absent locally. It queues a reviewed package-level decision and preserves
+organization-wide exposure as a separate follow-up. Triage reports now render
+dedicated threat and exposure sections.
+
+Verification: 420 Core tests passed; focused triage/orchestrator tests passed;
+MkDocs strict build and repository diff checks passed.

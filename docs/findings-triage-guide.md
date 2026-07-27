@@ -58,7 +58,8 @@ The orchestrator will:
 
 - move findings into `in_review`
 - write the same case files as manual investigation
-- auto-close low-risk `expected_behavior`
+- auto-close low-risk `expected_behavior` for eligible host/policy findings;
+  supply-chain intelligence is excluded from this shortcut
 - queue higher-risk actions such as allowlisting and tuning
 
 ## Supported Dispositions
@@ -71,6 +72,12 @@ The orchestrator will:
 - `needs_review`
 - `tune_policy`
 - `remediated`
+
+For supply-chain findings, do not use `expected_behavior`, `not_applicable`, or
+`false_positive` solely because the package is absent from the current local
+repository. Local absence changes the exposure assessment only. Keep credible
+package intelligence open or in review, validate the artifact through the
+Research workflow, and search organization-wide inventories separately.
 
 ## Supply-Chain Triage
 
@@ -88,8 +95,10 @@ Use it to quickly decide whether a package is:
 
 - `true_positive`
 - `false_positive`
-- `expected_behavior`
 - `needs_review`
+
+Record local deployment relevance in the separate exposure assessment rather
+than using `expected_behavior` as a substitute for “not installed here.”
 
 ### False-Positive Relief
 
