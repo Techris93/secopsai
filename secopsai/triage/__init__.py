@@ -8,7 +8,12 @@ from .engine import (
     list_triage_findings,
     start_finding,
 )
-from .orchestrator import apply_action, generate_summary, orchestrate_findings
+from .orchestrator import (
+    apply_action,
+    generate_summary,
+    orchestrate_findings,
+    reconcile_exposure_closures,
+)
 from .queue import get_action, list_actions
 
 __all__ = [
@@ -22,5 +27,6 @@ __all__ = [
     "list_actions",
     "list_triage_findings",
     "orchestrate_findings",
+    "reconcile_exposure_closures",
     "start_finding",
 ]

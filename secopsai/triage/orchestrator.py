@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import soc_store
+
 from secopsai.adaptive_response import evaluate_adaptive_response
 from secopsai import supply_chain as supply_chain_mod
 
@@ -28,6 +30,87 @@ class OrchestrateResult:
     queue_path: str
     summary_json: str
     summary_markdown: str
+    reconciled_exposure_closures: int = 0
+
+
+LEGACY_LOCAL_ABSENCE_MARKERS = (
+    "not referenced in local dependency manifests",
+    "outside current risk boundary",
+    "no matching dependency reference",
+    "not referenced locally",
+)
+
+
+def reconcile_exposure_closures(
+    *,
+    db_path: Optional[str] = None,
+    apply: bool = False,
+    author: str = "secopsai-policy-migration",
+) -> Dict[str, Any]:
+    """Reopen only malicious SCM findings closed by the legacy local-absence rule."""
+    rows = soc_store.list_findings(
+        db_path,
+        status="closed",
+        limit=None,
+        include_payload=True,
+    )
+    candidates: List[Dict[str, str]] = []
+    for row in rows:
+        finding_id = str(row.get("finding_id") or "")
+        if (
+            not finding_id.startswith("SCM-")
+            or str(row.get("source") or "") != "secopsai-supply-chain"
+            or str(row.get("disposition") or "") != "expected_behavior"
+            or str(row.get("verdict") or "").lower() != "malicious"
+        ):
+            continue
+        detail = soc_store.get_finding(finding_id, db_path) or row
+        notes = " ".join(
+            str(item.get("note") or "").lower()
+            for item in detail.get("notes") or []
+            if isinstance(item, dict)
+        )
+        matched_marker = next(
+            (marker for marker in LEGACY_LOCAL_ABSENCE_MARKERS if marker in notes),
+            None,
+        )
+        if not matched_marker:
+            continue
+        candidates.append(
+            {
+                "finding_id": finding_id,
+                "ecosystem": str(row.get("ecosystem") or ""),
+                "package": str(row.get("package") or ""),
+                "version": str(row.get("new_version") or ""),
+                "matched_legacy_reason": matched_marker,
+            }
+        )
+
+    if apply:
+        for candidate in candidates:
+            finding_id = candidate["finding_id"]
+            soc_store.set_finding_status(finding_id, "open", db_path)
+            soc_store.set_finding_disposition(finding_id, "unreviewed", db_path)
+            soc_store.add_note(
+                finding_id,
+                author,
+                (
+                    "Reopened after package-threat/exposure policy correction. "
+                    "Local absence is an exposure observation and cannot close a malicious package finding."
+                ),
+                db_path,
+            )
+
+    return {
+        "status": "applied" if apply else "preview",
+        "candidate_count": len(candidates),
+        "reopened_count": len(candidates) if apply else 0,
+        "findings": candidates,
+        "selection_rule": (
+            "closed SCM finding + secopsai-supply-chain source + malicious verdict + "
+            "expected_behavior disposition + legacy local-absence closure note"
+        ),
+    }
 
 
 def _utc_now() -> str:
@@ -383,6 +466,11 @@ def orchestrate_findings(
     limit: Optional[int] = None,
     auto_apply_safe: bool = True,
 ) -> OrchestrateResult:
+    reconciliation = reconcile_exposure_closures(
+        db_path=db_path,
+        apply=True,
+        author="secopsai-orchestrator-policy-migration",
+    )
     policy = load_policy()
     limit = int(limit or policy.get("limits", {}).get("max_findings_per_run", 20))
     if finding_ids:
@@ -488,4 +576,5 @@ def orchestrate_findings(
         queue_path=str(queue_path(queue_file)),
         summary_json=payload["summary_json"],
         summary_markdown=payload["summary_markdown"],
+        reconciled_exposure_closures=int(reconciliation["reopened_count"]),
     )

@@ -2051,6 +2051,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     triage_orchestrate.add_argument("--no-auto-apply-safe", action="store_true", help="Do not auto-close low-risk findings")
     triage_orchestrate.add_argument("--enforce-preflight", action="store_true", help="Block orchestration when freshness checks fail")
 
+    triage_reconcile_exposure = triage_sub.add_parser(
+        "reconcile-exposure-closures",
+        help="Preview or repair supply-chain findings closed by the legacy local-absence rule",
+    )
+    triage_reconcile_exposure.add_argument("--apply", action="store_true", help="Reopen the narrowly matched legacy findings")
+    triage_reconcile_exposure.add_argument("--author", default="secopsai-policy-migration")
+    triage_reconcile_exposure.add_argument("--db-path", default=None, help="Override SQLite database path")
+
     triage_queue = triage_sub.add_parser("queue", help="List queued triage actions")
     triage_queue.add_argument("--status", choices=["pending", "applied"])
     triage_queue.add_argument("--limit", type=int, default=50)
@@ -4017,6 +4025,26 @@ def main(argv: Optional[List[str]] = None) -> int:
                     print(f"\nSESSION_ID: {payload['session_id']}")
             return 0
 
+        if args.triage_cmd == "reconcile-exposure-closures":
+            from secopsai.triage import reconcile_exposure_closures
+
+            payload = reconcile_exposure_closures(
+                db_path=args.db_path,
+                apply=args.apply,
+                author=args.author,
+            )
+            if args.json:
+                print(to_json(payload))
+            else:
+                print(f"status={payload['status']}")
+                print(f"candidate_count={payload['candidate_count']}")
+                print(f"reopened_count={payload['reopened_count']}")
+                for item in payload["findings"]:
+                    print(
+                        "{finding_id} | {ecosystem}:{package}@{version}".format(**item)
+                    )
+            return 0
+
         if args.triage_cmd == "orchestrate":
             try:
                 preflight = build_preflight_report()
@@ -4047,6 +4075,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                             "processed": payload.processed,
                             "auto_applied": payload.auto_applied,
                             "queued": payload.queued,
+                            "reconciled_exposure_closures": payload.reconciled_exposure_closures,
                             "findings": payload.findings,
                             "queue_path": payload.queue_path,
                             "summary_json": payload.summary_json,
@@ -4060,6 +4089,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"processed={payload.processed}")
                 print(f"auto_applied={payload.auto_applied}")
                 print(f"queued={payload.queued}")
+                print(f"reconciled_exposure_closures={payload.reconciled_exposure_closures}")
                 print(f"queue_path={payload.queue_path}")
                 print(f"summary_json={payload.summary_json}")
                 print(f"summary_markdown={payload.summary_markdown}")
