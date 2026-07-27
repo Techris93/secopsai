@@ -703,6 +703,19 @@ def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
     items must become readable strings for human review cards.
     """
     result = dict(payload)
+    analyst_brief = result.get("analyst_brief")
+    if isinstance(analyst_brief, dict):
+        nested_map = {
+            "executive_summary": "summary",
+            "facts": "confirmed_facts",
+            "inferences": "inferences",
+            "limitations": "limitations",
+            "recommended_actions": "recommended_actions",
+            "next_steps": "recommended_actions",
+        }
+        for source, destination in nested_map.items():
+            if not _present(result.get(destination)) and _present(analyst_brief.get(source)):
+                result[destination] = analyst_brief[source]
     list_fields = (
         "confirmed_facts",
         "inferences",

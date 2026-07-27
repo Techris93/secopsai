@@ -409,3 +409,36 @@ def test_bridge_normalizes_kimi_style_structured_result():
     assert normalized["limitations"] == ["Runtime behavior was not observed."]
     validated = validate_bridge_result("analyze_research_case", normalized, provider="opencodex:kimi")
     assert validated["provider"] == "opencodex:kimi"
+
+
+def test_bridge_promotes_nested_analyst_brief_fields():
+    from secopsai.codex_bridge import _normalize_bridge_result
+
+    normalized = _normalize_bridge_result(
+        {
+            "analyst_brief": {
+                "executive_summary": "A detailed evidence-led executive summary.",
+                "facts": ["Fact one", "Fact two"],
+                "inferences": ["Inference one"],
+                "limitations": ["Runtime behavior was not observed."],
+                "next_steps": ["Run approved isolated analysis."],
+            },
+            "missing_evidence": ["Sandbox telemetry"],
+        }
+    )
+    assert normalized["summary"] == "A detailed evidence-led executive summary."
+    assert normalized["confirmed_facts"] == ["Fact one", "Fact two"]
+    assert normalized["inferences"] == ["Inference one"]
+    assert normalized["limitations"] == ["Runtime behavior was not observed."]
+    assert normalized["recommended_actions"] == ["Run approved isolated analysis."]
+
+
+def test_research_bridge_prompt_requests_evidence_led_depth():
+    from secopsai.intelligence import ACTIONS, _bridge_instructions
+
+    action = ACTIONS["analyze_research_case"]
+    prompt = _bridge_instructions(action)
+    assert "comprehensive defensive research assessment" in prompt
+    assert "5-12 confirmed_facts" in prompt
+    assert "prioritized recommended_actions" in prompt
+    assert "Use the available output limits fully" in prompt

@@ -15,6 +15,8 @@ ChatGPT authentication pays for and identifies the model session. SecOpsAI OAuth
 
 SecOpsAI can use your local OpenCodex proxy so research analysis is not locked to one ChatGPT account.
 
+Research actions request evidence-led structured output rather than a chat-style paragraph. A completed case analysis includes an executive summary, confirmed facts, inferences, unsupported claims, contradictions, missing evidence, prioritized next steps, a confidence-scored verdict, evidence references, limitations, and publication risks. Mission Control presents these fields separately and retains the complete normalized result and job history.
+
 Configured on this machine:
 
 - `kimi/kimi-k2.7-code`
