@@ -253,23 +253,96 @@ def investigate_supply_chain(finding: Dict[str, Any], *, search_root: Path) -> D
     strong_signals = sorted(rule for rule in matched_rules if rule.lower() in STRONG_RULE_MARKERS)
     weak_only = bool(lower_rules) and lower_rules.issubset(WEAK_RULE_MARKERS)
     reputation = _reputation_summary(ecosystem, package) if ecosystem and package else {}
+    score = explanation.get("score")
+    threshold = explanation.get("effective_threshold")
+    threshold_matched = (
+        isinstance(score, (int, float))
+        and isinstance(threshold, (int, float))
+        and score >= threshold
+    )
+    advisory_matches = finding.get("advisory_matches") or []
+    advisory_ids = finding.get("advisory_ids") or []
+    campaign_ids = finding.get("campaign_ids") or []
+    advisory_backed = bool(
+        advisory_matches
+        or advisory_ids
+        or campaign_ids
+        or "emergency advisory match" in lower_rules
+    )
+    scanner_verdict = str(
+        explanation.get("verdict") or finding.get("verdict") or ""
+    ).strip().lower()
+    denylisted = bool(policy.get("deny_matches"))
+    allowlisted = bool(policy.get("allow_matches"))
+
+    if advisory_backed or denylisted:
+        package_verdict = "confirmed_malicious"
+        threat_confidence = "high"
+        threat_basis = (
+            "Source-backed advisory or explicit deny policy identifies this package/version."
+        )
+    elif strong_signals and (threshold_matched or scanner_verdict == "malicious"):
+        package_verdict = "likely_malicious"
+        threat_confidence = "high"
+        threat_basis = "Multiple deterministic static indicators support a package-level threat assessment."
+    elif threshold_matched or strong_signals or scanner_verdict in {"malicious", "suspicious"}:
+        package_verdict = "suspicious"
+        threat_confidence = "medium"
+        threat_basis = "Scanner evidence warrants package-level investigation but is not conclusive proof."
+    elif weak_only:
+        package_verdict = "inconclusive"
+        threat_confidence = "low"
+        threat_basis = "Only weak heuristic evidence is available."
+    else:
+        package_verdict = "inconclusive"
+        threat_confidence = "low"
+        threat_basis = "Package-level evidence is incomplete."
+
+    exposure_status = "confirmed" if dependency_hits else "not_observed_in_scope"
+    exposure_assessment = {
+        "status": exposure_status,
+        "scope": str(search_root.resolve()),
+        "references": dependency_hits,
+        "searched_manifest_patterns": list(DEPENDENCY_FILE_GLOBS),
+        "limitations": (
+            []
+            if dependency_hits
+            else [
+                "No reference in this repository does not prove organization-wide absence.",
+                "Transitive dependencies, CI caches, containers, deployed workloads, and other repositories require separate inventory checks.",
+            ]
+        ),
+    }
+    package_actionable = package_verdict in {
+        "confirmed_malicious",
+        "likely_malicious",
+        "suspicious",
+        "inconclusive",
+    }
 
     recommended_disposition = "needs_review"
     confidence = "medium"
     summary_bits = []
     next_actions = []
 
-    if policy.get("deny_matches"):
+    if advisory_backed or denylisted:
         recommended_disposition = "true_positive"
         confidence = "high"
-        summary_bits.append("Package matches the supply-chain denylist.")
+        summary_bits.append(
+            "Package-level threat evidence is source-backed or explicitly denied by policy."
+        )
+        if not dependency_hits:
+            summary_bits.append(
+                "Local exposure was not observed in this repository; that does not change the package verdict."
+            )
         next_actions.extend(
             [
-                "Block or quarantine the package version immediately.",
-                "Check whether the package or version is installed in any production dependency graph.",
+                "Block or quarantine the exact package version in applicable dependency controls.",
+                "Search organization-wide manifests, SBOMs, lockfiles, CI caches, containers, and deployed workloads for exposure.",
+                "Preserve advisory sources, artifact hashes, registry metadata, and analysis tool versions in a Research Case.",
             ]
         )
-    elif policy.get("allow_matches"):
+    elif allowlisted and package_verdict == "inconclusive":
         recommended_disposition = "false_positive"
         confidence = "high"
         summary_bits.append("Package matches the local supply-chain allowlist.")
@@ -289,24 +362,28 @@ def investigate_supply_chain(finding: Dict[str, Any], *, search_root: Path) -> D
                 "Review the stored diff report for install hooks, dynamic execution, or credential access.",
             ]
         )
-    elif weak_only and not dependency_hits:
-        recommended_disposition = "false_positive"
-        confidence = "medium"
-        summary_bits.append("Only weak heuristic rules fired and the package is not referenced locally.")
+    elif weak_only:
+        recommended_disposition = "needs_review"
+        confidence = "low"
+        summary_bits.append("Only weak heuristic rules fired; package evidence remains inconclusive.")
         next_actions.extend(
             [
-                "Verify the package is not a transitive dependency in deployment manifests outside this repo.",
-                "If confirmed irrelevant, close as false_positive or expected_behavior with note.",
+                "Run safe package intake and compare the exact artifact with a trusted release before deciding the package verdict.",
+                "Close as false positive only when package-level evidence, not local absence, supports that conclusion.",
             ]
         )
     elif not dependency_hits:
-        recommended_disposition = "expected_behavior"
+        recommended_disposition = "needs_review"
         confidence = "medium"
-        summary_bits.append("The release is not referenced in local dependency manifests.")
+        summary_bits.append(
+            "Local exposure was not observed in this repository, while package-level validation remains open."
+        )
         next_actions.extend(
             [
-                "Treat this as ecosystem intelligence unless the package is known to be deployed elsewhere.",
-                "Close as expected_behavior if you confirm it is outside your risk boundary.",
+                "Collect registry metadata and the exact artifact without executing package code.",
+                "Hash, statically inspect, and compare the artifact with the legitimate or previous release.",
+                "Promote credible evidence into a Research Case and correlate publishers, code, infrastructure, and timelines.",
+                "Search organization-wide dependency inventories separately from the package investigation.",
             ]
         )
     else:
@@ -340,6 +417,29 @@ def investigate_supply_chain(finding: Dict[str, Any], *, search_root: Path) -> D
         "dependency_presence": {
             "present": bool(dependency_hits),
             "paths": dependency_hits,
+        },
+        "threat_assessment": {
+            "verdict": package_verdict,
+            "confidence": threat_confidence,
+            "basis": threat_basis,
+            "advisory_backed": advisory_backed,
+            "denylisted": denylisted,
+            "scanner_verdict": scanner_verdict or "unknown",
+            "score": score,
+            "threshold": threshold,
+            "strong_signals": strong_signals,
+            "limitations": [
+                "Static indicators do not by themselves prove runtime behavior or malicious intent.",
+                "Attribution requires separate corroborated evidence.",
+            ],
+        },
+        "exposure_assessment": exposure_assessment,
+        "actionability": {
+            "package_intelligence": "actionable" if package_actionable else "closed",
+            "local_response": "required" if dependency_hits else "verify_enterprise_exposure",
+            "reason": (
+                "Package threat assessment is independent of whether this repository references the package."
+            ),
         },
         "reputation": reputation,
         "policy": policy,

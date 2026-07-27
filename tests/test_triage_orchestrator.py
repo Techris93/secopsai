@@ -20,7 +20,7 @@ def _write_findings(db_path: str, findings):
 
 
 class TriageOrchestratorTests(unittest.TestCase):
-    def test_orchestrate_auto_closes_expected_behavior(self):
+    def test_orchestrate_keeps_external_package_intelligence_open_without_local_reference(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             db_path = str(temp_path / "soc.db")
@@ -61,11 +61,14 @@ class TriageOrchestratorTests(unittest.TestCase):
                 )
 
             self.assertEqual(result.processed, 1)
-            self.assertEqual(result.auto_applied, 1)
-            self.assertEqual(result.queued, 0)
+            self.assertEqual(result.auto_applied, 0)
+            self.assertEqual(result.queued, 1)
             updated = soc_store.get_finding("SCM-AUTO001", db_path)
-            self.assertEqual(updated["status"], "closed")
-            self.assertEqual(updated["disposition"], "expected_behavior")
+            self.assertEqual(updated["status"], "in_review")
+            self.assertEqual(updated["disposition"], "unreviewed")
+            queued = list_actions(path=queue_file)
+            self.assertEqual(queued[0]["payload"]["disposition"], "needs_review")
+            self.assertIn("local exposure was not observed", queued[0]["summary"].lower())
             self.assertTrue(Path(result.summary_json).exists())
             self.assertTrue(Path(result.summary_markdown).exists())
 
@@ -116,7 +119,7 @@ class TriageOrchestratorTests(unittest.TestCase):
             self.assertEqual(queued[0]["action_type"], "close_finding")
             self.assertEqual(queued[0]["payload"]["disposition"], "needs_review")
 
-    def test_apply_allowlist_action_closes_finding(self):
+    def test_weak_external_signal_requires_review_instead_of_automatic_allowlist(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             db_path = str(temp_path / "soc.db")
@@ -157,15 +160,21 @@ class TriageOrchestratorTests(unittest.TestCase):
                 )
 
             self.assertEqual(result.queued, 1)
-            action_id = list_actions(path=queue_file)[0]["action_id"]
-            with mock.patch("secopsai.triage.orchestrator.supply_chain_mod.allowlist_add", return_value={"target": "npm:nano-brain"}), \
-                 mock.patch("secopsai.triage.orchestrator.supply_chain_mod.reconcile_history", return_value={"reclassified": 1}):
-                updated = apply_action(action_id, queue_file=queue_file, db_path=db_path, author="tester", yes=True)
+            action = list_actions(path=queue_file)[0]
+            self.assertEqual(action["action_type"], "close_finding")
+            self.assertEqual(action["payload"]["disposition"], "needs_review")
+            updated = apply_action(
+                action["action_id"],
+                queue_file=queue_file,
+                db_path=db_path,
+                author="tester",
+                yes=True,
+            )
 
             self.assertEqual(updated["status"], "applied")
             finding = soc_store.get_finding("SCM-ALLOW001", db_path)
-            self.assertEqual(finding["disposition"], "false_positive")
-            self.assertEqual(finding["status"], "closed")
+            self.assertEqual(finding["disposition"], "needs_review")
+            self.assertEqual(finding["status"], "triaged")
 
     def test_generate_summary_writes_reports(self):
         with tempfile.TemporaryDirectory() as temp_dir:

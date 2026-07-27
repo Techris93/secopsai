@@ -96,7 +96,8 @@ def _planned_action_for(
 
     if category == "supply_chain":
         if recommended == "expected_behavior":
-            return {"kind": "auto_close", "disposition": "expected_behavior"}
+            recommended = "needs_review"
+            investigation["recommended_disposition"] = recommended
         if recommended == "false_positive" and policy.get("allow_matches"):
             return {"kind": "auto_close", "disposition": "false_positive"}
         if recommended == "false_positive":
@@ -126,6 +127,25 @@ def _planned_action_for(
                     "disposition": "needs_review",
                     "status": "triaged",
                     "note": "Strong rule hits require manual package/report review before downgrade or closure.",
+                },
+                investigation=investigation,
+                queue_file=queue_file,
+            )
+            return {"kind": "queued", "action": queued}
+        if recommended in {"true_positive", "needs_review"} and not dependency_present:
+            queued = _queue_action(
+                finding=finding,
+                category=category,
+                action_type="close_finding",
+                summary="Package-level threat evidence requires review; local exposure was not observed in this repository.",
+                payload={
+                    "finding_id": finding.get("finding_id"),
+                    "disposition": recommended,
+                    "status": "triaged",
+                    "note": (
+                        "Package verdict and environment exposure were assessed separately. "
+                        "No reference was observed in this repository; organization-wide exposure remains unverified."
+                    ),
                 },
                 investigation=investigation,
                 queue_file=queue_file,

@@ -145,6 +145,43 @@ Advisory matches produce source-backed `SUPPLY-CHAIN-ADVISORY` findings. If a no
 
 Advisory-backed findings are not closed as `expected_behavior` just because a package is absent from local manifests. They remain actionable ecosystem intelligence until an analyst explicitly triages them.
 
+## Threat Verdict And Exposure Are Separate
+
+SecOpsAI records three independent decisions for every supply-chain
+investigation:
+
+1. **Package threat verdict**: whether the package/version is confirmed
+   malicious, likely malicious, suspicious, inconclusive, or benign.
+2. **Evidence confidence**: the sources, artifact hashes, static or sandbox
+   results, comparison evidence, tool versions, and limitations supporting the
+   verdict.
+3. **Environment exposure**: whether the package was confirmed, not observed
+   in the searched scope, or remains unknown in customer environments.
+
+`not_observed_in_scope` is not a benign verdict. It means only that the selected
+repository did not contain a matching dependency reference. Other repositories,
+transitive dependencies, SBOMs, CI caches, container layers, registries, and
+deployed workloads still require separate exposure checks.
+
+To validate a package when it is not used locally:
+
+1. Preserve source URLs, registry metadata, publisher identity, timestamps,
+   exact package/version coordinates, and artifact hashes.
+2. Run Safe Package Intake without installing or executing the artifact.
+3. Compare the suspicious artifact with a trusted or previous release.
+4. Record deterministic static indicators and distinguish them from observed
+   runtime behavior.
+5. Use an approval-gated isolated sandbox only when static evidence is
+   insufficient and submission is legally and operationally appropriate.
+6. Correlate code, publisher, dependency, infrastructure, and timeline reuse;
+   shared infrastructure alone does not prove attribution.
+7. Record a Research Case verdict with confidence, evidence references, and
+   limitations before disclosure or publication.
+
+No professional workflow can promise to “prove everything.” SecOpsAI instead
+produces reproducible, reviewable evidence and states exactly what is confirmed,
+inferred, unknown, and not observed.
+
 ## node-ipc Stealer/Backdoor Workflow
 
 The `node-ipc` emergency advisory covers `node-ipc@9.1.6`,

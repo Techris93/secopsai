@@ -54,6 +54,30 @@ def write_report(result: Dict[str, Any], report_dir: Path | None = None) -> Dict
     lines.extend(_render_list(investigation.get("evidence") or []))
     if lines[-1] != "":
         lines.append("")
+    threat = investigation.get("threat_assessment") or {}
+    exposure = investigation.get("exposure_assessment") or {}
+    if threat:
+        lines.extend(
+            [
+                "## Package Threat Assessment",
+                "",
+                f"- Verdict: {threat.get('verdict', 'unknown')}",
+                f"- Confidence: {threat.get('confidence', 'unknown')}",
+                f"- Basis: {threat.get('basis', 'No basis recorded.')}",
+                "",
+            ]
+        )
+    if exposure:
+        lines.extend(
+            [
+                "## Environment Exposure Assessment",
+                "",
+                f"- Status: {exposure.get('status', 'unknown')}",
+                f"- Scope: {exposure.get('scope', 'unknown')}",
+            ]
+        )
+        lines.extend(_render_list(exposure.get("limitations") or []))
+        lines.append("")
     lines.extend(
         [
             "## Next Actions",
