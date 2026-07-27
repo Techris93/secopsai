@@ -16,6 +16,8 @@ Operator surfaces:
 
 The remaining human gates are external sandbox submission, external disclosure delivery, and final publication approval.
 
+Follow-up: bridge service installation now persists the selected OpenCodex provider/model identifier in the fixed service command. This prevents an autonomous background worker from silently reverting to a provider default after the browser closes or the workstation restarts. The service file still contains no provider credentials.
+
 ## 107 Hermes Agent v1.0.0 Integration
 
 Status: complete in production.

@@ -1205,6 +1205,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default="supervised",
         help="Automatically complete bounded research review when set to agent_review",
     )
+    intelligence_bridge_service.add_argument(
+        "--model",
+        default="",
+        help="Persist this OpenCodex provider/model for the background bridge",
+    )
 
     research = sub.add_parser("research", help="Generate source-backed research reports and preflight checks")
     research_sub = research.add_subparsers(dest="research_cmd", required=True)
@@ -3258,6 +3263,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                             db_path=args.db_path,
                             start=not args.no_start,
                             autonomy_mode=args.autonomy_mode,
+                            model=args.model,
                         )
                     else:
                         payload = codex_bridge_service_action(args.action, tail=args.tail)
