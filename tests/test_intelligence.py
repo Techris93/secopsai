@@ -217,6 +217,7 @@ def test_launchd_service_contains_no_credentials(tmp_path: Path):
         home=tmp_path,
         platform_name="darwin",
         runner=runner,
+        autonomy_mode="agent_review",
     )
     plist_path = Path(result["path"])
     with plist_path.open("rb") as handle:
@@ -225,8 +226,21 @@ def test_launchd_service_contains_no_credentials(tmp_path: Path):
     assert payload["Label"] == "ai.secopsai.codex-bridge"
     assert "SECOPSAI_CORE_READ_TOKEN" not in encoded
     assert "OPENAI_API_KEY" not in encoded
+    assert payload["EnvironmentVariables"]["SECOPSAI_RESEARCH_AUTONOMY_MODE"] == "agent_review"
+    assert result["autonomy_mode"] == "agent_review"
     assert result["credentials_persisted"] is False
     assert any(command[1] == "bootstrap" for command in calls)
+
+
+def test_bridge_service_rejects_unknown_autonomy_mode(tmp_path: Path):
+    with pytest.raises(ValueError, match="supervised or agent_review"):
+        install_service(
+            db_path=str(tmp_path / "core.db"),
+            start=False,
+            home=tmp_path,
+            platform_name="darwin",
+            autonomy_mode="publish_everything",
+        )
 
 
 def test_bridge_lists_opencodex_models(monkeypatch):

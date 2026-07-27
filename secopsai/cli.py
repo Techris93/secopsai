@@ -177,6 +177,7 @@ from secopsai.research_workflow import (
     set_sandbox_status,
 )
 from secopsai.research_pipeline import (
+    agent_complete_pipeline,
     get_pipeline as get_research_pipeline,
     list_pipelines as list_research_pipelines,
     resume_investigation_pipeline,
@@ -1198,6 +1199,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     intelligence_bridge_service.add_argument("--db-path", default=None)
     intelligence_bridge_service.add_argument("--no-start", action="store_true")
     intelligence_bridge_service.add_argument("--tail", type=int, default=80)
+    intelligence_bridge_service.add_argument(
+        "--autonomy-mode",
+        choices=["supervised", "agent_review"],
+        default="supervised",
+        help="Automatically complete bounded research review when set to agent_review",
+    )
 
     research = sub.add_parser("research", help="Generate source-backed research reports and preflight checks")
     research_sub = research.add_subparsers(dest="research_cmd", required=True)
@@ -1615,6 +1622,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     pipeline_auto.add_argument("pipeline_id")
     pipeline_auto.add_argument("--actor", default="analyst")
     pipeline_auto.add_argument("--db-path", default=None)
+    pipeline_agent = research_pipeline_sub.add_parser(
+        "agent-complete",
+        help="Accept bounded proposals and record an evidence-linked agent verdict without external actions",
+    )
+    pipeline_agent.add_argument("pipeline_id")
+    pipeline_agent.add_argument("--actor", default="secopsai-agent-autonomy")
+    pipeline_agent.add_argument("--db-path", default=None)
 
     workflow = research_sub.add_parser("workflow", help="Evidence, verdict, disclosure, publication, and sandbox gates")
     workflow_sub = workflow.add_subparsers(dest="research_workflow_cmd", required=True)
@@ -2350,6 +2364,12 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = {"pipelines": list_research_pipelines(case_id=args.case_id, limit=args.limit, db_path=args.db_path)}
             elif args.research_pipeline_cmd == "auto-review":
                 payload = auto_review_pipeline(
+                    args.pipeline_id,
+                    actor=args.actor,
+                    db_path=args.db_path,
+                )
+            elif args.research_pipeline_cmd == "agent-complete":
+                payload = agent_complete_pipeline(
                     args.pipeline_id,
                     actor=args.actor,
                     db_path=args.db_path,
@@ -3234,7 +3254,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                         )
                 elif args.intelligence_bridge_cmd == "service":
                     if args.action == "install":
-                        payload = install_codex_bridge_service(db_path=args.db_path, start=not args.no_start)
+                        payload = install_codex_bridge_service(
+                            db_path=args.db_path,
+                            start=not args.no_start,
+                            autonomy_mode=args.autonomy_mode,
+                        )
                     else:
                         payload = codex_bridge_service_action(args.action, tail=args.tail)
                 else:

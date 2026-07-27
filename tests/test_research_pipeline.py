@@ -10,6 +10,7 @@ from secopsai.intelligence_jobs import claim_next_job, complete_job, fail_job
 from secopsai.research_cases import add_evidence, add_subject, create_case, get_case
 from secopsai.research_intake import SafeFetcher
 from secopsai.research_pipeline import (
+    agent_complete_pipeline,
     get_pipeline,
     pipeline_intelligence_context,
     resume_investigation_pipeline,
@@ -96,6 +97,10 @@ def _bridge_result(action: str) -> dict:
         "evidence": ["The package was collected and hash identified without execution."],
         "recommended_actions": ["Verify publisher ownership."],
         "limitations": ["No runtime behavior was observed."],
+        "verdict_recommendation": "inconclusive",
+        "verdict_confidence": 50,
+        "verdict_rationale": "Evidence remains incomplete.",
+        "verdict_evidence_refs": [],
     }
     if action == "analyze_research_case":
         data.update(
@@ -105,6 +110,10 @@ def _bridge_result(action: str) -> dict:
                 "unsupported_claims": ["Victim impact has not been established."],
                 "contradictions": [],
                 "missing_evidence": ["Publisher confirmation is missing."],
+                "verdict_recommendation": "likely",
+                "verdict_confidence": 78,
+                "verdict_rationale": "Static package and comparison evidence supports a likely verdict while runtime behavior remains unobserved.",
+                "verdict_evidence_refs": ["collect_subject", "compare_packages"],
             }
         )
     elif action == "generate_analyst_brief":
@@ -233,6 +242,84 @@ def test_auto_review_pipeline(tmp_path, monkeypatch):
     assert completed["review_summary"]["rejected"] == 0
 
 
+def test_agent_complete_records_bounded_verdict_without_external_actions(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(tmp_path / "quarantine"))
+    case = _case(db)
+    pipeline = start_investigation_pipeline(
+        case["case_id"],
+        reference_ecosystem="npm",
+        reference_package="legitimate-pkg",
+        reference_version="1.0.0",
+        db_path=db,
+        fetcher=_fetcher(),
+    )
+    _complete_bridge_queue(db)
+
+    completed = agent_complete_pipeline(pipeline["pipeline_id"], db_path=db)
+    stored = get_case(case["case_id"], db_path=db)
+
+    assert completed["status"] == "succeeded"
+    assert completed["summary"]["autonomy_mode"] == "agent_review"
+    assert completed["summary"]["verdict_recorded"] is True
+    assert completed["summary"]["agent_verdict"] == "likely"
+    assert completed["summary"]["disclosure_sent"] is False
+    assert completed["summary"]["sandbox_submitted"] is False
+    assert completed["summary"]["published"] is False
+    assert stored["verdicts"][0]["verdict"] == "likely"
+    assert stored["verdicts"][0]["actor"].startswith("secopsai-agent-autonomy:")
+    assert stored["verdicts"][0]["evidence_ids"]
+    accepted_ids = {
+        item["evidence_id"]
+        for item in stored["evidence"]
+        if (item.get("metadata") or {}).get("pipeline_id") == pipeline["pipeline_id"]
+    }
+    assert set(stored["verdicts"][0]["evidence_ids"]) <= accepted_ids
+
+
+def test_agent_completion_cannot_treat_local_absence_as_benign(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(tmp_path / "quarantine"))
+    case = _case(db)
+    pipeline = start_investigation_pipeline(case["case_id"], db_path=db, fetcher=_fetcher())
+
+    while True:
+        job = claim_next_job(provider="test-codex", worker_id="test-worker", db_path=db)
+        if job is None:
+            break
+        result = _bridge_result(job["action"])
+        if job["action"] == "analyze_research_case":
+            result["data"].update(
+                {
+                    "verdict_recommendation": "benign",
+                    "verdict_confidence": 99,
+                    "verdict_rationale": "The package is not found in the local repository and no matching dependency exists.",
+                }
+            )
+        complete_job(job["job_id"], result=result, actor="test-worker", db_path=db)
+
+    completed = agent_complete_pipeline(pipeline["pipeline_id"], db_path=db)
+    stored = get_case(case["case_id"], db_path=db)
+    assert completed["summary"]["agent_verdict"] == "inconclusive"
+    assert stored["verdicts"][0]["verdict"] == "inconclusive"
+    assert "local absence cannot establish package benignness" in stored["verdicts"][0]["rationale"]
+
+
+def test_agent_review_mode_completes_pipeline_when_last_job_finishes(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(tmp_path / "quarantine"))
+    monkeypatch.setenv("SECOPSAI_RESEARCH_AUTONOMY_MODE", "agent_review")
+    case = _case(db)
+    pipeline = start_investigation_pipeline(case["case_id"], db_path=db, fetcher=_fetcher())
+    _complete_bridge_queue(db)
+
+    completed = get_pipeline(pipeline["pipeline_id"], db_path=db)
+    assert completed["status"] == "succeeded"
+    assert completed["current_step"] == "agent_review_complete"
+    assert completed["summary"]["agent_verdict"] == "likely"
+    assert completed["review_summary"]["pending"] == 0
+
+
 def test_pipeline_does_not_guess_a_legitimate_reference(tmp_path, monkeypatch):
     db = str(tmp_path / "research.db")
     monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(tmp_path / "quarantine"))
@@ -301,6 +388,34 @@ def test_pipeline_cli_dispatches_to_the_pipeline_service(monkeypatch, capsys):
     assert output["pipeline_id"] == "RPL-AAAAAAAAAAAAAAAA"
     assert called["case_id"] == "RSC-AAAAAAAAAAAA"
     assert called["actor"] == "cli-test"
+
+
+def test_pipeline_cli_dispatches_agent_completion(monkeypatch, capsys):
+    called = {}
+
+    def fake_complete(pipeline_id: str, **kwargs):
+        called.update({"pipeline_id": pipeline_id, **kwargs})
+        return {"pipeline_id": pipeline_id, "status": "succeeded"}
+
+    monkeypatch.setattr(cli_module, "agent_complete_pipeline", fake_complete)
+    status = cli_module.main(
+        [
+            "--json",
+            "research",
+            "pipeline",
+            "agent-complete",
+            "RPL-AAAAAAAAAAAAAAAA",
+            "--actor",
+            "agent-test",
+            "--db-path",
+            "/tmp/research-agent-test.db",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+    assert status == 0
+    assert output["status"] == "succeeded"
+    assert called["pipeline_id"] == "RPL-AAAAAAAAAAAAAAAA"
+    assert called["actor"] == "agent-test"
 
 
 def test_bridge_request_contains_only_normalized_pipeline_context(tmp_path, monkeypatch):
