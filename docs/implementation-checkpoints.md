@@ -198,3 +198,10 @@ dedicated threat and exposure sections.
 
 Verification: 420 Core tests passed; focused triage/orchestrator tests passed;
 MkDocs strict build and repository diff checks passed.
+
+Historical reconciliation follows the same boundary. A previewable, idempotent
+repair selects only malicious Core supply-chain findings closed as
+`expected_behavior` with the former local-absence rationale. The next
+orchestrator run applies the repair automatically, reopens those findings as
+`unreviewed`, and records an audit note without touching unrelated analyst
+closures.

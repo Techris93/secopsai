@@ -100,6 +100,21 @@ Use it to quickly decide whether a package is:
 Record local deployment relevance in the separate exposure assessment rather
 than using `expected_behavior` as a substitute for “not installed here.”
 
+Preview and repair historical findings that were closed by the superseded
+local-absence rule:
+
+```bash
+secopsai triage reconcile-exposure-closures --json
+secopsai triage reconcile-exposure-closures --apply --json
+```
+
+The repair is intentionally narrow: it selects only closed
+`secopsai-supply-chain` findings with a stored `malicious` verdict, an
+`expected_behavior` disposition, and a legacy local-absence closure note. It
+reopens them as `unreviewed` and adds an audit note. Ordinary analyst closures
+are preserved. The orchestrator performs the same idempotent repair before its
+next run so unattended installations converge automatically.
+
 ### False-Positive Relief
 
 Immediate allowlist relief:

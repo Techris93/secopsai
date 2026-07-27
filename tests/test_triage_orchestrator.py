@@ -12,7 +12,13 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import soc_store
-from secopsai.triage import apply_action, generate_summary, list_actions, orchestrate_findings
+from secopsai.triage import (
+    apply_action,
+    generate_summary,
+    list_actions,
+    orchestrate_findings,
+    reconcile_exposure_closures,
+)
 
 
 def _write_findings(db_path: str, findings):
@@ -20,6 +26,78 @@ def _write_findings(db_path: str, findings):
 
 
 class TriageOrchestratorTests(unittest.TestCase):
+    def test_reconcile_exposure_closures_is_narrow_previewable_and_audited(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = str(Path(temp_dir) / "soc.db")
+            base = {
+                "title": "Suspicious npm package release",
+                "summary": "Deterministic rules flagged credential access.",
+                "severity": "critical",
+                "severity_score": 90,
+                "status": "closed",
+                "disposition": "expected_behavior",
+                "source": "secopsai-supply-chain",
+                "first_seen": "2026-04-08T00:00:00Z",
+                "last_seen": "2026-04-08T00:00:00Z",
+                "platform": "supply_chain",
+                "ecosystem": "npm",
+                "new_version": "1.0.1",
+                "old_version": "1.0.0",
+                "verdict": "malicious",
+            }
+            soc_store.persist_findings(
+                [
+                    {**base, "finding_id": "SCM-LEGACY001", "package": "legacy-package"},
+                    {**base, "finding_id": "SCM-MANUAL002", "package": "manual-package"},
+                    {
+                        **base,
+                        "finding_id": "SCM-BENIGN003",
+                        "package": "benign-package",
+                        "verdict": "benign",
+                    },
+                ],
+                source="secopsai-supply-chain",
+                db_path=db_path,
+            )
+            soc_store.add_note(
+                "SCM-LEGACY001",
+                "old-orchestrator",
+                "Package is not referenced in local dependency manifests; treating as ecosystem intelligence outside current risk boundary.",
+                db_path,
+            )
+            soc_store.add_note(
+                "SCM-MANUAL002",
+                "analyst",
+                "Expected behavior was confirmed from source and maintainer evidence.",
+                db_path,
+            )
+            soc_store.add_note(
+                "SCM-BENIGN003",
+                "old-orchestrator",
+                "Package is not referenced in local dependency manifests.",
+                db_path,
+            )
+
+            preview = reconcile_exposure_closures(db_path=db_path)
+            self.assertEqual(preview["candidate_count"], 1)
+            self.assertEqual(preview["reopened_count"], 0)
+            self.assertEqual(
+                soc_store.get_finding("SCM-LEGACY001", db_path)["status"], "closed"
+            )
+
+            applied = reconcile_exposure_closures(db_path=db_path, apply=True)
+            self.assertEqual(applied["reopened_count"], 1)
+            reopened = soc_store.get_finding("SCM-LEGACY001", db_path)
+            self.assertEqual(reopened["status"], "open")
+            self.assertEqual(reopened["disposition"], "unreviewed")
+            self.assertIn("policy correction", reopened["notes"][-1]["note"])
+            self.assertEqual(
+                soc_store.get_finding("SCM-MANUAL002", db_path)["status"], "closed"
+            )
+            self.assertEqual(
+                soc_store.get_finding("SCM-BENIGN003", db_path)["status"], "closed"
+            )
+
     def test_orchestrate_keeps_external_package_intelligence_open_without_local_reference(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
