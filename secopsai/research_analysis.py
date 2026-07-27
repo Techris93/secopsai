@@ -12,7 +12,6 @@ import json
 import os
 import re
 import secrets
-import shlex
 import subprocess
 import tempfile
 import zipfile
@@ -157,16 +156,19 @@ def inspect_nuget_archive(data: bytes, filename: str = "package.nupkg") -> Dict[
         },
         "safety": {"execution_performed": False, "assemblies_loaded": False, "raw_artifact_sent_to_ai": False},
     }
-    analyzer = os.environ.get("SECOPSAI_NUGET_ANALYZER", "").strip()
-    if analyzer:
-        command = shlex.split(analyzer)
-        if not command or any("\x00" in item for item in command):
-            raise IntakeError("configured NuGet analyzer command is invalid")
+    analyzer_image = os.environ.get("SECOPSAI_NUGET_ANALYZER_IMAGE", "").strip()
+    if analyzer_image:
+        if not re.fullmatch(r"[A-Za-z0-9._/-]{1,180}:[A-Za-z0-9._-]{1,80}", analyzer_image):
+            raise IntakeError("NuGet analyzer image must be a pinned image reference")
         with tempfile.TemporaryDirectory(prefix="secopsai-nuget-") as temp_dir:
-            package_path = os.path.join(temp_dir, filename.replace("/", "_").replace("\\", "_")[:180] or "package.nupkg")
+            package_path = os.path.join(temp_dir, "package.nupkg")
             with open(package_path, "wb") as handle:
                 handle.write(data)
-            completed = subprocess.run([*command, package_path], capture_output=True, text=True, timeout=90, check=False)
+            completed = subprocess.run([
+                "docker", "run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
+                "--security-opt", "no-new-privileges", "--pids-limit", "64", "--memory", "512m",
+                "-v", f"{temp_dir}:/input:ro", analyzer_image, "/input/package.nupkg",
+            ], capture_output=True, text=True, timeout=120, check=False)
         if completed.returncode != 0:
             raise IntakeError("configured NuGet analyzer failed")
         try:

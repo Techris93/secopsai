@@ -228,6 +228,64 @@ def init_db(db_path: str | None = None) -> None:
                 FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS research_artifacts (
+                artifact_id TEXT PRIMARY KEY,
+                sha256 TEXT NOT NULL UNIQUE,
+                filename TEXT NOT NULL,
+                ecosystem TEXT NOT NULL,
+                package_name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                quarantine_path TEXT NOT NULL,
+                state TEXT NOT NULL,
+                provenance_json TEXT NOT NULL,
+                analysis_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_case_artifacts (
+                case_id TEXT NOT NULL,
+                artifact_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (case_id, artifact_id),
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE,
+                FOREIGN KEY (artifact_id) REFERENCES research_artifacts (artifact_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_ioc_candidates (
+                candidate_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                ioc_type TEXT NOT NULL,
+                value TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                source_evidence_id TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                reviewed_at TEXT,
+                reviewed_by TEXT,
+                UNIQUE (case_id, ioc_type, value),
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE,
+                FOREIGN KEY (source_evidence_id) REFERENCES research_evidence (evidence_id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_partner_requests (
+                request_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                subject_id TEXT,
+                requested_by TEXT NOT NULL,
+                recipient TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                status TEXT NOT NULL,
+                artifact_sha256 TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE,
+                FOREIGN KEY (subject_id) REFERENCES research_subjects (subject_id) ON DELETE SET NULL
+            );
+
             CREATE TABLE IF NOT EXISTS research_evidence (
                 evidence_id TEXT PRIMARY KEY,
                 case_id TEXT NOT NULL,
@@ -815,6 +873,14 @@ def init_db(db_path: str | None = None) -> None:
         )
         for table in ("research_subjects", "research_evidence", "research_iocs"):
             _ensure_column(connection, table, "status", "TEXT NOT NULL DEFAULT 'active'")
+        for column, definition in (
+            ("registry_state", "TEXT NOT NULL DEFAULT 'unknown'"),
+            ("artifact_state", "TEXT NOT NULL DEFAULT 'missing'"),
+            ("validation_state", "TEXT NOT NULL DEFAULT 'unverified'"),
+            ("state_reason", "TEXT NOT NULL DEFAULT ''"),
+            ("state_checked_at", "TEXT"),
+        ):
+            _ensure_column(connection, "research_subjects", column, definition)
         connection.commit()
 
 

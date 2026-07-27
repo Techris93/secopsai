@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -119,6 +120,7 @@ from secopsai.research_cases import (
     retract_item as retract_research_item,
     start_package_case as start_research_package_case,
     update_case as update_research_case,
+    update_subject_state,
 )
 from secopsai.research_watchlists import promote_watchlist_packages
 from secopsai.research_intake import ADAPTERS as RESEARCH_INTAKE_ADAPTERS, preview_package as preview_research_package
@@ -154,6 +156,9 @@ from secopsai.research_worker import (
     run_worker_loop,
 )
 from secopsai.research_analysis import compare_intakes, compare_packages, correlate_candidates, inspect_nuget_archive, list_campaigns
+from secopsai.research_artifacts import attach_to_case, get_artifact, import_artifact, list_artifacts, verify_artifact
+from secopsai.research_artifact_analysis import compare_artifacts, extract_ioc_candidates, inspect_artifact, review_ioc_candidate
+from secopsai.research_acquisition import create_partner_request, list_partner_requests, update_partner_request
 from secopsai.research_sandbox import poll_sandbox_request, submit_sandbox_request, provider_status as sandbox_provider_status
 from secopsai.research_delivery import send_approved_disclosure, send_research_alert
 from secopsai.research_workflow import (
@@ -1325,6 +1330,90 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         research_compare_packages.add_argument(f"--{prefix}-version", default="")
     research_compare_packages.add_argument("--db-path", default=None)
 
+    research_artifact = research_sub.add_parser("artifact", help="Manage local authorized research artifacts")
+    research_artifact_sub = research_artifact.add_subparsers(dest="research_artifact_cmd", required=True)
+    artifact_list = research_artifact_sub.add_parser("list")
+    artifact_list.add_argument("--ecosystem", default="")
+    artifact_list.add_argument("--db-path", default=None)
+    artifact_import = research_artifact_sub.add_parser("import", help="Import a local artifact into hash-addressed quarantine")
+    artifact_import.add_argument("--path", required=True)
+    artifact_import.add_argument("--ecosystem", default="nuget")
+    artifact_import.add_argument("--package", default="")
+    artifact_import.add_argument("--version", default="")
+    artifact_import.add_argument("--provenance", default="{}")
+    artifact_import.add_argument("--db-path", default=None)
+    artifact_show = research_artifact_sub.add_parser("show")
+    artifact_show.add_argument("artifact_id")
+    artifact_show.add_argument("--db-path", default=None)
+    artifact_verify = research_artifact_sub.add_parser("verify")
+    artifact_verify.add_argument("artifact_id")
+    artifact_verify.add_argument("--db-path", default=None)
+    artifact_attach = research_artifact_sub.add_parser("attach")
+    artifact_attach.add_argument("case_id")
+    artifact_attach.add_argument("artifact_id")
+    artifact_attach.add_argument("--role", default="subject")
+    artifact_attach.add_argument("--db-path", default=None)
+
+    research_analysis = research_sub.add_parser("analysis", help="Run bounded static analysis on local artifacts")
+    research_analysis_sub = research_analysis.add_subparsers(dest="research_analysis_cmd", required=True)
+    analysis_run = research_analysis_sub.add_parser("run")
+    analysis_run.add_argument("artifact_id")
+    analysis_run.add_argument("--db-path", default=None)
+    analysis_compare = research_analysis_sub.add_parser("compare")
+    analysis_compare.add_argument("left_artifact_id")
+    analysis_compare.add_argument("right_artifact_id")
+    analysis_compare.add_argument("--db-path", default=None)
+
+    research_artifact_worker = research_sub.add_parser("artifact-worker", help="Run the local artifact analysis worker")
+    research_artifact_worker_sub = research_artifact_worker.add_subparsers(dest="research_artifact_worker_cmd", required=True)
+    artifact_worker_run = research_artifact_worker_sub.add_parser("run")
+    artifact_worker_run.add_argument("artifact_id")
+    artifact_worker_run.add_argument("--db-path", default=None)
+    artifact_worker_sub_status = research_artifact_worker_sub.add_parser("status")
+    artifact_worker_sub_status.add_argument("--db-path", default=None)
+
+    research_ioc = research_sub.add_parser("ioc-candidates", help="Extract and review deterministic IOC candidates")
+    research_ioc_sub = research_ioc.add_subparsers(dest="research_ioc_cmd", required=True)
+    ioc_extract = research_ioc_sub.add_parser("extract")
+    ioc_extract.add_argument("case_id")
+    ioc_extract.add_argument("--artifact-id", default=None)
+    ioc_extract.add_argument("--db-path", default=None)
+    ioc_review = research_ioc_sub.add_parser("review")
+    ioc_review.add_argument("candidate_id")
+    ioc_review.add_argument("--decision", choices=["approved", "rejected"], required=True)
+    ioc_review.add_argument("--actor", default="analyst")
+    ioc_review.add_argument("--db-path", default=None)
+
+    research_subject = research_sub.add_parser("subject", help="Record separate registry, artifact, and validation state")
+    research_subject_sub = research_subject.add_subparsers(dest="research_subject_cmd", required=True)
+    subject_state = research_subject_sub.add_parser("state")
+    subject_state.add_argument("subject_id")
+    subject_state.add_argument("--registry-state", choices=["available", "unlisted", "removed", "unavailable", "unknown"])
+    subject_state.add_argument("--artifact-state", choices=["collected", "missing", "externally_supplied"])
+    subject_state.add_argument("--validation-state", choices=["unverified", "static_confirmed", "sandbox_confirmed"])
+    subject_state.add_argument("--reason", default="")
+    subject_state.add_argument("--actor", default="analyst")
+    subject_state.add_argument("--db-path", default=None)
+
+    research_partner = research_sub.add_parser("partner-request", help="Request an unavailable artifact from a trusted research partner")
+    research_partner_sub = research_partner.add_subparsers(dest="research_partner_cmd", required=True)
+    partner_create = research_partner_sub.add_parser("create")
+    partner_create.add_argument("case_id")
+    partner_create.add_argument("--recipient", required=True)
+    partner_create.add_argument("--reason", required=True)
+    partner_create.add_argument("--subject-id", default=None)
+    partner_create.add_argument("--artifact-sha256", default="")
+    partner_create.add_argument("--actor", default="analyst")
+    partner_create.add_argument("--db-path", default=None)
+    partner_list = research_partner_sub.add_parser("list")
+    partner_list.add_argument("--case-id", default=None)
+    partner_list.add_argument("--db-path", default=None)
+    partner_status = research_partner_sub.add_parser("status")
+    partner_status.add_argument("request_id")
+    partner_status.add_argument("--status", choices=["approved", "sent", "received", "closed", "canceled"], required=True)
+    partner_status.add_argument("--actor", default="analyst")
+    partner_status.add_argument("--db-path", default=None)
+
     research_campaign = research_sub.add_parser("campaign", help="Correlate candidate evidence into reviewable campaign links")
     research_campaign_sub = research_campaign.add_subparsers(dest="research_campaign_cmd", required=True)
     campaign_correlate = research_campaign_sub.add_parser("correlate")
@@ -2291,6 +2380,45 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = run_worker_cycle(db_path=args.db_path)
             else:
                 payload = run_worker_loop(db_path=args.db_path, interval_seconds=args.interval, max_cycles=args.max_cycles, on_cycle=lambda summary: print(json.dumps({"cycle": summary}, sort_keys=True), flush=True))
+        elif args.research_cmd == "artifact":
+            if args.research_artifact_cmd == "list":
+                payload = {"artifacts": list_artifacts(ecosystem=args.ecosystem, db_path=args.db_path)}
+            elif args.research_artifact_cmd == "import":
+                try:
+                    provenance = json.loads(args.provenance)
+                except json.JSONDecodeError as exc:
+                    raise ValueError("--provenance must be valid JSON") from exc
+                payload = import_artifact(args.path, ecosystem=args.ecosystem, package_name=args.package, version=args.version, provenance=provenance, db_path=args.db_path)
+            elif args.research_artifact_cmd == "show":
+                payload = get_artifact(args.artifact_id, db_path=args.db_path)
+            elif args.research_artifact_cmd == "verify":
+                payload = verify_artifact(args.artifact_id, db_path=args.db_path)
+            else:
+                payload = attach_to_case(args.case_id, args.artifact_id, role=args.role, db_path=args.db_path)
+        elif args.research_cmd == "analysis":
+            if args.research_analysis_cmd == "run":
+                payload = inspect_artifact(args.artifact_id, db_path=args.db_path)
+            else:
+                payload = compare_artifacts(args.left_artifact_id, args.right_artifact_id, db_path=args.db_path)
+        elif args.research_cmd == "artifact-worker":
+            if args.research_artifact_worker_cmd == "run":
+                payload = inspect_artifact(args.artifact_id, db_path=args.db_path)
+            else:
+                payload = {"worker": "local-artifact-worker", "quarantine": True, "analyzer_image_configured": bool(os.environ.get("SECOPSAI_NUGET_ANALYZER_IMAGE", "").strip()), "execution_performed": False}
+        elif args.research_cmd == "ioc-candidates":
+            if args.research_ioc_cmd == "extract":
+                payload = extract_ioc_candidates(args.case_id, artifact_id=args.artifact_id, db_path=args.db_path)
+            else:
+                payload = review_ioc_candidate(args.candidate_id, decision=args.decision, actor=args.actor, db_path=args.db_path)
+        elif args.research_cmd == "subject":
+            payload = update_subject_state(args.subject_id, registry_state=args.registry_state, artifact_state=args.artifact_state, validation_state=args.validation_state, reason=args.reason, actor=args.actor, db_path=args.db_path)
+        elif args.research_cmd == "partner-request":
+            if args.research_partner_cmd == "create":
+                payload = create_partner_request(args.case_id, recipient=args.recipient, reason=args.reason, subject_id=args.subject_id, artifact_sha256=args.artifact_sha256, actor=args.actor, db_path=args.db_path)
+            elif args.research_partner_cmd == "list":
+                payload = {"requests": list_partner_requests(args.case_id, db_path=args.db_path)}
+            else:
+                payload = update_partner_request(args.request_id, status=args.status, actor=args.actor, db_path=args.db_path)
         elif args.research_cmd == "compare":
             with open(args.left, "r", encoding="utf-8") as left_handle:
                 left_payload = json.load(left_handle)
@@ -2797,7 +2925,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
 
-        if args.research_cmd in {"ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "compare", "compare-packages", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "workflow"}:
+        if args.research_cmd in {"ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "workflow"}:
             return _run_research_automation_command(args)
 
         if args.research_cmd == "case":

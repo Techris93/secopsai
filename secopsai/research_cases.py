@@ -406,6 +406,26 @@ def get_case(case_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
         ]
         for item in result["subjects"]:
             item.pop("metadata_json", None)
+        result["artifacts"] = [
+            dict(item) for item in connection.execute(
+                """SELECT a.artifact_id, a.sha256, a.filename, a.ecosystem,
+                          a.package_name, a.version, a.size_bytes, a.state,
+                          ca.role, ca.created_at
+                   FROM research_case_artifacts ca
+                   JOIN research_artifacts a ON a.artifact_id = ca.artifact_id
+                   WHERE ca.case_id = ? ORDER BY ca.created_at, a.artifact_id""", (case_id,)
+            ).fetchall()
+        ]
+        result["ioc_candidates"] = [
+            dict(item) for item in connection.execute(
+                "SELECT * FROM research_ioc_candidates WHERE case_id = ? ORDER BY created_at, candidate_id", (case_id,)
+            ).fetchall()
+        ]
+        result["partner_requests"] = [
+            dict(item) for item in connection.execute(
+                "SELECT * FROM research_partner_requests WHERE case_id = ? ORDER BY updated_at DESC", (case_id,)
+            ).fetchall()
+        ]
         result["evidence"] = [
             {**dict(item), "metadata": _decode(item["metadata_json"], {})}
             for item in connection.execute(
@@ -593,6 +613,10 @@ def add_subject(
     ecosystem: str = "",
     version: str = "",
     publisher: str = "",
+    registry_state: str = "unknown",
+    artifact_state: str = "missing",
+    validation_state: str = "unverified",
+    state_reason: str = "",
     metadata: Optional[Dict[str, Any]] = None,
     db_path: Optional[str] = None,
     actor: str = "analyst",
@@ -604,6 +628,10 @@ def add_subject(
     ecosystem = _clean(ecosystem, field="ecosystem", limit=80).lower()
     version = _clean(version, field="version", limit=160)
     publisher = _clean(publisher, field="publisher", limit=240)
+    registry_state = _choice(registry_state, field="registry_state", allowed={"available", "unlisted", "removed", "unavailable", "unknown"})
+    artifact_state = _choice(artifact_state, field="artifact_state", allowed={"collected", "missing", "externally_supplied"})
+    validation_state = _choice(validation_state, field="validation_state", allowed={"unverified", "static_confirmed", "sandbox_confirmed"})
+    state_reason = _clean(state_reason, field="state_reason", limit=2000)
     stable = hashlib.sha256(f"{case_id}|{subject_type}|{ecosystem}|{name}|{version}".encode()).hexdigest()[:16].upper()
     subject_id = f"SUB-{stable}"
     now = soc_store.utc_now()
@@ -612,17 +640,62 @@ def add_subject(
             """
             INSERT INTO research_subjects (
                 subject_id, case_id, subject_type, ecosystem, name, version,
-                publisher, status, metadata_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                publisher, status, registry_state, artifact_state, validation_state,
+                state_reason, state_checked_at, metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(case_id, subject_type, ecosystem, name, version) DO UPDATE SET
-                publisher = excluded.publisher, status = 'active', metadata_json = excluded.metadata_json
+                publisher = excluded.publisher, metadata_json = excluded.metadata_json,
+                registry_state = excluded.registry_state, artifact_state = excluded.artifact_state,
+                validation_state = excluded.validation_state, state_reason = excluded.state_reason,
+                state_checked_at = excluded.state_checked_at
             """,
-            (subject_id, case_id, subject_type, ecosystem, name, version, publisher, _json(metadata or {}), now),
+            (subject_id, case_id, subject_type, ecosystem, name, version, publisher,
+             registry_state, artifact_state, validation_state, state_reason, now,
+             _json(metadata or {}), now),
         )
         _record_event(connection, case_id, "subject_added", f"Added research subject {name}.", actor=actor, data={"subject_id": subject_id})
         connection.execute("UPDATE research_cases SET updated_at = ? WHERE case_id = ?", (now, case_id))
         connection.commit()
     return get_case(case_id, db_path=db_path)
+
+
+def update_subject_state(
+    subject_id: str,
+    *,
+    registry_state: Optional[str] = None,
+    artifact_state: Optional[str] = None,
+    validation_state: Optional[str] = None,
+    reason: str = "",
+    db_path: Optional[str] = None,
+    actor: str = "analyst",
+) -> Dict[str, Any]:
+    """Update lifecycle facts without changing the case-record status."""
+    soc_store.init_db(db_path)
+    allowed = {
+        "registry_state": {"available", "unlisted", "removed", "unavailable", "unknown"},
+        "artifact_state": {"collected", "missing", "externally_supplied"},
+        "validation_state": {"unverified", "static_confirmed", "sandbox_confirmed"},
+    }
+    changes: Dict[str, Any] = {}
+    for key, value in (("registry_state", registry_state), ("artifact_state", artifact_state), ("validation_state", validation_state)):
+        if value is not None:
+            value = _choice(value, field=key, allowed=allowed[key])
+            changes[key] = value
+    if reason:
+        changes["state_reason"] = _clean(reason, field="reason", limit=2000)
+    if not changes:
+        raise ValueError("at least one subject state is required")
+    changes["state_checked_at"] = soc_store.utc_now()
+    with closing(soc_store.connect(db_path)) as connection:
+        row = connection.execute("SELECT case_id FROM research_subjects WHERE subject_id = ?", (subject_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"subject not found: {subject_id}")
+        assignments = ", ".join(f"{key} = ?" for key in changes)
+        connection.execute(f"UPDATE research_subjects SET {assignments} WHERE subject_id = ?", (*changes.values(), subject_id))
+        _record_event(connection, row["case_id"], "subject_state_updated", f"Updated lifecycle state for {subject_id}.", actor=actor, data={"subject_id": subject_id, "changes": changes})
+        connection.execute("UPDATE research_cases SET updated_at = ? WHERE case_id = ?", (soc_store.utc_now(), row["case_id"]))
+        connection.commit()
+    return get_case(row["case_id"], db_path=db_path)
 
 
 def add_evidence(
