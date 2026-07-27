@@ -13,7 +13,12 @@ import soc_store
 from secopsai.intelligence_jobs import cancel_job, enqueue_job, get_job
 from secopsai.research_analysis import compare_intakes
 from secopsai.research_cases import add_evidence, get_case
-from secopsai.research_intake import attach_intake_result, collect_package_intake
+from secopsai.research_intake import (
+    IntakeError,
+    attach_intake_result,
+    collect_package_intake,
+    validate_quarantined_intake,
+)
 from secopsai.research_workflow import (
     build_evidence_matrix,
     publication_safety_check,
@@ -401,7 +406,12 @@ def _run_pipeline(pipeline_id: str, *, actor: str, db_path: Optional[str], fetch
         suspect_result = _step_result(pipeline, "collect_subject")
         if not suspect_result:
             _set_step(pipeline_id, "collect_subject", "running", db_path=db_path)
-            suspect_result = collect_package_intake(fetcher=fetcher, **config["suspect"])
+            suspect_result = _collect_or_reuse_intake(
+                case_id,
+                config["suspect"],
+                fetcher=fetcher,
+                db_path=db_path,
+            )
             _set_step(pipeline_id, "collect_subject", "succeeded", result=suspect_result, db_path=db_path)
         _put_review_item(
             pipeline_id,
@@ -418,7 +428,12 @@ def _run_pipeline(pipeline_id: str, *, actor: str, db_path: Optional[str], fetch
         reference_result: Dict[str, Any] = {}
         if config.get("reference"):
             _set_step(pipeline_id, "collect_reference", "running", db_path=db_path)
-            reference_result = collect_package_intake(fetcher=fetcher, **config["reference"])
+            reference_result = _collect_or_reuse_intake(
+                case_id,
+                config["reference"],
+                fetcher=fetcher,
+                db_path=db_path,
+            )
             _set_step(pipeline_id, "collect_reference", "succeeded", result=reference_result, db_path=db_path)
             _put_review_item(
                 pipeline_id,
@@ -489,6 +504,10 @@ def _run_pipeline(pipeline_id: str, *, actor: str, db_path: Optional[str], fetch
             "static_collection_complete": True,
             "comparison_complete": bool(reference_result),
             "comparison_input_required": not bool(reference_result),
+            "quarantine_reuse_count": sum(
+                bool(item.get("reuse")) for item in (suspect_result, reference_result) if item
+            ),
+            "registry_collection_degraded": bool(suspect_result.get("reuse") or reference_result.get("reuse")),
             "ai_jobs_queued": len(AI_STEPS),
             "human_review_required": True,
             "raw_artifact_sent_to_ai": False,
@@ -529,9 +548,14 @@ def _preliminary_matrix(case_id: str, suspect: Dict[str, Any], reference: Dict[s
     suspect_meta = suspect.get("metadata") or {}
     suspect_analysis = suspect.get("analysis") or {}
     indicators = suspect_analysis.get("indicators") or []
+    collection_statement = (
+        f"SecOpsAI verified a previously quarantined {_target_label(suspect_meta)} artifact, originally collected from its allowlisted registry source, and "
+        if suspect.get("reuse")
+        else f"SecOpsAI collected {_target_label(suspect_meta)} from its allowlisted registry source and "
+    )
     claims = [
         {
-            "statement": f"SecOpsAI collected {_target_label(suspect_meta)} from its allowlisted registry source and recorded SHA-256 {suspect_meta.get('artifact_sha256', 'unavailable')}.",
+            "statement": f"{collection_statement}recorded SHA-256 {suspect_meta.get('artifact_sha256', 'unavailable')}.",
             "confidence": 100,
             "status": "supported",
             "evidence_refs": ["collect_subject"],
@@ -697,6 +721,70 @@ def reconcile_intelligence_job(job: Dict[str, Any], *, db_path: Optional[str] = 
             db_path=db_path,
         )
     return get_pipeline(pipeline_id, db_path=db_path)
+
+
+def _collect_or_reuse_intake(
+    case_id: str,
+    target: Dict[str, Any],
+    *,
+    fetcher: Any,
+    db_path: Optional[str],
+) -> Dict[str, Any]:
+    """Prefer fresh registry collection, then reuse exact hash-verified local evidence."""
+    try:
+        return collect_package_intake(fetcher=fetcher, **target)
+    except IntakeError as registry_error:
+        cached = _find_verified_cached_intake(case_id, target, db_path=db_path)
+        if cached is None:
+            raise
+        result = json.loads(json.dumps(cached))
+        result["reuse"] = {
+            "mode": "verified_quarantine",
+            "reason": "official registry collection was unavailable",
+            "registry_error": _clean(registry_error, 500),
+            "hash_verified": True,
+            "execution_performed": False,
+        }
+        return result
+
+
+def _find_verified_cached_intake(
+    case_id: str,
+    target: Dict[str, Any],
+    *,
+    db_path: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    ecosystem = _clean(target.get("ecosystem"), 80).lower()
+    package = _clean(target.get("package"), 512).lower()
+    version = _clean(target.get("version"), 160)
+    if not ecosystem or not package or not version:
+        return None
+    with closing(soc_store.connect(db_path)) as connection:
+        rows = connection.execute(
+            """SELECT s.result_json
+            FROM research_pipeline_steps s
+            JOIN research_pipeline_runs p ON p.pipeline_id = s.pipeline_id
+            WHERE p.case_id = ? AND s.step_key IN ('collect_subject', 'collect_reference')
+              AND s.status = 'succeeded'
+            ORDER BY s.completed_at DESC
+            LIMIT 50""",
+            (case_id,),
+        ).fetchall()
+    for row in rows:
+        result = _decode(row["result_json"], {})
+        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        if (
+            _clean(metadata.get("ecosystem"), 80).lower() != ecosystem
+            or _clean(metadata.get("package"), 512).lower() != package
+            or _clean(metadata.get("version"), 160) != version
+        ):
+            continue
+        try:
+            validate_quarantined_intake(result)
+        except IntakeError:
+            continue
+        return result
+    return None
 
 
 def _materialize_ai_review_items(pipeline_id: str, *, db_path: Optional[str]) -> None:

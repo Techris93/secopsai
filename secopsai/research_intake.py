@@ -602,6 +602,35 @@ def collect_package_intake(
     }
 
 
+def validate_quarantined_intake(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Verify that a normalized intake still matches its owner-only quarantined artifact."""
+    metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+    analysis = result.get("analysis") if isinstance(result.get("analysis"), dict) else {}
+    quarantine = result.get("quarantine") if isinstance(result.get("quarantine"), dict) else {}
+    digest = _text(metadata.get("artifact_sha256") or quarantine.get("artifact_id"), 64).lower()
+    if not re.fullmatch(r"[a-f0-9]{64}", digest):
+        raise IntakeError("cached intake does not contain a valid artifact hash")
+    filename = _text(analysis.get("filename") or "artifact", 512)
+    path = _quarantine_path(digest, filename)
+    if not path.is_file() or path.is_symlink():
+        raise IntakeError("cached quarantined artifact is unavailable")
+    if path.stat().st_size > MAX_ARTIFACT_BYTES:
+        raise IntakeError("cached quarantined artifact exceeds the configured size limit")
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual != digest:
+        raise IntakeError("cached quarantined artifact hash changed")
+    expected_bytes = int(metadata.get("artifact_bytes") or quarantine.get("bytes") or 0)
+    if expected_bytes and expected_bytes != path.stat().st_size:
+        raise IntakeError("cached quarantined artifact size changed")
+    return {
+        "artifact_sha256": digest,
+        "artifact_bytes": path.stat().st_size,
+        "filename": filename,
+        "verified": True,
+        "execution_performed": False,
+    }
+
+
 def run_package_intake(
     *,
     case_id: str,

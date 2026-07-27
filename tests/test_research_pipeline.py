@@ -9,6 +9,7 @@ from secopsai.intelligence import bridge_output_schema, prepare_bridge_request
 from secopsai.intelligence_jobs import claim_next_job, complete_job, fail_job
 from secopsai.research_cases import add_evidence, add_subject, create_case, get_case
 from secopsai.research_intake import SafeFetcher
+from secopsai.research_intake import IntakeError
 from secopsai.research_pipeline import (
     agent_complete_pipeline,
     get_pipeline,
@@ -318,6 +319,43 @@ def test_agent_review_mode_completes_pipeline_when_last_job_finishes(tmp_path, m
     assert completed["current_step"] == "agent_review_complete"
     assert completed["summary"]["agent_verdict"] == "likely"
     assert completed["review_summary"]["pending"] == 0
+
+
+def test_retracted_package_reuses_exact_hash_verified_quarantine(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(tmp_path / "quarantine"))
+    case = _case(db)
+    first = start_investigation_pipeline(
+        case["case_id"],
+        reference_ecosystem="npm",
+        reference_package="legitimate-pkg",
+        reference_version="1.0.0",
+        db_path=db,
+        fetcher=_fetcher(),
+    )
+    _complete_bridge_queue(db)
+    auto_review_pipeline(first["pipeline_id"], actor="test-reviewer", db_path=db)
+
+    def unavailable(_url, _max_bytes):
+        raise IntakeError("registry returned HTTP 404")
+
+    second = start_investigation_pipeline(
+        case["case_id"],
+        reference_ecosystem="npm",
+        reference_package="legitimate-pkg",
+        reference_version="1.0.0",
+        db_path=db,
+        fetcher=SafeFetcher(fetch=unavailable),
+    )
+    steps = {step["step_key"]: step for step in second["steps"]}
+    assert second["pipeline_id"] != first["pipeline_id"]
+    assert second["status"] == "awaiting_ai"
+    assert steps["collect_subject"]["result"]["reuse"]["mode"] == "verified_quarantine"
+    assert steps["collect_reference"]["result"]["reuse"]["hash_verified"] is True
+    assert steps["collect_subject"]["result"]["safety"]["execution_performed"] is False
+    assert second["summary"]["quarantine_reuse_count"] == 2
+    assert second["summary"]["registry_collection_degraded"] is True
+    assert "verified a previously quarantined" in steps["evidence_matrix"]["result"]["claims"][0]["statement"]
 
 
 def test_pipeline_does_not_guess_a_legitimate_reference(tmp_path, monkeypatch):

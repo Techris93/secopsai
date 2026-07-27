@@ -18,6 +18,8 @@ The normal workflow no longer requires an evidence-bundle export, a file upload,
 
 If the bridge or collection step fails, click **Retry from checkpoint**. A new pipeline revision is created, stale proposals are superseded, and the previous revision remains auditable. If comparison was incomplete, enter a verified reference and click **Add reference and rerun analysis**.
 
+If an exact package version is later removed from its registry, the pipeline may reuse a previously collected local quarantine artifact only when its ecosystem, package, version, byte size, and SHA-256 all match. The reuse reason and failed registry retrieval are recorded in the step result. SecOpsAI never substitutes another version or trusts an unverified local file.
+
 The pipeline never executes package code, submits an artifact to an external sandbox, sends external communication, approves publication, or publishes an article. In agent-review mode it may record a bounded case verdict, but only against accepted, pipeline-specific evidence and with all guardrail decisions retained in the audit trail.
 
 ## Agent-review mode
