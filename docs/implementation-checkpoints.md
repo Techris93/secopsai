@@ -18,6 +18,8 @@ The remaining human gates are external sandbox submission, external disclosure d
 
 Follow-up: bridge service installation now persists the selected OpenCodex provider/model identifier in the fixed service command. This prevents an autonomous background worker from silently reverting to a provider default after the browser closes or the workstation restarts. The service file still contains no provider credentials.
 
+Live acceptance exposed a retracted-package recovery gap: an exact NuGet version previously collected and hashed had disappeared from the registry. Investigation pipelines now prefer a fresh official-registry collection but may reuse an exact prior quarantine artifact after independently verifying ecosystem, package, version, byte size, SHA-256, regular-file state, and configured size limit. Missing or altered cache entries still fail closed. The recorded step makes registry unavailability and quarantine reuse explicit, and no package code is executed.
+
 ## 107 Hermes Agent v1.0.0 Integration
 
 Status: complete in production.
