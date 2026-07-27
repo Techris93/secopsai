@@ -4,7 +4,7 @@
 
 Status: implementation complete locally; deployment and browser acceptance remain release gates.
 
-Added hash-addressed local artifact quarantine, separate registry/artifact/validation subject states, bounded archive inspection, local comparison, deterministic IOC candidate extraction/review, partner acquisition records, typed Core CLI commands, and authenticated Mission Control helper endpoints. Raw package bytes remain local and are never sent to Supabase, Render, Cloudflare, or an AI provider. Arbitrary analyzer commands were removed; the optional deep NuGet provider is a pinned Docker image with no network, read-only access, dropped capabilities, and bounded resources.
+Added hash-addressed local artifact quarantine, separate registry/artifact/validation subject states, bounded archive inspection, local comparison, deterministic IOC candidate extraction/review, durable local analysis jobs, partner acquisition records, typed Core CLI commands, and authenticated Mission Control helper endpoints. Raw package bytes remain local and are never sent to Supabase, Render, Cloudflare, or an AI provider. Arbitrary analyzer commands were removed; the optional deep NuGet provider is a pinned Docker image with no network, read-only access, dropped capabilities, and bounded resources.
 
 Verification: `tests/test_research_artifacts.py` passed; existing research automation, analysis, and pipeline tests passed; Core CLI and dashboard server syntax checks passed; dashboard contract tests passed.
 
