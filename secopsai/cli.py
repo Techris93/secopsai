@@ -158,7 +158,7 @@ from secopsai.research_worker import (
 from secopsai.research_analysis import compare_intakes, compare_packages, correlate_candidates, inspect_nuget_archive, list_campaigns
 from secopsai.research_artifacts import attach_to_case, get_artifact, import_artifact, list_artifacts, verify_artifact
 from secopsai.research_artifact_analysis import compare_artifacts, extract_ioc_candidates, inspect_artifact, review_ioc_candidate, queue_artifact_analysis, run_artifact_job, run_artifact_worker_once
-from secopsai.research_acquisition import create_partner_request, list_partner_requests, update_partner_request
+from secopsai.research_acquisition import check_registry_state, create_partner_request, list_partner_requests, update_partner_request
 from secopsai.research_sandbox import poll_sandbox_request, submit_sandbox_request, provider_status as sandbox_provider_status
 from secopsai.research_delivery import send_approved_disclosure, send_research_alert
 from secopsai.research_workflow import (
@@ -1398,6 +1398,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     subject_state.add_argument("--reason", default="")
     subject_state.add_argument("--actor", default="analyst")
     subject_state.add_argument("--db-path", default=None)
+    subject_check = research_subject_sub.add_parser("registry-check")
+    subject_check.add_argument("subject_id")
+    subject_check.add_argument("--db-path", default=None)
 
     research_partner = research_sub.add_parser("partner-request", help="Request an unavailable artifact from a trusted research partner")
     research_partner_sub = research_partner.add_subparsers(dest="research_partner_cmd", required=True)
@@ -2422,7 +2425,10 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
             else:
                 payload = review_ioc_candidate(args.candidate_id, decision=args.decision, actor=args.actor, db_path=args.db_path)
         elif args.research_cmd == "subject":
-            payload = update_subject_state(args.subject_id, registry_state=args.registry_state, artifact_state=args.artifact_state, validation_state=args.validation_state, reason=args.reason, actor=args.actor, db_path=args.db_path)
+            if args.research_subject_cmd == "registry-check":
+                payload = check_registry_state(args.subject_id, db_path=args.db_path)
+            else:
+                payload = update_subject_state(args.subject_id, registry_state=args.registry_state, artifact_state=args.artifact_state, validation_state=args.validation_state, reason=args.reason, actor=args.actor, db_path=args.db_path)
         elif args.research_cmd == "partner-request":
             if args.research_partner_cmd == "create":
                 payload = create_partner_request(args.case_id, recipient=args.recipient, reason=args.reason, subject_id=args.subject_id, artifact_sha256=args.artifact_sha256, actor=args.actor, db_path=args.db_path)
