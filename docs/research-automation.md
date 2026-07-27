@@ -31,7 +31,7 @@ Install or update the background bridge in agent-review mode:
 ```bash
 secopsai intelligence bridge service install \
   --autonomy-mode agent_review \
-  --model kimi/kimi-k2.7-code-highspeed
+  --model google-antigravity/gemini-3.6-flash
 ```
 
 Complete an already-waiting pipeline from the CLI:

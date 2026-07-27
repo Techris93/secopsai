@@ -2,7 +2,7 @@
 
 ## 108 Guarded Agent Research Completion
 
-Status: implementation complete; full verification and Mission Control release are pending.
+Status: complete in the local pilot and merged.
 
 Added an optional `agent_review` mode for the Local Codex/OpenCodex bridge. When all bounded static-analysis jobs finish, Core accepts pipeline-scoped proposals, records an evidence-linked verdict, and reruns publication safety without requiring card-by-card operator acceptance. Verdict output is schema constrained and then independently guarded by Core: low-confidence work remains inconclusive, a credible verdict requires advisory-backed or sandbox evidence, unresolved contradictions and unsupported claims reduce certainty, and absence from a local repository can never establish package benignness or make ecosystem intelligence non-actionable.
 
@@ -19,6 +19,10 @@ The remaining human gates are external sandbox submission, external disclosure d
 Follow-up: bridge service installation now persists the selected OpenCodex provider/model identifier in the fixed service command. This prevents an autonomous background worker from silently reverting to a provider default after the browser closes or the workstation restarts. The service file still contains no provider credentials.
 
 Live acceptance exposed a retracted-package recovery gap: an exact NuGet version previously collected and hashed had disappeared from the registry. Investigation pipelines now prefer a fresh official-registry collection but may reuse an exact prior quarantine artifact after independently verifying ecosystem, package, version, byte size, SHA-256, regular-file state, and configured size limit. Missing or altered cache entries still fail closed. The recorded step makes registry unavailability and quarantine reuse explicit, and no package code is executed.
+
+Live acceptance: pipeline `RPL-37985992E2512C07` recovered `nuget:Braintree.Net@3.35.7` after the registry returned HTTP 404, reused the exact hash-verified quarantine artifact, freshly collected the legitimate reference package, and completed all three structured analyses through `google-antigravity/gemini-3.6-flash`. Guarded agent review accepted 18 revision-scoped proposals and recorded a `likely` verdict at 85% confidence. Publication preflight remained `needs_approval`; sandbox submission, disclosure delivery, and publication all remained false. The earlier Kimi/Grok provider-credit failures remain in the job audit history.
+
+Release acceptance: Core PRs #92, #93, and #94 and Mission Control PRs #32 and #33 passed their Python-version matrix, MCP, security, dependency, Cloudflare, dashboard, and browser checks before merge. The local launchd bridge is running in `agent_review` mode with Gemini 3.6 persisted in its fixed command and no provider credentials in the service definition.
 
 ## 107 Hermes Agent v1.0.0 Integration
 
