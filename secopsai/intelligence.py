@@ -266,17 +266,20 @@ def _bridge_context(action: Action, inputs: dict[str, Any], db_path: str | None)
 def _bridge_instructions(action: Action) -> str:
     action_guidance = {
         "analyze_research_case": (
-            "Also return confirmed_facts, inferences, unsupported_claims, contradictions, and missing_evidence as arrays. "
+            "Produce a comprehensive defensive research assessment, not a generic alert summary. Summarize the scope, method, strongest evidence, and conclusion in clear prose. "
+            "Return 5-12 confirmed_facts when evidence supports them, plus inferences, unsupported_claims, contradictions, and missing_evidence as arrays. "
             "A confirmed fact must cite supplied normalized evidence; otherwise classify it as an inference or unsupported claim. "
+            "Return prioritized recommended_actions that would close the most important evidence gaps, including static, registry, IOC, comparison, or sandbox steps as applicable. "
             "Return verdict_recommendation as credible, likely, inconclusive, not_substantiated, or benign; "
             "verdict_confidence as 0-100; verdict_rationale; and verdict_evidence_refs using only supplied evidence or pipeline step identifiers. "
             "Never downgrade a package merely because local exposure was not observed. "
         ),
         "generate_analyst_brief": (
-            "Also return an article_outline array. Keep it suitable for a technical draft, not publication-ready copy. "
+            "Write a substantial analyst brief with an executive summary, investigation scope, methodology, confirmed findings, implications, limitations, and prioritized next steps in the available schema fields. "
+            "Also return an article_outline array with 6-12 specific sections suitable for a technical research draft, not publication-ready copy. "
         ),
         "review_publication_safety": (
-            "Also return publication_risks as an array and disclosure_draft as review-only text. Do not approve or send either. "
+            "Assess evidentiary, attribution, privacy, operational, legal, disclosure, and reproducibility risks. Return specific publication_risks, corrective recommended_actions, and a detailed disclosure_draft as review-only text. Do not approve or send either. "
         ),
     }.get(action.name, "")
     return (
@@ -285,7 +288,8 @@ def _bridge_instructions(action: Action) -> str:
         "Do not execute commands, access files, browse, contact external parties, change product state, or approve publication. "
         f"{action_guidance}For actions other than analyze_research_case, set verdict_recommendation to inconclusive, "
         "verdict_confidence to 0, verdict_rationale to 'Verdict not assessed by this action', and verdict_evidence_refs to an empty array. "
-        "Return concise JSON matching the required output schema. Model output is evidence-bounded and subject to SecOpsAI guardrails."
+        "Use the available output limits fully when evidence warrants detail, while avoiding repetition. Return JSON matching the required output schema. "
+        "Model output is evidence-bounded and subject to SecOpsAI guardrails."
     )
 
 

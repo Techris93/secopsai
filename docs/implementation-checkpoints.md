@@ -1,5 +1,13 @@
 # Implementation Checkpoints
 
+## 109 Full Intelligence Result Review
+
+Status: implementation complete; Mission Control release and live browser acceptance are pending.
+
+Expanded research prompts so frontier models produce comprehensive, evidence-led assessments rather than generic summaries. The bridge now requests investigation scope, method, 5-12 supported facts where available, explicit fact/inference/unsupported-claim separation, contradictions, missing proof, prioritized evidence-closing actions, verdict rationale, technical article structure, and publication/disclosure risk analysis. Schema-adjacent nested analyst briefs from Kimi, Grok, and Gemini are normalized into the canonical result instead of collapsing to placeholder text.
+
+The safety boundary is unchanged: models receive normalized evidence, cannot browse or execute package code through this action, and cannot submit sandbox artifacts, send disclosure, change customer controls, or publish content.
+
 ## 108 Guarded Agent Research Completion
 
 Status: complete in the local pilot and merged.
