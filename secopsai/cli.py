@@ -157,7 +157,7 @@ from secopsai.research_worker import (
 )
 from secopsai.research_analysis import compare_intakes, compare_packages, correlate_candidates, inspect_nuget_archive, list_campaigns
 from secopsai.research_artifacts import attach_to_case, get_artifact, import_artifact, list_artifacts, verify_artifact
-from secopsai.research_artifact_analysis import compare_artifacts, extract_ioc_candidates, inspect_artifact, review_ioc_candidate
+from secopsai.research_artifact_analysis import compare_artifacts, extract_ioc_candidates, inspect_artifact, review_ioc_candidate, queue_artifact_analysis, run_artifact_job, run_artifact_worker_once
 from secopsai.research_acquisition import create_partner_request, list_partner_requests, update_partner_request
 from secopsai.research_sandbox import poll_sandbox_request, submit_sandbox_request, provider_status as sandbox_provider_status
 from secopsai.research_delivery import send_approved_disclosure, send_research_alert
@@ -1367,10 +1367,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     research_artifact_worker = research_sub.add_parser("artifact-worker", help="Run the local artifact analysis worker")
     research_artifact_worker_sub = research_artifact_worker.add_subparsers(dest="research_artifact_worker_cmd", required=True)
     artifact_worker_run = research_artifact_worker_sub.add_parser("run")
-    artifact_worker_run.add_argument("artifact_id")
+    artifact_worker_run.add_argument("target", help="Artifact ID or ARJ job ID")
+    artifact_worker_run.add_argument("--queue-case", default=None)
     artifact_worker_run.add_argument("--db-path", default=None)
     artifact_worker_sub_status = research_artifact_worker_sub.add_parser("status")
     artifact_worker_sub_status.add_argument("--db-path", default=None)
+    artifact_worker_once = research_artifact_worker_sub.add_parser("once")
+    artifact_worker_once.add_argument("--limit", type=int, default=5)
+    artifact_worker_once.add_argument("--db-path", default=None)
 
     research_ioc = research_sub.add_parser("ioc-candidates", help="Extract and review deterministic IOC candidates")
     research_ioc_sub = research_ioc.add_subparsers(dest="research_ioc_cmd", required=True)
@@ -2402,7 +2406,14 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = compare_artifacts(args.left_artifact_id, args.right_artifact_id, db_path=args.db_path)
         elif args.research_cmd == "artifact-worker":
             if args.research_artifact_worker_cmd == "run":
-                payload = inspect_artifact(args.artifact_id, db_path=args.db_path)
+                if args.queue_case:
+                    payload = queue_artifact_analysis(args.queue_case, args.target, db_path=args.db_path)
+                elif args.target.startswith("ARJ-"):
+                    payload = run_artifact_job(args.target, db_path=args.db_path)
+                else:
+                    payload = inspect_artifact(args.target, db_path=args.db_path)
+            elif args.research_artifact_worker_cmd == "once":
+                payload = run_artifact_worker_once(limit=args.limit, db_path=args.db_path)
             else:
                 payload = {"worker": "local-artifact-worker", "quarantine": True, "analyzer_image_configured": bool(os.environ.get("SECOPSAI_NUGET_ANALYZER_IMAGE", "").strip()), "execution_performed": False}
         elif args.research_cmd == "ioc-candidates":

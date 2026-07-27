@@ -286,6 +286,22 @@ def init_db(db_path: str | None = None) -> None:
                 FOREIGN KEY (subject_id) REFERENCES research_subjects (subject_id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS research_artifact_jobs (
+                job_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                artifact_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                requested_by TEXT NOT NULL,
+                queued_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                error_message TEXT,
+                result_json TEXT NOT NULL,
+                UNIQUE (case_id, artifact_id),
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE,
+                FOREIGN KEY (artifact_id) REFERENCES research_artifacts (artifact_id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS research_evidence (
                 evidence_id TEXT PRIMARY KEY,
                 case_id TEXT NOT NULL,

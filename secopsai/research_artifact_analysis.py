@@ -5,6 +5,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import secrets
 import re
 import zipfile
 from contextlib import closing
@@ -171,3 +172,51 @@ def review_ioc_candidate(candidate_id: str, *, decision: str, db_path: Optional[
     if decision == "approved":
         add_ioc(row["case_id"], ioc_type=row["ioc_type"], value=row["value"], confidence=row["confidence"], db_path=db_path, actor=actor)
     return {"candidate_id": candidate_id, "case_id": row["case_id"], "status": decision}
+
+
+def queue_artifact_analysis(case_id: str, artifact_id: str, *, requested_by: str = "mission-control", db_path: Optional[str] = None) -> Dict[str, Any]:
+    soc_store.init_db(db_path)
+    job_id = "ARJ-" + secrets.token_hex(7).upper()
+    now = soc_store.utc_now()
+    with closing(soc_store.connect(db_path)) as connection:
+        connection.execute("""INSERT INTO research_artifact_jobs
+            (job_id, case_id, artifact_id, status, requested_by, queued_at, result_json)
+            VALUES (?, ?, ?, 'queued', ?, ?, '{}')
+            ON CONFLICT(case_id, artifact_id) DO UPDATE SET status='queued', requested_by=excluded.requested_by, queued_at=excluded.queued_at, error_message=NULL""", (job_id, case_id, artifact_id, requested_by, now))
+        row = connection.execute("SELECT job_id, status, queued_at FROM research_artifact_jobs WHERE case_id = ? AND artifact_id = ?", (case_id, artifact_id)).fetchone()
+        connection.commit()
+    return {"job_id": row["job_id"], "case_id": case_id, "artifact_id": artifact_id, "status": row["status"], "queued_at": row["queued_at"]}
+
+
+def run_artifact_job(job_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
+    soc_store.init_db(db_path)
+    with closing(soc_store.connect(db_path)) as connection:
+        row = connection.execute("SELECT * FROM research_artifact_jobs WHERE job_id = ?", (job_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"artifact analysis job not found: {job_id}")
+        connection.execute("UPDATE research_artifact_jobs SET status='running', started_at=? WHERE job_id=?", (soc_store.utc_now(), job_id))
+        connection.commit()
+    try:
+        result = inspect_artifact(row["artifact_id"], db_path=db_path)
+    except Exception as exc:
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute("UPDATE research_artifact_jobs SET status='failed', completed_at=?, error_message=? WHERE job_id=?", (soc_store.utc_now(), str(exc)[:2000], job_id))
+            connection.commit()
+        raise
+    with closing(soc_store.connect(db_path)) as connection:
+        connection.execute("UPDATE research_artifact_jobs SET status='succeeded', completed_at=?, result_json=? WHERE job_id=?", (soc_store.utc_now(), json.dumps(result, sort_keys=True), job_id))
+        connection.commit()
+    return {"job_id": job_id, "status": "succeeded", "result": result}
+
+
+def run_artifact_worker_once(*, db_path: Optional[str] = None, limit: int = 5) -> Dict[str, Any]:
+    soc_store.init_db(db_path)
+    with closing(soc_store.connect(db_path)) as connection:
+        jobs = connection.execute("SELECT job_id FROM research_artifact_jobs WHERE status='queued' ORDER BY queued_at LIMIT ?", (max(1, min(limit, 25)),)).fetchall()
+    results = []
+    for item in jobs:
+        try:
+            results.append(run_artifact_job(item["job_id"], db_path=db_path))
+        except Exception as exc:
+            results.append({"job_id": item["job_id"], "status": "failed", "error": str(exc)})
+    return {"processed": len(results), "jobs": results}
