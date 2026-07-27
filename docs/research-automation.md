@@ -27,7 +27,9 @@ Agent-review mode is the recommended high-automation setting for a local researc
 Install or update the background bridge in agent-review mode:
 
 ```bash
-secopsai intelligence bridge service install --autonomy-mode agent_review
+secopsai intelligence bridge service install \
+  --autonomy-mode agent_review \
+  --model kimi/kimi-k2.7-code-highspeed
 ```
 
 Complete an already-waiting pipeline from the CLI:
@@ -44,6 +46,8 @@ Mission Control exposes the same operation as **Complete Agent Review**. The act
 - downgrades unsupported or contradictory claims;
 - reruns publication safety;
 - does not upload an artifact, contact a third party, or publish content.
+
+The model identifier is stored in the user service definition, not only in the browser session. Provider credentials remain owned by OpenCodex or Codex and are never copied into the service file.
 
 Use supervised mode when policy requires proposal-by-proposal human acceptance:
 

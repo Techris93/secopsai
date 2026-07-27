@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import platform
 import plistlib
+import re
 import shlex
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import soc_store
 LABEL = "ai.secopsai.codex-bridge"
 SYSTEMD_UNIT = "secopsai-codex-bridge.service"
 RunCommand = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
+MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
 
 
 def install_service(
@@ -25,6 +27,7 @@ def install_service(
     platform_name: str | None = None,
     runner: RunCommand | None = None,
     autonomy_mode: str = "supervised",
+    model: str = "",
 ) -> dict[str, Any]:
     resolved_home = (home or Path.home()).expanduser().resolve()
     system = (platform_name or platform.system()).lower()
@@ -32,10 +35,13 @@ def install_service(
     autonomy_mode = str(autonomy_mode or "supervised").strip().lower()
     if autonomy_mode not in {"supervised", "agent_review"}:
         raise ValueError("autonomy mode must be supervised or agent_review")
+    model = str(model or "").strip()
+    if model and not MODEL_ID_RE.fullmatch(model):
+        raise ValueError("bridge model id contains unsupported characters")
     if system == "darwin":
-        result = _install_launchd(resolved_home, db_path, run, start, autonomy_mode)
+        result = _install_launchd(resolved_home, db_path, run, start, autonomy_mode, model)
     elif system == "linux":
-        result = _install_systemd(resolved_home, db_path, run, start, autonomy_mode)
+        result = _install_systemd(resolved_home, db_path, run, start, autonomy_mode, model)
     else:
         raise ValueError("automatic Codex bridge service installation supports macOS and Linux")
     return {"status": "installed", "service": LABEL, **result}
@@ -64,7 +70,7 @@ def service_action(
     raise ValueError("Codex bridge service controls support macOS and Linux")
 
 
-def _install_launchd(home: Path, db_path: str | None, run: RunCommand, start: bool, autonomy_mode: str) -> dict[str, Any]:
+def _install_launchd(home: Path, db_path: str | None, run: RunCommand, start: bool, autonomy_mode: str, model: str) -> dict[str, Any]:
     launch_agents = home / "Library" / "LaunchAgents"
     logs = home / "Library" / "Logs" / "SecOpsAI"
     launch_agents.mkdir(parents=True, exist_ok=True)
@@ -81,6 +87,8 @@ def _install_launchd(home: Path, db_path: str | None, run: RunCommand, start: bo
         "--db-path",
         str(Path(db_path or soc_store.default_db_path()).expanduser().resolve()),
     ]
+    if model:
+        args.extend(["--model", model])
     environment = {
         "HOME": str(home),
         "PATH": os.environ.get("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"),
@@ -115,10 +123,11 @@ def _install_launchd(home: Path, db_path: str | None, run: RunCommand, start: bo
         "logs": [str(logs / "codex-bridge.out.log"), str(logs / "codex-bridge.err.log")],
         "credentials_persisted": False,
         "autonomy_mode": autonomy_mode,
+        "model": model or "provider default",
     }
 
 
-def _install_systemd(home: Path, db_path: str | None, run: RunCommand, start: bool, autonomy_mode: str) -> dict[str, Any]:
+def _install_systemd(home: Path, db_path: str | None, run: RunCommand, start: bool, autonomy_mode: str, model: str) -> dict[str, Any]:
     unit_dir = home / ".config" / "systemd" / "user"
     logs = home / ".local" / "state" / "secopsai"
     unit_dir.mkdir(parents=True, exist_ok=True)
@@ -135,6 +144,8 @@ def _install_systemd(home: Path, db_path: str | None, run: RunCommand, start: bo
         "--db-path",
         str(Path(db_path or soc_store.default_db_path()).expanduser().resolve()),
     ]
+    if model:
+        command.extend(["--model", model])
     lines = [
         "[Unit]",
         "Description=SecOpsAI local Codex intelligence bridge",
@@ -168,6 +179,7 @@ def _install_systemd(home: Path, db_path: str | None, run: RunCommand, start: bo
         "logs": [f"journalctl --user -u {SYSTEMD_UNIT}"],
         "credentials_persisted": False,
         "autonomy_mode": autonomy_mode,
+        "model": model or "provider default",
     }
 
 
