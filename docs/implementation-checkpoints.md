@@ -1,5 +1,21 @@
 # Implementation Checkpoints
 
+## 108 Guarded Agent Research Completion
+
+Status: implementation complete; full verification and Mission Control release are pending.
+
+Added an optional `agent_review` mode for the Local Codex/OpenCodex bridge. When all bounded static-analysis jobs finish, Core accepts pipeline-scoped proposals, records an evidence-linked verdict, and reruns publication safety without requiring card-by-card operator acceptance. Verdict output is schema constrained and then independently guarded by Core: low-confidence work remains inconclusive, a credible verdict requires advisory-backed or sandbox evidence, unresolved contradictions and unsupported claims reduce certainty, and absence from a local repository can never establish package benignness or make ecosystem intelligence non-actionable.
+
+The model receives normalized evidence only. Verdict evidence is limited to active records created by the same investigation pipeline. Every decision records the actor and pipeline revision, and repeated completion is idempotent. The automation cannot execute packages, submit artifacts to an external sandbox, send disclosure, change customer controls, approve publication, or publish content.
+
+Operator surfaces:
+
+- `secopsai research pipeline agent-complete RPL-...`
+- `secopsai intelligence bridge service install --autonomy-mode agent_review`
+- Mission Control **Complete Agent Review**
+
+The remaining human gates are external sandbox submission, external disclosure delivery, and final publication approval.
+
 ## 107 Hermes Agent v1.0.0 Integration
 
 Status: complete in production.

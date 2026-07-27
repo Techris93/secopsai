@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 from contextlib import closing
 from typing import Any, Dict, Iterable, Optional
@@ -13,7 +14,11 @@ from secopsai.intelligence_jobs import cancel_job, enqueue_job, get_job
 from secopsai.research_analysis import compare_intakes
 from secopsai.research_cases import add_evidence, get_case
 from secopsai.research_intake import attach_intake_result, collect_package_intake
-from secopsai.research_workflow import build_evidence_matrix, publication_safety_check
+from secopsai.research_workflow import (
+    build_evidence_matrix,
+    publication_safety_check,
+    record_verdict,
+)
 
 
 SCHEMA_VERSION = "secopsai.research.investigation-pipeline.v1"
@@ -685,6 +690,12 @@ def reconcile_intelligence_job(job: Dict[str, Any], *, db_path: Optional[str] = 
             {"pipeline_id": pipeline_id, "pending_review_items": summary["pending_review_items"]},
         )
         connection.commit()
+    if str(os.environ.get("SECOPSAI_RESEARCH_AUTONOMY_MODE") or "").strip().lower() == "agent_review":
+        return agent_complete_pipeline(
+            pipeline_id,
+            actor="secopsai-agent-autonomy",
+            db_path=db_path,
+        )
     return get_pipeline(pipeline_id, db_path=db_path)
 
 
@@ -792,6 +803,146 @@ def auto_review_pipeline(
             actor=actor,
             db_path=db_path,
         )
+    return get_pipeline(pipeline_id, db_path=db_path)
+
+
+def agent_complete_pipeline(
+    pipeline_id: str,
+    *,
+    actor: str = "secopsai-agent-autonomy",
+    db_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Complete safe review work and record a bounded, evidence-linked agent verdict."""
+    pipeline = get_pipeline(pipeline_id, db_path=db_path)
+    if pipeline["status"] == "awaiting_review":
+        pipeline = auto_review_pipeline(pipeline_id, actor=actor, db_path=db_path)
+    elif pipeline["status"] != "succeeded":
+        raise ValueError("agent completion requires a pipeline awaiting review or already succeeded")
+
+    case = get_case(pipeline["case_id"], db_path=db_path)
+    actor_id = f"{actor}:{pipeline_id}"[:160]
+    existing = next(
+        (item for item in case.get("verdicts") or [] if str(item.get("actor") or "") == actor_id),
+        None,
+    )
+    verdict_recorded = bool(existing)
+    verdict = str(existing.get("verdict") or "") if existing else ""
+    confidence = int(existing.get("confidence") or 0) if existing else 0
+
+    if not existing:
+        analyze = next(
+            (step for step in pipeline["steps"] if step["step_key"] == "analyze_research_case"),
+            {},
+        )
+        envelope = analyze.get("result") or {}
+        data = envelope.get("data") if isinstance(envelope.get("data"), dict) else envelope
+        requested = str(data.get("verdict_recommendation") or "inconclusive").strip().lower()
+        if requested not in {"credible", "likely", "inconclusive", "not_substantiated", "benign"}:
+            requested = "inconclusive"
+        try:
+            confidence = max(0, min(int(data.get("verdict_confidence") or 0), 100))
+        except (TypeError, ValueError):
+            confidence = 0
+        rationale = _clean(data.get("verdict_rationale"), 8000)
+        contradictions = data.get("contradictions") if isinstance(data.get("contradictions"), list) else []
+        unsupported = data.get("unsupported_claims") if isinstance(data.get("unsupported_claims"), list) else []
+        decision_context = " ".join(
+            _clean(value, 2000)
+            for value in (
+                rationale,
+                data.get("summary"),
+                data.get("risk_assessment"),
+                *(data.get("confirmed_facts") if isinstance(data.get("confirmed_facts"), list) else []),
+                *(data.get("limitations") if isinstance(data.get("limitations"), list) else []),
+            )
+        ).lower()
+        local_absence_only = any(
+            marker in decision_context
+            for marker in (
+                "not installed locally",
+                "not referenced locally",
+                "not present locally",
+                "absent from the local",
+                "no local dependency",
+                "no matching dependency",
+                "not found in the local repository",
+            )
+        )
+        active_evidence = [
+            item
+            for item in case.get("evidence") or []
+            if str(item.get("status") or "active") == "active"
+            and item.get("evidence_id")
+            and str((item.get("metadata") or {}).get("pipeline_id") or "") == pipeline_id
+        ]
+        evidence_ids = [str(item["evidence_id"]) for item in active_evidence[:50]]
+        strong_proof = any(
+            str(item.get("evidence_type") or "") == "sandbox_analysis"
+            or bool((item.get("metadata") or {}).get("advisory_backed"))
+            for item in active_evidence
+        )
+
+        verdict = requested
+        guardrail_notes: list[str] = []
+        if not evidence_ids or confidence < 60:
+            verdict = "inconclusive"
+            guardrail_notes.append("insufficient linked evidence or confidence")
+        if requested == "credible" and not strong_proof:
+            verdict = "likely" if evidence_ids and confidence >= 70 else "inconclusive"
+            guardrail_notes.append("credible requires advisory-backed or sandbox evidence")
+        if contradictions and verdict == "credible":
+            verdict = "likely"
+            guardrail_notes.append("unresolved contradictions prevent a credible verdict")
+        if requested in {"benign", "not_substantiated"} and local_absence_only:
+            verdict = "inconclusive"
+            guardrail_notes.append("local absence cannot establish package benignness")
+        if requested in {"benign", "not_substantiated"} and not strong_proof:
+            verdict = "inconclusive"
+            guardrail_notes.append("an exonerating verdict requires advisory-backed or sandbox evidence")
+        if unsupported and verdict == "credible":
+            verdict = "likely"
+            guardrail_notes.append("unsupported claims prevent a credible verdict")
+
+        if evidence_ids:
+            rationale_text = rationale or "Agent completed bounded review of normalized research evidence."
+            if guardrail_notes:
+                rationale_text += " Guardrails: " + "; ".join(guardrail_notes) + "."
+            record_verdict(
+                pipeline["case_id"],
+                verdict=verdict,
+                confidence=confidence,
+                rationale=f"[pipeline {pipeline_id}] {rationale_text}",
+                evidence_ids=evidence_ids,
+                actor=actor_id,
+                db_path=db_path,
+            )
+            verdict_recorded = True
+
+    safety = publication_safety_check(pipeline["case_id"], actor=actor_id, db_path=db_path)
+    current = get_pipeline(pipeline_id, db_path=db_path)
+    _set_pipeline(
+        pipeline_id,
+        "succeeded",
+        current_step="agent_review_complete",
+        summary={
+            **current.get("summary", {}),
+            "autonomy_mode": "agent_review",
+            "human_review_required": False,
+            "verdict_recorded": verdict_recorded,
+            "agent_verdict": verdict or None,
+            "agent_verdict_confidence": confidence,
+            "publication_preflight": safety["status"],
+            "disclosure_sent": False,
+            "sandbox_submitted": False,
+            "published": False,
+            "human_gates_remaining": [
+                "external sandbox submission",
+                "external disclosure delivery",
+                "final publication approval",
+            ],
+        },
+        db_path=db_path,
+    )
     return get_pipeline(pipeline_id, db_path=db_path)
 
 

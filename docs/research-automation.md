@@ -12,13 +12,44 @@ The normal workflow no longer requires an evidence-bundle export, a file upload,
 4. Core collects official-registry metadata and the package artifact using bounded static-intake controls. It records hashes, inspects the archive without execution, and performs a deterministic comparison when a trusted reference was supplied.
 5. Core queues three durable Intelligence jobs. The installed Local Codex Bridge reads only minimized case and static-analysis context and writes structured proposals back to the same pipeline record.
 6. Mission Control refreshes the running pipeline automatically.
-7. Review every proposed fact, inference, unsupported claim, contradiction, missing-evidence group, recommended-action group, disclosure draft, and publication-risk group. Related model list items are deduplicated and grouped into one editable review card so the queue remains usable. Click **Accept** or **Reject**.
-8. Accepted static evidence is attached with its pipeline and review provenance. Accepted model text becomes an immutable analyst-reviewed case note. Rejected proposals remain auditable and do not change canonical evidence.
-9. Record the human verdict, approve any sandbox request, send disclosure, and approve publication through their existing separate gates.
+7. In **agent review** mode, SecOpsAI accepts the bounded evidence proposals, records an evidence-linked agent verdict, and reruns publication safety automatically. The verdict is constrained by deterministic guardrails: local absence cannot prove benignness, `credible` requires advisory-backed or sandbox evidence, and low-confidence work remains `inconclusive`.
+8. In **supervised** mode, review each proposal manually with **Accept** or **Reject**, then record the verdict yourself.
+9. Review the resulting case. External sandbox submission, external disclosure delivery, and final publication approval remain separate human gates.
 
 If the bridge or collection step fails, click **Retry from checkpoint**. A new pipeline revision is created, stale proposals are superseded, and the previous revision remains auditable. If comparison was incomplete, enter a verified reference and click **Add reference and rerun analysis**.
 
-The pipeline cannot classify a package as malicious, execute it, submit it to a sandbox, send external communication, approve publication, or publish an article.
+The pipeline never executes package code, submits an artifact to an external sandbox, sends external communication, approves publication, or publishes an article. In agent-review mode it may record a bounded case verdict, but only against accepted, pipeline-specific evidence and with all guardrail decisions retained in the audit trail.
+
+## Agent-review mode
+
+Agent-review mode is the recommended high-automation setting for a local research workstation. It delegates the repeatable evidence review, verdict recommendation, analyst brief, and publication preflight to the selected Local Codex/OpenCodex model. Models remain fallible; SecOpsAI therefore validates their schema, evidence links, confidence, contradictions, and local-exposure reasoning before writing a verdict.
+
+Install or update the background bridge in agent-review mode:
+
+```bash
+secopsai intelligence bridge service install --autonomy-mode agent_review
+```
+
+Complete an already-waiting pipeline from the CLI:
+
+```bash
+secopsai research pipeline agent-complete RPL-XXXXXXXXXXXXXXXX
+```
+
+Mission Control exposes the same operation as **Complete Agent Review**. The action:
+
+- accepts bounded static evidence and model proposals;
+- records a verdict with confidence, rationale, evidence identifiers, model provider, and pipeline revision;
+- blocks benign or not-substantiated conclusions based only on missing local exposure;
+- downgrades unsupported or contradictory claims;
+- reruns publication safety;
+- does not upload an artifact, contact a third party, or publish content.
+
+Use supervised mode when policy requires proposal-by-proposal human acceptance:
+
+```bash
+secopsai intelligence bridge service install --autonomy-mode supervised
+```
 
 ## Granular recovery controls
 
@@ -29,7 +60,7 @@ Use the individual actions only when diagnosing a step or deliberately running a
 3. Use **Collect Metadata Preview** to confirm the official registry target.
 4. Use **Run Safe Package Intake**. The artifact is fetched into local quarantine, hashed, and inspected in memory. No package manager or build command runs.
 5. Review the job result and indicators. Use **Attach Verified Evidence** only after reviewing the preview.
-6. Use **Generate Evidence Matrix** and record a human verdict with rationale and evidence IDs.
+6. Use **Generate Evidence Matrix** and either click **Complete Agent Review** or record a human verdict with rationale and evidence IDs.
 7. Use **Run Publication Safety Check** before drafting public content.
 8. Use **Prepare Disclosure** to create a reviewable maintainer/registry message. Approval and sending are separate actions.
 9. Use **Request Sandbox Approval** only when static evidence leaves an important runtime question. The default provider is manual-result-import; Core never executes packages locally.
@@ -50,7 +81,7 @@ secopsai research workflow evidence-matrix RSC-XXXXXXXXXXXX
 secopsai research workflow publication-check RSC-XXXXXXXXXXXX
 ```
 
-Human-gated actions are explicit:
+Human-gated external actions are explicit:
 
 ```bash
 secopsai research workflow verdict RSC-XXXXXXXXXXXX --verdict likely --confidence 70 --rationale "Explain the evidence and limitations." --evidence-id EVD-XXXXXXXXXXXX
@@ -63,4 +94,4 @@ secopsai research workflow publication-approve RSC-XXXXXXXXXXXX --review-id PUB-
 
 Artifacts are bounded by size, redirect, archive-entry, expanded-content, and inspected-text limits. Absolute paths, traversal, links, devices, archive bombs, private-address resolutions, credential-bearing URLs, and unapproved redirects are rejected. Static indicators are evidence leads, not proof of maliciousness. Raw artifacts and raw registry responses are not sent to AI.
 
-Dynamic analysis is not enabled by pretending the Core host is a sandbox. Configure a dedicated isolated provider or import a sanitized result manually. Disclosure sending and publication approval remain auditable human decisions.
+Dynamic analysis is not enabled by pretending the Core host is a sandbox. Configure a dedicated isolated provider or import a sanitized result manually. External sandbox submission, disclosure sending, and publication approval remain auditable human decisions. A model may prepare the justification or draft, but it cannot perform the external action.

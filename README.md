@@ -427,6 +427,16 @@ Higher-risk actions stay queued for analyst approval and application:
 - threshold tuning
 - escalation closures such as `needs_review` or `tune_policy`
 
+## Guarded Research Autonomy
+
+The Local Codex/OpenCodex bridge can complete repeatable research review work with the selected Kimi, Grok, Gemini, or Codex model. In `agent_review` mode it accepts bounded pipeline proposals, records an evidence-linked verdict, and reruns publication safety automatically:
+
+```bash
+secopsai intelligence bridge service install --autonomy-mode agent_review
+```
+
+Core guardrails prevent local dependency absence from becoming a benign verdict, constrain verdict evidence to the active pipeline, and reduce conclusions that lack sufficient confidence or proof. Package execution, external sandbox submission, disclosure delivery, customer-control changes, and final publication remain human-approved actions. See [Research Automation](docs/research-automation.md).
+
 ## Background Monitoring
 
 Example operational model:

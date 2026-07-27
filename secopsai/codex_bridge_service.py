@@ -24,14 +24,18 @@ def install_service(
     home: Path | None = None,
     platform_name: str | None = None,
     runner: RunCommand | None = None,
+    autonomy_mode: str = "supervised",
 ) -> dict[str, Any]:
     resolved_home = (home or Path.home()).expanduser().resolve()
     system = (platform_name or platform.system()).lower()
     run = runner or _run
+    autonomy_mode = str(autonomy_mode or "supervised").strip().lower()
+    if autonomy_mode not in {"supervised", "agent_review"}:
+        raise ValueError("autonomy mode must be supervised or agent_review")
     if system == "darwin":
-        result = _install_launchd(resolved_home, db_path, run, start)
+        result = _install_launchd(resolved_home, db_path, run, start, autonomy_mode)
     elif system == "linux":
-        result = _install_systemd(resolved_home, db_path, run, start)
+        result = _install_systemd(resolved_home, db_path, run, start, autonomy_mode)
     else:
         raise ValueError("automatic Codex bridge service installation supports macOS and Linux")
     return {"status": "installed", "service": LABEL, **result}
@@ -60,7 +64,7 @@ def service_action(
     raise ValueError("Codex bridge service controls support macOS and Linux")
 
 
-def _install_launchd(home: Path, db_path: str | None, run: RunCommand, start: bool) -> dict[str, Any]:
+def _install_launchd(home: Path, db_path: str | None, run: RunCommand, start: bool, autonomy_mode: str) -> dict[str, Any]:
     launch_agents = home / "Library" / "LaunchAgents"
     logs = home / "Library" / "Logs" / "SecOpsAI"
     launch_agents.mkdir(parents=True, exist_ok=True)
@@ -80,6 +84,7 @@ def _install_launchd(home: Path, db_path: str | None, run: RunCommand, start: bo
     environment = {
         "HOME": str(home),
         "PATH": os.environ.get("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"),
+        "SECOPSAI_RESEARCH_AUTONOMY_MODE": autonomy_mode,
     }
     if os.environ.get("CODEX_HOME"):
         environment["CODEX_HOME"] = os.environ["CODEX_HOME"]
@@ -109,10 +114,11 @@ def _install_launchd(home: Path, db_path: str | None, run: RunCommand, start: bo
         "started": start,
         "logs": [str(logs / "codex-bridge.out.log"), str(logs / "codex-bridge.err.log")],
         "credentials_persisted": False,
+        "autonomy_mode": autonomy_mode,
     }
 
 
-def _install_systemd(home: Path, db_path: str | None, run: RunCommand, start: bool) -> dict[str, Any]:
+def _install_systemd(home: Path, db_path: str | None, run: RunCommand, start: bool, autonomy_mode: str) -> dict[str, Any]:
     unit_dir = home / ".config" / "systemd" / "user"
     logs = home / ".local" / "state" / "secopsai"
     unit_dir.mkdir(parents=True, exist_ok=True)
@@ -138,6 +144,7 @@ def _install_systemd(home: Path, db_path: str | None, run: RunCommand, start: bo
         "Type=simple",
         f"WorkingDirectory={working_directory}",
         f"ExecStart={shlex.join(command)}",
+        f"Environment=SECOPSAI_RESEARCH_AUTONOMY_MODE={autonomy_mode}",
         "Restart=on-failure",
         "RestartSec=15",
         "NoNewPrivileges=true",
@@ -160,6 +167,7 @@ def _install_systemd(home: Path, db_path: str | None, run: RunCommand, start: bo
         "started": start,
         "logs": [f"journalctl --user -u {SYSTEMD_UNIT}"],
         "credentials_persisted": False,
+        "autonomy_mode": autonomy_mode,
     }
 
 

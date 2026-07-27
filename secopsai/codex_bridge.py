@@ -714,6 +714,7 @@ def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
         "evidence",
         "recommended_actions",
         "limitations",
+        "verdict_evidence_refs",
     )
     for field_name in list_fields:
         values = result.get(field_name)
@@ -747,6 +748,17 @@ def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
     if not _present(result.get("limitations")):
         missing = result.get("missing_evidence")
         result["limitations"] = list(missing[:25]) if isinstance(missing, list) else []
+    recommendation = str(result.get("verdict_recommendation") or "").strip().lower()
+    if recommendation not in {"credible", "likely", "inconclusive", "not_substantiated", "benign"}:
+        result["verdict_recommendation"] = "inconclusive"
+    try:
+        result["verdict_confidence"] = max(0, min(int(result.get("verdict_confidence") or 0), 100))
+    except (TypeError, ValueError):
+        result["verdict_confidence"] = 0
+    if not _present(result.get("verdict_rationale")):
+        result["verdict_rationale"] = "The model did not provide a bounded package verdict rationale."
+    if not isinstance(result.get("verdict_evidence_refs"), list):
+        result["verdict_evidence_refs"] = []
     return result
 
 

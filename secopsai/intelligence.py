@@ -268,6 +268,9 @@ def _bridge_instructions(action: Action) -> str:
         "analyze_research_case": (
             "Also return confirmed_facts, inferences, unsupported_claims, contradictions, and missing_evidence as arrays. "
             "A confirmed fact must cite supplied normalized evidence; otherwise classify it as an inference or unsupported claim. "
+            "Return verdict_recommendation as credible, likely, inconclusive, not_substantiated, or benign; "
+            "verdict_confidence as 0-100; verdict_rationale; and verdict_evidence_refs using only supplied evidence or pipeline step identifiers. "
+            "Never downgrade a package merely because local exposure was not observed. "
         ),
         "generate_analyst_brief": (
             "Also return an article_outline array. Keep it suitable for a technical draft, not publication-ready copy. "
@@ -280,7 +283,9 @@ def _bridge_instructions(action: Action) -> str:
         f"Perform the approved SecOpsAI action '{action.name}'. Use only the supplied normalized context. "
         "Do not claim that missing evidence was observed. Distinguish facts, inferences, and limitations. "
         "Do not execute commands, access files, browse, contact external parties, change product state, or approve publication. "
-        f"{action_guidance}Return concise JSON matching the required output schema. Human review is mandatory."
+        f"{action_guidance}For actions other than analyze_research_case, set verdict_recommendation to inconclusive, "
+        "verdict_confidence to 0, verdict_rationale to 'Verdict not assessed by this action', and verdict_evidence_refs to an empty array. "
+        "Return concise JSON matching the required output schema. Model output is evidence-bounded and subject to SecOpsAI guardrails."
     )
 
 
@@ -299,6 +304,10 @@ def bridge_output_schema() -> dict[str, Any]:
         "publication_risks",
         "article_outline",
         "disclosure_draft",
+        "verdict_recommendation",
+        "verdict_confidence",
+        "verdict_rationale",
+        "verdict_evidence_refs",
     ]
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -319,6 +328,17 @@ def bridge_output_schema() -> dict[str, Any]:
             "publication_risks": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 2000}},
             "article_outline": {"type": "array", "maxItems": 30, "items": {"type": "string", "maxLength": 2000}},
             "disclosure_draft": {"type": "string", "maxLength": 12000},
+            "verdict_recommendation": {
+                "type": "string",
+                "enum": ["credible", "likely", "inconclusive", "not_substantiated", "benign"],
+            },
+            "verdict_confidence": {"type": "integer", "minimum": 0, "maximum": 100},
+            "verdict_rationale": {"type": "string", "maxLength": 8000},
+            "verdict_evidence_refs": {
+                "type": "array",
+                "maxItems": 50,
+                "items": {"type": "string", "maxLength": 200},
+            },
         },
     }
 
