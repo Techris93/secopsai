@@ -41,24 +41,15 @@
         </div>
       </div>
 
-      <div class="secops-home__terminal">
-        <div class="secops-home__terminal-bar">
-          <div class="secops-home__terminal-lights">
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
-          <span class="secops-home__terminal-label">docs.secopsai.dev</span>
-        </div>
-        <pre class="secops-home__terminal-body"><code><span class="secops-home__prompt">$</span> secopsai edge sync
-<span class="secops-home__ok">[OK]</span> Edge assets and findings imported
-<span class="secops-home__ok">[OK]</span> asset graph updated
-
-<span class="secops-home__prompt">$</span> secopsai research monitor run-due
-<span class="secops-home__ok">[OK]</span> registry monitors completed
-
-<span class="secops-home__prompt">$</span> secopsai triage list --source secopsai_edge
-<span class="secops-home__warn">REVIEW</span> 2 findings require operator action</code></pre>
+      <div class="secops-home__capabilities">
+        <div class="secops-home__capabilities-head">Platform operating sequence</div>
+        <ol class="secops-home__capabilities-list">
+          <li><span class="secops-home__capabilities-step">01</span><div><strong>Collect</strong> network assets, wireless networks, package-registry events, and agent telemetry.</div></li>
+          <li><span class="secops-home__capabilities-step">02</span><div><strong>Detect</strong> new devices, risky exposed services, supply-chain candidates, and behavior changes.</div></li>
+          <li><span class="secops-home__capabilities-step">03</span><div><strong>Investigate</strong> findings with bounded static analysis, evidence, and normalized context.</div></li>
+          <li><span class="secops-home__capabilities-step">04</span><div><strong>Resolve</strong> with disposition, remediation tracking, and disclosure coordination.</div></li>
+          <li><span class="secops-home__capabilities-step">05</span><div><strong>Publish</strong> reports and research with human approval gates at every external step.</div></li>
+        </ol>
       </div>
     </div>
   </section>

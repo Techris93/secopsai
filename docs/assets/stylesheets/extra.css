@@ -60,6 +60,11 @@ body {
   color: var(--secops-ink);
 }
 .md-header .md-search__input::placeholder { color: var(--secops-muted); }
+.md-header__button.md-logo img {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+}
 .md-tabs {
   background: #FFFFFF;
   border-bottom: 1px solid var(--secops-rule);
@@ -342,6 +347,45 @@ body {
   color: var(--secops-muted);
   padding: 0.2rem 0.55rem;
   border-radius: 2px;
+}
+.secops-home__capabilities {
+  border: 1px solid var(--secops-rule-dark);
+  border-left: 3px solid var(--secops-ink);
+  background: #FFFFFF;
+  border-radius: 2px;
+  padding: 1.1rem 1.2rem;
+}
+.secops-home__capabilities-head {
+  font-family: var(--md-code-font);
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--secops-muted);
+  border-bottom: 1px solid var(--secops-rule);
+  padding-bottom: 0.7rem;
+  margin-bottom: 0.7rem;
+}
+.secops-home__capabilities-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.secops-home__capabilities-list li {
+  display: flex;
+  gap: 12px;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--secops-rule);
+  font-size: 0.8rem;
+  color: var(--secops-ink-2);
+}
+.secops-home__capabilities-list li:last-child { border-bottom: 0; }
+.secops-home__capabilities-list strong { color: var(--secops-ink); }
+.secops-home__capabilities-step {
+  font-family: var(--md-code-font);
+  font-size: 0.68rem;
+  color: var(--secops-note);
+  min-width: 2ch;
+  padding-top: 2px;
 }
 .secops-home__section {
   padding: 2.2rem 0;

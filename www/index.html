@@ -82,6 +82,15 @@
             letter-spacing: 0.12em;
             text-decoration: none;
             color: var(--ink);
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .wordmark-mark {
+            width: 26px;
+            height: 26px;
+            border-radius: 6px;
+            display: block;
         }
         .doc-nav {
             display: flex;
@@ -403,7 +412,7 @@
 <div class="page">
 
     <header class="doc-header">
-        <a class="wordmark" href="/">SECOPSAI</a>
+        <a class="wordmark" href="/"><img class="wordmark-mark" src="/assets/favicon-512.png" alt="SecOpsAI mark" width="26" height="26">SECOPSAI</a>
         <nav class="doc-nav" aria-label="Document">
             <a href="#install">INSTALL</a>
             <a href="#capabilities">CAPABILITIES</a>
