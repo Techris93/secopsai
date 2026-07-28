@@ -77,6 +77,12 @@ the root Blueprint path. It creates one Starter instance and a 1 GB persistent
 disk because SQLite data must survive deploys and Render disks cannot be
 attached to a free service.
 
+The Blueprint is also the only deployment authority for the Core API and the
+research worker. Both services use `autoDeployTrigger: checksPass`; do not add a
+second GitHub deploy hook for this repository. The repository pins Render's
+native Python runtime in `.python-version`, so a platform default update cannot
+change the production interpreter without review.
+
 Before creating it:
 
 1. Generate four unrelated secrets of at least 32 characters.

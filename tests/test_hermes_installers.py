@@ -19,6 +19,15 @@ def test_release_version_is_consistent() -> None:
     assert "type=sha,prefix={{branch}}-" not in workflow
 
 
+def test_render_deployment_has_one_authority_and_a_pinned_runtime() -> None:
+    blueprint = (ROOT / "render.yaml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "test-and-build.yml").read_text(encoding="utf-8")
+    assert blueprint.count("autoDeployTrigger: checksPass") == 2
+    assert "deploy-render:" not in workflow
+    assert "RENDER_DEPLOY_HOOK_URL" not in workflow
+    assert (ROOT / ".python-version").read_text(encoding="utf-8").strip() == "3.11.15"
+
+
 def test_shell_installers_are_syntax_valid() -> None:
     commands = (
         ["bash", "-n", str(ROOT / "setup.sh")],
