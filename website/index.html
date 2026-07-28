@@ -60,6 +60,8 @@
         ::selection { background: var(--note); color: #fff; }
 
         .page {
+            width: 100%;
+            min-width: 0;
             max-width: 880px;
             margin: 0 auto;
             padding: 0 24px 96px;
@@ -107,23 +109,12 @@
         }
         .doc-nav a:hover { color: var(--note); border-bottom-color: var(--note); }
 
-        /* ── Data-module identification block ────────────────── */
+        /* ── Product introduction ────────────────────────────── */
         .dm-ident {
+            min-width: 0;
             border: 1px solid var(--rule-dark);
             background: var(--panel);
             margin: 32px 0 40px;
-        }
-        .dm-ident-head {
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
-            border-bottom: 1px solid var(--rule);
-            padding: 10px 16px;
-            font-family: var(--mono);
-            font-size: 11px;
-            letter-spacing: 0.08em;
-            color: var(--muted);
-            flex-wrap: wrap;
         }
         .dm-ident-body { padding: 28px 16px 24px; }
         .dm-title {
@@ -270,6 +261,7 @@
         /* ── Tables ──────────────────────────────────────────── */
         .spec-table {
             width: 100%;
+            max-width: 100%;
             border-collapse: collapse;
             border: 1px solid var(--rule-dark);
             background: var(--panel);
@@ -379,15 +371,24 @@
         .doc-footer a { color: var(--note); text-decoration: none; }
 
         @media (max-width: 640px) {
+            .page { padding: 0 20px 72px; }
             .doc-header { align-items: flex-start; }
             .doc-nav {
                 display: grid;
-                grid-template-columns: repeat(3, minmax(0, 1fr));
+                grid-template-columns: repeat(2, minmax(0, 1fr));
                 gap: 10px 14px;
                 width: 100%;
             }
             .doc-nav a { white-space: nowrap; }
+            .dm-ident { margin: 24px 0 32px; }
+            .dm-ident-body { padding: 24px 16px 22px; }
             .dm-title { font-size: 26px; }
+            .dm-meta { grid-template-columns: 1fr; }
+            .dm-meta-item {
+                border-right: 0;
+                border-bottom: 1px solid var(--rule);
+            }
+            .dm-meta-item:last-child { border-bottom: 0; }
             .install-cmd { flex-direction: column; }
             .install-cmd code {
                 white-space: normal;
@@ -401,6 +402,13 @@
             }
             .notice { flex-direction: column; }
             .notice-label { border-right: 0; border-bottom: 1px solid; }
+            .spec-table { table-layout: fixed; font-size: 12.5px; }
+            .spec-table th,
+            .spec-table td {
+                padding: 8px;
+                overflow-wrap: anywhere;
+            }
+            .spec-table td:first-child { white-space: normal; }
         }
         @media print {
             .doc-nav, .copy-btn, .tabs { display: none; }
@@ -422,29 +430,24 @@
         </nav>
     </header>
 
-    <!-- Data-module identification block -->
+    <!-- Product introduction -->
     <div class="dm-ident">
-        <div class="dm-ident-head">
-            <span>DOC-SECOPS-AI-001</span>
-            <span>ISSUE 2026-07</span>
-            <span>LANGUAGE: EN (STE)</span>
-        </div>
         <div class="dm-ident-body">
             <h1 class="dm-title">SecOpsAI</h1>
             <p class="dm-subtitle">Security visibility for your network and your software supply chain. Local-first by design.</p>
         </div>
         <div class="dm-meta">
             <div class="dm-meta-item">
-                <span class="dm-meta-key">APPLICABILITY</span>
+                <span class="dm-meta-key">PLATFORMS</span>
                 macOS · Linux · Windows · Edge sensors
             </div>
             <div class="dm-meta-item">
-                <span class="dm-meta-key">DATA POLICY</span>
-                Local-first. No log shipping by default.
+                <span class="dm-meta-key">DEPLOYMENT</span>
+                Local-first · No log shipping by default
             </div>
             <div class="dm-meta-item">
-                <span class="dm-meta-key">LICENSE</span>
-                MIT · Source available on GitHub
+                <span class="dm-meta-key">SOURCE</span>
+                Open source · MIT licensed
             </div>
         </div>
     </div>
@@ -749,7 +752,7 @@
 
     <footer class="doc-footer">
         <div>
-            <div class="footer-id">DOC-SECOPS-AI-001 · ISSUE 2026-07</div>
+            <div class="footer-id">SecOpsAI · Security operations platform</div>
             <div>SecOpsAI — local-first security operations.</div>
         </div>
         <div>
