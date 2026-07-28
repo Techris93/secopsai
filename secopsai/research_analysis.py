@@ -158,8 +158,10 @@ def inspect_nuget_archive(data: bytes, filename: str = "package.nupkg") -> Dict[
     }
     analyzer_image = os.environ.get("SECOPSAI_NUGET_ANALYZER_IMAGE", "").strip()
     if analyzer_image:
-        if not re.fullmatch(r"[A-Za-z0-9._/-]{1,180}:[A-Za-z0-9._-]{1,80}", analyzer_image):
-            raise IntakeError("NuGet analyzer image must be a pinned image reference")
+        tag_pinned = re.fullmatch(r"[A-Za-z0-9._/-]{1,180}:[A-Za-z0-9._-]{1,80}", analyzer_image)
+        digest_pinned = re.fullmatch(r"[A-Za-z0-9._/-]{1,180}@sha256:[a-f0-9]{64}", analyzer_image)
+        if not (tag_pinned or digest_pinned):
+            raise IntakeError("NuGet analyzer image must be a pinned image reference (immutable tag or sha256 digest)")
         with tempfile.TemporaryDirectory(prefix="secopsai-nuget-") as temp_dir:
             package_path = os.path.join(temp_dir, "package.nupkg")
             with open(package_path, "wb") as handle:

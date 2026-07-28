@@ -8,9 +8,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import stat
+import tarfile
 import zipfile
 from contextlib import closing
 from pathlib import Path
@@ -22,6 +24,9 @@ MAX_ARTIFACT_BYTES = 250 * 1024 * 1024
 MAX_ARCHIVE_ENTRIES = 10000
 MAX_ENTRY_BYTES = 50 * 1024 * 1024
 ALLOWED_STATES = {"collected", "missing", "externally_supplied", "purged"}
+ZIP_SUFFIXES = {".nupkg", ".zip", ".vsix", ".whl"}
+TAR_SUFFIXES = {".gem"}
+ATTACHMENT_ROLES = {"subject", "reference", "comparison", "baseline"}
 
 
 def quarantine_root() -> Path:
@@ -51,9 +56,18 @@ def _hash_and_validate(path: Path, max_bytes: int = MAX_ARTIFACT_BYTES) -> tuple
     return digest.hexdigest(), size
 
 
-def _validate_archive(path: Path) -> Dict[str, Any]:
-    if path.suffix.lower() not in {".nupkg", ".zip", ".vsix", ".gem", ".whl"}:
-        return {"archive": False, "entries": 0, "unsafe": False}
+def _validate_member_name(name: str) -> None:
+    normalized = name.replace("\\", "/")
+    parts = [part for part in normalized.split("/") if part not in {"", "."}]
+    if (
+        normalized.startswith("/")
+        or ".." in parts
+        or (parts and re.fullmatch(r"[A-Za-z]:", parts[0]))
+    ):
+        raise ValueError("archive contains a path traversal entry")
+
+
+def _validate_zip(path: Path) -> Dict[str, Any]:
     entries = 0
     expanded = 0
     with zipfile.ZipFile(path) as archive:
@@ -62,9 +76,10 @@ def _validate_archive(path: Path) -> Dict[str, Any]:
             raise ValueError("archive contains too many entries")
         for info in infos:
             entries += 1
-            name = info.filename.replace("\\", "/")
-            if name.startswith("/") or ".." in Path(name).parts:
-                raise ValueError("archive contains a path traversal entry")
+            _validate_member_name(info.filename)
+            mode = info.external_attr >> 16
+            if stat.S_ISLNK(mode) or stat.S_ISCHR(mode) or stat.S_ISBLK(mode) or stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode):
+                raise ValueError("archive contains a symlink or device entry")
             if info.is_dir():
                 continue
             if info.file_size > MAX_ENTRY_BYTES:
@@ -72,7 +87,38 @@ def _validate_archive(path: Path) -> Dict[str, Any]:
             expanded += info.file_size
             if expanded > MAX_ARTIFACT_BYTES * 4:
                 raise ValueError("archive expanded size exceeds safety limit")
-    return {"archive": True, "entries": entries, "expanded_bytes": expanded, "unsafe": False}
+    return {"archive": True, "format": "zip", "entries": entries, "expanded_bytes": expanded, "unsafe": False}
+
+
+def _validate_tar(path: Path) -> Dict[str, Any]:
+    entries = 0
+    expanded = 0
+    with tarfile.open(path) as archive:
+        members = archive.getmembers()
+        if len(members) > MAX_ARCHIVE_ENTRIES:
+            raise ValueError("archive contains too many entries")
+        for info in members:
+            entries += 1
+            _validate_member_name(info.name)
+            if info.issym() or info.islnk() or info.isdev() or info.isfifo():
+                raise ValueError("archive contains a symlink, hardlink, or device entry")
+            if info.isdir():
+                continue
+            if info.size > MAX_ENTRY_BYTES:
+                raise ValueError("archive entry exceeds safety limit")
+            expanded += info.size
+            if expanded > MAX_ARTIFACT_BYTES * 4:
+                raise ValueError("archive expanded size exceeds safety limit")
+    return {"archive": True, "format": "tar", "entries": entries, "expanded_bytes": expanded, "unsafe": False}
+
+
+def _validate_archive(path: Path) -> Dict[str, Any]:
+    suffix = path.suffix.lower()
+    if suffix in ZIP_SUFFIXES:
+        return _validate_zip(path)
+    if suffix in TAR_SUFFIXES:
+        return _validate_tar(path)
+    return {"archive": False, "entries": 0, "unsafe": False}
 
 
 def import_artifact(
@@ -86,6 +132,8 @@ def import_artifact(
     actor: str = "analyst",
 ) -> Dict[str, Any]:
     """Copy an authorized local artifact into hash-addressed quarantine."""
+    if not isinstance(provenance, dict) or not str(provenance.get("source", "")).strip():
+        raise ValueError("provenance requires a non-empty 'source' describing lawful origin and authorization")
     soc_store.init_db(db_path)
     source = Path(source_path).expanduser()
     digest, size = _hash_and_validate(source)
@@ -161,18 +209,26 @@ def get_artifact(artifact_id: str, *, db_path: Optional[str] = None) -> Dict[str
 def verify_artifact(artifact_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
     soc_store.init_db(db_path)
     with closing(soc_store.connect(db_path)) as connection:
-        row = connection.execute("SELECT sha256, quarantine_path FROM research_artifacts WHERE artifact_id = ?", (artifact_id,)).fetchone()
+        row = connection.execute("SELECT sha256, quarantine_path, state FROM research_artifacts WHERE artifact_id = ?", (artifact_id,)).fetchone()
         if row is None:
             raise ValueError(f"artifact not found: {artifact_id}")
         path = Path(row["quarantine_path"])
         valid = path.is_file() and _hash_and_validate(path)[0] == row["sha256"] if path.exists() else False
-        state = "collected" if valid else "missing"
+        current = str(row["state"])
+        if current == "purged":
+            state = "purged"
+        elif valid:
+            state = "externally_supplied" if current == "externally_supplied" else "collected"
+        else:
+            state = "missing"
         connection.execute("UPDATE research_artifacts SET state = ?, updated_at = ? WHERE artifact_id = ?", (state, soc_store.utc_now(), artifact_id))
         connection.commit()
     return {"artifact_id": artifact_id, "valid": valid, "state": state}
 
 
 def attach_to_case(case_id: str, artifact_id: str, *, role: str = "subject", db_path: Optional[str] = None, actor: str = "analyst") -> Dict[str, Any]:
+    if role not in ATTACHMENT_ROLES:
+        raise ValueError(f"role must be one of {sorted(ATTACHMENT_ROLES)}")
     soc_store.init_db(db_path)
     artifact = get_artifact(artifact_id, db_path=db_path)
     if not artifact.get("available"):

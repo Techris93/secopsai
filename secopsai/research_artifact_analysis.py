@@ -1,16 +1,20 @@
 """Bounded, non-executing analysis for quarantined research artifacts."""
 from __future__ import annotations
 
+import gzip
 import hashlib
+import io
 import ipaddress
 import json
 import os
 import secrets
 import re
+import tarfile
 import zipfile
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
+from urllib.parse import urlsplit
 
 import soc_store
 from secopsai import research_artifacts
@@ -22,6 +26,11 @@ IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 HASH_RE = re.compile(r"\b[a-f0-9]{64}\b", re.I)
 SCRIPT_NAMES = {"install.ps1", "install.sh", "setup.py", "setup.cfg", "pyproject.toml", "package.json", ".nuspec"}
 MAX_STRINGS = 5000
+BENIGN_IOC_HOSTS = (
+    "nuget.org", "npmjs.com", "npmjs.org", "pypi.org", "rubygems.org",
+    "packagist.org", "maven.org", "golang.org", "open-vsx.org", "crates.io",
+    "w3.org", "json.schemastore.org",
+)
 
 
 def _safe_ip(value: str) -> bool:
@@ -35,6 +44,37 @@ def _safe_ip(value: str) -> bool:
 def _strings(data: bytes) -> list[str]:
     values = re.findall(rb"[ -~]{8,}", data)
     return [item.decode("ascii", "ignore")[:2048] for item in values[:MAX_STRINGS]]
+
+
+def _capped_gunzip(data: bytes, cap: int = 50 * 1024 * 1024) -> bytes:
+    """Decompress a gzip member in memory with a hard output cap."""
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(data)) as handle:
+            return handle.read(cap + 1)[:cap]
+    except (OSError, EOFError):
+        return b""
+
+
+def _is_benign_ioc_url(value: str) -> bool:
+    try:
+        host = (urlsplit(value).hostname or "").lower()
+    except ValueError:
+        return False
+    return any(host == domain or host.endswith(f".{domain}") for domain in BENIGN_IOC_HOSTS)
+
+
+def _process_member(name: str, data: bytes, result: Dict[str, Any]) -> None:
+    lower = name.lower()
+    if lower.endswith((".dll", ".exe")):
+        result["assemblies"].append({
+            "path": name, "sha256": hashlib.sha256(data).hexdigest(),
+            "size": len(data), "loaded": False, "executed": False,
+            "analysis": "metadata-only; Mono.Cecil worker not invoked",
+        })
+    if any(lower.endswith(script) or lower == script for script in SCRIPT_NAMES):
+        result["lifecycle_scripts"].append({"path": name, "sha256": hashlib.sha256(data).hexdigest()})
+    if lower.endswith((".dll", ".exe", ".json", ".xml", ".nuspec", ".cs", ".ps1", ".sh", ".py", ".js", ".ts", ".txt", ".md")):
+        result["strings"].extend(_strings(data))
 
 
 def inspect_artifact(artifact_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
@@ -65,28 +105,41 @@ def inspect_artifact(artifact_id: str, *, db_path: Optional[str] = None) -> Dict
     try:
         with zipfile.ZipFile(path) as archive:
             infos = archive.infolist()
-            result["archive_members"] = [
-                {"name": info.filename.replace("\\", "/"), "size": info.file_size, "sha256": hashlib.sha256(archive.read(info)).hexdigest()}
-                for info in infos[:10000] if not info.is_dir()
-            ]
+            members = []
             for info in infos[:10000]:
                 name = info.filename.replace("\\", "/")
-                lower = name.lower()
-                if info.is_dir() or info.file_size > 50 * 1024 * 1024:
+                if info.is_dir():
                     continue
                 data = archive.read(info)
-                if lower.endswith((".dll", ".exe")):
-                    result["assemblies"].append({
-                        "path": name, "sha256": hashlib.sha256(data).hexdigest(),
-                        "size": len(data), "loaded": False, "executed": False,
-                        "analysis": "metadata-only; Mono.Cecil worker not invoked",
-                    })
-                if any(lower.endswith(script) or lower == script for script in SCRIPT_NAMES):
-                    result["lifecycle_scripts"].append({"path": name, "sha256": hashlib.sha256(data).hexdigest()})
-                if lower.endswith((".dll", ".exe", ".json", ".xml", ".nuspec", ".cs", ".ps1", ".sh", ".py", ".js", ".ts", ".txt", ".md")):
-                    result["strings"].extend(_strings(data))
+                members.append({"name": name, "size": info.file_size, "sha256": hashlib.sha256(data).hexdigest()})
+                if info.file_size <= 50 * 1024 * 1024:
+                    _process_member(name, data, result)
+            result["archive_members"] = members
+            result["archive_format"] = "zip"
     except zipfile.BadZipFile:
-        result["limitations"].append("artifact is not a supported ZIP package; only hash metadata is available")
+        try:
+            with tarfile.open(path) as archive:
+                members = []
+                for info in archive.getmembers()[:10000]:
+                    if not info.isfile():
+                        continue
+                    name = info.name.replace("\\", "/")
+                    data = b""
+                    if info.size <= 50 * 1024 * 1024:
+                        extracted = archive.extractfile(info)
+                        if extracted is not None:
+                            data = extracted.read()
+                    members.append({"name": name, "size": info.size, "sha256": hashlib.sha256(data).hexdigest() if data else None})
+                    if data:
+                        _process_member(name, data, result)
+                        if name.lower().endswith(".gz"):
+                            decompressed = _capped_gunzip(data)
+                            if decompressed:
+                                result["strings"].extend(_strings(decompressed))
+                result["archive_members"] = members
+                result["archive_format"] = "tar"
+        except tarfile.TarError:
+            result["limitations"].append("artifact is not a supported ZIP or TAR package; only hash metadata is available")
     strings = list(dict.fromkeys(result["strings"]))[:MAX_STRINGS]
     result["strings"] = strings
     urls = sorted({match.rstrip(".,);") for value in strings for match in URL_RE.findall(value)})
@@ -145,7 +198,7 @@ def extract_ioc_candidates(case_id: str, *, artifact_id: Optional[str] = None, d
         result = inspect_artifact(current, db_path=db_path)
         for indicator in result["indicators"]:
             value = indicator["value"]
-            if indicator["type"] == "url" and ("nuget.org" in value or "npmjs.com" in value or "pypi.org" in value):
+            if indicator["type"] == "url" and _is_benign_ioc_url(value):
                 continue
             stable = hashlib.sha256(f"{case_id}|{indicator['type']}|{value}".encode()).hexdigest()[:16].upper()
             candidate_id = f"IOC-C-{stable}"

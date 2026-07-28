@@ -1351,7 +1351,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     artifact_attach = research_artifact_sub.add_parser("attach")
     artifact_attach.add_argument("case_id")
     artifact_attach.add_argument("artifact_id")
-    artifact_attach.add_argument("--role", default="subject")
+    artifact_attach.add_argument("--role", default="subject", choices=["subject", "reference", "comparison", "baseline"])
     artifact_attach.add_argument("--db-path", default=None)
 
     research_analysis = research_sub.add_parser("analysis", help="Run bounded static analysis on local artifacts")
