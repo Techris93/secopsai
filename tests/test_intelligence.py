@@ -19,6 +19,7 @@ from secopsai.intelligence_jobs import (
     enqueue_job,
     get_job,
     list_jobs,
+    recover_running_jobs,
 )
 
 
@@ -102,6 +103,18 @@ def test_job_lifecycle_is_idempotent_and_audited(tmp_path: Path):
     assert claimed_running and claimed_running["job_id"] == running_source["job_id"]
     with pytest.raises(ValueError, match="cannot be canceled safely"):
         cancel_job(running_source["job_id"], actor="tester", db_path=db)
+
+
+def test_bridge_service_recovery_requeues_interrupted_running_jobs(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    job = enqueue_job(action="prioritize_findings", requested_by="tester", db_path=db)
+    claimed = claim_next_job(provider="opencodex_proxy", worker_id="old-worker", db_path=db)
+    assert claimed and claimed["job_id"] == job["job_id"]
+    recovered = recover_running_jobs(actor="service-restart", db_path=db)
+    assert recovered["job_ids"] == [job["job_id"]]
+    stored = get_job(job["job_id"], db_path=db)
+    assert stored["status"] == "queued"
+    assert stored["events"][-1]["event_type"] == "service_recovered"
 
 
 def test_local_bridge_doctor_recognizes_chatgpt_login(monkeypatch):
@@ -324,6 +337,7 @@ def test_local_bridge_uses_selected_model_and_falls_back(tmp_path: Path, monkeyp
         model = ""
         if "--model" in command:
             model = command[command.index("--model") + 1]
+            assert environment.get("OCX_SHIM_BYPASS") == "1"
         if model == "kimi/kimi-k2.7-code":
             return subprocess.CompletedProcess(command, 1, "", "ERROR: You've hit your usage limit.")
         output_path = Path(command[command.index("--output-last-message") + 1])
@@ -431,6 +445,37 @@ def test_bridge_promotes_nested_analyst_brief_fields():
     assert normalized["inferences"] == ["Inference one"]
     assert normalized["limitations"] == ["Runtime behavior was not observed."]
     assert normalized["recommended_actions"] == ["Run approved isolated analysis."]
+
+
+def test_bridge_promotes_schema_adjacent_triage_depth():
+    from secopsai.codex_bridge import _normalize_bridge_result
+
+    normalized = _normalize_bridge_result(
+        {
+            "finding_verdict": "needs_more_evidence",
+            "finding_confidence": 55,
+            "disposition_recommendation": "needs_review",
+            "automation_note": "Keep the finding in review and collect the exact artifacts.",
+            "triage_analysis": {
+                "facts": ["The scanner score exceeded the configured threshold."],
+                "inferences": ["Report-text matches may have inflated the score."],
+                "limitations": ["Artifact bytes were not available."],
+            },
+            "handling_proposal": {
+                "immediate_reversible_steps": ["Collect and hash both artifacts."],
+                "escalation_path": "Open a Research Case if static comparison corroborates the signal.",
+            },
+        }
+    )
+    assert normalized["summary"].startswith("Keep the finding in review")
+    assert normalized["risk_assessment"].startswith("Model verdict: needs more evidence")
+    assert normalized["confirmed_facts"] == ["The scanner score exceeded the configured threshold."]
+    assert normalized["inferences"] == ["Report-text matches may have inflated the score."]
+    assert normalized["limitations"] == ["Artifact bytes were not available."]
+    assert normalized["recommended_actions"] == [
+        "Collect and hash both artifacts.",
+        "Open a Research Case if static comparison corroborates the signal.",
+    ]
 
 
 def test_research_bridge_prompt_requests_evidence_led_depth():

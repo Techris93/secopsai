@@ -32,6 +32,11 @@ from secopsai.intelligence_jobs import enqueue_job as enqueue_intelligence_job
 from secopsai.intelligence_jobs import fail_job as fail_intelligence_job
 from secopsai.intelligence_jobs import get_job as get_intelligence_job
 from secopsai.intelligence_jobs import list_jobs as list_intelligence_jobs
+from secopsai.agent_triage import enqueue_due_findings as enqueue_agent_triage_findings
+from secopsai.agent_triage import rollback_run as rollback_agent_triage_run
+from secopsai.agent_triage import rollback_tuning_proposal as rollback_agent_tuning_proposal
+from secopsai.agent_triage import status as agent_triage_status
+from secopsai.agent_triage import update_settings as update_agent_triage_settings
 from secopsai.observability import initialize_observability
 
 
@@ -390,6 +395,105 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return {"jobs": list_intelligence_jobs(status=status, limit=limit, db_path=resolved.db_path)}
 
+    @application.get("/api/v1/intelligence/autopilot")
+    def intelligence_autopilot_status(
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        return agent_triage_status(db_path=resolved.db_path)
+
+    @application.post("/api/v1/intelligence/autopilot/configure")
+    async def intelligence_autopilot_configure(
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        try:
+            payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "Autopilot configuration")
+            settings = update_agent_triage_settings(
+                mode=payload.get("mode"),
+                selected_model=payload.get("selected_model"),
+                poll_interval_seconds=payload.get("poll_interval_seconds"),
+                min_auto_close_confidence=payload.get("min_auto_close_confidence"),
+                min_evidence_refs=payload.get("min_evidence_refs"),
+                max_records_per_cycle=payload.get("max_records_per_cycle"),
+                auto_create_tuning_proposals=payload.get("auto_create_tuning_proposals"),
+                auto_activate_tuning=payload.get("auto_activate_tuning"),
+                actor="mission-control",
+                db_path=resolved.db_path,
+            )
+            _write_audit(
+                resolved.db_path,
+                request_id=request.state.request_id,
+                action="intelligence.autopilot.configured",
+                actor_role="intelligence_operator",
+                result="success",
+                source_instance="secopsai-core",
+                details={"mode": settings["mode"], "selected_model": settings["selected_model"]},
+            )
+            return {"settings": settings, "request_id": request.state.request_id}
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @application.post("/api/v1/intelligence/autopilot/run-now")
+    def intelligence_autopilot_run_now(
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        result = enqueue_agent_triage_findings(db_path=resolved.db_path, requested_by="mission-control")
+        _write_audit(
+            resolved.db_path,
+            request_id=request.state.request_id,
+            action="intelligence.autopilot.run_now",
+            actor_role="intelligence_operator",
+            result="success",
+            source_instance="secopsai-core",
+            details={"queued": len(result.get("queued") or [])},
+        )
+        return {"result": result, "request_id": request.state.request_id}
+
+    @application.post("/api/v1/intelligence/autopilot/runs/{run_id}/rollback")
+    def intelligence_autopilot_rollback(
+        run_id: str,
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        try:
+            result = rollback_agent_triage_run(run_id, actor="mission-control", db_path=resolved.db_path)
+            _write_audit(
+                resolved.db_path,
+                request_id=request.state.request_id,
+                action="intelligence.autopilot.rolled_back",
+                actor_role="intelligence_operator",
+                result="success",
+                source_instance="secopsai-core",
+                details={"run_id": run_id, "target_id": result["target_id"]},
+            )
+            return {"run": result, "request_id": request.state.request_id}
+        except ValueError as exc:
+            status_code = 404 if "not found" in str(exc).lower() else 409
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+    @application.post("/api/v1/intelligence/autopilot/tuning/{proposal_id}/rollback")
+    def intelligence_autopilot_tuning_rollback(
+        proposal_id: str,
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        try:
+            result = rollback_agent_tuning_proposal(proposal_id, actor="mission-control", db_path=resolved.db_path)
+            _write_audit(
+                resolved.db_path,
+                request_id=request.state.request_id,
+                action="intelligence.autopilot.tuning_rolled_back",
+                actor_role="intelligence_operator",
+                result="success",
+                source_instance="secopsai-core",
+                details={"proposal_id": proposal_id, "finding_id": result["finding_id"]},
+            )
+            return {"proposal": result, "request_id": request.state.request_id}
+        except ValueError as exc:
+            status_code = 404 if "not found" in str(exc).lower() else 409
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
     @application.get("/api/v1/intelligence/jobs/{job_id}")
     def intelligence_job_show(
         job_id: str,
@@ -433,6 +537,7 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
             if not worker_id:
                 raise ValueError("worker_id is required")
             async with application.state.ingest_lock:
+                enqueue_agent_triage_findings(db_path=resolved.db_path, requested_by="remote-bridge-poll")
                 job = claim_intelligence_job(
                     provider="codex_chatgpt_subscription",
                     worker_id=worker_id,
@@ -455,7 +560,14 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
             )
             return {
                 "status": "claimed" if job else "idle",
-                "job": ({key: job.get(key) for key in ("job_id", "action", "target_id", "status", "attempt")} if job else None),
+                "job": (
+                    {
+                        **{key: job.get(key) for key in ("job_id", "action", "target_id", "status", "attempt")},
+                        "selected_model": str((job.get("input") or {}).get("selected_model") or ""),
+                    }
+                    if job
+                    else None
+                ),
                 "bridge_request": bridge_request,
                 "request_id": request.state.request_id,
             }

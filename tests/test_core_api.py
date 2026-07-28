@@ -171,6 +171,64 @@ def test_intelligence_read_and_job_routes_use_separate_credentials(client):
     assert "intelligence.job.canceled" in audit_actions
 
 
+def test_intelligence_autopilot_is_configurable_and_queues_findings(client):
+    test_client, settings = client
+    now = soc_store.utc_now()
+    soc_store.persist_findings(
+        [
+            {
+                "finding_id": "FND-AUTOPILOT-API",
+                "title": "Finding awaiting model triage",
+                "summary": "Normalized host evidence is ready for review.",
+                "severity": "medium",
+                "severity_score": 55,
+                "status": "open",
+                "disposition": "unreviewed",
+                "source": "test-host",
+                "first_seen": now,
+                "last_seen": now,
+                "event_ids": [],
+                "rule_ids": ["TEST-HOST-RULE"],
+                "evidence": {},
+            }
+        ],
+        source="test-host",
+        db_path=settings.db_path,
+    )
+    denied = test_client.get(
+        "/api/v1/intelligence/autopilot",
+        headers={"Authorization": f"Bearer {READ_TOKEN}"},
+    )
+    assert denied.status_code == 401
+    configured = test_client.post(
+        "/api/v1/intelligence/autopilot/configure",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+        json={
+            "mode": "guarded",
+            "selected_model": "kimi/kimi-k2.7-code-highspeed",
+            "min_auto_close_confidence": 98,
+            "min_evidence_refs": 2,
+            "max_records_per_cycle": 10,
+            "auto_create_tuning_proposals": True,
+            "auto_activate_tuning": False,
+        },
+    )
+    assert configured.status_code == 200
+    assert configured.json()["settings"]["mode"] == "guarded"
+    queued = test_client.post(
+        "/api/v1/intelligence/autopilot/run-now",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+    )
+    assert queued.status_code == 200
+    assert queued.json()["result"]["queued"][0]["finding_id"] == "FND-AUTOPILOT-API"
+    status_payload = test_client.get(
+        "/api/v1/intelligence/autopilot",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+    ).json()
+    assert status_payload["summary"]["awaiting_model"] == 1
+    assert status_payload["settings"]["selected_model"].startswith("kimi/")
+
+
 def test_remote_bridge_claims_and_completes_a_hosted_job(client):
     test_client, _ = client
     with soc_store.connect(client[1].db_path) as connection:

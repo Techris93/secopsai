@@ -17,6 +17,36 @@ SecOpsAI can use your local OpenCodex proxy so research analysis is not locked t
 
 Research actions request evidence-led structured output rather than a chat-style paragraph. A completed case analysis includes an executive summary, confirmed facts, inferences, unsupported claims, contradictions, missing evidence, prioritized next steps, a confidence-scored verdict, evidence references, limitations, and publication risks. Mission Control presents these fields separately and retains the complete normalized result and job history.
 
+## Autonomous finding triage
+
+Mission Control can use any model in the local OpenCodex catalog, including Kimi K3, Grok, Gemini, or an available Codex model, to review new canonical findings continuously. Select the model under **System → SecOpsAI Intelligence**, then configure **Autonomous triage**.
+
+The modes are:
+
+- `off`: no automatic model jobs are created.
+- `advisory`: the model records a verdict, counterarguments, evidence references, and handling recommendation without changing the finding.
+- `guarded`: Core may close a false positive or expected behavior only when deterministic SecOpsAI analysis independently supports the same disposition, the model meets the configured confidence and evidence thresholds, and no advisory-backed or strong threat evidence conflicts. The prior state is retained for one-click rollback.
+
+Guarded mode may promote corroborated true positives to `in_review`. It never publishes, sends disclosure, submits an artifact, executes package code, performs destructive response, or treats missing local exposure as proof that a package is benign.
+
+The model may propose rule or threshold tuning. Every proposal enters shadow mode. Only an ecosystem threshold that exactly matches a high-confidence deterministic historical replay, includes enough reviewed safe and risky findings, and introduces no known true-positive regression can activate automatically. Rule weights, conditions, and exceptions remain shadow-only.
+
+CLI equivalents:
+
+```bash
+secopsai intelligence autopilot configure --mode guarded --model kimi/k3
+secopsai intelligence autopilot run-now
+secopsai intelligence autopilot status
+secopsai intelligence autopilot runs
+secopsai intelligence autopilot tuning
+secopsai intelligence autopilot rollback ATR-XXXXXXXXXXXXXXXX
+secopsai intelligence autopilot rollback-tuning DTP-XXXXXXXXXXXXXXXX
+```
+
+The background bridge checks for newly changed findings before each queue poll, so a continuously running service provides near-real-time review without adding a second daemon.
+
+The bridge processes durable queued work before discovering another record, performs at most one new deterministic assessment per idle poll, and bypasses OpenCodex's redundant per-command `ensure` step after the provider health check succeeds. If the user-level bridge is stopped or reinstalled during a model run, interrupted local jobs are requeued immediately and keep their audit history.
+
 Configured on this machine:
 
 - `kimi/kimi-k2.7-code`

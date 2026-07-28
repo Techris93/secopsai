@@ -245,3 +245,12 @@ repair selects only malicious Core supply-chain findings closed as
 orchestrator run applies the repair automatically, reopens those findings as
 `unreviewed`, and records an audit note without touching unrelated analyst
 closures.
+# 110 Evidence-Gated Autonomous Finding Triage
+
+Status: implementation complete; live model acceptance and hosted deployment verification pending.
+
+Added continuous model review for canonical SecOpsAI findings using the selected OpenCodex model. Core now owns versioned triage settings, durable agent-triage runs, deterministic/model adjudication, reversible automatic dispositions, one-click rollback, and shadow-mode tuning proposals. Model-only suppression is blocked. Supply-chain findings cannot be downgraded because local exposure is absent, and advisory-backed, denylisted, or strong threat evidence prevents automatic closure.
+
+Mission Control now exposes `off`, advisory, and guarded modes, confidence and evidence thresholds, model persistence, run-now, decision history, guardrail reasons, tuning proposal counts, and rollback. Historical replay can automatically activate only an exact high-confidence ecosystem-threshold recommendation; rule weight and condition changes remain shadow-only. Final publication, disclosure, external sandbox submission, package execution, and destructive response remain outside agent authority.
+
+Verification: 450 Core tests, 4 subtests, strict MkDocs, 69 dashboard tests, 13 dashboard subtests, JavaScript syntax checks, hosted-worker contracts, desktop/mobile DOM review, model selection interaction, and console review pass. A live `kimi/k3` job reviewed SCM-FF3461F8E3215AF8, separated package verdict from local exposure, challenged report-text heuristic provenance, retained `needs_review`, and persisted three validated evidence references without auto-closing the finding. The live check also removed redundant `ocx ensure` latency, made the bridge claim queued jobs before discovering more work, and added immediate interrupted-job recovery on service restart.

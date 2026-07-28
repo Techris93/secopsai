@@ -195,6 +195,70 @@ def init_db(db_path: str | None = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_intelligence_job_events_job
                 ON intelligence_job_events (job_id, event_id);
 
+            CREATE TABLE IF NOT EXISTS agent_triage_settings (
+                settings_id INTEGER PRIMARY KEY CHECK (settings_id = 1),
+                mode TEXT NOT NULL,
+                selected_model TEXT NOT NULL,
+                poll_interval_seconds INTEGER NOT NULL,
+                min_auto_close_confidence INTEGER NOT NULL,
+                min_evidence_refs INTEGER NOT NULL,
+                max_records_per_cycle INTEGER NOT NULL,
+                auto_create_tuning_proposals INTEGER NOT NULL,
+                auto_activate_tuning INTEGER NOT NULL,
+                updated_at TEXT NOT NULL,
+                updated_by TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_triage_runs (
+                run_id TEXT PRIMARY KEY,
+                target_type TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                target_fingerprint TEXT NOT NULL,
+                status TEXT NOT NULL,
+                intelligence_job_id TEXT,
+                selected_model TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                deterministic_json TEXT NOT NULL,
+                recommendation_json TEXT NOT NULL,
+                decision_json TEXT NOT NULL,
+                final_action TEXT NOT NULL,
+                reversible INTEGER NOT NULL DEFAULT 1,
+                rollback_json TEXT NOT NULL,
+                error_code TEXT,
+                error_message TEXT,
+                queued_at TEXT NOT NULL,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL,
+                UNIQUE (target_type, target_id, target_fingerprint),
+                FOREIGN KEY (intelligence_job_id) REFERENCES intelligence_jobs (job_id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS detection_tuning_proposals (
+                proposal_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                finding_id TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                change_type TEXT NOT NULL,
+                proposed_value_json TEXT NOT NULL,
+                rationale TEXT NOT NULL,
+                expected_effect TEXT NOT NULL,
+                status TEXT NOT NULL,
+                shadow_metrics_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                applied_at TEXT,
+                applied_by TEXT,
+                FOREIGN KEY (run_id) REFERENCES agent_triage_runs (run_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_triage_runs_status_updated
+                ON agent_triage_runs (status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_agent_triage_runs_target
+                ON agent_triage_runs (target_type, target_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_detection_tuning_status
+                ON detection_tuning_proposals (status, updated_at DESC);
+
             CREATE TABLE IF NOT EXISTS research_cases (
                 case_id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,

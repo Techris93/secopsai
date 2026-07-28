@@ -16,7 +16,7 @@ from typing import Any, Callable, Sequence
 import requests
 
 from secopsai.intelligence import bridge_output_schema, prepare_bridge_request, validate_bridge_result
-from secopsai.intelligence_jobs import claim_next_job, complete_job, fail_job, requeue_job
+from secopsai.intelligence_jobs import claim_next_job, complete_job, fail_job, job_counts, requeue_job
 
 
 PROVIDER_OPENCODEX = "opencodex_proxy"
@@ -184,7 +184,6 @@ def run_once(
     if require_ready_provider and health["status"] != "ready":
         return {"status": "blocked", "bridge": health, "job": None}
 
-    model_chain = _model_chain(resolved, model=model, available=health.get("models", {}))
     remote = bool(resolved.core_api_url and resolved.bridge_token)
     provider_label = PROVIDER_OPENCODEX if health.get("opencodex", {}).get("status") == "ready" else PROVIDER_CODEX_NATIVE
     if remote:
@@ -201,6 +200,13 @@ def run_once(
     if job is None:
         return {"status": "idle", "job": None}
     try:
+        job_inputs = job.get("input") if isinstance(job.get("input"), dict) else {}
+        job_model = str(job_inputs.get("selected_model") or job.get("selected_model") or "").strip()
+        model_chain = _model_chain(
+            resolved,
+            model=model or job_model or None,
+            available=health.get("models", {}),
+        )
         if bridge_request is None:
             inputs = dict(job.get("input") or {})
             if job.get("target_id"):
@@ -261,6 +267,17 @@ def run_loop(
     iterations = 0
     while max_iterations <= 0 or iterations < max_iterations:
         iterations += 1
+        if not (resolved.core_api_url and resolved.bridge_token):
+            try:
+                from secopsai.agent_triage import enqueue_due_findings
+
+                counts = job_counts(db_path=db_path)
+                if not counts.get("queued") and not counts.get("running"):
+                    enqueue_due_findings(db_path=db_path, limit_override=1)
+            except Exception:
+                # The bridge must continue processing already-durable jobs when
+                # automatic triage discovery is temporarily degraded.
+                pass
         result = run_once(db_path=db_path, settings=resolved, runner=runner, model=model)
         if result["status"] == "blocked":
             return {"status": "blocked", "processed": processed, "failures": failures, "bridge": result.get("bridge")}
@@ -622,7 +639,15 @@ def _invoke_codex(
         else:
             command.extend(["--ignore-user-config", "--ignore-rules"])
         command.append("-")
-        completed = runner(command, prompt, _safe_environment(), settings.timeout_seconds)
+        environment = _safe_environment()
+        if model:
+            # OpenCodex's codex shim normally runs `ocx ensure` before every
+            # invocation. The bridge already performed provider health and
+            # catalog checks, so repeating a full sync here adds long latency
+            # and can hang model jobs. The Codex process still uses the active
+            # OpenCodex base URL and catalog.
+            environment["OCX_SHIM_BYPASS"] = "1"
+        completed = runner(command, prompt, environment, settings.timeout_seconds)
         if completed.returncode != 0:
             raise RuntimeError(f"Codex execution failed: {_provider_failure_message(completed)}")
         if not output_path.exists():
@@ -716,6 +741,26 @@ def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
         for source, destination in nested_map.items():
             if not _present(result.get(destination)) and _present(analyst_brief.get(source)):
                 result[destination] = analyst_brief[source]
+    triage_analysis = result.get("triage_analysis")
+    if isinstance(triage_analysis, dict):
+        triage_map = {
+            "facts": "confirmed_facts",
+            "inferences": "inferences",
+            "limitations": "limitations",
+            "counterarguments": "counterarguments",
+        }
+        for source, destination in triage_map.items():
+            if not _present(result.get(destination)) and _present(triage_analysis.get(source)):
+                result[destination] = triage_analysis[source]
+    handling = result.get("handling_proposal")
+    if isinstance(handling, dict) and not _present(result.get("recommended_actions")):
+        actions: list[Any] = []
+        for key in ("immediate_reversible_steps", "containment_if_corroborated"):
+            if isinstance(handling.get(key), list):
+                actions.extend(handling[key])
+        if _present(handling.get("escalation_path")):
+            actions.append(handling["escalation_path"])
+        result["recommended_actions"] = actions[:25]
     list_fields = (
         "confirmed_facts",
         "inferences",
@@ -728,6 +773,8 @@ def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
         "recommended_actions",
         "limitations",
         "verdict_evidence_refs",
+        "decision_evidence_refs",
+        "counterarguments",
     )
     for field_name in list_fields:
         values = result.get(field_name)
@@ -736,12 +783,19 @@ def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
             result[field_name] = [item for item in normalized_items if item]
 
     if not _present(result.get("summary")):
+        automation_note = str(result.get("automation_note") or "").strip()
         facts = result.get("confirmed_facts") or []
-        result["summary"] = (
+        result["summary"] = automation_note or (
             facts[0] if facts else "Model returned structured analysis without a prose summary."
         )
     if not _present(result.get("risk_assessment")):
         risk = result.get("risk") or result.get("risk_rating") or result.get("severity_assessment")
+        if not risk and result.get("finding_verdict"):
+            risk = (
+                f"Model verdict: {str(result.get('finding_verdict')).replace('_', ' ')} "
+                f"at {result.get('finding_confidence', 0)}% confidence; "
+                f"recommended disposition: {str(result.get('disposition_recommendation') or 'needs_review').replace('_', ' ')}."
+            )
         result["risk_assessment"] = (
             str(risk)[:4000]
             if risk
@@ -772,6 +826,28 @@ def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
         result["verdict_rationale"] = "The model did not provide a bounded package verdict rationale."
     if not isinstance(result.get("verdict_evidence_refs"), list):
         result["verdict_evidence_refs"] = []
+    finding_verdict = str(result.get("finding_verdict") or "").strip().lower()
+    if finding_verdict not in {"true_positive", "false_positive", "benign_expected", "policy_noise", "needs_more_evidence"}:
+        result["finding_verdict"] = "needs_more_evidence"
+    try:
+        result["finding_confidence"] = max(0, min(int(result.get("finding_confidence") or 0), 100))
+    except (TypeError, ValueError):
+        result["finding_confidence"] = 0
+    disposition = str(result.get("disposition_recommendation") or "").strip().lower()
+    if disposition not in {"true_positive", "false_positive", "expected_behavior", "tune_policy", "needs_review"}:
+        result["disposition_recommendation"] = "needs_review"
+    if not isinstance(result.get("decision_evidence_refs"), list):
+        result["decision_evidence_refs"] = []
+    exposure = str(result.get("exposure_assessment") or "").strip().lower()
+    if exposure not in {"affected", "not_observed", "unknown", "not_applicable"}:
+        result["exposure_assessment"] = "unknown"
+    recommendation = str(result.get("automation_recommendation") or "").strip().lower()
+    if recommendation not in {"escalate", "suppress_once", "suppress_pattern", "monitor", "collect_evidence"}:
+        result["automation_recommendation"] = "collect_evidence"
+    if not isinstance(result.get("counterarguments"), list):
+        result["counterarguments"] = []
+    proposals = result.get("rule_tuning_proposals")
+    result["rule_tuning_proposals"] = proposals[:10] if isinstance(proposals, list) else []
     return result
 
 

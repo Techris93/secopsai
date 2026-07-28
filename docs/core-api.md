@@ -54,6 +54,11 @@ tenant-aware PostgreSQL design.
 | `POST /api/v1/intelligence/query` | Read token | Deterministic minimized Core query |
 | `POST /api/v1/intelligence/jobs` | Intelligence token | Queue an approved local Codex action |
 | `GET /api/v1/intelligence/jobs` | Intelligence token | Inspect intelligence queue state |
+| `GET /api/v1/intelligence/autopilot` | Intelligence token | Inspect continuous model-triage policy, runs, and tuning proposals |
+| `POST /api/v1/intelligence/autopilot/configure` | Intelligence token | Configure off, advisory, or evidence-gated guarded automation |
+| `POST /api/v1/intelligence/autopilot/run-now` | Intelligence token | Queue model review for eligible changed findings |
+| `POST /api/v1/intelligence/autopilot/runs/{run_id}/rollback` | Intelligence token | Restore the pre-decision finding state |
+| `POST /api/v1/intelligence/autopilot/tuning/{proposal_id}/rollback` | Intelligence token | Restore the threshold baseline recorded before activation |
 | `POST /api/v1/intelligence/jobs/{job_id}/cancel` | Intelligence token | Cancel a non-final job |
 | `POST /api/v1/intelligence/bridge/claim` | Bridge token | Claim one queued job and receive minimized context |
 | `POST /api/v1/intelligence/bridge/jobs/{job_id}/complete` | Bridge token | Return a schema-validated result |

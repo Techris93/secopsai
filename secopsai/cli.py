@@ -82,6 +82,14 @@ from secopsai.intelligence_jobs import requeue_job as requeue_intelligence_job
 from secopsai.intelligence_jobs import enqueue_job as enqueue_intelligence_job
 from secopsai.intelligence_jobs import get_job as get_intelligence_job
 from secopsai.intelligence_jobs import list_jobs as list_intelligence_jobs
+from secopsai.agent_triage import enqueue_due_findings as enqueue_agent_triage_findings
+from secopsai.agent_triage import get_settings as get_agent_triage_settings
+from secopsai.agent_triage import list_runs as list_agent_triage_runs
+from secopsai.agent_triage import list_tuning_proposals as list_agent_tuning_proposals
+from secopsai.agent_triage import rollback_run as rollback_agent_triage_run
+from secopsai.agent_triage import rollback_tuning_proposal as rollback_agent_tuning_proposal
+from secopsai.agent_triage import status as agent_triage_status
+from secopsai.agent_triage import update_settings as update_agent_triage_settings
 from secopsai.codex_bridge import doctor as codex_bridge_doctor
 from secopsai.codex_bridge import list_models as list_codex_bridge_models
 from secopsai.codex_bridge import run_loop as run_codex_bridge_loop
@@ -1180,6 +1188,43 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     intelligence_jobs_requeue.add_argument("job_id")
     intelligence_jobs_requeue.add_argument("--actor", default="operator")
     intelligence_jobs_requeue.add_argument("--db-path", default=None)
+    intelligence_autopilot = intelligence_sub.add_parser(
+        "autopilot",
+        help="Configure and inspect evidence-gated continuous model triage",
+    )
+    intelligence_autopilot_sub = intelligence_autopilot.add_subparsers(dest="intelligence_autopilot_cmd", required=True)
+    intelligence_autopilot_status = intelligence_autopilot_sub.add_parser("status")
+    intelligence_autopilot_status.add_argument("--db-path", default=None)
+    intelligence_autopilot_configure = intelligence_autopilot_sub.add_parser("configure")
+    intelligence_autopilot_configure.add_argument("--mode", choices=["off", "advisory", "guarded"], default=None)
+    intelligence_autopilot_configure.add_argument("--model", default=None)
+    intelligence_autopilot_configure.add_argument("--poll-seconds", type=int, default=None)
+    intelligence_autopilot_configure.add_argument("--auto-close-confidence", type=int, default=None)
+    intelligence_autopilot_configure.add_argument("--min-evidence-refs", type=int, default=None)
+    intelligence_autopilot_configure.add_argument("--max-records", type=int, default=None)
+    intelligence_autopilot_configure.add_argument("--auto-tuning-proposals", choices=["on", "off"], default=None)
+    intelligence_autopilot_configure.add_argument("--auto-activate-tuning", choices=["on", "off"], default=None)
+    intelligence_autopilot_configure.add_argument("--actor", default="operator")
+    intelligence_autopilot_configure.add_argument("--db-path", default=None)
+    intelligence_autopilot_run = intelligence_autopilot_sub.add_parser("run-now")
+    intelligence_autopilot_run.add_argument("--search-root", default=None)
+    intelligence_autopilot_run.add_argument("--db-path", default=None)
+    intelligence_autopilot_runs = intelligence_autopilot_sub.add_parser("runs")
+    intelligence_autopilot_runs.add_argument("--status", default="")
+    intelligence_autopilot_runs.add_argument("--limit", type=int, default=100)
+    intelligence_autopilot_runs.add_argument("--db-path", default=None)
+    intelligence_autopilot_rollback = intelligence_autopilot_sub.add_parser("rollback")
+    intelligence_autopilot_rollback.add_argument("run_id")
+    intelligence_autopilot_rollback.add_argument("--actor", default="operator")
+    intelligence_autopilot_rollback.add_argument("--db-path", default=None)
+    intelligence_autopilot_tuning = intelligence_autopilot_sub.add_parser("tuning")
+    intelligence_autopilot_tuning.add_argument("--status", default="")
+    intelligence_autopilot_tuning.add_argument("--limit", type=int, default=100)
+    intelligence_autopilot_tuning.add_argument("--db-path", default=None)
+    intelligence_autopilot_tuning_rollback = intelligence_autopilot_sub.add_parser("rollback-tuning")
+    intelligence_autopilot_tuning_rollback.add_argument("proposal_id")
+    intelligence_autopilot_tuning_rollback.add_argument("--actor", default="operator")
+    intelligence_autopilot_tuning_rollback.add_argument("--db-path", default=None)
     intelligence_bridge = intelligence_sub.add_parser(
         "bridge",
         help="Inspect or run the local OpenCodex/Codex intelligence bridge",
@@ -3358,6 +3403,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "generated_at": soc_store.utc_now(),
                     "actions": list_intelligence_actions(),
                     "jobs": {"jobs": list_intelligence_jobs(limit=args.limit, db_path=args.db_path)},
+                    "autopilot": agent_triage_status(db_path=args.db_path),
                     "bridge": codex_bridge_doctor(),
                     "service": codex_bridge_service_action("status"),
                 }
@@ -3387,6 +3433,38 @@ def main(argv: Optional[List[str]] = None) -> int:
                     payload = requeue_intelligence_job(args.job_id, actor=args.actor, db_path=args.db_path)
                 else:
                     raise ValueError(f"unsupported intelligence jobs command: {args.intelligence_jobs_cmd}")
+            elif args.intelligence_cmd == "autopilot":
+                if args.intelligence_autopilot_cmd == "status":
+                    payload = agent_triage_status(db_path=args.db_path)
+                elif args.intelligence_autopilot_cmd == "configure":
+                    payload = update_agent_triage_settings(
+                        mode=args.mode,
+                        selected_model=args.model,
+                        poll_interval_seconds=args.poll_seconds,
+                        min_auto_close_confidence=args.auto_close_confidence,
+                        min_evidence_refs=args.min_evidence_refs,
+                        max_records_per_cycle=args.max_records,
+                        auto_create_tuning_proposals=(args.auto_tuning_proposals == "on") if args.auto_tuning_proposals else None,
+                        auto_activate_tuning=(args.auto_activate_tuning == "on") if args.auto_activate_tuning else None,
+                        actor=args.actor,
+                        db_path=args.db_path,
+                    )
+                elif args.intelligence_autopilot_cmd == "run-now":
+                    payload = enqueue_agent_triage_findings(
+                        db_path=args.db_path,
+                        search_root=args.search_root,
+                        requested_by="secopsai-cli-autopilot",
+                    )
+                elif args.intelligence_autopilot_cmd == "runs":
+                    payload = {"runs": list_agent_triage_runs(status=args.status, limit=args.limit, db_path=args.db_path)}
+                elif args.intelligence_autopilot_cmd == "rollback":
+                    payload = rollback_agent_triage_run(args.run_id, actor=args.actor, db_path=args.db_path)
+                elif args.intelligence_autopilot_cmd == "tuning":
+                    payload = {"proposals": list_agent_tuning_proposals(status=args.status, limit=args.limit, db_path=args.db_path)}
+                elif args.intelligence_autopilot_cmd == "rollback-tuning":
+                    payload = rollback_agent_tuning_proposal(args.proposal_id, actor=args.actor, db_path=args.db_path)
+                else:
+                    raise ValueError(f"unsupported intelligence autopilot command: {args.intelligence_autopilot_cmd}")
             elif args.intelligence_cmd == "bridge":
                 if args.intelligence_bridge_cmd == "doctor":
                     payload = codex_bridge_doctor()
@@ -3411,7 +3489,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                             model=args.model,
                         )
                     else:
-                        payload = codex_bridge_service_action(args.action, tail=args.tail)
+                        payload = codex_bridge_service_action(args.action, tail=args.tail, db_path=args.db_path)
                 else:
                     raise ValueError(f"unsupported intelligence bridge command: {args.intelligence_bridge_cmd}")
             else:

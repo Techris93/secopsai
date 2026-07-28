@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 import soc_store
+from secopsai.intelligence_jobs import recover_running_jobs
 
 
 LABEL = "ai.secopsai.codex-bridge"
@@ -54,6 +55,7 @@ def service_action(
     platform_name: str | None = None,
     runner: RunCommand | None = None,
     tail: int = 80,
+    db_path: str | None = None,
 ) -> dict[str, Any]:
     action = str(action or "").strip().lower()
     if action not in {"start", "stop", "status", "logs", "uninstall"}:
@@ -64,9 +66,9 @@ def service_action(
     if action == "logs":
         return _logs(resolved_home, system, run, tail)
     if system == "darwin":
-        return _launchd_action(action, resolved_home, run)
+        return _launchd_action(action, resolved_home, run, db_path=db_path)
     if system == "linux":
-        return _systemd_action(action, resolved_home, run)
+        return _systemd_action(action, resolved_home, run, db_path=db_path)
     raise ValueError("Codex bridge service controls support macOS and Linux")
 
 
@@ -113,6 +115,11 @@ def _install_launchd(home: Path, db_path: str | None, run: RunCommand, start: bo
     os.chmod(path, 0o600)
     domain = f"gui/{os.getuid()}"
     run(["launchctl", "bootout", f"{domain}/{LABEL}"])
+    recover_running_jobs(
+        actor="bridge-service-install",
+        reason="The previous local bridge process was replaced during service installation.",
+        db_path=db_path,
+    )
     if start:
         completed = run(["launchctl", "bootstrap", domain, str(path)])
         _require_success(completed, "launchd bootstrap")
@@ -183,7 +190,7 @@ def _install_systemd(home: Path, db_path: str | None, run: RunCommand, start: bo
     }
 
 
-def _launchd_action(action: str, home: Path, run: RunCommand) -> dict[str, Any]:
+def _launchd_action(action: str, home: Path, run: RunCommand, *, db_path: str | None = None) -> dict[str, Any]:
     domain = f"gui/{os.getuid()}"
     service = f"{domain}/{LABEL}"
     path = home / "Library" / "LaunchAgents" / f"{LABEL}.plist"
@@ -196,6 +203,7 @@ def _launchd_action(action: str, home: Path, run: RunCommand) -> dict[str, Any]:
         _require_success(completed, "launchd start")
     elif action == "stop":
         _require_success(run(["launchctl", "bootout", service]), "launchd stop", allow_not_loaded=True)
+        recover_running_jobs(db_path=db_path)
     elif action == "uninstall":
         run(["launchctl", "bootout", service])
         path.unlink(missing_ok=True)
@@ -211,12 +219,13 @@ def _launchd_action(action: str, home: Path, run: RunCommand) -> dict[str, Any]:
     return {"status": "started" if action == "start" else "stopped", "manager": "launchd", "path": str(path)}
 
 
-def _systemd_action(action: str, home: Path, run: RunCommand) -> dict[str, Any]:
+def _systemd_action(action: str, home: Path, run: RunCommand, *, db_path: str | None = None) -> dict[str, Any]:
     path = home / ".config" / "systemd" / "user" / SYSTEMD_UNIT
     if action == "start":
         _require_success(run(["systemctl", "--user", "start", SYSTEMD_UNIT]), "systemd start")
     elif action == "stop":
         _require_success(run(["systemctl", "--user", "stop", SYSTEMD_UNIT]), "systemd stop", allow_not_loaded=True)
+        recover_running_jobs(db_path=db_path)
     elif action == "uninstall":
         run(["systemctl", "--user", "disable", "--now", SYSTEMD_UNIT])
         path.unlink(missing_ok=True)

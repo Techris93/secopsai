@@ -1,0 +1,28 @@
+{
+  "schema_version": "secopsai.agent-triage.v1",
+  "settings": {
+    "settings_id": 1,
+    "schema_version": "secopsai.agent-triage.v1",
+    "mode": "guarded",
+    "selected_model": "kimi/k3",
+    "poll_interval_seconds": 30,
+    "min_auto_close_confidence": 97,
+    "min_evidence_refs": 2,
+    "max_records_per_cycle": 10,
+    "auto_create_tuning_proposals": true,
+    "auto_activate_tuning": false,
+    "updated_at": "2026-07-28T12:00:00Z",
+    "updated_by": "operator"
+  },
+  "summary": {
+    "runs": 0,
+    "awaiting_model": 0,
+    "auto_applied": 0,
+    "escalated": 0,
+    "failed": 0,
+    "tuning_proposals": 0,
+    "tuning_ready": 0
+  },
+  "runs": [],
+  "tuning_proposals": []
+}

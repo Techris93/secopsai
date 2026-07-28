@@ -263,6 +263,34 @@ def job_counts(*, db_path: str | None = None) -> dict[str, int]:
     return {str(row["status"]): int(row["count"]) for row in rows}
 
 
+def recover_running_jobs(
+    *,
+    actor: str = "bridge-service-recovery",
+    reason: str = "The local bridge service stopped before completion.",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Requeue local running jobs after the owning bridge has stopped."""
+    soc_store.init_db(db_path)
+    now = soc_store.utc_now()
+    recovered: list[str] = []
+    with closing(soc_store.connect(db_path)) as connection:
+        rows = connection.execute(
+            "SELECT job_id FROM intelligence_jobs WHERE status = 'running' ORDER BY queued_at, job_id"
+        ).fetchall()
+        for row in rows:
+            job_id = str(row["job_id"])
+            connection.execute(
+                """UPDATE intelligence_jobs SET status = 'queued', provider = '', started_at = NULL,
+                   updated_at = ?, error_code = 'service_recovered', error_message = ?
+                   WHERE job_id = ? AND status = 'running'""",
+                (now, _clean(reason, 500), job_id),
+            )
+            _event(connection, job_id, "service_recovered", actor, "Requeued after the local bridge service stopped.", {})
+            recovered.append(job_id)
+        connection.commit()
+    return {"status": "recovered", "count": len(recovered), "job_ids": recovered}
+
+
 def _finish(
     job_id: str,
     status: str,
@@ -306,6 +334,7 @@ def _finish(
         connection.commit()
     completed = get_job(job_id, db_path=db_path)
     _notify_research_pipeline(completed, db_path=db_path)
+    _notify_agent_triage(completed, db_path=db_path)
     return get_job(job_id, db_path=db_path)
 
 
@@ -325,6 +354,27 @@ def _notify_research_pipeline(job: dict[str, Any], *, db_path: str | None) -> No
                 "pipeline_reconcile_failed",
                 "research-pipeline",
                 "The Intelligence result was saved, but pipeline reconciliation needs a retry.",
+                {"error": str(exc)[:500]},
+            )
+            connection.commit()
+
+
+def _notify_agent_triage(job: dict[str, Any], *, db_path: str | None) -> None:
+    inputs = job.get("input") if isinstance(job.get("input"), dict) else {}
+    if not inputs.get("agent_triage_run_id"):
+        return
+    try:
+        from secopsai.agent_triage import reconcile_intelligence_job
+
+        reconcile_intelligence_job(job, db_path=db_path)
+    except Exception as exc:  # Preserve the model result and expose reconciliation failure.
+        with closing(soc_store.connect(db_path)) as connection:
+            _event(
+                connection,
+                job["job_id"],
+                "agent_triage_reconcile_failed",
+                "agent-triage",
+                "The Intelligence result was saved, but agent triage reconciliation needs a retry.",
                 {"error": str(exc)[:500]},
             )
             connection.commit()
