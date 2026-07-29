@@ -170,6 +170,30 @@ def enqueue_finding(finding_id: str, *, db_path: Optional[str] = None) -> Dict[s
     return get_run(run_id, db_path=db_path)
 
 
+def enqueue_due_findings(*, db_path: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
+    """Backfill eligible existing findings as well as newly triaged records."""
+    settings = get_settings(db_path=db_path)
+    findings = soc_store.list_findings(db_path, limit=None, include_payload=True)
+    candidates = sorted(
+        (
+            item for item in findings
+            if _clean(item.get("status"), 32).lower() in {"open", "in_review"}
+            and _clean(item.get("disposition"), 32).lower() in {"", "unreviewed", "needs_review", "true_positive"}
+        ),
+        key=lambda item: (-SEVERITY_ORDER.get(_clean(item.get("severity"), 20).lower(), 0), _clean(item.get("first_seen"), 80)),
+    )
+    queued, skipped = [], 0
+    for finding in candidates:
+        if len(queued) >= max(1, min(int(limit), 500)):
+            break
+        result = enqueue_finding(str(finding.get("finding_id") or ""), db_path=db_path)
+        if result.get("status") == "queued":
+            queued.append(result)
+        else:
+            skipped += 1
+    return {"queued": queued, "skipped": skipped, "eligible_scanned": len(candidates)}
+
+
 def _existing_case(finding_id: str, *, db_path: Optional[str]) -> Optional[str]:
     with closing(soc_store.connect(db_path)) as connection:
         row = connection.execute(
@@ -244,6 +268,7 @@ def run_due(*, db_path: Optional[str] = None, limit: int = 1) -> Dict[str, Any]:
     settings = get_settings(db_path=db_path)
     if settings["mode"] == "off":
         return {"status": "off", "processed": 0, "runs": []}
+    backfill = enqueue_due_findings(db_path=db_path, limit=max(10, int(settings["max_active_runs"])))
     with closing(soc_store.connect(db_path)) as connection:
         active_count = int(connection.execute(
             "SELECT COUNT(*) FROM investigation_autopilot_runs WHERE status IN ('collecting','analyzing','awaiting_model')"
@@ -256,7 +281,7 @@ def run_due(*, db_path: Optional[str] = None, limit: int = 1) -> Dict[str, Any]:
     results = []
     for row in rows:
         results.append(_run(str(row["run_id"]), db_path=db_path))
-    return {"status": "completed", "processed": len(results), "runs": results}
+    return {"status": "completed", "processed": len(results), "runs": results, "backfill": backfill}
 
 
 def _run(run_id: str, *, db_path: Optional[str]) -> Dict[str, Any]:

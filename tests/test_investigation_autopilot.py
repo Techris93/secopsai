@@ -90,3 +90,18 @@ def test_lower_priority_finding_skips_expensive_investigation_by_default(tmp_pat
     result = investigation_autopilot.enqueue_finding("SCM-AUTOPILOT-1", db_path=db)
     assert result == {"status": "skipped", "finding_id": "SCM-AUTOPILOT-1", "reason": "below_severity_threshold"}
     assert investigation_autopilot.list_runs(db_path=db) == []
+
+
+def test_run_due_backfills_existing_high_priority_findings(tmp_path, monkeypatch):
+    db = str(tmp_path / "soc.db")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(tmp_path / "quarantine"))
+    soc_store.persist_findings([_finding()], source="secopsai-supply-chain", db_path=db)
+    real_start = start_investigation_pipeline
+    monkeypatch.setattr(
+        investigation_autopilot, "start_investigation_pipeline",
+        lambda case_id, **kwargs: real_start(case_id, **kwargs, fetcher=_fetcher()),
+    )
+    result = investigation_autopilot.run_due(db_path=db)
+    assert result["backfill"]["queued"][0]["finding_id"] == "SCM-AUTOPILOT-1"
+    assert result["processed"] == 1
+    assert len(investigation_autopilot.list_runs(db_path=db)) == 1
