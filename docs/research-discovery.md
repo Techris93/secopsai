@@ -97,11 +97,15 @@ secopsai research monitor create --ecosystem nuget --watchlist-id WL-... --inter
 secopsai research monitor list
 secopsai research monitor run-due --limit 25
 secopsai research candidate list
+secopsai research candidate promotion-policy --ecosystem all
+secopsai research candidate run-promotion-policy --ecosystem all
 secopsai research campaign correlate
 secopsai research campaign list
 ```
 
 The dashboard provides the same actions under Research Discovery. Use **Add watchlist**, **Create monitor**, **Run due monitors**, **Compare exact packages**, and **Correlate campaigns**. Protected writes require the research action token.
+
+Candidate promotion is disabled by default. Configure it with `research candidate promotion-policy --set`, then run `run-promotion-policy` without `--apply` to preview every decision. The policy evaluates a minimum score, evidence-reference count, optional publisher evidence, and ecosystem scope. Adding `--apply` may create draft Research Cases only; it never records a malicious verdict. Each promotion persists the candidate, exact policy, reasons, actor, resulting case ID, and event timestamp for audit and rollback review.
 
 On macOS, install the local due-monitor trigger as a background service:
 
