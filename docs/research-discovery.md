@@ -50,6 +50,26 @@ secopsai research worker run           # loop mode with SIGTERM handling
 
 On Render, the `secopsai-research-worker` background worker in `render.yaml` runs loop mode against a persistent disk (`SECOPS_FINDINGS_DIR=/var/data/secopsai-research`). The worker database is independent of the API database so collection can scale separately.
 
+### Storage capacity and recovery
+
+The worker runs bounded storage maintenance before every collection cycle. It preserves pending events, candidate-linked records, research cases, evidence, IOCs, active alerts, and the newest registry comparison snapshots. It removes only processed operational feed history after its configured retention period, old completed run history, resolved dead letters, expired delivery history, and superseded snapshots. Freed SQLite pages are reused by later collections.
+
+The production Blueprint reserves 16 MB on the persistent disk. If free space drops below 128 MB or disk use reaches 85%, the worker releases that reserve before cleanup so SQLite can commit the recovery transaction. Storage pressure is reported separately from registry health; a full disk must not be presented as proof that a registry is unavailable.
+
+Inspect and maintain storage with:
+
+```bash
+secopsai research storage status --json
+secopsai research storage maintain --aggressive --json
+secopsai research storage release-reserve --json
+```
+
+`maintain --aggressive` prunes all eligible batches and runs `VACUUM` only when enough free capacity exists to do so safely. It never deletes pending events, canonical candidates, cases, case evidence, IOCs, rules, unresolved alerts, or quarantined artifacts.
+
+If Render reports `database or disk is full`, increase the worker disk from its **Disks** page before redeploying. Render supports increasing a persistent disk without downtime, but does not allow reducing it later. After capacity becomes available, deploy this release; the worker performs maintenance before it starts another collector. Then verify `storage status`, confirm `pressure=false`, and confirm a complete worker cycle in the logs.
+
+The 1 GB Blueprint value is suitable only for a bounded development deployment. Continuous global-registry surveillance requires capacity based on measured ingestion rate. Start a production pilot at 5 GB, retain the automatic pressure guard, and review the Disk Usage metric weekly. A future multi-worker service must move this ledger to a managed datastore because Render persistent disks are single-service and cannot be shared.
+
 The worker creates a deduplicated high-severity `collector_degraded` alert when a registry run fails, leaves a coverage gap, or reaches a bounded collection limit. It creates at most one such alert per ecosystem per UTC day and continues collecting other registries. Delivery is disabled by default outside the production Blueprint. For a standalone deployment, configure:
 
 ```text

@@ -9,6 +9,7 @@ from secopsai.research_worker import (
     run_worker_cycle,
     run_worker_loop,
 )
+from secopsai.research_storage import ResearchStorageCapacityError
 from secopsai.research_intake import SafeFetcher
 
 
@@ -89,6 +90,7 @@ def test_worker_cycle_isolates_collector_failures(tmp_path, monkeypatch):
     assert "scoring" in result
     assert "retries" in result
     assert "recovery" in result
+    assert "storage" in result
     assert len(result["operational_alert_ids"]) == 8
     assert result["alert_delivery"]["enabled"] is False
     with soc_store.connect(db_path) as connection:
@@ -227,3 +229,28 @@ def test_worker_loop_honors_max_cycles(tmp_path):
     assert result["cycles"] == 2
     assert len(cycles) == 2
     assert result["stopped_by_signal"] is False
+
+
+def test_worker_loop_stays_alive_in_degraded_storage_state(tmp_path, monkeypatch):
+    import secopsai.research_worker as worker_module
+
+    monkeypatch.setattr(
+        worker_module,
+        "run_worker_cycle",
+        lambda **kwargs: (_ for _ in ()).throw(ResearchStorageCapacityError("disk full")),
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "storage_status",
+        lambda **kwargs: {"pressure": True, "filesystem_free_bytes": 0},
+    )
+    cycles = []
+    result = run_worker_loop(
+        db_path=_db(tmp_path),
+        interval_seconds=15,
+        max_cycles=1,
+        on_cycle=cycles.append,
+    )
+    assert result["cycles"] == 1
+    assert cycles[0]["status"] == "degraded"
+    assert cycles[0]["error_code"] == "storage_capacity_exhausted"

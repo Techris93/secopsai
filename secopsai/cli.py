@@ -183,6 +183,7 @@ from secopsai.research_worker import (
     run_worker_cycle,
     run_worker_loop,
 )
+from secopsai.research_storage import maintain_research_storage, release_storage_reserve, storage_status
 from secopsai.research_analysis import compare_intakes, compare_packages, correlate_candidates, inspect_nuget_archive, list_campaigns
 from secopsai.research_artifacts import attach_to_case, get_artifact, import_artifact, list_artifacts, verify_artifact
 from secopsai.research_artifact_analysis import compare_artifacts, extract_ioc_candidates, inspect_artifact, review_ioc_candidate, queue_artifact_analysis, run_artifact_job, run_artifact_worker_once
@@ -1433,6 +1434,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     worker_due = research_worker_sub.add_parser("due", help="Show which collectors are due")
     worker_due.add_argument("--db-path", default=None)
 
+    research_storage = research_sub.add_parser("storage", help="Inspect and maintain bounded research-worker storage")
+    research_storage_sub = research_storage.add_subparsers(dest="research_storage_cmd", required=True)
+    storage_status_cmd = research_storage_sub.add_parser("status", help="Show database, disk, reserve, and pressure metrics")
+    storage_status_cmd.add_argument("--db-path", default=None)
+    storage_maintain = research_storage_sub.add_parser("maintain", help="Prune retained operational history safely")
+    storage_maintain.add_argument("--aggressive", action="store_true", help="Run all pruning batches and VACUUM when enough free space exists")
+    storage_maintain.add_argument("--db-path", default=None)
+    storage_release = research_storage_sub.add_parser("release-reserve", help="Release emergency disk reserve before manual recovery")
+    storage_release.add_argument("--db-path", default=None)
+
     research_compare = research_sub.add_parser("compare", help="Compare two normalized, statically collected package intake JSON files")
     research_compare.add_argument("--left", required=True, help="Path to the first normalized intake JSON")
     research_compare.add_argument("--right", required=True, help="Path to the second normalized intake JSON")
@@ -2561,6 +2572,16 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = run_worker_cycle(db_path=args.db_path)
             else:
                 payload = run_worker_loop(db_path=args.db_path, interval_seconds=args.interval, max_cycles=args.max_cycles, on_cycle=lambda summary: print(json.dumps({"cycle": summary}, sort_keys=True), flush=True))
+        elif args.research_cmd == "storage":
+            if args.research_storage_cmd == "status":
+                payload = storage_status(db_path=args.db_path)
+            elif args.research_storage_cmd == "maintain":
+                payload = maintain_research_storage(db_path=args.db_path, aggressive=args.aggressive)
+            else:
+                payload = {
+                    "released_reserve_bytes": release_storage_reserve(db_path=args.db_path),
+                    "status": storage_status(db_path=args.db_path),
+                }
         elif args.research_cmd == "artifact":
             if args.research_artifact_cmd == "list":
                 payload = {"artifacts": list_artifacts(ecosystem=args.ecosystem, db_path=args.db_path)}
@@ -3135,7 +3156,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
 
-        if args.research_cmd in {"rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "resolution", "workflow"}:
+        if args.research_cmd in {"rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "storage", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "resolution", "workflow"}:
             return _run_research_automation_command(args)
 
         if args.research_cmd == "case":

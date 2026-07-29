@@ -1,5 +1,9 @@
 # Implementation Checkpoints
 
+## Research worker storage-pressure recovery
+
+The continuous registry worker now treats disk capacity as an explicit operational dependency. Before collection it records database, journal, WAL, filesystem, reserve, and SQLite freelist metrics; releases an owner-only emergency reserve under pressure; prunes only retention-expired operational history in bounded transactions; keeps pending events, candidate-linked evidence, cases, active alerts, and the newest collector snapshots; and makes freed pages reusable. Operators can inspect and recover storage through `secopsai research storage status`, `maintain --aggressive`, and `release-reserve`. The Render Blueprint configures a 16 MB recovery reserve, 128 MB minimum free-space floor, 85% pressure threshold, and explicit history-retention windows. The production runbook requires increasing an already-full 1 GB disk before recovery because SQLite cannot commit cleanup without writable capacity.
+
 ## 111 Guarded Agent Resolution And Unified Alert Review
 
 Status: implementation and local acceptance complete; repository release remains the final gate.

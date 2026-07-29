@@ -84,6 +84,24 @@ services:
         value: https://secopsai-core-api.onrender.com/api/v1/research/alerts/webhook
       - key: SECOPSAI_SENTRY_TRACES_SAMPLE_RATE
         value: "0"
+      - key: SECOPSAI_STORAGE_RESERVE_BYTES
+        value: "16777216"
+      - key: SECOPSAI_STORAGE_MIN_FREE_BYTES
+        value: "134217728"
+      - key: SECOPSAI_STORAGE_MAX_USED_PERCENT
+        value: "85"
+      - key: SECOPSAI_RESEARCH_EVENT_RETENTION_HOURS
+        value: "24"
+      - key: SECOPSAI_RESEARCH_CANDIDATE_EVENT_RETENTION_DAYS
+        value: "90"
+      - key: SECOPSAI_RESEARCH_RUN_RETENTION_DAYS
+        value: "30"
+      - key: SECOPSAI_RESEARCH_GAP_RETENTION_DAYS
+        value: "180"
+      - key: SECOPSAI_RESEARCH_DELIVERY_RETENTION_DAYS
+        value: "90"
+      - key: SECOPSAI_RESEARCH_SNAPSHOTS_PER_COLLECTOR
+        value: "2"
     disk:
       name: secopsai-research-data
       mountPath: /var/data/secopsai-research

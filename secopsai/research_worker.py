@@ -22,6 +22,7 @@ from secopsai.observability import capture_exception, initialize_observability
 from secopsai.research_delivery import deliver_pending_operational_alerts
 from secopsai.research_intake import SafeFetcher
 from secopsai.research_scoring import score_pending_events
+from secopsai.research_storage import ResearchStorageCapacityError, maintain_research_storage, storage_status
 from secopsai.research_surveillance import (
     COLLECTOR_DEFINITIONS,
     CollectorError,
@@ -187,6 +188,7 @@ def run_worker_cycle(
 ) -> Dict[str, Any]:
     """Run one worker cycle: due collectors, scoring, retries, recovery."""
     initialize_observability(service="secopsai-research-worker")
+    storage = maintain_research_storage(db_path=db_path)
     fetcher = fetcher or SafeFetcher()
     selected = {item.lower() for item in ecosystems} if ecosystems else None
     results: List[Dict[str, Any]] = []
@@ -249,6 +251,7 @@ def run_worker_cycle(
         "recovery": recovery,
         "operational_alert_ids": alert_ids,
         "alert_delivery": deliveries,
+        "storage": storage,
         "completed_at": _utcnow().isoformat().replace("+00:00", "Z"),
     }
 
@@ -282,6 +285,15 @@ def run_worker_loop(
         while not stop["requested"]:
             try:
                 last_summary = run_worker_cycle(db_path=db_path, fetcher=fetcher)
+            except ResearchStorageCapacityError as exc:
+                capture_exception(exc, context={"component": "research_worker_storage"})
+                last_summary = {
+                    "status": "degraded",
+                    "error_code": "storage_capacity_exhausted",
+                    "error": str(exc),
+                    "storage": storage_status(db_path=db_path),
+                    "completed_at": _utcnow().isoformat().replace("+00:00", "Z"),
+                }
             except Exception as exc:
                 capture_exception(exc, context={"component": "research_worker_cycle"})
                 raise

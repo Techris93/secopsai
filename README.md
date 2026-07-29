@@ -468,6 +468,20 @@ On macOS, launchd-based execution is supported via helper scripts, including:
 - `scripts/install_supply_chain_launchd.sh`
 - `scripts/install_triage_orchestrator_launchd.sh`
 
+The hosted registry-surveillance worker also enforces bounded storage
+retention before each collection cycle. Inspect capacity or perform a guarded
+recovery with:
+
+```bash
+secopsai research storage status --json
+secopsai research storage maintain --aggressive --json
+```
+
+These commands preserve pending events, candidates, research cases, evidence,
+IOCs, rules, and active alerts. See
+[Research Discovery](docs/research-discovery.md#storage-capacity-and-recovery)
+for the Render disk-pressure runbook and retention boundaries.
+
 ## Documentation
 
 - [Docs site](https://docs.secopsai.dev)
