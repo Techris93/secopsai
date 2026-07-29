@@ -299,6 +299,103 @@ def init_db(db_path: str | None = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_detection_tuning_status
                 ON detection_tuning_proposals (status, updated_at DESC);
 
+            CREATE TABLE IF NOT EXISTS detection_learning_settings (
+                settings_id INTEGER PRIMARY KEY CHECK (settings_id = 1),
+                mode TEXT NOT NULL,
+                minimum_examples INTEGER NOT NULL,
+                holdout_percent INTEGER NOT NULL,
+                maximum_false_negative_regression INTEGER NOT NULL,
+                minimum_precision REAL NOT NULL,
+                canary_percent INTEGER NOT NULL,
+                auto_promote_shadow INTEGER NOT NULL,
+                auto_promote_canary INTEGER NOT NULL,
+                updated_at TEXT NOT NULL,
+                updated_by TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS detection_learning_examples (
+                example_id TEXT PRIMARY KEY,
+                organization_key TEXT NOT NULL,
+                finding_id TEXT NOT NULL,
+                case_id TEXT,
+                label TEXT NOT NULL,
+                label_source TEXT NOT NULL,
+                trust_score INTEGER NOT NULL,
+                feature_version TEXT NOT NULL,
+                features_json TEXT NOT NULL,
+                split TEXT NOT NULL,
+                evidence_refs_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (organization_key, finding_id, feature_version)
+            );
+
+            CREATE TABLE IF NOT EXISTS detection_learning_datasets (
+                dataset_id TEXT PRIMARY KEY,
+                schema_version TEXT NOT NULL,
+                feature_version TEXT NOT NULL,
+                fingerprint TEXT NOT NULL UNIQUE,
+                example_count INTEGER NOT NULL,
+                label_counts_json TEXT NOT NULL,
+                split_counts_json TEXT NOT NULL,
+                source_policy_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS detection_learning_experiments (
+                experiment_id TEXT PRIMARY KEY,
+                dataset_id TEXT NOT NULL,
+                algorithm TEXT NOT NULL,
+                status TEXT NOT NULL,
+                model_json TEXT NOT NULL,
+                metrics_json TEXT NOT NULL,
+                guardrails_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY (dataset_id) REFERENCES detection_learning_datasets (dataset_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS detection_learning_proposals (
+                proposal_id TEXT PRIMARY KEY,
+                experiment_id TEXT NOT NULL,
+                proposal_type TEXT NOT NULL,
+                target TEXT NOT NULL,
+                status TEXT NOT NULL,
+                parameters_json TEXT NOT NULL,
+                replay_metrics_json TEXT NOT NULL,
+                rollback_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                activated_at TEXT,
+                FOREIGN KEY (experiment_id) REFERENCES detection_learning_experiments (experiment_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS detection_learning_deployments (
+                deployment_id TEXT PRIMARY KEY,
+                proposal_id TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                traffic_percent INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                observations_json TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (proposal_id) REFERENCES detection_learning_proposals (proposal_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS detection_learning_bandit_actions (
+                action_name TEXT PRIMARY KEY,
+                pulls INTEGER NOT NULL,
+                reward_sum REAL NOT NULL,
+                reward_squared_sum REAL NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_detection_learning_examples_split
+                ON detection_learning_examples (organization_key, split, label);
+            CREATE INDEX IF NOT EXISTS idx_detection_learning_proposals_status
+                ON detection_learning_proposals (status, updated_at DESC);
+
             CREATE TABLE IF NOT EXISTS research_resolution_settings (
                 settings_id INTEGER PRIMARY KEY CHECK (settings_id = 1),
                 mode TEXT NOT NULL,

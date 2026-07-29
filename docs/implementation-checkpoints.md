@@ -282,3 +282,13 @@ High and critical package findings now enter a durable Core-owned investigation 
 Strong deterministic signals now count as corroboration for reversible true-positive escalation when the model also returns at least 85% confidence and cites valid evidence. They still block false-positive closure. Evidence-gated not-substantiated or benign resolutions can close linked findings reversibly; likely or credible verdicts escalate linked findings to in review. Missing comparison evidence remains explicit and SecOpsAI never guesses a legitimate package.
 
 Mission Control exposes queue state, stages, case and pipeline IDs, evidence gaps, model decisions, retry, cancel, and run-due controls. No unattended path approves or submits a sandbox request, sends disclosure, or publishes content. Raw artifacts remain local and never enter model context.
+
+# 112 Guarded Detection Learning
+
+Status: implemented and locally verified.
+
+Completed investigations now feed a tenant-scoped learning store only when the outcome is supported by an evidence-gated research resolution, an evidence-linked likely or credible research verdict, or a corroborated agent escalation. Model-only recommendations and local non-exposure are excluded from ground truth.
+
+Core creates immutable dataset snapshots with stable train, validation, and holdout splits; trains an interpretable risk ranker; records reproducible experiment metrics; and blocks proposals that fail precision or false-negative gates. Proposals progress through replay, shadow, limited canary, and active stages. Canary false-negative regression triggers automatic rollback. A bounded contextual-bandit policy can recommend the next investigation action, but sandbox submission remains approval-gated.
+
+Every dataset, experiment, proposal, deployment, observation, promotion, and rollback remains auditable. The learning system does not mutate production detection logic directly and cannot disclose or publish content.

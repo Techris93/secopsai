@@ -95,6 +95,14 @@ from secopsai.investigation_autopilot import retry as retry_investigation_autopi
 from secopsai.investigation_autopilot import run_due as run_due_investigation_autopilot
 from secopsai.investigation_autopilot import status as investigation_autopilot_status
 from secopsai.investigation_autopilot import update_settings as update_investigation_autopilot_settings
+from secopsai.detection_learning import deploy as deploy_detection_learning
+from secopsai.detection_learning import record_action_reward as record_detection_learning_reward
+from secopsai.detection_learning import record_observation as record_detection_learning_observation
+from secopsai.detection_learning import recommend_action as recommend_detection_learning_action
+from secopsai.detection_learning import rollback as rollback_detection_learning
+from secopsai.detection_learning import run_cycle as run_detection_learning_cycle
+from secopsai.detection_learning import status as detection_learning_status
+from secopsai.detection_learning import update_settings as update_detection_learning_settings
 from secopsai.research_resolution import adjudicate_pipeline as adjudicate_research_resolution
 from secopsai.research_resolution import review_run as review_research_resolution
 from secopsai.research_resolution import status as research_resolution_status
@@ -1253,6 +1261,23 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     intelligence_investigations.add_argument("--max-attempts", type=int, default=None)
     intelligence_investigations.add_argument("--actor", default="operator")
     intelligence_investigations.add_argument("--db-path", default=None)
+    intelligence_learning = intelligence_autopilot_sub.add_parser("learning", help="Operate guarded detection learning")
+    intelligence_learning.add_argument("action", choices=["status","run-cycle","configure","deploy","observe","rollback","recommend","reward"])
+    intelligence_learning.add_argument("--proposal-id", default="")
+    intelligence_learning.add_argument("--deployment-id", default="")
+    intelligence_learning.add_argument("--stage", choices=["shadow","canary","active"], default=None)
+    intelligence_learning.add_argument("--outcome", choices=["tp","fp","tn","fn"], default=None)
+    intelligence_learning.add_argument("--mode", choices=["off","advisory","guarded"], default=None)
+    intelligence_learning.add_argument("--minimum-examples", type=int, default=None)
+    intelligence_learning.add_argument("--holdout-percent", type=int, default=None)
+    intelligence_learning.add_argument("--minimum-precision", type=float, default=None)
+    intelligence_learning.add_argument("--maximum-fn-regression", type=int, default=None)
+    intelligence_learning.add_argument("--canary-percent", type=int, default=None)
+    intelligence_learning.add_argument("--context-json", default="{}")
+    intelligence_learning.add_argument("--bandit-action", default="")
+    intelligence_learning.add_argument("--reward", type=float, default=None)
+    intelligence_learning.add_argument("--actor", default="operator")
+    intelligence_learning.add_argument("--db-path", default=None)
     intelligence_bridge = intelligence_sub.add_parser(
         "bridge",
         help="Inspect or run the local OpenCodex/Codex intelligence bridge",
@@ -3527,6 +3552,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "actions": list_intelligence_actions(),
                     "jobs": {"jobs": list_intelligence_jobs(limit=args.limit, db_path=args.db_path)},
                     "autopilot": agent_triage_status(db_path=args.db_path),
+                    "learning": detection_learning_status(db_path=args.db_path),
                     "bridge": codex_bridge_doctor(),
                     "service": codex_bridge_service_action("status"),
                 }
@@ -3605,6 +3631,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                             max_active_runs=args.max_active_runs, max_attempts=args.max_attempts,
                             actor=args.actor, db_path=args.db_path,
                         )
+                elif args.intelligence_autopilot_cmd == "learning":
+                    if args.action == "status": payload = detection_learning_status(db_path=args.db_path)
+                    elif args.action == "run-cycle": payload = run_detection_learning_cycle(db_path=args.db_path)
+                    elif args.action == "configure": payload = update_detection_learning_settings(mode=args.mode, minimum_examples=args.minimum_examples, holdout_percent=args.holdout_percent, minimum_precision=args.minimum_precision, maximum_false_negative_regression=args.maximum_fn_regression, canary_percent=args.canary_percent, actor=args.actor, db_path=args.db_path)
+                    elif args.action == "deploy": payload = deploy_detection_learning(args.proposal_id, stage=args.stage or "", db_path=args.db_path)
+                    elif args.action == "observe": payload = record_detection_learning_observation(args.deployment_id, outcome=args.outcome or "", db_path=args.db_path)
+                    elif args.action == "rollback": payload = rollback_detection_learning(args.proposal_id, db_path=args.db_path)
+                    elif args.action == "recommend": payload = recommend_detection_learning_action(_json_object(args.context_json, label="learning context"), db_path=args.db_path)
+                    else: payload = record_detection_learning_reward(args.bandit_action, args.reward, db_path=args.db_path)
                 else:
                     raise ValueError(f"unsupported intelligence autopilot command: {args.intelligence_autopilot_cmd}")
             elif args.intelligence_cmd == "bridge":
