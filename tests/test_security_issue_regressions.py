@@ -218,7 +218,10 @@ def test_additional_sast_and_container_security_fixes():
     assert "os.chmod(directory, 0o700)  # nosec B103  # nosem" in common_py
     assert "os.chmod(output_dir, 0o700)  # nosec B103  # nosem" in findings_py
 
-    # Assert Dockerfile upgrades dependencies and uses alpine
+    # Assert the image upgrades dependencies without pulling Alpine's separate
+    # Python toolchain, which previously introduced vulnerable duplicate packages.
     assert "FROM python:3.10-alpine" in dockerfile
     assert "apk upgrade" in dockerfile
-    assert "pip install --no-cache-dir --upgrade pip setuptools wheel" in dockerfile
+    assert "python3-dev" not in dockerfile
+    assert 'pip install --no-cache-dir --upgrade pip "setuptools>=78.1.1" wheel' in dockerfile
+    assert "m.version('setuptools')" in dockerfile
