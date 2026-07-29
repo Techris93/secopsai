@@ -68,7 +68,7 @@ secopsai research storage release-reserve --json
 
 If Render reports `database or disk is full`, increase the worker disk from its **Disks** page before redeploying. Render supports increasing a persistent disk without downtime, but does not allow reducing it later. After capacity becomes available, deploy this release; the worker performs maintenance before it starts another collector. Then verify `storage status`, confirm `pressure=false`, and confirm a complete worker cycle in the logs.
 
-The 1 GB Blueprint value is suitable only for a bounded development deployment. Continuous global-registry surveillance requires capacity based on measured ingestion rate. Start a production pilot at 5 GB, retain the automatic pressure guard, and review the Disk Usage metric weekly. A future multi-worker service must move this ledger to a managed datastore because Render persistent disks are single-service and cannot be shared.
+The production Blueprint provisions 5 GB for continuous global-registry surveillance. Capacity must still be reviewed against measured ingestion rate: retain the automatic pressure guard and review the Disk Usage metric weekly. A bounded development deployment can use 1 GB, but a future multi-worker service must move this ledger to a managed datastore because Render persistent disks are single-service and cannot be shared.
 
 The worker creates a deduplicated high-severity `collector_degraded` alert when a registry run fails, leaves a coverage gap, or reaches a bounded collection limit. It creates at most one such alert per ecosystem per UTC day and continues collecting other registries. Delivery is disabled by default outside the production Blueprint. For a standalone deployment, configure:
 

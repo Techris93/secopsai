@@ -105,4 +105,4 @@ services:
     disk:
       name: secopsai-research-data
       mountPath: /var/data/secopsai-research
-      sizeGB: 1
+      sizeGB: 5
