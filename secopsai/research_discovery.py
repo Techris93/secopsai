@@ -582,8 +582,10 @@ def run_promotion_policy(*, ecosystem: str = "all", apply: bool = False, actor: 
         decision = {"candidate_id": candidate["candidate_id"], "eligible": eligible, "score": candidate["score"], "evidence_count": len(evidence_values), "reasons": reasons or (["policy_disabled"] if not policy["enabled"] else ["eligible"]), "case_id": candidate.get("case_id")}
         if apply and eligible and policy["mode"] == "draft_case" and not candidate.get("case_id"):
             case_id = f"RSC-{hashlib.sha256(candidate['candidate_id'].encode()).hexdigest()[:12].upper()}"
-            subject_id = f"SUB-{hashlib.sha256(f'{case_id}|package|{candidate["ecosystem"]}|{candidate["package"]}|{candidate.get("version") or ""}'.encode()).hexdigest()[:16].upper()}"
-            evidence_id = f"EVD-{hashlib.sha256(f'{case_id}|registry_metadata|{evidence.get("metadata_url") or candidate["candidate_id"]}'.encode()).hexdigest()[:16].upper()}"
+            subject_stable = "|".join((case_id, "package", str(candidate["ecosystem"]), str(candidate["package"]), str(candidate.get("version") or "")))
+            subject_id = f"SUB-{hashlib.sha256(subject_stable.encode()).hexdigest()[:16].upper()}"
+            evidence_stable = "|".join((case_id, "registry_metadata", str(evidence.get("metadata_url") or candidate["candidate_id"])))
+            evidence_id = f"EVD-{hashlib.sha256(evidence_stable.encode()).hexdigest()[:16].upper()}"
             now = _now()
             with closing(soc_store.connect(db_path)) as connection:
                 connection.execute("BEGIN IMMEDIATE")
