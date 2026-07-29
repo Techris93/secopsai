@@ -7,6 +7,7 @@ import soc_store
 from jsonschema import Draft202012Validator
 from secopsai import agent_triage
 from secopsai.intelligence_jobs import claim_next_job, complete_job
+from secopsai.triage.supply_chain import dependency_manifest_paths
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -111,11 +112,24 @@ def test_agent_triage_contract_fixture_validates():
     Draft202012Validator(schema).validate(fixture)
 
 
+def test_dependency_manifest_inventory_prunes_generated_environments(tmp_path):
+    tracked = tmp_path / "service" / "package.json"
+    ignored = tmp_path / ".venv" / "package.json"
+    tracked.parent.mkdir(parents=True)
+    ignored.parent.mkdir(parents=True)
+    tracked.write_text('{"dependencies":{"example":"1.0.0"}}', encoding="utf-8")
+    ignored.write_text('{"dependencies":{"hidden":"1.0.0"}}', encoding="utf-8")
+
+    paths = dependency_manifest_paths(tmp_path)
+
+    assert paths == [tracked]
+
+
 def test_guarded_model_triage_closes_only_with_deterministic_corroboration_and_rolls_back(tmp_path, monkeypatch):
     db = str(tmp_path / "soc.db")
     soc_store.persist_findings([_finding()], source="secopsai-supply-chain", db_path=db)
     agent_triage.update_settings(mode="guarded", min_evidence_refs=2, actor="test", db_path=db)
-    monkeypatch.setattr(agent_triage, "_deterministic_assessment", lambda finding, search_root: _deterministic())
+    monkeypatch.setattr(agent_triage, "_deterministic_assessment", lambda finding, **kwargs: _deterministic())
 
     queued = agent_triage.enqueue_due_findings(db_path=db)
     assert len(queued["queued"]) == 1
@@ -145,7 +159,7 @@ def test_model_cannot_close_when_deterministic_analysis_disagrees(tmp_path, monk
     monkeypatch.setattr(
         agent_triage,
         "_deterministic_assessment",
-        lambda finding, search_root: _deterministic("needs_review"),
+        lambda finding, **kwargs: _deterministic("needs_review"),
     )
 
     agent_triage.enqueue_due_findings(db_path=db)
@@ -162,7 +176,7 @@ def test_strong_threat_signal_blocks_false_positive_suppression(tmp_path, monkey
     db = str(tmp_path / "soc.db")
     soc_store.persist_findings([_finding()], source="secopsai-supply-chain", db_path=db)
     agent_triage.update_settings(mode="guarded", min_evidence_refs=2, actor="test", db_path=db)
-    monkeypatch.setattr(agent_triage, "_deterministic_assessment", lambda finding, search_root: _deterministic(strong=True))
+    monkeypatch.setattr(agent_triage, "_deterministic_assessment", lambda finding, **kwargs: _deterministic(strong=True))
 
     agent_triage.enqueue_due_findings(db_path=db)
     _complete_one(db, _model_result())
@@ -176,7 +190,7 @@ def test_strong_threat_signal_blocks_false_positive_suppression(tmp_path, monkey
 def test_advisory_mode_records_recommendation_without_mutating_finding(tmp_path, monkeypatch):
     db = str(tmp_path / "soc.db")
     soc_store.persist_findings([_finding()], source="secopsai-supply-chain", db_path=db)
-    monkeypatch.setattr(agent_triage, "_deterministic_assessment", lambda finding, search_root: _deterministic())
+    monkeypatch.setattr(agent_triage, "_deterministic_assessment", lambda finding, **kwargs: _deterministic())
 
     agent_triage.enqueue_due_findings(db_path=db)
     _complete_one(db, _model_result())
@@ -196,7 +210,7 @@ def test_cycle_limit_counts_new_jobs_not_already_reviewed_findings(tmp_path, mon
     second["first_seen"] = second["last_seen"] = "2026-07-28T00:00:00Z"
     soc_store.persist_findings([first, second], source="secopsai-supply-chain", db_path=db)
     agent_triage.update_settings(mode="advisory", max_records_per_cycle=1, actor="test", db_path=db)
-    monkeypatch.setattr(agent_triage, "_deterministic_assessment", lambda finding, search_root: _deterministic())
+    monkeypatch.setattr(agent_triage, "_deterministic_assessment", lambda finding, **kwargs: _deterministic())
 
     first_cycle = agent_triage.enqueue_due_findings(db_path=db)
     second_cycle = agent_triage.enqueue_due_findings(db_path=db)
@@ -222,7 +236,7 @@ def test_only_replay_proven_threshold_tuning_can_activate_and_rollback(tmp_path,
         actor="test",
         db_path=db,
     )
-    monkeypatch.setattr(agent_triage, "_deterministic_assessment", lambda finding, search_root: _deterministic())
+    monkeypatch.setattr(agent_triage, "_deterministic_assessment", lambda finding, **kwargs: _deterministic())
     monkeypatch.setattr(
         agent_triage.supply_chain,
         "suggest_threshold",

@@ -20,7 +20,7 @@ from secopsai.intelligence import minimize
 from secopsai.intelligence_jobs import enqueue_job, get_job
 from secopsai.triage.engine import infer_category
 from secopsai.triage.host import investigate_host
-from secopsai.triage.supply_chain import investigate_supply_chain
+from secopsai.triage.supply_chain import dependency_manifest_paths, investigate_supply_chain
 
 
 SCHEMA_VERSION = "secopsai.agent-triage.v1"
@@ -174,10 +174,20 @@ def _finding_fingerprint(finding: Dict[str, Any]) -> str:
     return hashlib.sha256(_json(payload).encode()).hexdigest()
 
 
-def _deterministic_assessment(finding: Dict[str, Any], *, search_root: Path) -> Dict[str, Any]:
+def _deterministic_assessment(
+    finding: Dict[str, Any],
+    *,
+    search_root: Path,
+    manifest_paths: Optional[list[Path]] = None,
+) -> Dict[str, Any]:
     category = infer_category(finding)
     if category == "supply_chain":
-        result = investigate_supply_chain(finding, search_root=search_root)
+        result = investigate_supply_chain(
+            finding,
+            search_root=search_root,
+            manifest_paths=manifest_paths,
+            include_reputation=False,
+        )
     else:
         result = investigate_host(finding)
     return {"category": category, **minimize(result)}
@@ -197,6 +207,7 @@ def enqueue_due_findings(
 
     alert_sync = sync_actionable_alert_findings(db_path=db_path)
     root = Path(search_root or Path(__file__).resolve().parents[1]).expanduser().resolve()
+    manifests = dependency_manifest_paths(root)
     findings = soc_store.list_findings(db_path, limit=None, include_payload=True)
     eligible = [
         item for item in findings
@@ -222,7 +233,7 @@ def enqueue_due_findings(
             skipped += 1
             continue
         run_id = _id("ATR")
-        deterministic = _deterministic_assessment(finding, search_root=root)
+        deterministic = _deterministic_assessment(finding, search_root=root, manifest_paths=manifests)
         now = soc_store.utc_now()
         with closing(soc_store.connect(db_path)) as connection:
             inserted = connection.execute(
