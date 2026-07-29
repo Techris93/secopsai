@@ -51,6 +51,18 @@ Mission Control exposes the same operation as **Complete Agent Review**. The act
 
 The model identifier is stored in the user service definition, not only in the browser session. Provider credentials remain owned by OpenCodex or Codex and are never copied into the service file.
 
+When every deterministic closure gate passes, the research resolution policy can close the case as `not_substantiated` or `benign`, retract active case rules that would otherwise create unsupported alerts, and place the complete reversible decision in **Research → Resolved by agents**. A `not_substantiated` decision means the available evidence did not prove the allegation; it is not a benign classification. `benign` additionally requires independently reviewed sandbox evidence. Likely or credible threats remain open and escalated.
+
+Configure this policy in Mission Control or use:
+
+```bash
+secopsai research resolution configure --mode guarded --min-confidence 90 --min-evidence-refs 4
+secopsai research resolution status
+secopsai research resolution review ARR-XXXXXXXXXXXXXXXX --decision reopen
+```
+
+Accepting a resolution records the operator review. Reopening restores the previous case fields and any validation-passed rules that the resolution retracted. Neither action publishes or contacts an external party.
+
 Use supervised mode when policy requires proposal-by-proposal human acceptance:
 
 ```bash

@@ -1,5 +1,17 @@
 # Implementation Checkpoints
 
+## 111 Guarded Agent Resolution And Unified Alert Review
+
+Status: implementation and local acceptance complete; repository release remains the final gate.
+
+Added a guarded research-case resolution policy with deterministic evidence requirements, reversible case closure, rule retraction, operator accept/reopen review, durable decision records, and rollback snapshots. Agent closure is limited to evidence-complete `not_substantiated` and `benign` verdicts. `not_substantiated` means the evidence did not prove the allegation; `benign` additionally requires independently reviewed sandbox evidence. Likely or credible threats remain escalated, and publication, disclosure delivery, sandbox submission, destructive response, and unsupported rule activation remain human-controlled.
+
+High-confidence registry research candidates now enter the canonical finding queue as `secopsai_research` supply-chain findings. The same model-assisted triage engine therefore covers host, Edge, supply-chain, and registry-research alerts. Missing local dependency exposure is explicitly recorded as response context and never treated as proof that an external package is safe. Resolving the notification alone leaves the canonical finding in a review-required state.
+
+Mission Control adds **Research → Resolved by agents** for policy configuration and reversible case review, plus a unified **Automation → Agent finding and alert review** table showing source, package context, model confidence, guardrail failures, tuning proposals, and rollback actions. Operational collector alerts remain in a separate deterministic lane and resolve only after coverage recovers.
+
+Verification: 464 Core tests and 4 subtests passed; 17 focused Mission Control Python tests passed; browser contract tests and the production JavaScript check passed. Signed-in browser acceptance confirmed the guarded case policy and the live supply-chain decision queue. Browser console errors observed during acceptance originated only from installed wallet extensions, not SecOpsAI.
+
 ## 110 Authorized Artifact Evidence Workflow
 
 Status: implementation complete locally; deployment and browser acceptance remain release gates.

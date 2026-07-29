@@ -2,7 +2,7 @@
 
 SecOpsAI includes a native triage orchestrator that can investigate open findings, auto-apply low-risk dispositions, and queue higher-risk actions for analyst confirmation.
 
-For model-assisted continuous review, use [Intelligence integrations](intelligence-integrations.md#autonomous-finding-triage). The native orchestrator remains the deterministic authority; the selected OpenCodex model adds evidence interpretation, counterarguments, and tuning proposals. A model-only false-positive recommendation cannot close a finding.
+For model-assisted continuous review, use [Intelligence integrations](intelligence-integrations.md#autonomous-finding-and-alert-triage). The native orchestrator remains the deterministic authority; the selected OpenCodex model adds evidence interpretation, counterarguments, and tuning proposals. A model-only false-positive recommendation cannot close a finding.
 
 ## What It Automates
 

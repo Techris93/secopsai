@@ -590,6 +590,14 @@ def get_run(run_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
     result["decision"] = _decode(result.pop("decision_json"), {})
     result["rollback"] = _decode(result.pop("rollback_json"), {})
     result["reversible"] = bool(result.get("reversible"))
+    finding = soc_store.get_finding(str(result.get("target_id") or ""), db_path)
+    result["target"] = {
+        "title": _clean((finding or {}).get("title"), 500),
+        "source": _clean((finding or {}).get("source"), 120),
+        "severity": _clean((finding or {}).get("severity"), 40),
+        "ecosystem": _clean((finding or {}).get("ecosystem"), 80),
+        "package": _clean((finding or {}).get("package"), 240),
+    }
     return result
 
 

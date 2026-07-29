@@ -27,6 +27,7 @@ WATCH_TYPES = {"package", "namespace", "publisher", "brand", "repository", "orga
 PRIORITIES = {"low", "normal", "high", "critical"}
 STATUSES = {"active", "paused", "archived", "new", "review", "dismissed", "promoted"}
 PROMOTION_MODES = {"review_only", "draft_case"}
+RESEARCH_ALERT_FINDING_SOURCE = "secopsai_research"
 
 
 def _id(prefix: str) -> str:
@@ -637,8 +638,42 @@ def create_candidate_alert(candidate: Dict[str, Any], *, db_path: Optional[str] 
             (alert_id, severity, candidate.get("candidate_id"), dedupe_key, str(candidate.get("reason") or "Candidate requires analyst review")[:2000], _json(candidate.get("evidence") or {}), now, now),
         )
         row = connection.execute("SELECT * FROM research_alerts WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
+        if row:
+            finding_id = f"RSCF-{hashlib.sha256(str(row['alert_id']).encode()).hexdigest()[:16].upper()}"
+            evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
+            package = str(candidate.get("package") or candidate.get("candidate_identifier") or "unknown package")
+            ecosystem = str(candidate.get("ecosystem") or evidence.get("ecosystem") or "unknown")
+            finding = {
+                "finding_id": finding_id,
+                "title": f"Research candidate requires verification: {ecosystem} {package}",
+                "summary": str(candidate.get("reason") or "Registry monitoring produced an explainable candidate that requires evidence-led review")[:2000],
+                "severity": severity,
+                "severity_score": {"critical": 95, "high": 80, "medium": 55}[severity],
+                "status": "open",
+                "disposition": "unreviewed",
+                "first_seen": str(candidate.get("first_seen") or row["created_at"] or now),
+                "last_seen": str(candidate.get("last_seen") or row["updated_at"] or now),
+                "event_ids": [str(row["alert_id"])],
+                "rule_ids": ["RESEARCH-CANDIDATE-DISCOVERY"],
+                "platform": "supply_chain",
+                "source": RESEARCH_ALERT_FINDING_SOURCE,
+                "alert_id": str(row["alert_id"]),
+                "candidate_id": str(candidate.get("candidate_id") or ""),
+                "package": package,
+                "ecosystem": ecosystem,
+                "version": str(candidate.get("version") or ""),
+                "confidence": min(99, max(0, int(score))),
+                "verdict": "unverified_candidate",
+                "evidence": evidence,
+                "local_dependency_reference": "not_required_for_package_verification",
+                "research_scope": "independent_registry_intelligence",
+            }
+            soc_store.upsert_finding(connection, finding, source=RESEARCH_ALERT_FINDING_SOURCE)
         connection.commit()
-    return dict(row) if row else {"alert_id": alert_id, "dedupe_key": dedupe_key}
+    result = dict(row) if row else {"alert_id": alert_id, "dedupe_key": dedupe_key}
+    if row:
+        result["finding_id"] = finding_id
+    return result
 
 
 def list_alerts(*, status: Optional[str] = None, limit: int = 100, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -659,5 +694,11 @@ def resolve_alert(alert_id: str, *, db_path: Optional[str] = None) -> Dict[str, 
             "UPDATE research_alerts SET status = 'resolved', updated_at = ? WHERE alert_id = ?",
             (now, alert_id),
         )
+        finding_id = f"RSCF-{hashlib.sha256(str(alert_id).encode()).hexdigest()[:16].upper()}"
+        connection.execute(
+            """UPDATE findings SET status = 'triaged', disposition = 'needs_review', updated_at = ?
+               WHERE finding_id = ? AND source = ? AND status IN ('open', 'in_review')""",
+            (now, finding_id, RESEARCH_ALERT_FINDING_SOURCE),
+        )
         connection.commit()
-    return {"ok": True, "alert_id": alert_id, "status": "resolved"}
+    return {"ok": True, "alert_id": alert_id, "finding_id": finding_id, "status": "resolved"}

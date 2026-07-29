@@ -5,7 +5,7 @@ import json
 import soc_store
 
 from secopsai.research_delivery import deliver_pending_operational_alerts, send_email, send_research_alert
-from secopsai.research_discovery import create_candidate_alert
+from secopsai.research_discovery import create_candidate_alert, resolve_alert
 from secopsai.research_worker import _record_collector_degraded_alert
 
 
@@ -33,6 +33,34 @@ def test_research_alert_delivery_is_audited_without_exposing_raw_artifacts(tmp_p
     assert row["status"] == "sent"
     assert row["attempts"] == 1
     assert row["destination"] == "research@secopsai.dev"
+
+
+def test_candidate_alert_enters_canonical_agent_triage_without_local_dependency(tmp_path):
+    db = str(tmp_path / "research.db")
+    alert = create_candidate_alert({
+        "candidate_id": "CAN-GLOBAL-TEST",
+        "ecosystem": "nuget",
+        "package": "Brand.Security.Update",
+        "version": "1.2.3",
+        "score": 92,
+        "reason": "Package identity is highly similar to a protected brand.",
+        "evidence": {"metadata_url": "https://api.nuget.org/v3/registration5-semver1/brand.security.update/index.json"},
+        "last_seen": "2026-07-18T00:00:00Z",
+    }, db_path=db)
+
+    finding = soc_store.get_finding(alert["finding_id"], db)
+    assert finding is not None
+    assert finding["source"] == "secopsai_research"
+    assert finding["platform"] == "supply_chain"
+    assert finding["package"] == "Brand.Security.Update"
+    assert finding["local_dependency_reference"] == "not_required_for_package_verification"
+    assert finding["status"] == "open"
+
+    resolved = resolve_alert(alert["alert_id"], db_path=db)
+    assert resolved["finding_id"] == alert["finding_id"]
+    finding = soc_store.get_finding(alert["finding_id"], db)
+    assert finding["status"] == "triaged"
+    assert finding["disposition"] == "needs_review"
 
 
 def test_email_uses_branded_multipart_content_and_safe_sender(monkeypatch):

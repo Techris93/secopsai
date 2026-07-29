@@ -714,7 +714,7 @@ def reconcile_intelligence_job(job: Dict[str, Any], *, db_path: Optional[str] = 
             {"pipeline_id": pipeline_id, "pending_review_items": summary["pending_review_items"]},
         )
         connection.commit()
-    if str(os.environ.get("SECOPSAI_RESEARCH_AUTONOMY_MODE") or "").strip().lower() == "agent_review":
+    if str(os.environ.get("SECOPSAI_RESEARCH_AUTONOMY_MODE") or "").strip().lower() in {"agent_review", "agent_resolve"}:
         return agent_complete_pipeline(
             pipeline_id,
             actor="secopsai-agent-autonomy",
@@ -984,9 +984,12 @@ def agent_complete_pipeline(
         if requested in {"benign", "not_substantiated"} and local_absence_only:
             verdict = "inconclusive"
             guardrail_notes.append("local absence cannot establish package benignness")
-        if requested in {"benign", "not_substantiated"} and not strong_proof:
+        if requested == "benign" and not strong_proof:
             verdict = "inconclusive"
-            guardrail_notes.append("an exonerating verdict requires advisory-backed or sandbox evidence")
+            guardrail_notes.append("a benign verdict requires advisory-backed or sandbox evidence")
+        if requested == "not_substantiated" and not unsupported:
+            verdict = "inconclusive"
+            guardrail_notes.append("not-substantiated requires explicit unsupported-claim analysis")
         if unsupported and verdict == "credible":
             verdict = "likely"
             guardrail_notes.append("unsupported claims prevent a credible verdict")
@@ -1031,6 +1034,42 @@ def agent_complete_pipeline(
         },
         db_path=db_path,
     )
+    current = get_pipeline(pipeline_id, db_path=db_path)
+    try:
+        from secopsai.research_resolution import adjudicate_pipeline
+
+        resolution = adjudicate_pipeline(pipeline_id, actor=actor_id, db_path=db_path)
+        _set_pipeline(
+            pipeline_id,
+            "succeeded",
+            current_step="agent_review_complete",
+            summary={
+                **current.get("summary", {}),
+                "agent_resolution": {
+                    "run_id": resolution["run_id"],
+                    "status": resolution["status"],
+                    "verdict": resolution["verdict"],
+                    "confidence": resolution["confidence"],
+                    "human_review_required": resolution["status"] in {"applied", "recommended"},
+                },
+            },
+            db_path=db_path,
+        )
+    except Exception as exc:
+        _set_pipeline(
+            pipeline_id,
+            "succeeded",
+            current_step="agent_review_complete",
+            summary={
+                **current.get("summary", {}),
+                "agent_resolution": {
+                    "status": "failed",
+                    "error": _clean(exc, 500),
+                    "human_review_required": True,
+                },
+            },
+            db_path=db_path,
+        )
     return get_pipeline(pipeline_id, db_path=db_path)
 
 

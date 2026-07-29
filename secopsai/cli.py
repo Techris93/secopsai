@@ -90,6 +90,10 @@ from secopsai.agent_triage import rollback_run as rollback_agent_triage_run
 from secopsai.agent_triage import rollback_tuning_proposal as rollback_agent_tuning_proposal
 from secopsai.agent_triage import status as agent_triage_status
 from secopsai.agent_triage import update_settings as update_agent_triage_settings
+from secopsai.research_resolution import adjudicate_pipeline as adjudicate_research_resolution
+from secopsai.research_resolution import review_run as review_research_resolution
+from secopsai.research_resolution import status as research_resolution_status
+from secopsai.research_resolution import update_settings as update_research_resolution_settings
 from secopsai.codex_bridge import doctor as codex_bridge_doctor
 from secopsai.codex_bridge import list_models as list_codex_bridge_models
 from secopsai.codex_bridge import run_loop as run_codex_bridge_loop
@@ -1817,6 +1821,28 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     pipeline_agent.add_argument("--actor", default="secopsai-agent-autonomy")
     pipeline_agent.add_argument("--db-path", default=None)
 
+    resolution = research_sub.add_parser("resolution", help="Configure and review guarded agent research-case resolution")
+    resolution_sub = resolution.add_subparsers(dest="research_resolution_cmd", required=True)
+    resolution_status = resolution_sub.add_parser("status")
+    resolution_status.add_argument("--db-path", default=None)
+    resolution_configure = resolution_sub.add_parser("configure")
+    resolution_configure.add_argument("--mode", choices=["off", "advisory", "guarded"], default=None)
+    resolution_configure.add_argument("--min-confidence", type=int, default=None)
+    resolution_configure.add_argument("--min-evidence-refs", type=int, default=None)
+    resolution_configure.add_argument("--max-cases", type=int, default=None)
+    resolution_configure.add_argument("--auto-retract-rules", choices=["on", "off"], default=None)
+    resolution_configure.add_argument("--actor", default="operator")
+    resolution_configure.add_argument("--db-path", default=None)
+    resolution_run = resolution_sub.add_parser("run", help="Adjudicate one completed research pipeline")
+    resolution_run.add_argument("pipeline_id")
+    resolution_run.add_argument("--actor", default="secopsai-agent-resolution")
+    resolution_run.add_argument("--db-path", default=None)
+    resolution_review = resolution_sub.add_parser("review")
+    resolution_review.add_argument("run_id")
+    resolution_review.add_argument("--decision", required=True, choices=["accept", "reopen"])
+    resolution_review.add_argument("--actor", default="operator")
+    resolution_review.add_argument("--db-path", default=None)
+
     workflow = research_sub.add_parser("workflow", help="Evidence, verdict, disclosure, publication, and sandbox gates")
     workflow_sub = workflow.add_subparsers(dest="research_workflow_cmd", required=True)
     matrix = workflow_sub.add_parser("evidence-matrix")
@@ -2641,6 +2667,25 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                     actor=args.actor,
                     db_path=args.db_path,
                 )
+        elif args.research_cmd == "resolution":
+            if args.research_resolution_cmd == "status":
+                payload = research_resolution_status(db_path=args.db_path)
+            elif args.research_resolution_cmd == "configure":
+                payload = update_research_resolution_settings(
+                    mode=args.mode,
+                    min_confidence=args.min_confidence,
+                    min_evidence_refs=args.min_evidence_refs,
+                    max_cases_per_cycle=args.max_cases,
+                    auto_retract_rules=None if args.auto_retract_rules is None else args.auto_retract_rules == "on",
+                    actor=args.actor,
+                    db_path=args.db_path,
+                )
+            elif args.research_resolution_cmd == "run":
+                payload = adjudicate_research_resolution(args.pipeline_id, actor=args.actor, db_path=args.db_path)
+            else:
+                payload = review_research_resolution(
+                    args.run_id, decision=args.decision, actor=args.actor, db_path=args.db_path,
+                )
         elif args.research_cmd == "workflow":
             command = args.research_workflow_cmd
             if command == "evidence-matrix":
@@ -3049,7 +3094,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
 
-        if args.research_cmd in {"rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "workflow"}:
+        if args.research_cmd in {"rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "resolution", "workflow"}:
             return _run_research_automation_command(args)
 
         if args.research_cmd == "case":

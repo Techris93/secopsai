@@ -17,9 +17,13 @@ SecOpsAI can use your local OpenCodex proxy so research analysis is not locked t
 
 Research actions request evidence-led structured output rather than a chat-style paragraph. A completed case analysis includes an executive summary, confirmed facts, inferences, unsupported claims, contradictions, missing evidence, prioritized next steps, a confidence-scored verdict, evidence references, limitations, and publication risks. Mission Control presents these fields separately and retains the complete normalized result and job history.
 
-## Autonomous finding triage
+## Autonomous finding and alert triage
 
-Mission Control can use any model in the local OpenCodex catalog, including Kimi K3, Grok, Gemini, or an available Codex model, to review new canonical findings continuously. Select the model under **System → SecOpsAI Intelligence**, then configure **Autonomous triage**.
+Mission Control can use any model in the local OpenCodex catalog, including Kimi K3, Grok, Gemini, or an available Codex model, to review new canonical findings continuously. This includes host detections, Edge findings, supply-chain findings, and high-confidence research candidates produced by registry monitoring. Select the model under **System → Automation**, then configure **Agent finding and alert review**.
+
+Research candidate alerts are normalized into canonical findings with source `secopsai_research`. Package verification remains actionable even when the package is not present in the local repository. Missing local exposure affects the response scope only; it is never evidence that the external package is safe.
+
+Operational alerts such as registry timeouts and stale collector cursors are handled by deterministic health checks instead of model opinion. They resolve only after successful coverage recovery, remain visible while degraded, and never become package verdicts.
 
 The modes are:
 
@@ -43,7 +47,7 @@ secopsai intelligence autopilot rollback ATR-XXXXXXXXXXXXXXXX
 secopsai intelligence autopilot rollback-tuning DTP-XXXXXXXXXXXXXXXX
 ```
 
-The background bridge checks for newly changed findings before each queue poll, so a continuously running service provides near-real-time review without adding a second daemon.
+The background bridge checks for newly changed findings and normalized research-candidate alerts before each queue poll, so a continuously running service provides near-real-time review without adding a second daemon.
 
 The bridge processes durable queued work before discovering another record, performs at most one new deterministic assessment per idle poll, and bypasses OpenCodex's redundant per-command `ensure` step after the provider health check succeeds. If the user-level bridge is stopped or reinstalled during a model run, interrupted local jobs are requeued immediately and keep their audit history.
 

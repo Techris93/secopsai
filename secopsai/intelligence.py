@@ -277,6 +277,8 @@ def _bridge_instructions(action: Action) -> str:
             "Return prioritized recommended_actions that would close the most important evidence gaps, including static, registry, IOC, comparison, or sandbox steps as applicable. "
             "Return verdict_recommendation as credible, likely, inconclusive, not_substantiated, or benign; "
             "verdict_confidence as 0-100; verdict_rationale; and verdict_evidence_refs using only supplied evidence or pipeline step identifiers. "
+            "Use not_substantiated only when the supplied investigation evidence does not prove the malicious claim; this does not mean the package is benign. "
+            "Use benign only when affirmative, independently reviewed evidence supports harmless behavior. "
             "Never downgrade a package merely because local exposure was not observed. "
         ),
         "generate_analyst_brief": (
