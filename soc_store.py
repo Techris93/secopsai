@@ -417,6 +417,30 @@ def init_db(db_path: str | None = None) -> None:
                 FOREIGN KEY (source_evidence_id) REFERENCES research_evidence (evidence_id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS research_rule_proposals (
+                proposal_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                rule_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                content TEXT NOT NULL,
+                source_evidence_id TEXT,
+                source_kind TEXT NOT NULL,
+                validation_status TEXT NOT NULL,
+                validation_json TEXT NOT NULL,
+                test_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                reviewer TEXT,
+                review_note TEXT NOT NULL,
+                active_rule_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (case_id, rule_type, name),
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE,
+                FOREIGN KEY (source_evidence_id) REFERENCES research_evidence (evidence_id) ON DELETE SET NULL,
+                FOREIGN KEY (active_rule_id) REFERENCES research_rules (rule_id) ON DELETE SET NULL
+            );
+
             CREATE TABLE IF NOT EXISTS research_case_findings (
                 case_id TEXT NOT NULL,
                 finding_id TEXT NOT NULL,
@@ -449,6 +473,8 @@ def init_db(db_path: str | None = None) -> None:
                 ON research_iocs (case_id, ioc_type);
             CREATE INDEX IF NOT EXISTS idx_research_rules_case_type
                 ON research_rules (case_id, rule_type, status);
+            CREATE INDEX IF NOT EXISTS idx_research_rule_proposals_case_status
+                ON research_rule_proposals (case_id, status, rule_type);
             CREATE INDEX IF NOT EXISTS idx_research_events_case_time
                 ON research_case_events (case_id, created_at);
 

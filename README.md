@@ -439,6 +439,18 @@ secopsai intelligence bridge service install --autonomy-mode agent_review
 
 Core guardrails prevent local dependency absence from becoming a benign verdict, constrain verdict evidence to the active pipeline, and reduce conclusions that lack sufficient confidence or proof. Package execution, external sandbox submission, disclosure delivery, customer-control changes, and final publication remain human-approved actions. See [Research Automation](docs/research-automation.md).
 
+Research cases can also turn reviewed evidence into guarded detection proposals:
+
+```bash
+secopsai research rule propose RSC-...
+secopsai research rule list RSC-...
+```
+
+Mission Control presents each structurally validated YARA, Sigma, or Semgrep
+proposal with its evidence and limitations. Activation is a separate audited
+decision; legitimate reference artifacts and low-confidence indicators are
+never converted into detections automatically.
+
 ## Background Monitoring
 
 Example operational model:
