@@ -8,6 +8,8 @@ Added a guarded research-case resolution policy with deterministic evidence requ
 
 High-confidence registry research candidates now enter the canonical finding queue as `secopsai_research` supply-chain findings. The same model-assisted triage engine therefore covers host, Edge, supply-chain, and registry-research alerts. Missing local dependency exposure is explicitly recorded as response context and never treated as proof that an external package is safe. Resolving the notification alone leaves the canonical finding in a review-required state.
 
+Before each model-triage cycle, Core idempotently reconciles both new and historical actionable research alerts, including watched-package version changes and imported non-operational research alerts. This makes restored databases and pre-release alerts eligible without a manual migration command. Collector degradation and retention alerts stay excluded from model verdicts and close only through deterministic coverage recovery.
+
 Mission Control adds **Research → Resolved by agents** for policy configuration and reversible case review, plus a unified **Automation → Agent finding and alert review** table showing source, package context, model confidence, guardrail failures, tuning proposals, and rollback actions. Operational collector alerts remain in a separate deterministic lane and resolve only after coverage recovers.
 
 Verification: 464 Core tests and 4 subtests passed; 17 focused Mission Control Python tests passed; browser contract tests and the production JavaScript check passed. Signed-in browser acceptance confirmed the guarded case policy and the live supply-chain decision queue. Browser console errors observed during acceptance originated only from installed wallet extensions, not SecOpsAI.

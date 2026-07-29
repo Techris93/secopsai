@@ -28,6 +28,7 @@ PRIORITIES = {"low", "normal", "high", "critical"}
 STATUSES = {"active", "paused", "archived", "new", "review", "dismissed", "promoted"}
 PROMOTION_MODES = {"review_only", "draft_case"}
 RESEARCH_ALERT_FINDING_SOURCE = "secopsai_research"
+OPERATIONAL_ALERT_TYPES = {"collector_degraded", "collector_retention_risk"}
 
 
 def _id(prefix: str) -> str:
@@ -639,41 +640,114 @@ def create_candidate_alert(candidate: Dict[str, Any], *, db_path: Optional[str] 
         )
         row = connection.execute("SELECT * FROM research_alerts WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
         if row:
-            finding_id = f"RSCF-{hashlib.sha256(str(row['alert_id']).encode()).hexdigest()[:16].upper()}"
-            evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
-            package = str(candidate.get("package") or candidate.get("candidate_identifier") or "unknown package")
-            ecosystem = str(candidate.get("ecosystem") or evidence.get("ecosystem") or "unknown")
-            finding = {
-                "finding_id": finding_id,
-                "title": f"Research candidate requires verification: {ecosystem} {package}",
-                "summary": str(candidate.get("reason") or "Registry monitoring produced an explainable candidate that requires evidence-led review")[:2000],
-                "severity": severity,
-                "severity_score": {"critical": 95, "high": 80, "medium": 55}[severity],
-                "status": "open",
-                "disposition": "unreviewed",
-                "first_seen": str(candidate.get("first_seen") or row["created_at"] or now),
-                "last_seen": str(candidate.get("last_seen") or row["updated_at"] or now),
-                "event_ids": [str(row["alert_id"])],
-                "rule_ids": ["RESEARCH-CANDIDATE-DISCOVERY"],
-                "platform": "supply_chain",
-                "source": RESEARCH_ALERT_FINDING_SOURCE,
-                "alert_id": str(row["alert_id"]),
-                "candidate_id": str(candidate.get("candidate_id") or ""),
-                "package": package,
-                "ecosystem": ecosystem,
-                "version": str(candidate.get("version") or ""),
-                "confidence": min(99, max(0, int(score))),
-                "verdict": "unverified_candidate",
-                "evidence": evidence,
-                "local_dependency_reference": "not_required_for_package_verification",
-                "research_scope": "independent_registry_intelligence",
-            }
-            soc_store.upsert_finding(connection, finding, source=RESEARCH_ALERT_FINDING_SOURCE)
+            finding_id = _upsert_research_alert_finding(connection, dict(row), candidate=candidate)
         connection.commit()
     result = dict(row) if row else {"alert_id": alert_id, "dedupe_key": dedupe_key}
     if row:
         result["finding_id"] = finding_id
     return result
+
+
+def _upsert_research_alert_finding(
+    connection: Any,
+    alert: Dict[str, Any],
+    *,
+    candidate: Optional[Dict[str, Any]] = None,
+) -> str:
+    alert_id = str(alert.get("alert_id") or "")
+    finding_id = f"RSCF-{hashlib.sha256(alert_id.encode()).hexdigest()[:16].upper()}"
+    evidence = _decode(alert.get("evidence_json"), {})
+    if candidate and isinstance(candidate.get("evidence"), dict):
+        evidence = {**evidence, **candidate["evidence"]}
+    alert_type = str(alert.get("alert_type") or "research_alert")
+    severity = str(alert.get("severity") or "medium").lower()
+    if severity not in {"critical", "high", "medium", "low", "info"}:
+        severity = "medium"
+    package = str((candidate or {}).get("package") or evidence.get("package") or "").strip()
+    ecosystem = str((candidate or {}).get("ecosystem") or evidence.get("ecosystem") or "").strip().lower()
+    version = str((candidate or {}).get("version") or evidence.get("version") or "").strip()
+    score = (candidate or {}).get("score", evidence.get("score", 0))
+    try:
+        confidence = min(99, max(0, int(float(score or 0))))
+    except (TypeError, ValueError):
+        confidence = 0
+    if alert_type == "candidate_detected":
+        title = f"Research candidate requires verification: {ecosystem or 'package'} {package or alert_id}"
+        rule_ids = ["RESEARCH-CANDIDATE-DISCOVERY"]
+    elif alert_type == "watched_package_version":
+        title = f"Watched package changed: {ecosystem or 'package'} {package or alert_id}{('@' + version) if version else ''}"
+        rule_ids = ["RESEARCH-WATCHLIST-VERSION-CHANGE"]
+    else:
+        title = f"Research alert requires verification: {alert_type.replace('_', ' ')}"
+        rule_ids = ["RESEARCH-ALERT-INGESTION"]
+    finding = {
+        "finding_id": finding_id,
+        "title": title[:500],
+        "summary": str(alert.get("reason") or "Research intelligence requires evidence-led review")[:2000],
+        "severity": severity,
+        "severity_score": {"critical": 95, "high": 80, "medium": 55, "low": 25, "info": 10}[severity],
+        "status": "open",
+        "disposition": "unreviewed",
+        "first_seen": str((candidate or {}).get("first_seen") or alert.get("created_at") or _now()),
+        "last_seen": str((candidate or {}).get("last_seen") or alert.get("updated_at") or _now()),
+        "event_ids": [alert_id],
+        "rule_ids": rule_ids,
+        "platform": "supply_chain" if package or ecosystem or alert_type in {"candidate_detected", "watched_package_version"} else "research",
+        "source": RESEARCH_ALERT_FINDING_SOURCE,
+        "alert_id": alert_id,
+        "alert_type": alert_type,
+        "candidate_id": str(alert.get("candidate_id") or (candidate or {}).get("candidate_id") or ""),
+        "campaign_id": str(alert.get("campaign_id") or ""),
+        "case_id": str(alert.get("case_id") or ""),
+        "package": package,
+        "ecosystem": ecosystem,
+        "version": version,
+        "confidence": confidence,
+        "verdict": "unverified_research_alert",
+        "evidence": evidence,
+        "local_dependency_reference": "not_required_for_package_verification",
+        "research_scope": "independent_registry_intelligence",
+    }
+    soc_store.upsert_finding(connection, finding, source=RESEARCH_ALERT_FINDING_SOURCE)
+    return finding_id
+
+
+def sync_actionable_alert_findings(*, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Idempotently normalize current and historical research alerts for agent triage."""
+    soc_store.init_db(db_path)
+    synced: list[str] = []
+    with closing(soc_store.connect(db_path)) as connection:
+        rows = connection.execute(
+            """SELECT a.*, c.ecosystem, c.package, c.version, c.score,
+                      c.first_seen AS candidate_first_seen, c.last_seen AS candidate_last_seen,
+                      c.evidence_json AS candidate_evidence_json
+               FROM research_alerts a
+               LEFT JOIN research_candidates c ON c.candidate_id = a.candidate_id
+               WHERE a.status IN ('open', 'in_review')
+               ORDER BY a.created_at ASC"""
+        ).fetchall()
+        for row in rows:
+            alert = dict(row)
+            if str(alert.get("alert_type") or "") in OPERATIONAL_ALERT_TYPES:
+                continue
+            candidate = {
+                "candidate_id": alert.get("candidate_id"),
+                "ecosystem": alert.get("ecosystem"),
+                "package": alert.get("package"),
+                "version": alert.get("version"),
+                "score": alert.get("score"),
+                "first_seen": alert.get("candidate_first_seen"),
+                "last_seen": alert.get("candidate_last_seen"),
+                "evidence": _decode(alert.get("candidate_evidence_json"), {}),
+            }
+            synced.append(_upsert_research_alert_finding(connection, alert, candidate=candidate))
+        connection.commit()
+    return {
+        "schema_version": "secopsai.research.alert-sync.v1",
+        "synced": len(synced),
+        "finding_ids": synced,
+        "operational_alert_types": sorted(OPERATIONAL_ALERT_TYPES),
+    }
 
 
 def list_alerts(*, status: Optional[str] = None, limit: int = 100, db_path: Optional[str] = None) -> List[Dict[str, Any]]:

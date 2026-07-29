@@ -5,7 +5,7 @@ import json
 import soc_store
 
 from secopsai.research_delivery import deliver_pending_operational_alerts, send_email, send_research_alert
-from secopsai.research_discovery import create_candidate_alert, resolve_alert
+from secopsai.research_discovery import create_candidate_alert, resolve_alert, sync_actionable_alert_findings
 from secopsai.research_worker import _record_collector_degraded_alert
 
 
@@ -61,6 +61,45 @@ def test_candidate_alert_enters_canonical_agent_triage_without_local_dependency(
     finding = soc_store.get_finding(alert["finding_id"], db)
     assert finding["status"] == "triaged"
     assert finding["disposition"] == "needs_review"
+
+
+def test_historical_research_alerts_are_backfilled_but_collector_health_is_not(tmp_path):
+    db = str(tmp_path / "research.db")
+    soc_store.init_db(db)
+    now = soc_store.utc_now()
+    with soc_store.connect(db) as connection:
+        connection.execute(
+            """INSERT INTO research_alerts
+               (alert_id, alert_type, severity, candidate_id, campaign_id, case_id,
+                dedupe_key, reason, evidence_json, status, owner, created_at, updated_at)
+               VALUES ('RAL-HISTORICAL', 'watched_package_version', 'info', NULL, NULL, NULL,
+                       'historical-package-change', 'Watched package changed version', ?, 'open', '', ?, ?)""",
+            (json.dumps({"ecosystem": "pypi", "package": "example", "version": "2.0.0"}), now, now),
+        )
+        connection.execute(
+            """INSERT INTO research_alerts
+               (alert_id, alert_type, severity, candidate_id, campaign_id, case_id,
+                dedupe_key, reason, evidence_json, status, owner, created_at, updated_at)
+               VALUES ('RAL-HEALTH', 'collector_degraded', 'high', NULL, NULL, NULL,
+                       'historical-health', 'Collector timed out', '{}', 'open', '', ?, ?)""",
+            (now, now),
+        )
+        connection.commit()
+
+    first = sync_actionable_alert_findings(db_path=db)
+    second = sync_actionable_alert_findings(db_path=db)
+
+    assert first["synced"] == 1
+    assert second["finding_ids"] == first["finding_ids"]
+    finding = soc_store.get_finding(first["finding_ids"][0], db)
+    assert finding["source"] == "secopsai_research"
+    assert finding["package"] == "example"
+    assert finding["status"] == "open"
+    with soc_store.connect(db) as connection:
+        health_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM findings WHERE payload_json LIKE '%RAL-HEALTH%'"
+        ).fetchone()["count"]
+    assert health_count == 0
 
 
 def test_email_uses_branded_multipart_content_and_safe_sender(monkeypatch):

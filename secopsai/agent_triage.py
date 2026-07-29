@@ -193,6 +193,9 @@ def enqueue_due_findings(
     settings = get_settings(db_path=db_path)
     if settings["mode"] == "off":
         return {"schema_version": SCHEMA_VERSION, "mode": "off", "queued": [], "skipped": 0}
+    from secopsai.research_discovery import sync_actionable_alert_findings
+
+    alert_sync = sync_actionable_alert_findings(db_path=db_path)
     root = Path(search_root or Path(__file__).resolve().parents[1]).expanduser().resolve()
     findings = soc_store.list_findings(db_path, limit=None, include_payload=True)
     eligible = [
@@ -261,7 +264,13 @@ def enqueue_due_findings(
             )
             connection.commit()
         queued.append({"run_id": run_id, "finding_id": finding_id, "job_id": job["job_id"]})
-    return {"schema_version": SCHEMA_VERSION, "mode": settings["mode"], "queued": queued, "skipped": skipped}
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": settings["mode"],
+        "queued": queued,
+        "skipped": skipped,
+        "research_alert_sync": alert_sync,
+    }
 
 
 def reconcile_intelligence_job(job: Dict[str, Any], *, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
