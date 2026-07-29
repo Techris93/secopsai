@@ -90,6 +90,11 @@ from secopsai.agent_triage import rollback_run as rollback_agent_triage_run
 from secopsai.agent_triage import rollback_tuning_proposal as rollback_agent_tuning_proposal
 from secopsai.agent_triage import status as agent_triage_status
 from secopsai.agent_triage import update_settings as update_agent_triage_settings
+from secopsai.investigation_autopilot import cancel as cancel_investigation_autopilot
+from secopsai.investigation_autopilot import retry as retry_investigation_autopilot
+from secopsai.investigation_autopilot import run_due as run_due_investigation_autopilot
+from secopsai.investigation_autopilot import status as investigation_autopilot_status
+from secopsai.investigation_autopilot import update_settings as update_investigation_autopilot_settings
 from secopsai.research_resolution import adjudicate_pipeline as adjudicate_research_resolution
 from secopsai.research_resolution import review_run as review_research_resolution
 from secopsai.research_resolution import status as research_resolution_status
@@ -1237,6 +1242,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     intelligence_autopilot_tuning_rollback.add_argument("proposal_id")
     intelligence_autopilot_tuning_rollback.add_argument("--actor", default="operator")
     intelligence_autopilot_tuning_rollback.add_argument("--db-path", default=None)
+    intelligence_investigations = intelligence_autopilot_sub.add_parser(
+        "investigations", help="Inspect and operate the evidence-collection investigation pipeline"
+    )
+    intelligence_investigations.add_argument("action", choices=["status", "run-due", "retry", "cancel", "configure"])
+    intelligence_investigations.add_argument("--run-id", default="")
+    intelligence_investigations.add_argument("--mode", choices=["off", "advisory", "guarded"], default=None)
+    intelligence_investigations.add_argument("--minimum-severity", choices=["info", "low", "medium", "high", "critical"], default=None)
+    intelligence_investigations.add_argument("--max-active-runs", type=int, default=None)
+    intelligence_investigations.add_argument("--max-attempts", type=int, default=None)
+    intelligence_investigations.add_argument("--actor", default="operator")
+    intelligence_investigations.add_argument("--db-path", default=None)
     intelligence_bridge = intelligence_sub.add_parser(
         "bridge",
         help="Inspect or run the local OpenCodex/Codex intelligence bridge",
@@ -3570,6 +3586,25 @@ def main(argv: Optional[List[str]] = None) -> int:
                     payload = {"proposals": list_agent_tuning_proposals(status=args.status, limit=args.limit, db_path=args.db_path)}
                 elif args.intelligence_autopilot_cmd == "rollback-tuning":
                     payload = rollback_agent_tuning_proposal(args.proposal_id, actor=args.actor, db_path=args.db_path)
+                elif args.intelligence_autopilot_cmd == "investigations":
+                    if args.action == "status":
+                        payload = investigation_autopilot_status(db_path=args.db_path)
+                    elif args.action == "run-due":
+                        payload = run_due_investigation_autopilot(db_path=args.db_path)
+                    elif args.action == "retry":
+                        if not args.run_id:
+                            raise ValueError("--run-id is required for retry")
+                        payload = retry_investigation_autopilot(args.run_id, db_path=args.db_path)
+                    elif args.action == "cancel":
+                        if not args.run_id:
+                            raise ValueError("--run-id is required for cancel")
+                        payload = cancel_investigation_autopilot(args.run_id, db_path=args.db_path)
+                    else:
+                        payload = update_investigation_autopilot_settings(
+                            mode=args.mode, minimum_severity=args.minimum_severity,
+                            max_active_runs=args.max_active_runs, max_attempts=args.max_attempts,
+                            actor=args.actor, db_path=args.db_path,
+                        )
                 else:
                     raise ValueError(f"unsupported intelligence autopilot command: {args.intelligence_autopilot_cmd}")
             elif args.intelligence_cmd == "bridge":

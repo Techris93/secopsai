@@ -233,6 +233,46 @@ def init_db(db_path: str | None = None) -> None:
                 FOREIGN KEY (intelligence_job_id) REFERENCES intelligence_jobs (job_id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS investigation_autopilot_settings (
+                settings_id INTEGER PRIMARY KEY CHECK (settings_id = 1),
+                mode TEXT NOT NULL,
+                minimum_severity TEXT NOT NULL,
+                max_active_runs INTEGER NOT NULL,
+                max_attempts INTEGER NOT NULL,
+                auto_start_pipeline INTEGER NOT NULL,
+                auto_extract_iocs INTEGER NOT NULL,
+                auto_correlate INTEGER NOT NULL,
+                updated_at TEXT NOT NULL,
+                updated_by TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS investigation_autopilot_runs (
+                run_id TEXT PRIMARY KEY,
+                finding_id TEXT NOT NULL,
+                finding_fingerprint TEXT NOT NULL,
+                case_id TEXT,
+                pipeline_id TEXT,
+                status TEXT NOT NULL,
+                current_stage TEXT NOT NULL,
+                last_successful_stage TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 0,
+                evidence_summary_json TEXT NOT NULL,
+                decision_json TEXT NOT NULL,
+                blocker_code TEXT,
+                blocker_message TEXT,
+                retryable INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL,
+                UNIQUE (finding_id, finding_fingerprint),
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE SET NULL,
+                FOREIGN KEY (pipeline_id) REFERENCES research_pipeline_runs (pipeline_id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_investigation_autopilot_status_updated
+                ON investigation_autopilot_runs (status, updated_at DESC);
+
             CREATE TABLE IF NOT EXISTS detection_tuning_proposals (
                 proposal_id TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL,

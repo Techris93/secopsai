@@ -395,7 +395,16 @@ def _adjudicate(
             (status, provider, _json(minimize(recommendation)), _json(decision), action, _json(previous), now, now, run_id),
         )
         connection.commit()
-    return get_run(run_id, db_path=db_path)
+    completed_run = get_run(run_id, db_path=db_path)
+    try:
+        from secopsai.investigation_autopilot import enqueue_finding
+
+        investigation = enqueue_finding(run["target_id"], db_path=db_path)
+        completed_run["investigation"] = investigation
+    except Exception as exc:
+        # Model triage remains durable even if evidence collection is temporarily unavailable.
+        completed_run["investigation"] = {"status": "degraded", "error": _clean(exc, 500)}
+    return completed_run
 
 
 def _valid_evidence_refs(finding: Dict[str, Any], deterministic: Dict[str, Any], submitted: list[str]) -> list[str]:
@@ -461,6 +470,7 @@ def _safe_escalation(
         _clean(deterministic.get("recommended_disposition"), 40).lower() == "true_positive"
         or bool(threat.get("advisory_backed"))
         or bool(threat.get("denylisted"))
+        or bool(threat.get("strong_signals"))
     )
     return model_verdict == "true_positive" and confidence >= 85 and bool(valid_evidence_refs) and corroborated
 

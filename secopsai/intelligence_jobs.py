@@ -99,7 +99,14 @@ def claim_next_job(
             )
 
         row = connection.execute(
-            "SELECT job_id FROM intelligence_jobs WHERE status = 'queued' ORDER BY queued_at, job_id LIMIT 1"
+            """SELECT job_id FROM intelligence_jobs WHERE status = 'queued'
+               ORDER BY CASE action
+                 WHEN 'analyze_research_case' THEN 0
+                 WHEN 'generate_analyst_brief' THEN 0
+                 WHEN 'review_publication_safety' THEN 0
+                 WHEN 'triage_finding' THEN 2
+                 ELSE 1 END,
+                 queued_at, job_id LIMIT 1"""
         ).fetchone()
         if row is None:
             connection.commit()
@@ -345,7 +352,11 @@ def _notify_research_pipeline(job: dict[str, Any], *, db_path: str | None) -> No
     try:
         from secopsai.research_pipeline import reconcile_intelligence_job
 
-        reconcile_intelligence_job(job, db_path=db_path)
+        pipeline = reconcile_intelligence_job(job, db_path=db_path)
+        if pipeline:
+            from secopsai.investigation_autopilot import reconcile_pipeline
+
+            reconcile_pipeline(pipeline["pipeline_id"], db_path=db_path)
     except Exception as exc:  # The completed AI result remains durable and retryable.
         with closing(soc_store.connect(db_path)) as connection:
             _event(

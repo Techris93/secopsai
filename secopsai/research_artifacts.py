@@ -179,6 +179,75 @@ def import_artifact(
     }
 
 
+def register_intake_artifact(
+    result: Dict[str, Any],
+    *,
+    case_id: str,
+    role: str = "subject",
+    db_path: Optional[str] = None,
+    actor: str = "research-autopilot",
+) -> Dict[str, Any]:
+    """Register an existing safe-intake quarantine object in the artifact catalog.
+
+    The intake and artifact subsystems historically used the same quarantine
+    bytes but separate catalogs. This bridge verifies the hash again and never
+    copies, extracts, loads, or executes the package.
+    """
+    from secopsai.research_intake import _quarantine_path, validate_quarantined_intake
+
+    verified = validate_quarantined_intake(result)
+    metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+    analysis = result.get("analysis") if isinstance(result.get("analysis"), dict) else {}
+    digest = str(verified["artifact_sha256"])
+    filename = str(verified.get("filename") or analysis.get("filename") or "artifact")
+    path = _quarantine_path(digest, filename)
+    artifact_id = f"ART-{digest[:16].upper()}"
+    now = soc_store.utc_now()
+    provenance = {
+        "source": "secopsai_safe_registry_intake",
+        "metadata_url": str(metadata.get("metadata_url") or "")[:4000],
+        "artifact_url": str(metadata.get("artifact_url_final") or "")[:4000],
+        "collected_by": actor[:160],
+        "hash_verified": True,
+        "execution_performed": False,
+    }
+    with closing(soc_store.connect(db_path)) as connection:
+        connection.execute(
+            """INSERT INTO research_artifacts
+            (artifact_id, sha256, filename, ecosystem, package_name, version,
+             size_bytes, quarantine_path, state, provenance_json, analysis_json,
+             created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'collected', ?, ?, ?, ?)
+            ON CONFLICT(sha256) DO UPDATE SET
+              filename=excluded.filename, ecosystem=excluded.ecosystem,
+              package_name=excluded.package_name, version=excluded.version,
+              size_bytes=excluded.size_bytes, quarantine_path=excluded.quarantine_path,
+              state='collected', provenance_json=excluded.provenance_json,
+              analysis_json=excluded.analysis_json, updated_at=excluded.updated_at""",
+            (
+                artifact_id, digest, filename, str(metadata.get("ecosystem") or "").lower(),
+                str(metadata.get("package") or ""), str(metadata.get("version") or ""),
+                int(verified["artifact_bytes"]), str(path), json.dumps(provenance, sort_keys=True),
+                json.dumps(analysis, sort_keys=True), now, now,
+            ),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO research_case_artifacts (case_id, artifact_id, role, created_at) VALUES (?, ?, ?, ?)",
+            (case_id, artifact_id, role, now),
+        )
+        connection.execute("UPDATE research_cases SET updated_at = ? WHERE case_id = ?", (now, case_id))
+        connection.commit()
+    return {
+        "case_id": case_id,
+        "artifact_id": artifact_id,
+        "role": role,
+        "sha256": digest,
+        "bytes": int(verified["artifact_bytes"]),
+        "hash_verified": True,
+        "execution_performed": False,
+    }
+
+
 def list_artifacts(*, db_path: Optional[str] = None, ecosystem: str = "") -> list[Dict[str, Any]]:
     soc_store.init_db(db_path)
     with closing(soc_store.connect(db_path)) as connection:
