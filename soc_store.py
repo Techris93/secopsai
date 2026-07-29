@@ -259,6 +259,39 @@ def init_db(db_path: str | None = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_detection_tuning_status
                 ON detection_tuning_proposals (status, updated_at DESC);
 
+            CREATE TABLE IF NOT EXISTS research_resolution_settings (
+                settings_id INTEGER PRIMARY KEY CHECK (settings_id = 1),
+                mode TEXT NOT NULL,
+                min_confidence INTEGER NOT NULL,
+                min_evidence_refs INTEGER NOT NULL,
+                max_cases_per_cycle INTEGER NOT NULL,
+                auto_retract_rules INTEGER NOT NULL,
+                updated_at TEXT NOT NULL,
+                updated_by TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_resolution_runs (
+                run_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                pipeline_id TEXT NOT NULL,
+                case_fingerprint TEXT NOT NULL,
+                status TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                decision_json TEXT NOT NULL,
+                rollback_json TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                reviewed_at TEXT,
+                reviewed_by TEXT,
+                UNIQUE (case_id, case_fingerprint),
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_research_resolution_status
+                ON research_resolution_runs (status, updated_at DESC);
+
             CREATE TABLE IF NOT EXISTS research_cases (
                 case_id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,

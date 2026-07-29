@@ -380,7 +380,7 @@ The policy file supports:
 
 ## Native Triage
 
-SecOpsAI can continuously review canonical findings with a selected local OpenCodex model. Mission Control supports `off`, advisory, and guarded automation modes. Guarded mode requires deterministic corroboration before reversible false-positive closure, records the complete model decision and evidence references, supports rollback, and places rule tuning in shadow replay before any activation. Final publication, external disclosure, sandbox submission, and destructive response remain separately controlled. See [Intelligence integrations](docs/intelligence-integrations.md#autonomous-finding-triage).
+SecOpsAI can continuously review canonical host, Edge, supply-chain, and registry-research alerts with a selected local OpenCodex model. Mission Control supports `off`, advisory, and guarded automation modes. Guarded mode requires deterministic corroboration before reversible false-positive closure, records the complete model decision and evidence references, supports rollback, and places rule tuning in shadow replay before any activation. Operational collector failures use deterministic recovery checks rather than model verdicts. Final publication, external disclosure, sandbox submission, and destructive response remain separately controlled. See [Intelligence integrations](docs/intelligence-integrations.md#autonomous-finding-and-alert-triage).
 
 SecOpsAI now includes a native analyst triage workflow that keeps findings,
 investigation notes, and closure state inside the local SOC store.
