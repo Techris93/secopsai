@@ -563,27 +563,58 @@ def run_promotion_policy(*, ecosystem: str = "all", apply: bool = False, actor: 
     decisions: List[Dict[str, Any]] = []
     for candidate in candidates:
         evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
-        evidence_refs = [key for key in ("metadata_url", "artifact_url", "publisher") if evidence.get(key)]
+        evidence_values = set()
+        for key in ("metadata_url", "artifact_url"):
+            value = str(evidence.get(key) or "").strip().lower()
+            if value:
+                evidence_values.add(value)
+        publisher_value = normalize_identifier("", evidence.get("publisher") or "")
+        if publisher_value:
+            evidence_values.add(f"publisher:{publisher_value}")
         reasons = []
         if float(candidate.get("score") or 0) < float(policy["score_threshold"]):
             reasons.append("score_below_threshold")
-        if len(evidence_refs) < int(policy["minimum_evidence"]):
+        if len(evidence_values) < int(policy["minimum_evidence"]):
             reasons.append("insufficient_evidence")
         if policy["require_publisher"] and not evidence.get("publisher"):
             reasons.append("publisher_missing")
         eligible = not reasons and bool(policy["enabled"])
-        decision = {"candidate_id": candidate["candidate_id"], "eligible": eligible, "score": candidate["score"], "evidence_count": len(evidence_refs), "reasons": reasons or (["policy_disabled"] if not policy["enabled"] else ["eligible"]), "case_id": candidate.get("case_id")}
+        decision = {"candidate_id": candidate["candidate_id"], "eligible": eligible, "score": candidate["score"], "evidence_count": len(evidence_values), "reasons": reasons or (["policy_disabled"] if not policy["enabled"] else ["eligible"]), "case_id": candidate.get("case_id")}
         if apply and eligible and policy["mode"] == "draft_case" and not candidate.get("case_id"):
-            from secopsai.research_cases import add_evidence, add_subject, create_case
-            case = create_case(title=f"Investigate {candidate['ecosystem']} package {candidate['package']}", summary=f"Automatically promoted as a draft investigation after deterministic policy checks. Similarity score: {candidate['score']}. This is a lead, not a maliciousness verdict.", case_type="typosquatting", severity="medium", confidence=min(int(float(candidate["score"])), 80), owner=actor, metadata={"candidate_id": candidate["candidate_id"], "promotion_policy": policy}, db_path=db_path)
-            add_subject(case["case_id"], subject_type="package", name=candidate["package"], ecosystem=candidate["ecosystem"], version=candidate.get("version") or "", publisher=evidence.get("publisher") or "", registry_state="available", metadata={"candidate_id": candidate["candidate_id"], "reference_identifier": candidate.get("reference_identifier")}, db_path=db_path, actor=actor)
-            if evidence.get("metadata_url"):
-                add_evidence(case["case_id"], evidence_type="registry_metadata", title="Registry metadata captured during candidate discovery", locator=evidence["metadata_url"], provenance="official registry monitor", notes=candidate.get("reason") or "", metadata={"candidate_id": candidate["candidate_id"]}, db_path=db_path, actor=actor)
+            case_id = f"RSC-{hashlib.sha256(candidate['candidate_id'].encode()).hexdigest()[:12].upper()}"
+            subject_stable = "|".join((case_id, "package", str(candidate["ecosystem"]), str(candidate["package"]), str(candidate.get("version") or "")))
+            subject_id = f"SUB-{hashlib.sha256(subject_stable.encode()).hexdigest()[:16].upper()}"
+            evidence_stable = "|".join((case_id, "registry_metadata", str(evidence.get("metadata_url") or candidate["candidate_id"])))
+            evidence_id = f"EVD-{hashlib.sha256(evidence_stable.encode()).hexdigest()[:16].upper()}"
+            now = _now()
             with closing(soc_store.connect(db_path)) as connection:
-                connection.execute("UPDATE research_candidates SET status = 'promoted', case_id = ? WHERE candidate_id = ?", (case["case_id"], candidate["candidate_id"]))
-                connection.execute("INSERT OR IGNORE INTO research_promotion_events (event_id, candidate_id, policy_ecosystem, decision, reasons_json, case_id, actor, created_at) VALUES (?, ?, ?, 'draft_case_created', ?, ?, ?, ?)", (_id("RPE"), candidate["candidate_id"], policy["ecosystem"], _json(decision["reasons"]), case["case_id"], actor, _now()))
+                connection.execute("BEGIN IMMEDIATE")
+                current = connection.execute("SELECT status, case_id FROM research_candidates WHERE candidate_id = ?", (candidate["candidate_id"],)).fetchone()
+                if not current or current["status"] != "new" or current["case_id"]:
+                    connection.rollback()
+                    decision["eligible"] = False
+                    decision["reasons"] = ["already_promoted_or_claimed"]
+                    decisions.append(decision)
+                    continue
+                connection.execute("""INSERT OR IGNORE INTO research_cases
+                    (case_id, title, summary, case_type, severity, confidence, status, owner, disclosure_status,
+                     embargo_until, created_at, updated_at, closed_at, published_at, payload_json)
+                    VALUES (?, ?, ?, 'typosquatting', 'medium', ?, 'draft', ?, 'not_started', NULL, ?, ?, NULL, NULL, ?)""",
+                    (case_id, f"Investigate {candidate['ecosystem']} package {candidate['package']}", f"Automatically promoted as a draft investigation after deterministic policy checks. Similarity score: {candidate['score']}. This is a lead, not a maliciousness verdict.", min(int(float(candidate["score"])), 80), actor, now, now, _json({"candidate_id": candidate["candidate_id"], "promotion_policy": policy})))
+                connection.execute("""INSERT OR IGNORE INTO research_subjects
+                    (subject_id, case_id, subject_type, ecosystem, name, version, publisher, status, metadata_json, created_at)
+                    VALUES (?, ?, 'package', ?, ?, ?, ?, 'active', ?, ?)""",
+                    (subject_id, case_id, candidate["ecosystem"], candidate["package"], candidate.get("version") or "", evidence.get("publisher") or "", _json({"candidate_id": candidate["candidate_id"], "reference_identifier": candidate.get("reference_identifier")}), now))
+                if evidence.get("metadata_url"):
+                    connection.execute("""INSERT OR IGNORE INTO research_evidence
+                        (evidence_id, case_id, evidence_type, title, locator, sha256, provenance, notes, status, collected_at, created_at, metadata_json)
+                        VALUES (?, ?, 'registry_metadata', 'Registry metadata captured during candidate discovery', ?, '', 'official registry monitor', ?, 'active', ?, ?, ?)""",
+                        (evidence_id, case_id, evidence["metadata_url"], candidate.get("reason") or "", now, now, _json({"candidate_id": candidate["candidate_id"]})))
+                connection.execute("INSERT INTO research_case_events (case_id, event_type, actor, message, data_json, created_at) VALUES (?, 'case_created', ?, 'Research case created by candidate promotion policy.', ?, ?)", (case_id, actor, _json({"candidate_id": candidate["candidate_id"], "promotion_policy": policy}), now))
+                connection.execute("UPDATE research_candidates SET status = 'promoted', case_id = ? WHERE candidate_id = ? AND status = 'new' AND case_id IS NULL", (case_id, candidate["candidate_id"]))
+                connection.execute("INSERT OR IGNORE INTO research_promotion_events (event_id, candidate_id, policy_ecosystem, decision, reasons_json, case_id, actor, created_at) VALUES (?, ?, ?, 'draft_case_created', ?, ?, ?, ?)", (_id("RPE"), candidate["candidate_id"], policy["ecosystem"], _json(decision["reasons"]), case_id, actor, now))
                 connection.commit()
-            decision["case_id"] = case["case_id"]
+            decision["case_id"] = case_id
             decision["applied"] = True
         decisions.append(decision)
     return {"schema_version": "secopsai.research.promotion-policy.v1", "policy": policy, "apply": bool(apply), "evaluated": len(decisions), "eligible": sum(bool(item["eligible"]) for item in decisions), "promoted": sum(bool(item.get("applied")) for item in decisions), "decisions": decisions}
