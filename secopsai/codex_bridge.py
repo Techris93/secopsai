@@ -270,7 +270,9 @@ def run_loop(
         if not (resolved.core_api_url and resolved.bridge_token):
             try:
                 from secopsai.agent_triage import enqueue_due_findings
+                from secopsai.investigation_autopilot import run_due as run_due_investigations
 
+                run_due_investigations(db_path=db_path, limit=1)
                 counts = job_counts(db_path=db_path)
                 if not counts.get("queued") and not counts.get("running"):
                     enqueue_due_findings(db_path=db_path, limit_override=1)

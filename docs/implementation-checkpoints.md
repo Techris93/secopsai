@@ -272,3 +272,13 @@ Added continuous model review for canonical SecOpsAI findings using the selected
 Mission Control now exposes `off`, advisory, and guarded modes, confidence and evidence thresholds, model persistence, run-now, decision history, guardrail reasons, tuning proposal counts, and rollback. Historical replay can automatically activate only an exact high-confidence ecosystem-threshold recommendation; rule weight and condition changes remain shadow-only. Final publication, disclosure, external sandbox submission, package execution, and destructive response remain outside agent authority.
 
 Verification: 450 Core tests, 4 subtests, strict MkDocs, 69 dashboard tests, 13 dashboard subtests, JavaScript syntax checks, hosted-worker contracts, desktop/mobile DOM review, model selection interaction, and console review pass. A live `kimi/k3` job reviewed SCM-FF3461F8E3215AF8, separated package verdict from local exposure, challenged report-text heuristic provenance, retained `needs_review`, and persisted three validated evidence references without auto-closing the finding. The live check also removed redundant `ocx ensure` latency, made the bridge claim queued jobs before discovering more work, and added immediate interrupted-job recovery on service restart.
+
+# 111 Evidence-Complete High-Priority Investigation Autopilot
+
+Status: implemented and locally verified.
+
+High and critical package findings now enter a durable Core-owned investigation queue after model triage. The coordinator idempotently links one canonical finding to one Research Case, performs allowlisted safe intake, verifies and registers the exact quarantined artifact, runs bounded ecosystem-aware static analysis, compares only an explicitly verified package and version, extracts IOC candidates, records correlation coverage, and queues the complete normalized case for the selected OpenCodex model.
+
+Strong deterministic signals now count as corroboration for reversible true-positive escalation when the model also returns at least 85% confidence and cites valid evidence. They still block false-positive closure. Evidence-gated not-substantiated or benign resolutions can close linked findings reversibly; likely or credible verdicts escalate linked findings to in review. Missing comparison evidence remains explicit and SecOpsAI never guesses a legitimate package.
+
+Mission Control exposes queue state, stages, case and pipeline IDs, evidence gaps, model decisions, retry, cancel, and run-due controls. No unattended path approves or submits a sandbox request, sends disclosure, or publishes content. Raw artifacts remain local and never enter model context.

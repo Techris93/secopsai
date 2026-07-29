@@ -187,6 +187,26 @@ def test_strong_threat_signal_blocks_false_positive_suppression(tmp_path, monkey
     assert "source-backed or strong threat evidence blocks automatic closure" in run["decision"]["guardrail_reasons"]
 
 
+def test_strong_signal_and_model_true_positive_escalate_without_advisory(tmp_path, monkeypatch):
+    db = str(tmp_path / "soc.db")
+    finding = _finding()
+    finding["severity"] = "high"
+    soc_store.persist_findings([finding], source="secopsai-supply-chain", db_path=db)
+    agent_triage.update_settings(mode="guarded", min_evidence_refs=1, actor="test", db_path=db)
+    monkeypatch.setattr(agent_triage, "_deterministic_assessment", lambda finding, **kwargs: _deterministic("needs_review", strong=True))
+    agent_triage.enqueue_due_findings(db_path=db)
+    model = _model_result()
+    model.update({
+        "finding_verdict": "true_positive", "finding_confidence": 91,
+        "disposition_recommendation": "true_positive", "decision_evidence_refs": ["RULE-EXAMPLE"],
+        "counterarguments": [],
+    })
+    _complete_one(db, model)
+    stored = soc_store.get_finding("FND-AUTO-1", db)
+    assert stored and stored["status"] == "in_review" and stored["disposition"] == "true_positive"
+    assert agent_triage.list_runs(db_path=db)[0]["final_action"] == "auto_escalated:true_positive"
+
+
 def test_advisory_mode_records_recommendation_without_mutating_finding(tmp_path, monkeypatch):
     db = str(tmp_path / "soc.db")
     soc_store.persist_findings([_finding()], source="secopsai-supply-chain", db_path=db)

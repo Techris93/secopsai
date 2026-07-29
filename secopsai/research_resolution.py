@@ -155,8 +155,8 @@ def _decision(case: Dict[str, Any], pipeline: Dict[str, Any], verdict: Dict[str,
         reasons.append("high-confidence active IOCs require analyst review")
     if sandbox_threat:
         reasons.append("sandbox evidence contains a potential malicious-behavior signal")
-    if linked_findings:
-        reasons.append("linked SOC findings require analyst review before closure")
+    # Linked findings are reconciled in the same guarded resolution workflow;
+    # their existence no longer creates a permanent manual-only dead end.
     if case.get("disclosure_status") not in {"not_started", "not_required"}:
         reasons.append("an active disclosure workflow prevents automatic closure")
     return {
@@ -206,6 +206,7 @@ def adjudicate_pipeline(
         "disclosure_status": case.get("disclosure_status"),
         "summary": case.get("summary"),
         "rule_ids": [],
+        "findings": [],
     }
     run_id = _id("ARR")
     now = soc_store.utc_now()
@@ -229,6 +230,23 @@ def adjudicate_pipeline(
             case["case_id"], status="closed", severity="info", confidence=int(verdict.get("confidence") or 0),
             disclosure_status="not_required", summary=summary, actor=actor, db_path=db_path,
         )
+        for linked in case.get("findings") or []:
+            finding_id = str(linked.get("finding_id") or "")
+            finding = soc_store.get_finding(finding_id, db_path)
+            if finding is None:
+                continue
+            rollback["findings"].append({
+                "finding_id": finding_id,
+                "status": finding.get("status"),
+                "disposition": finding.get("disposition"),
+            })
+            soc_store.set_finding_disposition(finding_id, "false_positive", db_path)
+            soc_store.set_finding_status(finding_id, "closed", db_path)
+            soc_store.add_note(
+                finding_id, actor,
+                f"Closed reversibly by research resolution {run_id}: {verdict['verdict']} with evidence-gated confidence {int(verdict.get('confidence') or 0)}%.",
+                db_path,
+            )
     with closing(soc_store.connect(db_path)) as connection:
         connection.execute(
             """INSERT INTO research_resolution_runs
@@ -307,6 +325,11 @@ def review_run(
                     (rule_id, run["case_id"]),
                 )
             connection.commit()
+        for finding in rollback.get("findings") or []:
+            finding_id = str(finding.get("finding_id") or "")
+            if finding_id and soc_store.get_finding(finding_id, db_path):
+                soc_store.set_finding_disposition(finding_id, str(finding.get("disposition") or "unreviewed"), db_path)
+                soc_store.set_finding_status(finding_id, str(finding.get("status") or "open"), db_path)
         next_status = "rolled_back"
     with closing(soc_store.connect(db_path)) as connection:
         connection.execute(

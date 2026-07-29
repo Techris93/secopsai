@@ -11,7 +11,9 @@ from typing import Any, Dict, Iterable, Optional
 
 import soc_store
 from secopsai.intelligence_jobs import cancel_job, enqueue_job, get_job
-from secopsai.research_analysis import compare_intakes
+from secopsai.research_analysis import compare_intakes, correlate_candidates
+from secopsai.research_artifact_analysis import extract_ioc_candidates, inspect_artifact
+from secopsai.research_artifacts import register_intake_artifact
 from secopsai.research_cases import add_evidence, get_case
 from secopsai.research_intake import (
     IntakeError,
@@ -50,8 +52,13 @@ ACTIVE_PIPELINE_STATUSES = {"running", "awaiting_ai", "awaiting_input", "awaitin
 STEP_ORDER = {
     "validate_subject": 10,
     "collect_subject": 20,
+    "register_subject_artifact": 25,
+    "deep_static_analysis": 27,
     "collect_reference": 30,
+    "register_reference_artifact": 35,
     "compare_packages": 40,
+    "extract_ioc_candidates": 45,
+    "correlate_campaigns": 47,
     "evidence_matrix": 50,
     "analyze_research_case": 60,
     "generate_analyst_brief": 70,
@@ -300,6 +307,7 @@ def start_investigation_pipeline(
     actor: str = "dashboard-operator",
     db_path: Optional[str] = None,
     fetcher: Any = None,
+    auto_enrich: bool = False,
 ) -> Dict[str, Any]:
     case = get_case(case_id, db_path=db_path)
     existing = list_pipelines(case_id=case_id, limit=1, db_path=db_path)
@@ -313,7 +321,11 @@ def start_investigation_pipeline(
     )
     pipeline_id = _id("RPL")
     now = soc_store.utc_now()
-    config = {**targets, "safety": {"execution_performed": False, "raw_artifact_sent_to_ai": False}}
+    config = {
+        **targets,
+        "auto_enrich": bool(auto_enrich),
+        "safety": {"execution_performed": False, "raw_artifact_sent_to_ai": False},
+    }
     with closing(soc_store.connect(db_path)) as connection:
         connection.execute(
             """INSERT INTO research_pipeline_runs
@@ -413,6 +425,50 @@ def _run_pipeline(pipeline_id: str, *, actor: str, db_path: Optional[str], fetch
                 db_path=db_path,
             )
             _set_step(pipeline_id, "collect_subject", "succeeded", result=suspect_result, db_path=db_path)
+        auto_enrich = bool(config.get("auto_enrich"))
+        subject_artifact: Dict[str, Any] = {}
+        normalized_deep: Dict[str, Any] = {"limitations": []}
+        if auto_enrich:
+            suspect_result["case_id"] = case_id
+            attachment = attach_intake_result(
+                suspect_result, db_path=db_path, actor=actor,
+                metadata_extra={"pipeline_id": pipeline_id, "comparison_role": "suspect"},
+            )
+            _set_step(pipeline_id, "register_subject_artifact", "running", db_path=db_path)
+            subject_artifact = register_intake_artifact(
+                suspect_result, case_id=case_id, role="subject", db_path=db_path, actor=actor,
+            )
+            _set_step(
+                pipeline_id, "register_subject_artifact", "succeeded",
+                result={**subject_artifact, "evidence_ids": attachment.get("evidence_ids") or []}, db_path=db_path,
+            )
+            _set_step(pipeline_id, "deep_static_analysis", "running", db_path=db_path)
+            deep_analysis = inspect_artifact(subject_artifact["artifact_id"], db_path=db_path)
+            normalized_deep = {
+                "artifact_id": subject_artifact["artifact_id"],
+                "sha256": deep_analysis.get("sha256"), "tool": deep_analysis.get("tool"),
+                "tool_version": deep_analysis.get("tool_version"), "complete": bool(deep_analysis.get("complete")),
+                "assembly_count": len(deep_analysis.get("assemblies") or []),
+                "lifecycle_script_count": len(deep_analysis.get("lifecycle_scripts") or []),
+                "indicator_count": len(deep_analysis.get("indicators") or []),
+                "limitations": deep_analysis.get("limitations") or [], "execution_performed": False,
+            }
+            deep_bytes = _json(normalized_deep).encode()
+            deep_evidence = add_evidence(
+                case_id, evidence_type="static_analysis", title=f"Deep static analysis: {_target_label(config['suspect'])}",
+                locator=f"artifact-analysis:{subject_artifact['artifact_id']}", sha256=hashlib.sha256(deep_bytes).hexdigest(),
+                provenance=f"{normalized_deep['tool']} {normalized_deep['tool_version']}; package code was not executed",
+                notes=f"Indicators={normalized_deep['indicator_count']}; limitations={len(normalized_deep['limitations'])}; execution=false.",
+                metadata=normalized_deep, actor=actor, db_path=db_path,
+            )
+            _set_step(
+                pipeline_id, "deep_static_analysis", "succeeded",
+                result={**normalized_deep, "evidence_id": deep_evidence["evidence"][-1]["evidence_id"]}, db_path=db_path,
+            )
+        else:
+            reason = {"message": "Deep artifact enrichment is enabled only for guarded autopilot runs."}
+            _set_step(pipeline_id, "register_subject_artifact", "skipped", result=reason, db_path=db_path)
+            _set_step(pipeline_id, "deep_static_analysis", "skipped", result=reason, db_path=db_path)
         _put_review_item(
             pipeline_id,
             case_id,
@@ -435,6 +491,22 @@ def _run_pipeline(pipeline_id: str, *, actor: str, db_path: Optional[str], fetch
                 db_path=db_path,
             )
             _set_step(pipeline_id, "collect_reference", "succeeded", result=reference_result, db_path=db_path)
+            if auto_enrich:
+                reference_result["case_id"] = case_id
+                reference_attachment = attach_intake_result(
+                    reference_result, db_path=db_path, actor=actor,
+                    metadata_extra={"pipeline_id": pipeline_id, "comparison_role": "reference"},
+                )
+                _set_step(pipeline_id, "register_reference_artifact", "running", db_path=db_path)
+                reference_artifact = register_intake_artifact(
+                    reference_result, case_id=case_id, role="reference", db_path=db_path, actor=actor,
+                )
+                _set_step(
+                    pipeline_id, "register_reference_artifact", "succeeded",
+                    result={**reference_artifact, "evidence_ids": reference_attachment.get("evidence_ids") or []}, db_path=db_path,
+                )
+            else:
+                _set_step(pipeline_id, "register_reference_artifact", "skipped", result={"message": "Autopilot enrichment is disabled."}, db_path=db_path)
             _put_review_item(
                 pipeline_id,
                 case_id,
@@ -449,6 +521,18 @@ def _run_pipeline(pipeline_id: str, *, actor: str, db_path: Optional[str], fetch
             _set_step(pipeline_id, "compare_packages", "running", db_path=db_path)
             comparison = compare_intakes(suspect_result, reference_result, db_path=db_path)
             _set_step(pipeline_id, "compare_packages", "succeeded", result=comparison, db_path=db_path)
+            if auto_enrich:
+                comparison_bytes = _json(comparison).encode()
+                comparison_evidence = add_evidence(
+                    case_id, evidence_type="static_analysis",
+                    title=f"Package comparison: {_target_label(config['suspect'])} vs {_target_label(config['reference'])}",
+                    locator=f"package-comparison:{comparison.get('comparison_id') or pipeline_id}",
+                    sha256=hashlib.sha256(comparison_bytes).hexdigest(),
+                    provenance="SecOpsAI deterministic package comparison; package code was not executed",
+                    notes="Exact normalized metadata, file inventory, lifecycle-script, and indicator comparison.",
+                    metadata={**comparison, "pipeline_id": pipeline_id}, actor=actor, db_path=db_path,
+                )
+                comparison["evidence_id"] = comparison_evidence["evidence"][-1]["evidence_id"]
             _put_review_item(
                 pipeline_id,
                 case_id,
@@ -466,7 +550,27 @@ def _run_pipeline(pipeline_id: str, *, actor: str, db_path: Optional[str], fetch
                 "message": "No verified legitimate comparison package is recorded. Add one and resume; SecOpsAI will not guess it.",
             }
             _set_step(pipeline_id, "collect_reference", "awaiting_input", result=missing, db_path=db_path)
+            _set_step(pipeline_id, "register_reference_artifact", "awaiting_input", result=missing, db_path=db_path)
             _set_step(pipeline_id, "compare_packages", "awaiting_input", result=missing, db_path=db_path)
+
+        ioc_result: Dict[str, Any] = {"candidates": []}
+        if auto_enrich:
+            _set_step(pipeline_id, "extract_ioc_candidates", "running", db_path=db_path)
+            ioc_result = extract_ioc_candidates(case_id, artifact_id=subject_artifact["artifact_id"], db_path=db_path, actor=actor)
+            _set_step(
+                pipeline_id, "extract_ioc_candidates", "succeeded",
+                result={"candidate_count": len(ioc_result.get("candidates") or []),
+                        "candidate_ids": [item["candidate_id"] for item in ioc_result.get("candidates") or []],
+                        "auto_approved": 0, "human_or_agent_validation_required": True, "execution_performed": False},
+                db_path=db_path,
+            )
+            _set_step(pipeline_id, "correlate_campaigns", "running", db_path=db_path)
+            campaigns = correlate_candidates(db_path=db_path)
+            _set_step(pipeline_id, "correlate_campaigns", "succeeded",
+                      result={"candidate_campaigns_created": len(campaigns), "attribution_inferred": False}, db_path=db_path)
+        else:
+            _set_step(pipeline_id, "extract_ioc_candidates", "skipped", result={"message": "Autopilot enrichment is disabled."}, db_path=db_path)
+            _set_step(pipeline_id, "correlate_campaigns", "skipped", result={"message": "Autopilot enrichment is disabled."}, db_path=db_path)
 
         matrix = _preliminary_matrix(case_id, suspect_result, reference_result)
         _set_step(pipeline_id, "evidence_matrix", "succeeded", result=matrix, db_path=db_path)
@@ -504,6 +608,12 @@ def _run_pipeline(pipeline_id: str, *, actor: str, db_path: Optional[str], fetch
             "static_collection_complete": True,
             "comparison_complete": bool(reference_result),
             "comparison_input_required": not bool(reference_result),
+            "artifact_registered": auto_enrich,
+            "deep_static_analysis_complete": auto_enrich,
+            "deep_static_analysis_limitations": normalized_deep.get("limitations") or [],
+            "ioc_candidates_extracted": len(ioc_result.get("candidates") or []),
+            "ioc_candidates_auto_approved": 0,
+            "campaign_correlation_complete": auto_enrich,
             "quarantine_reuse_count": sum(
                 bool(item.get("reuse")) for item in (suspect_result, reference_result) if item
             ),
@@ -1008,6 +1118,19 @@ def agent_complete_pipeline(
                 db_path=db_path,
             )
             verdict_recorded = True
+            if verdict in {"likely", "credible"}:
+                current_case = get_case(pipeline["case_id"], db_path=db_path)
+                for linked in current_case.get("findings") or []:
+                    finding_id = str(linked.get("finding_id") or "")
+                    if not finding_id or soc_store.get_finding(finding_id, db_path) is None:
+                        continue
+                    soc_store.set_finding_disposition(finding_id, "true_positive", db_path)
+                    soc_store.set_finding_status(finding_id, "in_review", db_path)
+                    soc_store.add_note(
+                        finding_id, actor_id,
+                        f"Escalated by evidence-complete research pipeline {pipeline_id}: {verdict} at {confidence}% confidence. Disclosure and publication remain human-approved.",
+                        db_path,
+                    )
 
     safety = publication_safety_check(pipeline["case_id"], actor=actor_id, db_path=db_path)
     current = get_pipeline(pipeline_id, db_path=db_path)
