@@ -272,9 +272,14 @@ class PyPiAdapter(RegistryAdapter):
 
     def resolve(self, package: str, requested_version: str, fetcher: SafeFetcher) -> RegistryMetadata:
         package = _safe_package(package)
-        url, payload = self._json(self.metadata_url(package), fetcher)
-        version = _version(requested_version) or str((payload.get("info") or {}).get("version") or "")
-        release = (payload.get("releases") or {}).get(version) or []
+        requested = _version(requested_version)
+        metadata_url = (
+            f"https://pypi.org/pypi/{urllib.parse.quote(package)}/{urllib.parse.quote(requested)}/json"
+            if requested else self.metadata_url(package)
+        )
+        url, payload = self._json(metadata_url, fetcher)
+        version = requested or str((payload.get("info") or {}).get("version") or "")
+        release = payload.get("urls") or (payload.get("releases") or {}).get(version) or []
         files = [item for item in release if isinstance(item, dict) and item.get("url")]
         if not files:
             raise IntakeError("PyPI metadata did not include an artifact for the selected version")

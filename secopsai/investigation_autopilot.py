@@ -309,12 +309,17 @@ def _run(run_id: str, *, db_path: Optional[str]) -> Dict[str, Any]:
         )
         next_status = "awaiting_model" if pipeline["status"] == "awaiting_ai" else pipeline["status"]
         blocker = None
+        blocker_code = None
         if pipeline.get("summary", {}).get("comparison_input_required"):
             blocker = "No verified comparison package/version is available; SecOpsAI did not guess one."
+            blocker_code = "comparison_reference_missing"
+        if pipeline["status"] == "failed":
+            blocker = _clean(pipeline.get("error_message") or "The evidence pipeline failed safely.", 2000)
+            blocker_code = _clean(pipeline.get("error_code") or "pipeline_failed", 120)
         _set_run(
             run_id, status=next_status, stage=pipeline.get("current_step") or "pipeline",
             case_id=case["case_id"], pipeline_id=pipeline["pipeline_id"],
-            blocker_code="comparison_reference_missing" if blocker else None,
+            blocker_code=blocker_code,
             blocker_message=blocker, retryable=True,
             evidence={"pipeline": pipeline.get("summary") or {}, "case_id": case["case_id"]},
             db_path=db_path,
