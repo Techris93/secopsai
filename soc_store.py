@@ -721,6 +721,32 @@ def init_db(db_path: str | None = None) -> None:
                 FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS research_promotion_policies (
+                ecosystem TEXT PRIMARY KEY,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                score_threshold REAL NOT NULL DEFAULT 90,
+                minimum_evidence INTEGER NOT NULL DEFAULT 2,
+                require_publisher INTEGER NOT NULL DEFAULT 0,
+                mode TEXT NOT NULL DEFAULT 'draft_case',
+                updated_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_promotion_events (
+                event_id TEXT PRIMARY KEY,
+                candidate_id TEXT NOT NULL,
+                policy_ecosystem TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                reasons_json TEXT NOT NULL,
+                case_id TEXT,
+                actor TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(candidate_id, policy_ecosystem, decision),
+                FOREIGN KEY (candidate_id) REFERENCES research_candidates (candidate_id) ON DELETE CASCADE,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE SET NULL
+            );
+
             CREATE TABLE IF NOT EXISTS research_campaigns (
                 campaign_id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,

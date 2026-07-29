@@ -137,6 +137,7 @@ from secopsai.research_discovery import (
     create_monitor as create_research_monitor,
     create_watchlist as create_research_watchlist,
     get_candidate as get_research_candidate,
+    get_promotion_policy as get_research_promotion_policy,
     ingest_registry_metadata,
     list_candidates as list_research_candidates,
     list_alerts as list_research_alerts,
@@ -146,6 +147,8 @@ from secopsai.research_discovery import (
     run_monitor as run_research_monitor,
     run_due_monitors as run_due_research_monitors,
     recover_stale_monitor_runs,
+    run_promotion_policy as run_research_promotion_policy,
+    set_promotion_policy as set_research_promotion_policy,
 )
 from secopsai.research_surveillance import (
     collector_status as registry_collector_status,
@@ -1314,6 +1317,22 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     candidate_show = research_candidate_sub.add_parser("show")
     candidate_show.add_argument("candidate_id")
     candidate_show.add_argument("--db-path", default=None)
+    candidate_policy = research_candidate_sub.add_parser("promotion-policy")
+    candidate_policy.add_argument("--ecosystem", default="all")
+    candidate_policy.add_argument("--set", action="store_true")
+    candidate_policy.add_argument("--enabled", choices=["true", "false"], default=None)
+    candidate_policy.add_argument("--score-threshold", type=float, default=90.0)
+    candidate_policy.add_argument("--minimum-evidence", type=int, default=2)
+    candidate_policy.add_argument("--require-publisher", action="store_true")
+    candidate_policy.add_argument("--mode", choices=["review_only", "draft_case"], default="draft_case")
+    candidate_policy.add_argument("--actor", default="operator")
+    candidate_policy.add_argument("--db-path", default=None)
+    candidate_promote = research_candidate_sub.add_parser("run-promotion-policy")
+    candidate_promote.add_argument("--ecosystem", default="all")
+    candidate_promote.add_argument("--apply", action="store_true")
+    candidate_promote.add_argument("--actor", default="operator")
+    candidate_promote.add_argument("--limit", type=int, default=100)
+    candidate_promote.add_argument("--db-path", default=None)
 
     research_collect = research_sub.add_parser("collect", help="Run global registry feed collectors")
     research_collect_sub = research_collect.add_subparsers(dest="research_collect_cmd", required=True)
@@ -2404,6 +2423,13 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
         elif args.research_cmd == "candidate":
             if args.research_candidate_cmd == "list":
                 payload = {"candidates": list_research_candidates(status=args.status, ecosystem=args.ecosystem, limit=args.limit, db_path=args.db_path)}
+            elif args.research_candidate_cmd == "promotion-policy":
+                if args.set:
+                    payload = set_research_promotion_policy(ecosystem=args.ecosystem, enabled=args.enabled == "true", score_threshold=args.score_threshold, minimum_evidence=args.minimum_evidence, require_publisher=args.require_publisher, mode=args.mode, actor=args.actor, db_path=args.db_path)
+                else:
+                    payload = get_research_promotion_policy(ecosystem=args.ecosystem, db_path=args.db_path)
+            elif args.research_candidate_cmd == "run-promotion-policy":
+                payload = run_research_promotion_policy(ecosystem=args.ecosystem, apply=args.apply, actor=args.actor, limit=args.limit, db_path=args.db_path)
             else:
                 payload = get_research_candidate(args.candidate_id, db_path=args.db_path)
         elif args.research_cmd == "collect":

@@ -26,6 +26,7 @@ ALGORITHM_VERSION = "similarity-1"
 WATCH_TYPES = {"package", "namespace", "publisher", "brand", "repository", "organization"}
 PRIORITIES = {"low", "normal", "high", "critical"}
 STATUSES = {"active", "paused", "archived", "new", "review", "dismissed", "promoted"}
+PROMOTION_MODES = {"review_only", "draft_case"}
 
 
 def _id(prefix: str) -> str:
@@ -514,6 +515,78 @@ def get_candidate(candidate_id: str, *, db_path: Optional[str] = None) -> Dict[s
     item["score_components"] = _decode(item.pop("score_components_json"), {})
     item["evidence"] = _decode(item.pop("evidence_json"), {})
     return item
+
+
+def get_promotion_policy(*, ecosystem: str = "all", db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Return the durable, auditable candidate-promotion policy."""
+    soc_store.init_db(db_path)
+    ecosystem = normalize_identifier("", ecosystem or "all")
+    with closing(soc_store.connect(db_path)) as connection:
+        row = connection.execute("SELECT * FROM research_promotion_policies WHERE ecosystem = ?", (ecosystem,)).fetchone()
+    if row:
+        return dict(row)
+    return {"ecosystem": ecosystem, "enabled": 0, "score_threshold": 90.0, "minimum_evidence": 2, "require_publisher": 0, "mode": "draft_case", "updated_by": "", "created_at": None, "updated_at": None}
+
+
+def set_promotion_policy(*, ecosystem: str = "all", enabled: bool = False, score_threshold: float = 90.0, minimum_evidence: int = 2, require_publisher: bool = False, mode: str = "draft_case", actor: str = "operator", db_path: Optional[str] = None) -> Dict[str, Any]:
+    soc_store.init_db(db_path)
+    ecosystem = normalize_identifier("", ecosystem or "all")
+    if ecosystem != "all" and ecosystem not in CAPABILITIES:
+        raise ValueError("unsupported promotion-policy ecosystem")
+    threshold = float(score_threshold)
+    if not 70 <= threshold <= 100:
+        raise ValueError("score threshold must be between 70 and 100")
+    evidence_count = max(1, min(int(minimum_evidence), 8))
+    if mode not in PROMOTION_MODES:
+        raise ValueError("unsupported promotion mode")
+    now = _now()
+    with closing(soc_store.connect(db_path)) as connection:
+        connection.execute("""INSERT INTO research_promotion_policies
+            (ecosystem, enabled, score_threshold, minimum_evidence, require_publisher, mode, updated_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ecosystem) DO UPDATE SET enabled=excluded.enabled, score_threshold=excluded.score_threshold,
+            minimum_evidence=excluded.minimum_evidence, require_publisher=excluded.require_publisher,
+            mode=excluded.mode, updated_by=excluded.updated_by, updated_at=excluded.updated_at""",
+            (ecosystem, int(bool(enabled)), threshold, evidence_count, int(bool(require_publisher)), mode, str(actor or "operator")[:160], now, now))
+        connection.commit()
+    return get_promotion_policy(ecosystem=ecosystem, db_path=db_path)
+
+
+def run_promotion_policy(*, ecosystem: str = "all", apply: bool = False, actor: str = "operator", limit: int = 100, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Evaluate candidates deterministically and optionally create draft cases.
+
+    Promotion never records a malicious verdict. It creates an auditable draft
+    investigation only when the configured evidence gates pass.
+    """
+    policy = get_promotion_policy(ecosystem=ecosystem, db_path=db_path)
+    candidates = list_candidates(status="new", ecosystem=None if policy["ecosystem"] == "all" else policy["ecosystem"], limit=limit, db_path=db_path)
+    decisions: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
+        evidence_refs = [key for key in ("metadata_url", "artifact_url", "publisher") if evidence.get(key)]
+        reasons = []
+        if float(candidate.get("score") or 0) < float(policy["score_threshold"]):
+            reasons.append("score_below_threshold")
+        if len(evidence_refs) < int(policy["minimum_evidence"]):
+            reasons.append("insufficient_evidence")
+        if policy["require_publisher"] and not evidence.get("publisher"):
+            reasons.append("publisher_missing")
+        eligible = not reasons and bool(policy["enabled"])
+        decision = {"candidate_id": candidate["candidate_id"], "eligible": eligible, "score": candidate["score"], "evidence_count": len(evidence_refs), "reasons": reasons or (["policy_disabled"] if not policy["enabled"] else ["eligible"]), "case_id": candidate.get("case_id")}
+        if apply and eligible and policy["mode"] == "draft_case" and not candidate.get("case_id"):
+            from secopsai.research_cases import add_evidence, add_subject, create_case
+            case = create_case(title=f"Investigate {candidate['ecosystem']} package {candidate['package']}", summary=f"Automatically promoted as a draft investigation after deterministic policy checks. Similarity score: {candidate['score']}. This is a lead, not a maliciousness verdict.", case_type="typosquatting", severity="medium", confidence=min(int(float(candidate["score"])), 80), owner=actor, metadata={"candidate_id": candidate["candidate_id"], "promotion_policy": policy}, db_path=db_path)
+            add_subject(case["case_id"], subject_type="package", name=candidate["package"], ecosystem=candidate["ecosystem"], version=candidate.get("version") or "", publisher=evidence.get("publisher") or "", registry_state="available", metadata={"candidate_id": candidate["candidate_id"], "reference_identifier": candidate.get("reference_identifier")}, db_path=db_path, actor=actor)
+            if evidence.get("metadata_url"):
+                add_evidence(case["case_id"], evidence_type="registry_metadata", title="Registry metadata captured during candidate discovery", locator=evidence["metadata_url"], provenance="official registry monitor", notes=candidate.get("reason") or "", metadata={"candidate_id": candidate["candidate_id"]}, db_path=db_path, actor=actor)
+            with closing(soc_store.connect(db_path)) as connection:
+                connection.execute("UPDATE research_candidates SET status = 'promoted', case_id = ? WHERE candidate_id = ?", (case["case_id"], candidate["candidate_id"]))
+                connection.execute("INSERT OR IGNORE INTO research_promotion_events (event_id, candidate_id, policy_ecosystem, decision, reasons_json, case_id, actor, created_at) VALUES (?, ?, ?, 'draft_case_created', ?, ?, ?, ?)", (_id("RPE"), candidate["candidate_id"], policy["ecosystem"], _json(decision["reasons"]), case["case_id"], actor, _now()))
+                connection.commit()
+            decision["case_id"] = case["case_id"]
+            decision["applied"] = True
+        decisions.append(decision)
+    return {"schema_version": "secopsai.research.promotion-policy.v1", "policy": policy, "apply": bool(apply), "evaluated": len(decisions), "eligible": sum(bool(item["eligible"]) for item in decisions), "promoted": sum(bool(item.get("applied")) for item in decisions), "decisions": decisions}
 
 
 def create_candidate_alert(candidate: Dict[str, Any], *, db_path: Optional[str] = None) -> Dict[str, Any]:
