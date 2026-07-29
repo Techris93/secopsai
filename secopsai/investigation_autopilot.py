@@ -315,7 +315,11 @@ def _run(run_id: str, *, db_path: Optional[str]) -> Dict[str, Any]:
             blocker_code = "comparison_reference_missing"
         if pipeline["status"] == "failed":
             blocker = _clean(pipeline.get("error_message") or "The evidence pipeline failed safely.", 2000)
-            blocker_code = _clean(pipeline.get("error_code") or "pipeline_failed", 120)
+            if "HTTP 404" in blocker:
+                next_status = "evidence_gap"
+                blocker_code = "artifact_unavailable"
+            else:
+                blocker_code = _clean(pipeline.get("error_code") or "pipeline_failed", 120)
         _set_run(
             run_id, status=next_status, stage=pipeline.get("current_step") or "pipeline",
             case_id=case["case_id"], pipeline_id=pipeline["pipeline_id"],
@@ -347,8 +351,15 @@ def reconcile_pipeline(pipeline_id: str, *, db_path: Optional[str] = None) -> Op
     verdict = _clean(summary.get("agent_verdict"), 40)
     status = "awaiting_model"
     completed = False
+    blocker_code = None
+    blocker_message = None
     if pipeline["status"] == "failed":
         status = "failed"
+        blocker_code = _clean(pipeline.get("error_code") or "pipeline_failed", 120)
+        blocker_message = _clean(pipeline.get("error_message") or "The evidence pipeline failed safely.", 2000)
+        if "HTTP 404" in blocker_message:
+            status = "evidence_gap"
+            blocker_code = "artifact_unavailable"
     elif pipeline["status"] == "succeeded":
         if verdict in {"credible", "likely"}:
             status = "escalated"
@@ -361,8 +372,8 @@ def reconcile_pipeline(pipeline_id: str, *, db_path: Optional[str] = None) -> Op
         run_id, status=status, stage=pipeline.get("current_step") or "pipeline",
         evidence={"pipeline": summary, "review_summary": pipeline.get("review_summary") or {}},
         decision={"verdict": verdict, "confidence": summary.get("agent_verdict_confidence"), "resolution": resolution},
-        blocker_code="evidence_incomplete" if status == "evidence_gap" else None,
-        blocker_message="The available evidence does not support a final automatic resolution." if status == "evidence_gap" else None,
+        blocker_code=blocker_code or ("evidence_incomplete" if status == "evidence_gap" else None),
+        blocker_message=blocker_message or ("The available evidence does not support a final automatic resolution." if status == "evidence_gap" else None),
         retryable=status in {"failed", "evidence_gap"}, completed=completed, db_path=db_path,
     )
     return get_run(run_id, db_path=db_path)
