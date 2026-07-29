@@ -9,6 +9,7 @@ from secopsai import investigation_autopilot
 from secopsai.research_cases import get_case
 from secopsai.research_intake import SafeFetcher
 from secopsai.research_pipeline import start_investigation_pipeline
+from secopsai.research_intake import PyPiAdapter
 
 
 def _artifact() -> bytes:
@@ -105,3 +106,19 @@ def test_run_due_backfills_existing_high_priority_findings(tmp_path, monkeypatch
     assert result["backfill"]["queued"][0]["finding_id"] == "SCM-AUTOPILOT-1"
     assert result["processed"] == 1
     assert len(investigation_autopilot.list_runs(db_path=db)) == 1
+
+
+def test_pypi_exact_version_uses_bounded_release_endpoint():
+    requested_urls = []
+
+    def fetch(url: str, max_bytes: int):
+        requested_urls.append(url)
+        payload = {
+            "info": {"name": "duckdb", "version": "1.5.2.dev38", "author": "DuckDB"},
+            "urls": [{"url": "https://files.pythonhosted.org/duckdb.whl", "packagetype": "bdist_wheel", "digests": {"sha256": "a" * 64}}],
+        }
+        return 200, {"content-type": "application/json"}, json.dumps(payload).encode()
+
+    metadata = PyPiAdapter().resolve("duckdb", "1.5.2.dev38", SafeFetcher(fetch=fetch))
+    assert requested_urls == ["https://pypi.org/pypi/duckdb/1.5.2.dev38/json"]
+    assert metadata.version == "1.5.2.dev38"
