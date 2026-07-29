@@ -23,6 +23,8 @@ Mission Control can use any model in the local OpenCodex catalog, including Kimi
 
 Research candidate alerts are normalized into canonical findings with source `secopsai_research`. Package verification remains actionable even when the package is not present in the local repository. Missing local exposure affects the response scope only; it is never evidence that the external package is safe.
 
+The reconciliation runs before every agent-triage cycle and is idempotent. It also backfills older open research alerts, so upgrading Core does not leave pre-existing alerts outside the model review queue.
+
 Operational alerts such as registry timeouts and stale collector cursors are handled by deterministic health checks instead of model opinion. They resolve only after successful coverage recovery, remain visible while degraded, and never become package verdicts.
 
 The modes are:
