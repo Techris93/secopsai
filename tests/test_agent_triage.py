@@ -188,6 +188,24 @@ def test_advisory_mode_records_recommendation_without_mutating_finding(tmp_path,
     assert run["final_action"] == "recommend_review"
 
 
+def test_cycle_limit_counts_new_jobs_not_already_reviewed_findings(tmp_path, monkeypatch):
+    db = str(tmp_path / "soc.db")
+    first = _finding("FND-OLDER")
+    second = _finding("FND-NEWER")
+    first["first_seen"] = first["last_seen"] = "2026-07-27T00:00:00Z"
+    second["first_seen"] = second["last_seen"] = "2026-07-28T00:00:00Z"
+    soc_store.persist_findings([first, second], source="secopsai-supply-chain", db_path=db)
+    agent_triage.update_settings(mode="advisory", max_records_per_cycle=1, actor="test", db_path=db)
+    monkeypatch.setattr(agent_triage, "_deterministic_assessment", lambda finding, search_root: _deterministic())
+
+    first_cycle = agent_triage.enqueue_due_findings(db_path=db)
+    second_cycle = agent_triage.enqueue_due_findings(db_path=db)
+
+    assert [item["finding_id"] for item in first_cycle["queued"]] == ["FND-OLDER"]
+    assert [item["finding_id"] for item in second_cycle["queued"]] == ["FND-NEWER"]
+    assert second_cycle["skipped"] == 1
+
+
 def test_only_replay_proven_threshold_tuning_can_activate_and_rollback(tmp_path, monkeypatch):
     db = str(tmp_path / "soc.db")
     findings = [_finding()]

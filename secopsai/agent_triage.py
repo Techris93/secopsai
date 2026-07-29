@@ -208,7 +208,9 @@ def enqueue_due_findings(
     cycle_limit = int(settings["max_records_per_cycle"])
     if limit_override is not None:
         cycle_limit = max(1, min(int(limit_override), cycle_limit))
-    for finding in eligible[:cycle_limit]:
+    for finding in eligible:
+        if len(queued) >= cycle_limit:
+            break
         finding_id = _clean(finding.get("finding_id"), 240)
         fingerprint = _finding_fingerprint(finding)
         with closing(soc_store.connect(db_path)) as connection:
