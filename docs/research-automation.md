@@ -6,7 +6,7 @@ SecOpsAI Research turns a watchlist lead into a defensible investigation without
 
 Eligible high and critical package findings are promoted automatically after initial model triage. Core creates or reuses the finding-linked Research Case, collects the exact registry artifact, verifies and catalogs the quarantine object, performs bounded static analysis, compares only a verified reference, extracts IOC candidates, correlates normalized evidence, and requests a complete model assessment.
 
-Use **System → Automation → High-priority investigations** to inspect progress, retry a failed checkpoint, cancel active work, or open the linked case. A missing comparison reference, registry outage, analyzer limitation, or pending sandbox approval is displayed as an evidence gap rather than a verdict.
+Use **Administration → Automation → High-priority investigations** to inspect progress, retry a failed checkpoint, cancel active work, or open the linked case. A missing comparison reference, registry outage, analyzer limitation, or pending sandbox approval is displayed as an evidence gap rather than a verdict.
 
 The unattended workflow cannot approve a sandbox submission, send external disclosure, or approve and publish an article. Those remain the final operator gates.
 

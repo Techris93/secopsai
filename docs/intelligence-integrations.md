@@ -19,7 +19,7 @@ Research actions request evidence-led structured output rather than a chat-style
 
 ## Autonomous finding and alert triage
 
-Mission Control can use any model in the local OpenCodex catalog, including Kimi K3, Grok, Gemini, or an available Codex model, to review new canonical findings continuously. This includes host detections, Edge findings, supply-chain findings, and high-confidence research candidates produced by registry monitoring. Select the model under **System → Automation**, then configure **Agent finding and alert review**.
+Mission Control can use any model in the local OpenCodex catalog, including Kimi K3, Grok, Gemini, or an available Codex model, to review new canonical findings continuously. This includes host detections, Edge findings, supply-chain findings, and high-confidence research candidates produced by registry monitoring. Open **Administration → Automation**, select the model, then configure **Agent finding and alert review**.
 
 Research candidate alerts are normalized into canonical findings with source `secopsai_research`. Package verification remains actionable even when the package is not present in the local repository. Missing local exposure affects the response scope only; it is never evidence that the external package is safe.
 
