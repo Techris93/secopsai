@@ -376,6 +376,15 @@ def reconcile_pipeline(pipeline_id: str, *, db_path: Optional[str] = None) -> Op
         blocker_message=blocker_message or ("The available evidence does not support a final automatic resolution." if status == "evidence_gap" else None),
         retryable=status in {"failed", "evidence_gap"}, completed=completed, db_path=db_path,
     )
+    if pipeline["status"] in {"succeeded", "failed"}:
+        try:
+            from secopsai.detection_learning import collect_examples, record_action_reward
+
+            collect_examples(db_path=db_path)
+            reward = 1.0 if status in {"resolved", "escalated"} else (-0.25 if status == "failed" else 0.0)
+            record_action_reward("model_review", reward, db_path=db_path)
+        except Exception:
+            pass
     return get_run(run_id, db_path=db_path)
 
 
