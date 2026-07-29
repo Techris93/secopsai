@@ -376,6 +376,7 @@ def list_cases(
                        (SELECT COUNT(*) FROM research_evidence e WHERE e.case_id = c.case_id AND e.status = 'active') AS evidence_count,
                        (SELECT COUNT(*) FROM research_iocs i WHERE i.case_id = c.case_id AND i.status = 'active') AS ioc_count,
                        (SELECT COUNT(*) FROM research_rules r WHERE r.case_id = c.case_id AND r.status = 'active') AS rule_count,
+                       (SELECT COUNT(*) FROM research_rule_proposals p WHERE p.case_id = c.case_id AND p.status = 'review_required') AS rule_proposal_count,
                        (SELECT COUNT(*) FROM research_case_findings f WHERE f.case_id = c.case_id) AS finding_count
                 FROM research_cases c
                 """
@@ -448,6 +449,14 @@ def get_case(case_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
             value = dict(item)
             value["validation"] = _decode(value.pop("validation_json", "{}"), {})
             result["rules"].append(value)
+        result["rule_proposals"] = []
+        for item in connection.execute(
+            "SELECT * FROM research_rule_proposals WHERE case_id = ? ORDER BY created_at, proposal_id", (case_id,)
+        ).fetchall():
+            value = dict(item)
+            value["validation"] = _decode(value.pop("validation_json", "{}"), {})
+            value["test"] = _decode(value.pop("test_json", "{}"), {})
+            result["rule_proposals"].append(value)
         result["findings"] = [
             dict(item)
             for item in connection.execute(

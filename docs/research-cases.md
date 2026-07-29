@@ -48,6 +48,27 @@ Sigma and Semgrep documents are parsed with safe YAML loading; YARA receives a
 bounded structural preflight (declaration, braces, and condition) rather than
 claiming compiler-level validation.
 
+The recommended path is the guarded proposal workflow:
+
+```bash
+secopsai research rule propose RSC-...
+secopsai research rule list RSC-...
+secopsai research rule review RSC-... RRP-... --decision accepted
+```
+
+Proposal generation is deterministic and evidence-bound. It can create:
+
+- exact-artifact YARA rules from reviewed suspect package hashes;
+- Sigma network rules from high-confidence domain or IP IOCs;
+- Semgrep source indicators from high-confidence domains or URLs.
+
+Legitimate comparison artifacts, low-confidence indicators, unlinked model
+claims, and raw package content are excluded. Generation never activates a
+rule. A proposal must pass structural and policy validation and then receive an
+explicit accept decision. Rejected and failed proposals remain in the audit
+history. The model may explain limitations, but it is not evidence and does not
+control activation.
+
 Attach a rule from inline content or a local UTF-8 file:
 
 ```bash
@@ -211,7 +232,9 @@ Open **Research** in the canonical SecOpsAI dashboard to:
 - review the case queue and publication blockers
 - manage status, severity, confidence, owner, and disclosure
 - add subjects, evidence, IOCs, notes, and finding links
-- review attached detection rules and their validation status
+- generate evidence-linked rule proposals, review their validation limits, and
+  activate or reject them
+- review active case-linked detection rules and their validation status
 - download a Markdown case report
 - create a review-only blog draft when readiness passes
 

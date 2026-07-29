@@ -201,6 +201,11 @@ from secopsai.research_pipeline import (
     auto_review_pipeline,
     start_investigation_pipeline,
 )
+from secopsai.research_rule_proposals import (
+    generate_rule_proposals,
+    list_rule_proposals,
+    review_rule_proposal,
+)
 from secopsai.sessions import (
     add_artifact as add_session_artifact,
     add_event as add_session_event,
@@ -1549,6 +1554,23 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     research_case = research_sub.add_parser("case", help="Manage durable independent-research cases")
     research_case_sub = research_case.add_subparsers(dest="research_case_cmd", required=True)
 
+    research_rule = research_sub.add_parser("rule", help="Generate and review evidence-linked detection rules")
+    research_rule_sub = research_rule.add_subparsers(dest="research_rule_cmd", required=True)
+    rule_propose = research_rule_sub.add_parser("propose", help="Generate deterministic rule proposals from reviewed evidence")
+    rule_propose.add_argument("case_id")
+    rule_propose.add_argument("--actor", default="secopsai-rule-generator")
+    rule_propose.add_argument("--db-path", default=None)
+    rule_list = research_rule_sub.add_parser("list", help="List rule proposals for a research case")
+    rule_list.add_argument("case_id")
+    rule_list.add_argument("--db-path", default=None)
+    rule_review = research_rule_sub.add_parser("review", help="Accept or reject one validated rule proposal")
+    rule_review.add_argument("case_id")
+    rule_review.add_argument("proposal_id")
+    rule_review.add_argument("--decision", required=True, choices=["accepted", "rejected"])
+    rule_review.add_argument("--review-note", default="")
+    rule_review.add_argument("--actor", default="analyst")
+    rule_review.add_argument("--db-path", default=None)
+
     case_create = research_case_sub.add_parser("create", help="Create a research case")
     case_create.add_argument("--title", required=True)
     case_create.add_argument("--summary", default="")
@@ -2390,7 +2412,21 @@ def maybe_refresh(args: argparse.Namespace) -> Optional[Dict[str, Any]]:
 
 def _run_research_automation_command(args: argparse.Namespace) -> int:
     try:
-        if args.research_cmd == "ecosystems":
+        if args.research_cmd == "rule":
+            if args.research_rule_cmd == "propose":
+                payload = generate_rule_proposals(args.case_id, actor=args.actor, db_path=args.db_path)
+            elif args.research_rule_cmd == "list":
+                payload = {"case_id": args.case_id, "proposals": list_rule_proposals(args.case_id, db_path=args.db_path)}
+            else:
+                payload = review_rule_proposal(
+                    args.case_id,
+                    args.proposal_id,
+                    decision=args.decision,
+                    actor=args.actor,
+                    review_note=args.review_note,
+                    db_path=args.db_path,
+                )
+        elif args.research_cmd == "ecosystems":
             payload = research_capability_registry()
         elif args.research_cmd == "watchlist":
             if args.research_watchlist_cmd == "list":
@@ -3013,7 +3049,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
 
-        if args.research_cmd in {"ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "workflow"}:
+        if args.research_cmd in {"rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "workflow"}:
             return _run_research_automation_command(args)
 
         if args.research_cmd == "case":
