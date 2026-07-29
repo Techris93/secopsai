@@ -54,3 +54,23 @@ def test_enabled_policy_creates_auditable_draft_case_without_a_verdict() -> None
         assert "promotion_policy" in case["payload_json"]
         assert event["decision"] == "draft_case_created"
         assert event["actor"] == "test-operator"
+        second = run_promotion_policy(ecosystem="nuget", apply=True, actor="test-operator", db_path=db_path)
+        assert second["promoted"] == 0
+        with soc_store.connect(db_path) as connection:
+            assert connection.execute("SELECT COUNT(*) FROM research_cases").fetchone()[0] == 1
+            assert connection.execute("SELECT COUNT(*) FROM research_promotion_events").fetchone()[0] == 1
+
+
+def test_duplicate_urls_count_as_one_evidence_reference() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = str(Path(temp_dir) / "soc.db")
+        candidate_id = _candidate(db_path)
+        duplicate = "https://api.nuget.org/v3/registration5-gz-semver2/braintree.net.test/index.json"
+        with soc_store.connect(db_path) as connection:
+            connection.execute("UPDATE research_candidates SET evidence_json = ? WHERE candidate_id = ?", (json.dumps({"metadata_url": duplicate, "artifact_url": duplicate, "publisher": ""}), candidate_id))
+            connection.commit()
+        set_promotion_policy(ecosystem="nuget", enabled=True, score_threshold=90, minimum_evidence=2, db_path=db_path)
+        preview = run_promotion_policy(ecosystem="nuget", db_path=db_path)
+        assert preview["eligible"] == 0
+        assert preview["decisions"][0]["evidence_count"] == 1
+        assert "insufficient_evidence" in preview["decisions"][0]["reasons"]
