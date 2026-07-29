@@ -12,6 +12,8 @@ Before each model-triage cycle, Core idempotently reconciles both new and histor
 
 The per-cycle limit applies to newly queued reviews rather than the first records examined. Already-reviewed fingerprints are skipped without consuming the cycle budget, which prevents older unchanged findings from starving newly reconciled alerts.
 
+Queue preparation inventories dependency manifests once per cycle, prunes generated environments, and performs no live registry reputation request. This keeps alert ingestion bounded; richer network enrichment remains in the explicit research pipeline.
+
 Mission Control adds **Research → Resolved by agents** for policy configuration and reversible case review, plus a unified **Automation → Agent finding and alert review** table showing source, package context, model confidence, guardrail failures, tuning proposals, and rollback actions. Operational collector alerts remain in a separate deterministic lane and resolve only after coverage recovers.
 
 Verification: 464 Core tests and 4 subtests passed; 17 focused Mission Control Python tests passed; browser contract tests and the production JavaScript check passed. Signed-in browser acceptance confirmed the guarded case policy and the live supply-chain decision queue. Browser console errors observed during acceptance originated only from installed wallet extensions, not SecOpsAI.

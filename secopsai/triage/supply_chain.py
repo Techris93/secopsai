@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import fnmatch
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List
@@ -176,17 +178,37 @@ def _manifest_contains_package(path: Path, package: str) -> bool:
     return bool(pattern.search(text))
 
 
-def _package_reference_paths(package: str, search_root: Path) -> List[str]:
+def dependency_manifest_paths(search_root: Path, *, limit: int = 5000) -> List[Path]:
+    """Inventory dependency manifests once while pruning generated environments."""
+    root = search_root.resolve()
+    paths: List[Path] = []
+    for current, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if name not in IGNORED_PATH_PARTS]
+        current_path = Path(current)
+        for name in filenames:
+            if not any(fnmatch.fnmatch(name, pattern) for pattern in DEPENDENCY_FILE_GLOBS):
+                continue
+            paths.append(current_path / name)
+            if len(paths) >= max(1, min(int(limit), 20000)):
+                return sorted(paths)
+    return sorted(paths)
+
+
+def _package_reference_paths(
+    package: str,
+    search_root: Path,
+    *,
+    manifest_paths: List[Path] | None = None,
+) -> List[str]:
     hits: List[str] = []
     needle = str(package or "").strip()
     if not needle:
         return hits
-    for glob in DEPENDENCY_FILE_GLOBS:
-        for path in search_root.rglob(glob):
-            if _should_ignore_path(path, search_root):
-                continue
-            if _manifest_contains_package(path, needle):
-                hits.append(str(path.resolve()))
+    for path in manifest_paths if manifest_paths is not None else dependency_manifest_paths(search_root):
+        if _should_ignore_path(path, search_root):
+            continue
+        if _manifest_contains_package(path, needle):
+            hits.append(str(path.resolve()))
     return sorted(set(hits))
 
 
@@ -231,7 +253,13 @@ def _reputation_summary(ecosystem: str, package: str) -> Dict[str, Any]:
     return _npm_reputation(package)
 
 
-def investigate_supply_chain(finding: Dict[str, Any], *, search_root: Path) -> Dict[str, Any]:
+def investigate_supply_chain(
+    finding: Dict[str, Any],
+    *,
+    search_root: Path,
+    manifest_paths: List[Path] | None = None,
+    include_reputation: bool = True,
+) -> Dict[str, Any]:
     ecosystem = str(finding.get("ecosystem") or "").lower()
     package = str(finding.get("package") or "")
     report_path = Path(str(finding.get("report_path") or "")).resolve() if finding.get("report_path") else None
@@ -247,12 +275,12 @@ def investigate_supply_chain(finding: Dict[str, Any], *, search_root: Path) -> D
         except Exception as exc:
             explanation = {"error": str(exc)}
 
-    dependency_hits = _package_reference_paths(package, search_root)
+    dependency_hits = _package_reference_paths(package, search_root, manifest_paths=manifest_paths)
     matched_rules = _extract_rule_names(explanation)
     lower_rules = {rule.lower() for rule in matched_rules}
     strong_signals = sorted(rule for rule in matched_rules if rule.lower() in STRONG_RULE_MARKERS)
     weak_only = bool(lower_rules) and lower_rules.issubset(WEAK_RULE_MARKERS)
-    reputation = _reputation_summary(ecosystem, package) if ecosystem and package else {}
+    reputation = _reputation_summary(ecosystem, package) if include_reputation and ecosystem and package else {}
     score = explanation.get("score")
     threshold = explanation.get("effective_threshold")
     threshold_matched = (
