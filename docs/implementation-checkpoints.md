@@ -10,6 +10,8 @@ High-confidence registry research candidates now enter the canonical finding que
 
 Before each model-triage cycle, Core idempotently reconciles both new and historical actionable research alerts, including watched-package version changes and imported non-operational research alerts. This makes restored databases and pre-release alerts eligible without a manual migration command. Collector degradation and retention alerts stay excluded from model verdicts and close only through deterministic coverage recovery.
 
+The per-cycle limit applies to newly queued reviews rather than the first records examined. Already-reviewed fingerprints are skipped without consuming the cycle budget, which prevents older unchanged findings from starving newly reconciled alerts.
+
 Mission Control adds **Research → Resolved by agents** for policy configuration and reversible case review, plus a unified **Automation → Agent finding and alert review** table showing source, package context, model confidence, guardrail failures, tuning proposals, and rollback actions. Operational collector alerts remain in a separate deterministic lane and resolve only after coverage recovers.
 
 Verification: 464 Core tests and 4 subtests passed; 17 focused Mission Control Python tests passed; browser contract tests and the production JavaScript check passed. Signed-in browser acceptance confirmed the guarded case policy and the live supply-chain decision queue. Browser console errors observed during acceptance originated only from installed wallet extensions, not SecOpsAI.
