@@ -18,9 +18,11 @@ RUN apk update && apk upgrade && apk add --no-cache \
 COPY . .
 
 # Install Python dependencies (including build deps for compile-on-demand)
-RUN apk add --no-cache --virtual .build-deps build-base linux-headers python3-dev && \
-    pip install --no-cache-dir --upgrade pip setuptools wheel && \
+RUN apk add --no-cache --virtual .build-deps build-base linux-headers && \
+    pip install --no-cache-dir --upgrade pip "setuptools>=78.1.1" wheel && \
     pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir --upgrade "setuptools>=78.1.1" && \
+    python -c "import importlib.metadata as m; assert tuple(map(int, m.version('setuptools').split('.')[:3])) >= (78, 1, 1)" && \
     apk del .build-deps
 
 # Create non-root user for security
