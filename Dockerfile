@@ -63,7 +63,8 @@ RUN rm -rf \
     echo '9fedddf7e814c226cb7e1ac0aa603092eda40047367ec00ad740a81484a17d01  /usr/local/lib/python3.13/tarfile.py' | sha256sum -c - && \
     echo '4274e9112adf3fa57c7f9afa7c9b5c631456b18b7403cc627cc5027d02cdd2ae  /usr/local/lib/python3.13/html/parser.py' | sha256sum -c - && \
     python -c "import importlib.util as u; assert u.find_spec('pip') is None; assert u.find_spec('setuptools') is None; assert u.find_spec('wheel') is None" && \
-    python -c "import html.parser, tarfile; from detect import run_detection; assert html.parser.__file__ == '/usr/local/lib/python3.13/html/parser.py'; assert tarfile.__file__ == '/usr/local/lib/python3.13/tarfile.py'; print('runtime-import-ok')"
+    python -c "import html.parser, tarfile; from detect import run_detection; assert html.parser.__file__ == '/usr/local/lib/python3.13/html/parser.py'; assert tarfile.__file__ == '/usr/local/lib/python3.13/tarfile.py'; print('runtime-import-ok')" && \
+    chmod 0755 /opt/secopsai/scripts/container-entrypoint.sh
 
 # Switch to non-root user
 USER secops
@@ -72,8 +73,8 @@ USER secops
 HEALTHCHECK --interval=5m --timeout=1m --start-period=1m --retries=3 \
     CMD python -c "from detect import run_detection; print('ok')" || exit 1
 
-# Default command: run live OpenClaw detection
-CMD ["sh", "-c", "while true; do python -u run_openclaw_live.py; sleep \"${SECOPS_POLL_INTERVAL_SECONDS:-300}\"; done"]
+# Default command: run live OpenClaw detection with graceful signal handling.
+CMD ["sh", "scripts/container-entrypoint.sh"]
 
 # Allow override to run other commands:
 # docker run secopsai python evaluate.py --mode benchmark

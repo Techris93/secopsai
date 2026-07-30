@@ -195,6 +195,7 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
     assert "docker run -d" in startup_step["run"]
     assert "from detect import run_detection" in startup_step["run"]
     assert ".State.ExitCode" in startup_step["run"]
+    assert "container-smoke.json" in startup_step["run"]
     assert any(step.get("name") == "Generate Trivy base-image JSON" for step in build_steps)
     assert any(step.get("name") == "Generate Trivy final-image JSON" for step in build_steps)
     assert any(step.get("name") == "Generate independent CycloneDX SBOM with Syft" for step in build_steps)
@@ -249,5 +250,6 @@ def test_additional_sast_and_container_security_fixes():
     assert "COPY --from=builder --chown=secops:secops /opt/venv /opt/venv" in dockerfile
     assert "python3.13/site-packages/setuptools*" in dockerfile
     assert "u.find_spec('setuptools') is None" in dockerfile
+    assert 'CMD ["sh", "scripts/container-entrypoint.sh"]' in dockerfile
     assert "tests" in dockerignore
     assert "Dockerfile" in dockerignore

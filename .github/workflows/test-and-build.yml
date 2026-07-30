@@ -212,6 +212,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p container-security
           container_id="$(docker run -d "secopsai-ci-scan:${GITHUB_SHA}")"
           trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
           for attempt in $(seq 1 10); do
@@ -223,8 +224,27 @@ jobs:
           test "$(docker inspect --format '{{.State.Running}}' "$container_id")" = "true"
           docker exec "$container_id" \
             python -c "from detect import run_detection; print('health-ok')"
-          docker stop --time 10 "$container_id"
+          docker stop --timeout 10 "$container_id"
           test "$(docker inspect --format '{{.State.ExitCode}}' "$container_id")" = "0"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          Path("container-security/container-smoke.json").write_text(
+              json.dumps(
+                  {
+                      "schema_version": "secopsai.container-smoke.v1",
+                      "startup": "passed",
+                      "health_command": "passed",
+                      "graceful_shutdown": "passed",
+                  },
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
 
       - name: Record exact image identities and package provenance
         id: image-identity
