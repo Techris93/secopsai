@@ -224,6 +224,7 @@ def test_additional_sast_and_container_security_fixes():
     common_py = (ROOT / "openclaw_adapters" / "common.py").read_text(encoding="utf-8")
     findings_py = (ROOT / "openclaw_findings.py").read_text(encoding="utf-8")
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
 
     # Assert SHA1 is not used for record IDs in openclaw_adapters/common.py
     assert "hashlib.sha1" not in common_py
@@ -235,12 +236,14 @@ def test_additional_sast_and_container_security_fixes():
 
     # Assert the image upgrades dependencies without pulling Alpine's separate
     # Python toolchain, which previously introduced vulnerable duplicate packages.
-    assert "FROM python:3.10-alpine" in dockerfile
-    assert "FROM python:3.10-alpine AS builder" in dockerfile
+    assert "python:3.13-alpine@sha256:" in dockerfile
+    assert "FROM ${PYTHON_IMAGE} AS builder" in dockerfile
+    assert "FROM ${PYTHON_IMAGE}" in dockerfile
     assert "apk upgrade" in dockerfile
     assert "python3-dev" not in dockerfile
     assert '/opt/venv/bin/pip install --no-cache-dir --upgrade pip "setuptools>=78.1.1" wheel' in dockerfile
-    assert "COPY --from=builder /opt/venv /opt/venv" in dockerfile
-    assert "m.version('setuptools')" in dockerfile
-    assert "msgpack-1.1.2.dist-info" in dockerfile
-    assert "setuptools-70.3.0.dist-info" in dockerfile
+    assert "COPY --from=builder --chown=secops:secops /opt/venv /opt/venv" in dockerfile
+    assert "python3.13/site-packages/setuptools*" in dockerfile
+    assert "u.find_spec('setuptools') is None" in dockerfile
+    assert "tests" in dockerignore
+    assert "Dockerfile" in dockerignore

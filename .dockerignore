@@ -1,8 +1,19 @@
 .git
 .github
+.brv
+.wrangler
 .venv
 venv
 site
+tests
+apps
+blog
+docs
+website
+www
+reports
+eval
+.openai
 .pytest_cache
 .mypy_cache
 .ruff_cache
@@ -26,3 +37,7 @@ data/triage
 data/supply_chain/artifacts
 data/supply_chain/quarantine
 data/supply_chain/reports
+Dockerfile
+docker-compose*.yml
+mkdocs.yml
+*.md

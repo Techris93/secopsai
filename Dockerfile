@@ -1,4 +1,6 @@
-FROM python:3.10-alpine AS builder
+ARG PYTHON_IMAGE=python:3.13-alpine@sha256:399babc8b49529dabfd9c922f2b5eea81d611e4512e3ed250d75bd2e7683f4b0
+
+FROM ${PYTHON_IMAGE} AS builder
 
 WORKDIR /opt/secopsai
 
@@ -10,7 +12,7 @@ RUN apk add --no-cache build-base linux-headers && \
     /opt/venv/bin/pip install --no-cache-dir -r requirements.txt && \
     /opt/venv/bin/python -c "import importlib.metadata as m; assert tuple(map(int, m.version('setuptools').split('.')[:3])) >= (78, 1, 1)"
 
-FROM python:3.10-alpine
+FROM ${PYTHON_IMAGE}
 
 # Metadata
 LABEL maintainer="secopsai"
@@ -28,25 +30,32 @@ RUN apk update && apk upgrade && apk add --no-cache \
     curl \
     ca-certificates
 
-# Copy project files
-COPY . .
+# Create the unprivileged runtime owner before copying application content so
+# the image does not need a later recursive ownership layer.
+RUN adduser -D -u 1000 secops
+
+# Copy only runtime files admitted by .dockerignore.
+COPY --chown=secops:secops . .
 
 # Copy only the resolved Python environment. Build tools and their transitive
 # packages remain in the discarded builder stage.
-COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder --chown=secops:secops /opt/venv /opt/venv
 
-# Fail the build if an OS or cached Python environment reintroduces either
-# vulnerable distribution outside the active /usr/local Python environment.
-RUN vulnerable="$(find / -type d \( \
-      -name 'msgpack-1.1.2.dist-info' -o \
-      -name 'setuptools-70.3.0.dist-info' \
-    \) -print 2>/dev/null)" && \
-    test -z "$vulnerable" || { printf 'Vulnerable Python metadata found:\n%s\n' "$vulnerable"; exit 1; } && \
-    python -c "import importlib.metadata as m; assert tuple(map(int, m.version('setuptools').split('.')[:3])) >= (78, 1, 1)"
-
-# Create non-root user for security
-RUN adduser -D -u 1000 secops && \
-    chown -R secops:secops /opt/secopsai
+# pip, setuptools, wheel, and ensurepip are installation tools. SecOpsAI has no
+# runtime import of them, so remove both base-image and venv copies after the
+# resolved environment has been assembled.
+RUN rm -rf \
+      /usr/local/lib/python3.13/ensurepip \
+      /usr/local/lib/python3.13/site-packages/pip* \
+      /usr/local/lib/python3.13/site-packages/setuptools* \
+      /usr/local/lib/python3.13/site-packages/wheel* \
+      /opt/venv/lib/python3.13/site-packages/pip* \
+      /opt/venv/lib/python3.13/site-packages/setuptools* \
+      /opt/venv/lib/python3.13/site-packages/wheel* \
+      /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.13 \
+      /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.13 && \
+    python -c "import importlib.util as u; assert u.find_spec('pip') is None; assert u.find_spec('setuptools') is None; assert u.find_spec('wheel') is None" && \
+    python -c "from detect import run_detection; print('runtime-import-ok')"
 
 # Switch to non-root user
 USER secops

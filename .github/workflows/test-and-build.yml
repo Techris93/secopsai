@@ -9,6 +9,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SECOPSAI_BASE_IMAGE: python:3.13-alpine@sha256:399babc8b49529dabfd9c922f2b5eea81d611e4512e3ed250d75bd2e7683f4b0
 
 jobs:
   test:
@@ -208,10 +209,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p container-security
-          docker pull python:3.10-alpine
+          docker pull "$SECOPSAI_BASE_IMAGE"
           final_digest="$(docker image inspect --format '{{.Id}}' "secopsai-ci-scan:${GITHUB_SHA}")"
-          base_digest="$(docker image inspect --format '{{.Id}}' python:3.10-alpine)"
-          base_repo_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' python:3.10-alpine)"
+          base_digest="$(docker image inspect --format '{{.Id}}' "$SECOPSAI_BASE_IMAGE")"
+          base_repo_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$SECOPSAI_BASE_IMAGE")"
           printf 'final_digest=%s\n' "$final_digest" >> "$GITHUB_OUTPUT"
           printf 'base_digest=%s\n' "$base_digest" >> "$GITHUB_OUTPUT"
           printf 'base_repo_digest=%s\n' "$base_repo_digest" >> "$GITHUB_OUTPUT"
