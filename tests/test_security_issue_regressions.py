@@ -225,9 +225,11 @@ def test_additional_sast_and_container_security_fixes():
     # Assert the image upgrades dependencies without pulling Alpine's separate
     # Python toolchain, which previously introduced vulnerable duplicate packages.
     assert "FROM python:3.10-alpine" in dockerfile
+    assert "FROM python:3.10-alpine AS builder" in dockerfile
     assert "apk upgrade" in dockerfile
     assert "python3-dev" not in dockerfile
-    assert 'pip install --no-cache-dir --upgrade pip "setuptools>=78.1.1" wheel' in dockerfile
+    assert '/opt/venv/bin/pip install --no-cache-dir --upgrade pip "setuptools>=78.1.1" wheel' in dockerfile
+    assert "COPY --from=builder /opt/venv /opt/venv" in dockerfile
     assert "m.version('setuptools')" in dockerfile
     assert "msgpack-1.1.2.dist-info" in dockerfile
     assert "setuptools-70.3.0.dist-info" in dockerfile
