@@ -18,7 +18,8 @@ import them. Tests, documentation, reports, local state, databases, secrets,
 quarantine content, and generated site content are excluded from the image.
 The HIGH/CRITICAL gate has no unexplained ignore file: Trivy and Grype must both
 pass, and the CycloneDX inventory must not contain a prohibited vulnerable
-version.
+version. CI also starts the default container process, executes the image health
+command inside it, and requires a clean shutdown before scanning or publishing.
 
 `Test & Build` also runs as a weekly no-cache rebuild at 04:17 UTC on Monday.
 Scheduled and manually dispatched runs scan but do not publish. A push to the

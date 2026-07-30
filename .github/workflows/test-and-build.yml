@@ -208,6 +208,24 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           no-cache: true
 
+      - name: Smoke-test container startup and health command
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_id="$(docker run -d "secopsai-ci-scan:${GITHUB_SHA}")"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 10); do
+            if [ "$(docker inspect --format '{{.State.Running}}' "$container_id")" = "true" ]; then
+              break
+            fi
+            sleep 1
+          done
+          test "$(docker inspect --format '{{.State.Running}}' "$container_id")" = "true"
+          docker exec "$container_id" \
+            python -c "from detect import run_detection; print('health-ok')"
+          docker stop --time 10 "$container_id"
+          test "$(docker inspect --format '{{.State.ExitCode}}' "$container_id")" = "0"
+
       - name: Record exact image identities and package provenance
         id: image-identity
         shell: bash

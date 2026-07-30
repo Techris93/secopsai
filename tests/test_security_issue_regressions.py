@@ -191,6 +191,10 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
     assert build_step["with"]["load"] is True
     assert not any(step.get("name") == "Build and push Docker image" for step in build_steps)
     assert any(step.get("name") == "Publish the already-scanned image" for step in build_steps)
+    startup_step = next(step for step in build_steps if step.get("name") == "Smoke-test container startup and health command")
+    assert "docker run -d" in startup_step["run"]
+    assert "from detect import run_detection" in startup_step["run"]
+    assert ".State.ExitCode" in startup_step["run"]
     assert any(step.get("name") == "Generate Trivy base-image JSON" for step in build_steps)
     assert any(step.get("name") == "Generate Trivy final-image JSON" for step in build_steps)
     assert any(step.get("name") == "Generate independent CycloneDX SBOM with Syft" for step in build_steps)
