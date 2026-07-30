@@ -337,20 +337,148 @@ def approve_publication_review(case_id: str, *, review_id: str = "", actor: str 
     return get_case(case_id, db_path=db_path)
 
 
-def prepare_disclosure(case_id: str, *, recipient: str, subject: str = "", body: str = "", embargo_until: Optional[str] = None, actor: str = "analyst", db_path: Optional[str] = None) -> Dict[str, Any]:
+def _package_scope(case: Dict[str, Any]) -> List[Dict[str, Any]]:
+    subjects = [
+        item for item in (case.get("subjects") or [])
+        if item.get("status", "active") == "active" and item.get("subject_type") in {"package", "extension", "publisher"}
+    ]
+    scope: List[Dict[str, Any]] = []
+    for item in subjects:
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        scope.append(
+            {
+                "ecosystem": item.get("ecosystem") or metadata.get("ecosystem") or "",
+                "name": item.get("name") or metadata.get("package") or "",
+                "version": item.get("version") or metadata.get("version") or "",
+                "publisher": item.get("publisher") or metadata.get("publisher") or "",
+                "artifact_sha256": metadata.get("artifact_sha256") or "",
+                "metadata_url": metadata.get("metadata_url") or "",
+                "artifact_url": metadata.get("artifact_url") or "",
+                "contacts": metadata.get("contacts") if isinstance(metadata.get("contacts"), dict) else {},
+            }
+        )
+    return scope
+
+
+def _registry_contact(ecosystem: str) -> str:
+    mapping = {
+        "npm": "security@npmjs.com",
+        "pypi": "security@pypi.org",
+        "nuget": "support@nuget.org",
+        "maven": "security@central.sonatype.com",
+        "rubygems": "security@rubygems.org",
+        "packagist": "contact@packagist.org",
+        "go": "security@golang.org",
+        "open-vsx": "security@eclipse.org",
+    }
+    return mapping.get(str(ecosystem or "").strip().lower(), "security@secopsai.dev")
+
+
+def suggest_disclosure_draft(case_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Build a review-only disclosure draft from case subjects and intake metadata."""
     case = get_case(case_id, db_path=db_path)
-    recipient = str(recipient or "").strip()
+    scope = _package_scope(case)
+    package_lines: List[str] = []
+    recipients: List[str] = []
+    names: List[str] = []
+    urls: List[str] = []
+    hashes: List[str] = []
+    ecosystems: List[str] = []
+    for item in scope:
+        label = " / ".join(part for part in [item.get("ecosystem"), item.get("name"), item.get("version")] if part)
+        if label:
+            package_lines.append(label)
+        if item.get("ecosystem"):
+            ecosystems.append(str(item["ecosystem"]))
+        if item.get("publisher"):
+            names.append(str(item["publisher"]))
+        if item.get("artifact_sha256"):
+            hashes.append(str(item["artifact_sha256"]))
+        contacts = item.get("contacts") if isinstance(item.get("contacts"), dict) else {}
+        recipients.extend(str(value) for value in contacts.get("emails") or [] if value)
+        names.extend(str(value) for value in contacts.get("names") or [] if value)
+        urls.extend(str(value) for value in contacts.get("urls") or [] if value)
+        if not (contacts.get("emails") or []):
+            if item.get("ecosystem"):
+                recipients.append(_registry_contact(str(item["ecosystem"])))
+    # Prefer maintainer emails, then registry security contacts.
+    unique_recipients: List[str] = []
+    seen = set()
+    for item in recipients:
+        key = item.casefold()
+        if not item or key in seen or "\n" in item or len(item) > 320:
+            continue
+        seen.add(key)
+        unique_recipients.append(item)
+    if not unique_recipients:
+        unique_recipients = ["security@secopsai.dev"]
+    recipient = unique_recipients[0]
+    package_summary = ", ".join(package_lines[:6]) or case.get("title") or "the investigated package"
+    subject = f"Responsible disclosure: {package_summary}"[:240]
+    hash_lines = "\n".join(f"- {value}" for value in hashes[:8]) or "- Artifact hash available on request through the agreed channel."
+    contact_names = ", ".join(dict.fromkeys(names) )[:240] or "the package maintainer"
+    body = (
+        f"Hello {contact_names},\n\n"
+        f"SecOpsAI Research is preparing a responsible disclosure regarding {package_summary}.\n\n"
+        "We collected official registry metadata and preserved a hashed, quarantined artifact for defensive analysis. "
+        "Package code was not installed or executed on analyst workstations.\n\n"
+        f"Relevant artifact hashes:\n{hash_lines}\n\n"
+        "We can share reproduction-safe details, affected versions, and recommended mitigations through this channel. "
+        "Please confirm the preferred security contact and any embargo expectations.\n\n"
+        "Regards,\nSecOpsAI Research\nresearch@secopsai.dev\n"
+    )
+    return {
+        "case_id": case["case_id"],
+        "recipient": recipient,
+        "recipient_candidates": unique_recipients[:8],
+        "subject": subject,
+        "body": body[:30000],
+        "affected_scope": scope,
+        "package_summary": package_summary,
+        "artifact_hashes": hashes[:12],
+        "contact_names": list(dict.fromkeys(names))[:12],
+        "contact_urls": list(dict.fromkeys(urls))[:12],
+        "ecosystems": list(dict.fromkeys(ecosystems)),
+        "requires_review": True,
+        "auto_send": False,
+        "notes": [
+            "Recipient and message are suggested from registry metadata and case subjects.",
+            "Sending remains a separate approval-gated action.",
+            "Review names, emails, and package scope before delivery.",
+        ],
+    }
+
+
+def prepare_disclosure(case_id: str, *, recipient: str = "", subject: str = "", body: str = "", embargo_until: Optional[str] = None, actor: str = "analyst", db_path: Optional[str] = None) -> Dict[str, Any]:
+    case = get_case(case_id, db_path=db_path)
+    suggestion = suggest_disclosure_draft(case_id, db_path=db_path)
+    recipient = str(recipient or suggestion.get("recipient") or "").strip()
     if not recipient or "\n" in recipient or len(recipient) > 320:
         raise ValueError("a valid disclosure recipient is required")
-    subject = (subject or f"SecOpsAI responsible disclosure: {case['title']}").strip()[:240]
-    body = (body or f"Hello,\n\nSecOpsAI is sharing a responsible disclosure regarding {case['title']}.\n\nWe have preserved evidence and can provide hashes and reproduction-safe details through the agreed channel.\n\nRegards,\nSecOpsAI Research").strip()[:30000]
+    subject = (subject or suggestion.get("subject") or f"SecOpsAI responsible disclosure: {case['title']}").strip()[:240]
+    body = (body or suggestion.get("body") or f"Hello,\n\nSecOpsAI is sharing a responsible disclosure regarding {case['title']}.\n\nWe have preserved evidence and can provide hashes and reproduction-safe details through the agreed channel.\n\nRegards,\nSecOpsAI Research").strip()[:30000]
     disclosure_id = _id("DSC")
     now = soc_store.utc_now()
     with closing(soc_store.connect(db_path)) as connection:
-        connection.execute("INSERT INTO research_disclosures (disclosure_id, case_id, status, recipient, subject, body, affected_scope_json, attachments_json, embargo_until, approved_by, sent_at, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?, ?, ?, '[]', ?, NULL, NULL, ?, ?)", (disclosure_id, case_id, recipient, subject, body, _json({"subjects": [{"ecosystem": item.get("ecosystem"), "name": item.get("name"), "version": item.get("version")} for item in case.get("subjects", [])]}), embargo_until, now, now))
-        _event(connection, case_id, "disclosure_prepared", "Prepared a responsible disclosure draft; sending remains approval-gated.", actor, {"disclosure_id": disclosure_id, "recipient": recipient})
+        connection.execute(
+            "INSERT INTO research_disclosures (disclosure_id, case_id, status, recipient, subject, body, affected_scope_json, attachments_json, embargo_until, approved_by, sent_at, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?, ?, ?, '[]', ?, NULL, NULL, ?, ?)",
+            (
+                disclosure_id,
+                case_id,
+                recipient,
+                subject,
+                body,
+                _json({"subjects": suggestion.get("affected_scope") or [{"ecosystem": item.get("ecosystem"), "name": item.get("name"), "version": item.get("version")} for item in case.get("subjects", [])], "suggestion": {"recipient_candidates": suggestion.get("recipient_candidates"), "package_summary": suggestion.get("package_summary")}}),
+                embargo_until,
+                now,
+                now,
+            ),
+        )
+        _event(connection, case_id, "disclosure_prepared", "Prepared a responsible disclosure draft; sending remains approval-gated.", actor, {"disclosure_id": disclosure_id, "recipient": recipient, "auto_suggested": not bool(str(recipient or '').strip() and recipient != suggestion.get('recipient'))})
         connection.commit()
-    return get_disclosure(disclosure_id, db_path=db_path)
+    result = get_disclosure(disclosure_id, db_path=db_path)
+    result["suggestion"] = suggestion
+    return result
 
 
 def get_disclosure(disclosure_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:

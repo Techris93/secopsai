@@ -203,6 +203,7 @@ from secopsai.research_workflow import (
     recover_stale_jobs,
     retry_research_job,
     prepare_disclosure,
+    suggest_disclosure_draft,
     publication_safety_check,
     record_verdict,
     request_sandbox,
@@ -1924,9 +1925,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     pubapprove.add_argument("--waiver", action="append", default=[])
     pubapprove.add_argument("--actor", default="publisher")
     pubapprove.add_argument("--db-path", default=None)
+    suggest = workflow_sub.add_parser("suggest-disclosure")
+    suggest.add_argument("case_id")
+    suggest.add_argument("--db-path", default=None)
     disclosure = workflow_sub.add_parser("prepare-disclosure")
     disclosure.add_argument("case_id")
-    disclosure.add_argument("--recipient", required=True)
+    disclosure.add_argument("--recipient", default="", help="Optional. Defaults to suggested maintainer/registry contact from case metadata.")
     disclosure.add_argument("--subject", default="")
     disclosure.add_argument("--body", default="")
     disclosure.add_argument("--embargo-until", default=None)
@@ -2760,6 +2764,8 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = publication_safety_check(args.case_id, actor=args.actor, db_path=args.db_path)
             elif command == "publication-approve":
                 payload = approve_publication_review(args.case_id, review_id=args.review_id, waivers=args.waiver, actor=args.actor, db_path=args.db_path)
+            elif command == "suggest-disclosure":
+                payload = suggest_disclosure_draft(args.case_id, db_path=args.db_path)
             elif command == "prepare-disclosure":
                 payload = prepare_disclosure(args.case_id, recipient=args.recipient, subject=args.subject, body=args.body, embargo_until=args.embargo_until, actor=args.actor, db_path=args.db_path)
             elif command == "disclosure-status":

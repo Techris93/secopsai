@@ -557,8 +557,91 @@ def _quarantine_path(digest: str, filename: str) -> Path:
     return path
 
 
+def _walk_values(value: Any, *, depth: int = 0) -> Iterable[Any]:
+    if depth > 5:
+        return
+    yield value
+    if isinstance(value, dict):
+        for nested in value.values():
+            yield from _walk_values(nested, depth=depth + 1)
+    elif isinstance(value, (list, tuple)):
+        for nested in value[:50]:
+            yield from _walk_values(nested, depth=depth + 1)
+
+
+def _extract_contact_candidates(raw: Dict[str, Any], publisher: str = "") -> Dict[str, Any]:
+    """Collect only bounded contact-like fields for disclosure drafting."""
+    emails: List[str] = []
+    names: List[str] = []
+    urls: List[str] = []
+    email_re = re.compile(r"(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b")
+    for value in _walk_values(raw):
+        if isinstance(value, str):
+            text = value.strip()
+            if not text or len(text) > 320:
+                continue
+            for match in email_re.findall(text):
+                emails.append(match.lower())
+            if text.startswith("http://") or text.startswith("https://"):
+                lower = text.lower()
+                if any(token in lower for token in ("security", "support", "issues", "contact", "github.com", "gitlab.com")):
+                    urls.append(text)
+            elif " " not in text and "@" not in text and 1 < len(text) <= 120:
+                continue
+        elif isinstance(value, dict):
+            for key, nested in value.items():
+                key_l = str(key).lower()
+                if key_l in {"email", "mail", "contact", "author", "authors", "maintainer", "maintainers", "owner", "owners", "publisher", "namespace"}:
+                    if isinstance(nested, str) and nested.strip():
+                        if "@" in nested:
+                            emails.extend(email_re.findall(nested))
+                        elif key_l in {"author", "authors", "maintainer", "maintainers", "owner", "owners", "publisher", "namespace"}:
+                            names.append(nested.strip()[:160])
+                    elif isinstance(nested, dict):
+                        name = nested.get("name") or nested.get("username") or nested.get("login")
+                        email = nested.get("email") or nested.get("mail")
+                        if isinstance(name, str) and name.strip():
+                            names.append(name.strip()[:160])
+                        if isinstance(email, str) and email.strip():
+                            emails.extend(email_re.findall(email))
+                    elif isinstance(nested, list):
+                        for item in nested[:20]:
+                            if isinstance(item, str) and item.strip():
+                                if "@" in item:
+                                    emails.extend(email_re.findall(item))
+                                else:
+                                    names.append(item.strip()[:160])
+                            elif isinstance(item, dict):
+                                name = item.get("name") or item.get("username") or item.get("login")
+                                email = item.get("email") or item.get("mail")
+                                if isinstance(name, str) and name.strip():
+                                    names.append(name.strip()[:160])
+                                if isinstance(email, str) and email.strip():
+                                    emails.extend(email_re.findall(email))
+    if publisher:
+        names.append(publisher[:160])
+        emails.extend(email_re.findall(publisher))
+    # Keep order while de-duplicating.
+    def unique(items: List[str]) -> List[str]:
+        seen = set()
+        out: List[str] = []
+        for item in items:
+            key = item.casefold()
+            if not item or key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+        return out[:12]
+    return {
+        "emails": unique([item for item in emails if not item.endswith(".invalid")]),
+        "names": unique(names),
+        "urls": unique(urls),
+    }
+
+
 def _metadata_summary(metadata: RegistryMetadata) -> Dict[str, Any]:
-    raw = metadata.raw
+    raw = metadata.raw if isinstance(metadata.raw, dict) else {}
+    contacts = _extract_contact_candidates(raw, publisher=metadata.publisher)
     return {
         "ecosystem": metadata.ecosystem,
         "package": metadata.package,
@@ -569,6 +652,7 @@ def _metadata_summary(metadata: RegistryMetadata) -> Dict[str, Any]:
         "published_at": metadata.published_at[:80],
         "dependencies": metadata.dependencies if isinstance(metadata.dependencies, (dict, list)) else {},
         "integrity": metadata.integrity,
+        "contacts": contacts,
         "raw_keys": sorted(str(key) for key in raw.keys())[:100],
     }
 

@@ -11,6 +11,7 @@ from secopsai.research_workflow import (
     attach_intake_job,
     build_evidence_matrix,
     prepare_disclosure,
+    suggest_disclosure_draft,
     publication_safety_check,
     record_verdict,
     request_sandbox,
@@ -44,7 +45,8 @@ def fake_fetcher(artifact: bytes):
             "1.0.0": {
                 "name": "demo-pkg",
                 "version": "1.0.0",
-                "author": {"name": "Example"},
+                "author": {"name": "Example Maintainer", "email": "maintainer@example.com"},
+                "maintainers": [{"name": "Example Maintainer", "email": "maintainer@example.com"}],
                 "dist": {"tarball": "https://registry.npmjs.org/demo-pkg/-/demo-pkg-1.0.0.tgz", "integrity": "sha512-test"},
             }
         },
@@ -209,3 +211,28 @@ def test_workflow_records_human_gates(tmp_path, monkeypatch):
     review = publication_safety_check(case["case_id"], db_path=db)
     assert review["approval_required"] is True
     assert review["status"] in {"needs_approval", "blocked"}
+
+
+
+def test_disclosure_prefills_from_case_metadata(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(tmp_path / "quarantine"))
+    case = create_case(title="Disclosure prefill test", db_path=db)
+    run_package_intake(
+        case_id=case["case_id"],
+        ecosystem="npm",
+        package="demo-pkg",
+        db_path=db,
+        attach=True,
+        fetcher=fake_fetcher(npm_artifact()),
+    )
+    suggestion = suggest_disclosure_draft(case["case_id"], db_path=db)
+    assert suggestion["recipient"] == "maintainer@example.com"
+    assert "demo-pkg" in suggestion["subject"]
+    assert "demo-pkg" in suggestion["body"]
+    assert any(value == "maintainer@example.com" for value in suggestion["recipient_candidates"])
+    disclosure = prepare_disclosure(case["case_id"], db_path=db)
+    assert disclosure["status"] == "draft"
+    assert disclosure["recipient"] == "maintainer@example.com"
+    assert "demo-pkg" in disclosure["subject"]
+    assert disclosure["body"]
