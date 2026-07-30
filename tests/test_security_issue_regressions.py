@@ -186,11 +186,22 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
     assert "ignore-unfixed" not in image_sarif_step["with"]
     image_upload_step = next(step for step in build_steps if step.get("name") == "Upload Trivy results to GitHub Security tab")
     assert image_upload_step["with"]["category"] == "trivy-image"
+    build_step = next(step for step in build_steps if step.get("name") == "Build Docker image for security scan")
+    assert build_step["with"]["no-cache"] is True
+    assert build_step["with"]["load"] is True
+    assert not any(step.get("name") == "Build and push Docker image" for step in build_steps)
+    assert any(step.get("name") == "Publish the already-scanned image" for step in build_steps)
+    assert any(step.get("name") == "Generate Trivy base-image JSON" for step in build_steps)
+    assert any(step.get("name") == "Generate Trivy final-image JSON" for step in build_steps)
+    assert any(step.get("name") == "Generate independent CycloneDX SBOM with Syft" for step in build_steps)
+    assert any(step.get("name") == "Scan exact image with Grype" for step in build_steps)
+    evidence_upload = next(step for step in build_steps if step.get("name") == "Upload container security evidence")
+    assert evidence_upload["if"] == "always()"
     image_gate_step = next(step for step in build_steps if step.get("name") == "Enforce Trivy HIGH/CRITICAL image gate")
-    assert image_gate_step["with"]["severity"] == "HIGH,CRITICAL"
-    assert image_gate_step["with"]["exit-code"] == "1"
-    assert image_gate_step["with"]["format"] == "table"
-    assert image_gate_step["with"]["scanners"] == "vuln"
+    assert "summarize_container_security.py" in image_gate_step["run"]
+    assert "--gate" in image_gate_step["run"]
+    assert any(step.get("name") == "Enforce Grype HIGH/CRITICAL image gate" for step in build_steps)
+    assert any(step.get("name") == "Enforce SBOM package-version assertions" for step in build_steps)
 
     eval_harness = (ROOT / ".github" / "workflows" / "eval-harness-v2.yml").read_text(encoding="utf-8")
     assert "EVAL_TYPE=\"${{ github.event.inputs.evaluation_type" not in eval_harness

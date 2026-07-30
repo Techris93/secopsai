@@ -192,6 +192,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build Docker image for security scan
+        id: container-build
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294
         with:
           context: .
@@ -199,34 +200,188 @@ jobs:
           push: false
           tags: secopsai-ci-scan:${{ github.sha }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          no-cache: true
+
+      - name: Record exact image identities and package provenance
+        id: image-identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p container-security
+          docker pull python:3.10-alpine
+          final_digest="$(docker image inspect --format '{{.Id}}' "secopsai-ci-scan:${GITHUB_SHA}")"
+          base_digest="$(docker image inspect --format '{{.Id}}' python:3.10-alpine)"
+          base_repo_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' python:3.10-alpine)"
+          printf 'final_digest=%s\n' "$final_digest" >> "$GITHUB_OUTPUT"
+          printf 'base_digest=%s\n' "$base_digest" >> "$GITHUB_OUTPUT"
+          printf 'base_repo_digest=%s\n' "$base_repo_digest" >> "$GITHUB_OUTPUT"
+          export FINAL_DIGEST="$final_digest"
+          export BASE_DIGEST="$base_digest"
+          export BASE_REPO_DIGEST="$base_repo_digest"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          Path("container-security/image-identities.json").write_text(
+              json.dumps(
+                  {
+                      "schema_version": "secopsai.container-image-identities.v1",
+                      "commit": os.environ["GITHUB_SHA"],
+                      "final_image": os.environ["FINAL_DIGEST"],
+                      "base_image": os.environ["BASE_DIGEST"],
+                      "base_repo_digest": os.environ["BASE_REPO_DIGEST"],
+                  },
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          docker history --no-trunc --format '{{json .}}' "$final_digest" > container-security/final-image-history.jsonl
+          docker run --rm "$final_digest" \
+            python scripts/container_package_provenance.py \
+            > container-security/container-package-provenance.json
+          container_id="$(docker create "$final_digest")"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          docker export "$container_id" > container-security/rootfs.tar
+          tar -tf container-security/rootfs.tar | grep -Ei \
+            '(^|/)(ensurepip|[^/]*(msgpack|setuptools)[^/]*|[^/]+\.(whl|egg|zip))(/|$)' \
+            > container-security/rootfs-package-paths.txt || true
+          rm -f container-security/rootfs.tar
+      - name: Generate Trivy base-image JSON
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          image-ref: ${{ steps.image-identity.outputs.base_digest }}
+          scanners: "vuln"
+          exit-code: "0"
+          format: "json"
+          output: "container-security/trivy-base.json"
+
+      - name: Generate Trivy final-image JSON
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          image-ref: ${{ steps.image-identity.outputs.final_digest }}
+          scanners: "vuln"
+          exit-code: "0"
+          format: "json"
+          output: "container-security/trivy-final.json"
 
       - name: Generate Trivy image SARIF
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
-          image-ref: secopsai-ci-scan:${{ github.sha }}
+          image-ref: ${{ steps.image-identity.outputs.final_digest }}
           scanners: "vuln"
           exit-code: "0"
           format: "sarif"
-          output: "trivy-results.sarif"
+          output: "container-security/trivy-results.sarif"
+
+      - name: Record Trivy version, database, and normalized provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          trivy version --format json > container-security/trivy-version.json
+          python scripts/summarize_container_security.py \
+            --input container-security/trivy-base.json \
+            --output container-security/trivy-base-evidence.json \
+            --image-digest '${{ steps.image-identity.outputs.base_digest }}' \
+            --trivy-version "$(trivy --version | head -1)" \
+            --db-metadata container-security/trivy-version.json
+          python scripts/summarize_container_security.py \
+            --input container-security/trivy-final.json \
+            --output container-security/trivy-final-evidence.json \
+            --image-digest '${{ steps.image-identity.outputs.final_digest }}' \
+            --trivy-version "$(trivy --version | head -1)" \
+            --db-metadata container-security/trivy-version.json
+
+      - name: Generate independent CycloneDX SBOM with Syft
+        uses: anchore/sbom-action@d7200a720eed41adabe049cd48f7e13cd52bf858
+        with:
+          image: ${{ steps.image-identity.outputs.final_digest }}
+          format: cyclonedx-json
+          output-file: container-security/secopsai.cdx.json
+          artifact-name: secopsai-container-sbom.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Scan exact image with Grype
+        uses: anchore/scan-action@ac02c2cca96bd43004ad85e5fc951721f0a623ea
+        with:
+          image: ${{ steps.image-identity.outputs.final_digest }}
+          fail-build: false
+          severity-cutoff: high
+          output-format: json
+          output-file: container-security/grype-results.json
+
+      - name: Upload container security evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: container-security-${{ github.sha }}
+          path: container-security/
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload Trivy results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@a60c4df7a135c7317c1e9ddf9b5a9b07a910dda9
-        if: always() && hashFiles('trivy-results.sarif') != ''
+        if: always() && hashFiles('container-security/trivy-results.sarif') != ''
         continue-on-error: true
         with:
-          sarif_file: "trivy-results.sarif"
+          sarif_file: "container-security/trivy-results.sarif"
           category: "trivy-image"
 
+      - name: Enforce SBOM package-version assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          sbom = json.loads(Path("container-security/secopsai.cdx.json").read_text(encoding="utf-8"))
+          forbidden = {("msgpack", "1.1.2"), ("setuptools", "70.3.0")}
+          present = {
+              (str(component.get("name", "")).lower(), str(component.get("version", "")))
+              for component in sbom.get("components", [])
+          }
+          vulnerable = sorted(forbidden & present)
+          if vulnerable:
+              raise SystemExit(f"Forbidden vulnerable versions remain in CycloneDX SBOM: {vulnerable}")
+          PY
+
+      - name: Enforce Grype HIGH/CRITICAL image gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("container-security/grype-results.json").read_text(encoding="utf-8"))
+          failures = []
+          for match in report.get("matches", []):
+              vulnerability = match.get("vulnerability") or {}
+              artifact = match.get("artifact") or {}
+              if vulnerability.get("severity") in {"High", "Critical", "HIGH", "CRITICAL"}:
+                  failures.append(
+                      f"{vulnerability.get('id')} {artifact.get('name')}@{artifact.get('version')} "
+                      f"path={artifact.get('locations') or []}"
+                  )
+          if failures:
+              print("\n".join(f"::error title=Grype container vulnerability::{item}" for item in failures))
+              raise SystemExit(f"Grype found {len(failures)} HIGH/CRITICAL vulnerabilities")
+          PY
+
       - name: Enforce Trivy HIGH/CRITICAL image gate
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
-        with:
-          image-ref: secopsai-ci-scan:${{ github.sha }}
-          scanners: "vuln"
-          severity: "HIGH,CRITICAL"
-          exit-code: "1"
-          format: "table"
+        run: |
+          python scripts/summarize_container_security.py \
+            --input container-security/trivy-final.json \
+            --output container-security/trivy-final-evidence.json \
+            --image-digest '${{ steps.image-identity.outputs.final_digest }}' \
+            --trivy-version "$(trivy --version | head -1)" \
+            --db-metadata container-security/trivy-version.json \
+            --gate
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
@@ -235,15 +390,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Publish the already-scanned image
+        shell: bash
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            test -n "$tag" || continue
+            docker tag '${{ steps.image-identity.outputs.final_digest }}' "$tag"
+            docker push "$tag"
+          done <<< "$IMAGE_TAGS"
 
   release:
     needs: [test, chatgpt-app, build-container]
