@@ -375,6 +375,43 @@ def test_local_bridge_uses_selected_model_and_falls_back(tmp_path: Path, monkeyp
     assert "opencodex:xai" in stored["provider"]
 
 
+def test_opencodex_catalog_pins_survive_transient_model_list_rewrites(tmp_path: Path, monkeypatch):
+    config_dir = tmp_path / ".opencodex"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "google-antigravity": {
+                        "defaultModel": "gemini-3.6-flash",
+                        "models": ["gemini-3.6-flash"],
+                        "modelCatalogPins": [
+                            "gemini-3.5-flash-extra-low",
+                            "gemini-3.5-flash-low",
+                            "gemini-3.5-flash-mid",
+                            "gemini-3.5-flash-high",
+                            "gemini-3-flash-agent",
+                        ],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    from secopsai.codex_bridge import _models_from_opencodex_config
+
+    ids = {item["id"] for item in _models_from_opencodex_config()}
+    assert ids >= {
+        "google-antigravity/gemini-3.5-flash-extra-low",
+        "google-antigravity/gemini-3.5-flash-low",
+        "google-antigravity/gemini-3.5-flash-mid",
+        "google-antigravity/gemini-3.5-flash-high",
+        "google-antigravity/gemini-3-flash-agent",
+    }
+
+
 def test_requeue_failed_intelligence_job(tmp_path: Path):
     from secopsai.intelligence_jobs import fail_job, requeue_job
 

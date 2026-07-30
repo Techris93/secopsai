@@ -457,6 +457,11 @@ def _models_from_opencodex_config() -> list[dict[str, Any]]:
         names = []
         if isinstance(conf.get("models"), list):
             names.extend(str(item) for item in conf.get("models") if str(item).strip())
+        # Catalog pins are deliberately separate from provider discovery. They
+        # preserve known working model aliases when an upstream sync rewrites
+        # the provider's transient models list or its discovery endpoint fails.
+        if isinstance(conf.get("modelCatalogPins"), list):
+            names.extend(str(item) for item in conf.get("modelCatalogPins") if str(item).strip())
         default_model = str(conf.get("defaultModel") or conf.get("model") or "").strip()
         if default_model:
             names.insert(0, default_model)
