@@ -1,0 +1,10 @@
+{
+  "schema_version": "secopsai.container-vex-policy.v1",
+  "vex_document": "python-3.13.14-backports.openvex.json",
+  "patch_manifest": "../../container/stdlib/3.13/PATCHES.json",
+  "issued_at": "2026-07-30T00:00:00Z",
+  "review_after": "2026-10-30T00:00:00Z",
+  "maximum_review_days": 92,
+  "owner": "SecOpsAI Security",
+  "reason": "Stable CPython 3.13.14 with exact upstream PSF security backports applied and hash-verified in the final image."
+}

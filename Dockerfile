@@ -41,6 +41,12 @@ COPY --chown=secops:secops . .
 # packages remain in the discarded builder stage.
 COPY --from=builder --chown=secops:secops /opt/venv /opt/venv
 
+# Apply exact PSF Python 3.13 security backports. PATCHES.json records the
+# upstream commits and hashes used for the evidence-backed OpenVEX statement.
+COPY container/stdlib/3.13/tarfile.py /usr/local/lib/python3.13/tarfile.py
+COPY container/stdlib/3.13/html/parser.py /usr/local/lib/python3.13/html/parser.py
+COPY container/stdlib/3.13/PATCHES.json /usr/local/share/secopsai/cpython-patches.json
+
 # pip, setuptools, wheel, and ensurepip are installation tools. SecOpsAI has no
 # runtime import of them, so remove both base-image and venv copies after the
 # resolved environment has been assembled.
@@ -54,8 +60,10 @@ RUN rm -rf \
       /opt/venv/lib/python3.13/site-packages/wheel* \
       /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.13 \
       /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.13 && \
+    echo '9fedddf7e814c226cb7e1ac0aa603092eda40047367ec00ad740a81484a17d01  /usr/local/lib/python3.13/tarfile.py' | sha256sum -c - && \
+    echo '4274e9112adf3fa57c7f9afa7c9b5c631456b18b7403cc627cc5027d02cdd2ae  /usr/local/lib/python3.13/html/parser.py' | sha256sum -c - && \
     python -c "import importlib.util as u; assert u.find_spec('pip') is None; assert u.find_spec('setuptools') is None; assert u.find_spec('wheel') is None" && \
-    python -c "from detect import run_detection; print('runtime-import-ok')"
+    python -c "import html.parser, tarfile; from detect import run_detection; assert html.parser.__file__ == '/usr/local/lib/python3.13/html/parser.py'; assert tarfile.__file__ == '/usr/local/lib/python3.13/tarfile.py'; print('runtime-import-ok')"
 
 # Switch to non-root user
 USER secops

@@ -1,0 +1,32 @@
+{
+  "schema_version": "secopsai.cpython-runtime-patches.v1",
+  "base_runtime": "CPython 3.13.14",
+  "source_repository": "https://github.com/python/cpython",
+  "source_revision": "7933f4bf7131aa4140750f9404f5de0aa2969ced",
+  "files": [
+    {
+      "path": "Lib/tarfile.py",
+      "sha256": "9fedddf7e814c226cb7e1ac0aa603092eda40047367ec00ad740a81484a17d01",
+      "vulnerabilities": [
+        {
+          "id": "CVE-2026-11940",
+          "upstream_3_13_commit": "771d12dda5140313db0ac550292987975651bbde"
+        },
+        {
+          "id": "CVE-2026-11972",
+          "upstream_3_13_commit": "3f031d431f80668e14f3bc066bbf4369cd9281b9"
+        }
+      ]
+    },
+    {
+      "path": "Lib/html/parser.py",
+      "sha256": "4274e9112adf3fa57c7f9afa7c9b5c631456b18b7403cc627cc5027d02cdd2ae",
+      "vulnerabilities": [
+        {
+          "id": "CVE-2026-15308",
+          "upstream_3_13_commit": "7933f4bf7131aa4140750f9404f5de0aa2969ced"
+        }
+      ]
+    }
+  ]
+}

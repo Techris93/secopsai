@@ -6,6 +6,9 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main, develop]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -165,8 +168,10 @@ jobs:
     needs: [test, chatgpt-app]
     runs-on: ubuntu-latest
     if: >-
-      github.event_name == 'push' &&
-      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+      (github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
 
     permissions:
       contents: read
@@ -314,6 +319,12 @@ jobs:
           severity-cutoff: high
           output-format: json
           output-file: container-security/grype-results.json
+          vex: .github/vex/python-3.13.14-backports.openvex.json
+
+      - name: Validate evidence-backed container VEX
+        run: |
+          python scripts/validate_container_vex.py \
+            --output container-security/vex-validation.json
 
       - name: Upload container security evidence
         if: always()
@@ -385,6 +396,7 @@ jobs:
             --gate
 
       - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
@@ -392,6 +404,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish the already-scanned image
+        if: github.event_name == 'push'
         shell: bash
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}

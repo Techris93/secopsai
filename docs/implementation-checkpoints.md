@@ -1,5 +1,29 @@
 # Implementation Checkpoints
 
+## Container Provenance And Deterministic Security Gate
+
+The production image is built once without cache, identified by its image
+digest, and scanned at that exact digest before it can be tagged or published.
+CI retains Trivy JSON and SARIF, a normalized package-and-layer evidence report,
+an independent Syft CycloneDX SBOM, Grype JSON, the base-image identity, image
+history, and a bounded root-filesystem package-path inventory. A failed gate
+therefore names the affected package, version, path or source target, layer,
+scanner version, and vulnerability database metadata instead of leaving an
+opaque table-only failure.
+
+The image uses a digest-pinned Python 3.13 Alpine base. Dependency installation
+is isolated in the builder stage. `pip`, `setuptools`, `wheel`, and `ensurepip`
+are removed from the final runtime after tests proved that SecOpsAI does not
+import them. Tests, documentation, reports, local state, databases, secrets,
+quarantine content, and generated site content are excluded from the image.
+The HIGH/CRITICAL gate has no unexplained ignore file: Trivy and Grype must both
+pass, and the CycloneDX inventory must not contain a prohibited vulnerable
+version.
+
+`Test & Build` also runs as a weekly no-cache rebuild at 04:17 UTC on Monday.
+Scheduled and manually dispatched runs scan but do not publish. A push to the
+main branch or a version tag may publish only the already-scanned image object.
+
 ## Research worker storage-pressure recovery
 
 The continuous registry worker now treats disk capacity as an explicit operational dependency. Before collection it records database, journal, WAL, filesystem, reserve, and SQLite freelist metrics; releases an owner-only emergency reserve under pressure; prunes only retention-expired operational history in bounded transactions; keeps pending events, candidate-linked evidence, cases, active alerts, and the newest collector snapshots; and makes freed pages reusable. Operators can inspect and recover storage through `secopsai research storage status`, `maintain --aggressive`, and `release-reserve`. The Render Blueprint configures a 5 GB worker disk, 16 MB recovery reserve, 128 MB minimum free-space floor, 85% pressure threshold, and explicit history-retention windows. The production runbook requires increasing an already-full disk before recovery because SQLite cannot commit cleanup without writable capacity.

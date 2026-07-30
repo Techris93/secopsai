@@ -1,0 +1,28 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://secopsai.dev/vex/python-3.13.14-backports/1",
+  "author": "SecOpsAI Security <security@secopsai.dev>",
+  "role": "Product Security",
+  "timestamp": "2026-07-30T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {"name": "CVE-2026-11940"},
+      "products": [{"@id": "pkg:generic/python@3.13.14"}],
+      "status": "fixed",
+      "impact_statement": "The final image replaces Lib/tarfile.py with the Python 3.13 upstream security-fixed revision. The file hash and upstream commit are verified during the image build."
+    },
+    {
+      "vulnerability": {"name": "CVE-2026-11972"},
+      "products": [{"@id": "pkg:generic/python@3.13.14"}],
+      "status": "fixed",
+      "impact_statement": "The final image replaces Lib/tarfile.py with the Python 3.13 upstream security-fixed revision. The file hash and upstream commit are verified during the image build."
+    },
+    {
+      "vulnerability": {"name": "CVE-2026-15308"},
+      "products": [{"@id": "pkg:generic/python@3.13.14"}],
+      "status": "fixed",
+      "impact_statement": "The final image replaces Lib/html/parser.py with the Python 3.13 upstream security-fixed revision. The file hash and upstream commit are verified during the image build."
+    }
+  ]
+}
