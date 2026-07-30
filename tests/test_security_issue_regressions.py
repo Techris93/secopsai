@@ -199,9 +199,13 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
 
 def test_container_and_playbook_security_gates_stay_clean():
     dockerfile = (ROOT / "Dockerfile").read_text()
+    dockerignore = (ROOT / ".dockerignore").read_text()
     playbook = (ROOT / "supply-chain/playbooks/incident_response.py").read_text()
 
     assert "apk add --no-cache" in dockerfile
+    assert ".venv" in dockerignore
+    assert "data/research" in dockerignore
+    assert "*.db" in dockerignore
     assert "shell=True" not in playbook
 
 
@@ -225,3 +229,5 @@ def test_additional_sast_and_container_security_fixes():
     assert "python3-dev" not in dockerfile
     assert 'pip install --no-cache-dir --upgrade pip "setuptools>=78.1.1" wheel' in dockerfile
     assert "m.version('setuptools')" in dockerfile
+    assert "msgpack-1.1.2.dist-info" in dockerfile
+    assert "setuptools-70.3.0.dist-info" in dockerfile
