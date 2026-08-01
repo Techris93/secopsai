@@ -439,7 +439,11 @@ def list_runs(*, status: str = "", limit: int = 100, db_path: Optional[str] = No
 
 
 def status(*, db_path: Optional[str] = None) -> Dict[str, Any]:
-    runs = list_runs(limit=200, db_path=db_path)
+    # Return a generous recent window for the operator surface, but compute
+    # counters from the complete table. A fixed 200-row window previously
+    # made an old backlog disappear from the dashboard and understated the
+    # number of recoverable investigations.
+    runs = list_runs(limit=500, db_path=db_path)
     settings = get_settings(db_path=db_path)
     max_attempts = int(settings.get("max_attempts") or DEFAULTS["max_attempts"])
     # Keep recovery semantics explicit in the API. Older rows may have a
@@ -455,8 +459,17 @@ def status(*, db_path: Optional[str] = None) -> Dict[str, Any]:
             if run["recovery_available"]
             else ("retry limit reached" if recoverable else "run is active or complete")
         )
-    states = {name: sum(run["status"] == name for run in runs) for name in {
+    state_names = {
         "queued", "collecting", "analyzing", "awaiting_model", "awaiting_input",
-        "awaiting_sandbox", "evidence_gap", "resolved", "escalated", "failed", "canceled",
-    }}
+        "awaiting_sandbox", "ready_for_decision", "evidence_gap", "resolved", "escalated", "failed", "canceled",
+    }
+    with closing(soc_store.connect(db_path)) as connection:
+        rows = connection.execute(
+            "SELECT status, COUNT(*) AS count FROM investigation_autopilot_runs GROUP BY status"
+        ).fetchall()
+    states = {name: 0 for name in state_names}
+    for row in rows:
+        states[str(row["status"])] = int(row["count"])
+    states["total"] = sum(states.values())
+    states["recovery_available"] = sum(1 for run in runs if run.get("recovery_available"))
     return {"schema_version": SCHEMA_VERSION, "settings": settings, "summary": states, "runs": runs}
