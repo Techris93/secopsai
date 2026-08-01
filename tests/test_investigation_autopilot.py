@@ -127,6 +127,25 @@ def test_recovery_status_exposes_retry_for_stale_recoverable_rows(tmp_path):
     assert retried["status"] == "queued"
 
 
+def test_due_recovery_requeues_stale_rows_with_backoff(tmp_path):
+    db = str(tmp_path / "soc.db")
+    soc_store.persist_findings([_finding()], source="secopsai-supply-chain", db_path=db)
+    queued = investigation_autopilot.enqueue_finding("SCM-AUTOPILOT-1", db_path=db)
+    with soc_store.connect(db) as connection:
+        connection.execute(
+            """UPDATE investigation_autopilot_runs
+               SET status='failed', retryable=0, attempt=1,
+                   updated_at='2020-01-01T00:00:00Z'
+               WHERE run_id=?""",
+            (queued["run_id"],),
+        )
+        connection.commit()
+
+    recovered = investigation_autopilot.recover_due_runs(db_path=db)
+    assert recovered["run_ids"] == [queued["run_id"]]
+    assert investigation_autopilot.get_run(queued["run_id"], db_path=db)["status"] == "queued"
+
+
 def test_pypi_exact_version_uses_bounded_release_endpoint():
     requested_urls = []
 

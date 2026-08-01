@@ -9,6 +9,7 @@ import hashlib
 import json
 import secrets
 from contextlib import closing
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import soc_store
@@ -30,6 +31,7 @@ DEFAULTS = {
     "auto_extract_iocs": True,
     "auto_correlate": True,
 }
+RECOVERY_BACKOFF_SECONDS = 300
 
 
 def _json(value: Any) -> str:
@@ -268,6 +270,7 @@ def run_due(*, db_path: Optional[str] = None, limit: int = 1) -> Dict[str, Any]:
     settings = get_settings(db_path=db_path)
     if settings["mode"] == "off":
         return {"status": "off", "processed": 0, "runs": []}
+    recovered = recover_due_runs(db_path=db_path)
     backfill = enqueue_due_findings(db_path=db_path, limit=max(10, int(settings["max_active_runs"])))
     with closing(soc_store.connect(db_path)) as connection:
         active_count = int(connection.execute(
@@ -281,7 +284,63 @@ def run_due(*, db_path: Optional[str] = None, limit: int = 1) -> Dict[str, Any]:
     results = []
     for row in rows:
         results.append(_run(str(row["run_id"]), db_path=db_path))
-    return {"status": "completed", "processed": len(results), "runs": results, "backfill": backfill}
+    return {"status": "completed", "processed": len(results), "runs": results, "backfill": backfill, "recovered": recovered}
+
+
+def _timestamp_age_seconds(value: Any) -> Optional[float]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds())
+
+
+def recover_due_runs(*, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Requeue stale recoverable runs with bounded exponential backoff.
+
+    Evidence gaps are often caused by a temporary registry or analyzer
+    outage. Automatic recovery is useful, but retrying every cycle would
+    amplify an outage. The persisted attempt count and backoff keep this
+    path bounded; once the configured limit is reached the run remains
+    visible for an explicit operator decision.
+    """
+    settings = get_settings(db_path=db_path)
+    max_attempts = int(settings.get("max_attempts") or DEFAULTS["max_attempts"])
+    now = soc_store.utc_now()
+    with closing(soc_store.connect(db_path)) as connection:
+        rows = connection.execute(
+            """SELECT run_id, status, attempt, retryable, updated_at
+               FROM investigation_autopilot_runs
+               WHERE status IN ('failed', 'evidence_gap', 'canceled')
+               ORDER BY updated_at ASC"""
+        ).fetchall()
+        recovered: list[str] = []
+        for row in rows:
+            attempts = int(row["attempt"] or 0)
+            if attempts >= max_attempts:
+                continue
+            age = _timestamp_age_seconds(row["updated_at"])
+            backoff = min(3600, RECOVERY_BACKOFF_SECONDS * (2 ** max(0, attempts - 1)))
+            if age is None or age < backoff:
+                continue
+            connection.execute(
+                """UPDATE investigation_autopilot_runs
+                   SET status='queued', current_stage='queued',
+                       blocker_code=NULL, blocker_message=NULL,
+                       completed_at=NULL, retryable=1, updated_at=?
+                   WHERE run_id=?""",
+                (now, str(row["run_id"])),
+            )
+            recovered.append(str(row["run_id"]))
+        connection.commit()
+    return {"count": len(recovered), "run_ids": recovered}
 
 
 def _run(run_id: str, *, db_path: Optional[str]) -> Dict[str, Any]:
