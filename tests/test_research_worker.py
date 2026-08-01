@@ -90,6 +90,7 @@ def test_worker_cycle_isolates_collector_failures(tmp_path, monkeypatch):
     assert "scoring" in result
     assert "retries" in result
     assert "recovery" in result
+    assert "investigations" in result
     assert "storage" in result
     assert len(result["operational_alert_ids"]) == 8
     assert result["alert_delivery"]["enabled"] is False

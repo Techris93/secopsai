@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 import soc_store
+from secopsai.investigation_autopilot import run_due as run_due_investigations
 from secopsai.observability import capture_exception, initialize_observability
 from secopsai.research_delivery import deliver_pending_operational_alerts
 from secopsai.research_intake import SafeFetcher
@@ -239,6 +240,14 @@ def run_worker_cycle(
     retries = retry_dead_letters(limit=50, db_path=db_path, fetcher=fetcher)
     recovery = recover_interrupted_runs(db_path=db_path)
     try:
+        # The research worker is the durable 24/7 control loop. Keep evidence
+        # investigations on the same bounded cadence as registry collection so
+        # queued supply-chain alerts do not depend on a dashboard click.
+        investigations = run_due_investigations(db_path=db_path)
+    except Exception as exc:  # investigation work must not stop surveillance
+        capture_exception(exc, context={"component": "research_investigation_autopilot"})
+        investigations = {"status": "degraded", "processed": 0, "error": str(exc)[:500]}
+    try:
         deliveries = deliver_pending_operational_alerts(db_path=db_path)
     except Exception as exc:  # alerting must not stop registry surveillance
         capture_exception(exc, context={"component": "research_alert_delivery"})
@@ -249,6 +258,7 @@ def run_worker_cycle(
         "scoring": scoring,
         "retries": retries,
         "recovery": recovery,
+        "investigations": investigations,
         "operational_alert_ids": alert_ids,
         "alert_delivery": deliveries,
         "storage": storage,
