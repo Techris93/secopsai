@@ -108,6 +108,25 @@ def test_run_due_backfills_existing_high_priority_findings(tmp_path, monkeypatch
     assert len(investigation_autopilot.list_runs(db_path=db)) == 1
 
 
+def test_recovery_status_exposes_retry_for_stale_recoverable_rows(tmp_path):
+    db = str(tmp_path / "soc.db")
+    soc_store.persist_findings([_finding()], source="secopsai-supply-chain", db_path=db)
+    queued = investigation_autopilot.enqueue_finding("SCM-AUTOPILOT-1", db_path=db)
+    with soc_store.connect(db) as connection:
+        connection.execute(
+            "UPDATE investigation_autopilot_runs SET status='evidence_gap', retryable=0, attempt=1 WHERE run_id=?",
+            (queued["run_id"],),
+        )
+        connection.commit()
+
+    status = investigation_autopilot.status(db_path=db)
+    run = next(item for item in status["runs"] if item["run_id"] == queued["run_id"])
+    assert run["recovery_available"] is True
+    assert run["recovery_reason"] == "retry available"
+    retried = investigation_autopilot.retry(queued["run_id"], db_path=db)
+    assert retried["status"] == "queued"
+
+
 def test_pypi_exact_version_uses_bounded_release_endpoint():
     requested_urls = []
 

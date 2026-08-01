@@ -1907,6 +1907,26 @@ def _raise_retention_alert(*, collector: Dict[str, Any], state: Dict[str, Any], 
             )
 
 
+def _resolve_retention_alerts(*, collector: Dict[str, Any], db_path: Optional[str]) -> None:
+    """Close stale retention alerts after a successful in-window run.
+
+    Retention alerts describe a time-sensitive cursor condition. Keeping every
+    historical alert open after the cursor recovers makes the operator queue
+    look permanently broken and hides the next real outage.
+    """
+    now = _format_ts(_utcnow())
+    with closing(soc_store.connect(db_path)) as connection:
+        with connection:
+            connection.execute(
+                """UPDATE research_alerts
+                   SET status = 'resolved', updated_at = ?
+                   WHERE alert_type = 'collector_retention_risk'
+                     AND status = 'open'
+                     AND dedupe_key LIKE ?""",
+                (now, f"retention|{collector['collector_id']}|%"),
+            )
+
+
 def run_registry_collector(
     *,
     ecosystem: str = "nuget",
@@ -2017,6 +2037,8 @@ def run_registry_collector(
         result["retention"] = retention
         if retention["retention_risk"]:
             _raise_retention_alert(collector=collector, state=retention, db_path=db_path)
+        else:
+            _resolve_retention_alerts(collector=collector, db_path=db_path)
     return result
 
 

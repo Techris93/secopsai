@@ -390,8 +390,13 @@ def reconcile_pipeline(pipeline_id: str, *, db_path: Optional[str] = None) -> Op
 
 def retry(run_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
     run = get_run(run_id, db_path=db_path)
-    if not run.get("retryable"):
-        raise ValueError("this investigation is not retryable")
+    settings = get_settings(db_path=db_path)
+    recoverable_status = run.get("status") in {"failed", "evidence_gap", "canceled"}
+    attempts = int(run.get("attempt") or 0)
+    if not recoverable_status:
+        raise ValueError("only failed, evidence-gap, or canceled investigations can be retried")
+    if not run.get("retryable") and attempts >= int(settings.get("max_attempts") or DEFAULTS["max_attempts"]):
+        raise ValueError("this investigation reached its retry limit; increase max attempts before retrying")
     with closing(soc_store.connect(db_path)) as connection:
         connection.execute(
             "UPDATE investigation_autopilot_runs SET status='queued', current_stage='queued', blocker_code=NULL, blocker_message=NULL, completed_at=NULL, updated_at=? WHERE run_id=?",
@@ -435,8 +440,23 @@ def list_runs(*, status: str = "", limit: int = 100, db_path: Optional[str] = No
 
 def status(*, db_path: Optional[str] = None) -> Dict[str, Any]:
     runs = list_runs(limit=200, db_path=db_path)
+    settings = get_settings(db_path=db_path)
+    max_attempts = int(settings.get("max_attempts") or DEFAULTS["max_attempts"])
+    # Keep recovery semantics explicit in the API. Older rows may have a
+    # stale retryable bit after a worker restart, while the status itself is
+    # still safely recoverable. The UI can now show a Retry action without
+    # guessing, and exhausted runs remain clearly blocked.
+    for run in runs:
+        recoverable = run.get("status") in {"failed", "evidence_gap", "canceled"}
+        attempts = int(run.get("attempt") or 0)
+        run["recovery_available"] = bool(recoverable and (run.get("retryable") or attempts < max_attempts))
+        run["recovery_reason"] = (
+            "retry available"
+            if run["recovery_available"]
+            else ("retry limit reached" if recoverable else "run is active or complete")
+        )
     states = {name: sum(run["status"] == name for run in runs) for name in {
         "queued", "collecting", "analyzing", "awaiting_model", "awaiting_input",
         "awaiting_sandbox", "evidence_gap", "resolved", "escalated", "failed", "canceled",
     }}
-    return {"schema_version": SCHEMA_VERSION, "settings": get_settings(db_path=db_path), "summary": states, "runs": runs}
+    return {"schema_version": SCHEMA_VERSION, "settings": settings, "summary": states, "runs": runs}

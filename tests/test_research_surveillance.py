@@ -1,6 +1,7 @@
 import json
 import re
 import urllib.parse
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from secopsai.research_surveillance import (
     retry_dead_letters,
     run_registry_collector,
     set_collector_enabled,
+    _raise_retention_alert,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "nuget_catalog"
@@ -422,6 +424,30 @@ def test_packagist_empty_feed_still_advances_cursor(tmp_path):
     assert result["events_seen"] == 0
     # An idle registry still advances the cursor so it stays inside retention.
     assert result["cursor_after"] == "17846424000042"
+
+
+def test_successful_in_window_run_resolves_old_retention_alert(tmp_path, monkeypatch):
+    db_path = _db(tmp_path)
+    monkeypatch.setattr(
+        "secopsai.research_surveillance._utcnow",
+        lambda: datetime(2026, 7, 21, 14, 30, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr("secopsai.research_surveillance.time.time", lambda: 1784644200)
+    ensure_collectors(db_path=db_path)
+    collector = next(item for item in ensure_collectors(db_path=db_path) if item["ecosystem"] == "packagist")
+    _raise_retention_alert(
+        collector=collector,
+        state={"cursor_age_seconds": 90000, "retention_seconds": 86400, "retention_risk": True},
+        db_path=db_path,
+    )
+    assert _alerts(db_path)
+    run_registry_collector(
+        ecosystem="packagist",
+        since=PACKAGIST_SINCE,
+        db_path=db_path,
+        fetcher=_packagist_fetcher([], fixture="changes_empty.json"),
+    )
+    assert all(item["status"] == "resolved" for item in _alerts(db_path))
 
 
 def test_packagist_cursor_never_moves_backward(tmp_path):

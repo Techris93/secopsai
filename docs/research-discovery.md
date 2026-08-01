@@ -42,6 +42,8 @@ A failed fetch never advances the cursor, so history cannot be skipped silently.
 
 `secopsai research worker run` executes due collectors on their own schedules (NuGet 15 min, Packagist 15 min, PyPI 1 hour, RubyGems 30 min), scores new events, retries dead letters, and recovers interrupted runs. One failing registry never stops the cycle.
 
+Collector status separates an active coverage gap from an old cursor watermark. A successful run resolves open retention alerts for that collector automatically; an old alert record is historical evidence, not a current outage. When a feed is behind, let the worker process bounded catch-up cycles rather than starting overlapping collectors. A collector cursor advances only after its selected pages are persisted, so a restart is safe and idempotent.
+
 ```bash
 secopsai research worker due           # which collectors are due and why
 secopsai research worker run --once    # single cycle (cron-friendly)

@@ -8,6 +8,8 @@ Eligible high and critical package findings are promoted automatically after ini
 
 Use **Administration → Automation → High-priority investigations** to inspect progress, retry a failed checkpoint, cancel active work, or open the linked case. A missing comparison reference, registry outage, analyzer limitation, or pending sandbox approval is displayed as an evidence gap rather than a verdict.
 
+Investigation status responses include `recovery_available` and `recovery_reason`. A failed, evidence-gap, or canceled run is retriable while its attempt limit has not been reached, even if an older worker wrote a stale `retryable` flag. The console prioritizes these rows and exposes a visible **Retry** action. Runs at the attempt limit remain blocked and explain why they cannot be retried.
+
 The unattended workflow cannot approve a sandbox submission, send external disclosure, or approve and publish an article. Those remain the final operator gates.
 
 ## Primary Mission Control workflow
