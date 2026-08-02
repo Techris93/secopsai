@@ -97,6 +97,7 @@ from secopsai.investigation_autopilot import status as investigation_autopilot_s
 from secopsai.investigation_autopilot import update_settings as update_investigation_autopilot_settings
 from secopsai.detection_learning import deploy as deploy_detection_learning
 from secopsai.detection_learning import record_action_reward as record_detection_learning_reward
+from secopsai.detection_learning import record_feedback as record_detection_learning_feedback
 from secopsai.detection_learning import record_observation as record_detection_learning_observation
 from secopsai.detection_learning import recommend_action as recommend_detection_learning_action
 from secopsai.detection_learning import rollback as rollback_detection_learning
@@ -1264,7 +1265,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     intelligence_investigations.add_argument("--actor", default="operator")
     intelligence_investigations.add_argument("--db-path", default=None)
     intelligence_learning = intelligence_autopilot_sub.add_parser("learning", help="Operate guarded detection learning")
-    intelligence_learning.add_argument("action", choices=["status","run-cycle","configure","deploy","observe","rollback","recommend","reward"])
+    intelligence_learning.add_argument("action", choices=["status","run-cycle","configure","deploy","observe","rollback","recommend","reward","feedback"])
     intelligence_learning.add_argument("--proposal-id", default="")
     intelligence_learning.add_argument("--deployment-id", default="")
     intelligence_learning.add_argument("--stage", choices=["shadow","canary","active"], default=None)
@@ -1278,6 +1279,24 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     intelligence_learning.add_argument("--context-json", default="{}")
     intelligence_learning.add_argument("--bandit-action", default="")
     intelligence_learning.add_argument("--reward", type=float, default=None)
+    intelligence_learning.add_argument(
+        "--finding-id",
+        default="",
+        help="Finding identifier for alert feedback; not required for a true-negative baseline observation",
+    )
+    intelligence_learning.add_argument("--subject-key", default="")
+    intelligence_learning.add_argument("--event-id", default="")
+    intelligence_learning.add_argument(
+        "--feedback-outcome",
+        choices=["true_positive", "false_positive", "true_negative", "false_negative", "unknown"],
+        default=None,
+    )
+    intelligence_learning.add_argument("--source", default="operator_verified")
+    intelligence_learning.add_argument("--confidence", type=int, default=0)
+    intelligence_learning.add_argument("--trust-score", type=int, default=0)
+    intelligence_learning.add_argument("--evidence-ref", action="append", default=[])
+    intelligence_learning.add_argument("--features-json", default="{}")
+    intelligence_learning.add_argument("--metadata-json", default="{}")
     intelligence_learning.add_argument("--actor", default="operator")
     intelligence_learning.add_argument("--db-path", default=None)
     intelligence_bridge = intelligence_sub.add_parser(
@@ -3666,7 +3685,24 @@ def main(argv: Optional[List[str]] = None) -> int:
                     elif args.action == "observe": payload = record_detection_learning_observation(args.deployment_id, outcome=args.outcome or "", db_path=args.db_path)
                     elif args.action == "rollback": payload = rollback_detection_learning(args.proposal_id, db_path=args.db_path)
                     elif args.action == "recommend": payload = recommend_detection_learning_action(_json_object(args.context_json, label="learning context"), db_path=args.db_path)
-                    else: payload = record_detection_learning_reward(args.bandit_action, args.reward, db_path=args.db_path)
+                    elif args.action == "reward": payload = record_detection_learning_reward(args.bandit_action, args.reward, db_path=args.db_path)
+                    else:
+                        if not args.feedback_outcome:
+                            raise ValueError("--feedback-outcome is required for learning feedback")
+                        payload = record_detection_learning_feedback(
+                            outcome=args.feedback_outcome,
+                            subject_key=args.subject_key,
+                            finding_id=args.finding_id,
+                            event_id=args.event_id,
+                            source=args.source,
+                            confidence=args.confidence,
+                            trust_score=args.trust_score,
+                            evidence_refs=args.evidence_ref,
+                            features=_json_object(args.features_json, label="feedback features"),
+                            metadata=_json_object(args.metadata_json, label="feedback metadata"),
+                            actor=args.actor,
+                            db_path=args.db_path,
+                        )
                 else:
                     raise ValueError(f"unsupported intelligence autopilot command: {args.intelligence_autopilot_cmd}")
             elif args.intelligence_cmd == "bridge":

@@ -330,6 +330,26 @@ def init_db(db_path: str | None = None) -> None:
                 UNIQUE (organization_key, finding_id, feature_version)
             );
 
+            CREATE TABLE IF NOT EXISTS detection_learning_feedback (
+                feedback_id TEXT PRIMARY KEY,
+                organization_key TEXT NOT NULL,
+                subject_key TEXT NOT NULL,
+                finding_id TEXT,
+                event_id TEXT,
+                outcome TEXT NOT NULL,
+                learning_label TEXT,
+                label_source TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                trust_score INTEGER NOT NULL,
+                feature_version TEXT NOT NULL,
+                features_json TEXT NOT NULL,
+                evidence_refs_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                dedupe_key TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS detection_learning_datasets (
                 dataset_id TEXT PRIMARY KEY,
                 schema_version TEXT NOT NULL,
@@ -393,6 +413,10 @@ def init_db(db_path: str | None = None) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_detection_learning_examples_split
                 ON detection_learning_examples (organization_key, split, label);
+            CREATE INDEX IF NOT EXISTS idx_detection_learning_feedback_subject
+                ON detection_learning_feedback (organization_key, subject_key, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_detection_learning_feedback_outcome
+                ON detection_learning_feedback (organization_key, outcome, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_detection_learning_proposals_status
                 ON detection_learning_proposals (status, updated_at DESC);
 

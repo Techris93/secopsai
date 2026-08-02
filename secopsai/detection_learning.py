@@ -17,7 +17,28 @@ import soc_store
 SCHEMA_VERSION = "secopsai.detection-learning.v1"
 FEATURE_VERSION = "dlf-1"
 MODES = {"off", "advisory", "guarded"}
+# ``outcome`` describes what happened to an alert or evaluation.  The model
+# still trains on the binary ``learning_label`` because TP/FN are evidence of
+# the threat class and FP/TN are evidence of the benign class.  ``unknown``
+# is retained for active learning, but is never used as ground truth.
+OUTCOMES = {"true_positive", "false_positive", "true_negative", "false_negative", "unknown"}
 LABELS = {"true_positive", "false_positive"}
+OUTCOME_TO_LABEL = {
+    "true_positive": "true_positive",
+    "false_negative": "true_positive",
+    "false_positive": "false_positive",
+    "true_negative": "false_positive",
+}
+TRUSTED_FEEDBACK_SOURCES = {
+    "evidence_gated_research_resolution",
+    "evidence_linked_research_verdict",
+    "corroborated_agent_escalation",
+    "operator_verified",
+    "operator_reviewed_disposition",
+    "sandbox_confirmed",
+    "external_advisory",
+    "rule_fixture",
+}
 FEATURES = ("severity", "rule_count", "event_count", "advisory", "denylisted", "strong_signals", "static_evidence", "active_iocs", "sandbox_evidence")
 DEFAULTS = {"mode": "advisory", "minimum_examples": 20, "holdout_percent": 20, "maximum_false_negative_regression": 0, "minimum_precision": 0.90, "canary_percent": 10, "auto_promote_shadow": False, "auto_promote_canary": False}
 
@@ -62,6 +83,180 @@ def _split(key: str, holdout: int) -> str:
     return "holdout" if bucket < holdout else ("validation" if bucket < holdout + 20 else "train")
 
 
+def _feature_values(features: Any) -> Dict[str, float]:
+    values = features if isinstance(features, dict) else {}
+    normalized: Dict[str, float] = {}
+    for key in FEATURES:
+        try:
+            normalized[key] = max(0.0, min(1.0, float(values.get(key, 0.0))))
+        except (TypeError, ValueError):
+            normalized[key] = 0.0
+    return normalized
+
+
+def _feedback_dedupe(*, organization_key: str, subject_key: str, outcome: str,
+                     label_source: str, feature_version: str, event_id: str,
+                     evidence_refs: list[str]) -> str:
+    payload = _json({
+        "organization_key": organization_key,
+        "subject_key": subject_key,
+        "outcome": outcome,
+        "label_source": label_source,
+        "feature_version": feature_version,
+        "event_id": event_id,
+        "evidence_refs": sorted(set(evidence_refs)),
+    })
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _insert_feedback(
+    connection: Any,
+    *,
+    organization_key: str,
+    subject_key: str,
+    finding_id: str,
+    event_id: str,
+    outcome: str,
+    label_source: str,
+    confidence: int,
+    trust_score: int,
+    features: Dict[str, float],
+    evidence_refs: list[str],
+    metadata: Dict[str, Any],
+    actor: str,
+    settings: Dict[str, Any],
+) -> Dict[str, Any]:
+    outcome = _clean(outcome, 40).lower()
+    if outcome not in OUTCOMES:
+        raise ValueError(f"invalid feedback outcome: {outcome}")
+    subject_key = _clean(subject_key or finding_id, 240)
+    if not subject_key:
+        raise ValueError("subject_key or finding_id is required")
+    organization_key = _clean(organization_key or "local", 160)
+    label_source = _clean(label_source or "operator", 160)
+    actor = _clean(actor or "operator", 160)
+    finding_id = _clean(finding_id, 160)
+    event_id = _clean(event_id, 200)
+    confidence = max(0, min(100, int(confidence or 0)))
+    trust_score = max(0, min(100, int(trust_score or confidence)))
+    refs = [_clean(item, 200) for item in evidence_refs if _clean(item, 200)]
+    values = _feature_values(features)
+    learning_label = OUTCOME_TO_LABEL.get(outcome)
+    eligible = bool(
+        learning_label
+        and label_source in TRUSTED_FEEDBACK_SOURCES
+        and confidence >= 70
+        and trust_score >= 70
+    )
+    dedupe_key = _feedback_dedupe(
+        organization_key=organization_key,
+        subject_key=subject_key,
+        outcome=outcome,
+        label_source=label_source,
+        feature_version=FEATURE_VERSION,
+        event_id=event_id,
+        evidence_refs=refs,
+    )
+    now = soc_store.utc_now()
+    feedback_id = _id("DLF")
+    cursor = connection.execute(
+        """INSERT OR IGNORE INTO detection_learning_feedback
+           (feedback_id, organization_key, subject_key, finding_id, event_id,
+            outcome, learning_label, label_source, confidence, trust_score,
+            feature_version, features_json, evidence_refs_json, metadata_json,
+            actor, dedupe_key, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            feedback_id, organization_key, subject_key, finding_id or None,
+            event_id or None, outcome, learning_label, label_source,
+            confidence, trust_score, FEATURE_VERSION, _json(values),
+            _json(refs), _json(metadata if isinstance(metadata, dict) else {}),
+            actor, dedupe_key, now,
+        ),
+    )
+    inserted = cursor.rowcount > 0
+    example_id = None
+    if inserted and eligible and learning_label:
+        example_finding_id = finding_id or subject_key
+        example_id = "DLE-" + hashlib.sha256(
+            f"{organization_key}|{example_finding_id}|{FEATURE_VERSION}".encode()
+        ).hexdigest()[:16].upper()
+        connection.execute(
+            """INSERT INTO detection_learning_examples
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(organization_key,finding_id,feature_version) DO UPDATE SET
+                 label=excluded.label,
+                 label_source=excluded.label_source,
+                 trust_score=excluded.trust_score,
+                 features_json=excluded.features_json,
+                 evidence_refs_json=excluded.evidence_refs_json,
+                 updated_at=excluded.updated_at""",
+            (
+                example_id, organization_key, example_finding_id,
+                metadata.get("case_id") if isinstance(metadata, dict) else None,
+                learning_label, label_source, trust_score, FEATURE_VERSION,
+                _json(values), _split(example_finding_id, int(settings["holdout_percent"])),
+                _json(refs), now, now,
+            ),
+        )
+    return {
+        "feedback_id": feedback_id if inserted else None,
+        "inserted": inserted,
+        "outcome": outcome,
+        "learning_label": learning_label,
+        "eligible_for_training": eligible,
+        "example_id": example_id,
+        "dedupe_key": dedupe_key,
+    }
+
+
+def record_feedback(*, outcome: str, subject_key: str = "", finding_id: str = "",
+                    event_id: str = "", source: str = "operator_verified",
+                    confidence: int = 0, trust_score: int = 0,
+                    evidence_refs: Optional[list[str]] = None,
+                    features: Optional[Dict[str, Any]] = None,
+                    metadata: Optional[Dict[str, Any]] = None,
+                    actor: str = "operator", organization_key: str = "local",
+                    db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Persist one immutable outcome and optionally promote it to training.
+
+    All outcomes are retained.  Only an explicit trusted source can create a
+    binary training example.  This prevents unresolved alerts and model-only
+    suggestions from becoming labels while still preserving them for active
+    learning and later adjudication.
+    """
+    soc_store.init_db(db_path)
+    settings = get_settings(db_path=db_path)
+    finding: Dict[str, Any] = {}
+    if finding_id:
+        finding = soc_store.get_finding(finding_id, db_path) or {}
+    with closing(soc_store.connect(db_path)) as connection:
+        linked = connection.execute(
+            "SELECT case_id FROM research_case_findings WHERE finding_id=? ORDER BY created_at DESC LIMIT 1",
+            (_clean(finding_id, 160),),
+        ).fetchone() if finding_id else None
+        case_id = str(linked["case_id"]) if linked else ""
+        values = features if features is not None else _features(finding, connection, case_id)
+        item = _insert_feedback(
+            connection,
+            organization_key=organization_key,
+            subject_key=subject_key or finding_id,
+            finding_id=finding_id,
+            event_id=event_id,
+            outcome=outcome,
+            label_source=source,
+            confidence=confidence,
+            trust_score=trust_score or confidence,
+            features=values,
+            evidence_refs=evidence_refs or [],
+            metadata={**(metadata or {}), "case_id": case_id} if case_id else (metadata or {}),
+            actor=actor,
+            settings=settings,
+        )
+        connection.commit()
+    return item
+
+
 def _trusted_label(finding: Dict[str, Any], connection: Any) -> Optional[tuple[str,str,int,str]]:
     fid = _clean(finding.get("finding_id"), 160); disposition = _clean(finding.get("disposition"), 40).lower()
     linked = connection.execute("SELECT case_id FROM research_case_findings WHERE finding_id=? ORDER BY created_at DESC LIMIT 1", (fid,)).fetchone()
@@ -71,6 +266,8 @@ def _trusted_label(finding: Dict[str, Any], connection: Any) -> Optional[tuple[s
         if resolution and str(resolution["verdict"]) in {"not_substantiated","benign"}: return "false_positive", "evidence_gated_research_resolution", max(90,int(resolution["confidence"])), case_id
         verdict = connection.execute("SELECT verdict,confidence,actor FROM research_verdicts WHERE case_id=? ORDER BY created_at DESC LIMIT 1", (case_id,)).fetchone()
         if verdict and str(verdict["verdict"]) in {"likely","credible"} and int(verdict["confidence"]) >= 80: return "true_positive", "evidence_linked_research_verdict", int(verdict["confidence"]), case_id
+    if disposition in {"false_positive", "expected_behavior", "not_applicable", "accepted_risk"}:
+        return "false_positive", "operator_reviewed_disposition", 90, case_id
     if disposition in {"remediated","true_positive"}:
         triage = connection.execute("SELECT final_action,decision_json FROM agent_triage_runs WHERE target_id=? AND status='escalated' ORDER BY updated_at DESC LIMIT 1", (fid,)).fetchone()
         if triage:
@@ -91,16 +288,61 @@ def _features(f: Dict[str, Any], c: Any, case_id: str) -> Dict[str,float]:
 
 
 def collect_examples(*, organization_key: str = "local", db_path: Optional[str] = None) -> Dict[str,Any]:
-    settings=get_settings(db_path=db_path); inserted=0; excluded=0
+    settings=get_settings(db_path=db_path); inserted=0; excluded=0; observed=0; feedback_inserted=0; unresolved=0
     findings=soc_store.list_findings(db_path,limit=None,include_payload=True)
     with closing(soc_store.connect(db_path)) as c:
         for f in findings:
+            observed += 1
             trusted=_trusted_label(f,c)
-            if not trusted: excluded+=1; continue
-            label,source,trust,case_id=trusted; fid=_clean(f.get("finding_id"),160); eid="DLE-"+hashlib.sha256(f"{organization_key}|{fid}|{FEATURE_VERSION}".encode()).hexdigest()[:16].upper(); feats=_features(f,c,case_id); now=soc_store.utc_now(); refs=[fid]+list(f.get("rule_ids") or [])
-            c.execute("""INSERT INTO detection_learning_examples VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(organization_key,finding_id,feature_version) DO UPDATE SET label=excluded.label,label_source=excluded.label_source,trust_score=excluded.trust_score,features_json=excluded.features_json,evidence_refs_json=excluded.evidence_refs_json,updated_at=excluded.updated_at""",(eid,organization_key,fid,case_id or None,label,source,trust,FEATURE_VERSION,_json(feats),_split(fid,int(settings["holdout_percent"])),_json(refs),now,now)); inserted+=1
+            fid=_clean(f.get("finding_id"),160)
+            linked = c.execute("SELECT case_id FROM research_case_findings WHERE finding_id=? ORDER BY created_at DESC LIMIT 1", (fid,)).fetchone()
+            case_id = str(linked["case_id"]) if linked else ""
+            feats = _features(f,c,case_id)
+            refs = [fid] + list(f.get("rule_ids") or []) + list(f.get("event_ids") or [])
+            if trusted:
+                label,source,trust,case_id=trusted
+                outcome = label
+                confidence = trust
+                metadata = {"case_id": case_id, "original_disposition": f.get("disposition"), "automatic": True}
+            else:
+                outcome = "unknown"
+                source = "alert_observed"
+                trust = 0
+                confidence = 0
+                metadata = {"original_disposition": f.get("disposition"), "automatic": True, "active_learning": True}
+            item = _insert_feedback(
+                c,
+                organization_key=organization_key,
+                subject_key=fid,
+                finding_id=fid,
+                event_id=str((f.get("event_ids") or [""])[0] or ""),
+                outcome=outcome,
+                label_source=source,
+                confidence=confidence,
+                trust_score=trust,
+                features=feats,
+                evidence_refs=refs,
+                metadata=metadata,
+                actor="secopsai-learning",
+                settings=settings,
+            )
+            if item["inserted"]:
+                feedback_inserted += 1
+            if outcome == "unknown":
+                unresolved += 1
+            if item["eligible_for_training"]:
+                inserted += 1
+            else:
+                excluded += 1
         c.commit()
-    return {"accepted":inserted,"excluded_untrusted":excluded,"policy":"verified outcomes only; model-only recommendations excluded"}
+    return {
+        "accepted": inserted,
+        "observed_alerts": observed,
+        "feedback_inserted": feedback_inserted,
+        "unresolved_feedback": unresolved,
+        "excluded_untrusted": excluded,
+        "policy": "all alerts retained; only trusted outcomes become training labels; unknown/model-only outcomes remain active-learning feedback",
+    }
 
 
 def _rows(db_path: Optional[str]) -> list[Dict[str,Any]]:
@@ -212,11 +454,17 @@ def status(*, db_path: Optional[str]=None) -> Dict[str,Any]:
     soc_store.init_db(db_path)
     with closing(soc_store.connect(db_path)) as c:
         examples=int(c.execute("SELECT COUNT(*) FROM detection_learning_examples").fetchone()[0]); datasets=[dict(r) for r in c.execute("SELECT * FROM detection_learning_datasets ORDER BY created_at DESC LIMIT 10")]; experiments=[dict(r) for r in c.execute("SELECT * FROM detection_learning_experiments ORDER BY created_at DESC LIMIT 20")]; proposals=[dict(r) for r in c.execute("SELECT * FROM detection_learning_proposals ORDER BY updated_at DESC LIMIT 50")]; deployments=[dict(r) for r in c.execute("SELECT * FROM detection_learning_deployments ORDER BY updated_at DESC LIMIT 50")]
+        feedback_total = int(c.execute("SELECT COUNT(*) FROM detection_learning_feedback").fetchone()[0])
+        feedback_by_outcome = {
+            str(row["outcome"]): int(row["count"])
+            for row in c.execute("SELECT outcome, COUNT(*) AS count FROM detection_learning_feedback GROUP BY outcome")
+        }
+        feedback_eligible = int(c.execute("SELECT COUNT(*) FROM detection_learning_feedback WHERE learning_label IS NOT NULL AND label_source IN ({})".format(",".join("?" for _ in TRUSTED_FEEDBACK_SOURCES)), tuple(sorted(TRUSTED_FEEDBACK_SOURCES))).fetchone()[0])
     for x in datasets: x["label_counts"]=_decode(x.pop("label_counts_json"),{}); x["split_counts"]=_decode(x.pop("split_counts_json"),{}); x.pop("source_policy_json",None)
     for x in experiments: x["model"]=_decode(x.pop("model_json"),{}); x["metrics"]=_decode(x.pop("metrics_json"),{}); x["guardrails"]=_decode(x.pop("guardrails_json"),{})
     for x in proposals: x["parameters"]=_decode(x.pop("parameters_json"),{}); x["replay_metrics"]=_decode(x.pop("replay_metrics_json"),{}); x["rollback"]=_decode(x.pop("rollback_json"),{})
     for x in deployments: x["observations"]=_decode(x.pop("observations_json"),{})
-    return {"schema_version":SCHEMA_VERSION,"settings":get_settings(db_path=db_path),"summary":{"examples":examples,"datasets":len(datasets),"experiments":len(experiments),"shadow":sum(p["status"]=="shadow" for p in proposals),"canary":sum(p["status"]=="canary" for p in proposals),"active":sum(p["status"]=="active" for p in proposals),"rolled_back":sum(p["status"]=="rolled_back" for p in proposals)},"datasets":datasets,"experiments":experiments,"proposals":proposals,"deployments":deployments}
+    return {"schema_version":SCHEMA_VERSION,"settings":get_settings(db_path=db_path),"summary":{"examples":examples,"datasets":len(datasets),"experiments":len(experiments),"shadow":sum(p["status"]=="shadow" for p in proposals),"canary":sum(p["status"]=="canary" for p in proposals),"active":sum(p["status"]=="active" for p in proposals),"rolled_back":sum(p["status"]=="rolled_back" for p in proposals),"feedback_total":feedback_total,"feedback_eligible":feedback_eligible,"feedback_by_outcome":feedback_by_outcome},"datasets":datasets,"experiments":experiments,"proposals":proposals,"deployments":deployments}
 
 
 def run_cycle(*, db_path: Optional[str]=None) -> Dict[str,Any]:

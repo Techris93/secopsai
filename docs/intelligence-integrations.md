@@ -37,6 +37,75 @@ Guarded mode may promote corroborated true positives to `in_review`. It never pu
 
 The model may propose rule or threshold tuning. Every proposal enters shadow mode. Only an ecosystem threshold that exactly matches a high-confidence deterministic historical replay, includes enough reviewed safe and risky findings, and introduces no known true-positive regression can activate automatically. Rule weights, conditions, and exceptions remain shadow-only.
 
+## Closed-loop alert feedback
+
+Every observed alert now contributes to a durable feedback ledger. This includes
+verified true positives, false positives, expected behavior, unresolved alerts,
+true-negative baseline observations, and later-discovered false negatives.
+Unknown outcomes are retained for active learning, but they are not treated as
+truth. Only evidence-backed or explicitly verified outcomes become training
+examples.
+
+The learning label is derived separately from the operational outcome:
+
+| Outcome | Training class | Meaning |
+|---|---|---|
+| `true_positive` | positive | The alert correctly identified a threat. |
+| `false_negative` | positive | A threat was missed; the missed evidence becomes a positive example. |
+| `false_positive` | negative | The alert was not a threat. |
+| `true_negative` | negative | A reviewed baseline stayed benign. |
+| `unknown` | none | Not enough evidence yet; retained for future adjudication. |
+
+The feedback ledger is append-only and records the subject, event, outcome,
+evidence references, feature version, source, confidence, actor, and dedupe
+key. The existing replay, holdout, shadow, canary, false-negative gate, and
+rollback controls remain in force. This means every alert improves SecOpsAI's
+context and active-learning queue immediately, while production detection rules
+change only after deterministic validation.
+
+Record a verified outcome explicitly when an investigation finishes:
+
+```bash
+cd /Users/chrixchange/secopsai
+.venv/bin/python -m secopsai.cli intelligence autopilot learning feedback \
+  --finding-id SCM-EXAMPLE \
+  --feedback-outcome true_positive \
+  --source operator_verified \
+  --confidence 95 \
+  --trust-score 95 \
+  --evidence-ref EVD-EXAMPLE \
+  --actor analyst
+```
+
+Record a missed detection or a reviewed benign baseline with a stable subject
+key. These records do not require a finding ID:
+
+```bash
+.venv/bin/python -m secopsai.cli intelligence autopilot learning feedback \
+  --subject-key missed-release-2026-01 \
+  --feedback-outcome false_negative \
+  --source operator_verified \
+  --confidence 95 \
+  --trust-score 95 \
+  --evidence-ref EVD-EXAMPLE \
+  --actor analyst
+
+.venv/bin/python -m secopsai.cli intelligence autopilot learning feedback \
+  --subject-key baseline-window-2026-01 \
+  --feedback-outcome true_negative \
+  --source rule_fixture \
+  --confidence 100 \
+  --trust-score 100 \
+  --evidence-ref FIXTURE-EXAMPLE \
+  --actor test-harness
+```
+
+Run the learning cycle from **Administration → Automation → Detection
+Learning**. The page shows total feedback, trusted examples, unresolved
+feedback, experiments, staged proposals, and rollbacks. A model recommendation
+alone never becomes a label, and no learning cycle can publish, disclose,
+execute packages, or perform destructive response.
+
 CLI equivalents:
 
 ```bash

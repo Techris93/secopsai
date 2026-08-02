@@ -201,8 +201,17 @@ def enqueue_due_findings(
     limit_override: Optional[int] = None,
 ) -> Dict[str, Any]:
     settings = get_settings(db_path=db_path)
+    # Capture every observed alert before filtering for model review.  This is
+    # deliberately independent of the triage mode so turning model assistance
+    # off does not discard useful feedback or active-learning candidates.
+    try:
+        from secopsai.detection_learning import collect_examples
+
+        feedback = collect_examples(db_path=db_path)
+    except Exception as exc:
+        feedback = {"status": "degraded", "error": _clean(exc, 500)}
     if settings["mode"] == "off":
-        return {"schema_version": SCHEMA_VERSION, "mode": "off", "queued": [], "skipped": 0}
+        return {"schema_version": SCHEMA_VERSION, "mode": "off", "queued": [], "skipped": 0, "feedback": feedback}
     from secopsai.research_discovery import sync_actionable_alert_findings
 
     alert_sync = sync_actionable_alert_findings(db_path=db_path)
@@ -282,6 +291,7 @@ def enqueue_due_findings(
         "mode": settings["mode"],
         "queued": queued,
         "skipped": skipped,
+        "feedback": feedback,
         "research_alert_sync": alert_sync,
     }
 

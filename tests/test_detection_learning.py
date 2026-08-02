@@ -25,6 +25,45 @@ def test_model_only_recommendation_is_not_training_truth(tmp_path):
         c.execute("""INSERT INTO agent_triage_runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",("ATR-0123456789ABCDEF","finding","SCM-LEARN-1","fp","recommended",None,"model","provider","{}","{}",json.dumps({"model_confidence":99,"validated_evidence_refs":["RULE-X"]}),"recommend_review",1,"{}",None,None,now,now,now)); c.commit()
     result=detection_learning.collect_examples(db_path=db)
     assert result["accepted"]==0 and result["excluded_untrusted"]==1
+    assert result["observed_alerts"] == 1
+    assert result["unresolved_feedback"] == 1
+    with soc_store.connect(db) as c:
+        feedback = c.execute("SELECT outcome, learning_label FROM detection_learning_feedback").fetchall()
+    assert [(row["outcome"], row["learning_label"]) for row in feedback] == [("unknown", None)]
+
+
+def test_every_alert_is_retained_and_verified_outcomes_become_examples(tmp_path):
+    db=str(tmp_path/"soc.db")
+    soc_store.persist_findings([_finding(2, disposition="expected_behavior")], source="secopsai-supply-chain", db_path=db)
+    observed = detection_learning.collect_examples(db_path=db)
+    assert observed["observed_alerts"] == 1
+    assert observed["accepted"] == 1
+    with soc_store.connect(db) as c:
+        row = c.execute("SELECT outcome, learning_label, label_source FROM detection_learning_feedback").fetchone()
+        assert (row["outcome"], row["learning_label"], row["label_source"]) == ("false_positive", "false_positive", "operator_reviewed_disposition")
+        assert c.execute("SELECT COUNT(*) FROM detection_learning_examples").fetchone()[0] == 1
+    repeated = detection_learning.collect_examples(db_path=db)
+    assert repeated["feedback_inserted"] == 0
+
+
+def test_false_negative_and_true_negative_are_explicit_feedback(tmp_path):
+    db=str(tmp_path/"soc.db")
+    false_negative = detection_learning.record_feedback(
+        outcome="false_negative", subject_key="missed-package-release-1", source="operator_verified",
+        confidence=95, trust_score=95, evidence_refs=["EVD-123"],
+        features={"severity": 1, "strong_signals": 1}, db_path=db,
+    )
+    true_negative = detection_learning.record_feedback(
+        outcome="true_negative", subject_key="baseline-window-1", source="rule_fixture",
+        confidence=100, trust_score=100, evidence_refs=["FIXTURE-123"], db_path=db,
+    )
+    assert false_negative["eligible_for_training"] is True
+    assert true_negative["eligible_for_training"] is True
+    with soc_store.connect(db) as c:
+        labels = [row["learning_label"] for row in c.execute("SELECT learning_label FROM detection_learning_feedback ORDER BY created_at")]
+        examples = [row["label"] for row in c.execute("SELECT label FROM detection_learning_examples ORDER BY created_at")]
+    assert labels == ["true_positive", "false_positive"]
+    assert examples == ["true_positive", "false_positive"]
 
 
 def test_reproducible_training_shadow_canary_and_false_negative_rollback(tmp_path):

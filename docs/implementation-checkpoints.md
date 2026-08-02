@@ -321,3 +321,12 @@ Completed investigations now feed a tenant-scoped learning store only when the o
 Core creates immutable dataset snapshots with stable train, validation, and holdout splits; trains an interpretable risk ranker; records reproducible experiment metrics; and blocks proposals that fail precision or false-negative gates. Proposals progress through replay, shadow, limited canary, and active stages. Canary false-negative regression triggers automatic rollback. A bounded contextual-bandit policy can recommend the next investigation action, but sandbox submission remains approval-gated.
 
 Every dataset, experiment, proposal, deployment, observation, promotion, and rollback remains auditable. The learning system does not mutate production detection logic directly and cannot disclose or publish content.
+
+The learning loop now also retains every observed alert in an append-only
+feedback ledger. Verified true positives, false positives, true-negative
+baselines, and false negatives are mapped to binary training classes only when
+their source and evidence meet the trust policy. Unknown and model-only
+outcomes remain explicit active-learning feedback and never become ground truth.
+Mission Control shows total feedback and unresolved adjudication counts, and the
+CLI supports immutable feedback records for later replay. Existing holdout,
+shadow, canary, false-negative, and rollback gates remain mandatory.
