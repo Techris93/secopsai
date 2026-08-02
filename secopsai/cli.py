@@ -104,6 +104,12 @@ from secopsai.detection_learning import rollback as rollback_detection_learning
 from secopsai.detection_learning import run_cycle as run_detection_learning_cycle
 from secopsai.detection_learning import status as detection_learning_status
 from secopsai.detection_learning import update_settings as update_detection_learning_settings
+from secopsai.daily_automation import (
+    run_cycle as run_daily_automation_cycle,
+    run_due as run_due_daily_automation,
+    status as daily_automation_status,
+    update_settings as update_daily_automation_settings,
+)
 from secopsai.research_resolution import adjudicate_pipeline as adjudicate_research_resolution
 from secopsai.research_resolution import review_run as review_research_resolution
 from secopsai.research_resolution import status as research_resolution_status
@@ -1299,6 +1305,19 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     intelligence_learning.add_argument("--metadata-json", default="{}")
     intelligence_learning.add_argument("--actor", default="operator")
     intelligence_learning.add_argument("--db-path", default=None)
+    intelligence_daily = intelligence_autopilot_sub.add_parser(
+        "daily", help="Run and configure the coordinated daily research and triage workflow"
+    )
+    intelligence_daily.add_argument("action", choices=["status", "run", "run-due", "configure"])
+    intelligence_daily.add_argument("--enabled", choices=["on", "off"], default=None)
+    intelligence_daily.add_argument("--interval-seconds", type=int, default=None)
+    intelligence_daily.add_argument("--max-alert-reviews", type=int, default=None)
+    intelligence_daily.add_argument("--max-investigations", type=int, default=None)
+    intelligence_daily.add_argument("--max-candidate-cases", type=int, default=None)
+    intelligence_daily.add_argument("--auto-promote-candidates", choices=["on", "off"], default=None)
+    intelligence_daily.add_argument("--run-learning", choices=["on", "off"], default=None)
+    intelligence_daily.add_argument("--actor", default="operator")
+    intelligence_daily.add_argument("--db-path", default=None)
     intelligence_bridge = intelligence_sub.add_parser(
         "bridge",
         help="Inspect or run the local OpenCodex/Codex intelligence bridge",
@@ -3599,6 +3618,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "jobs": {"jobs": list_intelligence_jobs(limit=args.limit, db_path=args.db_path)},
                     "autopilot": agent_triage_status(db_path=args.db_path),
                     "learning": detection_learning_status(db_path=args.db_path),
+                    "daily_automation": daily_automation_status(db_path=args.db_path),
                     "bridge": codex_bridge_doctor(),
                     "service": codex_bridge_service_action("status"),
                 }
@@ -3700,6 +3720,29 @@ def main(argv: Optional[List[str]] = None) -> int:
                             evidence_refs=args.evidence_ref,
                             features=_json_object(args.features_json, label="feedback features"),
                             metadata=_json_object(args.metadata_json, label="feedback metadata"),
+                            actor=args.actor,
+                            db_path=args.db_path,
+                        )
+                elif args.intelligence_autopilot_cmd == "daily":
+                    if args.action == "status":
+                        payload = daily_automation_status(db_path=args.db_path)
+                    elif args.action == "run":
+                        payload = run_daily_automation_cycle(
+                            db_path=args.db_path,
+                            trigger=args.actor,
+                            force=True,
+                        )
+                    elif args.action == "run-due":
+                        payload = run_due_daily_automation(db_path=args.db_path, trigger=args.actor)
+                    else:
+                        payload = update_daily_automation_settings(
+                            enabled=(args.enabled == "on") if args.enabled else None,
+                            interval_seconds=args.interval_seconds,
+                            max_alert_reviews=args.max_alert_reviews,
+                            max_investigations=args.max_investigations,
+                            max_candidate_cases=args.max_candidate_cases,
+                            auto_promote_candidates=(args.auto_promote_candidates == "on") if args.auto_promote_candidates else None,
+                            run_learning=(args.run_learning == "on") if args.run_learning else None,
                             actor=args.actor,
                             db_path=args.db_path,
                         )

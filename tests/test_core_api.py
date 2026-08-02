@@ -229,6 +229,50 @@ def test_intelligence_autopilot_is_configurable_and_queues_findings(client):
     assert status_payload["settings"]["selected_model"].startswith("kimi/")
 
 
+def test_daily_automation_routes_are_protected_configurable_and_audited(client, monkeypatch):
+    test_client, settings = client
+    assert test_client.get(
+        "/api/v1/intelligence/daily",
+        headers={"Authorization": f"Bearer {READ_TOKEN}"},
+    ).status_code == 401
+    initial = test_client.get(
+        "/api/v1/intelligence/daily",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+    )
+    assert initial.status_code == 200
+    assert initial.json()["settings"]["interval_seconds"] == 86400
+
+    configured = test_client.post(
+        "/api/v1/intelligence/daily/configure",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+        json={
+            "enabled": True,
+            "interval_seconds": 3600,
+            "max_alert_reviews": 10,
+            "max_investigations": 2,
+            "max_candidate_cases": 5,
+            "auto_promote_candidates": False,
+            "run_learning": True,
+        },
+    )
+    assert configured.status_code == 200
+    assert configured.json()["settings"]["interval_seconds"] == 3600
+    monkeypatch.setattr(
+        "secopsai.core_api.run_daily_automation_cycle",
+        lambda **kwargs: {"run_id": "DAR-0123456789ABCDEF", "status": "succeeded", "summary": {}},
+    )
+    ran = test_client.post(
+        "/api/v1/intelligence/daily/run",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+    )
+    assert ran.status_code == 200
+    assert ran.json()["result"]["status"] == "succeeded"
+    with sqlite3.connect(settings.db_path) as connection:
+        audit_actions = [row[0] for row in connection.execute("SELECT action FROM core_api_audit_logs ORDER BY audit_id")]
+    assert "intelligence.daily.configured" in audit_actions
+    assert "intelligence.daily.run" in audit_actions
+
+
 def test_remote_bridge_claims_and_completes_a_hosted_job(client):
     test_client, _ = client
     with soc_store.connect(client[1].db_path) as connection:

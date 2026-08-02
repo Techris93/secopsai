@@ -330,3 +330,27 @@ outcomes remain explicit active-learning feedback and never become ground truth.
 Mission Control shows total feedback and unresolved adjudication counts, and the
 CLI supports immutable feedback records for later replay. Existing holdout,
 shadow, canary, false-negative, and rollback gates remain mandatory.
+
+# 113 Coordinated Daily Workflow Automation
+
+Status: implemented and locally verified.
+
+Core now persists one bounded daily workflow policy, durable cycle records, and
+per-step results. The coordinator links registry surveillance, deterministic
+candidate promotion into draft cases, alert feedback capture and model-review
+queueing, evidence investigations, guarded detection learning, and operational
+alert delivery. It prevents overlapping cycles, marks stale owners as degraded,
+continues after an individual step fails, and schedules the next due cycle.
+
+The existing research worker checks the persisted schedule on each normal cycle,
+so production does not need another daemon. Mission Control's Administration →
+Automation page exposes the schedule, limits, enable/paused state, run-now
+action, latest step history, and degraded errors. Core API routes expose the same
+status, configure, and run operations for hosted Mission Control.
+
+The coordinator cannot approve sandbox submission, send disclosure, publish
+research, execute package code, or activate unverified detector changes. Those
+remain explicit, auditable operator gates.
+
+Verification: daily coordinator unit tests, Core API route tests, dashboard
+contract tests, JavaScript/Worker checks, and repository diff checks pass.

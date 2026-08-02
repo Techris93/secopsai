@@ -411,6 +411,50 @@ def init_db(db_path: str | None = None) -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS daily_automation_settings (
+                settings_id INTEGER PRIMARY KEY CHECK (settings_id = 1),
+                enabled INTEGER NOT NULL DEFAULT 1,
+                interval_seconds INTEGER NOT NULL DEFAULT 86400,
+                max_alert_reviews INTEGER NOT NULL DEFAULT 25,
+                max_investigations INTEGER NOT NULL DEFAULT 5,
+                max_candidate_cases INTEGER NOT NULL DEFAULT 25,
+                auto_promote_candidates INTEGER NOT NULL DEFAULT 1,
+                run_learning INTEGER NOT NULL DEFAULT 1,
+                last_run_at TEXT,
+                next_run_at TEXT,
+                updated_at TEXT NOT NULL,
+                updated_by TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS daily_automation_runs (
+                run_id TEXT PRIMARY KEY,
+                trigger TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                next_run_at TEXT,
+                summary_json TEXT NOT NULL,
+                error_message TEXT,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS daily_automation_steps (
+                step_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                step_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                result_json TEXT NOT NULL,
+                error_message TEXT,
+                FOREIGN KEY (run_id) REFERENCES daily_automation_runs (run_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_daily_automation_runs_status_time
+                ON daily_automation_runs (status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_daily_automation_steps_run_time
+                ON daily_automation_steps (run_id, step_id);
+
             CREATE INDEX IF NOT EXISTS idx_detection_learning_examples_split
                 ON detection_learning_examples (organization_key, split, label);
             CREATE INDEX IF NOT EXISTS idx_detection_learning_feedback_subject

@@ -37,6 +37,11 @@ from secopsai.agent_triage import rollback_run as rollback_agent_triage_run
 from secopsai.agent_triage import rollback_tuning_proposal as rollback_agent_tuning_proposal
 from secopsai.agent_triage import status as agent_triage_status
 from secopsai.agent_triage import update_settings as update_agent_triage_settings
+from secopsai.daily_automation import (
+    run_cycle as run_daily_automation_cycle,
+    status as daily_automation_status,
+    update_settings as update_daily_automation_settings,
+)
 from secopsai.observability import initialize_observability
 
 
@@ -400,6 +405,64 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
         _role: str = Depends(require_intelligence),
     ) -> dict[str, Any]:
         return agent_triage_status(db_path=resolved.db_path)
+
+    @application.get("/api/v1/intelligence/daily")
+    def intelligence_daily_status(
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        return daily_automation_status(db_path=resolved.db_path)
+
+    @application.post("/api/v1/intelligence/daily/configure")
+    async def intelligence_daily_configure(
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        try:
+            payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "Daily automation configuration")
+            settings = update_daily_automation_settings(
+                enabled=payload.get("enabled"),
+                interval_seconds=payload.get("interval_seconds"),
+                max_alert_reviews=payload.get("max_alert_reviews"),
+                max_investigations=payload.get("max_investigations"),
+                max_candidate_cases=payload.get("max_candidate_cases"),
+                auto_promote_candidates=payload.get("auto_promote_candidates"),
+                run_learning=payload.get("run_learning"),
+                actor="mission-control",
+                db_path=resolved.db_path,
+            )
+            _write_audit(
+                resolved.db_path,
+                request_id=request.state.request_id,
+                action="intelligence.daily.configured",
+                actor_role="intelligence_operator",
+                result="success",
+                source_instance="secopsai-core",
+                details={"enabled": settings["enabled"], "interval_seconds": settings["interval_seconds"]},
+            )
+            return {"settings": settings, "request_id": request.state.request_id}
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @application.post("/api/v1/intelligence/daily/run")
+    def intelligence_daily_run(
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        result = run_daily_automation_cycle(
+            db_path=resolved.db_path,
+            trigger="mission-control",
+            force=True,
+        )
+        _write_audit(
+            resolved.db_path,
+            request_id=request.state.request_id,
+            action="intelligence.daily.run",
+            actor_role="intelligence_operator",
+            result="success" if result.get("status") in {"succeeded", "degraded"} else "conflict",
+            source_instance="secopsai-core",
+            details={"run_id": result.get("run_id"), "status": result.get("status")},
+        )
+        return {"result": result, "request_id": request.state.request_id}
 
     @application.post("/api/v1/intelligence/autopilot/configure")
     async def intelligence_autopilot_configure(

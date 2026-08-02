@@ -35,6 +35,51 @@ The modes are:
 
 Guarded mode may promote corroborated true positives to `in_review`. It never publishes, sends disclosure, submits an artifact, executes package code, performs destructive response, or treats missing local exposure as proof that a package is benign.
 
+## Complete daily workflow
+
+The daily coordinator links the operational steps that previously required
+separate clicks or terminal commands. It runs only when its persisted schedule
+is due and records one durable run with a result for every step:
+
+1. Run due registry collectors, score new events, retry bounded failures, and
+   recover interrupted collector work.
+2. Apply the configured deterministic candidate-promotion policy. Promotion
+   creates draft research cases only; it is not a maliciousness verdict.
+3. Record every alert as feedback and queue eligible findings for the selected
+   model. Unknown outcomes remain active-learning records and are never used as
+   labels.
+4. Collect exact package evidence and run bounded static investigations for
+   eligible high-priority findings.
+5. Run the guarded detection-learning replay, holdout, shadow, and canary
+   checks. A failed quality gate produces a proposal or a blocked run; it does
+   not silently change a detector.
+6. Deliver configured operational health alerts with the existing retry and
+   audit controls.
+
+Configure or run the coordinator from **Administration → Automation → Daily
+workflow automation**, or use the CLI:
+
+```bash
+cd /Users/chrixchange/secopsai
+.venv/bin/python -m secopsai.cli intelligence autopilot daily status
+.venv/bin/python -m secopsai.cli intelligence autopilot daily configure \
+  --enabled on --interval-seconds 86400 \
+  --max-alert-reviews 25 --max-investigations 5 \
+  --max-candidate-cases 25 --auto-promote-candidates on --run-learning on
+.venv/bin/python -m secopsai.cli intelligence autopilot daily run
+```
+
+The research worker checks the same schedule on every normal worker cycle, so
+no second daemon is required. A stale or overlapping run is recovered and
+marked in the run history rather than started twice. A failed step does not
+cancel later steps; the cycle is marked `degraded` and the failed step remains
+retryable on the next due cycle.
+
+Agents may prepare evidence, triage recommendations, reversible finding
+changes, draft cases, and learning proposals. Sandbox submission, disclosure
+delivery, public publication, and unverified detector activation remain
+explicit approval actions.
+
 The model may propose rule or threshold tuning. Every proposal enters shadow mode. Only an ecosystem threshold that exactly matches a high-confidence deterministic historical replay, includes enough reviewed safe and risky findings, and introduces no known true-positive regression can activate automatically. Rule weights, conditions, and exceptions remain shadow-only.
 
 ## Closed-loop alert feedback

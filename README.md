@@ -385,6 +385,23 @@ SecOpsAI can continuously review canonical host, Edge, supply-chain, and registr
 SecOpsAI now includes a native analyst triage workflow that keeps findings,
 investigation notes, and closure state inside the local SOC store.
 
+The coordinated daily workflow can run the operational sequence without manual
+terminal work: registry surveillance, deterministic candidate promotion,
+alert-feedback capture, model-review queueing, evidence investigations,
+guarded learning, and operational alert delivery. Configure it from Mission
+Control under **Administration → Automation → Daily workflow automation**, or
+use the Core CLI:
+
+```bash
+secopsai intelligence autopilot daily status
+secopsai intelligence autopilot daily configure --enabled on --interval-seconds 86400
+secopsai intelligence autopilot daily run
+```
+
+Each cycle records per-step results and continues after a recoverable failure.
+Agents cannot submit sandbox artifacts, send disclosure, publish research, or
+activate unverified detector changes.
+
 Examples:
 
 ```bash

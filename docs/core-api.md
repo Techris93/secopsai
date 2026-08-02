@@ -57,6 +57,9 @@ tenant-aware PostgreSQL design.
 | `GET /api/v1/intelligence/autopilot` | Intelligence token | Inspect continuous model-triage policy, runs, and tuning proposals |
 | `POST /api/v1/intelligence/autopilot/configure` | Intelligence token | Configure off, advisory, or evidence-gated guarded automation |
 | `POST /api/v1/intelligence/autopilot/run-now` | Intelligence token | Queue model review for eligible changed findings |
+| `GET /api/v1/intelligence/daily` | Intelligence token | Inspect the coordinated daily workflow and step history |
+| `POST /api/v1/intelligence/daily/configure` | Intelligence token | Configure the daily schedule and bounded step limits |
+| `POST /api/v1/intelligence/daily/run` | Intelligence token | Run the complete coordinated workflow immediately |
 | `POST /api/v1/intelligence/autopilot/runs/{run_id}/rollback` | Intelligence token | Restore the pre-decision finding state |
 | `POST /api/v1/intelligence/autopilot/tuning/{proposal_id}/rollback` | Intelligence token | Restore the threshold baseline recorded before activation |
 | `POST /api/v1/intelligence/jobs/{job_id}/cancel` | Intelligence token | Cancel a non-final job |

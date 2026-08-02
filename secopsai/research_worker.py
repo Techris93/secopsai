@@ -186,6 +186,9 @@ def run_worker_cycle(
     ecosystems: Optional[List[str]] = None,
     max_pages: int = MAX_PAGES_PER_CYCLE,
     score_limit: int = SCORE_BATCH_LIMIT,
+    include_investigations: bool = True,
+    include_alert_delivery: bool = True,
+    include_automation: bool = True,
 ) -> Dict[str, Any]:
     """Run one worker cycle: due collectors, scoring, retries, recovery."""
     initialize_observability(service="secopsai-research-worker")
@@ -239,19 +242,35 @@ def run_worker_cycle(
     scoring = score_pending_events(limit=score_limit, db_path=db_path)
     retries = retry_dead_letters(limit=50, db_path=db_path, fetcher=fetcher)
     recovery = recover_interrupted_runs(db_path=db_path)
-    try:
-        # The research worker is the durable 24/7 control loop. Keep evidence
-        # investigations on the same bounded cadence as registry collection so
-        # queued supply-chain alerts do not depend on a dashboard click.
-        investigations = run_due_investigations(db_path=db_path)
-    except Exception as exc:  # investigation work must not stop surveillance
-        capture_exception(exc, context={"component": "research_investigation_autopilot"})
-        investigations = {"status": "degraded", "processed": 0, "error": str(exc)[:500]}
-    try:
-        deliveries = deliver_pending_operational_alerts(db_path=db_path)
-    except Exception as exc:  # alerting must not stop registry surveillance
-        capture_exception(exc, context={"component": "research_alert_delivery"})
-        deliveries = {"enabled": True, "attempted": 0, "sent": 0, "failed": 1, "error": "operational alert delivery failed"}
+    if include_investigations:
+        try:
+            # The research worker is the durable 24/7 control loop. Keep evidence
+            # investigations on the same bounded cadence as registry collection so
+            # queued supply-chain alerts do not depend on a dashboard click.
+            investigations = run_due_investigations(db_path=db_path)
+        except Exception as exc:  # investigation work must not stop surveillance
+            capture_exception(exc, context={"component": "research_investigation_autopilot"})
+            investigations = {"status": "degraded", "processed": 0, "error": str(exc)[:500]}
+    else:
+        investigations = {"status": "skipped", "reason": "coordinated_by_daily_automation"}
+    if include_alert_delivery:
+        try:
+            deliveries = deliver_pending_operational_alerts(db_path=db_path)
+        except Exception as exc:  # alerting must not stop registry surveillance
+            capture_exception(exc, context={"component": "research_alert_delivery"})
+            deliveries = {"enabled": True, "attempted": 0, "sent": 0, "failed": 1, "error": "operational alert delivery failed"}
+    else:
+        deliveries = {"status": "skipped", "reason": "coordinated_by_daily_automation"}
+    if include_automation:
+        try:
+            from secopsai.daily_automation import run_due as run_due_daily_automation
+
+            daily_automation = run_due_daily_automation(db_path=db_path, trigger="research-worker", fetcher=fetcher)
+        except Exception as exc:  # the coordinator must never stop surveillance
+            capture_exception(exc, context={"component": "daily_automation"})
+            daily_automation = {"status": "degraded", "error": str(exc)[:500]}
+    else:
+        daily_automation = {"status": "skipped", "reason": "coordinated_by_daily_automation"}
     return {
         "collectors_run": len(results),
         "collector_results": results,
@@ -261,6 +280,7 @@ def run_worker_cycle(
         "investigations": investigations,
         "operational_alert_ids": alert_ids,
         "alert_delivery": deliveries,
+        "daily_automation": daily_automation,
         "storage": storage,
         "completed_at": _utcnow().isoformat().replace("+00:00", "Z"),
     }
