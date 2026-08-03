@@ -195,7 +195,7 @@ from secopsai.research_analysis import compare_intakes, compare_packages, correl
 from secopsai.research_artifacts import attach_to_case, get_artifact, import_artifact, list_artifacts, verify_artifact
 from secopsai.research_artifact_analysis import compare_artifacts, extract_ioc_candidates, inspect_artifact, review_ioc_candidate, queue_artifact_analysis, run_artifact_job, run_artifact_worker_once
 from secopsai.research_acquisition import check_registry_state, create_partner_request, list_partner_requests, update_partner_request
-from secopsai.research_sandbox import poll_sandbox_request, submit_sandbox_request, provider_status as sandbox_provider_status
+from secopsai.research_sandbox import normalize_result as normalize_sandbox_result, poll_sandbox_request, prepare_manual_submission, submit_sandbox_request, provider_status as sandbox_provider_status
 from secopsai.research_delivery import send_approved_disclosure, send_research_alert
 from secopsai.research_workflow import (
     attach_intake_job,
@@ -1603,6 +1603,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     sandbox_poll = research_sandbox_sub.add_parser("poll")
     sandbox_poll.add_argument("request_id")
     sandbox_poll.add_argument("--db-path", default=None)
+    sandbox_prepare = research_sandbox_sub.add_parser("prepare-manual", help="Prepare an approved exact artifact for manual public sandbox upload")
+    sandbox_prepare.add_argument("request_id")
+    sandbox_prepare.add_argument("--output-dir", required=True)
+    sandbox_prepare.add_argument("--public-submission-acknowledged", action="store_true")
+    sandbox_prepare.add_argument("--actor", default="analyst")
+    sandbox_prepare.add_argument("--db-path", default=None)
 
     research_disclosure = research_sub.add_parser("disclosure", help="Deliver approved research disclosures")
     research_disclosure_sub = research_disclosure.add_subparsers(dest="research_disclosure_cmd", required=True)
@@ -2695,6 +2701,14 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = sandbox_provider_status()
             elif args.research_sandbox_cmd == "submit":
                 payload = submit_sandbox_request(args.request_id, db_path=args.db_path, public_acknowledged=args.public_submission_acknowledged)
+            elif args.research_sandbox_cmd == "prepare-manual":
+                payload = prepare_manual_submission(
+                    args.request_id,
+                    output_dir=args.output_dir,
+                    public_acknowledged=args.public_submission_acknowledged,
+                    actor=args.actor,
+                    db_path=args.db_path,
+                )
             else:
                 payload = poll_sandbox_request(args.request_id, db_path=args.db_path)
         elif args.research_cmd == "disclosure":
@@ -2816,6 +2830,11 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                     result = json.loads(args.result_json)
                     if not isinstance(result, dict):
                         raise ValueError("sandbox result must be a JSON object")
+                    result = normalize_sandbox_result(
+                        result,
+                        submission_id=str(result.get("submission_id") or result.get("id") or ""),
+                        report_url=str(result.get("report_url") or ""),
+                    )
                 payload = set_sandbox_status(args.request_id, args.status, actor=args.actor, result=result, db_path=args.db_path)
             elif command == "approve-sandbox":
                 payload = approve_sandbox_submission(args.request_id, actor=args.actor, public_submission_acknowledged=args.public_submission_acknowledged, db_path=args.db_path)

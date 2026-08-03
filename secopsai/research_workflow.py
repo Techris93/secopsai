@@ -562,3 +562,48 @@ def approve_sandbox_submission(request_id: str, *, actor: str = "reviewer", publ
     if current["status"] != "pending_approval":
         raise ValueError("only pending sandbox requests can be approved")
     return set_sandbox_status(request_id, "approved", actor=actor, db_path=db_path, _approval_acknowledged=True)
+
+
+def record_manual_sandbox_export(
+    request_id: str,
+    *,
+    filename: str,
+    size_bytes: int,
+    actor: str = "analyst",
+    db_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Record that an approved sample was prepared for manual submission.
+
+    Local paths are deliberately excluded from the durable record. The event
+    proves which approved hash was handed off, when, and by whom without
+    disclosing the quarantine layout to browser or model consumers.
+    """
+    current = get_sandbox_request(request_id, db_path=db_path)
+    if current["status"] != "approved":
+        raise ValueError("manual sandbox export requires an approved request")
+    now = soc_store.utc_now()
+    safe_export = {
+        "prepared_at": now,
+        "filename": str(filename or "sample.bin")[:240],
+        "size_bytes": max(0, int(size_bytes)),
+        "sha256": current["artifact_sha256"],
+        "public_submission": True,
+    }
+    result = current.get("result") if isinstance(current.get("result"), dict) else {}
+    exports = result.get("manual_exports") if isinstance(result.get("manual_exports"), list) else []
+    result = {**result, "manual_exports": [*exports[-9:], safe_export]}
+    with closing(soc_store.connect(db_path)) as connection:
+        connection.execute(
+            "UPDATE research_sandbox_requests SET result_json = ?, updated_at = ? WHERE request_id = ?",
+            (_json(result), now, request_id),
+        )
+        _event(
+            connection,
+            current["case_id"],
+            "sandbox_manual_export_prepared",
+            "Prepared the approved, hash-verified artifact for manual public sandbox submission.",
+            actor,
+            {"request_id": request_id, **safe_export},
+        )
+        connection.commit()
+    return get_sandbox_request(request_id, db_path=db_path)

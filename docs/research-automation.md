@@ -92,7 +92,27 @@ Use the individual actions only when diagnosing a step or deliberately running a
 7. Use **Run Publication Safety Check** before drafting public content.
 8. Use **Prepare Disclosure** to create a reviewable maintainer/registry message. Approval and sending are separate actions.
 9. Use **Request Sandbox Approval** only when static evidence leaves an important runtime question. The default provider is manual-result-import; Core never executes packages locally.
-10. Approve the publication review, create the Blog Ops draft, edit it, and complete the existing Blog Ops approval/publish workflow.
+10. While Tria.ge API access is unavailable, approve the public handoff, select **Download exact sample**, and upload that hash-verified file through the Tria.ge web interface. The download is recorded without storing its local path. Nothing is submitted automatically.
+11. After the Tria.ge report is complete, record only the public report URL, score, and a reviewed behavior summary through **Record manual Tria.ge result**. SecOpsAI sanitizes the record before attaching it.
+12. Approve the publication review, create the Blog Ops draft, edit it, and complete the existing Blog Ops approval/publish workflow.
+
+## Manual Tria.ge handoff
+
+Use this path only for an artifact already collected and attached to the case.
+
+1. Confirm the artifact row shows the exact package/version and SHA-256 you intend to analyze.
+2. Create a sandbox request with the unanswered runtime question in the justification.
+3. Approve the public handoff. This acknowledges that public Tria.ge submissions are visible publicly and cannot be deleted by public-cloud users.
+4. Select **Download exact sample**. Core re-hashes the owner-only quarantine file and serves it through a one-time, no-store response. A mismatch blocks the download.
+5. In Tria.ge, submit the downloaded file interactively. Review the static report before selecting an execution profile. For package archives, select only the relevant executable or script extracted by Tria.ge.
+6. Use a network-disabled profile when network access is not required to answer the research question. Enable controlled network access only when the expected behavior requires it.
+7. Wait for the report to complete. Review process, filesystem, persistence, network, and memory evidence. A sandbox score alone is not a verdict.
+8. In Mission Control, open **Record manual Tria.ge result**, enter the public report URL and score, and write a concise behavior summary that separates observed behavior from inference.
+9. Select **Attach sanitized result**. Then regenerate the evidence matrix and rerun model analysis before changing the verdict.
+
+Never submit customer files, credentials, tokens, private source code, internal documents, or any artifact whose authorization and public-disclosure status is unclear.
+
+See the official [Tria.ge sample submission guide](https://tria.ge/docs/cloud-api/submit/), [analysis process](https://tria.ge/docs/data-model/), and [public-cloud FAQ](https://tria.ge/docs/faq/) before submitting a sample.
 
 ## Supported intake ecosystems
 

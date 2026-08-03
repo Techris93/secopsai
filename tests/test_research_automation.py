@@ -1,7 +1,10 @@
 import io
+import hashlib
 import json
+import stat
 import tarfile
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -21,6 +24,9 @@ from secopsai.research_workflow import (
     approve_sandbox_submission,
 )
 from secopsai.research_cases import create_case, get_case
+from secopsai.research_artifacts import attach_to_case, import_artifact
+from secopsai.research_sandbox import SandboxProviderError, normalize_result, prepare_manual_submission
+from secopsai.research_workflow import get_sandbox_request
 
 
 def npm_artifact() -> bytes:
@@ -211,6 +217,111 @@ def test_workflow_records_human_gates(tmp_path, monkeypatch):
     review = publication_safety_check(case["case_id"], db_path=db)
     assert review["approval_required"] is True
     assert review["status"] in {"needs_approval", "blocked"}
+
+
+def test_manual_sandbox_handoff_requires_approval_and_preserves_exact_hash(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    quarantine = tmp_path / "quarantine"
+    monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(quarantine))
+    case = create_case(title="Manual sandbox handoff", db_path=db)
+    source = tmp_path / "candidate.nupkg"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("candidate.nuspec", "<package><metadata><id>Candidate</id></metadata></package>")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    artifact = import_artifact(
+        str(source),
+        ecosystem="nuget",
+        package_name="Candidate",
+        version="1.0.0",
+        provenance={"source": "authorized test fixture"},
+        db_path=db,
+    )
+    attach_to_case(case["case_id"], artifact["artifact_id"], db_path=db)
+    request = request_sandbox(
+        case["case_id"],
+        artifact_sha256=digest,
+        justification="Confirm runtime behavior in an isolated public sandbox.",
+        behaviors=["network", "process"],
+        db_path=db,
+    )
+    with pytest.raises(SandboxProviderError, match="approved"):
+        prepare_manual_submission(
+            request["request_id"],
+            output_dir=str(tmp_path / "handoff"),
+            public_acknowledged=True,
+            db_path=db,
+        )
+    approve_sandbox_submission(request["request_id"], public_submission_acknowledged=True, db_path=db)
+    prepared = prepare_manual_submission(
+        request["request_id"],
+        output_dir=str(tmp_path / "handoff"),
+        public_acknowledged=True,
+        actor="test-operator",
+        db_path=db,
+    )
+    output = Path(prepared["output_path"])
+    assert output.is_file()
+    assert hashlib.sha256(output.read_bytes()).hexdigest() == digest
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    durable = get_sandbox_request(request["request_id"], db_path=db)
+    assert durable["status"] == "approved"
+    assert durable["result"]["manual_exports"][0]["sha256"] == digest
+    assert "output_path" not in durable["result"]["manual_exports"][0]
+
+
+def test_manual_sandbox_handoff_rejects_tampered_quarantine(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    quarantine = tmp_path / "quarantine"
+    monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(quarantine))
+    case = create_case(title="Tampered sandbox handoff", db_path=db)
+    source = tmp_path / "candidate.zip"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("candidate.txt", "original")
+    artifact = import_artifact(str(source), provenance={"source": "authorized test fixture"}, db_path=db)
+    attach_to_case(case["case_id"], artifact["artifact_id"], db_path=db)
+    request = request_sandbox(case["case_id"], artifact_sha256=artifact["sha256"], justification="Test hash enforcement.", behaviors=["filesystem"], db_path=db)
+    approve_sandbox_submission(request["request_id"], public_submission_acknowledged=True, db_path=db)
+    quarantined = next(quarantine.glob(f"{artifact['sha256']}.*"))
+    quarantined.write_bytes(b"tampered")
+    with pytest.raises(SandboxProviderError, match="hash"):
+        prepare_manual_submission(request["request_id"], output_dir=str(tmp_path / "handoff"), public_acknowledged=True, db_path=db)
+
+
+def test_manual_sandbox_handoff_rejects_catalog_path_outside_quarantine(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    quarantine = tmp_path / "quarantine"
+    monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(quarantine))
+    case = create_case(title="Out-of-quarantine handoff", db_path=db)
+    source = tmp_path / "outside.zip"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("candidate.txt", "original")
+    artifact = import_artifact(str(source), provenance={"source": "authorized test fixture"}, db_path=db)
+    attach_to_case(case["case_id"], artifact["artifact_id"], db_path=db)
+    request = request_sandbox(case["case_id"], artifact_sha256=artifact["sha256"], justification="Test quarantine boundary.", behaviors=["filesystem"], db_path=db)
+    approve_sandbox_submission(request["request_id"], public_submission_acknowledged=True, db_path=db)
+    with soc_store.connect(db) as connection:
+        connection.execute("UPDATE research_artifacts SET quarantine_path = ? WHERE artifact_id = ?", (str(source), artifact["artifact_id"]))
+        connection.commit()
+    with pytest.raises(SandboxProviderError, match="outside local quarantine"):
+        prepare_manual_submission(request["request_id"], output_dir=str(tmp_path / "handoff"), public_acknowledged=True, db_path=db)
+
+
+def test_manual_sandbox_result_is_sanitized_and_tria_ge_scoped():
+    result = normalize_result(
+        {
+            "id": "260803-example123",
+            "status": "reported",
+            "score": 8.5,
+            "summary": "Observed process and network behavior.",
+            "secret": "must-not-survive",
+        },
+        report_url="https://tria.ge/260803-example123",
+    )
+    assert result["score"] == 8.5
+    assert result["behavior"] == "Observed process and network behavior."
+    assert "secret" not in result
+    with pytest.raises(SandboxProviderError, match="approved Tria.ge"):
+        normalize_result({"id": "260803-example123"}, report_url="https://example.invalid/report")
 
 
 
