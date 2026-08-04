@@ -419,6 +419,14 @@ def reconcile_pipeline(pipeline_id: str, *, db_path: Optional[str] = None) -> Op
         if "HTTP 404" in blocker_message:
             status = "evidence_gap"
             blocker_code = "artifact_unavailable"
+    elif pipeline["status"] == "awaiting_review":
+        # AI work is complete, but the pipeline is deliberately waiting for
+        # an evidence-bounded decision. Keep this separate from
+        # ``awaiting_model`` so completed analysis does not occupy an active
+        # slot or appear stuck in the operator queue.
+        status = "ready_for_decision"
+        blocker_code = "human_review_required"
+        blocker_message = "Model analysis is complete; review the evidence before recording a verdict."
     elif pipeline["status"] == "succeeded":
         if verdict in {"credible", "likely"}:
             status = "escalated"
