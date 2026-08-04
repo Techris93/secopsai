@@ -416,9 +416,13 @@ def reconcile_pipeline(pipeline_id: str, *, db_path: Optional[str] = None) -> Op
         status = "failed"
         blocker_code = _clean(pipeline.get("error_code") or "pipeline_failed", 120)
         blocker_message = _clean(pipeline.get("error_message") or "The evidence pipeline failed safely.", 2000)
-        if "HTTP 404" in blocker_message:
+        normalized_blocker = blocker_message.lower()
+        if "http 404" in normalized_blocker:
             status = "evidence_gap"
             blocker_code = "artifact_unavailable"
+        elif "safety limit" in normalized_blocker or "response exceeded" in normalized_blocker:
+            status = "evidence_gap"
+            blocker_code = "artifact_collection_limited"
     elif pipeline["status"] == "awaiting_review":
         # AI work is complete, but the pipeline is deliberately waiting for
         # an evidence-bounded decision. Keep this separate from

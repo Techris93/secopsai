@@ -173,6 +173,33 @@ def test_reconcile_marks_completed_model_review_ready_for_decision(tmp_path, mon
     assert reconciled["blocker_code"] == "human_review_required"
 
 
+def test_reconcile_marks_registry_safety_limit_as_evidence_gap(tmp_path, monkeypatch):
+    db = str(tmp_path / "soc.db")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(tmp_path / "quarantine"))
+    soc_store.persist_findings([_finding()], source="secopsai-supply-chain", db_path=db)
+    real_start = start_investigation_pipeline
+    monkeypatch.setattr(
+        investigation_autopilot, "start_investigation_pipeline",
+        lambda case_id, **kwargs: real_start(case_id, **kwargs, fetcher=_fetcher()),
+    )
+    queued = investigation_autopilot.enqueue_finding("SCM-AUTOPILOT-1", db_path=db)
+    run = investigation_autopilot.run_due(db_path=db)["runs"][0]
+
+    with soc_store.connect(db) as connection:
+        connection.execute(
+            "UPDATE research_pipeline_runs SET status='failed', error_code='pipeline_failed', error_message='registry response exceeded the safety limit' WHERE pipeline_id=?",
+            (run["pipeline_id"],),
+        )
+        connection.commit()
+
+    reconciled = investigation_autopilot.reconcile_pipeline(run["pipeline_id"], db_path=db)
+    assert reconciled is not None
+    assert reconciled["run_id"] == queued["run_id"]
+    assert reconciled["status"] == "evidence_gap"
+    assert reconciled["blocker_code"] == "artifact_collection_limited"
+    assert reconciled["retryable"] is True
+
+
 def test_pypi_exact_version_uses_bounded_release_endpoint():
     requested_urls = []
 
