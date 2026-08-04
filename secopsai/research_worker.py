@@ -21,6 +21,7 @@ import soc_store
 from secopsai.investigation_autopilot import run_due as run_due_investigations
 from secopsai.observability import capture_exception, initialize_observability
 from secopsai.research_delivery import deliver_pending_operational_alerts
+from secopsai.research_external_intel import refresh_and_sync
 from secopsai.research_intake import SafeFetcher
 from secopsai.research_scoring import score_pending_events
 from secopsai.research_storage import ResearchStorageCapacityError, maintain_research_storage, storage_status
@@ -194,6 +195,14 @@ def run_worker_cycle(
     initialize_observability(service="secopsai-research-worker")
     storage = maintain_research_storage(db_path=db_path)
     fetcher = fetcher or SafeFetcher()
+    try:
+        # External threat-intel is a separate signal from registry telemetry.
+        # Refreshing it before scoring means a public campaign can become an
+        # actionable, source-backed lead even when no local dependency exists.
+        external_intel = refresh_and_sync(db_path=db_path, fetcher=fetcher)
+    except Exception as exc:  # advisory feeds must never stop registry collection
+        capture_exception(exc, context={"component": "research_external_intel"})
+        external_intel = {"status": "degraded", "error": str(exc)[:500]}
     selected = {item.lower() for item in ecosystems} if ecosystems else None
     results: List[Dict[str, Any]] = []
     for item in due_collectors(db_path=db_path):
@@ -272,6 +281,7 @@ def run_worker_cycle(
     else:
         daily_automation = {"status": "skipped", "reason": "coordinated_by_daily_automation"}
     return {
+        "external_intel": external_intel,
         "collectors_run": len(results),
         "collector_results": results,
         "scoring": scoring,

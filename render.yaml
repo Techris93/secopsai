@@ -80,6 +80,11 @@ services:
         value: resend
       - key: SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS
         value: email,webhook
+      # Source-backed campaign leads are sent only to the signed Core webhook.
+      # They never inherit the operational email channel because one advisory
+      # can name hundreds of affected package versions.
+      - key: SECOPSAI_RESEARCH_EXTERNAL_ALERT_CHANNELS
+        value: webhook
       - key: SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL
         value: https://secopsai-core-api.onrender.com/api/v1/research/alerts/webhook
       - key: SECOPSAI_SENTRY_TRACES_SAMPLE_RATE

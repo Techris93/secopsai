@@ -47,7 +47,7 @@ case "$ACTION" in
   <array>
     <string>$PYTHON</string>
     <string>-c</string>
-    <string>import json; from secopsai.research_discovery import run_due_monitors; print(json.dumps(run_due_monitors(limit=25), indent=2))</string>
+    <string>import json; from secopsai.research_worker import run_worker_cycle; print(json.dumps(run_worker_cycle(), indent=2))</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -79,7 +79,7 @@ EOF
     ;;
   run-now)
     launchctl start "$LABEL"
-    echo "Requested one due-monitor run."
+    echo "Requested one global surveillance worker cycle."
     ;;
   logs)
     echo "stdout: $OUT_LOG"

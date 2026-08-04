@@ -1,5 +1,30 @@
 # Implementation Checkpoints
 
+## 112 Keyv/Cacheable external campaign detection path
+
+Status: implementation complete locally; deployment and live feed acceptance
+remain release gates.
+
+The global worker now refreshes an allowlisted public Wiz package/version feed
+for the August 2026 Keyv/Cacheable npm campaign. It persists source hashes and
+provenance, creates idempotent source-backed candidates and canonical
+`secopsai_research` findings without requiring a local dependency reference,
+and repairs a missing alert even when its candidate already exists. The local
+research monitor now runs the complete worker cycle rather than only
+watchlist-scoped monitors.
+
+The Core API accepts minimized signed `external_advisory_match` and
+`external_advisory_feed_degraded` events from the separate Render worker,
+creates a finding, exposes the alert in the workspace, and preserves analyst
+status on repeat delivery. External leads use a separate webhook-only channel
+so a campaign containing hundreds of versions cannot flood the research email
+alias.
+
+The source-backed state is intentionally `unverified`: it is a lead and not a
+maliciousness verdict. The normal quarantined intake, exact-version comparison,
+static analysis, optional approved sandbox, disclosure, and publication gates
+remain required. Focused external-intel, Core API, and delivery tests pass.
+
 ## Container Provenance And Deterministic Security Gate
 
 The production image is built once without cache, identified by its image

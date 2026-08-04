@@ -1054,6 +1054,41 @@ def init_db(db_path: str | None = None) -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS research_external_advisory_sources (
+                source_id TEXT PRIMARY KEY,
+                ecosystem TEXT NOT NULL,
+                name TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                interval_seconds INTEGER NOT NULL DEFAULT 300,
+                last_fetch_at TEXT,
+                source_hash TEXT,
+                status TEXT NOT NULL DEFAULT 'new',
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (ecosystem, source_url)
+            );
+
+            CREATE TABLE IF NOT EXISTS research_external_advisory_records (
+                record_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                advisory_id TEXT NOT NULL,
+                campaign_id TEXT NOT NULL,
+                ecosystem TEXT NOT NULL,
+                package TEXT NOT NULL,
+                version TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                confidence TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                source_hash TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                UNIQUE (source_id, ecosystem, package, version),
+                FOREIGN KEY (source_id) REFERENCES research_external_advisory_sources (source_id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS research_notification_deliveries (
                 delivery_id TEXT PRIMARY KEY,
                 alert_id TEXT NOT NULL,
@@ -1227,6 +1262,10 @@ def init_db(db_path: str | None = None) -> None:
                 ON research_monitors (enabled, next_run_at);
             CREATE INDEX IF NOT EXISTS idx_research_alerts_status_time
                 ON research_alerts (status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_external_advisory_records_active
+                ON research_external_advisory_records (active, ecosystem, package, version);
+            CREATE INDEX IF NOT EXISTS idx_external_advisory_sources_status
+                ON research_external_advisory_sources (status, last_fetch_at);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_registry_one_running
                 ON registry_ingestion_runs (collector_id) WHERE status = 'running';
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_cursor

@@ -231,6 +231,48 @@ def test_operational_alert_failure_is_audited_and_backed_off(tmp_path, monkeypat
     assert delivery["last_error"] == "smtp unavailable"
 
 
+def test_external_campaign_alerts_use_webhook_channel_without_email_flood(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    alert = create_candidate_alert(
+        {
+            "candidate_id": "CAN-EXT-DELIVERY",
+            "ecosystem": "npm",
+            "package": "keyv",
+            "version": "6.0.0",
+            "campaign_id": "keyv-cacheable-npm-worm-2026-08",
+            "score": 99,
+            "reason": "Source-backed campaign lead",
+            "evidence": {"ecosystem": "npm", "package": "keyv", "version": "6.0.0"},
+        },
+        alert_type="external_advisory_match",
+        severity_override="critical",
+        dedupe_key="external-advisory:test:keyv:6.0.0:hash",
+        db_path=db,
+    )
+    captured = []
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    monkeypatch.setenv("SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS", "email,webhook")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_EXTERNAL_ALERT_CHANNELS", "webhook")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL", "https://core.example.test/api/v1/research/alerts/webhook")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET", "a" * 48)
+    monkeypatch.setattr("secopsai.research_delivery.urllib.request.urlopen", lambda request, timeout: (captured.append(request), Response())[1])
+    monkeypatch.setattr("secopsai.research_delivery.send_email", lambda **kwargs: (_ for _ in ()).throw(AssertionError("external alerts must not email")))
+
+    result = deliver_pending_operational_alerts(db_path=db)
+    assert result["attempted"] == 1
+    assert result["sent"] == 1
+    assert len(captured) == 1
+
+
 def test_signed_webhook_uses_timestamped_hmac_and_normalized_evidence(tmp_path, monkeypatch):
     db = str(tmp_path / "research.db")
     alert_id = _record_collector_degraded_alert(

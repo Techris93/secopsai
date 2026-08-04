@@ -622,27 +622,48 @@ def run_promotion_policy(*, ecosystem: str = "all", apply: bool = False, actor: 
     return {"schema_version": "secopsai.research.promotion-policy.v1", "policy": policy, "apply": bool(apply), "evaluated": len(decisions), "eligible": sum(bool(item["eligible"]) for item in decisions), "promoted": sum(bool(item.get("applied")) for item in decisions), "decisions": decisions}
 
 
-def create_candidate_alert(candidate: Dict[str, Any], *, db_path: Optional[str] = None) -> Dict[str, Any]:
-    """Create a deduplicated alert for a high-confidence candidate."""
+def create_candidate_alert(
+    candidate: Dict[str, Any],
+    *,
+    db_path: Optional[str] = None,
+    alert_type: str = "candidate_detected",
+    severity_override: Optional[str] = None,
+    dedupe_key: Optional[str] = None,
+    reason_override: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a deduplicated alert for a high-confidence candidate.
+
+    External advisory feeds use the same canonical finding path but provide a
+    stable source/version/hash dedupe key.  The defaults preserve the original
+    watchlist candidate behavior.
+    """
     soc_store.init_db(db_path)
     score = float(candidate.get("score") or 0)
-    severity = "critical" if score >= 95 else "high" if score >= 85 else "medium"
-    dedupe_key = f"candidate:{candidate.get('candidate_id')}:{candidate.get('last_seen')}"
+    severity = severity_override or ("critical" if score >= 95 else "high" if score >= 85 else "medium")
+    severity = severity.lower()
+    if severity not in {"critical", "high", "medium", "low", "info"}:
+        severity = "medium"
+    stable_dedupe_key = dedupe_key or f"candidate:{candidate.get('candidate_id')}:{candidate.get('last_seen')}"
     alert_id = _id("RAL")
     now = _now()
     with closing(soc_store.connect(db_path)) as connection:
         connection.execute(
             """INSERT INTO research_alerts
-            (alert_id, alert_type, severity, candidate_id, campaign_id, case_id, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at)
-            VALUES (?, 'candidate_detected', ?, ?, NULL, NULL, ?, ?, ?, 'open', '', ?, ?)
-            ON CONFLICT(dedupe_key) DO UPDATE SET updated_at=excluded.updated_at""",
-            (alert_id, severity, candidate.get("candidate_id"), dedupe_key, str(candidate.get("reason") or "Candidate requires analyst review")[:2000], _json(candidate.get("evidence") or {}), now, now),
+                (alert_id, alert_type, severity, candidate_id, campaign_id, case_id, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 'open', '', ?, ?)
+            ON CONFLICT(dedupe_key) DO UPDATE SET severity=excluded.severity,
+                alert_type=excluded.alert_type, reason=excluded.reason,
+                evidence_json=excluded.evidence_json, updated_at=excluded.updated_at,
+                status='open'""",
+            (alert_id, alert_type, severity, candidate.get("candidate_id"), candidate.get("campaign_id"), stable_dedupe_key,
+             str(reason_override or candidate.get("reason") or "Candidate requires analyst review")[:2000],
+             _json(candidate.get("evidence") or {}), now, now),
         )
-        row = connection.execute("SELECT * FROM research_alerts WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
+        row = connection.execute("SELECT * FROM research_alerts WHERE dedupe_key = ?", (stable_dedupe_key,)).fetchone()
         if row:
             finding_id = _upsert_research_alert_finding(connection, dict(row), candidate=candidate)
         connection.commit()
-    result = dict(row) if row else {"alert_id": alert_id, "dedupe_key": dedupe_key}
+    result = dict(row) if row else {"alert_id": alert_id, "dedupe_key": stable_dedupe_key}
     if row:
         result["finding_id"] = finding_id
     return result
@@ -671,7 +692,10 @@ def _upsert_research_alert_finding(
         confidence = min(99, max(0, int(float(score or 0))))
     except (TypeError, ValueError):
         confidence = 0
-    if alert_type == "candidate_detected":
+    if alert_type == "external_advisory_match":
+        title = f"External advisory requires verification: {ecosystem or 'package'} {package or alert_id}{('@' + version) if version else ''}"
+        rule_ids = ["RESEARCH-EXTERNAL-ADVISORY"]
+    elif alert_type == "candidate_detected":
         title = f"Research candidate requires verification: {ecosystem or 'package'} {package or alert_id}"
         rule_ids = ["RESEARCH-CANDIDATE-DISCOVERY"]
     elif alert_type == "watched_package_version":

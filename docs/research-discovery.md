@@ -12,7 +12,12 @@ secopsai research ecosystems --json
 
 The first implementation supports npm, PyPI, NuGet, Maven, RubyGems, Packagist, Go modules, and Open VSX. Each ecosystem advertises metadata discovery, version history, artifact download, static inspection, deep-analysis availability, comparison, monitoring mode, limitations, and terms/rate-limit documentation.
 
-The initial monitor mode is intentionally watchlist-scoped. A successful watchlist poll is not a clean registry result. Incomplete coverage, stale cursors, and adapter failures remain visible to operators.
+The initial registry monitor mode is intentionally honest about coverage. A
+successful watchlist poll is not a clean registry result. Incomplete coverage,
+stale cursors, and adapter failures remain visible to operators. In addition,
+the worker can ingest an allowlisted, source-backed package advisory feed. A
+source-backed lead is created even when no local dependency reference exists;
+it remains `unverified` until the exact artifact is collected and analyzed.
 
 An exact-package monitor creates a version baseline and records subsequent version changes as informational alerts. It does not classify the legitimate watched package as a typosquat. Lookalike candidates enter through registry event/search observations and are scored separately against watchlists. Exact approved names and explicit exclusions are suppressed unless an expected publisher is configured and the observed publisher differs.
 
@@ -40,7 +45,11 @@ A failed fetch never advances the cursor, so history cannot be skipped silently.
 
 ## Continuous worker
 
-`secopsai research worker run` executes due collectors on their own schedules (NuGet 15 min, Packagist 15 min, PyPI 1 hour, RubyGems 30 min), scores new events, retries dead letters, and recovers interrupted runs. One failing registry never stops the cycle.
+`secopsai research worker run` executes the external advisory refresh and due
+collectors on their own schedules (NuGet 15 min, Packagist 15 min, PyPI 1
+hour, RubyGems 30 min, and the npm changes feed every 15 min), scores new
+events, retries dead letters, and recovers interrupted runs. One failing
+registry never stops the cycle.
 
 Collector status separates an active coverage gap from an old cursor watermark. A successful run resolves open retention alerts for that collector automatically; an old alert record is historical evidence, not a current outage. When a feed is behind, let the worker process bounded catch-up cycles rather than starting overlapping collectors. A collector cursor advances only after its selected pages are persisted, so a restart is safe and idempotent.
 
@@ -48,6 +57,7 @@ Collector status separates an active coverage gap from an old cursor watermark. 
 secopsai research worker due           # which collectors are due and why
 secopsai research worker run --once    # single cycle (cron-friendly)
 secopsai research worker run           # loop mode with SIGTERM handling
+secopsai research external-intel refresh --force --json  # refresh source-backed campaign leads now
 ```
 
 On Render, the `secopsai-research-worker` background worker in `render.yaml` runs loop mode against a persistent disk (`SECOPS_FINDINGS_DIR=/var/data/secopsai-research`). The worker database is independent of the API database so collection can scale separately.
@@ -92,7 +102,18 @@ SMTP messages are multipart email with a plain-text fallback and an escaped HTML
 
 The HTML mark is different from the avatar that mailbox providers may show beside the sender. That inbox-level identity requires BIMI-capable DNS and mail authentication. Do not publish a BIMI record until SPF and DKIM are aligned, DMARC is monitored and moved to enforcement, the logo is converted to SVG Tiny PS, and the chosen mailbox-provider certificate requirements are satisfied.
 
-The hosted Core API exposes `POST /api/v1/research/alerts/webhook` for this operational path. The Render Blueprint creates the `secopsai-research-alerts` environment group, generates a 256-bit `SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET`, and links it to Core and the worker. The worker URL is `https://secopsai-core-api.onrender.com/api/v1/research/alerts/webhook`, and automatic webhook delivery is enabled in the Blueprint. The signature covers the exact request body and a Unix timestamp. Core rejects requests outside a five-minute replay window, payloads larger than 64 KB, non-operational alert types, invalid signatures, and duplicate JSON keys.
+The hosted Core API exposes `POST /api/v1/research/alerts/webhook` for this
+operational path. The Render Blueprint creates the `secopsai-research-alerts`
+environment group, generates a 256-bit
+`SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET`, and links it to Core and the worker.
+The worker URL is `https://secopsai-core-api.onrender.com/api/v1/research/alerts/webhook`,
+and automatic webhook delivery is enabled in the Blueprint. The separate
+`SECOPSAI_RESEARCH_EXTERNAL_ALERT_CHANNELS=webhook` setting sends
+source-backed campaign leads only to Core. It never inherits the operational
+email channel, because one campaign can contain hundreds of package versions.
+The signature covers the exact request body and a Unix timestamp. Core rejects
+requests outside a five-minute replay window, payloads larger than 64 KB,
+unsupported alert types, invalid signatures, and duplicate JSON keys.
 
 Webhook retries are idempotent. Core assigns a stable local alert ID from the worker alert ID and preserves the operator-owned status and owner fields when the same alert is delivered again. The Core workspace response includes normalized operational research alerts; raw package artifacts and scanner data are not accepted by this endpoint.
 
@@ -102,7 +123,12 @@ Optional Sentry reporting is also disabled until `SECOPSAI_SENTRY_DSN` is presen
 
 The repository includes the manual `Configure Resend DNS` GitHub workflow. It uses the existing server-side `CLOUDFLARE_API_TOKEN` Actions secret plus the public `RESEND_DKIM_PUBLIC_KEY` repository variable to locate `secopsai.dev` by exact zone name and idempotently configure the Resend DKIM record and the `send.secopsai.dev` SPF and return-path records. The token must have Zone read and DNS edit permission for `secopsai.dev`; a Pages-only token fails without changing DNS.
 
-Important deployment boundary: Render persistent disks cannot be shared. The signed webhook synchronizes reduced operational alerts only. Registry events, candidates, artifacts, and full coverage history remain on the worker disk until their own authenticated ingestion contracts are implemented.
+Important deployment boundary: Render persistent disks cannot be shared. The
+signed webhook synchronizes reduced operational and source-backed alert
+context only. Registry events, candidates, artifacts, and full coverage
+history remain on the worker disk until their own authenticated ingestion
+contracts are implemented. Core still treats every external lead as
+unverified until its evidence workflow completes.
 
 ## Watchlist and monitor workflow
 

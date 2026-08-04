@@ -184,6 +184,7 @@ from secopsai.research_surveillance import (
     set_collector_enabled as set_registry_collector_enabled,
 )
 from secopsai.research_scoring import score_pending_events as score_pending_feed_events
+from secopsai.research_external_intel import refresh_and_sync as refresh_external_intel
 from secopsai.research_worker import (
     collector_schedules as research_collector_schedules,
     due_collectors as research_due_collectors,
@@ -1473,6 +1474,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     worker_due = research_worker_sub.add_parser("due", help="Show which collectors are due")
     worker_due.add_argument("--db-path", default=None)
 
+    research_external = research_sub.add_parser(
+        "external-intel", help="Refresh allowlisted public package-advisory feeds"
+    )
+    research_external_sub = research_external.add_subparsers(dest="research_external_cmd", required=True)
+    external_refresh = research_external_sub.add_parser(
+        "refresh", help="Refresh source-backed package leads and create reviewable candidates"
+    )
+    external_refresh.add_argument("--force", action="store_true")
+    external_refresh.add_argument("--db-path", default=None)
+
     research_storage = research_sub.add_parser("storage", help="Inspect and maintain bounded research-worker storage")
     research_storage_sub = research_storage.add_subparsers(dest="research_storage_cmd", required=True)
     storage_status_cmd = research_storage_sub.add_parser("status", help="Show database, disk, reserve, and pressure metrics")
@@ -2620,6 +2631,10 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = run_worker_cycle(db_path=args.db_path)
             else:
                 payload = run_worker_loop(db_path=args.db_path, interval_seconds=args.interval, max_cycles=args.max_cycles, on_cycle=lambda summary: print(json.dumps({"cycle": summary}, sort_keys=True), flush=True))
+        elif args.research_cmd == "external-intel":
+            if args.research_external_cmd != "refresh":
+                raise ValueError("unsupported external-intel command")
+            payload = refresh_external_intel(db_path=args.db_path, force=args.force)
         elif args.research_cmd == "storage":
             if args.research_storage_cmd == "status":
                 payload = storage_status(db_path=args.db_path)
@@ -3219,7 +3234,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
 
-        if args.research_cmd in {"rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "storage", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "resolution", "workflow"}:
+        if args.research_cmd in {"rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "external-intel", "storage", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "resolution", "workflow"}:
             return _run_research_automation_command(args)
 
         if args.research_cmd == "case":

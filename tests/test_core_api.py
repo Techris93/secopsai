@@ -537,6 +537,58 @@ def test_research_alert_webhook_rejects_tampering_replay_and_nonoperational_type
     assert "not accepted" in response.json()["detail"]
 
 
+def test_external_advisory_webhook_creates_core_finding_and_is_idempotent(client):
+    test_client, settings = client
+    event = {
+        "schema_version": "secopsai.research.alert.v1",
+        "alert_id": "RAL-EXT-KEYV-1",
+        "alert_type": "external_advisory_match",
+        "severity": "critical",
+        "candidate_id": "CAN-EXT-KEYV-1",
+        "campaign_id": "keyv-cacheable-npm-worm-2026-08",
+        "reason": "Wiz reports keyv@6.0.0 in the active campaign; collect and verify the exact artifact.",
+        "evidence": {
+            "ecosystem": "npm",
+            "package": "keyv",
+            "version": "6.0.0",
+            "advisory_id": "SECOPSAI-EXT-2026-08-KEYV-CACHEABLE",
+            "source_url": "https://example.test/advisory.csv",
+            "source_hash": "a" * 64,
+            "token": "must-not-persist",
+        },
+        "occurred_at": "2026-08-04T18:00:00Z",
+    }
+    body = json.dumps(event, sort_keys=True, separators=(",", ":")).encode()
+    headers = _signed_webhook_headers(body)
+    first = test_client.post("/api/v1/research/alerts/webhook", content=body, headers=headers)
+    second = test_client.post("/api/v1/research/alerts/webhook", content=body, headers=headers)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["created"] is True
+    assert second.json()["created"] is False
+
+    workspace = test_client.get(
+        "/api/v1/workspace", headers={"Authorization": f"Bearer {READ_TOKEN}"}
+    ).json()
+    assert workspace["summary"]["external_research_alerts"] == 1
+    assert workspace["findings"][0]["source"] == "secopsai_research"
+    assert "keyv" in workspace["findings"][0]["title"]
+
+    with sqlite3.connect(settings.db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        alert = connection.execute(
+            "SELECT candidate_id, campaign_id, evidence_json FROM research_alerts WHERE alert_type='external_advisory_match'"
+        ).fetchone()
+        finding = connection.execute(
+            "SELECT finding_id, status, payload_json FROM findings WHERE source='secopsai_research'"
+        ).fetchone()
+    assert alert["candidate_id"] == "CAN-EXT-KEYV-1"
+    assert alert["campaign_id"] == "keyv-cacheable-npm-worm-2026-08"
+    assert "must-not-persist" not in alert["evidence_json"]
+    assert finding["status"] == "open"
+    assert "keyv" in finding["payload_json"]
+
+
 def test_production_settings_fail_closed():
     settings = CoreAPISettings(
         db_path=":memory:",

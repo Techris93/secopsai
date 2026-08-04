@@ -140,6 +140,27 @@ secopsai triage queue
 secopsai --json triage summary
 ```
 
+### Monitor public package campaigns
+
+SecOpsAI can create reviewable leads from an allowlisted public advisory feed
+even when the package is not installed on the local machine. This is not a
+maliciousness verdict; collect and verify the exact artifact before disclosure
+or publication.
+
+```bash
+secopsai research external-intel refresh --force --json
+secopsai research worker run --once --json
+secopsai research collect status --json
+secopsai triage list --source secopsai_research
+```
+
+The continuous worker refreshes source-backed campaign leads, runs the global
+registry collectors, queues bounded evidence investigations, and keeps source
+and coverage failures visible. See
+[docs/research-incident-response.md](docs/research-incident-response.md) and
+[docs/research-discovery.md](docs/research-discovery.md) for the Keyv/Cacheable
+incident path, deployment boundary, and evidence requirements.
+
 ### Adaptive Response Layer
 
 Use the Adaptive Response Layer when you want stored findings to produce risk scoring, response guidance, and durable decision memory:

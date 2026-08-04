@@ -259,8 +259,15 @@ def send_research_alert(alert_id: str, *, channel: str = "email", db_path: str |
             sender = os.environ.get("SECOPSAI_RESEARCH_FROM_EMAIL", "research@secopsai.dev")
             result = send_email(recipient=destination, subject=f"SecOpsAI research alert: {alert.get('severity', 'review')}", body=json.dumps(event, indent=2), sender=sender)
         elif channel == "webhook":
-            endpoint = os.environ.get("SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL", "")
-            secret = os.environ.get("SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET", "")
+            is_external = str(alert.get("alert_type") or "") in {"external_advisory_match", "external_advisory_feed_degraded"}
+            endpoint = os.environ.get(
+                "SECOPSAI_RESEARCH_EXTERNAL_ALERT_WEBHOOK_URL" if is_external else "SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL",
+                "",
+            ) or os.environ.get("SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL", "")
+            secret = os.environ.get(
+                "SECOPSAI_RESEARCH_EXTERNAL_ALERT_WEBHOOK_SECRET" if is_external else "SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET",
+                "",
+            ) or os.environ.get("SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET", "")
             if not endpoint or not secret:
                 raise RuntimeError("research alert webhook configuration is incomplete")
             destination = endpoint
@@ -298,15 +305,35 @@ def configured_auto_alert_channels() -> List[str]:
     return channels
 
 
+def configured_external_alert_channels() -> List[str]:
+    """Return channels explicitly enabled for source-backed campaign leads.
+
+    External feeds can contain hundreds of affected versions.  They must never
+    inherit the ordinary operational email setting and flood an inbox.  The
+    default is empty; deployments normally enable only the signed Core
+    webhook after the receiving API is ready.
+    """
+    raw = os.environ.get("SECOPSAI_RESEARCH_EXTERNAL_ALERT_CHANNELS", "")
+    channels = []
+    for item in raw.split(","):
+        channel = item.strip().lower()
+        if channel in {"email", "webhook"} and channel not in channels:
+            channels.append(channel)
+    return channels
+
+
 def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datetime | None = None) -> Dict[str, Any]:
     """Deliver undelivered collector-health alerts with bounded backoff."""
     import soc_store
 
-    channels = configured_auto_alert_channels()
+    operational_channels = configured_auto_alert_channels()
+    external_channels = configured_external_alert_channels()
+    channels = list(dict.fromkeys(operational_channels + external_channels))
     if not channels:
         return {"enabled": False, "channels": [], "attempted": 0, "sent": 0, "failed": 0, "deferred": 0}
 
-    allowed_types = {"collector_degraded", "collector_retention_risk"}
+    operational_types = {"collector_degraded", "collector_retention_risk"}
+    external_types = {"external_advisory_match", "external_advisory_feed_degraded"}
     max_attempts = max(1, min(int(os.environ.get("SECOPSAI_RESEARCH_ALERT_MAX_ATTEMPTS", "5")), 10))
     current = now or datetime.now(timezone.utc)
     soc_store.init_db(db_path)
@@ -318,9 +345,14 @@ def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datet
     summary = {"enabled": True, "channels": channels, "attempted": 0, "sent": 0, "failed": 0, "deferred": 0}
     for row in alerts:
         alert = dict(row)
-        if alert.get("alert_type") not in allowed_types:
+        alert_type = str(alert.get("alert_type") or "")
+        if alert_type in operational_types:
+            eligible_channels = operational_channels
+        elif alert_type in external_types:
+            eligible_channels = external_channels
+        else:
             continue
-        for channel in channels:
+        for channel in eligible_channels:
             with soc_store.connect(db_path) as connection:
                 deliveries = connection.execute(
                     """SELECT status, created_at FROM research_notification_deliveries

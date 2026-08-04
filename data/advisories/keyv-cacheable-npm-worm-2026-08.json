@@ -1,0 +1,62 @@
+{
+  "advisory_id": "SECOPSAI-ADV-2026-08-KEYV-CACHEABLE",
+  "campaign_id": "keyv-cacheable-npm-worm-2026-08",
+  "title": "Keyv and Cacheable npm supply-chain worm",
+  "summary": "Source-backed emergency lead for the August 4, 2026 compromise of Keyv, Cacheable, and community-spread npm packages. The package list is refreshed separately from the public Wiz IOC feed; this record preserves the initial independently reported versions and is not a final SecOpsAI verdict.",
+  "severity": "critical",
+  "confidence": "reported",
+  "status": "active",
+  "auto_monitor": true,
+  "published_at": "2026-08-04T00:00:00Z",
+  "updated_at": "2026-08-04T16:00:00Z",
+  "source_names": ["Aikido Security", "Wiz Research", "Socket Research"],
+  "source_urls": [
+    "https://www.aikido.dev/blog/keyv-and-friends-compromised-in-npm-supply-chain-attack",
+    "https://www.wiz.io/blog/keyv-and-cacheable-npm-supply-chain-attack",
+    "https://socket.dev/blog/popular-npm-packages-in-the-keyv-and-cacheable-namespaces-compromised-in-active-supply-chain",
+    "https://raw.githubusercontent.com/wiz-sec-public/wiz-research-iocs/main/reports/keyv-packages.csv"
+  ],
+  "affected": [
+    {"ecosystem": "npm", "package": "keyv", "versions": ["6.0.0"]},
+    {"ecosystem": "npm", "package": "flat-cache", "versions": ["6.1.24"]},
+    {"ecosystem": "npm", "package": "file-entry-cache", "versions": ["11.1.6"]},
+    {"ecosystem": "npm", "package": "cacheable-request", "versions": ["13.0.20"]},
+    {"ecosystem": "npm", "package": "cacheable", "versions": ["2.5.1"]},
+    {"ecosystem": "npm", "package": "@cacheable/memory", "versions": ["2.2.1"]},
+    {"ecosystem": "npm", "package": "cache-manager", "versions": ["7.2.10"]},
+    {"ecosystem": "npm", "package": "@cacheable/node-cache", "versions": ["3.1.2"]},
+    {"ecosystem": "npm", "package": "@cacheable/utils", "versions": ["2.5.1"]},
+    {"ecosystem": "npm", "package": "@cacheable/net", "versions": ["2.1.1"]},
+    {"ecosystem": "npm", "package": "ecto", "versions": ["5.0.1"]},
+    {"ecosystem": "npm", "package": "@deliveroo/reevent", "versions": ["1.0.1"]},
+    {"ecosystem": "npm", "package": "@or-sdk/invitations", "versions": ["1.4.9"]},
+    {"ecosystem": "npm", "package": "@picsart/ai-sdk", "versions": ["3.32.2"]},
+    {"ecosystem": "npm", "package": "@qlik/embed-runtime", "versions": ["1.6.4"]},
+    {"ecosystem": "npm", "package": "picasso.js", "versions": ["2.11.6"]
+    }
+  ],
+  "iocs": {
+    "domains": ["npm-cache.com", "eth-mainnet.nodereal.io", "go.getblock.io", "eth.llamarpc.com", "pypi-get.com", "js-mirror.com"],
+    "user_agents": ["Bun/1.3.13"],
+    "file_paths": ["/tmp/bun-dl-*", "node_modules/keyv/Math_Symbol.js"],
+    "filenames": ["setup.mjs", "Math_Symbol.js", "math_init.js"],
+    "hashes": [
+      "35a672cf34b996b91f3e1c28cbf3a05a37e036e4",
+      "54dc7ea54a1317cca0e890a2770630cf7fa6c97813e0cb9d2caa93012b350668",
+      "fd3ca4007b225fdf8de7af4345a19179d5efa8c4bb9205f88cda806e5684b1eb",
+      "9fc2570b7cef51c1b8df116d144d11ff4096357be7d2c4c6367cfc2509cf1bcc"
+    ],
+    "strings": ["Shai-Hulud: Here We Go Again", "IfYouBlockThisAPIKeyItWillCrashTheLiveProductionServersOfAllThirdPartyClients"],
+    "ethereum_contracts": ["0xE1f2395ee43e45A1556EC6438a88c31B83493103"]
+  },
+  "detection_rationale": [
+    "Independent research reports describe a common payload across the Keyv/Cacheable package family and subsequent community-spread releases.",
+    "Reported releases add setup.mjs, Math_Symbol.js or math_init.js and an npm preinstall hook; the exact artifact must still be collected and inspected by SecOpsAI.",
+    "The public package list is an external lead. A local dependency reference is not required to create or prioritize the investigation."
+  ],
+  "remediation": [
+    "Audit package-lock.json, pnpm-lock.yaml, yarn.lock, node_modules, CI caches, and package proxies for every affected package/version in the current source list.",
+    "Treat a confirmed installation as a potential credential exposure. Isolate the host, preserve evidence, rotate npm, GitHub, cloud, SSH, CI/CD, and developer-tool credentials, and rebuild from a verified clean lockfile.",
+    "Hunt for the source-backed domains, file names, hashes, user-agent, and GitHub repository description indicators before making a final impact statement."
+  ]
+}

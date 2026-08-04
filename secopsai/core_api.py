@@ -37,6 +37,7 @@ from secopsai.agent_triage import rollback_run as rollback_agent_triage_run
 from secopsai.agent_triage import rollback_tuning_proposal as rollback_agent_tuning_proposal
 from secopsai.agent_triage import status as agent_triage_status
 from secopsai.agent_triage import update_settings as update_agent_triage_settings
+from secopsai.research_discovery import _upsert_research_alert_finding
 from secopsai.daily_automation import (
     run_cycle as run_daily_automation_cycle,
     status as daily_automation_status,
@@ -53,6 +54,12 @@ MAX_RESEARCH_ALERT_BYTES = 64 * 1024
 MAX_INTELLIGENCE_REQUEST_BYTES = 64 * 1024
 RESEARCH_WEBHOOK_MAX_AGE_SECONDS = 300
 RESEARCH_OPERATIONAL_ALERT_TYPES = {"collector_degraded", "collector_retention_risk"}
+# These alerts are normalized source-backed leads.  They are accepted by the
+# Core bridge so a worker on a separate Render disk cannot silently hide a new
+# campaign from the operator console.  They remain unverified until intake and
+# analysis produce independent evidence.
+RESEARCH_EXTERNAL_ALERT_TYPES = {"external_advisory_match", "external_advisory_feed_degraded"}
+RESEARCH_ALERT_TYPES = RESEARCH_OPERATIONAL_ALERT_TYPES | RESEARCH_EXTERNAL_ALERT_TYPES
 REDACTED_KEYS = {
     "artifact_bytes",
     "artifact_content",
@@ -782,7 +789,7 @@ def _validate_research_alert(payload: dict[str, Any]) -> dict[str, Any]:
     evidence = payload.get("evidence")
     if not alert_id or len(alert_id) > 128:
         raise HTTPException(status_code=422, detail="Research alert ID is invalid")
-    if alert_type not in RESEARCH_OPERATIONAL_ALERT_TYPES:
+    if alert_type not in RESEARCH_ALERT_TYPES:
         raise HTTPException(status_code=422, detail="Research alert type is not accepted by this endpoint")
     if severity not in {"info", "low", "medium", "high", "critical"}:
         raise HTTPException(status_code=422, detail="Research alert severity is invalid")
@@ -794,6 +801,8 @@ def _validate_research_alert(payload: dict[str, Any]) -> dict[str, Any]:
         "alert_id": alert_id,
         "alert_type": alert_type,
         "severity": severity,
+        "candidate_id": str(payload.get("candidate_id") or "")[:128],
+        "campaign_id": str(payload.get("campaign_id") or "")[:128],
         "reason": reason,
         "evidence": _sanitize(evidence),
         "occurred_at": str(payload.get("occurred_at") or soc_store.utc_now())[:64],
@@ -814,14 +823,17 @@ def _upsert_research_alert(alert: dict[str, Any], db_path: str) -> dict[str, Any
             """INSERT INTO research_alerts
             (alert_id, alert_type, severity, candidate_id, campaign_id, case_id, dedupe_key,
              reason, evidence_json, status, owner, created_at, updated_at)
-            VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?, 'open', '', ?, ?)
+            VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 'open', '', ?, ?)
             ON CONFLICT(dedupe_key) DO UPDATE SET alert_type=excluded.alert_type,
-                severity=excluded.severity, reason=excluded.reason,
+                severity=excluded.severity, candidate_id=excluded.candidate_id,
+                campaign_id=excluded.campaign_id, reason=excluded.reason,
                 evidence_json=excluded.evidence_json, updated_at=excluded.updated_at""",
             (
                 alert_id,
                 alert["alert_type"],
                 alert["severity"],
+                alert.get("candidate_id") or None,
+                alert.get("campaign_id") or None,
                 dedupe_key,
                 alert["reason"],
                 json.dumps(
@@ -838,10 +850,103 @@ def _upsert_research_alert(alert: dict[str, Any], db_path: str) -> dict[str, Any
             ),
         )
         stored = connection.execute(
-            "SELECT alert_id FROM research_alerts WHERE dedupe_key = ?", (dedupe_key,)
+            "SELECT * FROM research_alerts WHERE dedupe_key = ?", (dedupe_key,)
         ).fetchone()
+        if stored and alert["alert_type"] in RESEARCH_EXTERNAL_ALERT_TYPES:
+            evidence = alert.get("evidence") if isinstance(alert.get("evidence"), dict) else {}
+            _upsert_external_candidate(connection, alert, evidence)
+            candidate = {
+                "candidate_id": alert.get("candidate_id"),
+                "ecosystem": evidence.get("ecosystem"),
+                "package": evidence.get("package"),
+                "version": evidence.get("version"),
+                "score": evidence.get("score", 99),
+                "first_seen": alert.get("occurred_at"),
+                "last_seen": alert.get("occurred_at"),
+                "evidence": evidence,
+            }
+            _upsert_research_alert_finding(connection, dict(stored), candidate=candidate)
         connection.commit()
     return {"alert_id": stored["alert_id"], "created": existing is None}
+
+
+def _upsert_external_candidate(
+    connection: sqlite3.Connection,
+    alert: dict[str, Any],
+    evidence: dict[str, Any],
+) -> None:
+    """Persist a minimized external lead on the Core disk.
+
+    The worker and API have separate Render disks.  Keeping a candidate in the
+    API database means a source-backed lead remains available to the operator
+    workflow after the worker restarts.  This helper stores metadata only; the
+    package artifact is still collected and quarantined by the worker.
+    """
+    if str(alert.get("alert_type") or "") != "external_advisory_match":
+        return
+    ecosystem = str(evidence.get("ecosystem") or "").strip().lower()
+    package = str(evidence.get("package") or "").strip()
+    version = str(evidence.get("version") or "").strip()
+    if not ecosystem or not package or not version:
+        return
+    advisory_id = str(evidence.get("advisory_id") or "external-advisory").strip()[:256]
+    candidate_id = str(alert.get("candidate_id") or "").strip()
+    if not candidate_id:
+        candidate_id = "CAN-" + hashlib.sha256(
+            f"{advisory_id}|{ecosystem}|{package}|{version}".encode()
+        ).hexdigest()[:24].upper()
+    now = str(alert.get("occurred_at") or soc_store.utc_now())[:64]
+    reason = str(alert.get("reason") or "External source-backed package lead requires verification.")[:4000]
+    evidence_json = json.dumps(evidence, sort_keys=True)
+    score_components = json.dumps(
+        {
+            "source_backed": True,
+            "local_exposure_required": False,
+            "source_url": evidence.get("source_url"),
+            "source_hash": evidence.get("source_hash"),
+        },
+        sort_keys=True,
+    )
+    connection.execute(
+        """INSERT INTO research_candidates
+           (candidate_id, event_id, watchlist_id, ecosystem, package, version,
+            reference_identifier, score, score_components_json, reason, status,
+            case_id, evidence_json, first_seen, last_seen, algorithm_version)
+           VALUES (?, NULL, NULL, ?, ?, ?, ?, 99, ?, ?, 'new', NULL, ?, ?, ?, ?)
+           ON CONFLICT(ecosystem, package, version, reference_identifier)
+           DO UPDATE SET score=excluded.score,
+             score_components_json=excluded.score_components_json,
+             reason=excluded.reason, evidence_json=excluded.evidence_json,
+             last_seen=excluded.last_seen""",
+        (
+            candidate_id,
+            ecosystem,
+            package,
+            version,
+            advisory_id,
+            score_components,
+            reason,
+            evidence_json,
+            now,
+            now,
+            "external-advisory.v1",
+        ),
+    )
+    campaign_id = str(alert.get("campaign_id") or "").strip()
+    if campaign_id:
+        connection.execute(
+            """INSERT INTO research_campaigns
+               (campaign_id, title, status, confidence, attribution, summary, created_at, updated_at)
+               VALUES (?, ?, 'candidate', 0, 'unattributed', ?, ?, ?)
+               ON CONFLICT(campaign_id) DO UPDATE SET summary=excluded.summary, updated_at=excluded.updated_at""",
+            (
+                campaign_id,
+                f"External package campaign: {campaign_id}"[:500],
+                "Source-backed campaign lead. Independent artifact verification is required.",
+                now,
+                now,
+            ),
+        )
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -891,7 +996,8 @@ def _workspace_payload(db_path: str, limit: int) -> dict[str, Any]:
             """SELECT alert_id, alert_type, severity, reason, evidence_json, status,
                       owner, created_at, updated_at
                FROM research_alerts
-               WHERE alert_type IN ('collector_degraded', 'collector_retention_risk')
+               WHERE alert_type IN ('collector_degraded', 'collector_retention_risk',
+                                    'external_advisory_match', 'external_advisory_feed_degraded')
                ORDER BY updated_at DESC
                LIMIT ?""",
             (limit,),
@@ -915,6 +1021,11 @@ def _workspace_payload(db_path: str, limit: int) -> dict[str, Any]:
             """SELECT COUNT(*) FROM research_alerts
                WHERE status = 'open'
                  AND alert_type IN ('collector_degraded', 'collector_retention_risk')"""
+        ).fetchone()[0]
+        total_external_alerts = connection.execute(
+            """SELECT COUNT(*) FROM research_alerts
+               WHERE status = 'open'
+                 AND alert_type IN ('external_advisory_match', 'external_advisory_feed_degraded')"""
         ).fetchone()[0]
         graph_counts = {
             str(row["node_type"]): int(row["count"])
@@ -966,6 +1077,7 @@ def _workspace_payload(db_path: str, limit: int) -> dict[str, Any]:
             "sites": graph_counts.get("site", 0),
             "wifi_networks": graph_counts.get("wifi_network", 0),
             "operational_research_alerts": int(total_operational_alerts),
+            "external_research_alerts": int(total_external_alerts),
         },
         "assets": _sanitize(assets),
         "findings": _sanitize(findings),
