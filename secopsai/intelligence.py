@@ -405,7 +405,24 @@ def bridge_output_schema() -> dict[str, Any]:
                         "target_type": {"type": "string", "enum": ["rule", "threshold", "allowlist"]},
                         "target_id": {"type": "string", "maxLength": 200},
                         "change_type": {"type": "string", "enum": ["weight", "threshold", "condition", "exception"]},
-                        "proposed_value": {"type": ["string", "number", "boolean", "object"], "maxLength": 2000},
+                        "proposed_value": {
+                            "anyOf": [
+                                {"type": "string", "maxLength": 2000},
+                                {"type": "number"},
+                                {"type": "boolean"},
+                                {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "value": {"type": ["string", "number", "boolean"]},
+                                        "enabled": {"type": "boolean"},
+                                        "threshold": {"type": "number"},
+                                        "weight": {"type": "number"},
+                                    },
+                                    "required": ["value", "enabled", "threshold", "weight"],
+                                },
+                            ]
+                        },
                         "rationale": {"type": "string", "maxLength": 4000},
                         "expected_effect": {"type": "string", "maxLength": 4000},
                     },

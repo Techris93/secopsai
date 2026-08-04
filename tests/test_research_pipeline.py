@@ -400,6 +400,15 @@ def test_bridge_schema_accepts_structured_research_review_fields():
     assert set(schema["required"]) == set(properties)
 
 
+def test_bridge_schema_uses_strict_object_rules_for_tuning_values():
+    schema = bridge_output_schema()
+    proposed_value = schema["properties"]["rule_tuning_proposals"]["items"]["properties"]["proposed_value"]
+    object_variant = next(item for item in proposed_value["anyOf"] if item.get("type") == "object")
+    assert object_variant["additionalProperties"] is False
+    assert set(object_variant["properties"]) == {"value", "enabled", "threshold", "weight"}
+    assert object_variant["required"] == ["value", "enabled", "threshold", "weight"]
+
+
 def test_pipeline_cli_dispatches_to_the_pipeline_service(monkeypatch, capsys):
     called = {}
 
