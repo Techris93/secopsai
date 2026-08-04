@@ -355,6 +355,8 @@ jobs:
           image: ${{ steps.image-identity.outputs.final_digest }}
           fail-build: false
           severity-cutoff: high
+          grype-version: v0.114.0
+          cache-db: true
           output-format: json
           output-file: container-security/grype-results.json
           vex: .github/vex/python-3.13.14-backports.openvex.json
