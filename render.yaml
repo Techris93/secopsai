@@ -85,6 +85,13 @@ services:
       # can name hundreds of affected package versions.
       - key: SECOPSAI_RESEARCH_EXTERNAL_ALERT_CHANNELS
         value: webhook
+      # Exact-version npm enrichment is deliberately bounded per cycle.  New
+      # release events remain queued when this budget is exhausted and resume
+      # on the next worker cycle instead of being dropped.
+      - key: SECOPSAI_NPM_ENRICHMENT_EVENT_LIMIT
+        value: "100"
+      - key: SECOPSAI_NPM_STATIC_ANALYSIS_LIMIT
+        value: "10"
       - key: SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL
         value: https://secopsai-core-api.onrender.com/api/v1/research/alerts/webhook
       - key: SECOPSAI_SENTRY_TRACES_SAMPLE_RATE
@@ -100,6 +107,8 @@ services:
       - key: SECOPSAI_RESEARCH_CANDIDATE_EVENT_RETENTION_DAYS
         value: "90"
       - key: SECOPSAI_RESEARCH_RUN_RETENTION_DAYS
+        value: "30"
+      - key: SECOPSAI_RESEARCH_NPM_ANALYSIS_RETENTION_DAYS
         value: "30"
       - key: SECOPSAI_RESEARCH_GAP_RETENTION_DAYS
         value: "180"

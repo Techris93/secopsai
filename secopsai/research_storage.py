@@ -185,6 +185,7 @@ def _prune_rules() -> Tuple[Tuple[str, str, Tuple[Any, ...]], ...]:
     run_days = _env_int("SECOPSAI_RESEARCH_RUN_RETENTION_DAYS", 30, minimum=1)
     gap_days = _env_int("SECOPSAI_RESEARCH_GAP_RETENTION_DAYS", 180, minimum=1)
     delivery_days = _env_int("SECOPSAI_RESEARCH_DELIVERY_RETENTION_DAYS", 90, minimum=1)
+    npm_analysis_days = _env_int("SECOPSAI_RESEARCH_NPM_ANALYSIS_RETENTION_DAYS", 30, minimum=1)
     return (
         ("registry_feed_events", "processing_state IN ('scored','ignored') AND collected_at < ?", (_iso_cutoff(hours=event_hours),)),
         ("registry_feed_events", "processing_state = 'candidate' AND collected_at < ?", (_iso_cutoff(days=candidate_days),)),
@@ -195,6 +196,12 @@ def _prune_rules() -> Tuple[Tuple[str, str, Tuple[Any, ...]], ...]:
         ("registry_coverage_windows", "state != 'complete' AND created_at < ?", (_iso_cutoff(days=gap_days),)),
         ("registry_dead_letters", "status = 'resolved' AND updated_at < ?", (_iso_cutoff(days=run_days),)),
         ("research_notification_deliveries", "status IN ('sent','failed') AND updated_at < ?", (_iso_cutoff(days=delivery_days),)),
+        # Clean npm analyses are reproducible from the exact event, hash, and
+        # quarantine locator. Keep candidate-linked evidence and all failed or
+        # pending work until its retry/triage state is no longer active.
+        ("research_npm_release_analyses", "status = 'completed' AND updated_at < ? AND NOT EXISTS (SELECT 1 FROM research_candidates c WHERE c.evidence_json LIKE '%' || research_npm_release_analyses.artifact_sha256 || '%')", (_iso_cutoff(days=npm_analysis_days),)),
+        ("research_npm_release_analyses", "status = 'failed' AND updated_at < ?", (_iso_cutoff(days=npm_analysis_days),)),
+        ("research_npm_enrichment_runs", "status != 'running' AND completed_at IS NOT NULL AND completed_at < ?", (_iso_cutoff(days=run_days),)),
     )
 
 

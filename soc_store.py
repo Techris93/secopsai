@@ -1089,6 +1089,52 @@ def init_db(db_path: str | None = None) -> None:
                 FOREIGN KEY (source_id) REFERENCES research_external_advisory_sources (source_id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS research_npm_package_snapshots (
+                package TEXT PRIMARY KEY,
+                source_url TEXT NOT NULL,
+                metadata_sha256 TEXT NOT NULL,
+                versions_json TEXT NOT NULL,
+                known_versions_json TEXT NOT NULL DEFAULT '[]',
+                latest_version TEXT NOT NULL,
+                last_published_at TEXT,
+                last_event_seq TEXT,
+                status TEXT NOT NULL DEFAULT 'baseline',
+                last_error TEXT,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_npm_release_analyses (
+                analysis_id TEXT PRIMARY KEY,
+                source_event_id TEXT,
+                package TEXT NOT NULL,
+                version TEXT NOT NULL,
+                artifact_sha256 TEXT,
+                status TEXT NOT NULL,
+                score INTEGER NOT NULL DEFAULT 0,
+                indicators_json TEXT NOT NULL,
+                intake_json TEXT NOT NULL,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (package, version, artifact_sha256)
+            );
+
+            CREATE TABLE IF NOT EXISTS research_npm_enrichment_runs (
+                run_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                events_seen INTEGER NOT NULL DEFAULT 0,
+                packages_fetched INTEGER NOT NULL DEFAULT 0,
+                versions_created INTEGER NOT NULL DEFAULT 0,
+                analyses_started INTEGER NOT NULL DEFAULT 0,
+                candidates_created INTEGER NOT NULL DEFAULT 0,
+                failures INTEGER NOT NULL DEFAULT 0,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                error_message TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS research_notification_deliveries (
                 delivery_id TEXT PRIMARY KEY,
                 alert_id TEXT NOT NULL,
@@ -1266,6 +1312,12 @@ def init_db(db_path: str | None = None) -> None:
                 ON research_external_advisory_records (active, ecosystem, package, version);
             CREATE INDEX IF NOT EXISTS idx_external_advisory_sources_status
                 ON research_external_advisory_sources (status, last_fetch_at);
+            CREATE INDEX IF NOT EXISTS idx_research_npm_snapshots_updated
+                ON research_npm_package_snapshots (updated_at, status);
+            CREATE INDEX IF NOT EXISTS idx_research_npm_release_analyses_status
+                ON research_npm_release_analyses (status, updated_at);
+            CREATE INDEX IF NOT EXISTS idx_research_npm_enrichment_runs_started
+                ON research_npm_enrichment_runs (started_at DESC);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_registry_one_running
                 ON registry_ingestion_runs (collector_id) WHERE status = 'running';
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_cursor
@@ -1290,6 +1342,8 @@ def init_db(db_path: str | None = None) -> None:
             ("state_checked_at", "TEXT"),
         ):
             _ensure_column(connection, "research_subjects", column, definition)
+        _ensure_column(connection, "research_npm_package_snapshots", "known_versions_json", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(connection, "research_npm_package_snapshots", "last_published_at", "TEXT")
         connection.commit()
 
 

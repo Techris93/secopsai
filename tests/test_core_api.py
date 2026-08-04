@@ -589,6 +589,47 @@ def test_external_advisory_webhook_creates_core_finding_and_is_idempotent(client
     assert "keyv" in finding["payload_json"]
 
 
+def test_npm_enrichment_degraded_webhook_is_accepted_without_a_fake_candidate(client):
+    test_client, settings = client
+    event = {
+        "schema_version": "secopsai.research.alert.v1",
+        "alert_id": "RAL-NPM-ENRICHMENT-1",
+        "alert_type": "npm_enrichment_degraded",
+        "severity": "high",
+        "reason": "Exact npm release enrichment is degraded and retryable.",
+        "evidence": {
+            "ecosystem": "npm",
+            "run_id": "NEN-1",
+            "failure_count": 2,
+            "token": "must-not-persist",
+        },
+        "occurred_at": "2026-08-04T18:00:00Z",
+    }
+    body = json.dumps(event, sort_keys=True, separators=(",", ":")).encode()
+    response = test_client.post(
+        "/api/v1/research/alerts/webhook",
+        content=body,
+        headers=_signed_webhook_headers(body),
+    )
+    assert response.status_code == 200
+    local_alert_id = response.json()["alert_id"]
+    with sqlite3.connect(settings.db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        alert = connection.execute(
+            "SELECT alert_type, candidate_id, evidence_json FROM research_alerts WHERE alert_id=?",
+            (local_alert_id,),
+        ).fetchone()
+        finding = connection.execute(
+            "SELECT title, source, status FROM findings WHERE source='secopsai_research' ORDER BY updated_at DESC LIMIT 1"
+        ).fetchone()
+    assert alert["alert_type"] == "npm_enrichment_degraded"
+    assert alert["candidate_id"] is None
+    assert "must-not-persist" not in alert["evidence_json"]
+    assert finding["source"] == "secopsai_research"
+    assert "enrichment" in finding["title"].lower()
+    assert finding["status"] == "open"
+
+
 def test_production_settings_fail_closed():
     settings = CoreAPISettings(
         db_path=":memory:",

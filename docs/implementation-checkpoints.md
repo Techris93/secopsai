@@ -1,5 +1,32 @@
 # Implementation Checkpoints
 
+## 113 Proactive exact-version npm enrichment and artifact analysis
+
+Status: implementation complete locally; deployment and live npm acceptance
+remain release gates.
+
+The research worker now resolves npm changes-feed package documents through the
+official npm packument, records exact `version_observed` and
+`version_updated` events, maintains a compact bounded package baseline, and
+performs safe static intake on a bounded queue of exact artifacts. Static
+inspection never installs or executes package code. Lifecycle changes,
+suspicious script signals, publisher/dependency changes, and normalized
+artifact indicators produce explainable proactive candidates without requiring
+a matching local dependency.
+
+Artifact failures are retryable and remain visible as `analysis_failed` events.
+Registry and analysis failures produce a separate `npm_enrichment_degraded`
+alert. The alert is normalized into a local finding and can be delivered to
+Core through the signed external-alert webhook, so second-stage failures are
+not silently trapped on the worker disk. Render receives explicit event and
+static-analysis budgets through `render.yaml`; events beyond those budgets
+remain queued for the next cycle.
+
+Focused npm enrichment and worker tests pass. The remaining release gates are
+deployment of the worker/API changes and a live acceptance run that confirms an
+exact release reaches the Core workspace with its hash, indicators, and safety
+flags.
+
 ## 112 Keyv/Cacheable external campaign detection path
 
 Status: implementation complete locally; deployment and live feed acceptance

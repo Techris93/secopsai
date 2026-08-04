@@ -23,6 +23,7 @@ from secopsai.observability import capture_exception, initialize_observability
 from secopsai.research_delivery import deliver_pending_operational_alerts
 from secopsai.research_external_intel import refresh_and_sync
 from secopsai.research_intake import SafeFetcher
+from secopsai.research_npm_enrichment import run_npm_enrichment_cycle
 from secopsai.research_scoring import score_pending_events
 from secopsai.research_storage import ResearchStorageCapacityError, maintain_research_storage, storage_status
 from secopsai.research_surveillance import (
@@ -33,6 +34,7 @@ from secopsai.research_surveillance import (
     retry_dead_letters,
     run_registry_collector,
 )
+from secopsai.research_discovery import sync_actionable_alert_findings
 
 DEFAULT_CYCLE_INTERVAL_SECONDS = 60
 MAX_PAGES_PER_CYCLE = 25
@@ -130,6 +132,60 @@ def _record_collector_degraded_alert(result: Dict[str, Any], *, db_path: Optiona
                 (f"RAL-{secrets.token_hex(8).upper()}", dedupe_key, reason, json.dumps(evidence, sort_keys=True), now, now),
             )
             row = connection.execute("SELECT alert_id FROM research_alerts WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
+    return str(row["alert_id"]) if row else None
+
+
+def _record_npm_enrichment_alert(result: Dict[str, Any], *, db_path: Optional[str]) -> Optional[str]:
+    """Surface exact-version enrichment or artifact-analysis backlogs.
+
+    Registry collection can be healthy while the second-stage package work is
+    failing.  Keep that state distinct and deliver a minimized alert through
+    the same signed Core webhook used for source-backed intelligence.
+    """
+    failures = int(result.get("failures") or 0)
+    soc_store.init_db(db_path)
+    now = _utcnow().isoformat().replace("+00:00", "Z")
+    if failures <= 0:
+        with closing(soc_store.connect(db_path)) as connection:
+            with connection:
+                connection.execute(
+                    """UPDATE research_alerts SET status='resolved', updated_at=?
+                       WHERE alert_type='npm_enrichment_degraded' AND status='open'""",
+                    (now,),
+                )
+        return None
+    run_id = str(result.get("run_id") or "")
+    dedupe_key = f"npm-enrichment-degraded:{now[:10]}"
+    evidence = {
+        "ecosystem": "npm",
+        "run_id": run_id,
+        "status": result.get("status") or "degraded",
+        "events_seen": int(result.get("events_seen") or 0),
+        "packages_fetched": int(result.get("packages_fetched") or 0),
+        "versions_created": int(result.get("versions_created") or 0),
+        "analyses_started": int((result.get("static") or {}).get("analyses_started") or 0),
+        "enrichment_failures": int(result.get("enrichment_failures") or 0),
+        "analysis_failures": int(result.get("analysis_failures") or 0),
+        "failure_count": failures,
+    }
+    reason = (
+        "npm exact-version enrichment or bounded artifact analysis is degraded; "
+        f"{failures} item(s) require retry and coverage is not complete."
+    )
+    with closing(soc_store.connect(db_path)) as connection:
+        with connection:
+            connection.execute(
+                """INSERT INTO research_alerts
+                   (alert_id, alert_type, severity, candidate_id, campaign_id, case_id,
+                    dedupe_key, reason, evidence_json, status, owner, created_at, updated_at)
+                   VALUES (?, 'npm_enrichment_degraded', 'high', NULL, NULL, NULL, ?, ?, ?, 'open', '', ?, ?)
+                   ON CONFLICT(dedupe_key) DO UPDATE SET reason=excluded.reason,
+                    evidence_json=excluded.evidence_json, updated_at=excluded.updated_at, status='open'""",
+                (f"RAL-{secrets.token_hex(8).upper()}", dedupe_key, reason, json.dumps(evidence, sort_keys=True), now, now),
+            )
+            row = connection.execute("SELECT * FROM research_alerts WHERE dedupe_key=?", (dedupe_key,)).fetchone()
+    # Keep local operator views in sync even when the Core API is not running.
+    sync_actionable_alert_findings(db_path=db_path)
     return str(row["alert_id"]) if row else None
 
 
@@ -248,6 +304,27 @@ def run_worker_cycle(
 
     alert_ids = [alert_id for result in results if (alert_id := _record_collector_degraded_alert(result, db_path=db_path))]
 
+    try:
+        # The npm changes feed identifies package documents, not versions.
+        # Resolve exact releases and inspect explainable metadata signals before
+        # the normal watchlist scorer and investigation autopilot run.
+        npm_enrichment = run_npm_enrichment_cycle(db_path=db_path, fetcher=fetcher)
+    except Exception as exc:  # enrichment must not stop other registries
+        capture_exception(exc, context={"component": "research_npm_enrichment"})
+        npm_enrichment = {
+            "status": "degraded",
+            "error": str(exc)[:500],
+            "failures": 1,
+            "enrichment_failures": 1,
+            "analysis_failures": 0,
+        }
+
+    try:
+        npm_alert_id = _record_npm_enrichment_alert(npm_enrichment, db_path=db_path)
+    except Exception as exc:  # an exhausted disk must not terminate other collectors
+        capture_exception(exc, context={"component": "research_npm_enrichment_alert"})
+        npm_alert_id = None
+
     scoring = score_pending_events(limit=score_limit, db_path=db_path)
     retries = retry_dead_letters(limit=50, db_path=db_path, fetcher=fetcher)
     recovery = recover_interrupted_runs(db_path=db_path)
@@ -284,11 +361,13 @@ def run_worker_cycle(
         "external_intel": external_intel,
         "collectors_run": len(results),
         "collector_results": results,
+        "npm_enrichment": npm_enrichment,
         "scoring": scoring,
         "retries": retries,
         "recovery": recovery,
         "investigations": investigations,
         "operational_alert_ids": alert_ids,
+        "npm_enrichment_alert_id": npm_alert_id,
         "alert_delivery": deliveries,
         "daily_automation": daily_automation,
         "storage": storage,

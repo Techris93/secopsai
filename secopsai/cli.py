@@ -1484,6 +1484,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     external_refresh.add_argument("--force", action="store_true")
     external_refresh.add_argument("--db-path", default=None)
 
+    research_npm = research_sub.add_parser(
+        "npm", help="Resolve npm change-feed package documents into exact release events"
+    )
+    research_npm_sub = research_npm.add_subparsers(dest="research_npm_cmd", required=True)
+    npm_enrich = research_npm_sub.add_parser(
+        "enrich", help="Enrich bounded npm events and run proactive static intake"
+    )
+    npm_enrich.add_argument("--event-limit", type=int, default=100)
+    npm_enrich.add_argument("--static-limit", type=int, default=10)
+    npm_enrich.add_argument("--db-path", default=None)
+
     research_storage = research_sub.add_parser("storage", help="Inspect and maintain bounded research-worker storage")
     research_storage_sub = research_storage.add_subparsers(dest="research_storage_cmd", required=True)
     storage_status_cmd = research_storage_sub.add_parser("status", help="Show database, disk, reserve, and pressure metrics")
@@ -2635,6 +2646,16 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
             if args.research_external_cmd != "refresh":
                 raise ValueError("unsupported external-intel command")
             payload = refresh_external_intel(db_path=args.db_path, force=args.force)
+        elif args.research_cmd == "npm":
+            if args.research_npm_cmd != "enrich":
+                raise ValueError("unsupported npm command")
+            from secopsai.research_npm_enrichment import run_npm_enrichment_cycle
+
+            payload = run_npm_enrichment_cycle(
+                db_path=args.db_path,
+                event_limit=args.event_limit,
+                static_limit=args.static_limit,
+            )
         elif args.research_cmd == "storage":
             if args.research_storage_cmd == "status":
                 payload = storage_status(db_path=args.db_path)
@@ -3234,7 +3255,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
 
-        if args.research_cmd in {"rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "external-intel", "storage", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "resolution", "workflow"}:
+        if args.research_cmd in {"rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "external-intel", "npm", "storage", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "resolution", "workflow"}:
             return _run_research_automation_command(args)
 
         if args.research_cmd == "case":

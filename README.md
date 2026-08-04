@@ -375,6 +375,24 @@ secopsai supply-chain tune rule "wheel/sdist artifact divergence" --weight 1
 secopsai supply-chain tune threshold --ecosystem pypi --value 12
 ```
 
+The global research worker also performs proactive exact-version npm
+enrichment. It resolves package-change events through the official npm
+packument, records the exact release, quarantines a bounded artifact, and
+performs non-executing static inspection before a campaign is publicly
+reported. Run one bounded pass with:
+
+```bash
+secopsai research npm enrich --event-limit 100 --static-limit 10 --json
+```
+
+The worker repeats this automatically. Events remain queued when the per-cycle
+budget is reached. `npm_proactive_anomaly` candidates are evidence-led leads,
+not automatic maliciousness verdicts. Registry or artifact failures create an
+`npm_enrichment_degraded` alert and retry on a later cycle; the minimized alert
+is delivered to Core through the signed research webhook when configured. See
+[`docs/research-discovery.md`](docs/research-discovery.md) for the safety
+limits, storage model, and exact-release evidence fields.
+
 OpenClaw/Hermes/host monitoring can also send Slack alerts for new high-severity findings:
 
 ```bash

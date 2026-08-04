@@ -82,6 +82,12 @@ If Render reports `database or disk is full`, increase the worker disk from its 
 
 The production Blueprint provisions 5 GB for continuous global-registry surveillance. Capacity must still be reviewed against measured ingestion rate: retain the automatic pressure guard and review the Disk Usage metric weekly. A bounded development deployment can use 1 GB, but a future multi-worker service must move this ledger to a managed datastore because Render persistent disks are single-service and cannot be shared.
 
+Completed npm release analyses are retained for 30 days by default, while
+candidate-linked evidence, failed/retryable analyses, exact events, and
+quarantined artifacts are preserved by the storage guard. Override the
+completed-analysis window with `SECOPSAI_RESEARCH_NPM_ANALYSIS_RETENTION_DAYS`
+only after measuring the disk budget.
+
 The worker creates a deduplicated high-severity `collector_degraded` alert when a registry run fails, leaves a coverage gap, or reaches a bounded collection limit. It creates at most one such alert per ecosystem per UTC day and continues collecting other registries. Delivery is disabled by default outside the production Blueprint. For a standalone deployment, configure:
 
 ```text
@@ -129,6 +135,58 @@ context only. Registry events, candidates, artifacts, and full coverage
 history remain on the worker disk until their own authenticated ingestion
 contracts are implemented. Core still treats every external lead as
 unverified until its evidence workflow completes.
+
+### Proactive npm release enrichment
+
+The npm changes feed identifies a package document, not the exact release that
+changed. The worker therefore performs a second, bounded step before normal
+watchlist scoring:
+
+1. Resolve the package through the official `registry.npmjs.org` packument.
+2. Compare the current release set with a compact package baseline. The
+   append-only event ledger remains authoritative; the baseline is capped so a
+   popular package cannot fill the worker disk.
+3. Record an exact `version_observed` or `version_updated` event with the
+   metadata URL, official tarball URL, integrity values, publisher summary,
+   previous version, and packument hash.
+4. Download a bounded number of exact artifacts into owner-only quarantine.
+   Inspect the archive in memory for manifests, lifecycle hooks, process
+   execution, credential/payment access, network endpoints, encoding, and
+   persistence indicators. The package is never installed, imported, or run.
+5. Create a source-backed proactive candidate only when explainable metadata or
+   static indicators cross the conservative review threshold. The candidate is
+   marked `static_confirmed` only when the exact artifact was collected
+   successfully; it is never a maliciousness verdict.
+
+The default safety budgets are 100 package documents and 10 artifact analyses
+per worker cycle. They can be lowered or raised up to the hard safety caps with
+`SECOPSAI_NPM_ENRICHMENT_EVENT_LIMIT` and
+`SECOPSAI_NPM_STATIC_ANALYSIS_LIMIT`. Events that exceed the current budget
+remain pending for the next cycle. Temporary registry or artifact failures are
+retryable and create a separate `npm_enrichment_degraded` alert. That alert is
+sent through the signed Core webhook when external alert delivery is enabled,
+so a second-stage analysis failure cannot remain only on the worker disk.
+
+Run the bounded step manually when validating a deployment:
+
+```bash
+secopsai research npm enrich --event-limit 100 --static-limit 10 --json
+```
+
+Inspect the exact release ledger and analysis status with:
+
+```bash
+secopsai research collect events --collector-id COL-NPM-CHANGES --limit 50
+sqlite3 "${SECOPS_FINDINGS_DIR:-data/openclaw/findings}/openclaw_soc.db" \
+  "select package,version,status,score,artifact_sha256,updated_at from research_npm_release_analyses order by updated_at desc limit 50;"
+```
+
+The first observation of a package establishes a baseline and checks its
+current `latest` release. A package with no lifecycle or static indicator is
+still recorded as analyzed; it is not silently treated as clean. A registry
+that omits release timestamps, removes a packument, or was not monitored during
+the publish window remains subject to the existing coverage and retry limits.
+No monitor can prove that an entire registry is clean.
 
 ## Watchlist and monitor workflow
 

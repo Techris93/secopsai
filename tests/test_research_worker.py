@@ -1,9 +1,11 @@
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import soc_store
 from secopsai.research_surveillance import ensure_collectors, run_registry_collector
 from secopsai.research_worker import (
     _record_collector_degraded_alert,
+    _record_npm_enrichment_alert,
     collector_schedules,
     due_collectors,
     run_worker_cycle,
@@ -195,6 +197,33 @@ def test_collector_degraded_alert_is_deduplicated_per_day(tmp_path):
             "SELECT COUNT(*) AS count FROM research_alerts WHERE alert_type = 'collector_degraded'"
         ).fetchone()["count"]
     assert count == 1
+
+
+def test_npm_enrichment_degraded_alert_is_visible_and_resolves(tmp_path):
+    db_path = _db(tmp_path)
+    degraded = {
+        "run_id": "NEN-TEST",
+        "status": "degraded",
+        "events_seen": 4,
+        "packages_fetched": 2,
+        "versions_created": 3,
+        "failures": 2,
+        "enrichment_failures": 1,
+        "analysis_failures": 1,
+        "static": {"analyses_started": 2},
+    }
+    alert_id = _record_npm_enrichment_alert(degraded, db_path=db_path)
+    assert alert_id
+    with soc_store.connect(db_path) as connection:
+        alert = connection.execute("SELECT * FROM research_alerts WHERE alert_id=?", (alert_id,)).fetchone()
+        finding = connection.execute("SELECT * FROM findings WHERE finding_id=?", (f"RSCF-{hashlib.sha256(alert_id.encode()).hexdigest()[:16].upper()}",)).fetchone()
+    assert alert["alert_type"] == "npm_enrichment_degraded"
+    assert alert["status"] == "open"
+    assert finding is not None
+
+    assert _record_npm_enrichment_alert({"status": "completed", "failures": 0}, db_path=db_path) is None
+    with soc_store.connect(db_path) as connection:
+        assert connection.execute("SELECT status FROM research_alerts WHERE alert_id=?", (alert_id,)).fetchone()["status"] == "resolved"
 
 
 def test_worker_cycle_skips_collectors_not_yet_due(tmp_path):

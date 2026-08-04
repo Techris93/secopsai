@@ -259,7 +259,12 @@ def send_research_alert(alert_id: str, *, channel: str = "email", db_path: str |
             sender = os.environ.get("SECOPSAI_RESEARCH_FROM_EMAIL", "research@secopsai.dev")
             result = send_email(recipient=destination, subject=f"SecOpsAI research alert: {alert.get('severity', 'review')}", body=json.dumps(event, indent=2), sender=sender)
         elif channel == "webhook":
-            is_external = str(alert.get("alert_type") or "") in {"external_advisory_match", "external_advisory_feed_degraded"}
+            is_external = str(alert.get("alert_type") or "") in {
+                "external_advisory_match",
+                "external_advisory_feed_degraded",
+                "npm_proactive_anomaly",
+                "npm_enrichment_degraded",
+            }
             endpoint = os.environ.get(
                 "SECOPSAI_RESEARCH_EXTERNAL_ALERT_WEBHOOK_URL" if is_external else "SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL",
                 "",
@@ -333,7 +338,12 @@ def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datet
         return {"enabled": False, "channels": [], "attempted": 0, "sent": 0, "failed": 0, "deferred": 0}
 
     operational_types = {"collector_degraded", "collector_retention_risk"}
-    external_types = {"external_advisory_match", "external_advisory_feed_degraded"}
+    external_types = {
+        "external_advisory_match",
+        "external_advisory_feed_degraded",
+        "npm_proactive_anomaly",
+        "npm_enrichment_degraded",
+    }
     max_attempts = max(1, min(int(os.environ.get("SECOPSAI_RESEARCH_ALERT_MAX_ATTEMPTS", "5")), 10))
     current = now or datetime.now(timezone.utc)
     soc_store.init_db(db_path)

@@ -22,7 +22,7 @@ from secopsai.research_surveillance import ensure_collectors
 # Event types that describe something newly present in the ecosystem.
 # Removals (deleted, yanked, project_removed, extension_removed) stay
 # in the ledger for audit but never produce candidates.
-SCORABLE_EVENT_TYPES = {"published", "project_added", "extension_added", "version_updated"}
+SCORABLE_EVENT_TYPES = {"published", "project_added", "extension_added", "version_updated", "version_observed"}
 
 _ARTIFACT_SUFFIXES = (".gem", ".nupkg", ".tgz", ".whl", ".tar.gz", ".zip", ".vsix")
 
@@ -30,13 +30,15 @@ _ARTIFACT_SUFFIXES = (".gem", ".nupkg", ".tgz", ".whl", ".tar.gz", ".zip", ".vsi
 def _event_to_metadata(event: Dict[str, Any]) -> RegistryMetadata:
     metadata = event.get("metadata") or {}
     leaf_url = str(event.get("leaf_url") or "")
+    metadata_url = str(metadata.get("metadata_url") or event.get("page_url") or leaf_url)
+    artifact_url = str(metadata.get("artifact_url") or (leaf_url if leaf_url.endswith(_ARTIFACT_SUFFIXES) else ""))
     return RegistryMetadata(
         ecosystem=str(event["ecosystem"]),
         package=str(event["package"]),
         version=str(event.get("version") or ""),
-        metadata_url=leaf_url or str(event.get("page_url") or ""),
-        artifact_url=leaf_url if leaf_url.endswith(_ARTIFACT_SUFFIXES) else "",
-        publisher=str(metadata.get("authors") or ""),
+        metadata_url=metadata_url,
+        artifact_url=artifact_url,
+        publisher=str(metadata.get("publisher") or metadata.get("authors") or ""),
         published_at=str(event.get("registry_timestamp") or ""),
         dependencies={},
         integrity={"sha256": str(metadata.get("sha256") or "")},

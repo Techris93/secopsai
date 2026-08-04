@@ -692,7 +692,10 @@ def _upsert_research_alert_finding(
         confidence = min(99, max(0, int(float(score or 0))))
     except (TypeError, ValueError):
         confidence = 0
-    if alert_type == "external_advisory_match":
+    if alert_type == "npm_proactive_anomaly":
+        title = f"Proactive npm release requires verification: {ecosystem or 'npm'} {package or alert_id}{('@' + version) if version else ''}"
+        rule_ids = ["RESEARCH-NPM-PROACTIVE-STATIC"]
+    elif alert_type == "external_advisory_match":
         title = f"External advisory requires verification: {ecosystem or 'package'} {package or alert_id}{('@' + version) if version else ''}"
         rule_ids = ["RESEARCH-EXTERNAL-ADVISORY"]
     elif alert_type == "candidate_detected":

@@ -58,7 +58,12 @@ RESEARCH_OPERATIONAL_ALERT_TYPES = {"collector_degraded", "collector_retention_r
 # Core bridge so a worker on a separate Render disk cannot silently hide a new
 # campaign from the operator console.  They remain unverified until intake and
 # analysis produce independent evidence.
-RESEARCH_EXTERNAL_ALERT_TYPES = {"external_advisory_match", "external_advisory_feed_degraded"}
+RESEARCH_EXTERNAL_ALERT_TYPES = {
+    "external_advisory_match",
+    "external_advisory_feed_degraded",
+    "npm_proactive_anomaly",
+    "npm_enrichment_degraded",
+}
 RESEARCH_ALERT_TYPES = RESEARCH_OPERATIONAL_ALERT_TYPES | RESEARCH_EXTERNAL_ALERT_TYPES
 REDACTED_KEYS = {
     "artifact_bytes",
@@ -882,14 +887,18 @@ def _upsert_external_candidate(
     workflow after the worker restarts.  This helper stores metadata only; the
     package artifact is still collected and quarantined by the worker.
     """
-    if str(alert.get("alert_type") or "") != "external_advisory_match":
+    if str(alert.get("alert_type") or "") not in {"external_advisory_match", "npm_proactive_anomaly"}:
         return
     ecosystem = str(evidence.get("ecosystem") or "").strip().lower()
     package = str(evidence.get("package") or "").strip()
     version = str(evidence.get("version") or "").strip()
     if not ecosystem or not package or not version:
         return
-    advisory_id = str(evidence.get("advisory_id") or "external-advisory").strip()[:256]
+    advisory_id = str(
+        evidence.get("advisory_id")
+        or evidence.get("reference_identifier")
+        or "npm-proactive-static.v1"
+    ).strip()[:256]
     candidate_id = str(alert.get("candidate_id") or "").strip()
     if not candidate_id:
         candidate_id = "CAN-" + hashlib.sha256(
@@ -997,7 +1006,8 @@ def _workspace_payload(db_path: str, limit: int) -> dict[str, Any]:
                       owner, created_at, updated_at
                FROM research_alerts
                WHERE alert_type IN ('collector_degraded', 'collector_retention_risk',
-                                    'external_advisory_match', 'external_advisory_feed_degraded')
+                                    'external_advisory_match', 'external_advisory_feed_degraded',
+                                    'npm_proactive_anomaly', 'npm_enrichment_degraded')
                ORDER BY updated_at DESC
                LIMIT ?""",
             (limit,),
@@ -1024,8 +1034,9 @@ def _workspace_payload(db_path: str, limit: int) -> dict[str, Any]:
         ).fetchone()[0]
         total_external_alerts = connection.execute(
             """SELECT COUNT(*) FROM research_alerts
-               WHERE status = 'open'
-                 AND alert_type IN ('external_advisory_match', 'external_advisory_feed_degraded')"""
+                WHERE status = 'open'
+                 AND alert_type IN ('external_advisory_match', 'external_advisory_feed_degraded',
+                                    'npm_proactive_anomaly', 'npm_enrichment_degraded')"""
         ).fetchone()[0]
         graph_counts = {
             str(row["node_type"]): int(row["count"])
