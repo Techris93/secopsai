@@ -242,7 +242,7 @@ NuGet analysis provides safe package inventory and byte-level API signal detecti
 
 ## Provider configuration
 
-Keep `TRIAGE_API_TOKEN`, SMTP credentials, webhook secrets, and registry credentials server-side. Cloudflare Email Routing is inbound routing; outbound disclosure requires an SMTP or transactional provider with SPF, DKIM, and DMARC. Approved vulnerability disclosures default to `security@secopsai.dev`; research alerts default to `research@secopsai.dev`. Tria.ge is a public provider: do not submit confidential customer data, private credentials, or artifacts whose disclosure is not authorized.
+Keep `TRIAGE_API_TOKEN`, SMTP credentials, webhook secrets, and registry credentials server-side. For the local Mission Control helper, set `TRIAGE_API_TOKEN` in the owner-only `secopsai-dashboard/.env` file and restart the helper. The browser receives only a configured/not-configured provider state. Cloudflare Email Routing is inbound routing; outbound disclosure requires an SMTP or transactional provider with SPF, DKIM, and DMARC. Approved vulnerability disclosures default to `security@secopsai.dev`; research alerts default to `research@secopsai.dev`. Tria.ge is a public provider: do not submit confidential customer data, private credentials, or artifacts whose disclosure is not authorized.
 
 ## Recovery
 
