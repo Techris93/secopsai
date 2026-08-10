@@ -316,6 +316,7 @@ def run_cycle(
     from secopsai.investigation_autopilot import run_due as run_due_investigations
     from secopsai.research_delivery import deliver_pending_operational_alerts
     from secopsai.research_discovery import run_promotion_policy
+    from secopsai.research_storage import archive_and_prune_history
     from secopsai.research_worker import run_worker_cycle
 
     steps = [
@@ -357,6 +358,10 @@ def run_cycle(
         (
             "detection_learning",
             lambda: run_learning_cycle(db_path=db_path) if settings["run_learning"] else {"status": "skipped", "reason": "learning_disabled"},
+        ),
+        (
+            "storage_retention",
+            lambda: archive_and_prune_history(db_path=db_path),
         ),
         (
             "operational_alert_delivery",

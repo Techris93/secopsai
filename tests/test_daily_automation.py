@@ -37,6 +37,10 @@ def _stub_modules(monkeypatch, *, fail_step=None):
         "secopsai.research_delivery.deliver_pending_operational_alerts",
         stub("operational_alert_delivery"),
     )
+    monkeypatch.setattr(
+        "secopsai.research_storage.archive_and_prune_history",
+        stub("storage_retention"),
+    )
     return calls
 
 
@@ -47,7 +51,7 @@ def test_daily_cycle_runs_all_steps_and_is_persisted(tmp_path, monkeypatch):
     result = daily_automation.run_cycle(db_path=db, trigger="test", force=True)
 
     assert result["status"] == "succeeded"
-    assert result["summary"]["completed_steps"] == 6
+    assert result["summary"]["completed_steps"] == 7
     assert result["summary"]["failed_steps"] == 0
     assert calls == [
         "registry_surveillance",
@@ -55,10 +59,11 @@ def test_daily_cycle_runs_all_steps_and_is_persisted(tmp_path, monkeypatch):
         "alert_review_queue",
         "evidence_investigations",
         "detection_learning",
+        "storage_retention",
         "operational_alert_delivery",
     ]
     stored = daily_automation.get_run(result["run_id"], db_path=db)
-    assert len(stored["steps"]) == 6
+    assert len(stored["steps"]) == 7
     assert stored["steps"][0]["status"] == "succeeded"
     status = daily_automation.status(db_path=db)
     assert status["summary"]["last_status"] == "succeeded"

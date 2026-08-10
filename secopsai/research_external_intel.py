@@ -248,7 +248,7 @@ def refresh_keyv_advisory(*, db_path: Optional[str] = None, fetcher: Optional[Sa
                        (record_id, source_id, advisory_id, campaign_id, ecosystem,
                         package, version, severity, confidence, source_url,
                         source_hash, evidence_json, active, first_seen, last_seen)
-                       VALUES (?, ?, ?, ?, 'npm', ?, ?, 'critical', 'reported',
+                       VALUES (?, ?, ?, ?, 'npm', ?, ?, 'high', 'reported',
                         ?, ?, ?, 1, ?, ?)
                        ON CONFLICT(source_id, ecosystem, package, version) DO UPDATE
                        SET source_hash=excluded.source_hash,
@@ -381,7 +381,6 @@ def sync_advisory_candidates(*, db_path: Optional[str] = None, limit: int = 1000
             candidate_payload,
             db_path=db_path,
             alert_type="external_advisory_match",
-            severity_override="critical",
             dedupe_key=(
                 f"external-advisory:{record['source_id']}:{record['package']}"
                 f":{record['version']}:{record['source_hash']}"

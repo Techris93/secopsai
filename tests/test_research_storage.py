@@ -1,10 +1,13 @@
 from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
+import pytest
 
 import soc_store
 from secopsai import cli
 from secopsai.research_storage import (
     RESERVE_FILENAME,
+    archive_and_prune_history,
     ensure_storage_reserve,
     maintain_research_storage,
     release_storage_reserve,
@@ -132,3 +135,110 @@ def test_storage_cli_dispatches_status_and_maintenance(tmp_path, monkeypatch, ca
     maintenance = json.loads(capsys.readouterr().out)
     assert maintain_code == 0
     assert maintenance["after"]["pressure"] is False
+
+
+def test_history_archive_writes_before_pruning_terminal_rows(tmp_path):
+    db_path = _db(tmp_path)
+    soc_store.init_db(db_path)
+    old = _stamp(days=120)
+    with soc_store.connect(db_path) as connection:
+        connection.execute(
+            """INSERT INTO findings
+               (finding_id, title, summary, severity, severity_score, status, disposition,
+                source, first_seen, last_seen, created_at, updated_at, payload_json)
+               VALUES ('FND-OLD', 'Old finding', 'Archived', 'low', 25, 'closed',
+                       'false_positive', 'test', ?, ?, ?, ?, ?)""",
+            (old, old, old, old, json.dumps({"finding_id": "FND-OLD", "evidence": ["fixture"]})),
+        )
+        connection.execute(
+            """INSERT INTO intelligence_jobs
+               (job_id, action, target_id, status, requested_by, idempotency_key, attempt,
+                provider, queued_at, started_at, completed_at, updated_at, error_code,
+                error_message, input_json, result_json)
+               VALUES ('AIJ-OLD', 'triage_finding', 'FND-OLD', 'failed', 'test', 'old-job',
+                       1, 'test', ?, ?, ?, ?, 'bridge_failed', 'old failure', '{}', '{}')""",
+            (old, old, old, old),
+        )
+        connection.commit()
+
+    result = archive_and_prune_history(
+        db_path=db_path,
+        archive_dir=str(tmp_path / "archive"),
+        resolved_days=90,
+        failed_job_days=30,
+    )
+    assert result["status"] == "archived"
+    assert result["findings_archived"] == 1
+    assert result["intelligence_jobs_archived"] == 1
+    archive_path = tmp_path / "archive" / Path(result["archive_path"]).name
+    assert archive_path.exists()
+    assert archive_path.stat().st_mode & 0o777 == 0o600
+
+    import gzip
+    with gzip.open(archive_path, "rt", encoding="utf-8") as handle:
+        archived = json.load(handle)
+    assert archived["counts"] == {"findings": 1, "intelligence_jobs": 1}
+    with soc_store.connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) AS n FROM findings WHERE finding_id='FND-OLD'").fetchone()["n"] == 0
+        assert connection.execute("SELECT COUNT(*) AS n FROM intelligence_jobs WHERE job_id='AIJ-OLD'").fetchone()["n"] == 0
+
+
+def test_history_archive_keeps_active_case_and_supports_dry_run(tmp_path):
+    db_path = _db(tmp_path)
+    soc_store.init_db(db_path)
+    old = _stamp(days=120)
+    with soc_store.connect(db_path) as connection:
+        connection.execute(
+            """INSERT INTO research_cases
+               (case_id, title, summary, status, severity, confidence, case_type,
+                owner, disclosure_status, created_at, updated_at, payload_json)
+               VALUES ('RSC-ACTIVE', 'Active case', '', 'in_review', 'high', 50,
+                       'supply_chain', 'operator', 'not_started', ?, ?, '{}')""",
+            (old, old),
+        )
+        connection.execute(
+            """INSERT INTO findings
+               (finding_id, title, summary, severity, severity_score, status, disposition,
+                source, first_seen, last_seen, created_at, updated_at, payload_json)
+               VALUES ('FND-LINKED', 'Linked finding', 'Retain', 'high', 80, 'closed',
+                       'needs_review', 'test', ?, ?, ?, ?, '{}')""",
+            (old, old, old, old),
+        )
+        connection.execute(
+            """INSERT INTO research_case_findings (case_id, finding_id, relationship, created_at)
+               VALUES ('RSC-ACTIVE', 'FND-LINKED', 'subject', ?)""",
+            (old,),
+        )
+        connection.commit()
+    result = archive_and_prune_history(db_path=db_path, resolved_days=90, dry_run=True)
+    assert result["status"] == "dry_run"
+    assert result["findings_selected"] == 0
+    with soc_store.connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) AS n FROM findings WHERE finding_id='FND-LINKED'").fetchone()["n"] == 1
+
+
+def test_history_archive_does_not_delete_when_archive_write_fails(tmp_path, monkeypatch):
+    db_path = _db(tmp_path)
+    soc_store.init_db(db_path)
+    old = _stamp(days=120)
+    with soc_store.connect(db_path) as connection:
+        connection.execute(
+            """INSERT INTO findings
+               (finding_id, title, summary, severity, severity_score, status, disposition,
+                source, first_seen, last_seen, created_at, updated_at, payload_json)
+               VALUES ('FND-UNARCHIVED', 'Unarchived finding', 'Keep', 'low', 25, 'closed',
+                       'false_positive', 'test', ?, ?, ?, ?, '{}')""",
+            (old, old, old, old),
+        )
+        connection.commit()
+
+    def fail_archive(**_kwargs):
+        raise OSError("archive volume unavailable")
+
+    monkeypatch.setattr("secopsai.research_storage._archive_rows", fail_archive)
+    with pytest.raises(OSError, match="archive volume unavailable"):
+        archive_and_prune_history(db_path=db_path, resolved_days=90)
+    with soc_store.connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) AS n FROM findings WHERE finding_id='FND-UNARCHIVED'"
+        ).fetchone()["n"] == 1

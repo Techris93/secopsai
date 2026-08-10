@@ -1364,7 +1364,19 @@ def _existing_state(connection: sqlite3.Connection, finding_id: str) -> Dict[str
 def upsert_finding(connection: sqlite3.Connection, finding: Dict[str, Any], source: str) -> None:
     existing = _existing_state(connection, finding["finding_id"])
     now = utc_now()
-    status = existing["status"] if existing else str(finding.get("status", "open"))
+    requested_status = str(finding.get("status", "open"))
+    # A newly ingested advisory lead may be more accurately represented as a
+    # research lead than the provisional open status from an older sync. Never
+    # overwrite an analyst-owned state while applying this migration.
+    if (
+        existing
+        and requested_status == "research_lead"
+        and existing["status"] == "open"
+        and existing["disposition"] in {"", "unreviewed", "needs_review"}
+    ):
+        status = requested_status
+    else:
+        status = existing["status"] if existing else requested_status
     disposition = existing["disposition"] if existing else str(finding.get("disposition", "unreviewed"))
     created_at = existing["created_at"] if existing else str(finding.get("created_at", now))
 
@@ -1473,8 +1485,10 @@ def list_findings(
     source: str | None = None,
     limit: int | None = None,
     include_payload: bool = False,
+    initialize_db: bool = True,
 ) -> List[Dict[str, Any]]:
-    init_db(db_path)
+    if initialize_db:
+        init_db(db_path)
     if limit is not None and limit <= 0:
         return []
     clauses: List[str] = []
@@ -1529,6 +1543,43 @@ def list_findings(
         else:
             results.append(item)
     return results
+
+
+def summarize_findings(db_path: str | None = None, *, initialize_db: bool = True) -> Dict[str, Any]:
+    """Return aggregate finding counts without decoding finding payloads.
+
+    Dashboard summaries only need counts and severity distribution. Keeping
+    this query separate from ``list_findings(include_payload=True)`` avoids
+    reading and decoding every historical payload just to render metrics.
+    """
+    if initialize_db:
+        init_db(db_path)
+    with closing(connect(db_path)) as connection:
+        totals = connection.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN lower(status) = 'open' THEN 1 ELSE 0 END) AS open_findings,
+                SUM(CASE WHEN lower(status) = 'in_review' THEN 1 ELSE 0 END) AS in_review_findings,
+                SUM(CASE WHEN lower(status) = 'research_lead' THEN 1 ELSE 0 END) AS research_lead_findings
+            FROM findings
+            """
+        ).fetchone()
+        severity_rows = connection.execute(
+            "SELECT lower(severity) AS severity, COUNT(*) AS count FROM findings GROUP BY lower(severity)"
+        ).fetchall()
+
+    severity_counts = {
+        str(row["severity"] or "unknown"): int(row["count"] or 0)
+        for row in severity_rows
+    }
+    return {
+        "total": int((totals["total"] if totals else 0) or 0),
+        "open_findings": int((totals["open_findings"] if totals else 0) or 0),
+        "in_review_findings": int((totals["in_review_findings"] if totals else 0) or 0),
+        "research_lead_findings": int((totals["research_lead_findings"] if totals else 0) or 0),
+        "severity_counts": severity_counts,
+    }
 
 
 def get_finding(finding_id: str, db_path: str | None = None) -> Dict[str, Any] | None:

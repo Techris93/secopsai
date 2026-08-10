@@ -585,7 +585,7 @@ def test_external_advisory_webhook_creates_core_finding_and_is_idempotent(client
     assert alert["candidate_id"] == "CAN-EXT-KEYV-1"
     assert alert["campaign_id"] == "keyv-cacheable-npm-worm-2026-08"
     assert "must-not-persist" not in alert["evidence_json"]
-    assert finding["status"] == "open"
+    assert finding["status"] == "research_lead"
     assert "keyv" in finding["payload_json"]
 
 

@@ -10,6 +10,9 @@ completely exhausted.
 from __future__ import annotations
 
 import os
+import gzip
+import json
+import secrets
 import shutil
 import sqlite3
 from contextlib import closing
@@ -29,6 +32,186 @@ RESERVE_FILENAME = ".secopsai-storage-reserve"
 
 class ResearchStorageCapacityError(RuntimeError):
     """The worker cannot safely write until persistent capacity is restored."""
+
+
+HISTORY_ARCHIVE_SCHEMA = "secopsai.storage.history-archive.v1"
+DEFAULT_HISTORY_ARCHIVE_BATCH = 100
+
+
+def _history_archive_dir(db_path: Optional[str], archive_dir: Optional[str]) -> Path:
+    database = _resolved_db_path(db_path)
+    return Path(archive_dir).expanduser().resolve() if archive_dir else database.parent / "archive"
+
+
+def _archive_rows(
+    *,
+    archive_dir: Path,
+    db_path: Path,
+    findings: list[Dict[str, Any]],
+    intelligence_jobs: list[Dict[str, Any]],
+) -> Path:
+    """Persist a complete recovery record before any source row is deleted."""
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(archive_dir, 0o700)
+    except OSError:
+        pass
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    target = archive_dir / f"secopsai-history-{stamp}-{secrets.token_hex(4)}.json.gz"
+    temporary = target.with_suffix(".tmp")
+    payload = {
+        "schema_version": HISTORY_ARCHIVE_SCHEMA,
+        "archived_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "database_path": str(db_path),
+        "findings": findings,
+        "intelligence_jobs": intelligence_jobs,
+        "counts": {
+            "findings": len(findings),
+            "intelligence_jobs": len(intelligence_jobs),
+        },
+    }
+    try:
+        with gzip.open(temporary, "wt", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True, separators=(",", ":"), default=str)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return target
+
+
+def archive_and_prune_history(
+    *,
+    db_path: Optional[str] = None,
+    archive_dir: Optional[str] = None,
+    resolved_days: Optional[int] = None,
+    failed_job_days: Optional[int] = None,
+    batch_size: int = DEFAULT_HISTORY_ARCHIVE_BATCH,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Archive old terminal history, then prune only after the archive is durable.
+
+    Findings linked to active cases or active triage/investigation runs are
+    retained. Failed jobs referenced by a non-terminal pipeline or triage run
+    are retained so retry and recovery remain possible.
+    """
+    database = _resolved_db_path(db_path)
+    soc_store.init_db(str(database))
+    resolved_cutoff = _iso_cutoff(days=max(1, int(resolved_days or _env_int("SECOPSAI_RESOLVED_FINDING_RETENTION_DAYS", 90, minimum=1))))
+    failed_cutoff = _iso_cutoff(days=max(1, int(failed_job_days or _env_int("SECOPSAI_FAILED_JOB_RETENTION_DAYS", 30, minimum=1))))
+    limit = max(1, min(int(batch_size), 1000))
+    with closing(soc_store.connect(str(database))) as connection:
+        finding_rows = connection.execute(
+            """SELECT f.* FROM findings f
+               WHERE lower(f.status) IN ('closed','resolved','triaged')
+                 AND f.updated_at < ?
+                 AND NOT EXISTS (
+                   SELECT 1 FROM research_case_findings rcf
+                   WHERE rcf.finding_id = f.finding_id
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM agent_triage_runs atr
+                   WHERE atr.target_type='finding' AND atr.target_id=f.finding_id
+                     AND lower(atr.status) IN ('queued','awaiting_provider','awaiting_model')
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM investigation_autopilot_runs iar
+                   WHERE iar.finding_id=f.finding_id
+                     AND lower(iar.status) IN ('queued','running','awaiting_review','blocked')
+                 )
+               ORDER BY f.updated_at, f.finding_id LIMIT ?""",
+            (resolved_cutoff, limit),
+        ).fetchall()
+        job_rows = connection.execute(
+            """SELECT j.* FROM intelligence_jobs j
+               WHERE lower(j.status)='failed' AND j.updated_at < ?
+                 AND NOT EXISTS (
+                   SELECT 1 FROM research_pipeline_steps rps
+                   WHERE rps.intelligence_job_id=j.job_id
+                     AND lower(rps.status) NOT IN ('succeeded','failed','skipped')
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM agent_triage_runs atr
+                   WHERE atr.intelligence_job_id=j.job_id
+                     AND lower(atr.status) IN ('queued','awaiting_provider','awaiting_model')
+                 )
+               ORDER BY j.updated_at, j.job_id LIMIT ?""",
+            (failed_cutoff, limit),
+        ).fetchall()
+        finding_ids = [str(row["finding_id"]) for row in finding_rows]
+        job_ids = [str(row["job_id"]) for row in job_rows]
+        findings: list[Dict[str, Any]] = []
+        for row in finding_rows:
+            item = dict(row)
+            item["events"] = [
+                dict(event) for event in connection.execute(
+                    "SELECT * FROM finding_events WHERE finding_id=? ORDER BY event_id",
+                    (row["finding_id"],),
+                ).fetchall()
+            ]
+            item["notes"] = [
+                dict(note) for note in connection.execute(
+                    "SELECT * FROM notes WHERE finding_id=? ORDER BY note_id",
+                    (row["finding_id"],),
+                ).fetchall()
+            ]
+            findings.append(item)
+        jobs: list[Dict[str, Any]] = []
+        for row in job_rows:
+            item = dict(row)
+            item["events"] = [
+                dict(event) for event in connection.execute(
+                    "SELECT * FROM intelligence_job_events WHERE job_id=? ORDER BY event_id",
+                    (row["job_id"],),
+                ).fetchall()
+            ]
+            jobs.append(item)
+        if dry_run:
+            return {
+                "schema_version": HISTORY_ARCHIVE_SCHEMA,
+                "status": "dry_run",
+                "resolved_cutoff": resolved_cutoff,
+                "failed_job_cutoff": failed_cutoff,
+                "findings_selected": len(findings),
+                "intelligence_jobs_selected": len(jobs),
+                "archive_path": None,
+            }
+        if not findings and not jobs:
+            return {
+                "schema_version": HISTORY_ARCHIVE_SCHEMA,
+                "status": "nothing_to_archive",
+                "resolved_cutoff": resolved_cutoff,
+                "failed_job_cutoff": failed_cutoff,
+                "findings_archived": 0,
+                "intelligence_jobs_archived": 0,
+                "archive_path": None,
+            }
+        # The archive is committed to disk while the transaction is held. A
+        # failed write raises before DELETE, leaving every source row intact.
+        archive_path = _archive_rows(
+            archive_dir=_history_archive_dir(db_path, archive_dir),
+            db_path=database,
+            findings=findings,
+            intelligence_jobs=jobs,
+        )
+        if finding_ids:
+            placeholders = ",".join("?" for _ in finding_ids)
+            connection.execute(f"DELETE FROM findings WHERE finding_id IN ({placeholders})", tuple(finding_ids))
+        if job_ids:
+            placeholders = ",".join("?" for _ in job_ids)
+            connection.execute(f"DELETE FROM intelligence_jobs WHERE job_id IN ({placeholders})", tuple(job_ids))
+        connection.commit()
+    return {
+        "schema_version": HISTORY_ARCHIVE_SCHEMA,
+        "status": "archived",
+        "resolved_cutoff": resolved_cutoff,
+        "failed_job_cutoff": failed_cutoff,
+        "findings_archived": len(findings),
+        "intelligence_jobs_archived": len(jobs),
+        "archive_path": str(archive_path),
+    }
 
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:

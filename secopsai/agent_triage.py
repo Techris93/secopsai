@@ -25,7 +25,7 @@ from secopsai.triage.supply_chain import dependency_manifest_paths, investigate_
 
 SCHEMA_VERSION = "secopsai.agent-triage.v1"
 MODES = {"off", "advisory", "guarded"}
-RUN_STATUSES = {"queued", "awaiting_model", "applied", "recommended", "escalated", "failed", "rolled_back"}
+RUN_STATUSES = {"queued", "awaiting_provider", "awaiting_model", "applied", "recommended", "escalated", "failed", "rolled_back"}
 DEFAULT_SETTINGS = {
     "mode": "advisory",
     "selected_model": "",
@@ -220,10 +220,11 @@ def enqueue_due_findings(
     findings = soc_store.list_findings(db_path, limit=None, include_payload=True)
     eligible = [
         item for item in findings
-        if _clean(item.get("status"), 32).lower() in {"open", "in_review"}
+        if _clean(item.get("status"), 32).lower() in {"open", "research_lead", "in_review"}
         and _clean(item.get("disposition"), 32).lower() in {"", "unreviewed", "needs_review"}
     ]
     queued: list[Dict[str, Any]] = []
+    investigations: list[Dict[str, Any]] = []
     skipped = 0
     cycle_limit = int(settings["max_records_per_cycle"])
     if limit_override is not None:
@@ -243,6 +244,30 @@ def enqueue_due_findings(
             continue
         run_id = _id("ATR")
         deterministic = _deterministic_assessment(finding, search_root=root, manifest_paths=manifests)
+        # External package leads enter the evidence pipeline before model
+        # review. Local dependency absence is not a package-level verdict.
+        if (
+            _clean(finding.get("source"), 120).lower() == "secopsai_research"
+            or str(finding.get("alert_type") or "") in {"external_advisory_match", "npm_proactive_anomaly"}
+        ):
+            try:
+                from secopsai.investigation_autopilot import enqueue_finding as enqueue_investigation
+
+                investigation = enqueue_investigation(finding_id, db_path=db_path)
+                if investigation.get("status") in {"queued", "awaiting_provider"} or investigation.get("run_id"):
+                    investigations.append(investigation)
+            except Exception as exc:
+                investigations.append({"status": "degraded", "finding_id": finding_id, "error": _clean(exc, 500)})
+        try:
+            from secopsai.codex_bridge import cached_provider_health
+
+            cached_health = cached_provider_health()
+            waiting_for_provider = bool(cached_health) and not any(
+                str(item.get("status") or "") == "ready" for item in cached_health.values()
+            )
+        except Exception:
+            waiting_for_provider = False
+        initial_status = "awaiting_provider" if waiting_for_provider else "queued"
         now = soc_store.utc_now()
         with closing(soc_store.connect(db_path)) as connection:
             inserted = connection.execute(
@@ -274,6 +299,12 @@ def enqueue_due_findings(
                 },
                 requested_by=requested_by,
                 idempotency_key=f"agent-triage:{finding_id}:{fingerprint}",
+                initial_status=initial_status,
+                initial_error_code="provider_unavailable" if waiting_for_provider else None,
+                initial_error_message=(
+                    "All configured bridge providers failed their live health probe; this job will resume automatically."
+                    if waiting_for_provider else None
+                ),
                 db_path=db_path,
             )
         except Exception as exc:
@@ -281,8 +312,8 @@ def enqueue_due_findings(
             continue
         with closing(soc_store.connect(db_path)) as connection:
             connection.execute(
-                "UPDATE agent_triage_runs SET status = 'awaiting_model', intelligence_job_id = ?, updated_at = ? WHERE run_id = ?",
-                (job["job_id"], soc_store.utc_now(), run_id),
+                "UPDATE agent_triage_runs SET status = ?, intelligence_job_id = ?, updated_at = ? WHERE run_id = ?",
+                ("awaiting_provider" if job.get("status") == "awaiting_provider" else "awaiting_model", job["job_id"], soc_store.utc_now(), run_id),
             )
             connection.commit()
         queued.append({"run_id": run_id, "finding_id": finding_id, "job_id": job["job_id"]})
@@ -293,6 +324,7 @@ def enqueue_due_findings(
         "skipped": skipped,
         "feedback": feedback,
         "research_alert_sync": alert_sync,
+        "investigations": investigations,
     }
 
 
@@ -373,7 +405,7 @@ def _adjudicate(
         soc_store.set_finding_status(run["target_id"], "in_review", db_path)
         action = "auto_escalated:true_positive"
         status = "escalated"
-    elif settings["mode"] == "guarded" and finding.get("status") == "open":
+    elif settings["mode"] == "guarded" and finding.get("status") in {"open", "research_lead"}:
         soc_store.set_finding_status(run["target_id"], "in_review", db_path)
         action = "auto_started_review"
         status = "escalated"

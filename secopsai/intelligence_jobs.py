@@ -12,8 +12,9 @@ import soc_store
 
 
 SCHEMA_VERSION = "secopsai.intelligence.job.v1"
-ACTIVE_STATUSES = {"queued", "running"}
+ACTIVE_STATUSES = {"queued", "running", "awaiting_provider"}
 FINAL_STATUSES = {"succeeded", "failed", "canceled"}
+WAITING_PROVIDER_STATUS = "awaiting_provider"
 MAX_INPUT_BYTES = 64 * 1024
 MAX_RESULT_BYTES = 512 * 1024
 
@@ -25,11 +26,17 @@ def enqueue_job(
     inputs: dict[str, Any] | None = None,
     requested_by: str = "operator",
     idempotency_key: str = "",
+    initial_status: str = "queued",
+    initial_error_code: str | None = None,
+    initial_error_message: str | None = None,
     db_path: str | None = None,
 ) -> dict[str, Any]:
     action = _required(action, "action", 80)
     target_id = _clean(target_id, 240)
     requested_by = _required(requested_by, "requested_by", 160)
+    initial_status = _required(initial_status, "initial_status", 40)
+    if initial_status not in {"queued", WAITING_PROVIDER_STATUS}:
+        raise ValueError("initial_status must be queued or awaiting_provider")
     normalized_input = dict(inputs or {})
     input_json = _bounded_json(normalized_input, MAX_INPUT_BYTES, "job input")
     if not idempotency_key:
@@ -53,10 +60,29 @@ def enqueue_job(
             (job_id, action, target_id, status, requested_by, idempotency_key,
              attempt, provider, queued_at, started_at, completed_at, updated_at,
              error_code, error_message, input_json, result_json)
-            VALUES (?, ?, ?, 'queued', ?, ?, 0, '', ?, NULL, NULL, ?, NULL, NULL, ?, '{}')""",
-            (job_id, action, target_id, requested_by, idempotency_key, now, now, input_json),
+            VALUES (?, ?, ?, ?, ?, ?, 0, '', ?, NULL, NULL, ?, ?, ?, ?, '{}')""",
+            (
+                job_id,
+                action,
+                target_id,
+                initial_status,
+                requested_by,
+                idempotency_key,
+                now,
+                now,
+                _clean(initial_error_code, 80) if initial_error_code else None,
+                _clean(initial_error_message, 2000) if initial_error_message else None,
+                input_json,
+            ),
         )
-        _event(connection, job_id, "queued", requested_by, "Intelligence job queued.", {"action": action})
+        _event(
+            connection,
+            job_id,
+            "queued" if initial_status == "queued" else "awaiting_provider",
+            requested_by,
+            "Intelligence job queued." if initial_status == "queued" else "Intelligence job is waiting for a healthy provider.",
+            {"action": action, "status": initial_status},
+        )
         connection.commit()
     return get_job(job_id, db_path=db_path)
 
@@ -268,6 +294,65 @@ def job_counts(*, db_path: str | None = None) -> dict[str, int]:
     with closing(soc_store.connect(db_path)) as connection:
         rows = connection.execute("SELECT status, COUNT(*) AS count FROM intelligence_jobs GROUP BY status").fetchall()
     return {str(row["status"]): int(row["count"]) for row in rows}
+
+
+def mark_queued_jobs_awaiting_provider(
+    *,
+    reason: str,
+    actor: str = "bridge-health",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Move only unclaimed triage jobs to an explicit provider-wait state."""
+    soc_store.init_db(db_path)
+    now = soc_store.utc_now()
+    message = _clean(reason, 2000) or "All configured providers failed their live health probe."
+    moved: list[str] = []
+    with closing(soc_store.connect(db_path)) as connection:
+        rows = connection.execute(
+            "SELECT job_id FROM intelligence_jobs WHERE status='queued' AND action='triage_finding' ORDER BY queued_at, job_id"
+        ).fetchall()
+        for row in rows:
+            job_id = str(row["job_id"])
+            updated = connection.execute(
+                """UPDATE intelligence_jobs SET status=?, updated_at=?, error_code='provider_unavailable',
+                   error_message=? WHERE job_id=? AND status='queued'""",
+                (WAITING_PROVIDER_STATUS, now, message, job_id),
+            )
+            if updated.rowcount == 1:
+                _event(connection, job_id, "awaiting_provider", actor, "Moved to awaiting-provider queue after live provider health failure.", {"error_code": "provider_unavailable"})
+                moved.append(job_id)
+        connection.commit()
+    return {"status": WAITING_PROVIDER_STATUS, "count": len(moved), "job_ids": moved}
+
+
+def release_waiting_provider_jobs(
+    *,
+    provider: str,
+    actor: str = "bridge-health",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Return provider-waiting triage jobs to the normal queue after recovery."""
+    soc_store.init_db(db_path)
+    now = soc_store.utc_now()
+    released: list[str] = []
+    with closing(soc_store.connect(db_path)) as connection:
+        rows = connection.execute(
+            "SELECT job_id FROM intelligence_jobs WHERE status=? AND action='triage_finding' ORDER BY queued_at, job_id",
+            (WAITING_PROVIDER_STATUS,),
+        ).fetchall()
+        for row in rows:
+            job_id = str(row["job_id"])
+            updated = connection.execute(
+                """UPDATE intelligence_jobs SET status='queued', provider='', updated_at=?,
+                   error_code=NULL, error_message=NULL
+                   WHERE job_id=? AND status=?""",
+                (now, job_id, WAITING_PROVIDER_STATUS),
+            )
+            if updated.rowcount == 1:
+                _event(connection, job_id, "provider_recovered", actor, "Provider health recovered; job returned to the normal queue.", {"provider": _clean(provider, 80)})
+                released.append(job_id)
+        connection.commit()
+    return {"status": "released", "provider": _clean(provider, 80), "count": len(released), "job_ids": released}
 
 
 def recover_running_jobs(

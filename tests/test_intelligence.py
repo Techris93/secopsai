@@ -9,7 +9,15 @@ import pytest
 from jsonschema import Draft202012Validator
 
 import soc_store
-from secopsai.codex_bridge import BridgeSettings, doctor, run_once
+from secopsai.codex_bridge import (
+    DEFAULT_FALLBACK_MODELS,
+    PRIMARY_MODEL,
+    BridgeSettings,
+    clear_provider_health_cache,
+    doctor,
+    probe_provider_health,
+    run_once,
+)
 from secopsai.codex_bridge_service import install_service
 from secopsai.intelligence import list_actions, minimize, prepare_bridge_request, run_read_action, validate_bridge_result
 from secopsai.intelligence_jobs import (
@@ -142,6 +150,137 @@ def test_local_bridge_doctor_rejects_partial_hosted_queue_configuration(monkeypa
     status = doctor(BridgeSettings(core_api_url="https://core.example.test"), runner=runner)
     assert status["status"] == "blocked"
     assert "SECOPSAI_CODEX_BRIDGE_TOKEN" in status["message"]
+
+
+def test_bridge_health_probe_reports_each_upstream_failure(monkeypatch):
+    monkeypatch.setattr("secopsai.codex_bridge.shutil.which", lambda value: f"/usr/local/bin/{value}")
+    clear_provider_health_cache()
+    settings = BridgeSettings(
+        codex_binary="codex",
+        opencodex_binary="opencodex",
+        model=PRIMARY_MODEL,
+        fallback_models=DEFAULT_FALLBACK_MODELS,
+    )
+
+    def runner(command, stdin, environment, timeout):
+        model = command[command.index("--model") + 1]
+        if model == PRIMARY_MODEL:
+            return subprocess.CompletedProcess(command, 0, "OK", "")
+        if model.startswith("google-antigravity/"):
+            return subprocess.CompletedProcess(command, 1, "", "HTTP error: 429 Too Many Requests")
+        if model.startswith("kimi/"):
+            return subprocess.CompletedProcess(command, 1, "", "HTTP error: 403 usage limit reached")
+        return subprocess.CompletedProcess(command, 1, "", "HTTP error: 403 no credits")
+
+    health = probe_provider_health(
+        settings,
+        [PRIMARY_MODEL, *DEFAULT_FALLBACK_MODELS],
+        runner=runner,
+        force=True,
+    )
+    assert health[PRIMARY_MODEL]["status"] == "ready"
+    assert health["google-antigravity/gemini-3.5-flash-low"]["status"] == "unavailable"
+    assert health["google-antigravity/gemini-3.5-flash-low"]["http_status"] == 429
+    assert "Too Many Requests" in health["google-antigravity/gemini-3.5-flash-low"]["error"]
+    assert health["kimi/kimi-k2.7-code"]["http_status"] == 403
+    assert health["xai/grok-4.5"]["http_status"] == 403
+
+
+def test_bridge_uses_luna_first_when_live_probe_is_healthy(tmp_path: Path, monkeypatch):
+    db = str(tmp_path / "core.db")
+    job = enqueue_job(action="prioritize_findings", requested_by="tester", db_path=db)
+    monkeypatch.setattr(
+        "secopsai.codex_bridge.doctor",
+        lambda settings, runner=None: {
+            "status": "ready",
+            "live_ready": True,
+            "provider": "opencodex_proxy",
+            "opencodex": {"status": "ready"},
+            "models": {"default_model": PRIMARY_MODEL, "models": [{"id": PRIMARY_MODEL}]},
+        },
+    )
+
+    def runner(command, stdin, environment, timeout):
+        assert command[command.index("--model") + 1] == PRIMARY_MODEL
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text(json.dumps({"summary": "Luna completed the bounded review."}), encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = run_once(
+        db_path=db,
+        settings=BridgeSettings(model=PRIMARY_MODEL, worker_id="luna-test"),
+        runner=runner,
+    )
+    assert result["status"] == "succeeded"
+    assert result["model"] == PRIMARY_MODEL
+    assert get_job(job["job_id"], db_path=db)["status"] == "succeeded"
+
+
+def test_bridge_falls_back_after_luna_upstream_rate_limit(tmp_path: Path, monkeypatch):
+    db = str(tmp_path / "core.db")
+    job = enqueue_job(action="prioritize_findings", requested_by="tester", db_path=db)
+    models = [PRIMARY_MODEL, *DEFAULT_FALLBACK_MODELS]
+    monkeypatch.setattr(
+        "secopsai.codex_bridge.doctor",
+        lambda settings, runner=None: {
+            "status": "degraded",
+            "live_ready": True,
+            "provider": "opencodex_proxy",
+            "opencodex": {"status": "ready"},
+            "models": {"default_model": PRIMARY_MODEL, "models": [{"id": item} for item in models]},
+        },
+    )
+    attempted = []
+
+    def runner(command, stdin, environment, timeout):
+        model = command[command.index("--model") + 1]
+        attempted.append(model)
+        if model == PRIMARY_MODEL:
+            return subprocess.CompletedProcess(command, 1, "", "HTTP error: 429 Too Many Requests")
+        if model == DEFAULT_FALLBACK_MODELS[0]:
+            output_path = Path(command[command.index("--output-last-message") + 1])
+            output_path.write_text(json.dumps({"summary": "Gemini fallback completed the bounded review."}), encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return subprocess.CompletedProcess(command, 1, "", "fallback should not be needed")
+
+    result = run_once(
+        db_path=db,
+        settings=BridgeSettings(model=PRIMARY_MODEL, fallback_models=DEFAULT_FALLBACK_MODELS, worker_id="fallback-test"),
+        runner=runner,
+        require_ready_provider=False,
+    )
+    assert result["status"] == "succeeded"
+    assert result["model"] == DEFAULT_FALLBACK_MODELS[0]
+    assert attempted[:2] == [PRIMARY_MODEL, DEFAULT_FALLBACK_MODELS[0]]
+
+
+def test_bridge_moves_triage_job_to_awaiting_provider_when_all_providers_down(tmp_path: Path, monkeypatch):
+    db = str(tmp_path / "core.db")
+    job = enqueue_job(
+        action="triage_finding",
+        target_id="FND-DOWN",
+        requested_by="tester",
+        db_path=db,
+    )
+    monkeypatch.setattr(
+        "secopsai.codex_bridge.doctor",
+        lambda settings, runner=None: {
+            "status": "blocked",
+            "live_ready": False,
+            "configured_provider_count": 4,
+            "message": "Provider health: Luna=unavailable: 429; Gemini=unavailable: 429; Kimi=unavailable: 403; Grok=unavailable: 403.",
+            "providers": {},
+        },
+    )
+    result = run_once(
+        db_path=db,
+        settings=BridgeSettings(model=PRIMARY_MODEL, worker_id="blocked-test"),
+        runner=lambda *args: pytest.fail("no provider command should run"),
+    )
+    assert result["status"] == "awaiting_provider"
+    stored = get_job(job["job_id"], db_path=db)
+    assert stored["status"] == "awaiting_provider"
+    assert stored["error_code"] == "provider_unavailable"
 
 
 def test_local_bridge_processes_job_with_injected_runner(tmp_path: Path):

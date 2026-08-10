@@ -50,6 +50,21 @@ def _decode(value: Any, fallback: Any) -> Any:
         return fallback
 
 
+def _has_artifact_evidence(evidence: Any) -> bool:
+    payload = evidence if isinstance(evidence, dict) else {}
+    return bool(
+        payload.get("artifact_sha256")
+        or payload.get("artifact_url")
+        or payload.get("analysis")
+        or payload.get("static_analysis")
+        or payload.get("sandbox_analysis")
+    )
+
+
+def _external_lead_severity(score: float) -> str:
+    return "high" if score >= 85 else "medium" if score >= 60 else "low"
+
+
 def normalize_identifier(ecosystem: str, value: str) -> str:
     """Normalize names without erasing ecosystem-specific identity."""
     ecosystem = str(ecosystem or "").strip().lower()
@@ -639,11 +654,28 @@ def create_candidate_alert(
     """
     soc_store.init_db(db_path)
     score = float(candidate.get("score") or 0)
-    severity = severity_override or ("critical" if score >= 95 else "high" if score >= 85 else "medium")
+    package = str(candidate.get("package") or "").strip()
+    ecosystem = str(candidate.get("ecosystem") or "").strip().lower()
+    version = str(candidate.get("version") or candidate.get("new_version") or "").strip()
+    package_key = normalize_identifier(ecosystem, package)
+    version_key = normalize_identifier(ecosystem, version)
+    evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
+    artifact_evidence = _has_artifact_evidence(evidence)
+    if alert_type == "external_advisory_match" and not artifact_evidence:
+        # A public advisory is a valuable lead, but it is not yet an
+        # independently verified package compromise. Cap the initial lead at
+        # high severity until artifact evidence exists.
+        severity = _external_lead_severity(score)
+    else:
+        severity = severity_override or ("critical" if score >= 95 else "high" if score >= 85 else "medium")
     severity = severity.lower()
     if severity not in {"critical", "high", "medium", "low", "info"}:
         severity = "medium"
-    stable_dedupe_key = dedupe_key or f"candidate:{candidate.get('candidate_id')}:{candidate.get('last_seen')}"
+    if alert_type in {"external_advisory_match", "npm_proactive_anomaly"} and package_key and version_key:
+        # Group repeat observations of one package release into one lead.
+        stable_dedupe_key = f"package-lead:{alert_type}:{ecosystem}:{package_key}:{version_key}"
+    else:
+        stable_dedupe_key = dedupe_key or f"candidate:{candidate.get('candidate_id')}:{candidate.get('last_seen')}"
     alert_id = _id("RAL")
     now = _now()
     with closing(soc_store.connect(db_path)) as connection:
@@ -707,13 +739,14 @@ def _upsert_research_alert_finding(
     else:
         title = f"Research alert requires verification: {alert_type.replace('_', ' ')}"
         rule_ids = ["RESEARCH-ALERT-INGESTION"]
+    lead_status = "research_lead" if alert_type == "external_advisory_match" and not _has_artifact_evidence(evidence) else "open"
     finding = {
         "finding_id": finding_id,
         "title": title[:500],
         "summary": str(alert.get("reason") or "Research intelligence requires evidence-led review")[:2000],
         "severity": severity,
         "severity_score": {"critical": 95, "high": 80, "medium": 55, "low": 25, "info": 10}[severity],
-        "status": "open",
+        "status": lead_status,
         "disposition": "unreviewed",
         "first_seen": str((candidate or {}).get("first_seen") or alert.get("created_at") or _now()),
         "last_seen": str((candidate or {}).get("last_seen") or alert.get("updated_at") or _now()),
@@ -767,6 +800,15 @@ def sync_actionable_alert_findings(*, db_path: Optional[str] = None) -> Dict[str
                 "last_seen": alert.get("candidate_last_seen"),
                 "evidence": _decode(alert.get("candidate_evidence_json"), {}),
             }
+            if str(alert.get("alert_type") or "") == "external_advisory_match" and not _has_artifact_evidence(candidate["evidence"]):
+                score = float(candidate.get("score") or 0)
+                normalized_severity = _external_lead_severity(score)
+                if str(alert.get("severity") or "").lower() != normalized_severity:
+                    connection.execute(
+                        "UPDATE research_alerts SET severity=?, updated_at=? WHERE alert_id=?",
+                        (normalized_severity, _now(), alert["alert_id"]),
+                    )
+                    alert["severity"] = normalized_severity
             synced.append(_upsert_research_alert_finding(connection, alert, candidate=candidate))
         connection.commit()
     return {
@@ -798,7 +840,7 @@ def resolve_alert(alert_id: str, *, db_path: Optional[str] = None) -> Dict[str, 
         finding_id = f"RSCF-{hashlib.sha256(str(alert_id).encode()).hexdigest()[:16].upper()}"
         connection.execute(
             """UPDATE findings SET status = 'triaged', disposition = 'needs_review', updated_at = ?
-               WHERE finding_id = ? AND source = ? AND status IN ('open', 'in_review')""",
+               WHERE finding_id = ? AND source = ? AND status IN ('research_lead', 'open', 'in_review')""",
             (now, finding_id, RESEARCH_ALERT_FINDING_SOURCE),
         )
         connection.commit()

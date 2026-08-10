@@ -9,11 +9,14 @@ import socket
 import subprocess
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import RLock
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
 import requests
+import soc_store
 
 from secopsai.intelligence import bridge_output_schema, prepare_bridge_request, validate_bridge_result
 from secopsai.intelligence_jobs import claim_next_job, complete_job, fail_job, job_counts, requeue_job
@@ -21,17 +24,28 @@ from secopsai.intelligence_jobs import claim_next_job, complete_job, fail_job, j
 
 PROVIDER_OPENCODEX = "opencodex_proxy"
 PROVIDER_CODEX_NATIVE = "codex_chatgpt_subscription"
+PRIMARY_MODEL = "gpt-5.6-luna"
+DEFAULT_FALLBACK_MODELS = (
+    "google-antigravity/gemini-3.5-flash-low",
+    "kimi/kimi-k2.7-code",
+    "xai/grok-4.5",
+)
 DEFAULT_TIMEOUT_SECONDS = 300
+PROVIDER_PROBE_TTL_SECONDS = 60
+PROVIDER_PROBE_TIMEOUT_SECONDS = 20
 MAX_PROCESS_OUTPUT_BYTES = 256 * 1024
 Runner = Callable[[Sequence[str], str, dict[str, str], int], subprocess.CompletedProcess[str]]
+
+_PROVIDER_HEALTH_CACHE: dict[tuple[str, int, str, str], dict[str, Any]] = {}
+_PROVIDER_HEALTH_LOCK = RLock()
 
 
 @dataclass(frozen=True)
 class BridgeSettings:
     codex_binary: str = "codex"
     opencodex_binary: str = "opencodex"
-    model: str = ""
-    fallback_models: tuple[str, ...] = ()
+    model: str = PRIMARY_MODEL
+    fallback_models: tuple[str, ...] = DEFAULT_FALLBACK_MODELS
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     poll_interval_seconds: int = 5
     worker_id: str = ""
@@ -42,7 +56,7 @@ class BridgeSettings:
     def from_environment(cls) -> "BridgeSettings":
         fallback_raw = os.environ.get(
             "SECOPSAI_BRIDGE_FALLBACK_MODELS",
-            "kimi/kimi-k2.7-code,xai/grok-4.5,google-antigravity/gemini-3.5-flash-low",
+            ",".join(DEFAULT_FALLBACK_MODELS),
         )
         fallback = tuple(
             item.strip()
@@ -52,7 +66,7 @@ class BridgeSettings:
         return cls(
             codex_binary=os.environ.get("SECOPSAI_CODEX_BINARY", "codex").strip() or "codex",
             opencodex_binary=os.environ.get("SECOPSAI_OPENCODEX_BINARY", "opencodex").strip() or "opencodex",
-            model=os.environ.get("SECOPSAI_BRIDGE_MODEL", "").strip(),
+            model=os.environ.get("SECOPSAI_BRIDGE_MODEL", PRIMARY_MODEL).strip() or PRIMARY_MODEL,
             fallback_models=fallback,
             timeout_seconds=_bounded_int("SECOPSAI_CODEX_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS, 30, 1800),
             poll_interval_seconds=_bounded_int("SECOPSAI_CODEX_POLL_SECONDS", 5, 1, 300),
@@ -77,10 +91,18 @@ def doctor(settings: BridgeSettings | None = None, *, runner: Runner | None = No
     selected_ready = bool(selected_model) and any(
         item.get("id") == selected_model for item in models.get("models", [])
     )
-    # Ready if OpenCodex is healthy with selectable models, or native Codex ChatGPT login works.
-    ready = not remote_partial and (
-        (opencodex.get("status") == "ready" and bool(models.get("models")))
-        or codex.get("status") == "ready"
+    model_chain = _model_chain(resolved, model=selected_model or PRIMARY_MODEL, available=models)
+    provider_health = probe_provider_health(resolved, model_chain, runner=run)
+    ready_count = sum(1 for item in provider_health.values() if item.get("status") == "ready")
+    provider_count = len(provider_health)
+    # A provider is usable only after a real Responses-backed runtime probe.
+    # ``ready`` here means at least one configured provider is live; degraded
+    # means failover is possible but the selected/other providers are unhealthy.
+    ready = not remote_partial and ready_count > 0
+    aggregate_status = (
+        "ready" if ready_count == provider_count and provider_count else
+        "degraded" if ready_count else
+        "blocked"
     )
     if remote_partial:
         message = (
@@ -88,17 +110,19 @@ def doctor(settings: BridgeSettings | None = None, *, runner: Runner | None = No
             "or unset both to use the local SQLite queue."
         )
     elif ready:
-        message = (
-            "Bridge ready. Select a model with --model or SECOPSAI_BRIDGE_MODEL. "
-            f"Current selection: {selected_model or 'provider default'}."
-        )
+        message = _provider_health_message(provider_health, selected_model)
     else:
-        message = (
-            "No ready model path. Start OpenCodex (`opencodex start`) or sign in to Codex with ChatGPT."
+        message = _provider_health_message(provider_health, selected_model) if provider_health else (
+            "No configured provider path. Start OpenCodex or configure a Codex/OpenAI runtime."
         )
     provider = PROVIDER_OPENCODEX if opencodex.get("status") == "ready" else PROVIDER_CODEX_NATIVE
     return {
-        "status": "ready" if ready else "blocked",
+        "status": aggregate_status if not remote_partial else "blocked",
+        "live_ready": ready,
+        "ready_provider_count": ready_count,
+        "configured_provider_count": provider_count,
+        "providers": provider_health,
+        "probe_ttl_seconds": PROVIDER_PROBE_TTL_SECONDS,
         "provider": provider,
         "selected_model": selected_model,
         "selected_model_ready": selected_ready or not selected_model,
@@ -122,12 +146,182 @@ def doctor(settings: BridgeSettings | None = None, *, runner: Runner | None = No
             "env_fallback_models": os.environ.get("SECOPSAI_BRIDGE_FALLBACK_MODELS", ""),
             "cli_flag": "--model provider/model-name",
             "examples": [
-                "kimi/kimi-k2.7-code",
-                "xai/grok-4.5",
-                "google-antigravity/gemini-3.5-flash-low",
+                PRIMARY_MODEL,
+                *DEFAULT_FALLBACK_MODELS,
             ],
         },
     }
+
+
+def clear_provider_health_cache() -> None:
+    """Clear live provider probes, primarily for credential changes and tests."""
+    with _PROVIDER_HEALTH_LOCK:
+        _PROVIDER_HEALTH_CACHE.clear()
+
+
+def cached_provider_health(*, settings: BridgeSettings | None = None) -> dict[str, Any]:
+    """Return unexpired probe results without issuing a new provider request."""
+    resolved = settings or BridgeSettings.from_environment()
+    now = time.monotonic()
+    prefix = (resolved.codex_binary, resolved.opencodex_binary)
+    with _PROVIDER_HEALTH_LOCK:
+        result = {
+            model: dict(value)
+            for (model, _runner_id, codex_binary, opencodex_binary), value in _PROVIDER_HEALTH_CACHE.items()
+            if (codex_binary, opencodex_binary) == prefix
+            and now - float(value.get("checked_monotonic", 0)) <= PROVIDER_PROBE_TTL_SECONDS
+        }
+    return result
+
+
+def probe_provider_health(
+    settings: BridgeSettings,
+    model_chain: Sequence[str],
+    *,
+    runner: Runner,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Probe each configured model through the real Responses-backed runtime.
+
+    The local Codex/OpenCodex executable owns provider authentication. When a
+    direct OpenAI API key is present, the Luna probe uses the Responses HTTP
+    endpoint directly; otherwise the same executable path used for jobs is
+    probed with a one-token request. Results are cached for 60 seconds.
+    """
+    models = list(dict.fromkeys(str(item).strip() for item in model_chain if str(item).strip()))
+    if not models:
+        return {}
+    # Probe providers concurrently so a fleet-wide outage is bounded by one
+    # provider timeout instead of N sequential timeouts on the status endpoint.
+    results: dict[str, Any] = {}
+    with ThreadPoolExecutor(max_workers=min(4, len(models)), thread_name_prefix="secopsai-provider-probe") as executor:
+        futures = {
+            executor.submit(_probe_provider, model, settings, runner, force=force): model
+            for model in models
+        }
+        for future in as_completed(futures):
+            model = futures[future]
+            try:
+                results[model] = future.result()
+            except Exception as exc:
+                results[model] = {
+                    "model": model,
+                    "provider": model.split("/", 1)[0] if "/" in model else "openai",
+                    "status": "unavailable",
+                    "http_status": None,
+                    "probe_method": "codex_responses_runtime",
+                    "error": _safe_error_text(_safe_error(exc)),
+                }
+    return {model: results[model] for model in models}
+
+
+def _probe_provider(model: str, settings: BridgeSettings, runner: Runner, *, force: bool) -> dict[str, Any]:
+    key = (model, id(runner), settings.codex_binary, settings.opencodex_binary)
+    now = time.monotonic()
+    with _PROVIDER_HEALTH_LOCK:
+        cached = _PROVIDER_HEALTH_CACHE.get(key)
+        if cached and not force and now - float(cached.get("checked_monotonic", 0)) <= PROVIDER_PROBE_TTL_SECONDS:
+            return dict(cached)
+
+    started = time.monotonic()
+    result = _probe_openai_responses(model, settings)
+    if result is None:
+        result = _probe_codex_runtime(model, settings, runner)
+    result = {
+        "model": model,
+        "provider": model.split("/", 1)[0] if "/" in model else "openai",
+        "checked_at": soc_store.utc_now(),
+        "checked_monotonic": now,
+        "latency_ms": round((time.monotonic() - started) * 1000, 1),
+        **result,
+    }
+    with _PROVIDER_HEALTH_LOCK:
+        _PROVIDER_HEALTH_CACHE[key] = dict(result)
+    return result
+
+
+def _probe_openai_responses(model: str, settings: BridgeSettings) -> dict[str, Any] | None:
+    """Use an explicit OpenAI Responses request when an API key is configured."""
+    if "/" in model and not model.startswith("openai/"):
+        return None
+    api_key = os.environ.get("SECOPSAI_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    endpoint = (
+        os.environ.get("SECOPSAI_OPENAI_RESPONSES_URL")
+        or os.environ.get("OPENAI_RESPONSES_URL")
+        or "https://api.openai.com/v1/responses"
+    ).strip()
+    try:
+        response = requests.post(
+            endpoint,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": model.removeprefix("openai/"), "input": "Return OK.", "max_output_tokens": 1},
+            timeout=PROVIDER_PROBE_TIMEOUT_SECONDS,
+            allow_redirects=False,
+        )
+        if 200 <= response.status_code < 300:
+            return {"status": "ready", "http_status": response.status_code, "probe_method": "openai_responses"}
+        return {
+            "status": "unavailable",
+            "http_status": response.status_code,
+            "probe_method": "openai_responses",
+            "error": _safe_error_text(response.text),
+        }
+    except requests.RequestException as exc:
+        return {"status": "unavailable", "http_status": None, "probe_method": "openai_responses", "error": _safe_error(exc)}
+
+
+def _probe_codex_runtime(model: str, settings: BridgeSettings, runner: Runner) -> dict[str, Any]:
+    executable = shutil.which(settings.codex_binary) or settings.codex_binary
+    if not shutil.which(settings.codex_binary) and not Path(executable).exists():
+        return {"status": "unavailable", "http_status": None, "probe_method": "codex_responses_runtime", "error": "Codex executable is not available."}
+    with tempfile.TemporaryDirectory(prefix="secopsai-probe-") as temp_dir:
+        root = Path(temp_dir)
+        output_path = root / "probe.txt"
+        command = [
+            executable, "exec", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only",
+            "--color", "never", "--output-last-message", str(output_path), "-C", str(root),
+            "--model", model, "-",
+        ]
+        environment = _safe_environment()
+        environment["OCX_SHIM_BYPASS"] = "1"
+        try:
+            completed = runner(command, "Return only the word OK.", environment, PROVIDER_PROBE_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            return {"status": "unavailable", "http_status": None, "probe_method": "codex_responses_runtime", "error": "Provider probe timed out."}
+        combined = _provider_failure_message(completed)
+        status_code = _extract_http_status(combined)
+        if completed.returncode == 0 and (status_code is None or 200 <= status_code < 300):
+            return {"status": "ready", "http_status": status_code or 200, "probe_method": "codex_responses_runtime", "error": ""}
+        return {
+            "status": "unavailable",
+            "http_status": status_code,
+            "probe_method": "codex_responses_runtime",
+            "error": _safe_error_text(combined) or "Provider probe failed.",
+        }
+
+
+def _extract_http_status(message: str) -> int | None:
+    match = re.search(r"\bHTTP(?: error)?[: ]+(\d{3})\b|\bstatus[: =]+(\d{3})\b", message, re.IGNORECASE)
+    if not match:
+        return None
+    return int(next(value for value in match.groups() if value))
+
+
+def _safe_error_text(value: Any) -> str:
+    return re.sub(r"(?i)(api[_ -]?key|authorization|bearer|token)\s*[:=]\s*[^\s,;]+", r"\1=<redacted>", str(value or ""))[:1000]
+
+
+def _provider_health_message(providers: dict[str, Any], selected_model: str) -> str:
+    if not providers:
+        return "No provider health results are available."
+    parts = []
+    for model, item in providers.items():
+        status = str(item.get("status") or "unknown")
+        suffix = f": {item.get('error')}" if status != "ready" and item.get("error") else ""
+        parts.append(f"{model}={status}{suffix}")
+    return "Provider health: " + "; ".join(parts) + f". Selected: {selected_model or 'provider default'}."
 
 
 def list_models(settings: BridgeSettings | None = None, *, runner: Runner | None = None) -> dict[str, Any]:
@@ -181,7 +375,18 @@ def run_once(
     if require_subscription_login is not None:
         require_ready_provider = require_subscription_login
     health = doctor(resolved, runner=run)
-    if require_ready_provider and health["status"] != "ready":
+    if require_ready_provider and not health.get("live_ready"):
+        if health.get("configured_provider_count", 0):
+            try:
+                from secopsai.intelligence_jobs import mark_queued_jobs_awaiting_provider
+
+                mark_queued_jobs_awaiting_provider(
+                    reason=health.get("message") or "All configured providers failed their live health probe.",
+                    db_path=db_path,
+                )
+            except Exception:
+                pass
+            return {"status": "awaiting_provider", "bridge": health, "job": None}
         return {"status": "blocked", "bridge": health, "job": None}
 
     remote = bool(resolved.core_api_url and resolved.bridge_token)
@@ -191,6 +396,16 @@ def run_once(
         job = claimed.get("job")
         bridge_request = claimed.get("bridge_request")
     else:
+        try:
+            from secopsai.intelligence_jobs import release_waiting_provider_jobs
+
+            release_waiting_provider_jobs(
+                provider=health.get("provider") or PROVIDER_OPENCODEX,
+                actor=resolved.resolved_worker_id(),
+                db_path=db_path,
+            )
+        except Exception:
+            pass
         job = claim_next_job(
             provider=provider_label,
             worker_id=resolved.resolved_worker_id(),
@@ -283,6 +498,11 @@ def run_loop(
         result = run_once(db_path=db_path, settings=resolved, runner=runner, model=model)
         if result["status"] == "blocked":
             return {"status": "blocked", "processed": processed, "failures": failures, "bridge": result.get("bridge")}
+        if result["status"] == "awaiting_provider":
+            if max_iterations > 0 and iterations >= max_iterations:
+                return {"status": "awaiting_provider", "processed": processed, "failures": failures, "bridge": result.get("bridge")}
+            time.sleep(resolved.poll_interval_seconds)
+            continue
         if result["status"] == "succeeded":
             processed += 1
             continue

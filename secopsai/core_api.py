@@ -1018,12 +1018,15 @@ def _workspace_payload(db_path: str, limit: int) -> dict[str, Any]:
         ).fetchone()[0]
         total_findings = connection.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
         total_open_findings = connection.execute(
-            "SELECT COUNT(*) FROM findings WHERE status NOT IN ('closed', 'resolved')"
+            "SELECT COUNT(*) FROM findings WHERE status NOT IN ('closed', 'resolved', 'research_lead')"
+        ).fetchone()[0]
+        total_research_leads = connection.execute(
+            "SELECT COUNT(*) FROM findings WHERE status = 'research_lead'"
         ).fetchone()[0]
         total_priority_findings = connection.execute(
             """
             SELECT COUNT(*) FROM findings
-            WHERE status NOT IN ('closed', 'resolved')
+            WHERE status NOT IN ('closed', 'resolved', 'research_lead')
               AND lower(severity) IN ('critical', 'high')
             """
         ).fetchone()[0]
@@ -1083,6 +1086,7 @@ def _workspace_payload(db_path: str, limit: int) -> dict[str, Any]:
             "assets": int(total_assets),
             "findings": int(total_findings),
             "open_findings": int(total_open_findings),
+            "research_lead_findings": int(total_research_leads),
             "priority_findings": int(total_priority_findings),
             "sensors": graph_counts.get("sensor", 0),
             "sites": graph_counts.get("site", 0),

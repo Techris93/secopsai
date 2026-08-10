@@ -116,6 +116,7 @@ from secopsai.research_resolution import status as research_resolution_status
 from secopsai.research_resolution import update_settings as update_research_resolution_settings
 from secopsai.codex_bridge import doctor as codex_bridge_doctor
 from secopsai.codex_bridge import list_models as list_codex_bridge_models
+from secopsai.codex_bridge import PRIMARY_MODEL as codex_bridge_primary_model
 from secopsai.codex_bridge import run_loop as run_codex_bridge_loop
 from secopsai.codex_bridge import run_once as run_codex_bridge_once
 from secopsai.codex_bridge_service import install_service as install_codex_bridge_service
@@ -191,7 +192,12 @@ from secopsai.research_worker import (
     run_worker_cycle,
     run_worker_loop,
 )
-from secopsai.research_storage import maintain_research_storage, release_storage_reserve, storage_status
+from secopsai.research_storage import (
+    archive_and_prune_history,
+    maintain_research_storage,
+    release_storage_reserve,
+    storage_status,
+)
 from secopsai.research_analysis import compare_intakes, compare_packages, correlate_candidates, inspect_nuget_archive, list_campaigns
 from secopsai.research_artifacts import attach_to_case, get_artifact, import_artifact, list_artifacts, verify_artifact
 from secopsai.research_artifact_analysis import compare_artifacts, extract_ioc_candidates, inspect_artifact, review_ioc_candidate, queue_artifact_analysis, run_artifact_job, run_artifact_worker_once
@@ -1334,7 +1340,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     intelligence_bridge_run.add_argument("--max-iterations", type=int, default=0)
     intelligence_bridge_run.add_argument(
         "--model",
-        default="",
+        default=codex_bridge_primary_model,
         help="OpenCodex model id, e.g. kimi/kimi-k2.7-code or xai/grok-4.5",
     )
     intelligence_bridge_run.add_argument("--db-path", default=None)
@@ -1351,7 +1357,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     intelligence_bridge_service.add_argument(
         "--model",
-        default="",
+        default=codex_bridge_primary_model,
         help="Persist this OpenCodex provider/model for the background bridge",
     )
 
@@ -1504,6 +1510,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     storage_maintain.add_argument("--db-path", default=None)
     storage_release = research_storage_sub.add_parser("release-reserve", help="Release emergency disk reserve before manual recovery")
     storage_release.add_argument("--db-path", default=None)
+    storage_archive = research_storage_sub.add_parser(
+        "archive-history",
+        help="Archive old resolved findings and failed intelligence jobs before pruning them",
+    )
+    storage_archive.add_argument("--resolved-days", type=int, default=None)
+    storage_archive.add_argument("--failed-job-days", type=int, default=None)
+    storage_archive.add_argument("--archive-dir", default=None)
+    storage_archive.add_argument("--batch-size", type=int, default=100)
+    storage_archive.add_argument("--dry-run", action="store_true")
+    storage_archive.add_argument("--db-path", default=None)
 
     research_compare = research_sub.add_parser("compare", help="Compare two normalized, statically collected package intake JSON files")
     research_compare.add_argument("--left", required=True, help="Path to the first normalized intake JSON")
@@ -2661,6 +2677,15 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = storage_status(db_path=args.db_path)
             elif args.research_storage_cmd == "maintain":
                 payload = maintain_research_storage(db_path=args.db_path, aggressive=args.aggressive)
+            elif args.research_storage_cmd == "archive-history":
+                payload = archive_and_prune_history(
+                    db_path=args.db_path,
+                    archive_dir=args.archive_dir,
+                    resolved_days=args.resolved_days,
+                    failed_job_days=args.failed_job_days,
+                    batch_size=args.batch_size,
+                    dry_run=args.dry_run,
+                )
             else:
                 payload = {
                     "released_reserve_bytes": release_storage_reserve(db_path=args.db_path),

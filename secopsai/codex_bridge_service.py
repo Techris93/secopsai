@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 import soc_store
+from secopsai.codex_bridge import PRIMARY_MODEL
 from secopsai.intelligence_jobs import recover_running_jobs
 
 
@@ -28,7 +29,7 @@ def install_service(
     platform_name: str | None = None,
     runner: RunCommand | None = None,
     autonomy_mode: str = "supervised",
-    model: str = "",
+    model: str = PRIMARY_MODEL,
 ) -> dict[str, Any]:
     resolved_home = (home or Path.home()).expanduser().resolve()
     system = (platform_name or platform.system()).lower()
