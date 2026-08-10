@@ -16,6 +16,7 @@ from secopsai.codex_bridge import (
     clear_provider_health_cache,
     doctor,
     probe_provider_health,
+    run_loop,
     run_once,
 )
 from secopsai.codex_bridge_service import install_service
@@ -204,6 +205,23 @@ def test_bridge_probe_accepts_successful_http_fallback_diagnostic(monkeypatch):
     health = probe_provider_health(settings, [PRIMARY_MODEL], runner=runner, force=True)
     assert health[PRIMARY_MODEL]["status"] == "ready"
     assert health[PRIMARY_MODEL]["http_status"] == 426
+
+
+def test_bridge_drains_queued_work_before_autopilot_discovery(tmp_path: Path, monkeypatch):
+    db = str(tmp_path / "core.db")
+    enqueue_job(action="prioritize_findings", requested_by="tester", db_path=db)
+    monkeypatch.setattr(
+        "secopsai.codex_bridge.run_once",
+        lambda **kwargs: {"status": "succeeded", "job": {"job_id": "AIJ-QUEUED"}},
+    )
+    monkeypatch.setattr(
+        "secopsai.investigation_autopilot.run_due",
+        lambda **kwargs: pytest.fail("autopilot discovery must wait until the bridge queue is empty"),
+    )
+
+    result = run_loop(db_path=db, settings=BridgeSettings(worker_id="queue-first-test"), max_iterations=1)
+    assert result["status"] == "stopped"
+    assert result["processed"] == 1
 
 
 def test_bridge_uses_luna_first_when_live_probe_is_healthy(tmp_path: Path, monkeypatch):
