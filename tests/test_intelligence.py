@@ -186,6 +186,26 @@ def test_bridge_health_probe_reports_each_upstream_failure(monkeypatch):
     assert health["xai/grok-4.5"]["http_status"] == 403
 
 
+def test_bridge_probe_accepts_successful_http_fallback_diagnostic(monkeypatch):
+    monkeypatch.setattr("secopsai.codex_bridge.shutil.which", lambda value: f"/usr/local/bin/{value}")
+    clear_provider_health_cache()
+    settings = BridgeSettings(model=PRIMARY_MODEL, fallback_models=())
+
+    def runner(command, stdin, environment, timeout):
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text("OK", encoding="utf-8")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            "",
+            "ERROR: failed to connect to websocket: HTTP error: 426 Upgrade Required",
+        )
+
+    health = probe_provider_health(settings, [PRIMARY_MODEL], runner=runner, force=True)
+    assert health[PRIMARY_MODEL]["status"] == "ready"
+    assert health[PRIMARY_MODEL]["http_status"] == 426
+
+
 def test_bridge_uses_luna_first_when_live_probe_is_healthy(tmp_path: Path, monkeypatch):
     db = str(tmp_path / "core.db")
     job = enqueue_job(action="prioritize_findings", requested_by="tester", db_path=db)

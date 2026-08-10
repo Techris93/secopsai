@@ -32,7 +32,7 @@ DEFAULT_FALLBACK_MODELS = (
 )
 DEFAULT_TIMEOUT_SECONDS = 300
 PROVIDER_PROBE_TTL_SECONDS = 60
-PROVIDER_PROBE_TIMEOUT_SECONDS = 20
+DEFAULT_PROVIDER_PROBE_TIMEOUT_SECONDS = 45
 MAX_PROCESS_OUTPUT_BYTES = 256 * 1024
 Runner = Callable[[Sequence[str], str, dict[str, str], int], subprocess.CompletedProcess[str]]
 
@@ -253,11 +253,12 @@ def _probe_openai_responses(model: str, settings: BridgeSettings) -> dict[str, A
         or "https://api.openai.com/v1/responses"
     ).strip()
     try:
+        probe_timeout = _provider_probe_timeout_seconds()
         response = requests.post(
             endpoint,
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json={"model": model.removeprefix("openai/"), "input": "Return OK.", "max_output_tokens": 1},
-            timeout=PROVIDER_PROBE_TIMEOUT_SECONDS,
+            timeout=probe_timeout,
             allow_redirects=False,
         )
         if 200 <= response.status_code < 300:
@@ -286,13 +287,21 @@ def _probe_codex_runtime(model: str, settings: BridgeSettings, runner: Runner) -
         ]
         environment = _safe_environment()
         environment["OCX_SHIM_BYPASS"] = "1"
+        probe_timeout = _provider_probe_timeout_seconds()
         try:
-            completed = runner(command, "Return only the word OK.", environment, PROVIDER_PROBE_TIMEOUT_SECONDS)
+            completed = runner(command, "Return only the word OK.", environment, probe_timeout)
         except subprocess.TimeoutExpired:
             return {"status": "unavailable", "http_status": None, "probe_method": "codex_responses_runtime", "error": "Provider probe timed out."}
         combined = _provider_failure_message(completed)
         status_code = _extract_http_status(combined)
-        if completed.returncode == 0 and (status_code is None or 200 <= status_code < 300):
+        # Codex may report a failed WebSocket upgrade on stderr while falling
+        # back to its HTTP Responses transport and successfully writing the
+        # requested output. The process exit code and output file are the
+        # capability signal; a diagnostic from the abandoned transport is not.
+        if completed.returncode == 0 and (
+            (output_path.exists() and output_path.stat().st_size > 0)
+            or status_code is None
+        ):
             return {"status": "ready", "http_status": status_code or 200, "probe_method": "codex_responses_runtime", "error": ""}
         return {
             "status": "unavailable",
@@ -1286,6 +1295,16 @@ def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
     except ValueError:
         value = default
     return max(minimum, min(value, maximum))
+
+
+def _provider_probe_timeout_seconds() -> int:
+    """Return the bounded timeout for a real provider capability probe."""
+    return _bounded_int(
+        "SECOPSAI_PROVIDER_PROBE_TIMEOUT_SECONDS",
+        DEFAULT_PROVIDER_PROBE_TIMEOUT_SECONDS,
+        10,
+        120,
+    )
 
 
 # Compatibility export used by older imports/docs.
