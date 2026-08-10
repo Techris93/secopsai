@@ -4,6 +4,7 @@ import json
 import os
 import platform
 import re
+import signal
 import shutil
 import socket
 import subprocess
@@ -1197,15 +1198,31 @@ def _run(
     environment: dict[str, str],
     timeout: int,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    # The OpenCodex shim can spawn a vendor runtime. A normal subprocess
+    # timeout kills only the shim and leaves that child orphaned, which then
+    # accumulates across health probes. Put the entire invocation in its own
+    # process group and terminate the group on timeout.
+    process = subprocess.Popen(
         list(command),
-        input=stdin,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        capture_output=True,
         env=environment,
-        timeout=timeout,
-        check=False,
+        start_new_session=True,
     )
+    try:
+        stdout, stderr = process.communicate(input=stdin, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (PermissionError, ProcessLookupError):
+            process.kill()
+        stdout, stderr = process.communicate()
+        raise subprocess.TimeoutExpired(
+            list(command), timeout, output=stdout, stderr=stderr
+        ) from exc
+    return subprocess.CompletedProcess(list(command), process.returncode, stdout, stderr)
 
 
 def _safe_environment() -> dict[str, str]:

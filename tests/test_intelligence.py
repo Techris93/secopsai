@@ -18,6 +18,7 @@ from secopsai.codex_bridge import (
     probe_provider_health,
     run_loop,
     run_once,
+    _run,
 )
 from secopsai.codex_bridge_service import install_service
 from secopsai.intelligence import list_actions, minimize, prepare_bridge_request, run_read_action, validate_bridge_result
@@ -222,6 +223,37 @@ def test_bridge_drains_queued_work_before_autopilot_discovery(tmp_path: Path, mo
     result = run_loop(db_path=db, settings=BridgeSettings(worker_id="queue-first-test"), max_iterations=1)
     assert result["status"] == "stopped"
     assert result["processed"] == 1
+
+
+def test_bridge_runner_kills_the_process_group_on_timeout(monkeypatch):
+    captured = {}
+    killed = []
+
+    class FakeProcess:
+        pid = 4242
+        returncode = -9
+
+        def communicate(self, *, input=None, timeout=None):
+            if timeout is not None:
+                raise subprocess.TimeoutExpired(["codex"], timeout)
+            return "", ""
+
+        def kill(self):
+            captured["fallback_kill"] = True
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return FakeProcess()
+
+    monkeypatch.setattr("secopsai.codex_bridge.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("secopsai.codex_bridge.os.killpg", lambda pid, sig: killed.append((pid, sig)))
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        _run(["codex", "exec"], "Return OK.", {"PATH": "/usr/bin"}, 1)
+
+    assert captured["kwargs"]["start_new_session"] is True
+    assert killed and killed[0][0] == 4242
 
 
 def test_bridge_uses_luna_first_when_live_probe_is_healthy(tmp_path: Path, monkeypatch):
