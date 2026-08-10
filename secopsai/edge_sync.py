@@ -11,6 +11,7 @@ import requests
 
 import soc_store
 from secopsai.graph_store import SOURCE_EDGE, save_sync_state, upsert_graph
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 SCHEMA_VERSION = "secopsai.edge.bundle.v1"
@@ -126,6 +127,11 @@ def push_bundle(bundle: dict[str, Any], core_api_url: str, ingest_token: str) ->
 
 def import_bundle(bundle: dict[str, Any], *, db_path: str | None = None) -> dict[str, Any]:
     validate_bundle(bundle)
+    with sqlite_writer_lock(db_path):
+        return _import_bundle_unlocked(bundle, db_path=db_path)
+
+
+def _import_bundle_unlocked(bundle: dict[str, Any], *, db_path: str | None = None) -> dict[str, Any]:
     graph = bundle["graph"]
     graph_counts = upsert_graph(nodes=graph["nodes"], edges=graph["edges"], db_path=db_path)
     findings = [_normalize_finding(finding) for finding in bundle.get("findings", [])]

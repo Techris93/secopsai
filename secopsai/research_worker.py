@@ -35,6 +35,7 @@ from secopsai.research_surveillance import (
     run_registry_collector,
 )
 from secopsai.research_discovery import sync_actionable_alert_findings
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 DEFAULT_CYCLE_INTERVAL_SECONDS = 60
 MAX_PAGES_PER_CYCLE = 25
@@ -43,6 +44,12 @@ SCORE_BATCH_LIMIT = 500
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _writer_stage(db_path: Optional[str], operation: Callable[[], Any]) -> Any:
+    """Serialize one bounded Research Monitor persistence stage."""
+    with sqlite_writer_lock(db_path):
+        return operation()
 
 
 def _parse_started_at(value: str) -> Optional[datetime]:
@@ -236,7 +243,7 @@ def due_collectors(*, db_path: Optional[str] = None, now: Optional[datetime] = N
     return due
 
 
-def run_worker_cycle(
+def _run_worker_cycle_unlocked(
     *,
     db_path: Optional[str] = None,
     fetcher: Optional[SafeFetcher] = None,
@@ -249,29 +256,36 @@ def run_worker_cycle(
 ) -> Dict[str, Any]:
     """Run one worker cycle: due collectors, scoring, retries, recovery."""
     initialize_observability(service="secopsai-research-worker")
-    storage = maintain_research_storage(db_path=db_path)
+    storage = _writer_stage(db_path, lambda: maintain_research_storage(db_path=db_path))
     fetcher = fetcher or SafeFetcher()
     try:
         # External threat-intel is a separate signal from registry telemetry.
         # Refreshing it before scoring means a public campaign can become an
         # actionable, source-backed lead even when no local dependency exists.
-        external_intel = refresh_and_sync(db_path=db_path, fetcher=fetcher)
+        external_intel = _writer_stage(
+            db_path,
+            lambda: refresh_and_sync(db_path=db_path, fetcher=fetcher),
+        )
     except Exception as exc:  # advisory feeds must never stop registry collection
         capture_exception(exc, context={"component": "research_external_intel"})
         external_intel = {"status": "degraded", "error": str(exc)[:500]}
     selected = {item.lower() for item in ecosystems} if ecosystems else None
     results: List[Dict[str, Any]] = []
-    for item in due_collectors(db_path=db_path):
+    due = _writer_stage(db_path, lambda: due_collectors(db_path=db_path))
+    for item in due:
         if not item["due"]:
             continue
         if selected and item["ecosystem"] not in selected:
             continue
         try:
-            outcome = run_registry_collector(
-                ecosystem=item["ecosystem"],
-                max_pages=max_pages,
-                db_path=db_path,
-                fetcher=fetcher,
+            outcome = _writer_stage(
+                db_path,
+                lambda: run_registry_collector(
+                    ecosystem=item["ecosystem"],
+                    max_pages=max_pages,
+                    db_path=db_path,
+                    fetcher=fetcher,
+                ),
             )
             results.append(
                 {
@@ -302,13 +316,23 @@ def run_worker_cycle(
                 "collector_id": item["collector_id"],
             })
 
-    alert_ids = [alert_id for result in results if (alert_id := _record_collector_degraded_alert(result, db_path=db_path))]
+    alert_ids = _writer_stage(
+        db_path,
+        lambda: [
+            alert_id
+            for result in results
+            if (alert_id := _record_collector_degraded_alert(result, db_path=db_path))
+        ],
+    )
 
     try:
         # The npm changes feed identifies package documents, not versions.
         # Resolve exact releases and inspect explainable metadata signals before
         # the normal watchlist scorer and investigation autopilot run.
-        npm_enrichment = run_npm_enrichment_cycle(db_path=db_path, fetcher=fetcher)
+        npm_enrichment = _writer_stage(
+            db_path,
+            lambda: run_npm_enrichment_cycle(db_path=db_path, fetcher=fetcher),
+        )
     except Exception as exc:  # enrichment must not stop other registries
         capture_exception(exc, context={"component": "research_npm_enrichment"})
         npm_enrichment = {
@@ -320,20 +344,35 @@ def run_worker_cycle(
         }
 
     try:
-        npm_alert_id = _record_npm_enrichment_alert(npm_enrichment, db_path=db_path)
+        npm_alert_id = _writer_stage(
+            db_path,
+            lambda: _record_npm_enrichment_alert(npm_enrichment, db_path=db_path),
+        )
     except Exception as exc:  # an exhausted disk must not terminate other collectors
         capture_exception(exc, context={"component": "research_npm_enrichment_alert"})
         npm_alert_id = None
 
-    scoring = score_pending_events(limit=score_limit, db_path=db_path)
-    retries = retry_dead_letters(limit=50, db_path=db_path, fetcher=fetcher)
-    recovery = recover_interrupted_runs(db_path=db_path)
+    scoring = _writer_stage(
+        db_path,
+        lambda: score_pending_events(limit=score_limit, db_path=db_path),
+    )
+    retries = _writer_stage(
+        db_path,
+        lambda: retry_dead_letters(limit=50, db_path=db_path, fetcher=fetcher),
+    )
+    recovery = _writer_stage(
+        db_path,
+        lambda: recover_interrupted_runs(db_path=db_path),
+    )
     if include_investigations:
         try:
             # The research worker is the durable 24/7 control loop. Keep evidence
             # investigations on the same bounded cadence as registry collection so
             # queued supply-chain alerts do not depend on a dashboard click.
-            investigations = run_due_investigations(db_path=db_path)
+            investigations = _writer_stage(
+                db_path,
+                lambda: run_due_investigations(db_path=db_path),
+            )
         except Exception as exc:  # investigation work must not stop surveillance
             capture_exception(exc, context={"component": "research_investigation_autopilot"})
             investigations = {"status": "degraded", "processed": 0, "error": str(exc)[:500]}
@@ -341,7 +380,10 @@ def run_worker_cycle(
         investigations = {"status": "skipped", "reason": "coordinated_by_daily_automation"}
     if include_alert_delivery:
         try:
-            deliveries = deliver_pending_operational_alerts(db_path=db_path)
+            deliveries = _writer_stage(
+                db_path,
+                lambda: deliver_pending_operational_alerts(db_path=db_path),
+            )
         except Exception as exc:  # alerting must not stop registry surveillance
             capture_exception(exc, context={"component": "research_alert_delivery"})
             deliveries = {"enabled": True, "attempted": 0, "sent": 0, "failed": 1, "error": "operational alert delivery failed"}
@@ -351,7 +393,14 @@ def run_worker_cycle(
         try:
             from secopsai.daily_automation import run_due as run_due_daily_automation
 
-            daily_automation = run_due_daily_automation(db_path=db_path, trigger="research-worker", fetcher=fetcher)
+            daily_automation = _writer_stage(
+                db_path,
+                lambda: run_due_daily_automation(
+                    db_path=db_path,
+                    trigger="research-worker",
+                    fetcher=fetcher,
+                ),
+            )
         except Exception as exc:  # the coordinator must never stop surveillance
             capture_exception(exc, context={"component": "daily_automation"})
             daily_automation = {"status": "degraded", "error": str(exc)[:500]}
@@ -373,6 +422,30 @@ def run_worker_cycle(
         "storage": storage,
         "completed_at": _utcnow().isoformat().replace("+00:00", "Z"),
     }
+
+
+def run_worker_cycle(
+    *,
+    db_path: Optional[str] = None,
+    fetcher: Optional[SafeFetcher] = None,
+    ecosystems: Optional[List[str]] = None,
+    max_pages: int = MAX_PAGES_PER_CYCLE,
+    score_limit: int = SCORE_BATCH_LIMIT,
+    include_investigations: bool = True,
+    include_alert_delivery: bool = True,
+    include_automation: bool = True,
+) -> Dict[str, Any]:
+    """Run one cycle with the shared lock around each persisted stage."""
+    return _run_worker_cycle_unlocked(
+        db_path=db_path,
+        fetcher=fetcher,
+        ecosystems=ecosystems,
+        max_pages=max_pages,
+        score_limit=score_limit,
+        include_investigations=include_investigations,
+        include_alert_delivery=include_alert_delivery,
+        include_automation=include_automation,
+    )
 
 
 def run_worker_loop(

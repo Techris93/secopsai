@@ -43,7 +43,13 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
     connection = sqlite3.connect(resolved_path, timeout=30)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 30000")
+    connection.execute("PRAGMA busy_timeout = 5000")
+    # Keep rollback journaling explicit for the local writer pair. The
+    # dedicated flock remains the ordering mechanism; this is only a SQLite
+    # fallback for short-lived readers or unrelated local tools.
+    journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+    if journal_mode != "delete":
+        raise RuntimeError(f"unsupported SQLite journal mode for local Core DB: {journal_mode}")
     try:
         os.chmod(resolved_path, 0o600)  # nosec B103
     except OSError:
