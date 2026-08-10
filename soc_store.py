@@ -16,6 +16,8 @@ from contextlib import closing
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List
 
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
+
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -1351,8 +1353,6 @@ def init_db(db_path: str | None = None) -> None:
         _ensure_column(connection, "research_npm_package_snapshots", "known_versions_json", "TEXT NOT NULL DEFAULT '[]'")
         _ensure_column(connection, "research_npm_package_snapshots", "last_published_at", "TEXT")
         connection.commit()
-
-
 def _existing_state(connection: sqlite3.Connection, finding_id: str) -> Dict[str, str] | None:
     row = connection.execute(
         "SELECT status, disposition, created_at FROM findings WHERE finding_id = ?",
@@ -1434,22 +1434,23 @@ def upsert_finding(connection: sqlite3.Connection, finding: Dict[str, Any], sour
 
 def persist_findings(findings: Iterable[Dict[str, Any]], source: str, db_path: str | None = None) -> str:
     resolved_path = db_path or default_db_path()
-    init_db(resolved_path)
     findings = list(findings)
-    current_ids = {finding["finding_id"] for finding in findings}
-    with closing(connect(resolved_path)) as connection:
-        for finding in findings:
-            upsert_finding(connection, finding, source)
+    with sqlite_writer_lock(resolved_path):
+        init_db(resolved_path)
+        current_ids = {finding["finding_id"] for finding in findings}
+        with closing(connect(resolved_path)) as connection:
+            for finding in findings:
+                upsert_finding(connection, finding, source)
 
-        stale_rows = connection.execute(
-            "SELECT finding_id FROM findings WHERE source = ?",
-            (source,),
-        ).fetchall()
-        stale_ids = [str(row["finding_id"]) for row in stale_rows if str(row["finding_id"]) not in current_ids]
-        for finding_id in stale_ids:
-            connection.execute("DELETE FROM findings WHERE finding_id = ?", (finding_id,))
+            stale_rows = connection.execute(
+                "SELECT finding_id FROM findings WHERE source = ?",
+                (source,),
+            ).fetchall()
+            stale_ids = [str(row["finding_id"]) for row in stale_rows if str(row["finding_id"]) not in current_ids]
+            for finding_id in stale_ids:
+                connection.execute("DELETE FROM findings WHERE finding_id = ?", (finding_id,))
 
-        connection.commit()
+            connection.commit()
     return resolved_path
 
 

@@ -410,8 +410,10 @@ def _parse_platforms(platforms: Optional[str]) -> List[str]:
 
 def _run_adapter_refresh(platforms: Optional[str], **kwargs: Any) -> Dict[str, Any]:
     from soc_store import init_db, persist_findings
+    from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
-    init_db()
+    with sqlite_writer_lock():
+        init_db()
     selected = _parse_platforms(platforms)
     all_findings: List[Dict[str, Any]] = []
     platform_results: List[Dict[str, Any]] = []

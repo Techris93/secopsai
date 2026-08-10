@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import soc_store
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 try:
     from defusedxml.xmlrpc import monkey_patch as _defuse_xmlrpc
@@ -1271,22 +1272,23 @@ def _build_finding(result: ScanResult) -> Dict[str, Any]:
 
 def _upsert_findings(findings: Iterable[Dict[str, Any]]) -> str:
     resolved = soc_store.default_db_path()
-    soc_store.init_db(resolved)
-    with soc_store.closing(soc_store.connect(resolved)) as connection:
-        for finding in findings:
-            if finding.get("advisory_matches"):
-                connection.execute(
-                    """
-                    UPDATE findings
-                    SET status = 'open', disposition = 'unreviewed'
-                    WHERE finding_id = ?
-                      AND status = 'closed'
-                      AND disposition = 'expected_behavior'
-                    """,
-                    (finding["finding_id"],),
-                )
-            soc_store.upsert_finding(connection, finding, source="secopsai-supply-chain")
-        connection.commit()
+    with sqlite_writer_lock(resolved):
+        soc_store.init_db(resolved)
+        with soc_store.closing(soc_store.connect(resolved)) as connection:
+            for finding in findings:
+                if finding.get("advisory_matches"):
+                    connection.execute(
+                        """
+                        UPDATE findings
+                        SET status = 'open', disposition = 'unreviewed'
+                        WHERE finding_id = ?
+                          AND status = 'closed'
+                          AND disposition = 'expected_behavior'
+                        """,
+                        (finding["finding_id"],),
+                    )
+                soc_store.upsert_finding(connection, finding, source="secopsai-supply-chain")
+            connection.commit()
     return resolved
 
 

@@ -363,7 +363,17 @@ def _metrics(rows: list[Dict[str,Any]], weights: Dict[str,float]) -> Dict[str,An
     for r in rows:
         pred=_predict(weights,r["features"])>=.5; actual=r["label"]=="true_positive"
         tp+=int(pred and actual); fp+=int(pred and not actual); tn+=int(not pred and not actual); fn+=int(not pred and actual)
-    return {"tp":tp,"fp":fp,"tn":tn,"fn":fn,"precision":tp/max(1,tp+fp),"recall":tp/max(1,tp+fn),"false_positive_rate":fp/max(1,fp+tn),"false_negative_rate":fn/max(1,fn+tp),"count":len(rows)}
+    def ratio(numerator: int, denominator: int) -> Optional[float]:
+        # A zero denominator is undefined, not a measured zero-percent
+        # result. Keeping it explicit prevents an empty holdout from looking
+        # like a failed but evaluated detector.
+        return None if denominator == 0 else numerator / denominator
+    return {
+        "tp":tp,"fp":fp,"tn":tn,"fn":fn,
+        "precision":ratio(tp,tp+fp),"recall":ratio(tp,tp+fn),
+        "false_positive_rate":ratio(fp,fp+tn),"false_negative_rate":ratio(fn,fn+tp),
+        "count":len(rows),
+    }
 
 
 def train(*, db_path: Optional[str]=None) -> Dict[str,Any]:
@@ -377,11 +387,11 @@ def train(*, db_path: Optional[str]=None) -> Dict[str,Any]:
                 for k in FEATURES: grad[k]+=err*float(r["features"].get(k,0))
             for k in weights: weights[k]-=.15*grad[k]/max(1,len(train_rows))
         status="evaluated"
-    metrics={split:_metrics([r for r in rows if r["split"]==split],weights) for split in ("train","validation","holdout")}; hold=metrics["holdout"]; gates={"enough_examples":len(rows)>=int(s["minimum_examples"]),"both_labels":{r["label"] for r in rows}==LABELS,"precision_pass":hold["precision"]>=float(s["minimum_precision"]),"false_negative_regression_pass":hold["fn"]<=int(s["maximum_false_negative_regression"])}; passed=all(gates.values()); eid=_id("DLX"); pid=_id("DLP"); now=soc_store.utc_now()
+    metrics={split:_metrics([r for r in rows if r["split"]==split],weights) for split in ("train","validation","holdout")}; hold=metrics["holdout"]; holdout_evaluable=hold["precision"] is not None and hold["recall"] is not None; training_ready=len(rows)>=int(s["minimum_examples"]) and {r["label"] for r in rows}==LABELS; evaluation_status="evaluated" if training_ready and holdout_evaluable else "insufficient_data"; metrics["evaluation_status"]=evaluation_status; gates={"enough_examples":len(rows)>=int(s["minimum_examples"]),"both_labels":{r["label"] for r in rows}==LABELS,"holdout_evaluable":holdout_evaluable,"precision_pass":bool(holdout_evaluable and hold["precision"]>=float(s["minimum_precision"])),"false_negative_regression_pass":bool(holdout_evaluable and hold["fn"]<=int(s["maximum_false_negative_regression"]))}; passed=all(gates.values()); eid=_id("DLX"); pid=_id("DLP"); now=soc_store.utc_now()
     with closing(soc_store.connect(db_path)) as c:
-        c.execute("INSERT INTO detection_learning_experiments VALUES (?,?,?,?,?,?,?,?,?)",(eid,ds["dataset_id"],"interpretable_logistic_ranker_v1","passed" if passed else status,_json({"weights":weights,"threshold":.5,"feature_version":FEATURE_VERSION}),_json(metrics),_json(gates),now,now))
-        c.execute("INSERT INTO detection_learning_proposals VALUES (?,?,?,?,?,?,?,?,?,?,?)",(pid,eid,"risk_ranker","global","shadow_ready" if passed else "blocked",_json({"weights":weights,"threshold":.5}),_json(metrics),_json({"previous_proposal_id":None}),now,now,None)); c.commit()
-    return {"experiment_id":eid,"proposal_id":pid,"status":"shadow_ready" if passed else "blocked","metrics":metrics,"guardrails":gates,"dataset":ds}
+        c.execute("INSERT INTO detection_learning_experiments VALUES (?,?,?,?,?,?,?,?,?)",(eid,ds["dataset_id"],"interpretable_logistic_ranker_v1","passed" if passed else evaluation_status,_json({"weights":weights,"threshold":.5,"feature_version":FEATURE_VERSION,"evaluation_status":evaluation_status}),_json(metrics),_json(gates),now,now))
+        c.execute("INSERT INTO detection_learning_proposals VALUES (?,?,?,?,?,?,?,?,?,?,?)",(pid,eid,"risk_ranker","global","shadow_ready" if passed else "blocked",_json({"weights":weights,"threshold":.5,"evaluation_status":evaluation_status}),_json(metrics),_json({"previous_proposal_id":None}),now,now,None)); c.commit()
+    return {"experiment_id":eid,"proposal_id":pid,"status":"shadow_ready" if passed else evaluation_status,"metrics":metrics,"guardrails":gates,"dataset":ds}
 
 
 def deploy(proposal_id: str, *, stage: str, db_path: Optional[str]=None) -> Dict[str,Any]:
@@ -390,7 +400,7 @@ def deploy(proposal_id: str, *, stage: str, db_path: Optional[str]=None) -> Dict
     with closing(soc_store.connect(db_path)) as c:
         p=c.execute("SELECT * FROM detection_learning_proposals WHERE proposal_id=?",(_clean(proposal_id,40).upper(),)).fetchone()
         if not p: raise ValueError("learning proposal not found")
-        metrics=_decode(p["replay_metrics_json"],{}); hold=metrics.get("holdout") or {}; allowed=bool(hold.get("precision",0)>=float(s["minimum_precision"]) and int(hold.get("fn",999))<=int(s["maximum_false_negative_regression"]))
+        metrics=_decode(p["replay_metrics_json"],{}); hold=metrics.get("holdout") or {}; precision=hold.get("precision"); allowed=bool(precision is not None and precision>=float(s["minimum_precision"]) and int(hold.get("fn",999))<=int(s["maximum_false_negative_regression"]))
         expected={"shadow":"shadow_ready","canary":"shadow","active":"canary"}[stage]
         if stage == "active":
             prior = c.execute("SELECT observations_json FROM detection_learning_deployments WHERE proposal_id=? AND stage='canary' AND status='running' ORDER BY updated_at DESC LIMIT 1", (p["proposal_id"],)).fetchone()

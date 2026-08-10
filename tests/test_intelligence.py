@@ -18,6 +18,7 @@ from secopsai.codex_bridge import (
     probe_provider_health,
     run_loop,
     run_once,
+    _model_chain,
     _run,
 )
 from secopsai.codex_bridge_service import install_service
@@ -188,6 +189,27 @@ def test_bridge_health_probe_reports_each_upstream_failure(monkeypatch):
     assert health["xai/grok-4.5"]["http_status"] == 403
 
 
+def test_bridge_health_probes_selected_model_before_fallbacks(monkeypatch):
+    calls = []
+
+    def probe(model, settings, runner, *, force):
+        calls.append(model)
+        return {"model": model, "status": "ready", "http_status": 200, "probe_method": "test", "error": ""}
+
+    monkeypatch.setattr("secopsai.codex_bridge._probe_provider", probe)
+    settings = BridgeSettings(model=PRIMARY_MODEL, fallback_models=DEFAULT_FALLBACK_MODELS)
+    health = probe_provider_health(settings, [PRIMARY_MODEL, *DEFAULT_FALLBACK_MODELS], runner=lambda *args: None, force=True)
+    assert health[PRIMARY_MODEL]["status"] == "ready"
+    assert calls[0] == PRIMARY_MODEL
+    assert set(calls) == {PRIMARY_MODEL, *DEFAULT_FALLBACK_MODELS}
+
+
+def test_model_chain_keeps_configured_fallbacks_when_catalog_is_stale():
+    settings = BridgeSettings(model=PRIMARY_MODEL, fallback_models=DEFAULT_FALLBACK_MODELS)
+    chain = _model_chain(settings, model=PRIMARY_MODEL, available={"models": [{"id": PRIMARY_MODEL}]})
+    assert chain == [PRIMARY_MODEL, *DEFAULT_FALLBACK_MODELS]
+
+
 def test_bridge_probe_accepts_successful_http_fallback_diagnostic(monkeypatch):
     monkeypatch.setattr("secopsai.codex_bridge.shutil.which", lambda value: f"/usr/local/bin/{value}")
     clear_provider_health_cache()
@@ -205,7 +227,9 @@ def test_bridge_probe_accepts_successful_http_fallback_diagnostic(monkeypatch):
 
     health = probe_provider_health(settings, [PRIMARY_MODEL], runner=runner, force=True)
     assert health[PRIMARY_MODEL]["status"] == "ready"
-    assert health[PRIMARY_MODEL]["http_status"] == 426
+    assert health[PRIMARY_MODEL]["http_status"] == 200
+    assert health[PRIMARY_MODEL]["transport_diagnostic_status"] == 426
+    assert "fallback transport" in health[PRIMARY_MODEL]["transport_diagnostic"]
 
 
 def test_bridge_drains_queued_work_before_autopilot_discovery(tmp_path: Path, monkeypatch):

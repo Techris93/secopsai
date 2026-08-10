@@ -20,7 +20,16 @@ import requests
 import soc_store
 
 from secopsai.intelligence import bridge_output_schema, prepare_bridge_request, validate_bridge_result
-from secopsai.intelligence_jobs import claim_next_job, complete_job, fail_job, job_counts, requeue_job
+from secopsai.intelligence_jobs import (
+    claim_next_job,
+    complete_job,
+    fail_job,
+    job_counts,
+    mark_queued_jobs_awaiting_provider,
+    release_waiting_provider_jobs,
+    requeue_job,
+)
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 PROVIDER_OPENCODEX = "opencodex_proxy"
@@ -128,6 +137,7 @@ def doctor(settings: BridgeSettings | None = None, *, runner: Runner | None = No
         "selected_model": selected_model,
         "selected_model_ready": selected_ready or not selected_model,
         "fallback_models": list(resolved.fallback_models),
+        "effective_model_chain": list(model_chain),
         "models": models,
         "codex": codex,
         "opencodex": opencodex,
@@ -192,27 +202,33 @@ def probe_provider_health(
     models = list(dict.fromkeys(str(item).strip() for item in model_chain if str(item).strip()))
     if not models:
         return {}
-    # Probe providers concurrently so a fleet-wide outage is bounded by one
-    # provider timeout instead of N sequential timeouts on the status endpoint.
+    # Probe the selected provider first. The local OpenCodex proxy can serialize
+    # upstream sessions; probing every fallback at once can make a healthy
+    # selected provider appear timed out. Once the primary capability is known,
+    # the independent fallbacks can be checked concurrently.
     results: dict[str, Any] = {}
-    with ThreadPoolExecutor(max_workers=min(4, len(models)), thread_name_prefix="secopsai-provider-probe") as executor:
-        futures = {
-            executor.submit(_probe_provider, model, settings, runner, force=force): model
-            for model in models
-        }
-        for future in as_completed(futures):
-            model = futures[future]
-            try:
-                results[model] = future.result()
-            except Exception as exc:
-                results[model] = {
-                    "model": model,
-                    "provider": model.split("/", 1)[0] if "/" in model else "openai",
-                    "status": "unavailable",
-                    "http_status": None,
-                    "probe_method": "codex_responses_runtime",
-                    "error": _safe_error_text(_safe_error(exc)),
-                }
+    def probe_one(model: str) -> dict[str, Any]:
+        try:
+            return _probe_provider(model, settings, runner, force=force)
+        except Exception as exc:
+            return {
+                "model": model,
+                "provider": model.split("/", 1)[0] if "/" in model else "openai",
+                "status": "unavailable",
+                "http_status": None,
+                "probe_method": "codex_responses_runtime",
+                "error": _safe_error_text(_safe_error(exc)),
+            }
+
+    results[models[0]] = probe_one(models[0])
+    if len(models) > 1:
+        with ThreadPoolExecutor(max_workers=min(4, len(models) - 1), thread_name_prefix="secopsai-provider-probe") as executor:
+            futures = {
+                executor.submit(probe_one, model): model
+                for model in models[1:]
+            }
+            for future in as_completed(futures):
+                results[futures[future]] = future.result()
     return {model: results[model] for model in models}
 
 
@@ -303,7 +319,23 @@ def _probe_codex_runtime(model: str, settings: BridgeSettings, runner: Runner) -
             (output_path.exists() and output_path.stat().st_size > 0)
             or status_code is None
         ):
-            return {"status": "ready", "http_status": status_code or 200, "probe_method": "codex_responses_runtime", "error": ""}
+            result = {
+                "status": "ready",
+                # A successful Codex request is the capability signal. The
+                # initial WebSocket upgrade may report 426 before the runtime
+                # falls back to HTTP; that diagnostic is not the provider's
+                # final response status.
+                "http_status": 200,
+                "probe_method": "codex_responses_runtime",
+                "error": "",
+            }
+            if status_code is not None:
+                result["transport_diagnostic_status"] = status_code
+                result["transport_diagnostic"] = (
+                    f"Codex runtime reported HTTP {status_code} during an initial transport attempt; "
+                    "the request completed successfully via the fallback transport."
+                )
+            return result
         return {
             "status": "unavailable",
             "http_status": status_code,
@@ -388,12 +420,11 @@ def run_once(
     if require_ready_provider and not health.get("live_ready"):
         if health.get("configured_provider_count", 0):
             try:
-                from secopsai.intelligence_jobs import mark_queued_jobs_awaiting_provider
-
-                mark_queued_jobs_awaiting_provider(
-                    reason=health.get("message") or "All configured providers failed their live health probe.",
-                    db_path=db_path,
-                )
+                with sqlite_writer_lock(db_path):
+                    mark_queued_jobs_awaiting_provider(
+                        reason=health.get("message") or "All configured providers failed their live health probe.",
+                        db_path=db_path,
+                    )
             except Exception:
                 pass
             return {"status": "awaiting_provider", "bridge": health, "job": None}
@@ -407,20 +438,24 @@ def run_once(
         bridge_request = claimed.get("bridge_request")
     else:
         try:
-            from secopsai.intelligence_jobs import release_waiting_provider_jobs
-
-            release_waiting_provider_jobs(
-                provider=health.get("provider") or PROVIDER_OPENCODEX,
-                actor=resolved.resolved_worker_id(),
-                db_path=db_path,
-            )
-        except Exception:
-            pass
-        job = claim_next_job(
-            provider=provider_label,
-            worker_id=resolved.resolved_worker_id(),
-            db_path=db_path,
-        )
+            with sqlite_writer_lock(db_path):
+                release_waiting_provider_jobs(
+                    provider=health.get("provider") or PROVIDER_OPENCODEX,
+                    actor=resolved.resolved_worker_id(),
+                    db_path=db_path,
+                )
+                job = claim_next_job(
+                    provider=provider_label,
+                    worker_id=resolved.resolved_worker_id(),
+                    db_path=db_path,
+                )
+        except TimeoutError as exc:
+            return {
+                "status": "writer_busy",
+                "job": None,
+                "bridge": health,
+                "error": _safe_error(exc),
+            }
         bridge_request = None
     if job is None:
         return {"status": "idle", "job": None}
@@ -448,13 +483,14 @@ def run_once(
                 {"result": raw, "provider": used_provider, "model": used_model},
             )["job"]
         else:
-            completed = complete_job(
-                job["job_id"],
-                result=result,
-                actor=resolved.resolved_worker_id(),
-                provider=used_provider,
-                db_path=db_path,
-            )
+            with sqlite_writer_lock(db_path):
+                completed = complete_job(
+                    job["job_id"],
+                    result=result,
+                    actor=resolved.resolved_worker_id(),
+                    provider=used_provider,
+                    db_path=db_path,
+                )
         return {"status": "succeeded", "provider": used_provider, "model": used_model, "job": completed}
     except subprocess.TimeoutExpired:
         failed = _fail_current_job(
@@ -503,10 +539,12 @@ def run_loop(
                     from secopsai.agent_triage import enqueue_due_findings
                     from secopsai.investigation_autopilot import run_due as run_due_investigations
 
-                    run_due_investigations(db_path=db_path, limit=1)
+                    with sqlite_writer_lock(db_path):
+                        run_due_investigations(db_path=db_path, limit=1)
                     counts = job_counts(db_path=db_path)
                     if not counts.get("queued") and not counts.get("running"):
-                        enqueue_due_findings(db_path=db_path, limit_override=1)
+                        with sqlite_writer_lock(db_path):
+                            enqueue_due_findings(db_path=db_path, limit=1)
             except Exception:
                 # The bridge must continue processing already-durable jobs when
                 # automatic triage discovery is temporarily degraded.
@@ -517,6 +555,11 @@ def run_loop(
         if result["status"] == "awaiting_provider":
             if max_iterations > 0 and iterations >= max_iterations:
                 return {"status": "awaiting_provider", "processed": processed, "failures": failures, "bridge": result.get("bridge")}
+            time.sleep(resolved.poll_interval_seconds)
+            continue
+        if result["status"] == "writer_busy":
+            if max_iterations > 0 and iterations >= max_iterations:
+                return {"status": "writer_busy", "processed": processed, "failures": failures, "bridge": result.get("bridge"), "error": result.get("error")}
             time.sleep(resolved.poll_interval_seconds)
             continue
         if result["status"] == "succeeded":
@@ -780,22 +823,17 @@ def _model_chain(
     available: dict[str, Any],
 ) -> list[str]:
     selected = (model or settings.model or str(available.get("default_model") or "")).strip()
-    available_ids = [str(item.get("id")) for item in available.get("models", []) if item.get("id")]
     chain: list[str] = []
     if selected:
         chain.append(selected)
     for item in settings.fallback_models:
         if item not in chain:
             chain.append(item)
-    # Keep only known models when catalog is present; otherwise preserve operator choice.
-    if available_ids:
-        known = [item for item in chain if item in available_ids]
-        if selected and selected not in known:
-            # Allow explicit operator override even if catalog is stale.
-            known = [selected] + known
-        if known:
-            chain = known
+    # Keep the configured chain even when catalog discovery is stale. A model
+    # missing from a transient catalog must be reported/probed as unavailable,
+    # not silently removed from failover.
     if not chain:
+        available_ids = [str(item.get("id")) for item in available.get("models", []) if item.get("id")]
         chain = available_ids[:3] or [""]
     # de-dupe
     out: list[str] = []
@@ -1183,13 +1221,14 @@ def _fail_current_job(
                 "error_code": error_code,
                 "error_message": error_message,
             }
-    return fail_job(
-        job_id,
-        error_code=error_code,
-        error_message=error_message,
-        actor=settings.resolved_worker_id(),
-        db_path=db_path,
-    )
+    with sqlite_writer_lock(db_path):
+        return fail_job(
+            job_id,
+            error_code=error_code,
+            error_message=error_message,
+            actor=settings.resolved_worker_id(),
+            db_path=db_path,
+        )
 
 
 def _run(

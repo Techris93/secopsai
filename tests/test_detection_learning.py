@@ -84,3 +84,14 @@ def test_bandit_requires_approval_for_sandbox_and_records_bounded_rewards(tmp_pa
     recommendation=detection_learning.recommend_action({"reference_available":True,"static_limitations":False},db_path=db)
     assert recommendation["action"]=="request_sandbox_approval" and recommendation["approval_required"] is True
     with pytest.raises(ValueError): detection_learning.record_action_reward("publish",1,db_path=db)
+
+
+def test_empty_holdout_is_reported_as_insufficient_data_not_zero_percent(tmp_path):
+    db=str(tmp_path/"soc.db")
+    soc_store.init_db(db)
+    result=detection_learning.train(db_path=db)
+    assert result["status"] == "insufficient_data"
+    assert result["metrics"]["evaluation_status"] == "insufficient_data"
+    assert result["metrics"]["holdout"]["precision"] is None
+    assert result["metrics"]["holdout"]["recall"] is None
+    assert result["guardrails"]["holdout_evaluable"] is False
