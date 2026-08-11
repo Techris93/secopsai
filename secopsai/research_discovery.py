@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import soc_store
 from secopsai.research_intake import ADAPTERS, RegistryMetadata, SafeFetcher
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 SCHEMA_VERSION = "secopsai.research.discovery.v1"
@@ -175,19 +176,20 @@ def capability_registry() -> Dict[str, Any]:
 def seed_registry_sources(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
     soc_store.init_db(db_path)
     now = _now()
-    with closing(soc_store.connect(db_path)) as connection:
-        for ecosystem, item in CAPABILITIES.items():
-            source_id = f"REG-{ecosystem.upper().replace('-', '_')}"
-            connection.execute(
-                """INSERT INTO research_registry_sources
-                (source_id, ecosystem, name, base_url, capabilities_json, coverage_mode, terms_url, enabled, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-                ON CONFLICT(ecosystem, name) DO UPDATE SET capabilities_json=excluded.capabilities_json,
-                coverage_mode=excluded.coverage_mode, terms_url=excluded.terms_url, updated_at=excluded.updated_at""",
-                (source_id, ecosystem, item["display_name"], item["terms_url"], _json(item), item["monitoring_mode"], item["terms_url"], now, now),
-            )
-        connection.commit()
-        rows = connection.execute("SELECT * FROM research_registry_sources ORDER BY ecosystem").fetchall()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            for ecosystem, item in CAPABILITIES.items():
+                source_id = f"REG-{ecosystem.upper().replace('-', '_')}"
+                connection.execute(
+                    """INSERT INTO research_registry_sources
+                    (source_id, ecosystem, name, base_url, capabilities_json, coverage_mode, terms_url, enabled, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                    ON CONFLICT(ecosystem, name) DO UPDATE SET capabilities_json=excluded.capabilities_json,
+                    coverage_mode=excluded.coverage_mode, terms_url=excluded.terms_url, updated_at=excluded.updated_at""",
+                    (source_id, ecosystem, item["display_name"], item["terms_url"], _json(item), item["monitoring_mode"], item["terms_url"], now, now),
+                )
+            connection.commit()
+            rows = connection.execute("SELECT * FROM research_registry_sources ORDER BY ecosystem").fetchall()
     return [dict(row) | {"capabilities": _decode(row["capabilities_json"], {})} for row in rows]
 
 
@@ -207,18 +209,19 @@ def create_watchlist(*, ecosystem: str, watch_type: str, identifier: str, brand:
         raise ValueError("threshold must be between 0 and 100")
     now = _now()
     watchlist_id = _id("WL")
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """INSERT INTO research_watchlists
-            (watchlist_id, ecosystem, watch_type, identifier, normalized_identifier, brand,
-             known_publishers_json, known_repositories_json, known_namespaces_json, threshold,
-             exclusions_json, priority, owner, expires_at, reason, source_evidence_json, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
-            (watchlist_id, ecosystem, watch_type, identifier, normalize_identifier(ecosystem, identifier), brand[:240],
-             _json(list(known_publishers)), _json(list(known_repositories)), _json(list(known_namespaces)), float(threshold),
-             _json(list(exclusions)), priority, owner[:160], expires_at, reason[:2000], _json(list(source_evidence)), now, now),
-        )
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                """INSERT INTO research_watchlists
+                (watchlist_id, ecosystem, watch_type, identifier, normalized_identifier, brand,
+                 known_publishers_json, known_repositories_json, known_namespaces_json, threshold,
+                 exclusions_json, priority, owner, expires_at, reason, source_evidence_json, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
+                (watchlist_id, ecosystem, watch_type, identifier, normalize_identifier(ecosystem, identifier), brand[:240],
+                 _json(list(known_publishers)), _json(list(known_repositories)), _json(list(known_namespaces)), float(threshold),
+                 _json(list(exclusions)), priority, owner[:160], expires_at, reason[:2000], _json(list(source_evidence)), now, now),
+            )
+            connection.commit()
     return get_watchlist(watchlist_id, db_path=db_path)
 
 
@@ -301,21 +304,22 @@ def _record_registry_event(*, metadata: RegistryMetadata, source_id: str, covera
     now = _now()
     event_key = hashlib.sha256(f"{source_id}|{metadata.ecosystem}|{metadata.package}|{metadata.version}|{metadata.artifact_url}".encode()).hexdigest()
     event_id = _id("REV")
-    with closing(soc_store.connect(db_path)) as connection:
-        prior = connection.execute(
-            "SELECT event_id, version, observed_at FROM research_registry_events WHERE source_id = ? AND ecosystem = ? AND package = ? ORDER BY observed_at DESC LIMIT 1",
-            (source_id, metadata.ecosystem, metadata.package),
-        ).fetchone()
-        cursor = connection.execute(
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            prior = connection.execute(
+                "SELECT event_id, version, observed_at FROM research_registry_events WHERE source_id = ? AND ecosystem = ? AND package = ? ORDER BY observed_at DESC LIMIT 1",
+                (source_id, metadata.ecosystem, metadata.package),
+            ).fetchone()
+            cursor = connection.execute(
             """INSERT INTO research_registry_events
             (event_id, source_id, ecosystem, package, version, publisher, source_url, artifact_url, artifact_sha256, observed_at, provenance_json, idempotency_key)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)
             ON CONFLICT(idempotency_key) DO NOTHING""",
             (event_id, source_id, metadata.ecosystem, metadata.package, metadata.version, metadata.publisher[:240], metadata.metadata_url, metadata.artifact_url, now, _json({"schema_version": "secopsai.research.registry-event.v1", "source": source_id, "coverage_mode": coverage_mode}), event_key),
-        )
-        created = cursor.rowcount == 1
-        row = connection.execute("SELECT event_id, observed_at FROM research_registry_events WHERE idempotency_key = ?", (event_key,)).fetchone()
-        connection.commit()
+            )
+            created = cursor.rowcount == 1
+            row = connection.execute("SELECT event_id, observed_at FROM research_registry_events WHERE idempotency_key = ?", (event_key,)).fetchone()
+            connection.commit()
     return {
         "event_id": row["event_id"],
         "observed_at": row["observed_at"],
@@ -333,16 +337,17 @@ def _record_watchlist_observation(*, monitor: Dict[str, Any], watchlist: Dict[st
         now = _now()
         alert_id = _id("RAL")
         dedupe_key = f"watched-version:{monitor['monitor_id']}:{metadata.package}:{metadata.version}"
-        with closing(soc_store.connect(db_path)) as connection:
-            connection.execute(
+        with sqlite_writer_lock(db_path):
+            with closing(soc_store.connect(db_path)) as connection:
+                connection.execute(
                 """INSERT INTO research_alerts
                 (alert_id, alert_type, severity, candidate_id, campaign_id, case_id, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at)
                 VALUES (?, 'watched_package_version', 'info', NULL, NULL, NULL, ?, ?, ?, 'open', ?, ?, ?)
                 ON CONFLICT(dedupe_key) DO NOTHING""",
                 (alert_id, dedupe_key, f"Watched package {metadata.package} changed from {event['previous_version']} to {metadata.version}", _json({"event_id": event["event_id"], "ecosystem": metadata.ecosystem, "package": metadata.package, "previous_version": event["previous_version"], "version": metadata.version, "watchlist_id": watchlist["watchlist_id"]}), watchlist.get("owner", ""), now, now),
-            )
-            stored = connection.execute("SELECT alert_id FROM research_alerts WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
-            connection.commit()
+                )
+                stored = connection.execute("SELECT alert_id FROM research_alerts WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
+                connection.commit()
         alert_id = stored["alert_id"] if stored else None
     return {
         "schema_version": "secopsai.research.registry-event.v1",
@@ -398,21 +403,22 @@ def _record_candidate(*, monitor: Dict[str, Any], watchlist: Dict[str, Any], met
     # impersonation signal in its own right; the name-similarity gate
     # must not suppress it when brand observation dilutes the score.
     exact_name_publisher_mismatch = normalized_package == normalized_reference and publisher_mismatch
-    with closing(soc_store.connect(db_path)) as connection:
-        if score["score"] >= threshold or exact_name_publisher_mismatch:
-            reason = _candidate_reason(score)
-            if exact_name_publisher_mismatch and score["score"] < threshold:
-                reason = "exact package name observed with an unexpected publisher; verify ownership before trusting this release"
-            connection.execute(
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            if score["score"] >= threshold or exact_name_publisher_mismatch:
+                reason = _candidate_reason(score)
+                if exact_name_publisher_mismatch and score["score"] < threshold:
+                    reason = "exact package name observed with an unexpected publisher; verify ownership before trusting this release"
+                connection.execute(
                 """INSERT INTO research_candidates
                 (candidate_id, event_id, watchlist_id, ecosystem, package, version, reference_identifier, score, score_components_json, reason, status, case_id, evidence_json, first_seen, last_seen, algorithm_version)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', NULL, ?, ?, ?, ?)
                 ON CONFLICT(ecosystem, package, version, reference_identifier) DO UPDATE SET score=excluded.score,
                 score_components_json=excluded.score_components_json, reason=excluded.reason, last_seen=excluded.last_seen""",
                 (candidate_id, event_id, watchlist["watchlist_id"], metadata.ecosystem, metadata.package, metadata.version, watchlist["identifier"], score["score"], _json(score["components"]), reason, _json({"metadata_url": metadata.metadata_url, "artifact_url": metadata.artifact_url, "publisher": metadata.publisher, "observed_value": observed_value, "watch_type": watchlist.get("watch_type")}), now, now, score["algorithm_version"]),
-            )
-        connection.commit()
-        row = connection.execute("SELECT * FROM research_candidates WHERE ecosystem = ? AND package = ? AND version = ? AND reference_identifier = ?", (metadata.ecosystem, metadata.package, metadata.version, watchlist["identifier"])).fetchone()
+                )
+            connection.commit()
+            row = connection.execute("SELECT * FROM research_candidates WHERE ecosystem = ? AND package = ? AND version = ? AND reference_identifier = ?", (metadata.ecosystem, metadata.package, metadata.version, watchlist["identifier"])).fetchone()
     if row is None:
         return {"matched": False, "score": score, "event_id": event_id}
     item = dict(row)
@@ -423,7 +429,7 @@ def _record_candidate(*, monitor: Dict[str, Any], watchlist: Dict[str, Any], met
     return {"matched": True, "candidate": item}
 
 
-def ingest_registry_metadata(*, metadata: RegistryMetadata, source_id: str, db_path: Optional[str] = None, monitor: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def ingest_registry_metadata(*, metadata: RegistryMetadata, source_id: str, db_path: Optional[str] = None, monitor: Optional[Dict[str, Any]] = None, seed_source: bool = True) -> Dict[str, Any]:
     """Score one observed registry package against every active watchlist.
 
     Registry-specific event/search adapters call this function.  Keeping the
@@ -431,7 +437,8 @@ def ingest_registry_metadata(*, metadata: RegistryMetadata, source_id: str, db_p
     from inventing different candidate semantics.
     """
     soc_store.init_db(db_path)
-    seed_registry_sources(db_path=db_path)
+    if seed_source:
+        seed_registry_sources(db_path=db_path)
     with closing(soc_store.connect(db_path)) as connection:
         rows = connection.execute("SELECT watchlist_id FROM research_watchlists WHERE ecosystem = ? AND status = 'active'", (metadata.ecosystem,)).fetchall()
     monitor_info = monitor or {"coverage_mode": "event_or_search", "interval_seconds": 0}
@@ -678,23 +685,25 @@ def create_candidate_alert(
         stable_dedupe_key = dedupe_key or f"candidate:{candidate.get('candidate_id')}:{candidate.get('last_seen')}"
     alert_id = _id("RAL")
     now = _now()
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """INSERT INTO research_alerts
-                (alert_id, alert_type, severity, candidate_id, campaign_id, case_id, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 'open', '', ?, ?)
-            ON CONFLICT(dedupe_key) DO UPDATE SET severity=excluded.severity,
-                alert_type=excluded.alert_type, reason=excluded.reason,
-                evidence_json=excluded.evidence_json, updated_at=excluded.updated_at,
-                status='open'""",
-            (alert_id, alert_type, severity, candidate.get("candidate_id"), candidate.get("campaign_id"), stable_dedupe_key,
-             str(reason_override or candidate.get("reason") or "Candidate requires analyst review")[:2000],
-             _json(candidate.get("evidence") or {}), now, now),
-        )
-        row = connection.execute("SELECT * FROM research_alerts WHERE dedupe_key = ?", (stable_dedupe_key,)).fetchone()
-        if row:
-            finding_id = _upsert_research_alert_finding(connection, dict(row), candidate=candidate)
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                """INSERT INTO research_alerts
+                    (alert_id, alert_type, severity, candidate_id, campaign_id, case_id, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 'open', '', ?, ?)
+                ON CONFLICT(dedupe_key) DO UPDATE SET severity=excluded.severity,
+                    alert_type=excluded.alert_type, reason=excluded.reason,
+                    evidence_json=excluded.evidence_json, updated_at=excluded.updated_at,
+                    status='open'""",
+                (alert_id, alert_type, severity, candidate.get("candidate_id"), candidate.get("campaign_id"), stable_dedupe_key,
+                 str(reason_override or candidate.get("reason") or "Candidate requires analyst review")[:2000],
+                 _json(candidate.get("evidence") or {}), now, now),
+            )
+            row = connection.execute("SELECT * FROM research_alerts WHERE dedupe_key = ?", (stable_dedupe_key,)).fetchone()
+            finding_id = None
+            if row:
+                finding_id = _upsert_research_alert_finding(connection, dict(row), candidate=candidate)
+            connection.commit()
     result = dict(row) if row else {"alert_id": alert_id, "dedupe_key": stable_dedupe_key}
     if row:
         result["finding_id"] = finding_id
@@ -776,41 +785,46 @@ def sync_actionable_alert_findings(*, db_path: Optional[str] = None) -> Dict[str
     """Idempotently normalize current and historical research alerts for agent triage."""
     soc_store.init_db(db_path)
     synced: list[str] = []
-    with closing(soc_store.connect(db_path)) as connection:
-        rows = connection.execute(
-            """SELECT a.*, c.ecosystem, c.package, c.version, c.score,
-                      c.first_seen AS candidate_first_seen, c.last_seen AS candidate_last_seen,
-                      c.evidence_json AS candidate_evidence_json
-               FROM research_alerts a
-               LEFT JOIN research_candidates c ON c.candidate_id = a.candidate_id
-               WHERE a.status IN ('open', 'in_review')
-               ORDER BY a.created_at ASC"""
-        ).fetchall()
-        for row in rows:
-            alert = dict(row)
-            if str(alert.get("alert_type") or "") in OPERATIONAL_ALERT_TYPES:
-                continue
-            candidate = {
-                "candidate_id": alert.get("candidate_id"),
-                "ecosystem": alert.get("ecosystem"),
-                "package": alert.get("package"),
-                "version": alert.get("version"),
-                "score": alert.get("score"),
-                "first_seen": alert.get("candidate_first_seen"),
-                "last_seen": alert.get("candidate_last_seen"),
-                "evidence": _decode(alert.get("candidate_evidence_json"), {}),
-            }
-            if str(alert.get("alert_type") or "") == "external_advisory_match" and not _has_artifact_evidence(candidate["evidence"]):
-                score = float(candidate.get("score") or 0)
-                normalized_severity = _external_lead_severity(score)
-                if str(alert.get("severity") or "").lower() != normalized_severity:
-                    connection.execute(
-                        "UPDATE research_alerts SET severity=?, updated_at=? WHERE alert_id=?",
-                        (normalized_severity, _now(), alert["alert_id"]),
-                    )
-                    alert["severity"] = normalized_severity
-            synced.append(_upsert_research_alert_finding(connection, alert, candidate=candidate))
-        connection.commit()
+    # This path is called by the Research Monitor after degraded-alert writes
+    # and can also be called by the triage helper. Keep its read/normalize/write
+    # batch in the same cross-process critical section as every other Core
+    # writer so Edge sync cannot interleave with finding upserts.
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            rows = connection.execute(
+                """SELECT a.*, c.ecosystem, c.package, c.version, c.score,
+                          c.first_seen AS candidate_first_seen, c.last_seen AS candidate_last_seen,
+                          c.evidence_json AS candidate_evidence_json
+                   FROM research_alerts a
+                   LEFT JOIN research_candidates c ON c.candidate_id = a.candidate_id
+                   WHERE a.status IN ('open', 'in_review')
+                   ORDER BY a.created_at ASC"""
+            ).fetchall()
+            for row in rows:
+                alert = dict(row)
+                if str(alert.get("alert_type") or "") in OPERATIONAL_ALERT_TYPES:
+                    continue
+                candidate = {
+                    "candidate_id": alert.get("candidate_id"),
+                    "ecosystem": alert.get("ecosystem"),
+                    "package": alert.get("package"),
+                    "version": alert.get("version"),
+                    "score": alert.get("score"),
+                    "first_seen": alert.get("candidate_first_seen"),
+                    "last_seen": alert.get("candidate_last_seen"),
+                    "evidence": _decode(alert.get("candidate_evidence_json"), {}),
+                }
+                if str(alert.get("alert_type") or "") == "external_advisory_match" and not _has_artifact_evidence(candidate["evidence"]):
+                    score = float(candidate.get("score") or 0)
+                    normalized_severity = _external_lead_severity(score)
+                    if str(alert.get("severity") or "").lower() != normalized_severity:
+                        connection.execute(
+                            "UPDATE research_alerts SET severity=?, updated_at=? WHERE alert_id=?",
+                            (normalized_severity, _now(), alert["alert_id"]),
+                        )
+                        alert["severity"] = normalized_severity
+                synced.append(_upsert_research_alert_finding(connection, alert, candidate=candidate))
+            connection.commit()
     return {
         "schema_version": "secopsai.research.alert-sync.v1",
         "synced": len(synced),

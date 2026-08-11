@@ -12,12 +12,14 @@ artifact-backed signals arrive later through the bounded intake path.
 from __future__ import annotations
 
 from contextlib import closing
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
 import soc_store
-from secopsai.research_discovery import ingest_registry_metadata
+from secopsai.research_discovery import ingest_registry_metadata, seed_registry_sources
 from secopsai.research_intake import RegistryMetadata
 from secopsai.research_surveillance import ensure_collectors
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 # Event types that describe something newly present in the ecosystem.
 # Removals (deleted, yanked, project_removed, extension_removed) stay
@@ -25,6 +27,13 @@ from secopsai.research_surveillance import ensure_collectors
 SCORABLE_EVENT_TYPES = {"published", "project_added", "extension_added", "version_updated", "version_observed"}
 
 _ARTIFACT_SUFFIXES = (".gem", ".nupkg", ".tgz", ".whl", ".tar.gz", ".zip", ".vsix")
+
+
+@contextmanager
+def _write_transaction(connection, db_path: Optional[str]):
+    with sqlite_writer_lock(db_path):
+        with connection:
+            yield connection
 
 
 def _event_to_metadata(event: Dict[str, Any]) -> RegistryMetadata:
@@ -65,6 +74,10 @@ def score_pending_events(
     crashed batch can simply be rerun.
     """
     ensure_collectors(db_path=db_path)
+    # Source metadata is stable for the whole batch. Seeding all eight rows for
+    # every event turned a bounded score pass into thousands of write
+    # transactions on the production ledger.
+    seed_registry_sources(db_path=db_path)
     limit = max(1, min(int(limit), 2000))
     clauses = ["processing_state = 'pending'"]
     params: List[Any] = []
@@ -90,7 +103,7 @@ def score_pending_events(
         else:
             source_id = f"REG-{event['ecosystem'].upper().replace('-', '_')}"
             result = ingest_registry_metadata(
-                metadata=_event_to_metadata(event), source_id=source_id, db_path=db_path
+                metadata=_event_to_metadata(event), source_id=source_id, db_path=db_path, seed_source=False
             )
             if int(result.get("matched_watchlists") or 0) > 0:
                 new_state = "candidate"
@@ -101,7 +114,7 @@ def score_pending_events(
                 new_state = "scored"
                 counts["scored"] += 1
         with closing(soc_store.connect(db_path)) as connection:
-            with connection:
+            with _write_transaction(connection, db_path):
                 connection.execute(
                     "UPDATE registry_feed_events SET processing_state = ? WHERE feed_event_id = ?",
                     (new_state, event["feed_event_id"]),

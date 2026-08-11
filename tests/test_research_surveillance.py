@@ -1,5 +1,7 @@
 import json
 import re
+import sqlite3
+import threading
 import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
@@ -264,6 +266,40 @@ def test_fetch_leaves_enriches_metadata_and_dead_letters_leaf_failure(tmp_path):
     fixed = {event["leaf_url"]: event for event in list_feed_events(db_path=db_path)}[failing_leaf]
     assert fixed["leaf_fetched"] == 1
     assert fixed["metadata"]["authors"] == "Contoso"
+
+
+def test_slow_leaf_fetch_does_not_hold_sqlite_write_lock(tmp_path):
+    db_path = _db(tmp_path)
+    target = next(iter(LEAF_URLS))
+    base = _fetcher()
+    started = threading.Event()
+    release = threading.Event()
+
+    def fetch(url, max_bytes):
+        if url == target:
+            started.set()
+            assert release.wait(5), "test leaf fetch did not release"
+        return base._injected(url, max_bytes)
+
+    worker = threading.Thread(
+        target=run_registry_collector,
+        kwargs={
+            "ecosystem": "nuget",
+            "since": SINCE_ALL,
+            "fetch_leaves": True,
+            "db_path": db_path,
+            "fetcher": SafeFetcher(fetch=fetch),
+        },
+    )
+    worker.start()
+    assert started.wait(5), "collector did not reach the delayed leaf"
+    with sqlite3.connect(db_path, timeout=1) as connection:
+        # The collector has not opened its write transaction while the remote
+        # leaf is delayed, so a concurrent read remains immediately available.
+        assert connection.execute("SELECT COUNT(*) FROM registry_feed_events").fetchone()[0] == 0
+    release.set()
+    worker.join(timeout=10)
+    assert not worker.is_alive()
 
 
 def test_collector_status_reports_lag_gaps_and_counts(tmp_path):

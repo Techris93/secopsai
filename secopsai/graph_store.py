@@ -4,6 +4,7 @@ import json
 from typing import Any, Iterable
 
 import soc_store
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 SOURCE_EDGE = "secopsai_edge"
@@ -20,12 +21,13 @@ def upsert_graph(
     now = soc_store.utc_now()
     node_count = 0
     edge_count = 0
-    with soc_store.connect(db_path) as connection:
-        for node in nodes:
-            node_count += 1
-            properties = dict(node.get("properties") or {})
-            timestamp = str(properties.get("last_seen_at") or properties.get("completed_at") or now)
-            connection.execute(
+    with sqlite_writer_lock(db_path):
+        with soc_store.connect(db_path) as connection:
+            for node in nodes:
+                node_count += 1
+                properties = dict(node.get("properties") or {})
+                timestamp = str(properties.get("last_seen_at") or properties.get("completed_at") or now)
+                connection.execute(
                 """
                 INSERT INTO asset_graph_nodes (
                     node_id, node_type, label, source, source_id, properties_json,
@@ -51,13 +53,13 @@ def upsert_graph(
                     timestamp,
                     now,
                 ),
-            )
+                )
 
-        for edge in edges:
-            edge_count += 1
-            properties = dict(edge.get("properties") or {})
-            timestamp = str(properties.get("observed_at") or now)
-            connection.execute(
+            for edge in edges:
+                edge_count += 1
+                properties = dict(edge.get("properties") or {})
+                timestamp = str(properties.get("observed_at") or now)
+                connection.execute(
                 """
                 INSERT INTO asset_graph_edges (
                     edge_id, edge_type, from_node_id, to_node_id, source,
@@ -83,8 +85,8 @@ def upsert_graph(
                     timestamp,
                     now,
                 ),
-            )
-        connection.commit()
+                )
+            connection.commit()
     return {"nodes": node_count, "edges": edge_count}
 
 
@@ -161,8 +163,9 @@ def save_sync_state(
     db_path: str | None = None,
 ) -> None:
     soc_store.init_db(db_path)
-    with soc_store.connect(db_path) as connection:
-        connection.execute(
+    with sqlite_writer_lock(db_path):
+        with soc_store.connect(db_path) as connection:
+            connection.execute(
             """
             INSERT INTO edge_sync_state (
                 source_instance, schema_version, cursor_json, bundle_exported_at, last_synced_at
@@ -180,8 +183,8 @@ def save_sync_state(
                 bundle_exported_at,
                 soc_store.utc_now(),
             ),
-        )
-        connection.commit()
+            )
+            connection.commit()
 
 
 def list_sync_state(*, db_path: str | None = None, limit: int = 20) -> list[dict[str, Any]]:

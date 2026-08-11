@@ -18,7 +18,7 @@ import json
 import os
 import re
 import secrets
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote
@@ -26,6 +26,7 @@ from urllib.parse import quote
 import soc_store
 from secopsai.research_discovery import create_candidate_alert
 from secopsai.research_intake import IntakeError, SafeFetcher, collect_package_intake
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 SCHEMA_VERSION = "secopsai.research.npm-enrichment.v1"
@@ -95,6 +96,14 @@ def _bounded_limit(value: Any, default: int, maximum: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return max(1, min(parsed, maximum))
+
+
+@contextmanager
+def _write_transaction(connection: Any, db_path: Optional[str]):
+    """Serialize short NPM-enrichment writes with every other Core writer."""
+    with sqlite_writer_lock(db_path):
+        with connection:
+            yield connection
 
 
 def _valid_package(value: Any) -> Optional[str]:
@@ -461,8 +470,9 @@ def _store_analysis(
     status = "completed" if intake else "failed"
     now = _now()
     with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """INSERT INTO research_npm_release_analyses
+        with _write_transaction(connection, db_path):
+            connection.execute(
+                """INSERT INTO research_npm_release_analyses
                (analysis_id, source_event_id, package, version, artifact_sha256,
                 status, score, indicators_json, intake_json, error_message, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -484,25 +494,24 @@ def _store_analysis(
                 now,
                 now,
             ),
-        )
-        event_metadata = _event_metadata(event)
-        static_attempts = int(event_metadata.get("npm_static_attempts") or 0) + 1
-        event_metadata.update({
-            "npm_static_analysis": evidence,
-            "npm_signals": signals,
-            "npm_analysis_status": status,
-            "npm_static_attempts": static_attempts,
-            "npm_static_last_attempt": now,
-            "npm_static_error": str(error)[:1000],
-        })
-        processing_state = "candidate" if score >= 40 else "analyzed"
-        if not intake:
-            processing_state = "analysis_failed"
-        connection.execute(
-            "UPDATE registry_feed_events SET processing_state = ?, metadata_json = ? WHERE feed_event_id = ?",
-            (processing_state, _json(event_metadata), event.get("feed_event_id")),
-        )
-        connection.commit()
+            )
+            event_metadata = _event_metadata(event)
+            static_attempts = int(event_metadata.get("npm_static_attempts") or 0) + 1
+            event_metadata.update({
+                "npm_static_analysis": evidence,
+                "npm_signals": signals,
+                "npm_analysis_status": status,
+                "npm_static_attempts": static_attempts,
+                "npm_static_last_attempt": now,
+                "npm_static_error": str(error)[:1000],
+            })
+            processing_state = "candidate" if score >= 40 else "analyzed"
+            if not intake:
+                processing_state = "analysis_failed"
+            connection.execute(
+                "UPDATE registry_feed_events SET processing_state = ?, metadata_json = ? WHERE feed_event_id = ?",
+                (processing_state, _json(event_metadata), event.get("feed_event_id")),
+            )
     return {"status": status, "score": score, "signals": signals, "evidence": evidence, "error": error}
 
 
@@ -536,8 +545,9 @@ def _promote_static_candidate(*, db_path: Optional[str], event: Dict[str, Any], 
     )
     score = max(40, min(99, int(result.get("score") or 0) + (25 if result.get("status") == "completed" else 0)))
     with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """INSERT INTO research_candidates
+        with _write_transaction(connection, db_path):
+            connection.execute(
+                """INSERT INTO research_candidates
                (candidate_id, event_id, watchlist_id, ecosystem, package, version,
                 reference_identifier, score, score_components_json, reason, status,
                 case_id, evidence_json, first_seen, last_seen, algorithm_version)
@@ -557,12 +567,11 @@ def _promote_static_candidate(*, db_path: Optional[str], event: Dict[str, Any], 
                 _now(),
                 "npm-proactive-static.v1",
             ),
-        )
-        candidate = connection.execute(
-            "SELECT * FROM research_candidates WHERE ecosystem='npm' AND package=? AND version=? AND reference_identifier='npm-proactive-static.v1'",
-            (event.get("package"), event.get("version")),
-        ).fetchone()
-        connection.commit()
+            )
+            candidate = connection.execute(
+                "SELECT * FROM research_candidates WHERE ecosystem='npm' AND package=? AND version=? AND reference_identifier='npm-proactive-static.v1'",
+                (event.get("package"), event.get("version")),
+            ).fetchone()
     if not candidate:
         return None
     payload = dict(candidate)
@@ -594,72 +603,72 @@ def _enrich_package(
     if not current_versions:
         raise IntakeError("npm packument contained no versions")
     with closing(soc_store.connect(db_path)) as connection:
-        prior_row = connection.execute(
-            "SELECT * FROM research_npm_package_snapshots WHERE package=?", (package,)
-        ).fetchone()
-        prior = dict(prior_row) if prior_row else None
-        previous_versions = _decode((prior or {}).get("versions_json"), {})
-        if not isinstance(previous_versions, dict):
-            previous_versions = {}
-        new_versions = _new_versions(current_versions, prior=prior, prior_versions=previous_versions, latest=latest)
-        baseline_only = not prior
-        previous_version = str((prior or {}).get("latest_version") or "")
-        for row in rows:
-            metadata = _event_metadata(row)
-            metadata.update({
-                "npm_enrichment_status": "completed",
-                "npm_enrichment_last_attempt": now,
-                "npm_enrichment_attempts": int(metadata.get("npm_enrichment_attempts") or 0) + 1,
-                "npm_exact_versions": new_versions[:100],
-                "npm_packument_sha256": source_hash,
-                "npm_metadata_url": final_url,
-            })
+        with _write_transaction(connection, db_path):
+            prior_row = connection.execute(
+                "SELECT * FROM research_npm_package_snapshots WHERE package=?", (package,)
+            ).fetchone()
+            prior = dict(prior_row) if prior_row else None
+            previous_versions = _decode((prior or {}).get("versions_json"), {})
+            if not isinstance(previous_versions, dict):
+                previous_versions = {}
+            new_versions = _new_versions(current_versions, prior=prior, prior_versions=previous_versions, latest=latest)
+            baseline_only = not prior
+            previous_version = str((prior or {}).get("latest_version") or "")
+            for row in rows:
+                metadata = _event_metadata(row)
+                metadata.update({
+                    "npm_enrichment_status": "completed",
+                    "npm_enrichment_last_attempt": now,
+                    "npm_enrichment_attempts": int(metadata.get("npm_enrichment_attempts") or 0) + 1,
+                    "npm_exact_versions": new_versions[:100],
+                    "npm_packument_sha256": source_hash,
+                    "npm_metadata_url": final_url,
+                })
+                connection.execute(
+                    "UPDATE registry_feed_events SET processing_state='enriched', metadata_json=? WHERE feed_event_id=?",
+                    (_json(metadata), row["feed_event_id"]),
+                )
+            compact_versions = _compact_snapshot_versions(current_versions)
+            published_times = [_summary_time(summary) for summary in current_versions.values()]
+            published_times = [item for item in published_times if item is not None]
+            last_published_at = max(published_times).isoformat().replace("+00:00", "Z") if published_times else ""
             connection.execute(
-                "UPDATE registry_feed_events SET processing_state='enriched', metadata_json=? WHERE feed_event_id=?",
-                (_json(metadata), row["feed_event_id"]),
+                """INSERT INTO research_npm_package_snapshots
+                   (package, source_url, metadata_sha256, versions_json, known_versions_json,
+                    latest_version, last_published_at, last_event_seq, status, last_error, first_seen, last_seen, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'baseline', NULL, ?, ?, ?)
+                   ON CONFLICT(package) DO UPDATE SET source_url=excluded.source_url,
+                    metadata_sha256=excluded.metadata_sha256, versions_json=excluded.versions_json,
+                    known_versions_json=excluded.known_versions_json, latest_version=excluded.latest_version,
+                    last_published_at=excluded.last_published_at, last_event_seq=excluded.last_event_seq,
+                    status='baseline', last_error=NULL, last_seen=excluded.last_seen, updated_at=excluded.updated_at""",
+                (
+                    package,
+                    final_url,
+                    source_hash,
+                    _json(compact_versions),
+                    _json(_known_version_names(current_versions)),
+                    latest,
+                    last_published_at,
+                    str((_event_metadata(rows[-1]).get("seq") or "")),
+                    now,
+                    now,
+                    now,
+                ),
             )
-        compact_versions = _compact_snapshot_versions(current_versions)
-        published_times = [_summary_time(summary) for summary in current_versions.values()]
-        published_times = [item for item in published_times if item is not None]
-        last_published_at = max(published_times).isoformat().replace("+00:00", "Z") if published_times else ""
-        connection.execute(
-            """INSERT INTO research_npm_package_snapshots
-               (package, source_url, metadata_sha256, versions_json, known_versions_json,
-                latest_version, last_published_at, last_event_seq, status, last_error, first_seen, last_seen, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'baseline', NULL, ?, ?, ?)
-               ON CONFLICT(package) DO UPDATE SET source_url=excluded.source_url,
-                metadata_sha256=excluded.metadata_sha256, versions_json=excluded.versions_json,
-                known_versions_json=excluded.known_versions_json, latest_version=excluded.latest_version,
-                last_published_at=excluded.last_published_at, last_event_seq=excluded.last_event_seq,
-                status='baseline', last_error=NULL, last_seen=excluded.last_seen, updated_at=excluded.updated_at""",
-            (
-                package,
-                final_url,
-                source_hash,
-                _json(compact_versions),
-                _json(_known_version_names(current_versions)),
-                latest,
-                last_published_at,
-                str((_event_metadata(rows[-1]).get("seq") or "")),
-                now,
-                now,
-                now,
-            ),
-        )
-        created = 0
-        for version in new_versions[:MAX_PACKUMENT_VERSIONS]:
-            summary = current_versions[version]
-            created += int(_insert_exact_event(
-                connection,
-                parent=rows[-1],
-                package=package,
-                version=version,
-                summary=summary,
-                metadata_url=final_url,
-                previous_version=previous_version,
-                baseline_only=baseline_only,
-            ))
-        connection.commit()
+            created = 0
+            for version in new_versions[:MAX_PACKUMENT_VERSIONS]:
+                summary = current_versions[version]
+                created += int(_insert_exact_event(
+                    connection,
+                    parent=rows[-1],
+                    package=package,
+                    version=version,
+                    summary=summary,
+                    metadata_url=final_url,
+                    previous_version=previous_version,
+                    baseline_only=baseline_only,
+                ))
     return {"package": package, "versions_created": created, "versions": new_versions, "baseline_only": baseline_only}
 
 
@@ -753,10 +762,11 @@ def run_npm_enrichment_cycle(
     run_id = _id("NEN")
     started = _now()
     with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            "INSERT INTO research_npm_enrichment_runs (run_id, status, started_at) VALUES (?, 'running', ?)",
-            (run_id, started),
-        )
+        with _write_transaction(connection, db_path):
+            connection.execute(
+                "INSERT INTO research_npm_enrichment_runs (run_id, status, started_at) VALUES (?, 'running', ?)",
+                (run_id, started),
+            )
         rows = connection.execute(
             """SELECT * FROM registry_feed_events
                WHERE ecosystem='npm' AND processing_state IN ('pending', 'enrichment_failed')
@@ -773,8 +783,8 @@ def run_npm_enrichment_cycle(
         if str(row.get("event_type") or "") == "deleted":
             metadata.update({"npm_enrichment_status": "not_applicable", "npm_enrichment_reason": "registry_deleted_event"})
             with closing(soc_store.connect(db_path)) as connection:
-                connection.execute("UPDATE registry_feed_events SET processing_state='enriched', metadata_json=? WHERE feed_event_id=?", (_json(metadata), row["feed_event_id"]))
-                connection.commit()
+                with _write_transaction(connection, db_path):
+                    connection.execute("UPDATE registry_feed_events SET processing_state='enriched', metadata_json=? WHERE feed_event_id=?", (_json(metadata), row["feed_event_id"]))
             continue
         if not _retry_allowed(metadata):
             skipped += 1
@@ -794,27 +804,28 @@ def run_npm_enrichment_cycle(
             failures += 1
             now = _now()
             with closing(soc_store.connect(db_path)) as connection:
-                for row in package_rows:
-                    metadata = _event_metadata(row)
-                    attempts = int(metadata.get("npm_enrichment_attempts") or 0) + 1
-                    metadata.update({
-                        "npm_enrichment_status": "failed",
-                        "npm_enrichment_last_attempt": now,
-                        "npm_enrichment_attempts": attempts,
-                        "npm_enrichment_error": str(exc)[:1000],
-                    })
-                    connection.execute(
-                        "UPDATE registry_feed_events SET processing_state='enrichment_failed', metadata_json=? WHERE feed_event_id=?",
-                        (_json(metadata), row["feed_event_id"]),
-                    )
-                connection.commit()
+                with _write_transaction(connection, db_path):
+                    for row in package_rows:
+                        metadata = _event_metadata(row)
+                        attempts = int(metadata.get("npm_enrichment_attempts") or 0) + 1
+                        metadata.update({
+                            "npm_enrichment_status": "failed",
+                            "npm_enrichment_last_attempt": now,
+                            "npm_enrichment_attempts": attempts,
+                            "npm_enrichment_error": str(exc)[:1000],
+                        })
+                        connection.execute(
+                            "UPDATE registry_feed_events SET processing_state='enrichment_failed', metadata_json=? WHERE feed_event_id=?",
+                            (_json(metadata), row["feed_event_id"]),
+                        )
     static_result = _run_static_triage(db_path=db_path, fetcher=fetcher, limit=static_limit)
     completed = _now()
     total_failures = failures + int(static_result.get("failures", 0))
     status = "degraded" if total_failures else "completed"
     with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """UPDATE research_npm_enrichment_runs
+        with _write_transaction(connection, db_path):
+            connection.execute(
+                """UPDATE research_npm_enrichment_runs
                SET status=?, events_seen=?, packages_fetched=?, versions_created=?,
                    analyses_started=?, candidates_created=?, failures=?, completed_at=?
                WHERE run_id=?""",
@@ -829,8 +840,7 @@ def run_npm_enrichment_cycle(
                 completed,
                 run_id,
             ),
-        )
-        connection.commit()
+            )
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,

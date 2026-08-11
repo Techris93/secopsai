@@ -270,6 +270,7 @@ def list_jobs(
     *,
     status: str = "",
     limit: int = 100,
+    include_result: bool = True,
     db_path: str | None = None,
 ) -> list[dict[str, Any]]:
     soc_store.init_db(db_path)
@@ -286,7 +287,7 @@ def list_jobs(
             f"SELECT * FROM intelligence_jobs{where} ORDER BY updated_at DESC, job_id DESC LIMIT ?",
             tuple(params),
         ).fetchall()
-    return [_row(row) for row in rows]
+    return [_row(row, include_result=include_result) for row in rows]
 
 
 def job_counts(*, db_path: str | None = None) -> dict[str, int]:
@@ -490,11 +491,34 @@ def _event(
     )
 
 
-def _row(row: sqlite3.Row) -> dict[str, Any]:
+def _row(row: sqlite3.Row, *, include_result: bool = True) -> dict[str, Any]:
     result = dict(row)
     result["schema_version"] = SCHEMA_VERSION
-    result["input"] = _decode(str(result.pop("input_json", "{}")))
-    result["result"] = _decode(str(result.pop("result_json", "{}")))
+    raw_input = str(result.pop("input_json", "{}"))
+    decoded_input = _decode(raw_input)
+    if include_result:
+        result["input"] = decoded_input
+    else:
+        # Status polling only needs the routing identity. Evidence, prompts,
+        # and deterministic assessments stay behind the explicit job-show
+        # endpoint just like the model result does.
+        result["input"] = {
+            key: decoded_input.get(key)
+            for key in ("target_id", "selected_model", "pipeline_id", "agent_triage_run_id")
+            if isinstance(decoded_input, dict) and decoded_input.get(key) is not None
+        }
+        result["input_available"] = raw_input not in {"", "{}"}
+        result["input_bytes"] = len(raw_input.encode("utf-8"))
+    raw_result = str(result.pop("result_json", "{}"))
+    if include_result:
+        result["result"] = _decode(raw_result)
+    else:
+        # Status/list views only need to know whether a result exists. Keep
+        # the full normalized result behind the explicit job-show action so a
+        # dashboard refresh cannot transfer megabytes of model output.
+        result["result"] = {}
+        result["result_available"] = raw_result not in {"", "{}"}
+        result["result_bytes"] = len(raw_result.encode("utf-8"))
     result.pop("idempotency_key", None)
     return result
 

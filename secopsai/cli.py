@@ -81,6 +81,7 @@ from secopsai.intelligence_jobs import cancel_job as cancel_intelligence_job
 from secopsai.intelligence_jobs import requeue_job as requeue_intelligence_job
 from secopsai.intelligence_jobs import enqueue_job as enqueue_intelligence_job
 from secopsai.intelligence_jobs import get_job as get_intelligence_job
+from secopsai.intelligence_jobs import job_counts as intelligence_job_counts
 from secopsai.intelligence_jobs import list_jobs as list_intelligence_jobs
 from secopsai.agent_triage import enqueue_due_findings as enqueue_agent_triage_findings
 from secopsai.agent_triage import get_settings as get_agent_triage_settings
@@ -155,6 +156,122 @@ from secopsai.research_cases import (
     update_case as update_research_case,
     update_subject_state,
 )
+
+
+def _compact_intelligence_status_section(payload: dict[str, Any] | None, section: str) -> dict[str, Any]:
+    """Keep the Mission Control status response bounded.
+
+    Durable evidence remains available through the explicit job/case detail
+    commands. Status polling only needs queue state and a small decision
+    summary; returning every model result and every collector payload made a
+    single refresh several megabytes and caused overlapping refreshes.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    compact = dict(payload)
+    if section == "autopilot":
+        rows = []
+        for item in payload.get("runs", []) if isinstance(payload.get("runs"), list) else []:
+            if not isinstance(item, dict):
+                continue
+            target = item.get("target") if isinstance(item.get("target"), dict) else {}
+            decision = item.get("decision") if isinstance(item.get("decision"), dict) else {}
+            rows.append(
+                {
+                    key: item.get(key)
+                    for key in (
+                        "run_id", "target_type", "target_id", "status", "intelligence_job_id",
+                        "selected_model", "provider", "final_action", "reversible", "error_code",
+                        "error_message", "queued_at", "completed_at", "updated_at", "schema_version",
+                    )
+                }
+                | {
+                    "target": {
+                        key: target.get(key)
+                        for key in ("title", "source", "ecosystem", "package", "version")
+                        if target.get(key) is not None
+                    },
+                    "decision": {
+                        key: decision.get(key)
+                        for key in ("model_verdict", "model_confidence", "guardrail_reasons")
+                        if decision.get(key) is not None
+                    },
+                }
+            )
+        compact["runs"] = rows
+    elif section == "investigations":
+        rows = []
+        for item in payload.get("runs", []) if isinstance(payload.get("runs"), list) else []:
+            if not isinstance(item, dict):
+                continue
+            decision = item.get("decision") if isinstance(item.get("decision"), dict) else {}
+            rows.append(
+                {
+                    key: item.get(key)
+                    for key in (
+                        "run_id", "finding_id", "case_id", "pipeline_id", "status", "current_stage",
+                        "last_successful_stage", "attempt", "blocker_code", "blocker_message", "retryable",
+                        "created_at", "started_at", "completed_at", "updated_at", "schema_version",
+                        "recovery_available", "recovery_reason",
+                    )
+                }
+                | {
+                    "decision": {
+                        key: decision.get(key)
+                        for key in ("verdict", "confidence")
+                        if decision.get(key) is not None
+                    }
+                }
+            )
+        compact["runs"] = rows
+    elif section == "daily_automation":
+        # The active run is represented in the bounded runs list below. It
+        # can otherwise repeat a full collector payload during every refresh.
+        compact["active_run"] = None
+        runs = []
+        for item in payload.get("runs", []) if isinstance(payload.get("runs"), list) else []:
+            if not isinstance(item, dict):
+                continue
+            steps = []
+            for step in item.get("steps", []) if isinstance(item.get("steps"), list) else []:
+                if not isinstance(step, dict):
+                    continue
+                result = step.get("result") if isinstance(step.get("result"), dict) else {}
+                steps.append(
+                    {
+                        key: step.get(key)
+                        for key in (
+                            "step_id", "run_id", "step_name", "status", "started_at", "completed_at",
+                            "error_message",
+                        )
+                    }
+                    | {
+                        "result": {
+                            key: result.get(key)
+                            for key in ("status", "reason", "error", "processed", "queued", "failed", "sent")
+                            if result.get(key) is not None
+                        }
+                    }
+                )
+            summary = item.get("summary")
+            if isinstance(summary, dict):
+                summary = {
+                    key: summary.get(key)
+                    for key in ("agent_boundary", "completed_steps", "failed_steps", "operator_gates")
+                    if summary.get(key) is not None
+                }
+            runs.append(
+                {
+                    key: item.get(key)
+                    for key in (
+                        "run_id", "trigger", "status", "started_at", "completed_at", "next_run_at",
+                        "error_message", "updated_at", "schema_version",
+                    )
+                }
+                | {"summary": summary, "steps": steps}
+            )
+        compact["runs"] = runs
+    return compact
 from secopsai.research_watchlists import promote_watchlist_packages
 from secopsai.research_intake import ADAPTERS as RESEARCH_INTAKE_ADAPTERS, preview_package as preview_research_package
 from secopsai.research_discovery import (
@@ -3693,16 +3810,33 @@ def main(argv: Optional[List[str]] = None) -> int:
             if args.intelligence_cmd == "actions":
                 payload = list_intelligence_actions()
             elif args.intelligence_cmd == "status":
+                autopilot_status_payload = _compact_intelligence_status_section(
+                    agent_triage_status(db_path=args.db_path), "autopilot"
+                )
+                investigation_status_payload = _compact_intelligence_status_section(
+                    investigation_autopilot_status(db_path=args.db_path), "investigations"
+                )
+                daily_status_payload = _compact_intelligence_status_section(
+                    daily_automation_status(db_path=args.db_path), "daily_automation"
+                )
                 payload = {
                     "schema_version": "secopsai.intelligence.status.v1",
                     "generated_at": soc_store.utc_now(),
                     "actions": list_intelligence_actions(),
-                    "jobs": {"jobs": list_intelligence_jobs(limit=args.limit, db_path=args.db_path)},
-                    "autopilot": agent_triage_status(db_path=args.db_path),
+                    "jobs": {
+                        "jobs": list_intelligence_jobs(limit=args.limit, include_result=False, db_path=args.db_path),
+                        "counts": intelligence_job_counts(db_path=args.db_path),
+                    },
+                    "autopilot": autopilot_status_payload,
                     "learning": detection_learning_status(db_path=args.db_path),
-                    "daily_automation": daily_automation_status(db_path=args.db_path),
-                    "bridge": codex_bridge_doctor(),
+                    "daily_automation": daily_status_payload,
+                    # Status is a read-only dashboard snapshot. The bridge
+                    # service performs the real probe before processing work
+                    # and persists it; do not launch four new provider probes
+                    # on every Mission Control refresh.
+                    "bridge": codex_bridge_doctor(probe=False, db_path=args.db_path),
                     "service": codex_bridge_service_action("status"),
+                    "investigations": investigation_status_payload,
                 }
             elif args.intelligence_cmd == "query":
                 inputs = _json_object(args.inputs_json, label="intelligence inputs")

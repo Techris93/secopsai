@@ -20,6 +20,7 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+SCHEMA_VERSION = 2
 
 
 def default_db_path() -> str:
@@ -46,12 +47,11 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA busy_timeout = 5000")
-    # Keep rollback journaling explicit for the local writer pair. The
-    # dedicated flock remains the ordering mechanism; this is only a SQLite
-    # fallback for short-lived readers or unrelated local tools.
-    journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
-    if journal_mode != "delete":
-        raise RuntimeError(f"unsupported SQLite journal mode for local Core DB: {journal_mode}")
+    # Do not query or change journal_mode on every connection. In rollback
+    # mode that pragma can itself wait for an active writer, which turns a
+    # read-only dashboard request into another source of lock contention. The
+    # schema initializer verifies the journal mode once, while holding the
+    # cross-process writer lock.
     try:
         os.chmod(resolved_path, 0o600)  # nosec B103
     except OSError:
@@ -66,9 +66,30 @@ def _ensure_column(connection: sqlite3.Connection, table: str, column: str, defi
 
 
 def init_db(db_path: str | None = None) -> None:
-    with closing(connect(db_path)) as connection:
-        connection.executescript(
-            """
+    resolved_path = db_path or default_db_path()
+
+    # Most callers invoke init_db before a read. The old implementation ran a
+    # 1,200-line CREATE TABLE/INDEX script on every such call. CREATE IF NOT
+    # EXISTS still takes a schema write lock, so a dashboard status request
+    # could collide with a research transaction and fail with "database is
+    # locked". PRAGMA user_version is a durable, read-only fast path shared by
+    # every process. Only a new database or a schema upgrade enters the writer
+    # critical section.
+    with closing(connect(resolved_path)) as connection:
+        current_version = int(connection.execute("PRAGMA user_version").fetchone()[0] or 0)
+    if current_version >= SCHEMA_VERSION:
+        return
+
+    with sqlite_writer_lock(resolved_path):
+        with closing(connect(resolved_path)) as connection:
+            current_version = int(connection.execute("PRAGMA user_version").fetchone()[0] or 0)
+            if current_version >= SCHEMA_VERSION:
+                return
+            journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+            if journal_mode != "delete":
+                raise RuntimeError(f"unsupported SQLite journal mode for local Core DB: {journal_mode}")
+            connection.executescript(
+                """
             CREATE TABLE IF NOT EXISTS findings (
                 finding_id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
@@ -1330,6 +1351,8 @@ def init_db(db_path: str | None = None) -> None:
                 ON registry_ingestion_runs (collector_id) WHERE status = 'running';
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_cursor
                 ON registry_feed_events (collector_id, registry_timestamp);
+            CREATE INDEX IF NOT EXISTS idx_registry_feed_events_processing_state_time
+                ON registry_feed_events (processing_state, registry_timestamp);
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_package
                 ON registry_feed_events (ecosystem, package, version);
             CREATE INDEX IF NOT EXISTS idx_registry_dead_letters_due
@@ -1338,21 +1361,24 @@ def init_db(db_path: str | None = None) -> None:
                 ON registry_coverage_windows (collector_id, state, window_start);
             CREATE INDEX IF NOT EXISTS idx_registry_snapshots_collector
                 ON registry_snapshots (collector_id, created_at DESC);
-            """
-        )
-        for table in ("research_subjects", "research_evidence", "research_iocs"):
-            _ensure_column(connection, table, "status", "TEXT NOT NULL DEFAULT 'active'")
-        for column, definition in (
-            ("registry_state", "TEXT NOT NULL DEFAULT 'unknown'"),
-            ("artifact_state", "TEXT NOT NULL DEFAULT 'missing'"),
-            ("validation_state", "TEXT NOT NULL DEFAULT 'unverified'"),
-            ("state_reason", "TEXT NOT NULL DEFAULT ''"),
-            ("state_checked_at", "TEXT"),
-        ):
-            _ensure_column(connection, "research_subjects", column, definition)
-        _ensure_column(connection, "research_npm_package_snapshots", "known_versions_json", "TEXT NOT NULL DEFAULT '[]'")
-        _ensure_column(connection, "research_npm_package_snapshots", "last_published_at", "TEXT")
-        connection.commit()
+                """
+            )
+            for table in ("research_subjects", "research_evidence", "research_iocs"):
+                _ensure_column(connection, table, "status", "TEXT NOT NULL DEFAULT 'active'")
+            for column, definition in (
+                ("registry_state", "TEXT NOT NULL DEFAULT 'unknown'"),
+                ("artifact_state", "TEXT NOT NULL DEFAULT 'missing'"),
+                ("validation_state", "TEXT NOT NULL DEFAULT 'unverified'"),
+                ("state_reason", "TEXT NOT NULL DEFAULT ''"),
+                ("state_checked_at", "TEXT"),
+            ):
+                _ensure_column(connection, "research_subjects", column, definition)
+            _ensure_column(connection, "research_npm_package_snapshots", "known_versions_json", "TEXT NOT NULL DEFAULT '[]'")
+            _ensure_column(connection, "research_npm_package_snapshots", "last_published_at", "TEXT")
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            connection.commit()
+
+
 def _existing_state(connection: sqlite3.Connection, finding_id: str) -> Dict[str, str] | None:
     row = connection.execute(
         "SELECT status, disposition, created_at FROM findings WHERE finding_id = ?",

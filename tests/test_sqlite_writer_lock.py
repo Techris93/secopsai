@@ -85,3 +85,28 @@ def test_writer_lock_uses_shared_file_and_sqlite_fallbacks(tmp_path: Path):
     assert hashlib.sha256("|".join(actual).encode()).hexdigest() == hashlib.sha256(
         "|".join(expected).encode()
     ).hexdigest()
+
+
+def test_schema_version_fast_path_does_not_rewrite_during_reader_status(tmp_path: Path):
+    db_path = str(tmp_path / "core.db")
+    soc_store.init_db(db_path)
+
+    with soc_store.connect(db_path) as connection:
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == soc_store.SCHEMA_VERSION
+        # A normal SQLite writer transaction may coexist with a read. Once the
+        # durable schema version is present, a second init_db call must not
+        # execute the schema DDL and therefore must not contend for that lock.
+        connection.execute("BEGIN IMMEDIATE")
+        soc_store.init_db(db_path)
+        connection.rollback()
+
+
+def test_registry_scoring_index_is_present(tmp_path: Path):
+    db_path = str(tmp_path / "core.db")
+    soc_store.init_db(db_path)
+    with soc_store.connect(db_path) as connection:
+        indexes = {
+            str(row[1])
+            for row in connection.execute("PRAGMA index_list(registry_feed_events)").fetchall()
+        }
+    assert "idx_registry_feed_events_processing_state_time" in indexes

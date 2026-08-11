@@ -20,13 +20,14 @@ import hashlib
 import io
 import json
 import re
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import soc_store
 from secopsai.research_discovery import create_candidate_alert
 from secopsai.research_intake import IntakeError, SafeFetcher
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 SCHEMA_VERSION = "secopsai.research.external-intel.v1"
@@ -43,6 +44,14 @@ MAX_PACKAGE_LENGTH = 512
 MAX_VERSION_LENGTH = 160
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9@._:/+\-]+$")
 VERSION_RE = re.compile(r"^[A-Za-z0-9.+:_~!*/\-]+$")
+
+
+@contextmanager
+def _write_transaction(connection, db_path: Optional[str]):
+    """Serialize external-intel state commits with registry and Edge writes."""
+    with sqlite_writer_lock(db_path):
+        with connection:
+            yield connection
 
 
 def _now() -> str:
@@ -92,25 +101,25 @@ def _versions(value: Any) -> List[str]:
 def _seed_source(db_path: Optional[str]) -> None:
     now = _now()
     with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """INSERT INTO research_external_advisory_sources
-               (source_id, ecosystem, name, source_url, interval_seconds,
-                status, created_at, updated_at)
-               VALUES (?, 'npm', ?, ?, ?, 'new', ?, ?)
-               ON CONFLICT(source_id) DO UPDATE SET name=excluded.name,
-               source_url=excluded.source_url,
-               interval_seconds=excluded.interval_seconds,
-               updated_at=excluded.updated_at""",
-            (
-                WIZ_KEYV_SOURCE_ID,
-                "Wiz Research Keyv/Cacheable campaign package list",
-                WIZ_KEYV_SOURCE_URL,
-                WIZ_KEYV_INTERVAL_SECONDS,
-                now,
-                now,
-            ),
-        )
-        connection.commit()
+        with _write_transaction(connection, db_path):
+            connection.execute(
+                """INSERT INTO research_external_advisory_sources
+                   (source_id, ecosystem, name, source_url, interval_seconds,
+                    status, created_at, updated_at)
+                   VALUES (?, 'npm', ?, ?, ?, 'new', ?, ?)
+                   ON CONFLICT(source_id) DO UPDATE SET name=excluded.name,
+                   source_url=excluded.source_url,
+                   interval_seconds=excluded.interval_seconds,
+                   updated_at=excluded.updated_at""",
+                (
+                    WIZ_KEYV_SOURCE_ID,
+                    "Wiz Research Keyv/Cacheable campaign package list",
+                    WIZ_KEYV_SOURCE_URL,
+                    WIZ_KEYV_INTERVAL_SECONDS,
+                    now,
+                    now,
+                ),
+            )
 
 
 def _source_due(db_path: Optional[str], *, force: bool) -> Tuple[bool, Optional[Dict[str, Any]]]:
@@ -133,7 +142,7 @@ def _record_source_failure(db_path: Optional[str], error: str) -> None:
     now = _now()
     dedupe = f"external-advisory-source:{WIZ_KEYV_SOURCE_ID}:{now[:10]}"
     with closing(soc_store.connect(db_path)) as connection:
-        with connection:
+        with _write_transaction(connection, db_path):
             connection.execute(
                 """UPDATE research_external_advisory_sources
                    SET status='failed', last_error=?, updated_at=?
@@ -223,7 +232,7 @@ def refresh_keyv_advisory(*, db_path: Optional[str] = None, fetcher: Optional[Sa
     source_hash = hashlib.sha256(body).hexdigest()
     seen: List[str] = []
     with closing(soc_store.connect(db_path)) as connection:
-        with connection:
+        with _write_transaction(connection, db_path):
             for package, version in rows:
                 record_id = "EXT-" + hashlib.sha256(
                     f"{WIZ_KEYV_SOURCE_ID}|npm|{package}|{version}".encode()
@@ -328,8 +337,9 @@ def sync_advisory_candidates(*, db_path: Optional[str] = None, limit: int = 1000
         )
         with closing(soc_store.connect(db_path)) as connection:
             now = _now()
-            if not record.get("existing_candidate_id"):
-                connection.execute(
+            with _write_transaction(connection, db_path):
+                if not record.get("existing_candidate_id"):
+                    connection.execute(
                     """INSERT INTO research_candidates
                        (candidate_id, event_id, watchlist_id, ecosystem, package,
                         version, reference_identifier, score, score_components_json,
@@ -360,13 +370,12 @@ def sync_advisory_candidates(*, db_path: Optional[str] = None, limit: int = 1000
                         "external-advisory.v1",
                     ),
                 )
-                created += 1
-            candidate = connection.execute(
-                """SELECT * FROM research_candidates WHERE ecosystem=? AND package=?
-                   AND version=? AND reference_identifier=?""",
-                (record["ecosystem"], record["package"], record["version"], record["advisory_id"]),
-            ).fetchone()
-            connection.commit()
+                    created += 1
+                candidate = connection.execute(
+                    """SELECT * FROM research_candidates WHERE ecosystem=? AND package=?
+                       AND version=? AND reference_identifier=?""",
+                    (record["ecosystem"], record["package"], record["version"], record["advisory_id"]),
+                ).fetchone()
         if not candidate:
             continue
         candidate_payload = dict(candidate)
@@ -377,16 +386,17 @@ def sync_advisory_candidates(*, db_path: Optional[str] = None, limit: int = 1000
             "advisory": record["advisory_id"],
             "local_exposure_required": False,
         }
-        alert = create_candidate_alert(
-            candidate_payload,
-            db_path=db_path,
-            alert_type="external_advisory_match",
-            dedupe_key=(
-                f"external-advisory:{record['source_id']}:{record['package']}"
-                f":{record['version']}:{record['source_hash']}"
-            ),
-            reason_override=reason,
-        )
+        with sqlite_writer_lock(db_path):
+            alert = create_candidate_alert(
+                candidate_payload,
+                db_path=db_path,
+                alert_type="external_advisory_match",
+                dedupe_key=(
+                    f"external-advisory:{record['source_id']}:{record['package']}"
+                    f":{record['version']}:{record['source_hash']}"
+                ),
+                reason_override=reason,
+            )
         if alert.get("alert_id"):
             alerts += 1
         candidate_ids.append(str(candidate_payload["candidate_id"]))

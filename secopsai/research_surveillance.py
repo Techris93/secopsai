@@ -20,13 +20,28 @@ import urllib.parse
 import uuid
 import zlib
 import hashlib
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import soc_store
 from secopsai.research_discovery import seed_registry_sources
 from secopsai.research_intake import IntakeError, SafeFetcher
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
+
+
+@contextmanager
+def _write_transaction(connection: sqlite3.Connection, db_path: Optional[str]):
+    """Serialize one short SQLite commit across monitor and sync processes.
+
+    Registry fetches happen before this context is entered. Keeping the
+    process-wide lock at the transaction boundary prevents Edge sync from
+    contending with a monitor commit without holding the lock during remote
+    I/O.
+    """
+    with sqlite_writer_lock(db_path):
+        with connection:
+            yield connection
 
 NUGET_CATALOG_INDEX_URL = "https://api.nuget.org/v3/catalog0/index.json"
 NUGET_ALLOWED_HOSTS: Tuple[str, ...] = ("api.nuget.org",)
@@ -61,7 +76,10 @@ DEFAULT_MAX_PAGES = 10
 DEFAULT_LOOKBACK_HOURS = 24
 DEFAULT_MAX_WINDOW_HOURS = 24
 DEFAULT_NPM_PAGE_LIMIT = 5000
-DEFAULT_GO_PAGE_LIMIT = 2000
+# Keep each Go index transaction small enough for the local SQLite store. A
+# backlog is advanced over successive cycles; one launch-agent invocation must
+# not monopolize the database while inserting thousands of module versions.
+DEFAULT_GO_PAGE_LIMIT = 250
 DEFAULT_MAVEN_PAGE_LIMIT = 200
 DEFAULT_OPENVSX_PAGE_LIMIT = 200
 OPENVSX_PARTITIONS = tuple("abcdefghijklmnopqrstuvwxyz0123456789")
@@ -258,57 +276,58 @@ def ensure_collectors(*, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
     seed_registry_sources(db_path=db_path)
     now = _format_ts(_utcnow())
     seeded: List[Dict[str, Any]] = []
-    with closing(soc_store.connect(db_path)) as connection:
-        for ecosystem, definition in COLLECTOR_DEFINITIONS.items():
-            config = {
-                "allowed_hosts": list(definition["allowed_hosts"]),
-                "algorithm_version": ALGORITHM_VERSION,
-            }
-            for key in ("cursor_multiplier", "overlap_seconds", "retention_seconds", "retention_safety_seconds", "max_window_hours", "interval_seconds", "page_limit"):
-                if key in definition:
-                    config[key] = definition[key]
-            connection.execute(
-                """INSERT INTO registry_collectors
-                (collector_id, source_id, ecosystem, name, feed_url, mode, enabled, config_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-                ON CONFLICT(collector_id) DO UPDATE SET feed_url=excluded.feed_url,
-                mode=excluded.mode, config_json=excluded.config_json, updated_at=excluded.updated_at""",
-                (
-                    definition["collector_id"],
-                    definition["source_id"],
-                    ecosystem,
-                    definition["name"],
-                    definition["feed_url"],
-                    definition["mode"],
-                    _json(config),
-                    now,
-                    now,
-                ),
-            )
-            if definition.get("cursor_seed") in {"bootstrap", "zero"}:
-                cursor_seed = PACKAGIST_BOOTSTRAP_CURSOR
-            else:
-                cursor_seed = _format_ts(_utcnow() - timedelta(hours=DEFAULT_LOOKBACK_HOURS))
-            connection.execute(
-                """INSERT INTO registry_cursors (collector_id, cursor_value, updated_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(collector_id) DO NOTHING""",
-                (
-                    definition["collector_id"],
-                    cursor_seed,
-                    now,
-                ),
-            )
-        connection.commit()
-        rows = connection.execute(
-            "SELECT * FROM registry_collectors ORDER BY ecosystem"
-        ).fetchall()
-        for row in rows:
-            cursor = connection.execute(
-                "SELECT * FROM registry_cursors WHERE collector_id = ?",
-                (row["collector_id"],),
-            ).fetchone()
-            seeded.append(dict(row) | {"cursor": dict(cursor) if cursor else None})
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            for ecosystem, definition in COLLECTOR_DEFINITIONS.items():
+                config = {
+                    "allowed_hosts": list(definition["allowed_hosts"]),
+                    "algorithm_version": ALGORITHM_VERSION,
+                }
+                for key in ("cursor_multiplier", "overlap_seconds", "retention_seconds", "retention_safety_seconds", "max_window_hours", "interval_seconds", "page_limit"):
+                    if key in definition:
+                        config[key] = definition[key]
+                connection.execute(
+                    """INSERT INTO registry_collectors
+                    (collector_id, source_id, ecosystem, name, feed_url, mode, enabled, config_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                    ON CONFLICT(collector_id) DO UPDATE SET feed_url=excluded.feed_url,
+                    mode=excluded.mode, config_json=excluded.config_json, updated_at=excluded.updated_at""",
+                    (
+                        definition["collector_id"],
+                        definition["source_id"],
+                        ecosystem,
+                        definition["name"],
+                        definition["feed_url"],
+                        definition["mode"],
+                        _json(config),
+                        now,
+                        now,
+                    ),
+                )
+                if definition.get("cursor_seed") in {"bootstrap", "zero"}:
+                    cursor_seed = PACKAGIST_BOOTSTRAP_CURSOR
+                else:
+                    cursor_seed = _format_ts(_utcnow() - timedelta(hours=DEFAULT_LOOKBACK_HOURS))
+                connection.execute(
+                    """INSERT INTO registry_cursors (collector_id, cursor_value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(collector_id) DO NOTHING""",
+                    (
+                        definition["collector_id"],
+                        cursor_seed,
+                        now,
+                    ),
+                )
+            connection.commit()
+            rows = connection.execute(
+                "SELECT * FROM registry_collectors ORDER BY ecosystem"
+            ).fetchall()
+            for row in rows:
+                cursor = connection.execute(
+                    "SELECT * FROM registry_cursors WHERE collector_id = ?",
+                    (row["collector_id"],),
+                ).fetchone()
+                seeded.append(dict(row) | {"cursor": dict(cursor) if cursor else None})
     return seeded
 
 
@@ -331,12 +350,13 @@ def set_collector_enabled(*, ecosystem: str, enabled: bool, db_path: Optional[st
     coverage history, and dead letters; runs are refused until resumed."""
     collector = _collector_for_ecosystem(ecosystem, db_path=db_path)
     now = _format_ts(_utcnow())
-    with closing(soc_store.connect(db_path)) as connection:
-        with connection:
-            connection.execute(
-                "UPDATE registry_collectors SET enabled = ?, updated_at = ? WHERE collector_id = ?",
-                (1 if enabled else 0, now, collector["collector_id"]),
-            )
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            with _write_transaction(connection, db_path):
+                connection.execute(
+                    "UPDATE registry_collectors SET enabled = ?, updated_at = ? WHERE collector_id = ?",
+                    (1 if enabled else 0, now, collector["collector_id"]),
+                )
     updated = get_collector(collector["collector_id"], db_path=db_path)
     return {
         "collector_id": updated["collector_id"],
@@ -477,6 +497,7 @@ def _persist_page_events(
     fetch_leaves: bool,
     fetcher: SafeFetcher,
     run_id: str,
+    db_path: Optional[str],
 ) -> Dict[str, int]:
     """Persist one catalog page and advance the cursor in a single transaction.
 
@@ -491,109 +512,132 @@ def _persist_page_events(
     if not isinstance(items, list):
         raise CollectorError("catalog page did not contain an items list")
 
-    with connection:
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            item_ts_raw = str(item.get("commitTimestamp") or "")
-            if not item_ts_raw:
-                continue
-            item_ts = _format_ts(_parse_ts(item_ts_raw))
-            if item_ts <= cursor_before:
-                continue
-            counts["seen"] += 1
-            package = str(item.get("nuget:id") or item.get("id") or "").strip()
-            version = str(item.get("nuget:version") or item.get("version") or "").strip()
-            leaf_url = str(item.get("@id") or "").strip()
-            if not package or not version or not leaf_url:
-                continue
-            event_type = _event_type(item.get("@type"))
-            key = _idempotency_key(collector["ecosystem"], package, version, item_ts, event_type)
-            metadata: Dict[str, Any] = {"catalog_types": item.get("@type"), "algorithm_version": ALGORITHM_VERSION}
-            leaf_fetched = 0
-            cursor = connection.execute(
-                """INSERT INTO registry_feed_events
-                (feed_event_id, collector_id, ecosystem, package, version, event_type,
-                 registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
-                 idempotency_key, collected_at, processing_state)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'pending')
-                ON CONFLICT(idempotency_key) DO NOTHING""",
-                (
-                    _id("RFE"),
-                    collector["collector_id"],
-                    collector["ecosystem"],
-                    package,
-                    version,
-                    event_type,
-                    item_ts,
-                    page_url,
-                    leaf_url,
-                    _json(metadata),
-                    key,
-                    now,
-                ),
-            )
-            if cursor.rowcount == 0:
-                counts["duplicate"] += 1
-                continue
-            counts["stored"] += 1
+    # Fetch remote leaves before opening the write transaction. The previous
+    # implementation inserted an event and then waited on a registry HTTP
+    # request while ``with connection`` still held SQLite's RESERVED lock.
+    pending: List[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item_ts_raw = str(item.get("commitTimestamp") or "")
+        if not item_ts_raw:
+            continue
+        item_ts = _format_ts(_parse_ts(item_ts_raw))
+        if item_ts <= cursor_before:
+            continue
+        counts["seen"] += 1
+        package = str(item.get("nuget:id") or item.get("id") or "").strip()
+        version = str(item.get("nuget:version") or item.get("version") or "").strip()
+        leaf_url = str(item.get("@id") or "").strip()
+        if not package or not version or not leaf_url:
+            continue
+        event_type = _event_type(item.get("@type"))
+        key = _idempotency_key(collector["ecosystem"], package, version, item_ts, event_type)
+        metadata: Dict[str, Any] = {"catalog_types": item.get("@type"), "algorithm_version": ALGORITHM_VERSION}
+        leaf_error = ""
+        if fetch_leaves and event_type == "published":
+            try:
+                leaf = _fetch_json(fetcher, leaf_url, allowed_hosts=allowed_hosts, max_bytes=MAX_LEAF_BYTES)
+                metadata.update(
+                    {
+                        "authors": leaf.get("authors") or leaf.get("owners") or "",
+                        "description": str(leaf.get("description") or "")[:2000],
+                        "listed": leaf.get("listed"),
+                        "published": leaf.get("published") or "",
+                        "project_url": leaf.get("projectUrl") or "",
+                        "tags": leaf.get("tags") or [],
+                        "leaf_fetched": True,
+                    }
+                )
+            except (IntakeError, CollectorError) as exc:
+                counts["leaf_failures"] += 1
+                leaf_error = str(exc)
+        pending.append(
+            {
+                "package": package,
+                "version": version,
+                "leaf_url": leaf_url,
+                "event_type": event_type,
+                "item_ts": item_ts,
+                "key": key,
+                "metadata": metadata,
+                "leaf_error": leaf_error,
+            }
+        )
 
-            if fetch_leaves and event_type == "published":
-                try:
-                    leaf = _fetch_json(fetcher, leaf_url, allowed_hosts=allowed_hosts, max_bytes=MAX_LEAF_BYTES)
-                    metadata.update(
-                        {
-                            "authors": leaf.get("authors") or leaf.get("owners") or "",
-                            "description": str(leaf.get("description") or "")[:2000],
-                            "listed": leaf.get("listed"),
-                            "published": leaf.get("published") or "",
-                            "project_url": leaf.get("projectUrl") or "",
-                            "tags": leaf.get("tags") or [],
-                        }
-                    )
-                    leaf_fetched = 1
+    with sqlite_writer_lock(db_path):
+        with _write_transaction(connection, db_path):
+            for event in pending:
+                key = event["key"]
+                cursor = connection.execute(
+                    """INSERT INTO registry_feed_events
+                    (feed_event_id, collector_id, ecosystem, package, version, event_type,
+                     registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
+                     idempotency_key, collected_at, processing_state)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'pending')
+                    ON CONFLICT(idempotency_key) DO NOTHING""",
+                    (
+                        _id("RFE"),
+                        collector["collector_id"],
+                        collector["ecosystem"],
+                        event["package"],
+                        event["version"],
+                        event["event_type"],
+                        event["item_ts"],
+                        page_url,
+                        event["leaf_url"],
+                        _json(event["metadata"]),
+                        key,
+                        now,
+                    ),
+                )
+                if cursor.rowcount == 0:
+                    counts["duplicate"] += 1
+                    continue
+                counts["stored"] += 1
+                if event["metadata"].get("leaf_fetched"):
                     connection.execute(
-                        "UPDATE registry_feed_events SET leaf_fetched = 1, metadata_json = ? WHERE idempotency_key = ?",
-                        (_json(metadata), key),
+                        "UPDATE registry_feed_events SET leaf_fetched = 1 WHERE idempotency_key = ?",
+                        (key,),
                     )
-                except (IntakeError, CollectorError) as exc:
-                    counts["leaf_failures"] += 1
+                if event["leaf_error"]:
                     _record_dead_letter(
                         connection,
                         collector_id=collector["collector_id"],
                         run_id=run_id,
-                        url=leaf_url,
+                        url=event["leaf_url"],
                         item_kind="leaf",
-                        payload={"idempotency_key": key, "package": package, "version": version},
-                        error=str(exc),
+                        payload={"idempotency_key": key, "package": event["package"], "version": event["version"]},
+                        error=event["leaf_error"],
                     )
 
-        connection.execute(
-            "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
-            (page_commit, page_commit, run_id, now, collector["collector_id"]),
-        )
+            connection.execute(
+                "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                (page_commit, page_commit, run_id, now, collector["collector_id"]),
+            )
     return counts
 
 
 def _open_run(*, collector: Dict[str, Any], cursor_before: str, db_path: Optional[str]) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
     run_id = _id("RIR")
     now = _format_ts(_utcnow())
-    with closing(soc_store.connect(db_path)) as connection:
-        try:
-            with connection:
-                connection.execute(
-                    """INSERT INTO registry_ingestion_runs
-                    (run_id, collector_id, status, cursor_before, cursor_after, coverage_mode, started_at)
-                    VALUES (?, ?, 'running', ?, ?, ?, ?)""",
-                    (run_id, collector["collector_id"], cursor_before, cursor_before, collector["mode"], now),
-                )
-        except sqlite3.IntegrityError:
-            return None, {
-                "run_id": None,
-                "collector_id": collector["collector_id"],
-                "status": "rejected",
-                "reason": "collector already has an active run",
-            }
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            try:
+                with _write_transaction(connection, db_path):
+                    connection.execute(
+                        """INSERT INTO registry_ingestion_runs
+                        (run_id, collector_id, status, cursor_before, cursor_after, coverage_mode, started_at)
+                        VALUES (?, ?, 'running', ?, ?, ?, ?)""",
+                        (run_id, collector["collector_id"], cursor_before, cursor_before, collector["mode"], now),
+                    )
+            except sqlite3.IntegrityError:
+                return None, {
+                    "run_id": None,
+                    "collector_id": collector["collector_id"],
+                    "status": "rejected",
+                    "reason": "collector already has an active run",
+                }
     return run_id, None
 
 
@@ -609,46 +653,47 @@ def _close_run(
     status = "failed" if error_message else "completed"
     finished = _format_ts(_utcnow())
     gap = error_message is not None and outcome["pages_processed"] < outcome["pages_selected"]
-    with closing(soc_store.connect(db_path)) as connection:
-        with connection:
-            connection.execute(
-                """UPDATE registry_ingestion_runs
-                SET status = ?, cursor_after = ?, pages_processed = ?, events_seen = ?,
-                    events_stored = ?, events_duplicate = ?, failures = ?, error_message = ?, completed_at = ?
-                WHERE run_id = ?""",
-                (
-                    status,
-                    outcome["cursor_after"],
-                    outcome["pages_processed"],
-                    outcome["events_seen"],
-                    outcome["events_stored"],
-                    outcome["events_duplicate"],
-                    outcome["leaf_failures"] + (1 if error_message else 0),
-                    error_message,
-                    finished,
-                    run_id,
-                ),
-            )
-            connection.execute(
-                """INSERT INTO registry_coverage_windows
-                (window_id, collector_id, run_id, window_start, window_end, expected_pages,
-                 processed_pages, events_stored, state, gap_reason, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    _id("RCW"),
-                    collector["collector_id"],
-                    run_id,
-                    cursor_before,
-                    outcome["cursor_after"],
-                    outcome["pages_selected"],
-                    outcome["pages_processed"],
-                    outcome["events_stored"],
-                    "gap" if gap else "complete",
-                    error_message if gap else None,
-                    finished,
-                    finished,
-                ),
-            )
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            with _write_transaction(connection, db_path):
+                connection.execute(
+                    """UPDATE registry_ingestion_runs
+                    SET status = ?, cursor_after = ?, pages_processed = ?, events_seen = ?,
+                        events_stored = ?, events_duplicate = ?, failures = ?, error_message = ?, completed_at = ?
+                    WHERE run_id = ?""",
+                    (
+                        status,
+                        outcome["cursor_after"],
+                        outcome["pages_processed"],
+                        outcome["events_seen"],
+                        outcome["events_stored"],
+                        outcome["events_duplicate"],
+                        outcome["leaf_failures"] + (1 if error_message else 0),
+                        error_message,
+                        finished,
+                        run_id,
+                    ),
+                )
+                connection.execute(
+                    """INSERT INTO registry_coverage_windows
+                    (window_id, collector_id, run_id, window_start, window_end, expected_pages,
+                     processed_pages, events_stored, state, gap_reason, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        _id("RCW"),
+                        collector["collector_id"],
+                        run_id,
+                        cursor_before,
+                        outcome["cursor_after"],
+                        outcome["pages_selected"],
+                        outcome["pages_processed"],
+                        outcome["events_stored"],
+                        "gap" if gap else "complete",
+                        error_message if gap else None,
+                        finished,
+                        finished,
+                    ),
+                )
     return {
         "run_id": run_id,
         "collector_id": collector["collector_id"],
@@ -717,7 +762,7 @@ def _ingest_nuget_catalog(
                     page = _fetch_json(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_CATALOG_PAGE_BYTES)
                 except (IntakeError, CollectorError) as exc:
                     outcome["error"] = f"page fetch failed: {exc}"
-                    with connection:
+                    with _write_transaction(connection, db_path):
                         _record_dead_letter(
                             connection,
                             collector_id=collector["collector_id"],
@@ -737,6 +782,7 @@ def _ingest_nuget_catalog(
                     fetch_leaves=fetch_leaves,
                     fetcher=fetcher,
                     run_id=run_id,
+                    db_path=db_path,
                 )
                 outcome["events_seen"] += counts.get("seen", 0)
                 outcome["events_stored"] += counts.get("stored", 0)
@@ -795,7 +841,7 @@ def _ingest_packagist_changes(
     except (IntakeError, CollectorError) as exc:
         outcome["error"] = f"changes feed fetch failed: {exc}"
         with closing(soc_store.connect(db_path)) as connection:
-            with connection:
+            with _write_transaction(connection, db_path):
                 _record_dead_letter(
                     connection,
                     collector_id=collector["collector_id"],
@@ -821,7 +867,7 @@ def _ingest_packagist_changes(
     now = _format_ts(_utcnow())
     last_event_ts: Optional[str] = None
     with closing(soc_store.connect(db_path)) as connection:
-        with connection:
+        with _write_transaction(connection, db_path):
             for action in actions:
                 if not isinstance(action, dict):
                     continue
@@ -959,7 +1005,7 @@ def _ingest_pypi_index(
     except (IntakeError, CollectorError) as exc:
         outcome["error"] = f"simple index fetch failed: {exc}"
         with closing(soc_store.connect(db_path)) as connection:
-            with connection:
+            with _write_transaction(connection, db_path):
                 _record_dead_letter(
                     connection,
                     collector_id=collector["collector_id"],
@@ -1002,7 +1048,7 @@ def _ingest_pypi_index(
         previous = _latest_snapshot(connection, collector["collector_id"])
         if previous is not None and str(previous["serial"]) == serial and str(previous["names_hash"]) == names_hash:
             # Unchanged index: no new snapshot, no events, cursor already correct.
-            with connection:
+            with _write_transaction(connection, db_path):
                 connection.execute(
                     "UPDATE registry_cursors SET last_run_id = ?, updated_at = ? WHERE collector_id = ?",
                     (run_id, now, collector["collector_id"]),
@@ -1020,7 +1066,7 @@ def _ingest_pypi_index(
             added = added[:max_diff_events]
             removed = removed[: max(0, max_diff_events - len(added))]
 
-        with connection:
+        with _write_transaction(connection, db_path):
             for name in added:
                 outcome["events_seen"] += 1
                 if _insert_index_event(connection, collector=collector, name=name, event_type="project_added", serial=serial, now=now):
@@ -1098,7 +1144,7 @@ def _ingest_rubygems_timeframe(
                 )
             except (IntakeError, CollectorError) as exc:
                 outcome["error"] = f"timeframe page fetch failed: {exc}"
-                with connection:
+                with _write_transaction(connection, db_path):
                     _record_dead_letter(
                         connection,
                         collector_id=collector["collector_id"],
@@ -1114,7 +1160,7 @@ def _ingest_rubygems_timeframe(
                 drained = True
                 break
             now = _format_ts(_utcnow())
-            with connection:
+            with _write_transaction(connection, db_path):
                 for item in items:
                     if not isinstance(item, dict):
                         continue
@@ -1174,7 +1220,7 @@ def _ingest_rubygems_timeframe(
     if drained:
         now = _format_ts(_utcnow())
         with closing(soc_store.connect(db_path)) as connection:
-            with connection:
+            with _write_transaction(connection, db_path):
                 connection.execute(
                     "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
                     (window_to, now, run_id, now, collector["collector_id"]),
@@ -1218,7 +1264,7 @@ def _ingest_npm_changes(
         except (IntakeError, CollectorError) as exc:
             outcome["error"] = f"replica root fetch failed: {exc}"
             with closing(soc_store.connect(db_path)) as connection:
-                with connection:
+                with _write_transaction(connection, db_path):
                     _record_dead_letter(
                         connection,
                         collector_id=collector["collector_id"],
@@ -1235,7 +1281,7 @@ def _ingest_npm_changes(
             return outcome
         now = _format_ts(_utcnow())
         with closing(soc_store.connect(db_path)) as connection:
-            with connection:
+            with _write_transaction(connection, db_path):
                 connection.execute(
                     "UPDATE registry_cursors SET cursor_value = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
                     (str(update_seq), run_id, now, collector["collector_id"]),
@@ -1255,16 +1301,17 @@ def _ingest_npm_changes(
                 payload = _fetch_json(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_NPM_CHANGES_BYTES)
             except (IntakeError, CollectorError) as exc:
                 outcome["error"] = f"changes page fetch failed: {exc}"
-                with connection:
-                    _record_dead_letter(
-                        connection,
-                        collector_id=collector["collector_id"],
-                        run_id=run_id,
-                        url=page_url,
-                        item_kind="page",
-                        payload={"since": since},
-                        error=str(exc),
-                    )
+                with sqlite_writer_lock(db_path):
+                    with _write_transaction(connection, db_path):
+                        _record_dead_letter(
+                            connection,
+                            collector_id=collector["collector_id"],
+                            run_id=run_id,
+                            url=page_url,
+                            item_kind="page",
+                            payload={"since": since},
+                            error=str(exc),
+                        )
                 break
             results = payload.get("results")
             if not isinstance(results, list):
@@ -1275,7 +1322,7 @@ def _ingest_npm_changes(
                 outcome["error"] = "changes response did not expose a valid last_seq"
                 break
             now = _format_ts(_utcnow())
-            with connection:
+            with _write_transaction(connection, db_path):
                 for item in results:
                     if not isinstance(item, dict):
                         continue
@@ -1348,7 +1395,7 @@ def _ingest_go_index(
     """
     config = _decode(collector["config_json"], {})
     allowed_hosts = config.get("allowed_hosts", [])
-    page_limit = max(1, min(int(config.get("page_limit", DEFAULT_GO_PAGE_LIMIT)), 2000))
+    page_limit = max(1, min(int(config.get("page_limit", DEFAULT_GO_PAGE_LIMIT)), 500))
     outcome = _empty_outcome(cursor_before)
 
     since = cursor_before
@@ -1360,7 +1407,7 @@ def _ingest_go_index(
                 records = _fetch_ndjson(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_GO_INDEX_BYTES)
             except (IntakeError, CollectorError) as exc:
                 outcome["error"] = f"module index fetch failed: {exc}"
-                with connection:
+                with _write_transaction(connection, db_path):
                     _record_dead_letter(
                         connection,
                         collector_id=collector["collector_id"],
@@ -1375,51 +1422,52 @@ def _ingest_go_index(
                 break
             last_ts: Optional[str] = None
             now = _format_ts(_utcnow())
-            with connection:
-                for record in records:
-                    path = str(record.get("Path") or "").strip()
-                    version = str(record.get("Version") or "").strip()
-                    timestamp = str(record.get("Timestamp") or "").strip()
-                    if not path or not version or not timestamp:
-                        continue
-                    registry_ts = _format_ts(_parse_ts(timestamp))
-                    outcome["events_seen"] += 1
-                    key = _idempotency_key(collector["ecosystem"], path, version, registry_ts, "published")
-                    metadata = {
-                        "module_path": path,
-                        "algorithm_version": ALGORITHM_VERSION,
-                    }
-                    cursor = connection.execute(
-                        """INSERT INTO registry_feed_events
-                        (feed_event_id, collector_id, ecosystem, package, version, event_type,
-                         registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
-                         idempotency_key, collected_at, processing_state)
-                        VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, 0, ?, ?, ?, 'pending')
-                        ON CONFLICT(idempotency_key) DO NOTHING""",
-                        (
-                            _id("RFE"),
-                            collector["collector_id"],
-                            collector["ecosystem"],
-                            path,
-                            version,
-                            registry_ts,
-                            page_url,
-                            f"https://proxy.golang.org/{path}/@v/{version}.info",
-                            _json(metadata),
-                            key,
-                            now,
-                        ),
-                    )
-                    if cursor.rowcount == 0:
-                        outcome["events_duplicate"] += 1
-                    else:
-                        outcome["events_stored"] += 1
-                    last_ts = registry_ts
-                if last_ts is not None:
-                    connection.execute(
-                        "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
-                        (last_ts, last_ts, run_id, now, collector["collector_id"]),
-                    )
+            with sqlite_writer_lock(db_path):
+                with _write_transaction(connection, db_path):
+                    for record in records:
+                        path = str(record.get("Path") or "").strip()
+                        version = str(record.get("Version") or "").strip()
+                        timestamp = str(record.get("Timestamp") or "").strip()
+                        if not path or not version or not timestamp:
+                            continue
+                        registry_ts = _format_ts(_parse_ts(timestamp))
+                        outcome["events_seen"] += 1
+                        key = _idempotency_key(collector["ecosystem"], path, version, registry_ts, "published")
+                        metadata = {
+                            "module_path": path,
+                            "algorithm_version": ALGORITHM_VERSION,
+                        }
+                        cursor = connection.execute(
+                            """INSERT INTO registry_feed_events
+                            (feed_event_id, collector_id, ecosystem, package, version, event_type,
+                             registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
+                             idempotency_key, collected_at, processing_state)
+                            VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, 0, ?, ?, ?, 'pending')
+                            ON CONFLICT(idempotency_key) DO NOTHING""",
+                            (
+                                _id("RFE"),
+                                collector["collector_id"],
+                                collector["ecosystem"],
+                                path,
+                                version,
+                                registry_ts,
+                                page_url,
+                                f"https://proxy.golang.org/{path}/@v/{version}.info",
+                                _json(metadata),
+                                key,
+                                now,
+                            ),
+                        )
+                        if cursor.rowcount == 0:
+                            outcome["events_duplicate"] += 1
+                        else:
+                            outcome["events_stored"] += 1
+                        last_ts = registry_ts
+                    if last_ts is not None:
+                        connection.execute(
+                            "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                            (last_ts, last_ts, run_id, now, collector["collector_id"]),
+                        )
             outcome["pages_processed"] += 1
             if last_ts is not None:
                 outcome["cursor_after"] = last_ts
@@ -1465,7 +1513,7 @@ def _ingest_maven_solr(
         except (IntakeError, CollectorError) as exc:
             outcome["error"] = f"solr bootstrap fetch failed: {exc}"
             with closing(soc_store.connect(db_path)) as connection:
-                with connection:
+                with _write_transaction(connection, db_path):
                     _record_dead_letter(
                         connection,
                         collector_id=collector["collector_id"],
@@ -1483,7 +1531,7 @@ def _ingest_maven_solr(
             return outcome
         now = _format_ts(_utcnow())
         with closing(soc_store.connect(db_path)) as connection:
-            with connection:
+            with _write_transaction(connection, db_path):
                 connection.execute(
                     "UPDATE registry_cursors SET cursor_value = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
                     (str(newest), run_id, now, collector["collector_id"]),
@@ -1504,7 +1552,7 @@ def _ingest_maven_solr(
                 payload = _fetch_json(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_MAVEN_PAGE_BYTES)
             except (IntakeError, CollectorError) as exc:
                 outcome["error"] = f"solr page fetch failed: {exc}"
-                with connection:
+                with _write_transaction(connection, db_path):
                     _record_dead_letter(
                         connection,
                         collector_id=collector["collector_id"],
@@ -1530,7 +1578,7 @@ def _ingest_maven_solr(
                 drained = True
                 break
             now = _format_ts(_utcnow())
-            with connection:
+            with _write_transaction(connection, db_path):
                 for doc in docs:
                     group = str(doc.get("g") or "").strip()
                     artifact = str(doc.get("a") or "").strip()
@@ -1585,7 +1633,7 @@ def _ingest_maven_solr(
     if drained and newest_seen is not None:
         now = _format_ts(_utcnow())
         with closing(soc_store.connect(db_path)) as connection:
-            with connection:
+            with _write_transaction(connection, db_path):
                 connection.execute(
                     "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
                     (str(newest_seen), _format_ts(datetime.fromtimestamp(newest_seen / 1000, tz=timezone.utc)), run_id, now, collector["collector_id"]),
@@ -1654,7 +1702,7 @@ def _ingest_openvsx_search(
                     payload = _fetch_json(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_OPENVSX_PAGE_BYTES)
                 except (IntakeError, CollectorError) as exc:
                     outcome["error"] = f"search enumeration fetch failed: {exc}"
-                    with connection:
+                    with _write_transaction(connection, db_path):
                         _record_dead_letter(
                             connection,
                             collector_id=collector["collector_id"],
@@ -1724,7 +1772,7 @@ def _ingest_openvsx_search(
         previous_map = _snapshot_map(previous)
         names_hash = hashlib.sha256(_json(members).encode("utf-8")).hexdigest()
         if previous is not None and str(previous["names_hash"]) == names_hash:
-            with connection:
+            with _write_transaction(connection, db_path):
                 connection.execute(
                     "UPDATE registry_cursors SET last_run_id = ?, updated_at = ? WHERE collector_id = ?",
                     (run_id, now, collector["collector_id"]),
@@ -1789,7 +1837,7 @@ def _ingest_openvsx_search(
             else:
                 outcome["events_stored"] += 1
 
-        with connection:
+        with _write_transaction(connection, db_path):
             for ext_id in added:
                 info = members[ext_id]
                 outcome["events_seen"] += 1
@@ -1895,16 +1943,17 @@ def _raise_retention_alert(*, collector: Dict[str, Any], state: Dict[str, Any], 
         f"{collector['name']} cursor is {int(state['cursor_age_seconds'])}s old, outside the "
         f"{int(state['retention_seconds'])}s change-log retention safety window; silent event loss is possible"
     )
-    with closing(soc_store.connect(db_path)) as connection:
-        with connection:
-            connection.execute(
-                """INSERT INTO research_alerts
-                (alert_id, alert_type, severity, candidate_id, campaign_id, case_id, dedupe_key,
-                 reason, evidence_json, status, owner, created_at, updated_at)
-                VALUES (?, 'collector_retention_risk', 'high', NULL, NULL, NULL, ?, ?, ?, 'open', '', ?, ?)
-                ON CONFLICT(dedupe_key) DO NOTHING""",
-                (_id("RAL"), dedupe, reason, _json(state | {"collector_id": collector["collector_id"]}), now, now),
-            )
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            with _write_transaction(connection, db_path):
+                connection.execute(
+                    """INSERT INTO research_alerts
+                    (alert_id, alert_type, severity, candidate_id, campaign_id, case_id, dedupe_key,
+                     reason, evidence_json, status, owner, created_at, updated_at)
+                    VALUES (?, 'collector_retention_risk', 'high', NULL, NULL, NULL, ?, ?, ?, 'open', '', ?, ?)
+                    ON CONFLICT(dedupe_key) DO NOTHING""",
+                    (_id("RAL"), dedupe, reason, _json(state | {"collector_id": collector["collector_id"]}), now, now),
+                )
 
 
 def _resolve_retention_alerts(*, collector: Dict[str, Any], db_path: Optional[str]) -> None:
@@ -1915,16 +1964,17 @@ def _resolve_retention_alerts(*, collector: Dict[str, Any], db_path: Optional[st
     look permanently broken and hides the next real outage.
     """
     now = _format_ts(_utcnow())
-    with closing(soc_store.connect(db_path)) as connection:
-        with connection:
-            connection.execute(
-                """UPDATE research_alerts
-                   SET status = 'resolved', updated_at = ?
-                   WHERE alert_type = 'collector_retention_risk'
-                     AND status = 'open'
-                     AND dedupe_key LIKE ?""",
-                (now, f"retention|{collector['collector_id']}|%"),
-            )
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            with _write_transaction(connection, db_path):
+                connection.execute(
+                    """UPDATE research_alerts
+                       SET status = 'resolved', updated_at = ?
+                       WHERE alert_type = 'collector_retention_risk'
+                         AND status = 'open'
+                         AND dedupe_key LIKE ?""",
+                    (now, f"retention|{collector['collector_id']}|%"),
+                )
 
 
 def run_registry_collector(
@@ -1937,7 +1987,38 @@ def run_registry_collector(
     db_path: Optional[str] = None,
     fetcher: Optional[SafeFetcher] = None,
 ) -> Dict[str, Any]:
-    """Run one bounded ingestion pass for a global registry feed."""
+    """Run one bounded ingestion pass for a global registry feed.
+
+    Registry adapters fetch remote pages outside SQLite transactions. The
+    individual persistence transactions below acquire the shared writer lock;
+    this function must not hold it across a network-bound collector pass.
+    """
+    return _run_registry_collector_unlocked(
+        ecosystem=ecosystem,
+        since=since,
+        max_pages=max_pages,
+        fetch_leaves=fetch_leaves,
+        max_diff_events=max_diff_events,
+        db_path=db_path,
+        fetcher=fetcher,
+    )
+
+
+def _run_registry_collector_unlocked(
+    *,
+    ecosystem: str = "nuget",
+    since: Optional[str] = None,
+    max_pages: int = DEFAULT_MAX_PAGES,
+    fetch_leaves: bool = False,
+    max_diff_events: int = DEFAULT_MAX_DIFF_EVENTS,
+    db_path: Optional[str] = None,
+    fetcher: Optional[SafeFetcher] = None,
+) -> Dict[str, Any]:
+    """Implementation for :func:`run_registry_collector`.
+
+    Remote fetches are intentionally outside the SQLite writer lock. Short
+    state transitions and event transactions acquire it at their call sites.
+    """
     collector = _collector_for_ecosystem(ecosystem, db_path=db_path)
     if not int(collector["enabled"]):
         raise CollectorError(f"collector {collector['collector_id']} is paused")
@@ -2075,7 +2156,7 @@ def retry_dead_letters(
                 new_status = "abandoned" if attempts >= MAX_DEAD_LETTER_ATTEMPTS else "pending"
                 if new_status == "abandoned":
                     results["abandoned"] += 1
-                with connection:
+                with _write_transaction(connection, db_path):
                     connection.execute(
                         """UPDATE registry_dead_letters
                         SET attempts = ?, next_retry_at = ?, status = ?, error_message = ?, updated_at = ?
@@ -2090,7 +2171,7 @@ def retry_dead_letters(
                         ),
                     )
                 continue
-            with connection:
+            with _write_transaction(connection, db_path):
                 if row["item_kind"] == "leaf":
                     original = _decode(row["payload_json"], {})
                     key = str(original.get("idempotency_key") or "")
@@ -2118,17 +2199,18 @@ def retry_dead_letters(
 
 def recover_interrupted_runs(*, max_age_seconds: int = 3600, db_path: Optional[str] = None) -> Dict[str, Any]:
     """Mark collector runs that died without completing as interrupted."""
-    ensure_collectors(db_path=db_path)
-    cutoff = _format_ts(_utcnow() - timedelta(seconds=max(60, int(max_age_seconds))))
-    now = _format_ts(_utcnow())
-    with closing(soc_store.connect(db_path)) as connection:
-        with connection:
-            cursor = connection.execute(
-                """UPDATE registry_ingestion_runs
-                SET status = 'interrupted', completed_at = ?, error_message = 'run exceeded the liveness window'
-                WHERE status = 'running' AND started_at < ?""",
-                (now, cutoff),
-            )
+    with sqlite_writer_lock(db_path):
+        ensure_collectors(db_path=db_path)
+        cutoff = _format_ts(_utcnow() - timedelta(seconds=max(60, int(max_age_seconds))))
+        now = _format_ts(_utcnow())
+        with closing(soc_store.connect(db_path)) as connection:
+            with _write_transaction(connection, db_path):
+                cursor = connection.execute(
+                    """UPDATE registry_ingestion_runs
+                    SET status = 'interrupted', completed_at = ?, error_message = 'run exceeded the liveness window'
+                    WHERE status = 'running' AND started_at < ?""",
+                    (now, cutoff),
+                )
     return {"interrupted": cursor.rowcount}
 
 

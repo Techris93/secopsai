@@ -16,6 +16,7 @@ import soc_store
 from secopsai.intelligence import minimize
 from secopsai.research_cases import add_evidence, add_subject, create_case, get_case, link_finding
 from secopsai.research_pipeline import get_pipeline, start_investigation_pipeline
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 SCHEMA_VERSION = "secopsai.investigation-autopilot.v1"
@@ -343,7 +344,7 @@ def recover_due_runs(*, db_path: Optional[str] = None) -> Dict[str, Any]:
     return {"count": len(recovered), "run_ids": recovered}
 
 
-def _run(run_id: str, *, db_path: Optional[str]) -> Dict[str, Any]:
+def _run_unlocked(run_id: str, *, db_path: Optional[str]) -> Dict[str, Any]:
     run = get_run(run_id, db_path=db_path)
     finding = soc_store.get_finding(run["finding_id"], db_path)
     if finding is None:
@@ -396,6 +397,19 @@ def _run(run_id: str, *, db_path: Optional[str]) -> Dict[str, Any]:
             retryable=not maxed, completed=maxed, db_path=db_path,
         )
     return get_run(run_id, db_path=db_path)
+
+
+def _run(run_id: str, *, db_path: Optional[str]) -> Dict[str, Any]:
+    """Run one investigation as one cross-process writer owner.
+
+    The pipeline contains several Core case, evidence, and review writes. It
+    also performs bounded artifact/provider work between those writes. Holding
+    the owner lock for this single run prevents Edge sync from interleaving
+    with a partially persisted investigation and is bounded by the existing
+    investigation worker limits.
+    """
+    with sqlite_writer_lock(db_path):
+        return _run_unlocked(run_id, db_path=db_path)
 
 
 def reconcile_pipeline(pipeline_id: str, *, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -514,7 +528,10 @@ def status(*, db_path: Optional[str] = None) -> Dict[str, Any]:
     # counters from the complete table. A fixed 200-row window previously
     # made an old backlog disappear from the dashboard and understated the
     # number of recoverable investigations.
-    runs = list_runs(limit=500, db_path=db_path)
+    # The summary query below covers the complete table. The operator panel
+    # only renders a bounded recent window; loading hundreds of rows through
+    # get_run() on every status refresh created an avoidable N+1 read burst.
+    runs = list_runs(limit=100, db_path=db_path)
     settings = get_settings(db_path=db_path)
     max_attempts = int(settings.get("max_attempts") or DEFAULTS["max_attempts"])
     # Keep recovery semantics explicit in the API. Older rows may have a

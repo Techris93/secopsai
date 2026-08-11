@@ -317,25 +317,26 @@ def _normalize_finding(finding: dict[str, Any]) -> dict[str, Any]:
 def _persist_edge_findings(findings: list[dict[str, Any]], *, db_path: str | None = None) -> int:
     soc_store.init_db(db_path)
     now = soc_store.utc_now()
-    with soc_store.connect(db_path) as connection:
-        for finding in findings:
-            existing = connection.execute(
+    with sqlite_writer_lock(db_path):
+        with soc_store.connect(db_path) as connection:
+            for finding in findings:
+                existing = connection.execute(
                 "SELECT status, disposition, created_at, payload_json FROM findings WHERE finding_id = ?",
                 (finding["finding_id"],),
-            ).fetchone()
-            status = finding["status"]
-            disposition = finding["disposition"]
-            created_at = finding.get("created_at") or now
-            if existing is not None:
-                created_at = str(existing["created_at"])
-                if _analyst_state_changed(existing):
-                    status = str(existing["status"])
-                    disposition = str(existing["disposition"])
+                ).fetchone()
+                status = finding["status"]
+                disposition = finding["disposition"]
+                created_at = finding.get("created_at") or now
+                if existing is not None:
+                    created_at = str(existing["created_at"])
+                    if _analyst_state_changed(existing):
+                        status = str(existing["status"])
+                        disposition = str(existing["disposition"])
 
-            persisted = dict(finding)
-            persisted["status"] = status
-            persisted["disposition"] = disposition
-            connection.execute(
+                persisted = dict(finding)
+                persisted["status"] = status
+                persisted["disposition"] = disposition
+                connection.execute(
                 """
                 INSERT INTO findings (
                     finding_id, title, summary, severity, severity_score, status,
@@ -370,13 +371,13 @@ def _persist_edge_findings(findings: list[dict[str, Any]], *, db_path: str | Non
                     now,
                     json.dumps(persisted, sort_keys=True),
                 ),
-            )
-            connection.execute("DELETE FROM finding_events WHERE finding_id = ?", (persisted["finding_id"],))
-            connection.executemany(
-                "INSERT INTO finding_events (finding_id, event_id) VALUES (?, ?)",
-                [(persisted["finding_id"], event_id) for event_id in persisted.get("event_ids", [])],
-            )
-        connection.commit()
+                )
+                connection.execute("DELETE FROM finding_events WHERE finding_id = ?", (persisted["finding_id"],))
+                connection.executemany(
+                    "INSERT INTO finding_events (finding_id, event_id) VALUES (?, ?)",
+                    [(persisted["finding_id"], event_id) for event_id in persisted.get("event_ids", [])],
+                )
+            connection.commit()
     return len(findings)
 
 

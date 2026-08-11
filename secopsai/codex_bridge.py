@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from threading import RLock
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +44,8 @@ DEFAULT_FALLBACK_MODELS = (
 DEFAULT_TIMEOUT_SECONDS = 300
 PROVIDER_PROBE_TTL_SECONDS = 60
 DEFAULT_PROVIDER_PROBE_TIMEOUT_SECONDS = 45
+HEALTH_SNAPSHOT_SCHEMA = "secopsai.intelligence.bridge-health.v1"
+HEALTH_SNAPSHOT_FILENAME = "bridge-health.json"
 MAX_PROCESS_OUTPUT_BYTES = 256 * 1024
 Runner = Callable[[Sequence[str], str, dict[str, str], int], subprocess.CompletedProcess[str]]
 
@@ -89,7 +92,74 @@ class BridgeSettings:
         return self.worker_id or f"{socket.gethostname()}:{os.getpid()}"
 
 
-def doctor(settings: BridgeSettings | None = None, *, runner: Runner | None = None) -> dict[str, Any]:
+def _health_snapshot_path(db_path: str | None = None) -> Path:
+    configured = os.environ.get("SECOPSAI_BRIDGE_HEALTH_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    database = Path(db_path or soc_store.default_db_path()).expanduser().resolve()
+    return database.with_name(HEALTH_SNAPSHOT_FILENAME)
+
+
+def _write_health_snapshot(health: dict[str, Any], db_path: str | None = None) -> None:
+    """Publish the last real probe for fast, read-only dashboard status."""
+    target = _health_snapshot_path(db_path)
+    payload = {
+        "schema_version": HEALTH_SNAPSHOT_SCHEMA,
+        "checked_at": soc_store.utc_now(),
+        "health": health,
+    }
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(target.parent, 0o700)
+    except OSError:
+        pass
+    temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+        try:
+            os.chmod(target, 0o600)
+        except OSError:
+            pass
+    except OSError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _read_health_snapshot(db_path: str | None = None) -> tuple[dict[str, Any] | None, float | None]:
+    target = _health_snapshot_path(db_path)
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, None
+    if not isinstance(payload, dict) or payload.get("schema_version") != HEALTH_SNAPSHOT_SCHEMA:
+        return None, None
+    health = payload.get("health")
+    checked_at = str(payload.get("checked_at") or "")
+    if not isinstance(health, dict) or not checked_at:
+        return None, None
+    try:
+        parsed = checked_at.replace("Z", "+00:00")
+        checked_epoch = datetime.fromisoformat(parsed).timestamp()
+        age = max(0.0, time.time() - checked_epoch)
+    except (TypeError, ValueError, OverflowError):
+        return None, None
+    return dict(health), age
+
+
+def doctor(
+    settings: BridgeSettings | None = None,
+    *,
+    runner: Runner | None = None,
+    probe: bool = True,
+    db_path: str | None = None,
+) -> dict[str, Any]:
     resolved = settings or BridgeSettings.from_environment()
     run = runner or _run
     codex = _doctor_codex(resolved, run)
@@ -102,18 +172,37 @@ def doctor(settings: BridgeSettings | None = None, *, runner: Runner | None = No
         item.get("id") == selected_model for item in models.get("models", [])
     )
     model_chain = _model_chain(resolved, model=selected_model or PRIMARY_MODEL, available=models)
-    provider_health = probe_provider_health(resolved, model_chain, runner=run)
+    health_source = "live_probe"
+    health_stale = False
+    snapshot_age_seconds = None
+    if probe:
+        provider_health = probe_provider_health(resolved, model_chain, runner=run)
+    else:
+        snapshot, snapshot_age_seconds = _read_health_snapshot(db_path)
+        if snapshot:
+            provider_health = {
+                str(model): dict(item)
+                for model, item in (snapshot.get("providers") or {}).items()
+                if isinstance(item, dict)
+            }
+            health_source = "last_live_probe"
+            health_stale = snapshot_age_seconds is None or snapshot_age_seconds > PROVIDER_PROBE_TTL_SECONDS
+        else:
+            provider_health = {}
+            health_source = "unavailable"
     ready_count = sum(1 for item in provider_health.values() if item.get("status") == "ready")
     provider_count = len(provider_health)
     # A provider is usable only after a real Responses-backed runtime probe.
     # ``ready`` here means at least one configured provider is live; degraded
     # means failover is possible but the selected/other providers are unhealthy.
-    ready = not remote_partial and ready_count > 0
+    ready = not remote_partial and ready_count > 0 and (probe or not health_stale)
     aggregate_status = (
         "ready" if ready_count == provider_count and provider_count else
         "degraded" if ready_count else
         "blocked"
     )
+    if not probe and health_stale and provider_count:
+        aggregate_status = "stale"
     if remote_partial:
         message = (
             "Set both SECOPSAI_CODEX_CORE_API_URL and SECOPSAI_CODEX_BRIDGE_TOKEN, "
@@ -121,12 +210,14 @@ def doctor(settings: BridgeSettings | None = None, *, runner: Runner | None = No
         )
     elif ready:
         message = _provider_health_message(provider_health, selected_model)
+    elif not probe and provider_health:
+        message = "The last live provider probe is stale; restart or wait for the bridge service to refresh it."
     else:
         message = _provider_health_message(provider_health, selected_model) if provider_health else (
             "No configured provider path. Start OpenCodex or configure a Codex/OpenAI runtime."
         )
     provider = PROVIDER_OPENCODEX if opencodex.get("status") == "ready" else PROVIDER_CODEX_NATIVE
-    return {
+    result = {
         "status": aggregate_status if not remote_partial else "blocked",
         "live_ready": ready,
         "ready_provider_count": ready_count,
@@ -151,6 +242,9 @@ def doctor(settings: BridgeSettings | None = None, *, runner: Runner | None = No
         "platform": platform.system().lower(),
         "queue_mode": "hosted_core" if remote_configured else "local_sqlite",
         "hosted_queue_configured": remote_configured,
+        "health_source": health_source,
+        "health_stale": health_stale,
+        "snapshot_age_seconds": round(snapshot_age_seconds, 1) if snapshot_age_seconds is not None else None,
         "message": message,
         "selection": {
             "env_model": os.environ.get("SECOPSAI_BRIDGE_MODEL", ""),
@@ -162,6 +256,9 @@ def doctor(settings: BridgeSettings | None = None, *, runner: Runner | None = No
             ],
         },
     }
+    if probe:
+        _write_health_snapshot(result, db_path)
+    return result
 
 
 def clear_provider_health_cache() -> None:
@@ -416,7 +513,7 @@ def run_once(
     run = runner or _run
     if require_subscription_login is not None:
         require_ready_provider = require_subscription_login
-    health = doctor(resolved, runner=run)
+    health = doctor(resolved, runner=run, db_path=db_path)
     if require_ready_provider and not health.get("live_ready"):
         if health.get("configured_provider_count", 0):
             try:
@@ -539,12 +636,14 @@ def run_loop(
                     from secopsai.agent_triage import enqueue_due_findings
                     from secopsai.investigation_autopilot import run_due as run_due_investigations
 
-                    with sqlite_writer_lock(db_path):
-                        run_due_investigations(db_path=db_path, limit=1)
+                    # Investigation execution performs bounded registry and
+                    # static-analysis work. Do not hold the shared SQLite
+                    # writer lock across that work: the lock is reserved for
+                    # the short queue mutations inside the called services.
+                    run_due_investigations(db_path=db_path, limit=1)
                     counts = job_counts(db_path=db_path)
                     if not counts.get("queued") and not counts.get("running"):
-                        with sqlite_writer_lock(db_path):
-                            enqueue_due_findings(db_path=db_path, limit=1)
+                        enqueue_due_findings(db_path=db_path, limit=1)
             except Exception:
                 # The bridge must continue processing already-durable jobs when
                 # automatic triage discovery is temporarily degraded.

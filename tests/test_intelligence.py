@@ -116,6 +116,22 @@ def test_job_lifecycle_is_idempotent_and_audited(tmp_path: Path):
         cancel_job(running_source["job_id"], actor="tester", db_path=db)
 
 
+def test_intelligence_status_job_list_is_compact_but_show_keeps_full_result(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    queued = enqueue_job(action="prioritize_findings", requested_by="tester", db_path=db)
+    claimed = claim_next_job(provider="fake", worker_id="worker-1", db_path=db)
+    assert claimed and claimed["job_id"] == queued["job_id"]
+    complete_job(claimed["job_id"], result={"summary": "x" * 1000}, actor="worker-1", db_path=db)
+
+    compact = list_jobs(db_path=db, include_result=False)
+    assert compact[0]["result"] == {}
+    assert compact[0]["result_available"] is True
+    assert compact[0]["result_bytes"] > 1000
+    assert compact[0]["input"] == {}
+    assert compact[0]["input_available"] is False
+    assert get_job(claimed["job_id"], db_path=db)["result"]["summary"] == "x" * 1000
+
+
 def test_bridge_service_recovery_requeues_interrupted_running_jobs(tmp_path: Path):
     db = str(tmp_path / "core.db")
     job = enqueue_job(action="prioritize_findings", requested_by="tester", db_path=db)
@@ -249,6 +265,25 @@ def test_bridge_drains_queued_work_before_autopilot_discovery(tmp_path: Path, mo
     assert result["processed"] == 1
 
 
+def test_bridge_does_not_hold_writer_lock_during_autopilot_discovery(tmp_path: Path, monkeypatch):
+    db = str(tmp_path / "core.db")
+    from secopsai.sqlite_writer_lock import sqlite_writer_lock
+
+    def discovery(**kwargs):
+        # Evidence collection may perform registry and static-analysis work.
+        # A separate writer must be able to acquire the lock while that work
+        # is running.
+        with sqlite_writer_lock(db, timeout_seconds=0.5):
+            return {"status": "completed", "processed": 0, "runs": []}
+
+    monkeypatch.setattr("secopsai.investigation_autopilot.run_due", discovery)
+    monkeypatch.setattr("secopsai.agent_triage.enqueue_due_findings", lambda **kwargs: {"queued": []})
+    monkeypatch.setattr("secopsai.codex_bridge.run_once", lambda **kwargs: {"status": "idle", "job": None})
+
+    result = run_loop(db_path=db, settings=BridgeSettings(worker_id="lock-scope-test"), max_iterations=1)
+    assert result["status"] == "stopped"
+
+
 def test_bridge_runner_kills_the_process_group_on_timeout(monkeypatch):
     captured = {}
     killed = []
@@ -285,7 +320,7 @@ def test_bridge_uses_luna_first_when_live_probe_is_healthy(tmp_path: Path, monke
     job = enqueue_job(action="prioritize_findings", requested_by="tester", db_path=db)
     monkeypatch.setattr(
         "secopsai.codex_bridge.doctor",
-        lambda settings, runner=None: {
+        lambda settings, runner=None, **kwargs: {
             "status": "ready",
             "live_ready": True,
             "provider": "opencodex_proxy",
@@ -316,7 +351,7 @@ def test_bridge_falls_back_after_luna_upstream_rate_limit(tmp_path: Path, monkey
     models = [PRIMARY_MODEL, *DEFAULT_FALLBACK_MODELS]
     monkeypatch.setattr(
         "secopsai.codex_bridge.doctor",
-        lambda settings, runner=None: {
+        lambda settings, runner=None, **kwargs: {
             "status": "degraded",
             "live_ready": True,
             "provider": "opencodex_proxy",
@@ -358,7 +393,7 @@ def test_bridge_moves_triage_job_to_awaiting_provider_when_all_providers_down(tm
     )
     monkeypatch.setattr(
         "secopsai.codex_bridge.doctor",
-        lambda settings, runner=None: {
+        lambda settings, runner=None, **kwargs: {
             "status": "blocked",
             "live_ready": False,
             "configured_provider_count": 4,
