@@ -220,6 +220,48 @@ def test_bridge_health_probes_selected_model_before_fallbacks(monkeypatch):
     assert set(calls) == {PRIMARY_MODEL, *DEFAULT_FALLBACK_MODELS}
 
 
+def test_background_probe_skips_fallbacks_when_selected_model_is_ready(tmp_path: Path, monkeypatch):
+    calls = []
+
+    def probe(model, settings, runner, *, force):
+        calls.append(model)
+        return {"model": model, "status": "ready", "http_status": 200, "probe_method": "test", "error": ""}
+
+    monkeypatch.setattr("secopsai.codex_bridge._probe_provider", probe)
+    settings = BridgeSettings(model=PRIMARY_MODEL, fallback_models=DEFAULT_FALLBACK_MODELS)
+    health = doctor(
+        settings,
+        runner=lambda *args: None,
+        probe_fallbacks=False,
+        db_path=str(tmp_path / "bridge.db"),
+    )
+    assert calls == [PRIMARY_MODEL]
+    assert health["live_ready"] is True
+    assert health["probe_fallbacks"] is False
+
+
+def test_background_probe_stops_at_first_healthy_fallback(tmp_path: Path, monkeypatch):
+    calls = []
+
+    def probe(model, settings, runner, *, force):
+        calls.append(model)
+        status = "unavailable" if model == PRIMARY_MODEL else "ready"
+        return {"model": model, "status": status, "http_status": 200 if status == "ready" else 429, "probe_method": "test", "error": "at capacity" if status != "ready" else ""}
+
+    monkeypatch.setattr("secopsai.codex_bridge._probe_provider", probe)
+    settings = BridgeSettings(model=PRIMARY_MODEL, fallback_models=DEFAULT_FALLBACK_MODELS)
+    health = doctor(
+        settings,
+        runner=lambda *args: None,
+        probe_fallbacks=False,
+        db_path=str(tmp_path / "bridge.db"),
+    )
+    assert calls == [PRIMARY_MODEL, DEFAULT_FALLBACK_MODELS[0]]
+    assert health["live_ready"] is True
+    assert health["selected_model_ready"] is False
+    assert health["providers"][DEFAULT_FALLBACK_MODELS[0]]["status"] == "ready"
+
+
 def test_model_chain_keeps_configured_fallbacks_when_catalog_is_stale():
     settings = BridgeSettings(model=PRIMARY_MODEL, fallback_models=DEFAULT_FALLBACK_MODELS)
     chain = _model_chain(settings, model=PRIMARY_MODEL, available={"models": [{"id": PRIMARY_MODEL}]})

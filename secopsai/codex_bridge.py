@@ -37,13 +37,23 @@ PROVIDER_OPENCODEX = "opencodex_proxy"
 PROVIDER_CODEX_NATIVE = "codex_chatgpt_subscription"
 PRIMARY_MODEL = "gpt-5.6-luna"
 DEFAULT_FALLBACK_MODELS = (
+    # Keep fallback capacity inside the OpenAI/Codex pool before attempting
+    # providers that may be independently quota-limited. These models are
+    # present in the synced OpenCodex catalog and use the same subscription
+    # path as the selected Luna model.
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.4-mini",
     "google-antigravity/gemini-3.5-flash-low",
     "kimi/kimi-k2.7-code",
     "xai/grok-4.5",
 )
 DEFAULT_TIMEOUT_SECONDS = 300
 PROVIDER_PROBE_TTL_SECONDS = 60
-DEFAULT_PROVIDER_PROBE_TIMEOUT_SECONDS = 45
+# Capability probes must finish well inside the 60-second health snapshot TTL.
+# A probe only needs to establish whether the configured runtime can accept a
+# minimal request; it must not wait through a provider's full retry window.
+DEFAULT_PROVIDER_PROBE_TIMEOUT_SECONDS = 20
 HEALTH_SNAPSHOT_SCHEMA = "secopsai.intelligence.bridge-health.v1"
 HEALTH_SNAPSHOT_FILENAME = "bridge-health.json"
 MAX_PROCESS_OUTPUT_BYTES = 256 * 1024
@@ -158,6 +168,7 @@ def doctor(
     *,
     runner: Runner | None = None,
     probe: bool = True,
+    probe_fallbacks: bool = True,
     db_path: str | None = None,
 ) -> dict[str, Any]:
     resolved = settings or BridgeSettings.from_environment()
@@ -168,7 +179,7 @@ def doctor(
     remote_configured = bool(resolved.core_api_url and resolved.bridge_token)
     remote_partial = bool(resolved.core_api_url) != bool(resolved.bridge_token)
     selected_model = resolved.model or models.get("default_model") or ""
-    selected_ready = bool(selected_model) and any(
+    selected_catalog_available = bool(selected_model) and any(
         item.get("id") == selected_model for item in models.get("models", [])
     )
     model_chain = _model_chain(resolved, model=selected_model or PRIMARY_MODEL, available=models)
@@ -176,7 +187,29 @@ def doctor(
     health_stale = False
     snapshot_age_seconds = None
     if probe:
-        provider_health = probe_provider_health(resolved, model_chain, runner=run)
+        if probe_fallbacks:
+            provider_health = probe_provider_health(resolved, model_chain, runner=run)
+        else:
+            # The local OpenCodex proxy serializes upstream sessions. The
+            # background worker must keep the selected model responsive rather
+            # than probing exhausted fallbacks on every cycle. Probe fallbacks
+            # only when the selected model is not usable, preserving failover
+            # without creating avoidable proxy contention.
+            provider_health = probe_provider_health(resolved, model_chain[:1], runner=run)
+            selected_health = provider_health.get(selected_model, {})
+            if selected_health.get("status") != "ready" and len(model_chain) > 1:
+                # Probe in configured priority order and stop at the first
+                # healthy fallback. This avoids opening several simultaneous
+                # OpenCodex sessions when the primary is at capacity.
+                for fallback_model in model_chain[1:]:
+                    fallback_health = probe_provider_health(
+                        resolved,
+                        [fallback_model],
+                        runner=run,
+                    )
+                    provider_health.update(fallback_health)
+                    if fallback_health.get(fallback_model, {}).get("status") == "ready":
+                        break
     else:
         snapshot, snapshot_age_seconds = _read_health_snapshot(db_path)
         if snapshot:
@@ -190,6 +223,10 @@ def doctor(
         else:
             provider_health = {}
             health_source = "unavailable"
+    selected_provider_health = provider_health.get(selected_model, {}) if selected_model else {}
+    selected_probe_status = str(selected_provider_health.get("status") or "unknown")
+    selected_last_probe_ready = selected_probe_status == "ready"
+    selected_model_ready = selected_last_probe_ready and (probe or not health_stale)
     ready_count = sum(1 for item in provider_health.values() if item.get("status") == "ready")
     provider_count = len(provider_health)
     # A provider is usable only after a real Responses-backed runtime probe.
@@ -224,9 +261,16 @@ def doctor(
         "configured_provider_count": provider_count,
         "providers": provider_health,
         "probe_ttl_seconds": PROVIDER_PROBE_TTL_SECONDS,
+        "probe_fallbacks": bool(probe_fallbacks),
         "provider": provider,
         "selected_model": selected_model,
-        "selected_model_ready": selected_ready or not selected_model,
+        # Catalog availability and live capability are separate signals. The
+        # former means the model is selectable; the latter is safe to use for
+        # new work only when the probe is live (or its snapshot is fresh).
+        "selected_model_catalog_available": selected_catalog_available,
+        "selected_model_probe_status": selected_probe_status,
+        "selected_model_last_probe_ready": selected_last_probe_ready,
+        "selected_model_ready": selected_model_ready or not selected_model,
         "fallback_models": list(resolved.fallback_models),
         "effective_model_chain": list(model_chain),
         "models": models,
@@ -506,6 +550,7 @@ def run_once(
     runner: Runner | None = None,
     require_ready_provider: bool = True,
     model: str | None = None,
+    probe_fallbacks: bool = True,
     # Backward-compatible alias used by older tests/callers.
     require_subscription_login: bool | None = None,
 ) -> dict[str, Any]:
@@ -513,7 +558,7 @@ def run_once(
     run = runner or _run
     if require_subscription_login is not None:
         require_ready_provider = require_subscription_login
-    health = doctor(resolved, runner=run, db_path=db_path)
+    health = doctor(resolved, runner=run, db_path=db_path, probe_fallbacks=probe_fallbacks)
     if require_ready_provider and not health.get("live_ready"):
         if health.get("configured_provider_count", 0):
             try:
@@ -648,7 +693,13 @@ def run_loop(
                 # The bridge must continue processing already-durable jobs when
                 # automatic triage discovery is temporarily degraded.
                 pass
-        result = run_once(db_path=db_path, settings=resolved, runner=runner, model=model)
+        result = run_once(
+            db_path=db_path,
+            settings=resolved,
+            runner=runner,
+            model=model,
+            probe_fallbacks=False,
+        )
         if result["status"] == "blocked":
             return {"status": "blocked", "processed": processed, "failures": failures, "bridge": result.get("bridge")}
         if result["status"] == "awaiting_provider":

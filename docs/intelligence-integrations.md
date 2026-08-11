@@ -169,6 +169,8 @@ The bridge processes durable queued work before discovering another record, perf
 
 Configured on this machine:
 
+- `gpt-5.6-luna` (primary)
+- `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.4-mini` (same OpenAI/Codex fallback pool)
 - `kimi/kimi-k2.7-code`
 - `xai/grok-4.5`
 - `google-antigravity/gemini-3.5-flash-low`
@@ -193,12 +195,12 @@ Set a default model for the bridge service:
 
 ```bash
 export SECOPSAI_BRIDGE_MODEL=xai/grok-4.5
-export SECOPSAI_BRIDGE_FALLBACK_MODELS=kimi/kimi-k2.7-code,google-antigravity/gemini-3.5-flash-low
+export SECOPSAI_BRIDGE_FALLBACK_MODELS=gpt-5.6-sol,gpt-5.6-terra,gpt-5.4-mini,google-antigravity/gemini-3.5-flash-low,kimi/kimi-k2.7-code,xai/grok-4.5
 .venv/bin/python -m secopsai.cli intelligence bridge service stop
 .venv/bin/python -m secopsai.cli intelligence bridge service start
 ```
 
-If the first model hits a usage/auth limit, the bridge automatically tries the fallback models.
+If the first model hits a usage/auth or capacity limit, the bridge automatically tries the fallback models in order. The background service probes the selected model first and stops at the first healthy fallback; an explicit one-shot probe can still report every configured provider.
 
 Mission Control model picker: the local bridge module in the dashboard lists the same catalog as a dropdown. Pick a model there and use **Process next job**; failed jobs can be requeued from the jobs table and retried on another model without recreating the pipeline.
 
