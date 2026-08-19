@@ -63,3 +63,46 @@ def test_vex_policy_is_time_limited_and_matches_patch_manifest():
     assert payload["status"] == "valid"
     assert payload["review_after"] == "2026-10-30T00:00:00Z"
     assert payload["vulnerabilities"] == ["CVE-2026-11940", "CVE-2026-11972", "CVE-2026-15308"]
+
+def test_grype_image_gate_blocks_fixed_high_findings_only(tmp_path):
+    from scripts.enforce_grype_image_gate import collect_blocking_findings, has_available_fix
+
+    unfixed = {
+        "matches": [
+            {
+                "vulnerability": {
+                    "id": "CVE-2026-14456",
+                    "severity": "High",
+                    "fix": {"versions": [], "state": "unknown"},
+                },
+                "artifact": {"name": "libssl3", "version": "3.5.7-r0", "locations": []},
+            },
+            {
+                "vulnerability": {
+                    "id": "CVE-2026-14456",
+                    "severity": "High",
+                    "fix": {"versions": [], "state": "unknown"},
+                },
+                "artifact": {"name": "libcrypto3", "version": "3.5.7-r0", "locations": []},
+            },
+        ]
+    }
+    assert collect_blocking_findings(unfixed) == []
+    assert has_available_fix(unfixed["matches"][0]["vulnerability"]) is False
+
+    fixed = {
+        "matches": [
+            {
+                "vulnerability": {
+                    "id": "CVE-2099-0001",
+                    "severity": "High",
+                    "fix": {"versions": ["3.5.8-r0"], "state": "fixed"},
+                },
+                "artifact": {"name": "libssl3", "version": "3.5.7-r0", "locations": ["/lib/apk/db/installed"]},
+            }
+        ]
+    }
+    failures = collect_blocking_findings(fixed)
+    assert failures == [
+        "CVE-2099-0001 libssl3@3.5.7-r0 path=['/lib/apk/db/installed']"
+    ]

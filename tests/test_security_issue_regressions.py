@@ -206,6 +206,9 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
     assert "summarize_container_security.py" in image_gate_step["run"]
     assert "--gate" in image_gate_step["run"]
     assert any(step.get("name") == "Enforce Grype HIGH/CRITICAL image gate" for step in build_steps)
+    grype_gate_step = next(step for step in build_steps if step.get("name") == "Enforce Grype HIGH/CRITICAL image gate")
+    assert "scripts/enforce_grype_image_gate.py" in grype_gate_step["run"]
+    assert "container-security/grype-results.json" in grype_gate_step["run"]
     assert any(step.get("name") == "Enforce SBOM package-version assertions" for step in build_steps)
 
     eval_harness = (ROOT / ".github" / "workflows" / "eval-harness-v2.yml").read_text(encoding="utf-8")
