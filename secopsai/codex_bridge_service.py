@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 import soc_store
-from secopsai.codex_bridge import PRIMARY_MODEL
+from secopsai.codex_bridge import persist_selected_model
 from secopsai.intelligence_jobs import recover_running_jobs
 
 
@@ -29,7 +29,7 @@ def install_service(
     platform_name: str | None = None,
     runner: RunCommand | None = None,
     autonomy_mode: str = "supervised",
-    model: str = PRIMARY_MODEL,
+    model: str = "",
 ) -> dict[str, Any]:
     resolved_home = (home or Path.home()).expanduser().resolve()
     system = (platform_name or platform.system()).lower()
@@ -40,6 +40,8 @@ def install_service(
     model = str(model or "").strip()
     if model and not MODEL_ID_RE.fullmatch(model):
         raise ValueError("bridge model id contains unsupported characters")
+    if model:
+        persist_selected_model(model, db_path=db_path, actor="bridge-service-install")
     if system == "darwin":
         result = _install_launchd(resolved_home, db_path, run, start, autonomy_mode, model)
     elif system == "linux":
@@ -90,8 +92,6 @@ def _install_launchd(home: Path, db_path: str | None, run: RunCommand, start: bo
         "--db-path",
         str(Path(db_path or soc_store.default_db_path()).expanduser().resolve()),
     ]
-    if model:
-        args.extend(["--model", model])
     environment = {
         "HOME": str(home),
         "PATH": os.environ.get("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"),
@@ -152,8 +152,6 @@ def _install_systemd(home: Path, db_path: str | None, run: RunCommand, start: bo
         "--db-path",
         str(Path(db_path or soc_store.default_db_path()).expanduser().resolve()),
     ]
-    if model:
-        command.extend(["--model", model])
     lines = [
         "[Unit]",
         "Description=SecOpsAI local Codex intelligence bridge",

@@ -118,6 +118,8 @@ from secopsai.research_resolution import update_settings as update_research_reso
 from secopsai.codex_bridge import doctor as codex_bridge_doctor
 from secopsai.codex_bridge import list_models as list_codex_bridge_models
 from secopsai.codex_bridge import PRIMARY_MODEL as codex_bridge_primary_model
+from secopsai.codex_bridge import load_selected_model as load_codex_bridge_selected_model
+from secopsai.codex_bridge import persist_selected_model as persist_codex_bridge_selected_model
 from secopsai.codex_bridge import run_loop as run_codex_bridge_loop
 from secopsai.codex_bridge import run_once as run_codex_bridge_once
 from secopsai.codex_bridge_service import install_service as install_codex_bridge_service
@@ -1449,18 +1451,25 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Inspect or run the local OpenCodex/Codex intelligence bridge",
     )
     intelligence_bridge_sub = intelligence_bridge.add_subparsers(dest="intelligence_bridge_cmd", required=True)
-    intelligence_bridge_sub.add_parser("doctor")
+    intelligence_bridge_doctor = intelligence_bridge_sub.add_parser("doctor")
+    intelligence_bridge_doctor.add_argument("--db-path", default=None)
     intelligence_bridge_sub.add_parser(
         "models",
         help="List OpenCodex/Codex models available for research analysis",
     )
+    intelligence_bridge_select = intelligence_bridge_sub.add_parser(
+        "select-model",
+        help="Persist the operator-selected OpenCodex/Codex model without probing fallbacks",
+    )
+    intelligence_bridge_select.add_argument("model")
+    intelligence_bridge_select.add_argument("--db-path", default=None)
     intelligence_bridge_run = intelligence_bridge_sub.add_parser("run")
     intelligence_bridge_run.add_argument("--once", action="store_true")
     intelligence_bridge_run.add_argument("--max-iterations", type=int, default=0)
     intelligence_bridge_run.add_argument(
         "--model",
-        default=codex_bridge_primary_model,
-        help="OpenCodex model id, e.g. kimi/kimi-k2.7-code or xai/grok-4.5",
+        default="",
+        help="OpenCodex model id to persist and use exclusively, e.g. xai/grok-4.6",
     )
     intelligence_bridge_run.add_argument("--db-path", default=None)
     intelligence_bridge_service = intelligence_bridge_sub.add_parser("service", help="Install or control the user-level bridge background service")
@@ -1476,7 +1485,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     intelligence_bridge_service.add_argument(
         "--model",
-        default=codex_bridge_primary_model,
+        default="",
         help="Persist this OpenCodex provider/model for the background bridge",
     )
 
@@ -3834,7 +3843,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     # service performs the real probe before processing work
                     # and persists it; do not launch four new provider probes
                     # on every Mission Control refresh.
-                    "bridge": codex_bridge_doctor(probe=False, db_path=args.db_path),
+                    "bridge": codex_bridge_doctor(probe=False, probe_fallbacks=False, db_path=args.db_path),
                     "service": codex_bridge_service_action("status"),
                     "investigations": investigation_status_payload,
                 }
@@ -3966,11 +3975,30 @@ def main(argv: Optional[List[str]] = None) -> int:
                     raise ValueError(f"unsupported intelligence autopilot command: {args.intelligence_autopilot_cmd}")
             elif args.intelligence_cmd == "bridge":
                 if args.intelligence_bridge_cmd == "doctor":
-                    payload = codex_bridge_doctor()
+                    payload = codex_bridge_doctor(
+                        db_path=getattr(args, "db_path", None),
+                        probe_fallbacks=False,
+                    )
                 elif args.intelligence_bridge_cmd == "models":
                     payload = list_codex_bridge_models()
+                elif args.intelligence_bridge_cmd == "select-model":
+                    persist_codex_bridge_selected_model(args.model, db_path=args.db_path, actor="operator")
+                    payload = codex_bridge_doctor(
+                        probe=True,
+                        probe_fallbacks=False,
+                        db_path=args.db_path,
+                        model=args.model,
+                    )
                 elif args.intelligence_bridge_cmd == "run":
                     selected_model = str(getattr(args, "model", "") or "").strip() or None
+                    # Persist only for an operator one-shot, or to migrate a
+                    # first-run --model into the persist file. A service loop
+                    # with a stale baked --model must not overwrite a later
+                    # dashboard selection.
+                    if selected_model and (
+                        args.once or not load_codex_bridge_selected_model(args.db_path)
+                    ):
+                        persist_codex_bridge_selected_model(selected_model, db_path=args.db_path, actor="operator")
                     if args.once:
                         payload = run_codex_bridge_once(db_path=args.db_path, model=selected_model)
                     else:
@@ -3981,11 +4009,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                         )
                 elif args.intelligence_bridge_cmd == "service":
                     if args.action == "install":
+                        selected_model = str(getattr(args, "model", "") or "").strip()
+                        if selected_model:
+                            persist_codex_bridge_selected_model(selected_model, db_path=args.db_path, actor="operator")
                         payload = install_codex_bridge_service(
                             db_path=args.db_path,
                             start=not args.no_start,
                             autonomy_mode=args.autonomy_mode,
-                            model=args.model,
+                            model=selected_model or args.model,
                         )
                     else:
                         payload = codex_bridge_service_action(args.action, tail=args.tail, db_path=args.db_path)

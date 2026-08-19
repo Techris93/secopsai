@@ -56,6 +56,8 @@ PROVIDER_PROBE_TTL_SECONDS = 60
 DEFAULT_PROVIDER_PROBE_TIMEOUT_SECONDS = 20
 HEALTH_SNAPSHOT_SCHEMA = "secopsai.intelligence.bridge-health.v1"
 HEALTH_SNAPSHOT_FILENAME = "bridge-health.json"
+SELECTED_MODEL_SCHEMA = "secopsai.intelligence.bridge-selected-model.v1"
+SELECTED_MODEL_FILENAME = "bridge-selected-model.json"
 MAX_PROCESS_OUTPUT_BYTES = 256 * 1024
 Runner = Callable[[Sequence[str], str, dict[str, str], int], subprocess.CompletedProcess[str]]
 
@@ -68,7 +70,7 @@ class BridgeSettings:
     codex_binary: str = "codex"
     opencodex_binary: str = "opencodex"
     model: str = PRIMARY_MODEL
-    fallback_models: tuple[str, ...] = DEFAULT_FALLBACK_MODELS
+    fallback_models: tuple[str, ...] = ()
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     poll_interval_seconds: int = 5
     worker_id: str = ""
@@ -77,10 +79,7 @@ class BridgeSettings:
 
     @classmethod
     def from_environment(cls) -> "BridgeSettings":
-        fallback_raw = os.environ.get(
-            "SECOPSAI_BRIDGE_FALLBACK_MODELS",
-            ",".join(DEFAULT_FALLBACK_MODELS),
-        )
+        fallback_raw = os.environ.get("SECOPSAI_BRIDGE_FALLBACK_MODELS", "")
         fallback = tuple(
             item.strip()
             for item in fallback_raw.split(",")
@@ -89,7 +88,7 @@ class BridgeSettings:
         return cls(
             codex_binary=os.environ.get("SECOPSAI_CODEX_BINARY", "codex").strip() or "codex",
             opencodex_binary=os.environ.get("SECOPSAI_OPENCODEX_BINARY", "opencodex").strip() or "opencodex",
-            model=os.environ.get("SECOPSAI_BRIDGE_MODEL", PRIMARY_MODEL).strip() or PRIMARY_MODEL,
+            model=os.environ.get("SECOPSAI_BRIDGE_MODEL", "").strip(),
             fallback_models=fallback,
             timeout_seconds=_bounded_int("SECOPSAI_CODEX_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS, 30, 1800),
             poll_interval_seconds=_bounded_int("SECOPSAI_CODEX_POLL_SECONDS", 5, 1, 300),
@@ -108,6 +107,96 @@ def _health_snapshot_path(db_path: str | None = None) -> Path:
         return Path(configured).expanduser().resolve()
     database = Path(db_path or soc_store.default_db_path()).expanduser().resolve()
     return database.with_name(HEALTH_SNAPSHOT_FILENAME)
+
+
+def _selected_model_path(db_path: str | None = None) -> Path:
+    configured = os.environ.get("SECOPSAI_BRIDGE_SELECTED_MODEL_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    database = Path(db_path or soc_store.default_db_path()).expanduser().resolve()
+    return database.with_name(SELECTED_MODEL_FILENAME)
+
+
+def load_selected_model(db_path: str | None = None) -> str:
+    target = _selected_model_path(db_path)
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, dict) or payload.get("schema_version") != SELECTED_MODEL_SCHEMA:
+        return ""
+    return str(payload.get("model") or "").strip()
+
+
+def persist_selected_model(model: str, *, db_path: str | None = None, actor: str = "operator") -> dict[str, Any]:
+    cleaned = str(model or "").strip()
+    if not cleaned:
+        raise ValueError("a model id is required")
+    if not re.fullmatch(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$", cleaned):
+        raise ValueError("bridge model id contains unsupported characters")
+    target = _selected_model_path(db_path)
+    payload = {
+        "schema_version": SELECTED_MODEL_SCHEMA,
+        "model": cleaned,
+        "updated_at": soc_store.utc_now(),
+        "updated_by": str(actor or "operator")[:80],
+    }
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+        try:
+            os.chmod(target, 0o600)
+        except OSError:
+            pass
+    except OSError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    return payload
+
+
+def resolve_selected_model(
+    settings: BridgeSettings | None = None,
+    *,
+    model: str | None = None,
+    db_path: str | None = None,
+    available: dict[str, Any] | None = None,
+) -> str:
+    """Return the model the operator selected.
+
+    Priority:
+    1. ``SECOPSAI_BRIDGE_MODEL`` — the only hard override
+    2. persisted operator selection — source of truth across restarts
+    3. explicit non-empty ``--model`` for this invocation, only when nothing
+       has been persisted yet (so a stale launchd/systemd ``--model`` cannot
+       overwrite a later dashboard choice)
+    4. ``BridgeSettings.model`` when a caller constructed settings directly
+    5. catalog default, then ``PRIMARY_MODEL``
+    """
+    resolved = settings or BridgeSettings.from_environment()
+    catalog_default = ""
+    if isinstance(available, dict):
+        catalog_default = str(available.get("default_model") or "").strip()
+    explicit = str(model or "").strip()
+    persisted = load_selected_model(db_path)
+    env_model = str(os.environ.get("SECOPSAI_BRIDGE_MODEL", "") or "").strip()
+    settings_model = str(resolved.model or "").strip()
+    return (
+        env_model
+        or persisted
+        or explicit
+        or settings_model
+        or catalog_default
+        or PRIMARY_MODEL
+    )
 
 
 def _write_health_snapshot(health: dict[str, Any], db_path: str | None = None) -> None:
@@ -170,6 +259,7 @@ def doctor(
     probe: bool = True,
     probe_fallbacks: bool = True,
     db_path: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     resolved = settings or BridgeSettings.from_environment()
     run = runner or _run
@@ -178,7 +268,7 @@ def doctor(
     models = list_models(settings=resolved, runner=run)
     remote_configured = bool(resolved.core_api_url and resolved.bridge_token)
     remote_partial = bool(resolved.core_api_url) != bool(resolved.bridge_token)
-    selected_model = resolved.model or models.get("default_model") or ""
+    selected_model = resolve_selected_model(resolved, model=model, db_path=db_path, available=models)
     selected_catalog_available = bool(selected_model) and any(
         item.get("id") == selected_model for item in models.get("models", [])
     )
@@ -187,36 +277,34 @@ def doctor(
     health_stale = False
     snapshot_age_seconds = None
     if probe:
-        if probe_fallbacks:
-            provider_health = probe_provider_health(resolved, model_chain, runner=run)
-        else:
-            # The local OpenCodex proxy serializes upstream sessions. The
-            # background worker must keep the selected model responsive rather
-            # than probing exhausted fallbacks on every cycle. Probe fallbacks
-            # only when the selected model is not usable, preserving failover
-            # without creating avoidable proxy contention.
-            provider_health = probe_provider_health(resolved, model_chain[:1], runner=run)
-            selected_health = provider_health.get(selected_model, {})
-            if selected_health.get("status") != "ready" and len(model_chain) > 1:
-                # Probe in configured priority order and stop at the first
-                # healthy fallback. This avoids opening several simultaneous
-                # OpenCodex sessions when the primary is at capacity.
-                for fallback_model in model_chain[1:]:
-                    fallback_health = probe_provider_health(
-                        resolved,
-                        [fallback_model],
-                        runner=run,
-                    )
-                    provider_health.update(fallback_health)
-                    if fallback_health.get(fallback_model, {}).get("status") == "ready":
-                        break
+        # Probe only the operator-selected model. Walk explicitly configured
+        # fallbacks only after that model is confirmed down.
+        provider_health = probe_provider_health(resolved, model_chain[:1], runner=run)
+        selected_health = provider_health.get(selected_model, {})
+        allow_fallbacks = (
+            probe_fallbacks
+            and bool(resolved.fallback_models)
+            and selected_health.get("status") != "ready"
+            and len(model_chain) > 1
+        )
+        if allow_fallbacks:
+            for fallback_model in model_chain[1:]:
+                fallback_health = probe_provider_health(
+                    resolved,
+                    [fallback_model],
+                    runner=run,
+                )
+                provider_health.update(fallback_health)
+                if fallback_health.get(fallback_model, {}).get("status") == "ready":
+                    break
     else:
         snapshot, snapshot_age_seconds = _read_health_snapshot(db_path)
         if snapshot:
             provider_health = {
-                str(model): dict(item)
-                for model, item in (snapshot.get("providers") or {}).items()
+                str(item_model): dict(item)
+                for item_model, item in (snapshot.get("providers") or {}).items()
                 if isinstance(item, dict)
+                and (not selected_model or item_model == selected_model)
             }
             health_source = "last_live_probe"
             health_stale = snapshot_age_seconds is None or snapshot_age_seconds > PROVIDER_PROBE_TTL_SECONDS
@@ -558,7 +646,14 @@ def run_once(
     run = runner or _run
     if require_subscription_login is not None:
         require_ready_provider = require_subscription_login
-    health = doctor(resolved, runner=run, db_path=db_path, probe_fallbacks=probe_fallbacks)
+    effective_model = resolve_selected_model(resolved, model=model, db_path=db_path)
+    health = doctor(
+        resolved,
+        runner=run,
+        db_path=db_path,
+        probe_fallbacks=probe_fallbacks and bool(resolved.fallback_models),
+        model=effective_model,
+    )
     if require_ready_provider and not health.get("live_ready"):
         if health.get("configured_provider_count", 0):
             try:
@@ -606,7 +701,7 @@ def run_once(
         job_model = str(job_inputs.get("selected_model") or job.get("selected_model") or "").strip()
         model_chain = _model_chain(
             resolved,
-            model=model or job_model or None,
+            model=model or job_model or effective_model,
             available=health.get("models", {}),
         )
         if bridge_request is None:
@@ -697,8 +792,8 @@ def run_loop(
             db_path=db_path,
             settings=resolved,
             runner=runner,
-            model=model,
-            probe_fallbacks=False,
+            model=resolve_selected_model(resolved, model=model, db_path=db_path),
+            probe_fallbacks=True,
         )
         if result["status"] == "blocked":
             return {"status": "blocked", "processed": processed, "failures": failures, "bridge": result.get("bridge")}

@@ -200,7 +200,7 @@ export SECOPSAI_BRIDGE_FALLBACK_MODELS=gpt-5.6-sol,gpt-5.6-terra,gpt-5.4-mini,go
 .venv/bin/python -m secopsai.cli intelligence bridge service start
 ```
 
-If the first model hits a usage/auth or capacity limit, the bridge automatically tries the fallback models in order. The background service probes the selected model first and stops at the first healthy fallback; an explicit one-shot probe can still report every configured provider.
+The operator-selected model is persisted and used exclusively. Health probes and jobs do not walk the Codex fallback pool unless `SECOPSAI_BRIDGE_FALLBACK_MODELS` is set. If the selected model is at a usage limit, SecOpsAI reports that model as unavailable instead of spending other providers' quotas.
 
 Mission Control model picker: the local bridge module in the dashboard lists the same catalog as a dropdown. Pick a model there and use **Process next job**; failed jobs can be requeued from the jobs table and retried on another model without recreating the pipeline.
 

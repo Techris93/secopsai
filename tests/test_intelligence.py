@@ -253,7 +253,7 @@ def test_background_probe_stops_at_first_healthy_fallback(tmp_path: Path, monkey
     health = doctor(
         settings,
         runner=lambda *args: None,
-        probe_fallbacks=False,
+        probe_fallbacks=True,
         db_path=str(tmp_path / "bridge.db"),
     )
     assert calls == [PRIMARY_MODEL, DEFAULT_FALLBACK_MODELS[0]]
@@ -551,7 +551,9 @@ def test_launchd_service_contains_no_credentials(tmp_path: Path):
     assert "SECOPSAI_CORE_READ_TOKEN" not in encoded
     assert "OPENAI_API_KEY" not in encoded
     assert payload["EnvironmentVariables"]["SECOPSAI_RESEARCH_AUTONOMY_MODE"] == "agent_review"
-    assert payload["ProgramArguments"][-2:] == ["--model", "kimi/kimi-k2.7-code-highspeed"]
+    assert "--model" not in payload["ProgramArguments"]
+    from secopsai.codex_bridge import load_selected_model
+    assert load_selected_model(db_path=str(tmp_path / "core.db")) == "kimi/kimi-k2.7-code-highspeed"
     assert result["autonomy_mode"] == "agent_review"
     assert result["model"] == "kimi/kimi-k2.7-code-highspeed"
     assert result["credentials_persisted"] is False
@@ -834,3 +836,89 @@ def test_research_bridge_prompt_requests_evidence_led_depth():
     assert "5-12 confirmed_facts" in prompt
     assert "prioritized recommended_actions" in prompt
     assert "Use the available output limits fully" in prompt
+
+def test_operator_selected_model_is_persisted_and_not_overwritten_by_service_flag(tmp_path: Path, monkeypatch):
+    db = str(tmp_path / "core.db")
+    monkeypatch.delenv("SECOPSAI_BRIDGE_MODEL", raising=False)
+    monkeypatch.delenv("SECOPSAI_BRIDGE_FALLBACK_MODELS", raising=False)
+    from secopsai.codex_bridge import persist_selected_model, resolve_selected_model, doctor
+    persist_selected_model("xai/grok-4.6", db_path=db, actor="operator")
+    settings = BridgeSettings(model=PRIMARY_MODEL, fallback_models=DEFAULT_FALLBACK_MODELS, worker_id="persist-test")
+    assert resolve_selected_model(settings, model=PRIMARY_MODEL, db_path=db) == "xai/grok-4.6"
+    calls = []
+    def probe(model, settings, runner, *, force):
+        calls.append(model)
+        return {"model": model, "status": "ready", "http_status": 200, "probe_method": "test", "error": ""}
+    monkeypatch.setattr("secopsai.codex_bridge._probe_provider", probe)
+    health = doctor(settings, runner=lambda *args: None, probe_fallbacks=True, db_path=db, model=PRIMARY_MODEL)
+    assert health["selected_model"] == "xai/grok-4.6"
+    assert calls == ["xai/grok-4.6"]
+    assert set(health["providers"]) == {"xai/grok-4.6"}
+
+
+def test_unconfigured_fallbacks_do_not_probe_exhausted_codex_siblings(tmp_path: Path, monkeypatch):
+    calls = []
+    def probe(model, settings, runner, *, force):
+        calls.append(model)
+        return {"model": model, "status": "unavailable", "http_status": 429, "probe_method": "test", "error": "usage limit"}
+    monkeypatch.setattr("secopsai.codex_bridge._probe_provider", probe)
+    settings = BridgeSettings(model="xai/grok-4.6", fallback_models=(), worker_id="exclusive-test")
+    health = doctor(settings, runner=lambda *args: None, probe_fallbacks=True, db_path=str(tmp_path / "bridge.db"))
+    assert calls == ["xai/grok-4.6"]
+    assert health["selected_model"] == "xai/grok-4.6"
+    assert health["effective_model_chain"] == ["xai/grok-4.6"]
+
+
+def test_persisted_selection_survives_service_restart_without_model_flag(tmp_path: Path, monkeypatch):
+    db = str(tmp_path / "core.db")
+    monkeypatch.delenv("SECOPSAI_BRIDGE_MODEL", raising=False)
+    monkeypatch.delenv("SECOPSAI_BRIDGE_FALLBACK_MODELS", raising=False)
+    from secopsai.codex_bridge import load_selected_model, persist_selected_model, resolve_selected_model
+
+    persist_selected_model("xai/grok-4.6", db_path=db, actor="operator")
+
+    def runner(command):
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = install_service(
+        db_path=db,
+        start=True,
+        home=tmp_path,
+        platform_name="darwin",
+        runner=runner,
+    )
+    with Path(result["path"]).open("rb") as handle:
+        payload = plistlib.load(handle)
+    assert "--model" not in payload["ProgramArguments"]
+    assert load_selected_model(db_path=db) == "xai/grok-4.6"
+    settings = BridgeSettings.from_environment()
+    assert resolve_selected_model(settings, model="", db_path=db) == "xai/grok-4.6"
+    assert resolve_selected_model(settings, model=None, db_path=db) == "xai/grok-4.6"
+    assert resolve_selected_model(
+        BridgeSettings(model=PRIMARY_MODEL, fallback_models=DEFAULT_FALLBACK_MODELS),
+        model=PRIMARY_MODEL,
+        db_path=db,
+    ) == "xai/grok-4.6"
+
+
+def test_healthy_selected_model_is_the_only_health_probe(tmp_path: Path, monkeypatch):
+    db = str(tmp_path / "core.db")
+    monkeypatch.delenv("SECOPSAI_BRIDGE_MODEL", raising=False)
+    monkeypatch.delenv("SECOPSAI_BRIDGE_FALLBACK_MODELS", raising=False)
+    from secopsai.codex_bridge import persist_selected_model
+
+    persist_selected_model("xai/grok-4.6", db_path=db, actor="operator")
+    calls = []
+
+    def probe(model, settings, runner, *, force):
+        calls.append(model)
+        return {"model": model, "status": "ready", "http_status": 200, "probe_method": "test", "error": ""}
+
+    monkeypatch.setattr("secopsai.codex_bridge._probe_provider", probe)
+    settings = BridgeSettings(model=PRIMARY_MODEL, fallback_models=DEFAULT_FALLBACK_MODELS, worker_id="probe-scope-test")
+    health = doctor(settings, runner=lambda *args: None, probe_fallbacks=True, db_path=db)
+    assert health["selected_model"] == "xai/grok-4.6"
+    assert calls == ["xai/grok-4.6"]
+    assert set(health["providers"]) == {"xai/grok-4.6"}
+    assert all(item not in calls for item in DEFAULT_FALLBACK_MODELS)
+
