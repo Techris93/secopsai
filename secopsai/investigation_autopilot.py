@@ -21,7 +21,7 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 SCHEMA_VERSION = "secopsai.investigation-autopilot.v1"
 MODES = {"off", "advisory", "guarded"}
-ACTIVE = {"queued", "collecting", "analyzing", "awaiting_model", "awaiting_input", "awaiting_sandbox", "ready_for_decision"}
+ACTIVE = {"queued", "collecting", "analyzing", "awaiting_model", "awaiting_input", "awaiting_sandbox", "ready_for_decision", "running"}
 SEVERITY_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 DEFAULTS = {
     "mode": "guarded",
@@ -33,6 +33,7 @@ DEFAULTS = {
     "auto_correlate": True,
 }
 RECOVERY_BACKOFF_SECONDS = 300
+STALE_ACTIVE_SECONDS = 6 * 3600
 
 
 def _json(value: Any) -> str:
@@ -271,11 +272,12 @@ def run_due(*, db_path: Optional[str] = None, limit: int = 1) -> Dict[str, Any]:
     settings = get_settings(db_path=db_path)
     if settings["mode"] == "off":
         return {"status": "off", "processed": 0, "runs": []}
+    reconciled = reconcile_due_runs(db_path=db_path)
     recovered = recover_due_runs(db_path=db_path)
     backfill = enqueue_due_findings(db_path=db_path, limit=max(10, int(settings["max_active_runs"])))
     with closing(soc_store.connect(db_path)) as connection:
         active_count = int(connection.execute(
-            "SELECT COUNT(*) FROM investigation_autopilot_runs WHERE status IN ('collecting','analyzing','awaiting_model')"
+            "SELECT COUNT(*) FROM investigation_autopilot_runs WHERE status IN ('collecting','analyzing','awaiting_model','running')"
         ).fetchone()[0])
         capacity = max(0, int(settings["max_active_runs"]) - active_count)
         rows = connection.execute(
@@ -285,7 +287,7 @@ def run_due(*, db_path: Optional[str] = None, limit: int = 1) -> Dict[str, Any]:
     results = []
     for row in rows:
         results.append(_run(str(row["run_id"]), db_path=db_path))
-    return {"status": "completed", "processed": len(results), "runs": results, "backfill": backfill, "recovered": recovered}
+    return {"status": "completed", "processed": len(results), "runs": results, "backfill": backfill, "recovered": recovered, "reconciled": reconciled}
 
 
 def _timestamp_age_seconds(value: Any) -> Optional[float]:
@@ -342,6 +344,57 @@ def recover_due_runs(*, db_path: Optional[str] = None) -> Dict[str, Any]:
             recovered.append(str(row["run_id"]))
         connection.commit()
     return {"count": len(recovered), "run_ids": recovered}
+
+
+def reconcile_due_runs(*, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Release investigation slots that are no longer actually active.
+
+    Completed or review-ready pipelines can remain marked collecting /
+    awaiting_model after a worker restart. Stale model waits also occupy
+    capacity forever. Reconcile those rows before starting new work so
+    queued findings are not blocked by ghost occupancy.
+    """
+    with closing(soc_store.connect(db_path)) as connection:
+        rows = connection.execute(
+            """SELECT run_id, pipeline_id, status, updated_at
+               FROM investigation_autopilot_runs
+               WHERE status IN ('collecting','analyzing','awaiting_model','running')
+               ORDER BY updated_at ASC"""
+        ).fetchall()
+    reconciled: list[str] = []
+    stale: list[str] = []
+    occupying = {"collecting", "analyzing", "awaiting_model", "running"}
+    for row in rows:
+        original_age = _timestamp_age_seconds(row["updated_at"])
+        pipeline_id = _clean(row["pipeline_id"], 40)
+        current = None
+        if pipeline_id:
+            try:
+                current = reconcile_pipeline(pipeline_id, db_path=db_path)
+            except Exception:
+                current = None
+        if current is None:
+            current = get_run(str(row["run_id"]), db_path=db_path)
+        if current.get("status") not in occupying:
+            reconciled.append(str(row["run_id"]))
+            continue
+        if original_age is None or original_age < STALE_ACTIVE_SECONDS:
+            continue
+        _set_run(
+            str(row["run_id"]),
+            status="evidence_gap",
+            stage=current.get("current_stage") or "stale_active",
+            case_id=current.get("case_id"),
+            pipeline_id=current.get("pipeline_id"),
+            blocker_code="stale_active_investigation",
+            blocker_message="This investigation stopped progressing and released its worker slot so newer cases can start. Retry when the local model or artifact source is healthy.",
+            retryable=True,
+            evidence=current.get("evidence_summary") if isinstance(current.get("evidence_summary"), dict) else None,
+            decision=current.get("decision") if isinstance(current.get("decision"), dict) else None,
+            db_path=db_path,
+        )
+        stale.append(str(row["run_id"]))
+    return {"count": len(reconciled) + len(stale), "reconciled": reconciled, "stale": stale}
 
 
 def _run_unlocked(run_id: str, *, db_path: Optional[str]) -> Dict[str, Any]:
@@ -549,7 +602,7 @@ def status(*, db_path: Optional[str] = None) -> Dict[str, Any]:
         )
     state_names = {
         "queued", "collecting", "analyzing", "awaiting_model", "awaiting_input",
-        "awaiting_sandbox", "ready_for_decision", "evidence_gap", "resolved", "escalated", "failed", "canceled",
+        "awaiting_sandbox", "ready_for_decision", "running", "evidence_gap", "resolved", "escalated", "failed", "canceled",
     }
     with closing(soc_store.connect(db_path)) as connection:
         rows = connection.execute(

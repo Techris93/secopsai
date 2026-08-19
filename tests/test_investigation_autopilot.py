@@ -214,3 +214,55 @@ def test_pypi_exact_version_uses_bounded_release_endpoint():
     metadata = PyPiAdapter().resolve("duckdb", "1.5.2.dev38", SafeFetcher(fetch=fetch))
     assert requested_urls == ["https://pypi.org/pypi/duckdb/1.5.2.dev38/json"]
     assert metadata.version == "1.5.2.dev38"
+
+
+def test_reconcile_due_runs_releases_review_ready_and_stale_slots(tmp_path, monkeypatch):
+    db = str(tmp_path / "soc.db")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(tmp_path / "quarantine"))
+    soc_store.persist_findings([_finding()], source="secopsai-supply-chain", db_path=db)
+    real_start = start_investigation_pipeline
+    monkeypatch.setattr(
+        investigation_autopilot, "start_investigation_pipeline",
+        lambda case_id, **kwargs: real_start(case_id, **kwargs, fetcher=_fetcher()),
+    )
+    queued = investigation_autopilot.enqueue_finding("SCM-AUTOPILOT-1", db_path=db)
+    run = investigation_autopilot.run_due(db_path=db)["runs"][0]
+    assert run["status"] == "awaiting_model"
+
+    with soc_store.connect(db) as connection:
+        connection.execute(
+            "UPDATE research_pipeline_runs SET status='awaiting_review', current_step='human_review' WHERE pipeline_id=?",
+            (run["pipeline_id"],),
+        )
+        connection.execute(
+            "UPDATE investigation_autopilot_runs SET updated_at='2020-01-01T00:00:00Z' WHERE run_id=?",
+            (run["run_id"],),
+        )
+        connection.commit()
+
+    released = investigation_autopilot.reconcile_due_runs(db_path=db)
+    assert queued["run_id"] in released["reconciled"]
+    current = investigation_autopilot.get_run(run["run_id"], db_path=db)
+    assert current["status"] == "ready_for_decision"
+
+    with soc_store.connect(db) as connection:
+        connection.execute(
+            """UPDATE investigation_autopilot_runs
+               SET status='awaiting_model', current_stage='local_codex_bridge',
+                   updated_at='2020-01-01T00:00:00Z'
+               WHERE run_id=?""",
+            (run["run_id"],),
+        )
+        connection.execute(
+            "UPDATE research_pipeline_runs SET status='awaiting_ai', current_step='local_codex_bridge' WHERE pipeline_id=?",
+            (run["pipeline_id"],),
+        )
+        connection.commit()
+
+    released = investigation_autopilot.reconcile_due_runs(db_path=db)
+    assert run["run_id"] in released["stale"]
+    current = investigation_autopilot.get_run(run["run_id"], db_path=db)
+    assert current["status"] == "evidence_gap"
+    assert current["blocker_code"] == "stale_active_investigation"
+    assert current["retryable"] is True
+
