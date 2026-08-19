@@ -278,7 +278,7 @@ def test_slow_leaf_fetch_does_not_hold_sqlite_write_lock(tmp_path):
     def fetch(url, max_bytes):
         if url == target:
             started.set()
-            assert release.wait(5), "test leaf fetch did not release"
+            assert release.wait(30), "test leaf fetch did not release"
         return base._injected(url, max_bytes)
 
     worker = threading.Thread(
@@ -292,14 +292,20 @@ def test_slow_leaf_fetch_does_not_hold_sqlite_write_lock(tmp_path):
         },
     )
     worker.start()
-    assert started.wait(5), "collector did not reach the delayed leaf"
-    with sqlite3.connect(db_path, timeout=1) as connection:
-        # The collector has not opened its write transaction while the remote
-        # leaf is delayed, so a concurrent read remains immediately available.
-        assert connection.execute("SELECT COUNT(*) FROM registry_feed_events").fetchone()[0] == 0
-    release.set()
-    worker.join(timeout=10)
-    assert not worker.is_alive()
+    try:
+        # Catalog index + page ingest can exceed 5s on a loaded Python 3.10 CI
+        # runner. The worker still reaches this leaf; it just arrives late.
+        assert started.wait(30), "collector did not reach the delayed leaf"
+        with sqlite3.connect(db_path, timeout=1) as connection:
+            # The collector has not opened its write transaction while the remote
+            # leaf is delayed, so a concurrent read remains immediately available.
+            assert connection.execute("SELECT COUNT(*) FROM registry_feed_events").fetchone()[0] == 0
+        release.set()
+        worker.join(timeout=10)
+        assert not worker.is_alive()
+    finally:
+        release.set()
+        worker.join(timeout=10)
 
 
 def test_collector_status_reports_lag_gaps_and_counts(tmp_path):
