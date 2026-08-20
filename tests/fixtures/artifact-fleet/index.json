@@ -1,0 +1,24 @@
+[
+  {
+    "ecosystem": "crates",
+    "package": "proc-macro1",
+    "version": "1.0.107",
+    "publisher": "fixture-maintainer",
+    "published_at": "2026-08-20T00:00:00Z",
+    "dist_url": "https://static.crates.io/crates/proc-macro1/proc-macro1-1.0.107.crate",
+    "source_url": "https://github.com/fixture/proc-macro1",
+    "source_revision": "fixture-1.0.107",
+    "trust": "registry"
+  },
+  {
+    "ecosystem": "crates",
+    "package": "proc-macro2",
+    "version": "1.0.107",
+    "publisher": "fixture-legitimate",
+    "published_at": "2026-08-20T00:00:01Z",
+    "dist_url": "https://static.crates.io/crates/proc-macro2/proc-macro2-1.0.107.crate",
+    "source_url": "https://github.com/dtolnay/proc-macro2",
+    "source_revision": "legitimate-1.0.107",
+    "trust": "registry"
+  }
+]

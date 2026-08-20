@@ -20,6 +20,7 @@ SecOpsAI is a local-first security monitoring, investigation, and triage platfor
 - Provides a local **agent runtime** for tool routing, context compaction, loop detection, and isolated jobs
 - Supports supply-chain policy management with **allowlists**, **rule tuning**, and **threshold tuning**
 - Scans AI-built code and local agent telemetry for **slopsquatted / hallucinated dependencies**
+- Provides a staged **OSS Artifact Fleet**: metadata indexing, deterministic static scanning, minimized model triage, and analyst escalation
 - Keeps data **local-first by default**
 
 ## Enterprise Security Operations
@@ -42,6 +43,18 @@ enterprise workflow records are documented in
 Missing cloud credentials or hosted storage are reported as `not_configured`;
 SecOpsAI never mutates IAM, firewall, Kubernetes, DAST targets, customer
 answers, or external tickets without explicit approval.
+
+For high-volume artifact review:
+
+```bash
+secopsai artifact-fleet status --json
+secopsai artifact-fleet scan-artifact --ecosystem crates --package proc-macro1 --version 1.0.107 --artifact fixture.crate --json
+secopsai artifact-fleet analyst-queue --json
+```
+
+The fleet never executes package code, build scripts, binaries, or extensions;
+model triage receives only deterministic rule-hit context. See
+[Artifact Fleet Operations](docs/artifact-fleet-operations.md).
 
 ## Platform Support
 

@@ -32,6 +32,19 @@ from secopsai.agent_core import (
 from secopsai.adaptive_response import evaluate_adaptive_response
 from secopsai.ai_dependency_guard import SUPPORTED_ECOSYSTEMS as AI_DEPENDENCY_GUARD_ECOSYSTEMS
 from secopsai.ai_dependency_guard import run_ai_dependency_guard
+from secopsai.artifact_fleet import analyst_queue as artifact_analyst_queue
+from secopsai.artifact_fleet import artifact_research_handoff, benchmark as artifact_benchmark
+from secopsai.artifact_fleet import draft_artifact_blog
+from secopsai.artifact_fleet import fleet_metrics, fleet_status, index_records as artifact_index_records
+from secopsai.artifact_fleet import index_live_sources
+from secopsai.artifact_fleet import list_artifacts as artifact_list
+from secopsai.artifact_fleet import scan_artifact as scan_artifact_fleet
+from secopsai.artifact_fleet import scan_pending as scan_pending_artifacts
+from secopsai.artifact_fleet import source_health as artifact_source_health
+from secopsai.artifact_fleet import triage_artifact
+from secopsai.artifact_fleet import triage_show as show_artifact_triage
+from secopsai.artifact_fleet import triage_pending
+from secopsai.artifact_fleet import validate_rule_pack as validate_artifact_rule_pack
 from secopsai.blog import (
     attach_media as attach_blog_media,
     attach_source_media as attach_blog_source_media,
@@ -1404,6 +1417,53 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     enterprise_ticket.add_argument("--actor", default="operator")
     enterprise_ticket.add_argument("--role", default="operator")
 
+    artifact_fleet = sub.add_parser("artifact-fleet", help="Run the staged OSS artifact index, scan, triage, and analyst funnel")
+    artifact_sub = artifact_fleet.add_subparsers(dest="artifact_cmd", required=True)
+    for command_name, help_text in (
+        ("status", "Show artifact fleet stage and queue status"),
+        ("source-health", "Show registry source cursor/freshness state"),
+        ("analyst-queue", "List suspicious or inconclusive artifacts awaiting analysts"),
+        ("metrics", "Show artifact throughput and queue metrics"),
+    ):
+        command = artifact_sub.add_parser(command_name, help=help_text)
+        command.add_argument("--limit", type=int, default=100)
+        command.add_argument("--db-path", default=None)
+    artifact_sub.add_parser("rules", help="Validate the versioned YARA/Sigma artifact rule pack")
+    artifact_index = artifact_sub.add_parser("index", help="Index metadata records without downloading artifacts")
+    artifact_index.add_argument("--fixture", default="", help="Metadata JSON array fixture")
+    artifact_index.add_argument("--source", default="fixture")
+    artifact_index.add_argument("--cursor", default="")
+    artifact_index.add_argument("--since", default="24h")
+    artifact_index.add_argument("--limit", type=int, default=1000)
+    artifact_index.add_argument("--db-path", default=None)
+    artifact_scan = artifact_sub.add_parser("scan-artifact", help="Safely scan one artifact without execution")
+    artifact_scan.add_argument("--ecosystem", required=True)
+    artifact_scan.add_argument("--package", required=True)
+    artifact_scan.add_argument("--version", required=True)
+    artifact_scan.add_argument("--artifact", required=True)
+    artifact_scan.add_argument("--source-reference", default="")
+    artifact_scan.add_argument("--db-path", default=None)
+    artifact_scan_queue = artifact_sub.add_parser("scan", help="Process pending artifact scan records")
+    artifact_scan_queue.add_argument("--fixture", default="", help="Optional JSON array of scan jobs")
+    artifact_scan_queue.add_argument("--workers", type=int, default=4)
+    artifact_scan_queue.add_argument("--since", default="24h")
+    artifact_scan_queue.add_argument("--db-path", default=None)
+    artifact_triage_cmd = artifact_sub.add_parser("triage", help="Process minimized artifact triage context")
+    artifact_triage_cmd.add_argument("--artifact-id", default="")
+    artifact_triage_cmd.add_argument("--limit", type=int, default=500)
+    artifact_triage_cmd.add_argument("--model", default="")
+    artifact_triage_cmd.add_argument("--db-path", default=None)
+    artifact_show = artifact_sub.add_parser("triage-show", help="Show one artifact triage record and safe context")
+    artifact_show.add_argument("artifact_id")
+    artifact_show.add_argument("--db-path", default=None)
+    artifact_bench = artifact_sub.add_parser("benchmark", help="Run a synthetic throughput benchmark")
+    artifact_bench.add_argument("--artifacts", type=int, default=1000)
+    artifact_bench.add_argument("--workers", type=int, default=4)
+    artifact_bench.add_argument("--fixture-mode", action="store_true")
+    artifact_handoff = artifact_sub.add_parser("research-handoff", help="Prepare review-only research handoff metadata")
+    artifact_handoff.add_argument("artifact_id")
+    artifact_handoff.add_argument("--db-path", default=None)
+
     intelligence = sub.add_parser("intelligence", help="Run approved read-only intelligence actions and manage the local Codex bridge")
     intelligence_sub = intelligence.add_subparsers(dest="intelligence_cmd", required=True)
     intelligence_sub.add_parser("actions", help="List approved intelligence actions and scopes")
@@ -1585,6 +1645,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     research_sub = research.add_subparsers(dest="research_cmd", required=True)
 
     research_ecosystems = research_sub.add_parser("ecosystems", help="Show research ecosystem capabilities and coverage modes")
+    research_artifact_case = research_sub.add_parser("artifact-case", help="Prepare a review-only research handoff for an artifact fleet result")
+    research_artifact_case.add_argument("artifact_id")
+    research_artifact_case.add_argument("--db-path", default=None)
 
     research_watchlist = research_sub.add_parser("watchlist", help="Manage cross-ecosystem research watchlists")
     research_watchlist_sub = research_watchlist.add_subparsers(dest="research_watchlist_cmd", required=True)
@@ -2274,6 +2337,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     blog_advisory.add_argument("--campaign", required=True, help="Campaign id or advisory id")
     blog_campaign = blog_sub.add_parser("draft-campaign", help="Create a review-only blog draft from a campaign research result")
     blog_campaign.add_argument("--campaign", required=True, help="Campaign id, advisory id, or campaign research JSON path")
+    blog_artifact = blog_sub.add_parser("draft-artifact-case", help="Create a review-only draft from an artifact fleet result")
+    blog_artifact.add_argument("artifact_id")
+    blog_artifact.add_argument("--db-path", default=None)
 
     blog_news = blog_sub.add_parser("draft-news", help="Create a review-only blog draft from a URL or RSS feed")
     blog_news.add_argument("--source", required=True, help="Source URL or feed URL")
@@ -3500,6 +3566,18 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
 
+        if args.research_cmd == "artifact-case":
+            try:
+                payload = artifact_research_handoff(args.artifact_id, db_path=args.db_path)
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"error": str(exc), "artifact_id": args.artifact_id}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            print(to_json(payload) if args.json else to_json(payload))
+            return 0
+
         if args.research_cmd in {"rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "external-intel", "npm", "storage", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "resolution", "workflow"}:
             return _run_research_automation_command(args)
 
@@ -3601,6 +3679,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 payload = draft_blog_advisory(args.campaign)
             elif args.blog_cmd == "draft-campaign":
                 payload = draft_blog_campaign(args.campaign)
+            elif args.blog_cmd == "draft-artifact-case":
+                payload = draft_artifact_blog(args.artifact_id, db_path=args.db_path)
             elif args.blog_cmd == "draft-news":
                 payload = draft_blog_news(args.source)
             elif args.blog_cmd == "news-sources":
@@ -3961,6 +4041,59 @@ def main(argv: Optional[List[str]] = None) -> int:
         except Exception as exc:
             if args.json:
                 print(to_json({"error": str(exc), "command": args.enterprise_cmd}))
+            else:
+                print(f"error: {exc}")
+            return 1
+        if args.json:
+            print(to_json(payload))
+        else:
+            print(to_json(payload))
+        return 0
+
+    if args.cmd == "artifact-fleet":
+        try:
+            if args.artifact_cmd == "status":
+                payload = fleet_status(db_path=args.db_path)
+            elif args.artifact_cmd == "rules":
+                payload = validate_artifact_rule_pack()
+            elif args.artifact_cmd == "source-health":
+                payload = {"sources": artifact_source_health(db_path=args.db_path)}
+            elif args.artifact_cmd == "analyst-queue":
+                payload = {"artifacts": artifact_analyst_queue(limit=args.limit, db_path=args.db_path)}
+            elif args.artifact_cmd == "metrics":
+                payload = fleet_metrics(db_path=args.db_path)
+            elif args.artifact_cmd == "index":
+                if not args.fixture:
+                    payload = index_live_sources(since=args.since, limit=args.limit, sources=[args.source] if args.source != "fixture" else None, db_path=args.db_path)
+                else:
+                    records = json.loads(Path(args.fixture).read_text(encoding="utf-8"))
+                    if not isinstance(records, list):
+                        raise ValueError("artifact index fixture must be a JSON array")
+                    payload = artifact_index_records(records[:args.limit], source=args.source, cursor=args.cursor, db_path=args.db_path)
+            elif args.artifact_cmd == "scan-artifact":
+                payload = scan_artifact_fleet(ecosystem=args.ecosystem, package=args.package, version=args.version, artifact=args.artifact, source_reference=args.source_reference, db_path=args.db_path)
+            elif args.artifact_cmd == "scan":
+                if args.fixture:
+                    jobs = json.loads(Path(args.fixture).read_text(encoding="utf-8"))
+                    if not isinstance(jobs, list):
+                        raise ValueError("artifact scan fixture must be a JSON array")
+                    artifact_index_records(jobs, source="fixture", db_path=args.db_path)
+                    payload = scan_pending_artifacts(limit=len(jobs), workers=args.workers, db_path=args.db_path)
+                else:
+                    payload = scan_pending_artifacts(limit=500, workers=args.workers, db_path=args.db_path)
+            elif args.artifact_cmd == "triage":
+                payload = triage_artifact(args.artifact_id, model=args.model, db_path=args.db_path) if args.artifact_id else triage_pending(limit=args.limit, db_path=args.db_path)
+            elif args.artifact_cmd == "triage-show":
+                payload = show_artifact_triage(args.artifact_id, db_path=args.db_path)
+            elif args.artifact_cmd == "benchmark":
+                payload = artifact_benchmark(artifacts=args.artifacts, workers=args.workers, fixture_mode=args.fixture_mode)
+            elif args.artifact_cmd == "research-handoff":
+                payload = artifact_research_handoff(args.artifact_id, db_path=args.db_path)
+            else:
+                raise ValueError(f"unsupported artifact-fleet command: {args.artifact_cmd}")
+        except Exception as exc:
+            if args.json:
+                print(to_json({"error": str(exc), "command": args.artifact_cmd}))
             else:
                 print(f"error: {exc}")
             return 1

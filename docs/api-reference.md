@@ -59,6 +59,23 @@ secopsai enterprise prioritize-vulnerability --input vulnerability.json --json
 Enterprise commands use bounded, redacted, organization-scoped records. Cloud
 and active-scan actions are read-only or approval-gated by design.
 
+## OSS artifact fleet commands
+
+```bash
+secopsai artifact-fleet index --since 24h --limit 1000 --json
+secopsai artifact-fleet status --json
+secopsai artifact-fleet source-health --json
+secopsai artifact-fleet scan --since 24h --workers 8 --json
+secopsai artifact-fleet triage --limit 500 --json
+secopsai artifact-fleet analyst-queue --limit 100 --json
+secopsai artifact-fleet metrics --json
+secopsai artifact-fleet benchmark --artifacts 1000 --workers 4 --fixture-mode --json
+```
+
+The fleet indexes metadata first, scans only authorized artifacts, sends only
+rule-hit context to model triage, and leaves suspicious or inconclusive work
+for analyst review.
+
 ## Triage commands
 
 ### `secopsai triage list`

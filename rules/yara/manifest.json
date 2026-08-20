@@ -1,0 +1,18 @@
+{
+  "schema_version": "secopsai.artifact-rule-pack.v1",
+  "pack_id": "secopsai-generic-oss",
+  "version": "1.0.0",
+  "author": "SecOpsAI",
+  "review_status": "reviewed",
+  "rules": [
+    {"rule_id": "OSS-BUILD-HOOK", "severity": "medium", "confidence": "medium", "file_types": ["source", "manifest"]},
+    {"rule_id": "OSS-DOWNLOAD-EXECUTE", "severity": "high", "confidence": "high", "file_types": ["source"]},
+    {"rule_id": "OSS-CREDENTIAL-DISCOVERY", "severity": "high", "confidence": "high", "file_types": ["source", "config"]},
+    {"rule_id": "OSS-POWERSHELL-STAGING", "severity": "high", "confidence": "high", "file_types": ["source"]},
+    {"rule_id": "OSS-WINDOWS-PERSISTENCE", "severity": "high", "confidence": "medium", "file_types": ["source"]},
+    {"rule_id": "OSS-BROWSER-DATA", "severity": "high", "confidence": "high", "file_types": ["source"]},
+    {"rule_id": "OSS-C2-DGA", "severity": "high", "confidence": "medium", "file_types": ["source"]},
+    {"rule_id": "OSS-RUST-PROC-MACRO", "severity": "high", "confidence": "high", "file_types": ["source"]},
+    {"rule_id": "OSS-C2-IP-PORT", "severity": "high", "confidence": "medium", "file_types": ["source", "binary"]}
+  ]
+}

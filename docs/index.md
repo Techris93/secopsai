@@ -167,6 +167,11 @@ Homebrew, npm, and package-registry ownership.
 - [Penetration-Test Coordination](penetration-testing.md)
 - [Developer Security Awareness](developer-security-awareness.md)
 - [Enterprise Deployment](enterprise-deployment.md)
+- [OSS Artifact Fleet Operations](artifact-fleet-operations.md)
+- [Artifact Triage](artifact-triage.md)
+- [Artifact Rule Packs](artifact-rule-packs.md)
+- [OSS Artifact Fleet Architecture](oss-artifact-fleet-architecture.md)
+- [OSS Artifact Fleet Gap Analysis](oss-artifact-fleet-gap-analysis.md)
 
 - [Beginner Live Guide](BEGINNER-LIVE-GUIDE.md)
 - [Operator Runbook](operator-runbook.md)

@@ -1,0 +1,13 @@
+title: Suspicious OSS Artifact Build Hook
+id: secopsai-oss-artifact-build-hook
+status: experimental
+description: Detects artifact build or install hooks combined with network or process behavior.
+logsource:
+  product: oss-artifact
+detection:
+  selection:
+    rule_id:
+      - OSS-BUILD-HOOK
+      - OSS-DOWNLOAD-EXECUTE
+  condition: selection
+level: high
