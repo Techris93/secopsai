@@ -1,0 +1,2 @@
+# Optional hosted enterprise data plane. Local SQLite mode does not require it.
+psycopg[binary,pool]>=3.2,<4

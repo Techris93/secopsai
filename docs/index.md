@@ -154,6 +154,20 @@ Homebrew, npm, and package-registry ownership.
 
 ## Operator Guides
 
+- [Enterprise Security Operations Architecture](enterprise-security-operations-architecture.md)
+- [Enterprise Security Gap Analysis](enterprise-security-gap-analysis.md)
+- [Cloud Connectors](cloud-connectors.md)
+- [SIEM And Observability](siem-observability.md)
+- [Kubernetes Security](kubernetes-security.md)
+- [Authorized DAST](dast.md)
+- [Vulnerability Management](vulnerability-management.md)
+- [GRC Evidence](grc-evidence.md)
+- [Customer Questionnaires](customer-questionnaires.md)
+- [Threat Modeling](threat-modeling.md)
+- [Penetration-Test Coordination](penetration-testing.md)
+- [Developer Security Awareness](developer-security-awareness.md)
+- [Enterprise Deployment](enterprise-deployment.md)
+
 - [Beginner Live Guide](BEGINNER-LIVE-GUIDE.md)
 - [Operator Runbook](operator-runbook.md)
 - [Findings Triage Guide](findings-triage-guide.md)

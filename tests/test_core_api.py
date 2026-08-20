@@ -119,6 +119,46 @@ def test_health_and_readiness_are_public(client):
     assert test_client.get("/readyz").json() == {"status": "ready", "data_store": "sqlite"}
 
 
+def test_enterprise_api_is_tenant_scoped_and_protected(client, tmp_path, monkeypatch):
+    test_client, settings = client
+    monkeypatch.setenv("SECOPSAI_ENTERPRISE_DB_PATH", str(tmp_path / "enterprise.db"))
+    health = test_client.get("/api/v1/enterprise/health", headers={"Authorization": f"Bearer {READ_TOKEN}"})
+    assert health.status_code == 200
+    assert health.json()["backend"] == "sqlite"
+    event = test_client.post(
+        "/api/v1/enterprise/events",
+        headers={"Authorization": f"Bearer {INGEST_TOKEN}", "Idempotency-Key": "event-1"},
+        json={"source": "aws.cloudtrail", "event_type": "aws.consolelogin", "payload": {"token": "secret", "ok": True}},
+    )
+    assert event.status_code == 200
+    assert event.json()["event"]["payload"]["token"] == "[redacted]"
+    listed = test_client.get("/api/v1/enterprise/events", headers={"Authorization": f"Bearer {READ_TOKEN}"})
+    assert listed.status_code == 200
+    assert listed.json()["events"][0]["organization_id"] == settings.organization_id
+    denied = test_client.get("/api/v1/enterprise/events")
+    assert denied.status_code == 401
+
+    control = test_client.post(
+        "/api/v1/enterprise/controls",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+        json={"control_id": "AC-1", "framework": "soc2", "title": "Access review", "owner": "security"},
+    )
+    assert control.status_code == 200
+    action = test_client.post(
+        "/api/v1/enterprise/actions",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+        json={"action_type": "create_ticket", "target_id": "VUL-1", "payload": {"provider": "github"}},
+    )
+    assert action.status_code == 200
+    assert action.json()["action"]["approval_required"] == 1
+    questionnaire = test_client.post(
+        "/api/v1/enterprise/workflows/questionnaire",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+        json={"questionnaire_id": "Q-1", "title": "Customer review", "owner": "security", "questions": [{"id": "Q1", "answer": "Yes"}]},
+    )
+    assert questionnaire.status_code == 200
+
+
 def test_intelligence_read_and_job_routes_use_separate_credentials(client):
     test_client, settings = client
     actions = test_client.get(

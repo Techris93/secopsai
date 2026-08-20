@@ -50,6 +50,20 @@ nav:
       - OpenClaw Integration: OpenClaw-Integration.md
       - OpenClaw Plugin: OpenClaw-Plugin.md
       - Hermes Integration: Hermes-Integration.md
+  - Enterprise Security Operations:
+      - Architecture: enterprise-security-operations-architecture.md
+      - Gap Analysis: enterprise-security-gap-analysis.md
+      - Cloud Connectors: cloud-connectors.md
+      - SIEM And Observability: siem-observability.md
+      - Kubernetes Security: kubernetes-security.md
+      - Authorized DAST: dast.md
+      - Vulnerability Management: vulnerability-management.md
+      - GRC Evidence: grc-evidence.md
+      - Customer Questionnaires: customer-questionnaires.md
+      - Threat Modeling: threat-modeling.md
+      - Penetration-Test Coordination: penetration-testing.md
+      - Developer Security Awareness: developer-security-awareness.md
+      - Enterprise Deployment: enterprise-deployment.md
   - Deploy And Reference:
       - Deployment Guide: deployment-guide.md
       - API Reference: api-reference.md

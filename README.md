@@ -22,6 +22,27 @@ SecOpsAI is a local-first security monitoring, investigation, and triage platfor
 - Scans AI-built code and local agent telemetry for **slopsquatted / hallucinated dependencies**
 - Keeps data **local-first by default**
 
+## Enterprise Security Operations
+
+SecOpsAI now includes an enterprise security foundation while retaining the
+local SQLite workflow. The shared enterprise store supports organization-scoped
+events, source cursors, dead letters, vulnerabilities, approval-gated actions,
+GRC controls/evidence, questionnaires, threat models, and penetration-test
+engagements. Hosted deployments can select the optional PostgreSQL pool:
+
+```bash
+pip install -r requirements-enterprise.txt
+secopsai enterprise status --json
+```
+
+Read-only AWS, GCP, and Kubernetes fixture/connector contracts, Kubernetes
+posture checks, authorized DAST validation, vulnerability prioritization, and
+enterprise workflow records are documented in
+[Enterprise Security Operations](docs/enterprise-security-operations-architecture.md).
+Missing cloud credentials or hosted storage are reported as `not_configured`;
+SecOpsAI never mutates IAM, firewall, Kubernetes, DAST targets, customer
+answers, or external tickets without explicit approval.
+
 ## Platform Support
 
 | Platform | Source              |        Status | Notes                            |

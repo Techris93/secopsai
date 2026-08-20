@@ -44,6 +44,9 @@ from secopsai.daily_automation import (
     update_settings as update_daily_automation_settings,
 )
 from secopsai.observability import initialize_observability
+from secopsai.enterprise_store import EnterpriseContext, build_enterprise_store
+from secopsai.enterprise_workflows import pentest_engagement, questionnaire_record, threat_model_record
+from secopsai.vulnerability_management import normalize_advisory
 
 
 LOGGER = logging.getLogger(__name__)
@@ -227,6 +230,91 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
         except sqlite3.Error as exc:
             raise HTTPException(status_code=503, detail="Core data store is unavailable") from exc
         return {"status": "ready", "data_store": "sqlite"}
+
+    def enterprise_store_for(role: str):
+        context = EnterpriseContext(
+            resolved.organization_id or "local",
+            actor_id=role,
+            role=role,
+        )
+        return build_enterprise_store(context=context)
+
+    @application.get("/api/v1/enterprise/health")
+    def enterprise_health(_role: str = Depends(require_read)) -> dict[str, Any]:
+        return enterprise_store_for("operator_read").health()
+
+    @application.get("/api/v1/enterprise/events")
+    def enterprise_events(
+        limit: int = 100,
+        cursor: str = "",
+        _role: str = Depends(require_read),
+    ) -> dict[str, Any]:
+        return enterprise_store_for("operator_read").list_events(limit=limit, cursor=cursor)
+
+    @application.post("/api/v1/enterprise/events")
+    async def enterprise_event_ingest(
+        request: Request,
+        _role: str = Depends(require_ingest),
+    ) -> dict[str, Any]:
+        payload = await _read_json_object(request, MAX_RESEARCH_ALERT_BYTES, "Enterprise event")
+        idempotency_key = request.headers.get("Idempotency-Key", "")[:160]
+        event = enterprise_store_for("enterprise_ingest").append_event(payload, idempotency_key=idempotency_key)
+        return {"event": event, "request_id": request.state.request_id}
+
+    @application.post("/api/v1/enterprise/vulnerabilities")
+    async def enterprise_vulnerability_upsert(
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        payload = await _read_json_object(request, MAX_RESEARCH_ALERT_BYTES, "Enterprise vulnerability")
+        item = normalize_advisory(payload)
+        return {"vulnerability": enterprise_store_for("intelligence_operator").upsert_vulnerability(item), "request_id": request.state.request_id}
+
+    @application.post("/api/v1/enterprise/controls")
+    async def enterprise_control_upsert(
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        payload = await _read_json_object(request, MAX_RESEARCH_ALERT_BYTES, "Enterprise control")
+        return {"control": enterprise_store_for("intelligence_operator").upsert_control(payload), "request_id": request.state.request_id}
+
+    @application.post("/api/v1/enterprise/evidence")
+    async def enterprise_evidence_record(
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        payload = await _read_json_object(request, MAX_RESEARCH_ALERT_BYTES, "Enterprise evidence")
+        return {"evidence": enterprise_store_for("intelligence_operator").record_evidence(payload), "request_id": request.state.request_id}
+
+    @application.post("/api/v1/enterprise/actions")
+    async def enterprise_action_propose(
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        payload = await _read_json_object(request, MAX_RESEARCH_ALERT_BYTES, "Enterprise action")
+        payload.setdefault("approval_required", True)
+        payload["status"] = "proposed"
+        return {"action": enterprise_store_for("intelligence_operator").create_action(payload), "request_id": request.state.request_id}
+
+    @application.post("/api/v1/enterprise/workflows/{kind}")
+    async def enterprise_workflow_record(
+        kind: str,
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        payload = await _read_json_object(request, MAX_RESEARCH_ALERT_BYTES, "Enterprise workflow")
+        if kind == "questionnaire":
+            record = questionnaire_record(**payload)
+            persisted = enterprise_store_for("intelligence_operator").upsert_questionnaire(record)
+        elif kind == "threat-model":
+            record = threat_model_record(**payload)
+            persisted = enterprise_store_for("intelligence_operator").upsert_threat_model(record)
+        elif kind == "pentest":
+            record = pentest_engagement(**payload)
+            persisted = enterprise_store_for("intelligence_operator").upsert_pentest_engagement(record)
+        else:
+            raise HTTPException(status_code=404, detail="unsupported enterprise workflow")
+        return {"workflow": persisted, "kind": kind, "request_id": request.state.request_id}
 
     @application.post("/api/v1/edge/bundles")
     async def ingest_edge_bundle(

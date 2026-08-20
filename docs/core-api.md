@@ -66,6 +66,14 @@ tenant-aware PostgreSQL design.
 | `POST /api/v1/intelligence/bridge/claim` | Bridge token | Claim one queued job and receive minimized context |
 | `POST /api/v1/intelligence/bridge/jobs/{job_id}/complete` | Bridge token | Return a schema-validated result |
 | `POST /api/v1/intelligence/bridge/jobs/{job_id}/fail` | Bridge token | Record a bounded bridge failure |
+| `GET /api/v1/enterprise/health` | Read token | Check enterprise data-plane readiness |
+| `GET /api/v1/enterprise/events` | Read token | Paginated normalized enterprise events |
+| `POST /api/v1/enterprise/events` | Ingest token | Append a redacted idempotent event |
+| `POST /api/v1/enterprise/vulnerabilities` | Intelligence token | Upsert prioritized vulnerability context |
+| `POST /api/v1/enterprise/controls` | Intelligence token | Upsert a GRC control |
+| `POST /api/v1/enterprise/evidence` | Intelligence token | Record hashed control evidence |
+| `POST /api/v1/enterprise/actions` | Intelligence token | Propose an approval-gated action |
+| `POST /api/v1/enterprise/workflows/{kind}` | Intelligence token | Record questionnaire, threat-model, or pen-test workflow |
 
 The import endpoint requires UTF-8 `application/json`, rejects compressed
 request bodies, enforces a 10 MiB default limit, rejects duplicate JSON keys,

@@ -46,6 +46,19 @@ Distribution and Marketplace maintenance details live in
 
 ## Command overview
 
+## Enterprise security commands
+
+```bash
+secopsai enterprise status --json
+secopsai enterprise ingest --source aws.cloudtrail --input fixture.json --json
+secopsai enterprise kubernetes-scan --path deployment.yaml --json
+secopsai enterprise dast-validate --target-id web-1 --url https://app.example --owner security --authorized-by change-123 --json
+secopsai enterprise prioritize-vulnerability --input vulnerability.json --json
+```
+
+Enterprise commands use bounded, redacted, organization-scoped records. Cloud
+and active-scan actions are read-only or approval-gated by design.
+
 ## Triage commands
 
 ### `secopsai triage list`

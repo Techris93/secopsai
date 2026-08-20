@@ -495,6 +495,22 @@
         <p style="margin-top:14px;">The OpenClaw integration provides approval-gated automation tools. The Hermes Agent integration provides read-only access to normalized findings, asset context, sessions, and service health while a separate local monitor collects Hermes telemetry. Neither integration exposes raw credentials or bypasses operator approval boundaries.</p>
     </section>
 
+    <section class="spec" id="enterprise-security">
+        <h2>Enterprise security operations</h2>
+        <p>SecOpsAI keeps the local-first workflow while adding a guarded enterprise foundation for normalized cloud and Kubernetes events, vulnerability prioritization, authorized DAST, GRC evidence, customer questionnaires, threat models, and penetration-test coordination.</p>
+        <table class="spec-table">
+            <caption>TABLE 2 — ENTERPRISE CONTROLS</caption>
+            <thead><tr><th>CAPABILITY</th><th>DEFAULT</th><th>BOUNDARY</th></tr></thead>
+            <tbody>
+                <tr><td>AWS / GCP / Kubernetes connectors</td><td>Read-only</td><td>Credentials stay server-side; no IAM, firewall, or cluster mutation</td></tr>
+                <tr><td>DAST</td><td>Passive and approval-gated</td><td>HTTPS ownership and authorization are required</td></tr>
+                <tr><td>Vulnerability management</td><td>Evidence-backed</td><td>CVSS, exploitability, exposure, SLA, exception, and ticket context</td></tr>
+                <tr><td>GRC and questionnaires</td><td>Draft and review</td><td>Evidence is hashed and reviewed; SecOpsAI does not certify or auto-send</td></tr>
+            </tbody>
+        </table>
+        <p style="margin-top:14px;">Local SQLite mode remains available. Hosted deployments can use the optional PostgreSQL enterprise data plane. See <a href="https://docs.secopsai.dev/enterprise-security-operations-architecture/">the enterprise architecture guide</a>.</p>
+    </section>
+
     <!-- 2. Installation -->
     <section class="spec" id="install">
         <h2>Installation</h2>

@@ -25,6 +25,9 @@ dev = [
   "jsonschema>=4.25,<5",
   "pytest>=9.0.3,<10",
 ]
+enterprise = [
+  "psycopg[binary,pool]>=3.2,<4",
+]
 
 [project.scripts]
 secopsai = "secopsai.cli:main"

@@ -124,6 +124,16 @@ from secopsai.codex_bridge import run_loop as run_codex_bridge_loop
 from secopsai.codex_bridge import run_once as run_codex_bridge_once
 from secopsai.codex_bridge_service import install_service as install_codex_bridge_service
 from secopsai.codex_bridge_service import service_action as codex_bridge_service_action
+from secopsai.cloud_connectors import NORMALIZERS as ENTERPRISE_NORMALIZERS
+from secopsai.cloud_connectors import collect_connector as collect_enterprise_connector
+from secopsai.dast import DastTarget, build_zap_command
+from secopsai.enterprise_store import EnterpriseContext, build_enterprise_store
+from secopsai.enterprise_workflows import control_record, pentest_engagement, questionnaire_record, threat_model_record
+from secopsai.awareness import recommend_from_findings
+from secopsai.ticketing import GitHubIssueAdapter, JiraIssueAdapter, TicketRequest
+from secopsai.kubernetes_security import dry_run_admission, scan_manifest
+from secopsai.siem import MetricsRegistry
+from secopsai.vulnerability_management import normalize_advisory
 from secopsai.intel import enrich_iocs, load_iocs, match_iocs_against_replay, refresh_iocs
 from secopsai.pipeline import refresh as refresh_pipeline
 from secopsai.research import (
@@ -503,6 +513,18 @@ def _refresh_lock(json_mode: bool):
         except OSError:
             pass
         handle.close()
+
+
+def _enterprise_context(args: argparse.Namespace) -> EnterpriseContext:
+    return EnterpriseContext(
+        str(getattr(args, "organization_id", "") or os.environ.get("SECOPSAI_ENTERPRISE_ORGANIZATION_ID", "local")),
+        actor_id=str(getattr(args, "actor", "") or "operator"),
+        role=str(getattr(args, "role", "") or "operator"),
+    )
+
+
+def _enterprise_store(args: argparse.Namespace):
+    return build_enterprise_store(context=_enterprise_context(args), db_path=getattr(args, "db_path", None))
 
 
 def _normalize_global_flags(argv: Optional[List[str]] = None) -> List[str]:
@@ -1311,6 +1333,76 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     graph_changes = graph_sub.add_parser("changes", help="Show recently updated graph nodes and edges")
     graph_changes.add_argument("--db-path", default=None, help="Override SQLite SOC/graph database path")
     graph_changes.add_argument("--limit", type=int, default=20)
+
+    enterprise = sub.add_parser("enterprise", help="Operate enterprise security connectors and governance workflows")
+    enterprise_sub = enterprise.add_subparsers(dest="enterprise_cmd", required=True)
+    enterprise_status = enterprise_sub.add_parser("status", help="Show enterprise data-plane health")
+    enterprise_status.add_argument("--db-path", default=None)
+    enterprise_status.add_argument("--organization-id", default=None)
+    enterprise_status.add_argument("--actor", default="operator")
+    enterprise_status.add_argument("--role", default="operator")
+    enterprise_ingest = enterprise_sub.add_parser("ingest", help="Ingest a deterministic cloud/Kubernetes fixture through a read-only connector")
+    enterprise_ingest.add_argument("--source", choices=sorted(ENTERPRISE_NORMALIZERS), required=True)
+    enterprise_ingest.add_argument("--input", required=True, help="Fixture JSON path")
+    enterprise_ingest.add_argument("--cursor", default="")
+    enterprise_ingest.add_argument("--limit", type=int, default=100)
+    enterprise_ingest.add_argument("--db-path", default=None)
+    enterprise_ingest.add_argument("--organization-id", default=None)
+    enterprise_ingest.add_argument("--actor", default="operator")
+    enterprise_ingest.add_argument("--role", default="operator")
+    enterprise_k8s = enterprise_sub.add_parser("kubernetes-scan", help="Scan Kubernetes YAML in dry-run mode")
+    enterprise_k8s.add_argument("--path", required=True)
+    enterprise_k8s.add_argument("--db-path", default=None)
+    enterprise_k8s.add_argument("--organization-id", default=None)
+    enterprise_k8s.add_argument("--actor", default="operator")
+    enterprise_k8s.add_argument("--role", default="operator")
+    enterprise_dast = enterprise_sub.add_parser("dast-validate", help="Validate an authorized DAST target and print its safe command")
+    enterprise_dast.add_argument("--target-id", required=True)
+    enterprise_dast.add_argument("--url", required=True)
+    enterprise_dast.add_argument("--owner", required=True)
+    enterprise_dast.add_argument("--authorized-by", required=True)
+    enterprise_dast.add_argument("--mode", choices=["passive", "active"], default="passive")
+    enterprise_dast.add_argument("--active-approved", action="store_true")
+    enterprise_dast.add_argument("--organization-id", default=None)
+    enterprise_dast.add_argument("--actor", default="operator")
+    enterprise_dast.add_argument("--role", default="operator")
+    enterprise_vuln = enterprise_sub.add_parser("prioritize-vulnerability", help="Normalize and prioritize one vulnerability JSON record")
+    enterprise_vuln.add_argument("--input", required=True)
+    enterprise_vuln.add_argument("--db-path", default=None)
+    enterprise_vuln.add_argument("--organization-id", default=None)
+    enterprise_vuln.add_argument("--actor", default="operator")
+    enterprise_vuln.add_argument("--role", default="operator")
+    enterprise_control = enterprise_sub.add_parser("control", help="Create or update a GRC control")
+    enterprise_control.add_argument("--control-id", required=True)
+    enterprise_control.add_argument("--framework", required=True)
+    enterprise_control.add_argument("--title", required=True)
+    enterprise_control.add_argument("--owner", required=True)
+    enterprise_control.add_argument("--status", default="not_started")
+    enterprise_control.add_argument("--db-path", default=None)
+    enterprise_control.add_argument("--organization-id", default=None)
+    enterprise_control.add_argument("--actor", default="operator")
+    enterprise_control.add_argument("--role", default="operator")
+    enterprise_workflow = enterprise_sub.add_parser("workflow", help="Persist a questionnaire, threat model, or pen-test engagement JSON")
+    enterprise_workflow.add_argument("kind", choices=["questionnaire", "threat-model", "pentest"])
+    enterprise_workflow.add_argument("--input", required=True)
+    enterprise_workflow.add_argument("--db-path", default=None)
+    enterprise_workflow.add_argument("--organization-id", default=None)
+    enterprise_workflow.add_argument("--actor", default="operator")
+    enterprise_workflow.add_argument("--role", default="operator")
+    enterprise_awareness = enterprise_sub.add_parser("awareness", help="Create finding-linked security awareness recommendations")
+    enterprise_awareness.add_argument("--input", required=True, help="Findings JSON array path")
+    enterprise_awareness.add_argument("--organization-id", default=None)
+    enterprise_awareness.add_argument("--actor", default="operator")
+    enterprise_awareness.add_argument("--role", default="operator")
+    enterprise_ticket = enterprise_sub.add_parser("ticket-propose", help="Create an approval-gated ticket proposal")
+    enterprise_ticket.add_argument("--provider", choices=["github", "jira"], required=True)
+    enterprise_ticket.add_argument("--project", required=True)
+    enterprise_ticket.add_argument("--finding-id", required=True)
+    enterprise_ticket.add_argument("--title", required=True)
+    enterprise_ticket.add_argument("--body", required=True)
+    enterprise_ticket.add_argument("--organization-id", default=None)
+    enterprise_ticket.add_argument("--actor", default="operator")
+    enterprise_ticket.add_argument("--role", default="operator")
 
     intelligence = sub.add_parser("intelligence", help="Run approved read-only intelligence actions and manage the local Codex bridge")
     intelligence_sub = intelligence.add_subparsers(dest="intelligence_cmd", required=True)
@@ -3812,6 +3904,70 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
             )
             print(f"DB: {payload['db_path']}")
+        return 0
+
+    if args.cmd == "enterprise":
+        try:
+            store = _enterprise_store(args)
+            if args.enterprise_cmd == "status":
+                payload = {"store": store.health(), "metrics": MetricsRegistry().snapshot()}
+            elif args.enterprise_cmd == "ingest":
+                fixture = json.loads(Path(args.input).read_text(encoding="utf-8"))
+                payload = collect_enterprise_connector(
+                    args.source,
+                    fetcher=lambda source, cursor: fixture,
+                    store=store,
+                    context=_enterprise_context(args),
+                    cursor=args.cursor,
+                    limit=args.limit,
+                ).__dict__
+            elif args.enterprise_cmd == "kubernetes-scan":
+                content = Path(args.path).read_text(encoding="utf-8")
+                payload = dry_run_admission(content, source_name=args.path)
+            elif args.enterprise_cmd == "dast-validate":
+                target = DastTarget(
+                    target_id=args.target_id,
+                    url=args.url,
+                    owner=args.owner,
+                    authorized_by=args.authorized_by,
+                    active_scan_approved=args.active_approved,
+                )
+                payload = {"target": target.__dict__, "command": build_zap_command(target, mode=args.mode), "mode": args.mode, "execution": "not_started"}
+            elif args.enterprise_cmd == "prioritize-vulnerability":
+                item = json.loads(Path(args.input).read_text(encoding="utf-8"))
+                payload = normalize_advisory(item)
+                payload["stored"] = store.upsert_vulnerability(payload)
+            elif args.enterprise_cmd == "control":
+                payload = store.upsert_control(control_record(control_id=args.control_id, framework=args.framework, title=args.title, owner=args.owner, status=args.status))
+            elif args.enterprise_cmd == "workflow":
+                item = json.loads(Path(args.input).read_text(encoding="utf-8"))
+                if args.kind == "questionnaire":
+                    payload = store.upsert_questionnaire(questionnaire_record(**item))
+                elif args.kind == "threat-model":
+                    payload = store.upsert_threat_model(threat_model_record(**item))
+                else:
+                    payload = store.upsert_pentest_engagement(pentest_engagement(**item))
+            elif args.enterprise_cmd == "awareness":
+                findings = json.loads(Path(args.input).read_text(encoding="utf-8"))
+                if not isinstance(findings, list):
+                    raise ValueError("awareness input must be a JSON array")
+                payload = {"recommendations": recommend_from_findings(findings)}
+            elif args.enterprise_cmd == "ticket-propose":
+                request = TicketRequest(args.provider, args.project, args.title, args.body, args.finding_id)
+                adapter = GitHubIssueAdapter() if args.provider == "github" else JiraIssueAdapter(api_base=os.environ.get("SECOPSAI_JIRA_API_BASE", "https://jira.example.invalid"))
+                payload = adapter.create(request)
+            else:
+                raise ValueError(f"unsupported enterprise command: {args.enterprise_cmd}")
+        except Exception as exc:
+            if args.json:
+                print(to_json({"error": str(exc), "command": args.enterprise_cmd}))
+            else:
+                print(f"error: {exc}")
+            return 1
+        if args.json:
+            print(to_json(payload))
+        else:
+            print(to_json(payload))
         return 0
 
     if args.cmd == "intelligence":
