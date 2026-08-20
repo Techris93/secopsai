@@ -158,6 +158,7 @@ CAPABILITIES: Dict[str, Dict[str, Any]] = {
     }
     for ecosystem, display, deep, mode, limitations, terms in (
         ("npm", "npm", False, "changes_feed_or_watchlist", ["The replica changes feed has no per-event timestamps; ledger times are collection times."], "https://docs.npmjs.com/"),
+        ("crates", "crates.io", False, "metadata_watchlist", ["Global publish-time monitoring is bounded; exact crate collection and checksum verification use the Rust Package Research workflow."], "https://crates.io/"),
         ("pypi", "PyPI", False, "index_reconcile_or_watchlist", ["Index reconciliation detects project additions and removals; per-release detection requires watchlist polling or backfill."], "https://docs.pypi.org/"),
         ("nuget", "NuGet", True, "catalog_or_watchlist", ["Catalog coverage and rate limits must be reported per run."], "https://learn.microsoft.com/en-us/nuget/api/overview"),
         ("maven", "Maven Central", False, "search_tail_or_watchlist", ["The Solr index can lag the live repository by days to weeks; coverage is search-derived, never a census."], "https://central.sonatype.org/"),

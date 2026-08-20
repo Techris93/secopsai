@@ -302,6 +302,7 @@ def _compact_intelligence_status_section(payload: dict[str, Any] | None, section
     return compact
 from secopsai.research_watchlists import promote_watchlist_packages
 from secopsai.research_intake import ADAPTERS as RESEARCH_INTAKE_ADAPTERS, preview_package as preview_research_package
+from secopsai.rust_package_research import run_rust_package_research
 from secopsai.research_discovery import (
     capability_registry as research_capability_registry,
     create_monitor as create_research_monitor,
@@ -1457,6 +1458,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     artifact_triage_cmd.add_argument("--limit", type=int, default=500)
     artifact_triage_cmd.add_argument("--model", default="")
     artifact_triage_cmd.add_argument("--enqueue-model", action="store_true", help="Queue minimized contexts for the configured model bridge")
+    artifact_triage_cmd.add_argument("--job-db-path", default=None, help="Optional separate database for the intelligence bridge job")
     artifact_triage_cmd.add_argument("--db-path", default=None)
     artifact_show = artifact_sub.add_parser("triage-show", help="Show one artifact triage record and safe context")
     artifact_show.add_argument("artifact_id")
@@ -1657,6 +1659,21 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     research_sub = research.add_subparsers(dest="research_cmd", required=True)
 
     research_ecosystems = research_sub.add_parser("ecosystems", help="Show research ecosystem capabilities and coverage modes")
+    research_rust_package = research_sub.add_parser("rust-package", help="Safely collect, statically scan, compare, and route a crates.io package")
+    research_rust_package.add_argument("--package", required=True)
+    research_rust_package.add_argument("--version", required=True)
+    research_rust_package.add_argument("--compare-package", default="")
+    research_rust_package.add_argument("--compare-version", default="")
+    research_rust_package.add_argument("--case-id", default="")
+    research_rust_package.add_argument("--source-reference", default="")
+    research_rust_package.add_argument("--owner", default="SecOpsAI Research")
+    research_rust_package.add_argument("--model", default="")
+    research_rust_package.add_argument("--persist-findings", action="store_true")
+    research_rust_package.add_argument("--draft-blog", action="store_true")
+    research_rust_package.add_argument("--no-create-case", action="store_true", help="Keep the result out of Research Cases unless --case-id is supplied")
+    research_rust_package.add_argument("--dry-run", action="store_true")
+    research_rust_package.add_argument("--artifact-db-path", default=None)
+    research_rust_package.add_argument("--db-path", default=None)
     research_artifact_case = research_sub.add_parser("artifact-case", help="Prepare a review-only research handoff for an artifact fleet result")
     research_artifact_case.add_argument("artifact_id")
     research_artifact_case.add_argument("--db-path", default=None)
@@ -3578,6 +3595,34 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(f"- {item}")
             return 0 if not _preflight_is_blocking(payload) else 1
 
+        if args.research_cmd == "rust-package":
+            try:
+                payload = run_rust_package_research(
+                    package=args.package,
+                    version=args.version,
+                    compare_package=args.compare_package,
+                    compare_version=args.compare_version,
+                    case_id=args.case_id,
+                    source_reference=args.source_reference,
+                    owner=args.owner,
+                    model=args.model,
+                    persist_findings=args.persist_findings,
+                    draft_blog=args.draft_blog,
+                    create_research_case=not args.no_create_case,
+                    dry_run=args.dry_run,
+                    db_path=args.db_path,
+                    artifact_db_path=args.artifact_db_path,
+                    actor="operator",
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"ok": False, "error": str(exc), "command": "research rust-package"}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            print(to_json(payload) if args.json else to_json(payload))
+            return 0
+
         if args.research_cmd == "artifact-case":
             try:
                 payload = artifact_research_handoff(args.artifact_id, db_path=args.db_path)
@@ -4095,7 +4140,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     payload = scan_pending_artifacts(limit=500, workers=args.workers, db_path=args.db_path)
             elif args.artifact_cmd == "triage":
                 if args.artifact_id:
-                    payload = enqueue_model_triage(args.artifact_id, model=args.model, db_path=args.db_path)
+                    payload = enqueue_model_triage(args.artifact_id, model=args.model, db_path=args.db_path, job_db_path=args.job_db_path)
                 elif args.enqueue_model:
                     payload = queue_model_triage(limit=args.limit, model=args.model, db_path=args.db_path)
                 else:

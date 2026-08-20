@@ -270,7 +270,8 @@ def _bridge_context(action: Action, inputs: dict[str, Any], db_path: str | None)
         from secopsai.artifact_fleet import triage_show
 
         artifact_id = _target(inputs, "artifact_id")
-        triage = triage_show(artifact_id, db_path=db_path)
+        artifact_db_path = inputs.get("artifact_db_path") or db_path
+        triage = triage_show(artifact_id, db_path=artifact_db_path)
         return {"artifact_triage": triage.get("context") or {}, "artifact_id": artifact_id}
     raise ValueError(f"no bridge context builder for action: {action.name}")
 

@@ -168,6 +168,7 @@ Homebrew, npm, and package-registry ownership.
 - [Developer Security Awareness](developer-security-awareness.md)
 - [Enterprise Deployment](enterprise-deployment.md)
 - [OSS Artifact Fleet Operations](artifact-fleet-operations.md)
+- [Rust Package Research Automation](rust-package-research-automation.md)
 - [Artifact Triage](artifact-triage.md)
 - [Artifact Rule Packs](artifact-rule-packs.md)
 - [OSS Artifact Fleet Architecture](oss-artifact-fleet-architecture.md)

@@ -39,6 +39,7 @@ nav:
       - Research Discovery Platform: research-discovery.md
       - Research Cases: research-cases.md
       - Research Automation: research-automation.md
+      - Rust Package Research Automation: rust-package-research-automation.md
       - Research And Verification: research-and-verification.md
       - Supply Chain Security: supply-chain.md
       - Emergency Advisories: supply-chain-advisories.md

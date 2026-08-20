@@ -60,6 +60,12 @@ dashboard also exposes allowlisted buttons for the cycle, indexing, pending
 scans, model-job queueing, rule validation, analyst queue, and synthetic
 benchmark; exact artifact paths remain CLI-only by design.
 
+Rust package investigations can be started from the dashboard or CLI. The
+workflow verifies crates.io metadata and checksums, quarantines the exact crate,
+compares an explicitly supplied reference package, records Research Case
+evidence, and prepares review-only publication without running Cargo or package
+code. See [Rust Package Research Automation](docs/rust-package-research-automation.md).
+
 ## Platform Support
 
 | Platform | Source              |        Status | Notes                            |

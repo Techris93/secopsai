@@ -8,6 +8,7 @@ the next tagged release.
 
 ### Added
 
+- Added approval-gated `research rust-package` automation for crates.io metadata/checksum verification, quarantine, static Artifact Fleet analysis, verified comparison crates, Research Case evidence, selected-model triage, and review-only Blog Ops drafts.
 - Added first-class Hermes Agent 0.18.2+ onboarding with an idempotent public installer, focused setup profile, native read-only Hermes plugin, bounded local telemetry refresh, and persistent launchd/systemd monitoring.
 - Added `secopsai hermes doctor`, `secopsai hermes refresh`, and complete Hermes service lifecycle commands with owner-only state, overlap prevention, explicit degraded health, and retained logs/findings on uninstall.
 - Added eight fixed-command Hermes tools for integration health, findings, sessions, triage summaries, and Edge asset context without arbitrary execution or credential exposure.

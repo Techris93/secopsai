@@ -2,6 +2,19 @@
 
 SecOpsAI Research turns a watchlist lead into a defensible investigation without executing the investigated package. The dashboard buttons call the same typed Core workflow as the CLI; command-copy helpers are only a fallback.
 
+For Rust/crates.io investigations, use **Enterprise Security → Artifact Fleet → Run Rust Package Research** or:
+
+```bash
+secopsai research rust-package --package proc-macro1 --version 1.0.107 --compare-package proc-macro2 --compare-version 1.0.107 --json
+```
+
+This source-first workflow verifies crates.io metadata and checksum, stores the
+exact crate in quarantine, runs Artifact Fleet static rules, records evidence
+and validated IOCs, optionally reuses a Research Case, queues the selected
+model with minimized context, and can prepare a review-only draft. Cargo,
+`build.rs`, binaries, sandbox submission, disclosure, publication, and deploy
+remain separate approval-gated actions.
+
 ## Automatic high-priority investigations
 
 Eligible high and critical package findings are promoted automatically after initial model triage. Core creates or reuses the finding-linked Research Case, collects the exact registry artifact, verifies and catalogs the quarantine object, performs bounded static analysis, compares only a verified reference, extracts IOC candidates, correlates normalized evidence, and requests a complete model assessment.
@@ -116,7 +129,7 @@ See the official [Tria.ge sample submission guide](https://tria.ge/docs/cloud-ap
 
 ## Supported intake ecosystems
 
-The common adapter contract supports npm, PyPI, NuGet, Maven Central, RubyGems, Packagist, Go modules, and Open VSX. CI uses fixtures, not live registry calls. Adapters enforce their own official metadata and artifact host allowlists.
+The common adapter contract supports npm, PyPI, crates.io, NuGet, Maven Central, RubyGems, Packagist, Go modules, and Open VSX. CI uses fixtures, not live registry calls. Adapters enforce their own official metadata and artifact host allowlists.
 
 ## CLI fallback
 

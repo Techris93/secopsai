@@ -13,6 +13,7 @@ secopsai artifact-fleet metrics --json
 secopsai artifact-fleet benchmark --artifacts 1000 --workers 4 --fixture-mode --json
 secopsai artifact-fleet cycle --since 24h --limit 1000 --workers 4 --json
 secopsai artifact-fleet triage --limit 500 --enqueue-model --model xai/grok-4.6 --json
+secopsai research rust-package --package proc-macro1 --version 1.0.107 --compare-package proc-macro2 --compare-version 1.0.107 --dry-run --json
 ```
 
 ## Dashboard buttons
@@ -35,6 +36,12 @@ Exact `scan-artifact` calls are intentionally CLI-only because they require a
 reviewed local artifact path and provenance. This prevents a dashboard click
 from opening an arbitrary filesystem path. `source-health` and `metrics` are
 read through **Refresh fleet** and the panel status response.
+
+The **Run Rust Package Research** drawer adds the crates.io workflow: preview
+official metadata, fetch the exact crate into quarantine, verify its checksum,
+run Rust static rules, compare an explicitly supplied reference crate, and
+route strong findings into a Research Case. It never runs Cargo or creates a
+public draft without the case publication gates.
 
 ## Optional scheduled cycle
 

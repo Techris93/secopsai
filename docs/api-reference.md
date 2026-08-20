@@ -78,6 +78,17 @@ The fleet indexes metadata first, scans only authorized artifacts, sends only
 rule-hit context to model triage, and leaves suspicious or inconclusive work
 for analyst review.
 
+## Rust package research
+
+```bash
+secopsai research rust-package --package proc-macro1 --version 1.0.107 --dry-run --json
+secopsai research rust-package --package proc-macro1 --version 1.0.107 --compare-package proc-macro2 --compare-version 1.0.107 --persist-findings --json
+```
+
+The Rust workflow verifies crates.io metadata and checksum, quarantines the
+exact crate, performs static-only analysis, and optionally creates a Research
+Case and review-only draft.
+
 ## Triage commands
 
 ### `secopsai triage list`

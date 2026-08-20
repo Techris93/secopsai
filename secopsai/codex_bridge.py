@@ -735,7 +735,7 @@ def run_once(
                 str(job.get("target_id") or job_inputs.get("artifact_id") or ""),
                 raw,
                 model=used_model,
-                db_path=db_path,
+                db_path=job_inputs.get("artifact_db_path") or db_path,
             )
         return {"status": "succeeded", "provider": used_provider, "model": used_model, "job": completed}
     except subprocess.TimeoutExpired:

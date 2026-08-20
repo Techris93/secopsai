@@ -534,7 +534,14 @@ def triage_artifact(artifact_id: str, *, model: str = "", model_call: Callable[[
     return {"artifact_id": artifact_id, "status": status, "model": model, "verdict": verdict, "confidence": confidence, "analyst_required": analyst_required, "result": response}
 
 
-def enqueue_model_triage(artifact_id: str, *, model: str = "", db_path: str | Path | None = None, requested_by: str = "artifact-fleet") -> dict[str, Any]:
+def enqueue_model_triage(
+    artifact_id: str,
+    *,
+    model: str = "",
+    db_path: str | Path | None = None,
+    job_db_path: str | Path | None = None,
+    requested_by: str = "artifact-fleet",
+) -> dict[str, Any]:
     """Queue one minimized artifact context for the configured model bridge."""
     triage = triage_show(artifact_id, db_path=db_path)
     from secopsai.intelligence_jobs import enqueue_job
@@ -542,10 +549,10 @@ def enqueue_model_triage(artifact_id: str, *, model: str = "", db_path: str | Pa
     job = enqueue_job(
         action="triage_artifact",
         target_id=artifact_id,
-        inputs={"artifact_id": artifact_id, "selected_model": model},
+        inputs={"artifact_id": artifact_id, "selected_model": model, "artifact_db_path": str(_db_path(db_path))},
         requested_by=requested_by,
         idempotency_key=f"artifact-triage:{artifact_id}:{model}",
-        db_path=db_path,
+        db_path=job_db_path or db_path,
     )
     target = init_db(db_path)
     with _connect(target) as conn:

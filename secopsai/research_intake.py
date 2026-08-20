@@ -262,6 +262,43 @@ class NpmAdapter(RegistryAdapter):
                                 {"integrity": dist.get("integrity", ""), "shasum": dist.get("shasum", "")}, payload)
 
 
+class CratesAdapter(RegistryAdapter):
+    """Official crates.io metadata and static crate download adapter."""
+
+    ecosystem = "crates"
+    metadata_hosts = ("crates.io",)
+    artifact_hosts = ("crates.io", "static.crates.io")
+
+    def metadata_url(self, package: str) -> str:
+        return f"https://crates.io/api/v1/crates/{urllib.parse.quote(package)}"
+
+    def resolve(self, package: str, requested_version: str, fetcher: SafeFetcher) -> RegistryMetadata:
+        package = _safe_package(package)
+        url, payload = self._json(self.metadata_url(package), fetcher)
+        crate = payload.get("crate") if isinstance(payload.get("crate"), dict) else {}
+        versions = payload.get("versions") if isinstance(payload.get("versions"), list) else []
+        version_rows = [item for item in versions if isinstance(item, dict) and item.get("num")]
+        version = self._pick_version([str(item["num"]) for item in version_rows], requested_version)
+        selected = next((item for item in version_rows if str(item.get("num")) == version), {})
+        # The API download route may return a JSON redirect descriptor when
+        # clients advertise JSON. Use the documented static object URL so the
+        # bounded fetcher receives archive bytes and can validate the crate.
+        artifact = f"https://static.crates.io/crates/{urllib.parse.quote(package)}/{urllib.parse.quote(package)}-{urllib.parse.quote(version)}.crate"
+        checksum = str(selected.get("checksum") or "")
+        return RegistryMetadata(
+            self.ecosystem,
+            package,
+            version,
+            url,
+            artifact,
+            str(crate.get("owner") or ""),
+            str(selected.get("created_at") or ""),
+            {},
+            {"checksum": checksum, "yanked": bool(selected.get("yanked"))},
+            payload,
+        )
+
+
 class PyPiAdapter(RegistryAdapter):
     ecosystem = "pypi"
     metadata_hosts = ("pypi.org",)
@@ -423,7 +460,7 @@ class OpenVSXAdapter(RegistryAdapter):
 
 ADAPTERS: Dict[str, RegistryAdapter] = {
     item.ecosystem: item for item in (
-        NpmAdapter(), PyPiAdapter(), NuGetAdapter(), MavenAdapter(), RubyGemsAdapter(),
+        NpmAdapter(), CratesAdapter(), PyPiAdapter(), NuGetAdapter(), MavenAdapter(), RubyGemsAdapter(),
         PackagistAdapter(), GoAdapter(), OpenVSXAdapter(),
     )
 }
@@ -557,6 +594,11 @@ def _quarantine_path(digest: str, filename: str) -> Path:
     return path
 
 
+def quarantine_path_for(digest: str, filename: str = "artifact") -> Path:
+    """Return the controlled owner-only quarantine path for an artifact hash."""
+    return _quarantine_path(_text(digest, 64).lower(), _text(filename, 512))
+
+
 def _walk_values(value: Any, *, depth: int = 0) -> Iterable[Any]:
     if depth > 5:
         return
@@ -641,7 +683,12 @@ def _extract_contact_candidates(raw: Dict[str, Any], publisher: str = "") -> Dic
 
 def _metadata_summary(metadata: RegistryMetadata) -> Dict[str, Any]:
     raw = metadata.raw if isinstance(metadata.raw, dict) else {}
-    contacts = _extract_contact_candidates(raw, publisher=metadata.publisher)
+    crate = raw.get("crate") if isinstance(raw.get("crate"), dict) else {}
+    if metadata.ecosystem == "crates":
+        repository = str(crate.get("repository") or "").strip()
+        contacts = {"emails": [], "names": [], "urls": [repository] if repository else []}
+    else:
+        contacts = _extract_contact_candidates(raw, publisher=metadata.publisher)
     return {
         "ecosystem": metadata.ecosystem,
         "package": metadata.package,
@@ -649,6 +696,9 @@ def _metadata_summary(metadata: RegistryMetadata) -> Dict[str, Any]:
         "metadata_url": metadata.metadata_url,
         "artifact_url": metadata.artifact_url,
         "publisher": metadata.publisher[:240],
+        "source_repository": str(crate.get("repository") or "")[:1000],
+        "homepage": str(crate.get("homepage") or "")[:1000],
+        "description": str(crate.get("description") or "")[:1000],
         "published_at": metadata.published_at[:80],
         "dependencies": metadata.dependencies if isinstance(metadata.dependencies, (dict, list)) else {},
         "integrity": metadata.integrity,
@@ -685,7 +735,7 @@ def collect_package_intake(
         "ok": True,
         "metadata": package_summary,
         "analysis": analysis,
-        "quarantine": {"artifact_id": digest, "bytes": len(artifact), "locator": f"quarantine://{digest}"},
+        "quarantine": {"artifact_id": digest, "bytes": len(artifact), "locator": f"quarantine://{digest}", "path": str(quarantine)},
         "attached": False,
         "safety": {"execution_performed": False, "extracted_to_filesystem": False, "raw_artifact_sent_to_ai": False},
     }
