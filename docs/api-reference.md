@@ -67,9 +67,11 @@ secopsai artifact-fleet status --json
 secopsai artifact-fleet source-health --json
 secopsai artifact-fleet scan --since 24h --workers 8 --json
 secopsai artifact-fleet triage --limit 500 --json
+secopsai artifact-fleet triage --limit 500 --enqueue-model --model xai/grok-4.6 --json
 secopsai artifact-fleet analyst-queue --limit 100 --json
 secopsai artifact-fleet metrics --json
 secopsai artifact-fleet benchmark --artifacts 1000 --workers 4 --fixture-mode --json
+secopsai artifact-fleet cycle --since 24h --limit 1000 --workers 4 --json
 ```
 
 The fleet indexes metadata first, scans only authorized artifacts, sends only

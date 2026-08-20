@@ -37,6 +37,7 @@ from secopsai.artifact_fleet import artifact_research_handoff, benchmark as arti
 from secopsai.artifact_fleet import draft_artifact_blog
 from secopsai.artifact_fleet import fleet_metrics, fleet_status, index_records as artifact_index_records
 from secopsai.artifact_fleet import index_live_sources
+from secopsai.artifact_fleet import run_cycle as run_artifact_fleet_cycle
 from secopsai.artifact_fleet import list_artifacts as artifact_list
 from secopsai.artifact_fleet import scan_artifact as scan_artifact_fleet
 from secopsai.artifact_fleet import scan_pending as scan_pending_artifacts
@@ -45,6 +46,7 @@ from secopsai.artifact_fleet import triage_artifact
 from secopsai.artifact_fleet import enqueue_model_triage
 from secopsai.artifact_fleet import triage_show as show_artifact_triage
 from secopsai.artifact_fleet import triage_pending
+from secopsai.artifact_fleet import queue_model_triage
 from secopsai.artifact_fleet import validate_rule_pack as validate_artifact_rule_pack
 from secopsai.blog import (
     attach_media as attach_blog_media,
@@ -1429,7 +1431,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         command = artifact_sub.add_parser(command_name, help=help_text)
         command.add_argument("--limit", type=int, default=100)
         command.add_argument("--db-path", default=None)
-    artifact_sub.add_parser("rules", help="Validate the versioned YARA/Sigma artifact rule pack")
+    artifact_rules = artifact_sub.add_parser("rules", help="Validate the versioned YARA/Sigma artifact rule pack")
+    artifact_rules.add_argument("--db-path", default=None)
     artifact_index = artifact_sub.add_parser("index", help="Index metadata records without downloading artifacts")
     artifact_index.add_argument("--fixture", default="", help="Metadata JSON array fixture")
     artifact_index.add_argument("--source", default="fixture")
@@ -1453,6 +1456,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     artifact_triage_cmd.add_argument("--artifact-id", default="")
     artifact_triage_cmd.add_argument("--limit", type=int, default=500)
     artifact_triage_cmd.add_argument("--model", default="")
+    artifact_triage_cmd.add_argument("--enqueue-model", action="store_true", help="Queue minimized contexts for the configured model bridge")
     artifact_triage_cmd.add_argument("--db-path", default=None)
     artifact_show = artifact_sub.add_parser("triage-show", help="Show one artifact triage record and safe context")
     artifact_show.add_argument("artifact_id")
@@ -1461,9 +1465,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     artifact_bench.add_argument("--artifacts", type=int, default=1000)
     artifact_bench.add_argument("--workers", type=int, default=4)
     artifact_bench.add_argument("--fixture-mode", action="store_true")
+    artifact_bench.add_argument("--db-path", default=None)
     artifact_handoff = artifact_sub.add_parser("research-handoff", help="Prepare review-only research handoff metadata")
     artifact_handoff.add_argument("artifact_id")
     artifact_handoff.add_argument("--db-path", default=None)
+    artifact_cycle = artifact_sub.add_parser("cycle", help="Run metadata index, safe scan, and triage queue automation")
+    artifact_cycle.add_argument("--since", default="24h")
+    artifact_cycle.add_argument("--limit", type=int, default=1000)
+    artifact_cycle.add_argument("--workers", type=int, default=4)
+    artifact_cycle.add_argument("--fixture", default="")
+    artifact_cycle.add_argument("--db-path", default=None)
 
     intelligence = sub.add_parser("intelligence", help="Run approved read-only intelligence actions and manage the local Codex bridge")
     intelligence_sub = intelligence.add_subparsers(dest="intelligence_cmd", required=True)
@@ -4083,11 +4094,18 @@ def main(argv: Optional[List[str]] = None) -> int:
                 else:
                     payload = scan_pending_artifacts(limit=500, workers=args.workers, db_path=args.db_path)
             elif args.artifact_cmd == "triage":
-                payload = enqueue_model_triage(args.artifact_id, model=args.model, db_path=args.db_path) if args.artifact_id else triage_pending(limit=args.limit, db_path=args.db_path)
+                if args.artifact_id:
+                    payload = enqueue_model_triage(args.artifact_id, model=args.model, db_path=args.db_path)
+                elif args.enqueue_model:
+                    payload = queue_model_triage(limit=args.limit, model=args.model, db_path=args.db_path)
+                else:
+                    payload = triage_pending(limit=args.limit, db_path=args.db_path)
             elif args.artifact_cmd == "triage-show":
                 payload = show_artifact_triage(args.artifact_id, db_path=args.db_path)
             elif args.artifact_cmd == "benchmark":
                 payload = artifact_benchmark(artifacts=args.artifacts, workers=args.workers, fixture_mode=args.fixture_mode)
+            elif args.artifact_cmd == "cycle":
+                payload = run_artifact_fleet_cycle(since=args.since, limit=args.limit, workers=args.workers, fixture_path=args.fixture or None, db_path=args.db_path)
             elif args.artifact_cmd == "research-handoff":
                 payload = artifact_research_handoff(args.artifact_id, db_path=args.db_path)
             else:

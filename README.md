@@ -50,11 +50,15 @@ For high-volume artifact review:
 secopsai artifact-fleet status --json
 secopsai artifact-fleet scan-artifact --ecosystem crates --package proc-macro1 --version 1.0.107 --artifact fixture.crate --json
 secopsai artifact-fleet analyst-queue --json
+secopsai artifact-fleet cycle --since 24h --limit 1000 --workers 4 --json
 ```
 
 The fleet never executes package code, build scripts, binaries, or extensions;
 model triage receives only deterministic rule-hit context. See
-[Artifact Fleet Operations](docs/artifact-fleet-operations.md).
+[Artifact Fleet Operations](docs/artifact-fleet-operations.md). The local
+dashboard also exposes allowlisted buttons for the cycle, indexing, pending
+scans, model-job queueing, rule validation, analyst queue, and synthetic
+benchmark; exact artifact paths remain CLI-only by design.
 
 ## Platform Support
 

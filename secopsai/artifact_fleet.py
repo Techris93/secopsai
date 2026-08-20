@@ -592,6 +592,25 @@ def triage_pending(*, limit: int = 500, db_path: str | Path | None = None) -> di
     return {"status": "awaiting_model", "artifacts": [{"artifact_id": row["artifact_id"], "status": row["status"], "model": row["model"], "verdict": row["verdict"], "confidence": row["confidence"], "context": json.loads(row["context_json"]), "updated_at": row["updated_at"]} for row in rows], "model_calls": 0}
 
 
+def queue_model_triage(*, limit: int = 500, model: str = "", db_path: str | Path | None = None, requested_by: str = "artifact-fleet-dashboard") -> dict[str, Any]:
+    """Enqueue bounded, minimized contexts for the configured model bridge.
+
+    This only creates intelligence jobs. It never invokes a model directly and
+    never executes an artifact. The bridge remains responsible for honoring the
+    selected model and the analyst-review guardrails.
+    """
+    pending = triage_pending(limit=limit, db_path=db_path)
+    queued: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for item in pending.get("artifacts", []):
+        artifact_id = str(item.get("artifact_id") or "")
+        try:
+            queued.append(enqueue_model_triage(artifact_id, model=model, db_path=db_path, requested_by=requested_by))
+        except Exception as exc:
+            errors.append({"artifact_id": artifact_id, "error": str(exc)[:500]})
+    return {"status": "queued", "model": model, "queued": queued, "errors": errors, "requested": len(pending.get("artifacts", []))}
+
+
 def analyst_queue(*, limit: int = 100, db_path: str | Path | None = None) -> list[dict[str, Any]]:
     target = init_db(db_path)
     bounded = max(1, min(int(limit), MAX_PAGE))
@@ -636,6 +655,20 @@ def benchmark(*, artifacts: int = 1000, workers: int = 4, fixture_mode: bool = T
     rate = count / elapsed
     target_rate = 114_000 / 86_400
     return {"mode": "synthetic_fixture" if fixture_mode else "metadata_only", "artifacts": count, "workers": worker_count, "elapsed_seconds": round(elapsed, 4), "artifacts_per_second": round(rate, 2), "artifacts_per_day_equivalent": round(rate * 86_400), "target_artifacts_per_day": 114_000, "synthetic_sustains_target": rate >= target_rate, "production_sustainable": None, "synthetic_flagged": flagged, "note": "Benchmark is synthetic and does not prove live registry throughput."}
+
+
+def run_cycle(*, since: str = "24h", limit: int = 1000, workers: int = 4, fixture_path: str | Path | None = None, db_path: str | Path | None = None) -> dict[str, Any]:
+    """Run the safe automated funnel up to (but not through) model execution."""
+    if fixture_path:
+        records = json.loads(Path(fixture_path).read_text(encoding="utf-8"))
+        if not isinstance(records, list):
+            raise ValueError("artifact cycle fixture must be a JSON array")
+        indexed = index_records(records[:limit], source="fixture", cursor=since, db_path=db_path)
+    else:
+        indexed = index_live_sources(since=since, limit=limit, db_path=db_path)
+    scanned = scan_pending(limit=limit, workers=workers, db_path=db_path)
+    pending = triage_pending(limit=limit, db_path=db_path)
+    return {"status": "completed", "index": indexed, "scan": scanned, "triage": pending, "metrics": fleet_metrics(db_path=db_path), "model_execution": "not_started", "next_action": "artifact-fleet triage --enqueue-model"}
 
 
 def artifact_research_handoff(artifact_id: str, *, db_path: str | Path | None = None) -> dict[str, Any]:
