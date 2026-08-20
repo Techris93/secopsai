@@ -66,6 +66,26 @@ class AwsReadOnlyConnector:
         client = self.session.client("securityhub", region_name=self.region)
         return list(client.get_findings(MaxResults=max(1, min(int(max_findings), 100))).get("Findings") or [])
 
+    def iam_metadata(self, *, max_items: int = 100) -> dict[str, list[dict[str, Any]]]:
+        client = self.session.client("iam", region_name=self.region)
+        bounded = max(1, min(int(max_items), 100))
+        users = list(client.list_users(MaxItems=bounded).get("Users") or [])
+        roles = list(client.list_roles(MaxItems=bounded).get("Roles") or [])
+        access_keys: list[dict[str, Any]] = []
+        for user in users[:bounded]:
+            name = _text(user.get("UserName"), 128)
+            if name:
+                access_keys.extend(client.list_access_keys(UserName=name, MaxItems=bounded).get("AccessKeyMetadata") or [])
+        return {"users": users, "roles": roles, "access_keys": access_keys[:bounded]}
+
+    def vpc_flow_metadata(self, *, max_items: int = 100) -> list[dict[str, Any]]:
+        client = self.session.client("ec2", region_name=self.region)
+        return list(client.describe_flow_logs(MaxResults=max(1, min(int(max_items), 100))).get("FlowLogs") or [])
+
+    def secret_metadata(self, *, max_items: int = 100) -> list[dict[str, Any]]:
+        client = self.session.client("secretsmanager", region_name=self.region)
+        return list(client.list_secrets(MaxResults=max(1, min(int(max_items), 100))).get("SecretList") or [])
+
 
 class GcpReadOnlyConnector:
     """Google client adapter using an injected read-only client object."""
@@ -84,6 +104,26 @@ class GcpReadOnlyConnector:
             raise RuntimeError("GCP client does not expose list_findings")
         findings = self.client.list_findings(source_name=source_name)
         return [dict(item) if isinstance(item, dict) else {"finding": str(item)} for item in findings]
+
+    def iam_metadata(self, *, project_id: str) -> list[dict[str, Any]]:
+        if not hasattr(self.client, "list_service_accounts"):
+            raise RuntimeError("GCP client does not expose list_service_accounts")
+        return [dict(item) if isinstance(item, dict) else {"service_account": str(item)} for item in self.client.list_service_accounts(project_id=project_id)]
+
+    def vpc_metadata(self, *, project_id: str) -> list[dict[str, Any]]:
+        if not hasattr(self.client, "list_firewall_rules"):
+            raise RuntimeError("GCP client does not expose list_firewall_rules")
+        return [dict(item) if isinstance(item, dict) else {"firewall_rule": str(item)} for item in self.client.list_firewall_rules(project_id=project_id)]
+
+    def gke_metadata(self, *, project_id: str, cluster: str) -> list[dict[str, Any]]:
+        if not hasattr(self.client, "list_gke_workloads"):
+            raise RuntimeError("GCP client does not expose list_gke_workloads")
+        return [dict(item) if isinstance(item, dict) else {"workload": str(item)} for item in self.client.list_gke_workloads(project_id=project_id, cluster=cluster)]
+
+    def secret_metadata(self, *, project_id: str) -> list[dict[str, Any]]:
+        if not hasattr(self.client, "list_secret_metadata"):
+            raise RuntimeError("GCP client does not expose list_secret_metadata")
+        return [dict(item) if isinstance(item, dict) else {"secret": str(item)} for item in self.client.list_secret_metadata(project_id=project_id)]
 
 
 class KubernetesReadOnlyConnector:

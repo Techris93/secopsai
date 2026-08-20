@@ -14,12 +14,15 @@ import json
 import os
 import re
 import sqlite3
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Protocol
+
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,17 +83,53 @@ class EnterpriseContext:
             raise ValueError("organization_id is required and must be safe")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,159}", self.actor_id or ""):
             raise ValueError("actor_id is invalid")
+        if self.role not in {"operator", "analyst", "security_engineer", "auditor", "reviewer", "administrator", "service", "enterprise_ingest", "intelligence_operator", "operator_read"}:
+            raise PermissionError("role is not allowed for enterprise operations")
+
+    def require_action_write(self) -> None:
+        if self.role not in {"operator", "security_engineer", "administrator", "intelligence_operator"}:
+            raise PermissionError("role cannot create enterprise actions")
+
+    def require_governance_write(self) -> None:
+        if self.role not in {"operator", "security_engineer", "administrator", "auditor", "reviewer", "intelligence_operator"}:
+            raise PermissionError("role cannot write governance records")
+
+
+class RateLimiter:
+    """Small process-local fixed-window limiter for connector/API boundaries."""
+
+    def __init__(self, *, limit: int = 120, window_seconds: int = 60) -> None:
+        self.limit = max(1, int(limit))
+        self.window_seconds = max(1, int(window_seconds))
+        self._windows: dict[str, tuple[int, int]] = {}
+
+    def allow(self, key: str) -> bool:
+        now = int(time.time())
+        bucket = now // self.window_seconds
+        previous_bucket, count = self._windows.get(str(key), (bucket, 0))
+        if previous_bucket != bucket:
+            count = 0
+        count += 1
+        self._windows[str(key)] = (bucket, count)
+        return count <= self.limit
 
 
 class EnterpriseRepository(Protocol):
     def health(self) -> dict[str, Any]: ...
     def append_event(self, event: dict[str, Any], *, idempotency_key: str = "") -> dict[str, Any]: ...
     def list_events(self, *, limit: int = 100, cursor: str = "") -> dict[str, Any]: ...
+    def export_events(self, *, limit: int = 500) -> list[dict[str, Any]]: ...
+    def purge_events(self, *, before: str, approved: bool = False) -> dict[str, Any]: ...
     def upsert_asset(self, asset: dict[str, Any]) -> dict[str, Any]: ...
     def upsert_vulnerability(self, vulnerability: dict[str, Any]) -> dict[str, Any]: ...
+    def upsert_finding(self, finding: dict[str, Any]) -> dict[str, Any]: ...
+    def upsert_alert(self, alert: dict[str, Any]) -> dict[str, Any]: ...
+    def upsert_case(self, case: dict[str, Any]) -> dict[str, Any]: ...
     def create_action(self, action: dict[str, Any]) -> dict[str, Any]: ...
     def upsert_source_cursor(self, cursor: dict[str, Any]) -> dict[str, Any]: ...
+    def list_source_cursors(self, *, limit: int = 100) -> list[dict[str, Any]]: ...
     def record_dead_letter(self, item: dict[str, Any]) -> dict[str, Any]: ...
+    def list_dead_letters(self, *, limit: int = 100) -> list[dict[str, Any]]: ...
     def upsert_control(self, control: dict[str, Any]) -> dict[str, Any]: ...
     def record_evidence(self, evidence: dict[str, Any]) -> dict[str, Any]: ...
     def upsert_questionnaire(self, questionnaire: dict[str, Any]) -> dict[str, Any]: ...
@@ -129,8 +168,19 @@ class SQLiteEnterpriseStore:
     def init_schema(self) -> None:
         migration = MIGRATION_PATH.read_text(encoding="utf-8")
         with self.connect() as conn:
-            conn.executescript(migration)
-            conn.commit()
+            try:
+                version = int(conn.execute("SELECT version FROM enterprise_schema_meta LIMIT 1").fetchone()[0])
+            except (sqlite3.Error, TypeError, ValueError):
+                version = 0
+        if version >= 1:
+            return
+        with sqlite_writer_lock(self.db_path):
+            with self.connect() as conn:
+                conn.executescript(migration)
+                conn.execute("CREATE TABLE IF NOT EXISTS enterprise_schema_meta (version INTEGER NOT NULL)")
+                conn.execute("DELETE FROM enterprise_schema_meta")
+                conn.execute("INSERT INTO enterprise_schema_meta(version) VALUES (1)")
+                conn.commit()
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -207,6 +257,17 @@ class SQLiteEnterpriseStore:
         next_cursor = str(rows[-1]["received_at"]) if has_more and rows else ""
         return {"events": [self._row(row) for row in rows], "next_cursor": next_cursor, "has_more": has_more}
 
+    def export_events(self, *, limit: int = 500) -> list[dict[str, Any]]:
+        return self.list_events(limit=limit)["events"]
+
+    def purge_events(self, *, before: str, approved: bool = False) -> dict[str, Any]:
+        if not approved or self.context.role not in {"administrator", "security_engineer"}:
+            raise PermissionError("event retention deletion requires administrator approval")
+        with self.transaction() as conn:
+            result = conn.execute("DELETE FROM enterprise_events WHERE organization_id=? AND received_at < ?", (self.context.organization_id, _bounded_text(before, 40)))
+            self._audit(conn, "events.purged", "success", {"before": before, "deleted": result.rowcount})
+        return {"status": "purged", "deleted": int(result.rowcount), "before": before}
+
     def upsert_asset(self, asset: dict[str, Any]) -> dict[str, Any]:
         item = self._scoped(asset)
         asset_id = _bounded_text(item.get("asset_id") or _safe_id("AST"), 100)
@@ -253,7 +314,17 @@ class SQLiteEnterpriseStore:
             row = conn.execute("SELECT * FROM enterprise_vulnerabilities WHERE vulnerability_id=?", (vuln_id,)).fetchone()
         return self._row(row)
 
+    def upsert_finding(self, finding: dict[str, Any]) -> dict[str, Any]:
+        return self._upsert_json_record("enterprise_findings", "finding_id", finding, "finding")
+
+    def upsert_alert(self, alert: dict[str, Any]) -> dict[str, Any]:
+        return self._upsert_json_record("enterprise_alerts", "alert_id", alert, "alert")
+
+    def upsert_case(self, case: dict[str, Any]) -> dict[str, Any]:
+        return self._upsert_json_record("enterprise_cases", "case_id", case, "case")
+
     def create_action(self, action: dict[str, Any]) -> dict[str, Any]:
+        self.context.require_action_write()
         item = self._scoped(action)
         action_id = _bounded_text(item.get("action_id") or _safe_id("ACT"), 100)
         idem = _bounded_text(item.get("idempotency_key"), 160)
@@ -316,7 +387,20 @@ class SQLiteEnterpriseStore:
             row = conn.execute("SELECT * FROM enterprise_dead_letters WHERE dead_letter_id=?", (dead_id,)).fetchone()
         return self._row(row)
 
+    def list_source_cursors(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        bounded = max(1, min(int(limit), MAX_PAGE_SIZE))
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM enterprise_source_cursors WHERE organization_id=? ORDER BY updated_at DESC LIMIT ?", (self.context.organization_id, bounded)).fetchall()
+        return [self._row(row) for row in rows]
+
+    def list_dead_letters(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        bounded = max(1, min(int(limit), MAX_PAGE_SIZE))
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM enterprise_dead_letters WHERE organization_id=? ORDER BY created_at DESC LIMIT ?", (self.context.organization_id, bounded)).fetchall()
+        return [self._row(row) for row in rows]
+
     def upsert_control(self, control: dict[str, Any]) -> dict[str, Any]:
+        self.context.require_governance_write()
         item = self._scoped(control)
         control_id = _bounded_text(item.get("control_id") or _safe_id("CTL"), 120)
         with self.transaction() as conn:
@@ -333,6 +417,7 @@ class SQLiteEnterpriseStore:
         return self._row(row)
 
     def record_evidence(self, evidence: dict[str, Any]) -> dict[str, Any]:
+        self.context.require_governance_write()
         item = self._scoped(evidence)
         evidence_id = _bounded_text(item.get("evidence_id") or _safe_id("EVD"), 120)
         body = _payload(item.get("metadata") or item.get("content") or {})
@@ -482,6 +567,16 @@ class PostgresEnterpriseStore:
         rows = rows[:bounded]
         return {"events": [self._row(row) for row in rows], "next_cursor": str(rows[-1]["received_at"]) if has_more and rows else "", "has_more": has_more}
 
+    def export_events(self, *, limit: int = 500) -> list[dict[str, Any]]:
+        return self.list_events(limit=limit)["events"]
+
+    def purge_events(self, *, before: str, approved: bool = False) -> dict[str, Any]:
+        if not approved or self.context.role not in {"administrator", "security_engineer"}:
+            raise PermissionError("event retention deletion requires administrator approval")
+        with self.pool.connection() as conn:
+            result = conn.execute("DELETE FROM enterprise_events WHERE organization_id=%s AND received_at < %s", (self.context.organization_id, _bounded_text(before, 40)))
+        return {"status": "purged", "deleted": result.rowcount, "before": before}
+
     def upsert_asset(self, asset: dict[str, Any]) -> dict[str, Any]:
         item = self._scoped(asset)
         asset_id = _bounded_text(item.get("asset_id") or _safe_id("AST"), 100)
@@ -508,7 +603,17 @@ class PostgresEnterpriseStore:
             ).fetchone()
         return self._row(row)
 
+    def upsert_finding(self, finding: dict[str, Any]) -> dict[str, Any]:
+        return self._upsert_json_record("enterprise_findings", "finding_id", finding, "finding")
+
+    def upsert_alert(self, alert: dict[str, Any]) -> dict[str, Any]:
+        return self._upsert_json_record("enterprise_alerts", "alert_id", alert, "alert")
+
+    def upsert_case(self, case: dict[str, Any]) -> dict[str, Any]:
+        return self._upsert_json_record("enterprise_cases", "case_id", case, "case")
+
     def create_action(self, action: dict[str, Any]) -> dict[str, Any]:
+        self.context.require_action_write()
         item = self._scoped(action)
         action_id = _bounded_text(item.get("action_id") or _safe_id("ACT"), 100)
         idem = _bounded_text(item.get("idempotency_key"), 160)
@@ -545,7 +650,20 @@ class PostgresEnterpriseStore:
             row = conn.execute("INSERT INTO enterprise_dead_letters (dead_letter_id, organization_id, source, reason, payload_json, retryable, created_at) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *", (dead_id, self.context.organization_id, _bounded_text(data.get("source"), 160), _bounded_text(data.get("reason"), 1000), _payload(data.get("payload") or {}), bool(data.get("retryable", True)), utc_now())).fetchone()
         return self._row(row)
 
+    def list_source_cursors(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        bounded = max(1, min(int(limit), MAX_PAGE_SIZE))
+        with self.pool.connection() as conn:
+            rows = conn.execute("SELECT * FROM enterprise_source_cursors WHERE organization_id=%s ORDER BY updated_at DESC LIMIT %s", (self.context.organization_id, bounded)).fetchall()
+        return [self._row(row) for row in rows]
+
+    def list_dead_letters(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        bounded = max(1, min(int(limit), MAX_PAGE_SIZE))
+        with self.pool.connection() as conn:
+            rows = conn.execute("SELECT * FROM enterprise_dead_letters WHERE organization_id=%s ORDER BY created_at DESC LIMIT %s", (self.context.organization_id, bounded)).fetchall()
+        return [self._row(row) for row in rows]
+
     def upsert_control(self, control: dict[str, Any]) -> dict[str, Any]:
+        self.context.require_governance_write()
         item = self._scoped(control)
         control_id = _bounded_text(item.get("control_id") or _safe_id("CTL"), 120)
         with self.pool.connection() as conn:
@@ -553,6 +671,7 @@ class PostgresEnterpriseStore:
         return self._row(row)
 
     def record_evidence(self, evidence: dict[str, Any]) -> dict[str, Any]:
+        self.context.require_governance_write()
         item = self._scoped(evidence)
         evidence_id = _bounded_text(item.get("evidence_id") or _safe_id("EVD"), 120)
         body = _payload(item.get("metadata") or item.get("content") or {})

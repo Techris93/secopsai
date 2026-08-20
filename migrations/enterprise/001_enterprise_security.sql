@@ -51,6 +51,39 @@ CREATE INDEX IF NOT EXISTS idx_enterprise_vulns_org_status
 CREATE INDEX IF NOT EXISTS idx_enterprise_vulns_org_asset
     ON enterprise_vulnerabilities (organization_id, asset_id, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS enterprise_findings (
+    finding_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    owner TEXT NOT NULL DEFAULT '',
+    payload_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_enterprise_findings_org_status
+    ON enterprise_findings (organization_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS enterprise_alerts (
+    alert_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    owner TEXT NOT NULL DEFAULT '',
+    payload_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_enterprise_alerts_org_status
+    ON enterprise_alerts (organization_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS enterprise_cases (
+    case_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    owner TEXT NOT NULL DEFAULT '',
+    payload_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_enterprise_cases_org_status
+    ON enterprise_cases (organization_id, status, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS enterprise_actions (
     action_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,

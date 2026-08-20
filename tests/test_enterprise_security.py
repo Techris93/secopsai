@@ -15,8 +15,8 @@ from secopsai.cloud_connectors import (
     normalize_kubernetes_audit_event,
 )
 from secopsai.awareness import recommend_from_findings
-from secopsai.dast import DastTarget, build_zap_command, parse_sarif, validate_scope
-from secopsai.enterprise_store import EnterpriseContext, SQLiteEnterpriseStore
+from secopsai.dast import DastTarget, build_zap_command, dedupe_findings, parse_sarif, validate_scope
+from secopsai.enterprise_store import EnterpriseContext, RateLimiter, SQLiteEnterpriseStore
 from secopsai.enterprise_workflows import (
     TicketProposal,
     control_record,
@@ -47,6 +47,13 @@ def test_enterprise_store_redacts_isolates_and_deduplicates(tmp_path):
         store.append_event({"organization_id": "org-b", "source": "x", "event_type": "y", "payload": {}})
 
 
+def test_rate_limiter_bounds_connector_calls():
+    limiter = RateLimiter(limit=2, window_seconds=60)
+    assert limiter.allow("client") is True
+    assert limiter.allow("client") is True
+    assert limiter.allow("client") is False
+
+
 def test_enterprise_store_paginates_events(tmp_path):
     store = SQLiteEnterpriseStore(str(tmp_path / "enterprise.db"), context=EnterpriseContext("org-a"))
     for index in range(3):
@@ -56,6 +63,20 @@ def test_enterprise_store_paginates_events(tmp_path):
     assert page["has_more"] is True
     next_page = store.list_events(limit=2, cursor=page["next_cursor"])
     assert len(next_page["events"]) == 1
+
+
+def test_enterprise_rbac_and_explicit_domain_repositories(tmp_path):
+    analyst = SQLiteEnterpriseStore(str(tmp_path / "enterprise.db"), context=EnterpriseContext("org-a", actor_id="analyst-1", role="analyst"))
+    assert analyst.upsert_finding({"finding_id": "F-1", "title": "Finding", "status": "open"})["finding_id"] == "F-1"
+    assert analyst.upsert_alert({"alert_id": "A-1", "title": "Alert", "status": "open"})["alert_id"] == "A-1"
+    assert analyst.upsert_case({"case_id": "C-1", "title": "Case", "status": "draft"})["case_id"] == "C-1"
+    with pytest.raises(PermissionError):
+        analyst.create_action({"action_type": "revoke_key", "target_id": "key-1"})
+    admin = SQLiteEnterpriseStore(str(tmp_path / "enterprise.db"), context=EnterpriseContext("org-a", actor_id="admin", role="administrator"))
+    admin.append_event({"event_id": "EVT-OLD", "source": "fixture", "event_type": "old", "received_at": "2020-01-01T00:00:00Z", "payload": {}})
+    with pytest.raises(PermissionError):
+        admin.purge_events(before="2030-01-01T00:00:00Z")
+    assert admin.purge_events(before="2030-01-01T00:00:00Z", approved=True)["deleted"] >= 1
 
 
 def test_cloud_normalizers_remove_raw_credentials():
@@ -147,6 +168,9 @@ def test_dast_requires_authorization_and_parses_sarif():
     findings = parse_sarif(json.dumps(sarif), target_id="web-1")
     assert findings[0]["severity"] == "critical"
     assert findings[0]["finding_id"].startswith("DAST-")
+    merged = dedupe_findings(findings + [{**findings[0], "severity": "high", "evidence_refs": ["EV-1"]}])
+    assert len(merged) == 1
+    assert merged[0]["severity"] == "critical"
 
 
 def test_vulnerability_priority_and_sla():

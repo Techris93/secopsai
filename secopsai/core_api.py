@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
@@ -44,9 +45,10 @@ from secopsai.daily_automation import (
     update_settings as update_daily_automation_settings,
 )
 from secopsai.observability import initialize_observability
-from secopsai.enterprise_store import EnterpriseContext, build_enterprise_store
+from secopsai.enterprise_store import EnterpriseContext, RateLimiter, build_enterprise_store
 from secopsai.enterprise_workflows import pentest_engagement, questionnaire_record, threat_model_record
 from secopsai.vulnerability_management import normalize_advisory
+from secopsai.siem import MetricsRegistry
 
 
 LOGGER = logging.getLogger(__name__)
@@ -170,6 +172,7 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
         resolved.validate()
         soc_store.init_db(resolved.db_path)
         application.state.ingest_lock = asyncio.Lock()
+        application.state.enterprise_rate_limiter = RateLimiter(limit=120, window_seconds=60)
         yield
 
     docs_enabled = resolved.environment not in PROTECTED_ENVIRONMENTS
@@ -203,7 +206,12 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
     async def security_headers(request: Request, call_next: Callable[..., Any]):
         request_id = _request_id(request.headers.get("X-Request-ID"))
         request.state.request_id = request_id
-        response = await call_next(request)
+        limiter = getattr(application.state, "enterprise_rate_limiter", None)
+        rate_key = f"{request.client.host if request.client else 'unknown'}:{request.url.path}"
+        if limiter is not None and request.url.path.startswith("/api/v1/enterprise") and not limiter.allow(rate_key):
+            response = JSONResponse({"detail": "enterprise API rate limit exceeded", "request_id": request_id}, status_code=429)
+        else:
+            response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -241,7 +249,17 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
 
     @application.get("/api/v1/enterprise/health")
     def enterprise_health(_role: str = Depends(require_read)) -> dict[str, Any]:
-        return enterprise_store_for("operator_read").health()
+        store = enterprise_store_for("operator_read")
+        return {
+            **store.health(),
+            "source_cursors": store.list_source_cursors(limit=100),
+            "dead_letters": store.list_dead_letters(limit=100),
+        }
+
+    @application.get("/api/v1/enterprise/metrics")
+    def enterprise_metrics(_role: str = Depends(require_read)) -> dict[str, Any]:
+        registry = MetricsRegistry()
+        return {"metrics": registry.snapshot(), "prometheus": registry.prometheus()}
 
     @application.get("/api/v1/enterprise/events")
     def enterprise_events(

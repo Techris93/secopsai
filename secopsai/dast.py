@@ -90,3 +90,22 @@ def validate_scope(target: DastTarget, requested_url: str) -> bool:
     if not target.scope:
         return requested.path == base.path or requested.path.startswith(base.path.rstrip("/") + "/")
     return any(requested.path.startswith(prefix) for prefix in target.scope)
+
+
+def dedupe_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge repeated DAST/SAST/SCA observations by target, rule, and location."""
+    merged: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for item in findings:
+        locations = json.dumps(item.get("locations") or item.get("path") or [], sort_keys=True)
+        key = (str(item.get("target_id") or ""), str(item.get("rule_id") or item.get("vulnerability_id") or ""), locations)
+        current = merged.get(key)
+        if current is None:
+            merged[key] = dict(item)
+            continue
+        evidence = list(current.get("evidence_refs") or []) + list(item.get("evidence_refs") or [])
+        current["evidence_refs"] = list(dict.fromkeys(str(value) for value in evidence))[:20]
+        if {str(current.get("severity")), str(item.get("severity"))} & {"critical"}:
+            current["severity"] = "critical"
+        elif {str(current.get("severity")), str(item.get("severity"))} & {"high"}:
+            current["severity"] = "high"
+    return list(merged.values())

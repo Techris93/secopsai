@@ -67,6 +67,7 @@ tenant-aware PostgreSQL design.
 | `POST /api/v1/intelligence/bridge/jobs/{job_id}/complete` | Bridge token | Return a schema-validated result |
 | `POST /api/v1/intelligence/bridge/jobs/{job_id}/fail` | Bridge token | Record a bounded bridge failure |
 | `GET /api/v1/enterprise/health` | Read token | Check enterprise data-plane readiness |
+| `GET /api/v1/enterprise/metrics` | Read token | Read bounded metrics and Prometheus text |
 | `GET /api/v1/enterprise/events` | Read token | Paginated normalized enterprise events |
 | `POST /api/v1/enterprise/events` | Ingest token | Append a redacted idempotent event |
 | `POST /api/v1/enterprise/vulnerabilities` | Intelligence token | Upsert prioritized vulnerability context |

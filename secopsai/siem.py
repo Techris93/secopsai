@@ -71,3 +71,14 @@ def export_normalized_events(events: Iterable[dict[str, Any]]) -> str:
         item["payload"] = item.get("payload") or {}
         lines.append(json.dumps(item, sort_keys=True, ensure_ascii=True))
     return "\n".join(lines) + ("\n" if lines else "")
+
+
+def export_to_http_sink(events: Iterable[dict[str, Any]], *, endpoint: str, requester: Any, approved: bool = False) -> dict[str, Any]:
+    """Send minimized events only through an explicitly configured sink."""
+    if not endpoint or not endpoint.startswith("https://"):
+        raise ValueError("SIEM export endpoints must use HTTPS")
+    if not approved:
+        return {"status": "proposed", "endpoint": endpoint, "events": len(list(events)), "network_called": False}
+    body = export_normalized_events(events)
+    response = requester(endpoint, {"Content-Type": "application/x-ndjson"}, body)
+    return {"status": "sent", "endpoint": endpoint, "response": response, "network_called": True}
