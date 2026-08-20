@@ -27,6 +27,7 @@ dev = [
 ]
 enterprise = [
   "psycopg[binary,pool]>=3.2,<4",
+  "yara-python>=4.5,<5",
 ]
 
 [project.scripts]

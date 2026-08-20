@@ -90,6 +90,15 @@ def test_triage_escalates_suspicious_and_context_is_minimized(tmp_path):
     assert artifact_fleet.analyst_queue(db_path=tmp_path / "fleet.db")
 
 
+def test_artifact_triage_can_queue_bridge_job_and_record_result(tmp_path):
+    archive = _crate_archive(tmp_path, "proc-macro1-1.0.107.crate")
+    scanned = artifact_fleet.scan_artifact(ecosystem="crates", package="proc-macro1", version="1.0.107", artifact=archive, db_path=tmp_path / "fleet.db")
+    queued = artifact_fleet.enqueue_model_triage(scanned["artifact_id"], model="fixture/model", db_path=tmp_path / "fleet.db")
+    assert queued["status"] == "awaiting_model"
+    recorded = artifact_fleet.record_model_result(scanned["artifact_id"], {"finding_verdict": "needs_more_evidence", "finding_confidence": 70}, model="fixture/model", db_path=tmp_path / "fleet.db")
+    assert recorded["status"] == "analyst_review"
+
+
 def test_pending_scan_queue_processes_fixture_workers(tmp_path):
     records = [{
         "ecosystem": "crates", "package": "proc-macro1", "version": "1.0.107",

@@ -81,6 +81,7 @@ def _actions() -> tuple[Action, ...]:
         Action("generate_analyst_brief", "Generate analyst brief", "Draft an evidence-grounded analyst brief from normalized case records.", "secopsai.research.read", "research_case", True),
         Action("review_publication_safety", "Review publication safety", "Review a case for disclosure, attribution, privacy, and evidentiary risks without approving publication.", "secopsai.research.read", "research_case", True),
         Action("recommend_remediation", "Recommend remediation", "Propose prioritized remediation with verification steps for one finding.", "secopsai.findings.read", "finding", True),
+        Action("triage_artifact", "Triage OSS artifact", "Assess deterministic OSS artifact findings and recommend analyst escalation.", "secopsai.artifacts.read", "artifact", True),
     )
 
 
@@ -265,6 +266,12 @@ def _bridge_context(action: Action, inputs: dict[str, Any], db_path: str | None)
 
             context["investigation_pipeline"] = pipeline_intelligence_context(pipeline_id, db_path=db_path)
         return context
+    if action.name == "triage_artifact":
+        from secopsai.artifact_fleet import triage_show
+
+        artifact_id = _target(inputs, "artifact_id")
+        triage = triage_show(artifact_id, db_path=db_path)
+        return {"artifact_triage": triage.get("context") or {}, "artifact_id": artifact_id}
     raise ValueError(f"no bridge context builder for action: {action.name}")
 
 
@@ -296,6 +303,12 @@ def _bridge_instructions(action: Action) -> str:
             "Set exposure_assessment to affected, not_observed, unknown, or not_applicable. Set automation_recommendation to escalate, suppress_once, suppress_pattern, monitor, or collect_evidence. "
             "List the strongest counterarguments against your own verdict. Rule tuning proposals must identify an existing rule or threshold, remain narrowly scoped, and explain the expected false-positive and false-negative effect. "
             "A model recommendation is not permission to publish, disclose, execute code, activate a rule, or perform destructive response. "
+        ),
+        "triage_artifact": (
+            "Assess only the supplied deterministic artifact findings. Return finding_verdict as true_positive, false_positive, benign_expected, or needs_more_evidence; "
+            "finding_confidence as 0-100; disposition_recommendation as true_positive, false_positive, expected_behavior, tune_policy, or needs_review; "
+            "and decision_evidence_refs using only supplied artifact rule IDs, file paths, hashes, and IOC identifiers. "
+            "Suspicious or inconclusive evidence must escalate to an analyst. Never treat a source URL or missing local usage as proof of benignness. "
         ),
     }.get(action.name, "")
     return (

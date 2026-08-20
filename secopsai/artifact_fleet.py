@@ -534,6 +534,44 @@ def triage_artifact(artifact_id: str, *, model: str = "", model_call: Callable[[
     return {"artifact_id": artifact_id, "status": status, "model": model, "verdict": verdict, "confidence": confidence, "analyst_required": analyst_required, "result": response}
 
 
+def enqueue_model_triage(artifact_id: str, *, model: str = "", db_path: str | Path | None = None, requested_by: str = "artifact-fleet") -> dict[str, Any]:
+    """Queue one minimized artifact context for the configured model bridge."""
+    triage = triage_show(artifact_id, db_path=db_path)
+    from secopsai.intelligence_jobs import enqueue_job
+
+    job = enqueue_job(
+        action="triage_artifact",
+        target_id=artifact_id,
+        inputs={"artifact_id": artifact_id, "selected_model": model},
+        requested_by=requested_by,
+        idempotency_key=f"artifact-triage:{artifact_id}:{model}",
+        db_path=db_path,
+    )
+    target = init_db(db_path)
+    with _connect(target) as conn:
+        conn.execute("UPDATE artifact_triage SET status='awaiting_model', model=?, updated_at=? WHERE artifact_id=?", (_text(model, 200), _now(), artifact_id))
+        conn.commit()
+    return {"artifact_id": artifact_id, "status": "awaiting_model", "job": job, "context": triage.get("context")}
+
+
+def record_model_result(artifact_id: str, response: dict[str, Any], *, model: str = "", db_path: str | Path | None = None) -> dict[str, Any]:
+    raw_verdict = _text(response.get("artifact_verdict") or response.get("finding_verdict") or response.get("verdict_recommendation"), 60).lower()
+    verdict_map = {"true_positive": "suspicious", "needs_more_evidence": "inconclusive", "benign_expected": "benign", "false_positive": "likely_benign"}
+    verdict = verdict_map.get(raw_verdict, raw_verdict)
+    if verdict not in {"benign", "likely_benign", "suspicious", "inconclusive"}:
+        verdict = "inconclusive"
+    confidence = max(0, min(int(response.get("artifact_confidence") or response.get("finding_confidence") or response.get("verdict_confidence") or 0), 100))
+    analyst_required = verdict in {"suspicious", "inconclusive"}
+    status = "analyst_review" if analyst_required else "resolved"
+    target = init_db(db_path)
+    now = _now()
+    with _connect(target) as conn:
+        conn.execute("UPDATE artifact_triage SET status=?, model=?, verdict=?, confidence=?, result_json=?, analyst_required=?, updated_at=? WHERE artifact_id=?", (status, _text(model, 200), verdict, confidence, _json(response), int(analyst_required), now, artifact_id))
+        conn.execute("UPDATE artifact_queue SET status='complete', updated_at=? WHERE artifact_id=? AND stage='triage'", (now, artifact_id))
+        conn.commit()
+    return {"artifact_id": artifact_id, "status": status, "verdict": verdict, "confidence": confidence, "analyst_required": analyst_required}
+
+
 def triage_show(artifact_id: str, *, db_path: str | Path | None = None) -> dict[str, Any]:
     target = init_db(db_path)
     with _connect(target) as conn:

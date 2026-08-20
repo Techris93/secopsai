@@ -42,6 +42,7 @@ from secopsai.artifact_fleet import scan_artifact as scan_artifact_fleet
 from secopsai.artifact_fleet import scan_pending as scan_pending_artifacts
 from secopsai.artifact_fleet import source_health as artifact_source_health
 from secopsai.artifact_fleet import triage_artifact
+from secopsai.artifact_fleet import enqueue_model_triage
 from secopsai.artifact_fleet import triage_show as show_artifact_triage
 from secopsai.artifact_fleet import triage_pending
 from secopsai.artifact_fleet import validate_rule_pack as validate_artifact_rule_pack
@@ -4082,7 +4083,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 else:
                     payload = scan_pending_artifacts(limit=500, workers=args.workers, db_path=args.db_path)
             elif args.artifact_cmd == "triage":
-                payload = triage_artifact(args.artifact_id, model=args.model, db_path=args.db_path) if args.artifact_id else triage_pending(limit=args.limit, db_path=args.db_path)
+                payload = enqueue_model_triage(args.artifact_id, model=args.model, db_path=args.db_path) if args.artifact_id else triage_pending(limit=args.limit, db_path=args.db_path)
             elif args.artifact_cmd == "triage-show":
                 payload = show_artifact_triage(args.artifact_id, db_path=args.db_path)
             elif args.artifact_cmd == "benchmark":

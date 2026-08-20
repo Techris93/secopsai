@@ -1,2 +1,3 @@
 # Optional hosted enterprise data plane. Local SQLite mode does not require it.
 psycopg[binary,pool]>=3.2,<4
+yara-python>=4.5,<5

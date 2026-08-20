@@ -728,6 +728,15 @@ def run_once(
                     provider=used_provider,
                     db_path=db_path,
                 )
+        if job.get("action") == "triage_artifact":
+            from secopsai.artifact_fleet import record_model_result
+
+            record_model_result(
+                str(job.get("target_id") or job_inputs.get("artifact_id") or ""),
+                raw,
+                model=used_model,
+                db_path=db_path,
+            )
         return {"status": "succeeded", "provider": used_provider, "model": used_model, "job": completed}
     except subprocess.TimeoutExpired:
         failed = _fail_current_job(
