@@ -11,6 +11,7 @@ import pytest
 import soc_store
 from secopsai.research_intake import SafeFetcher
 from secopsai.research_surveillance import (
+    COLLECTOR_DEFINITIONS,
     CollectorError,
     collector_status,
     coverage_report,
@@ -100,6 +101,58 @@ def test_ensure_collectors_seeds_nuget_catalog(tmp_path):
     assert nuget["ecosystem"] == "nuget"
     assert nuget["cursor"] is not None
     assert nuget["cursor"]["cursor_value"]
+
+
+def test_current_collector_reads_do_not_require_a_database_write(tmp_path):
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+    blocker = soc_store.connect(db_path)
+    try:
+        blocker.execute("BEGIN IMMEDIATE")
+        collectors = ensure_collectors(db_path=db_path)
+        events = list_feed_events(db_path=db_path)
+    finally:
+        blocker.rollback()
+        blocker.close()
+
+    assert len(collectors) == len(COLLECTOR_DEFINITIONS)
+    assert events == []
+
+
+def test_feed_event_listing_merges_indexed_collector_partitions_latest_first(tmp_path):
+    db_path = _db(tmp_path)
+    collectors = ensure_collectors(db_path=db_path)
+    first, second = collectors[:2]
+    with soc_store.connect(db_path) as connection:
+        for index, (collector, timestamp) in enumerate(
+            (
+                (first, "2026-08-20T10:00:00.000Z"),
+                (second, "2026-08-20T12:00:00.000Z"),
+                (first, "2026-08-20T11:00:00.000Z"),
+            )
+        ):
+            connection.execute(
+                """INSERT INTO registry_feed_events
+                (feed_event_id, collector_id, ecosystem, package, version, event_type,
+                 registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
+                 idempotency_key, collected_at, processing_state)
+                VALUES (?, ?, ?, ?, '1.0.0', 'published', ?, '', '', 0, '{}', ?, ?, 'pending')""",
+                (
+                    f"RFE-{index}",
+                    collector["collector_id"],
+                    collector["ecosystem"],
+                    f"fixture-{index}",
+                    timestamp,
+                    f"fixture-{index}",
+                    timestamp,
+                ),
+            )
+
+    events = list_feed_events(limit=2, db_path=db_path)
+    assert [event["registry_timestamp"] for event in events] == [
+        "2026-08-20T12:00:00.000Z",
+        "2026-08-20T11:00:00.000Z",
+    ]
 
 
 def test_run_stores_events_and_advances_cursor(tmp_path):

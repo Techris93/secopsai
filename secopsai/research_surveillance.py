@@ -271,21 +271,69 @@ def _decode(value: Any, fallback: Any) -> Any:
         return fallback
 
 
+def _collector_config(definition: Dict[str, Any]) -> Dict[str, Any]:
+    config = {
+        "allowed_hosts": list(definition["allowed_hosts"]),
+        "algorithm_version": ALGORITHM_VERSION,
+    }
+    for key in (
+        "cursor_multiplier",
+        "overlap_seconds",
+        "retention_seconds",
+        "retention_safety_seconds",
+        "max_window_hours",
+        "interval_seconds",
+        "page_limit",
+    ):
+        if key in definition:
+            config[key] = definition[key]
+    return config
+
+
+def _load_collectors(connection: sqlite3.Connection) -> List[Dict[str, Any]]:
+    rows = connection.execute("SELECT * FROM registry_collectors ORDER BY ecosystem").fetchall()
+    cursors = {
+        str(row["collector_id"]): dict(row)
+        for row in connection.execute("SELECT * FROM registry_cursors").fetchall()
+    }
+    return [dict(row) | {"cursor": cursors.get(str(row["collector_id"]))} for row in rows]
+
+
+def _collectors_are_current(collectors: Iterable[Dict[str, Any]]) -> bool:
+    by_id = {str(collector.get("collector_id") or ""): collector for collector in collectors}
+    expected_ids = {str(definition["collector_id"]) for definition in COLLECTOR_DEFINITIONS.values()}
+    if not expected_ids.issubset(by_id):
+        return False
+    for ecosystem, definition in COLLECTOR_DEFINITIONS.items():
+        collector = by_id[str(definition["collector_id"])]
+        if (
+            collector.get("source_id") != definition["source_id"]
+            or collector.get("ecosystem") != ecosystem
+            or collector.get("name") != definition["name"]
+            or collector.get("feed_url") != definition["feed_url"]
+            or collector.get("mode") != definition["mode"]
+            or _decode(collector.get("config_json"), {}) != _collector_config(definition)
+            or collector.get("cursor") is None
+        ):
+            return False
+    return True
+
+
 def ensure_collectors(*, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
     """Seed collector rows and cursors for every defined global feed."""
     seed_registry_sources(db_path=db_path)
+    with closing(soc_store.connect(db_path)) as connection:
+        collectors = _load_collectors(connection)
+    if _collectors_are_current(collectors):
+        return collectors
+
     now = _format_ts(_utcnow())
-    seeded: List[Dict[str, Any]] = []
     with sqlite_writer_lock(db_path):
         with closing(soc_store.connect(db_path)) as connection:
+            collectors = _load_collectors(connection)
+            if _collectors_are_current(collectors):
+                return collectors
             for ecosystem, definition in COLLECTOR_DEFINITIONS.items():
-                config = {
-                    "allowed_hosts": list(definition["allowed_hosts"]),
-                    "algorithm_version": ALGORITHM_VERSION,
-                }
-                for key in ("cursor_multiplier", "overlap_seconds", "retention_seconds", "retention_safety_seconds", "max_window_hours", "interval_seconds", "page_limit"):
-                    if key in definition:
-                        config[key] = definition[key]
                 connection.execute(
                     """INSERT INTO registry_collectors
                     (collector_id, source_id, ecosystem, name, feed_url, mode, enabled, config_json, created_at, updated_at)
@@ -299,7 +347,7 @@ def ensure_collectors(*, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
                         definition["name"],
                         definition["feed_url"],
                         definition["mode"],
-                        _json(config),
+                        _json(_collector_config(definition)),
                         now,
                         now,
                     ),
@@ -319,16 +367,7 @@ def ensure_collectors(*, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
                     ),
                 )
             connection.commit()
-            rows = connection.execute(
-                "SELECT * FROM registry_collectors ORDER BY ecosystem"
-            ).fetchall()
-            for row in rows:
-                cursor = connection.execute(
-                    "SELECT * FROM registry_cursors WHERE collector_id = ?",
-                    (row["collector_id"],),
-                ).fetchone()
-                seeded.append(dict(row) | {"cursor": dict(cursor) if cursor else None})
-    return seeded
+            return _load_collectors(connection)
 
 
 def get_collector(collector_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
@@ -2301,20 +2340,44 @@ def list_feed_events(
     db_path: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Inspect the stored feed-event ledger without terminal SQL."""
-    ensure_collectors(db_path=db_path)
-    clauses = []
-    params: List[Any] = []
-    if collector_id:
-        clauses.append("collector_id = ?")
-        params.append(collector_id)
-    if package:
-        clauses.append("package = ?")
-        params.append(package)
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    collectors = ensure_collectors(db_path=db_path)
+    bounded_limit = max(1, min(int(limit), 1000))
+    selected = [item for item in collectors if not collector_id or item["collector_id"] == collector_id]
+    if collector_id and not selected:
+        return []
+
+    events: List[sqlite3.Row] = []
     with closing(soc_store.connect(db_path)) as connection:
-        rows = connection.execute(
-            f"""SELECT * FROM registry_feed_events {where}
-            ORDER BY registry_timestamp DESC LIMIT ?""",
-            (*params, max(1, min(int(limit), 1000))),
-        ).fetchall()
-    return [dict(row) | {"metadata": _decode(row["metadata_json"], {})} for row in rows]
+        seen_ecosystems: set[str] = set()
+        for collector in selected:
+            if package:
+                if collector_id:
+                    rows = connection.execute(
+                        """SELECT * FROM registry_feed_events
+                        WHERE collector_id = ? AND package = ?
+                        ORDER BY registry_timestamp DESC LIMIT ?""",
+                        (collector["collector_id"], package, bounded_limit),
+                    ).fetchall()
+                elif collector["ecosystem"] not in seen_ecosystems:
+                    seen_ecosystems.add(collector["ecosystem"])
+                    rows = connection.execute(
+                        """SELECT * FROM registry_feed_events
+                        WHERE ecosystem = ? AND package = ?
+                        ORDER BY registry_timestamp DESC LIMIT ?""",
+                        (collector["ecosystem"], package, bounded_limit),
+                    ).fetchall()
+                else:
+                    rows = []
+            else:
+                rows = connection.execute(
+                    """SELECT * FROM registry_feed_events
+                    WHERE collector_id = ?
+                    ORDER BY registry_timestamp DESC LIMIT ?""",
+                    (collector["collector_id"], bounded_limit),
+                ).fetchall()
+            events.extend(rows)
+    events.sort(key=lambda row: str(row["registry_timestamp"]), reverse=True)
+    return [
+        dict(row) | {"metadata": _decode(row["metadata_json"], {})}
+        for row in events[:bounded_limit]
+    ]

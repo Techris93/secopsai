@@ -513,6 +513,24 @@ def get_case(case_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
                 for status in ("pending", "applying", "accepted", "rejected", "superseded")
             }
             result["pipelines"].append(pipeline)
+        intelligence_jobs = {
+            str(item["job_id"]): dict(item)
+            for item in connection.execute(
+                """SELECT DISTINCT j.job_id, j.action, j.status, j.attempt, j.provider,
+                          j.queued_at, j.started_at, j.completed_at, j.updated_at,
+                          j.error_code, j.error_message
+                   FROM intelligence_jobs j
+                   JOIN research_pipeline_steps s ON s.intelligence_job_id = j.job_id
+                   JOIN research_pipeline_runs p ON p.pipeline_id = s.pipeline_id
+                   WHERE p.case_id = ?""",
+                (case_id,),
+            ).fetchall()
+        }
+        for pipeline in result["pipelines"]:
+            for step in pipeline["steps"]:
+                job_id = str(step.get("intelligence_job_id") or "")
+                if job_id and job_id in intelligence_jobs:
+                    step["intelligence_job"] = intelligence_jobs[job_id]
         result["claims"] = []
         for item in connection.execute(
             "SELECT * FROM research_claims WHERE case_id = ? ORDER BY updated_at DESC",

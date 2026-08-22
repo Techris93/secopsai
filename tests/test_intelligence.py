@@ -21,6 +21,7 @@ from secopsai.codex_bridge import (
     resolve_model_routing,
     run_loop,
     run_once,
+    _invoke_codex,
     _model_chain,
     _run,
 )
@@ -291,6 +292,61 @@ def test_bridge_probe_accepts_successful_http_fallback_diagnostic(monkeypatch):
     assert health[PRIMARY_MODEL]["http_status"] == 200
     assert health[PRIMARY_MODEL]["transport_diagnostic_status"] == 426
     assert "fallback transport" in health[PRIMARY_MODEL]["transport_diagnostic"]
+
+
+def test_provider_model_uses_tool_free_loopback_responses(monkeypatch):
+    captured = []
+    monkeypatch.setenv("SECOPSAI_OPENCODEX_RESPONSES_URL", "http://127.0.0.1:53886/v1/responses")
+    clear_provider_health_cache()
+
+    canonical = {
+        "summary": "Bounded local model review completed.",
+        "risk_assessment": "Evidence needs analyst review.",
+        "evidence": ["Static evidence was supplied."],
+        "recommended_actions": ["Review the evidence."],
+        "limitations": ["No package code was executed."],
+    }
+
+    class FakeResponse:
+        ok = True
+        status_code = 200
+        text = ""
+
+        def __init__(self, payload):
+            self._payload = payload
+            self.content = json.dumps(payload).encode()
+
+        def json(self):
+            return self._payload
+
+    class FakeSession:
+        def __init__(self):
+            self.trust_env = True
+
+        def post(self, endpoint, **kwargs):
+            assert self.trust_env is False
+            captured.append({"endpoint": endpoint, **kwargs})
+            body = kwargs["json"]
+            output = "OK" if "text" not in body else json.dumps(canonical)
+            return FakeResponse({"output": [{"content": [{"type": "output_text", "text": output}]}]})
+
+    monkeypatch.setattr("secopsai.codex_bridge.requests.Session", FakeSession)
+    settings = BridgeSettings(model="xai/grok-4.6", fallback_models=())
+    health = probe_provider_health(settings, ["xai/grok-4.6"], runner=_run, force=True)
+    assert health["xai/grok-4.6"]["status"] == "ready"
+    assert health["xai/grok-4.6"]["probe_method"] == "opencodex_responses_loopback"
+
+    result = _invoke_codex(
+        {"action": "analyze_research_case", "instructions": "Review bounded evidence.", "context": {}},
+        settings,
+        _run,
+        model="xai/grok-4.6",
+    )
+    assert result["summary"] == canonical["summary"]
+    assert all(call["endpoint"] == "http://127.0.0.1:53886/v1/responses" for call in captured)
+    assert all("tools" not in call["json"] for call in captured)
+    assert captured[-1]["json"]["text"]["format"]["type"] == "json_schema"
+    assert captured[-1]["allow_redirects"] is False
 
 
 def test_bridge_drains_queued_work_before_autopilot_discovery(tmp_path: Path, monkeypatch):

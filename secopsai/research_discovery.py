@@ -174,11 +174,44 @@ def capability_registry() -> Dict[str, Any]:
     return {"schema_version": "secopsai.research.ecosystem-capabilities.v1", "ecosystems": list(CAPABILITIES.values())}
 
 
+def _registry_sources(connection) -> List[Dict[str, Any]]:
+    rows = connection.execute("SELECT * FROM research_registry_sources ORDER BY ecosystem").fetchall()
+    return [dict(row) | {"capabilities": _decode(row["capabilities_json"], {})} for row in rows]
+
+
+def _registry_sources_are_current(sources: Iterable[Dict[str, Any]]) -> bool:
+    by_id = {str(source.get("source_id") or ""): source for source in sources}
+    expected_ids = {f"REG-{ecosystem.upper().replace('-', '_')}" for ecosystem in CAPABILITIES}
+    if not expected_ids.issubset(by_id):
+        return False
+    for ecosystem, item in CAPABILITIES.items():
+        source_id = f"REG-{ecosystem.upper().replace('-', '_')}"
+        source = by_id[source_id]
+        if (
+            source.get("ecosystem") != ecosystem
+            or source.get("name") != item["display_name"]
+            or source.get("base_url") != item["terms_url"]
+            or source.get("coverage_mode") != item["monitoring_mode"]
+            or source.get("terms_url") != item["terms_url"]
+            or source.get("capabilities") != item
+        ):
+            return False
+    return True
+
+
 def seed_registry_sources(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
     soc_store.init_db(db_path)
+    with closing(soc_store.connect(db_path)) as connection:
+        sources = _registry_sources(connection)
+    if _registry_sources_are_current(sources):
+        return sources
+
     now = _now()
     with sqlite_writer_lock(db_path):
         with closing(soc_store.connect(db_path)) as connection:
+            sources = _registry_sources(connection)
+            if _registry_sources_are_current(sources):
+                return sources
             for ecosystem, item in CAPABILITIES.items():
                 source_id = f"REG-{ecosystem.upper().replace('-', '_')}"
                 connection.execute(
@@ -190,8 +223,7 @@ def seed_registry_sources(db_path: Optional[str] = None) -> List[Dict[str, Any]]
                     (source_id, ecosystem, item["display_name"], item["terms_url"], _json(item), item["monitoring_mode"], item["terms_url"], now, now),
                 )
             connection.commit()
-            rows = connection.execute("SELECT * FROM research_registry_sources ORDER BY ecosystem").fetchall()
-    return [dict(row) | {"capabilities": _decode(row["capabilities_json"], {})} for row in rows]
+            return _registry_sources(connection)
 
 
 def create_watchlist(*, ecosystem: str, watch_type: str, identifier: str, brand: str = "", known_publishers: Iterable[str] = (), known_repositories: Iterable[str] = (), known_namespaces: Iterable[str] = (), threshold: float = 70.0, exclusions: Iterable[str] = (), priority: str = "normal", owner: str = "", expires_at: Optional[str] = None, reason: str = "", source_evidence: Iterable[str] = (), db_path: Optional[str] = None) -> Dict[str, Any]:

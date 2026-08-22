@@ -157,6 +157,10 @@ def test_pipeline_collects_compares_and_queues_minimized_codex_analysis(tmp_path
     case_steps = {step["step_key"]: step for step in case_detail["pipelines"][0]["steps"]}
     assert case_steps["collect_subject"]["result"]["indicator_count"] >= 1
     assert "indicators" not in case_steps["collect_subject"]["result"]
+    queued_jobs = [step["intelligence_job"] for step in case_steps.values() if step.get("intelligence_job")]
+    assert len(queued_jobs) == 3
+    assert {job["status"] for job in queued_jobs} == {"queued"}
+    assert all(job["job_id"].startswith("AIJ-") for job in queued_jobs)
     assert start_investigation_pipeline(case["case_id"], db_path=db, fetcher=_fetcher())["pipeline_id"] == pipeline["pipeline_id"]
 
     context = pipeline_intelligence_context(pipeline["pipeline_id"], db_path=db)
