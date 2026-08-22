@@ -95,6 +95,7 @@ For repository scanning in CI, use the
 | Distribution | Use it for | Status |
 | --- | --- | --- |
 | Installer / source checkout | Complete SecOpsAI Core and CLI | Recommended |
+| Python editable install | Local development and test contributions | Documented in [Contributing](CONTRIBUTING.md) |
 | npm `secopsai@1.0.0` | Published OpenClaw plugin | Available |
 | GitHub Packages `@techris93/secopsai` | Authenticated scoped package workflow | Published; access may require `read:packages` |
 | Marketplace Action `v1.0.0` | Advisory, package, discovery, and triage checks in GitHub Actions | Available |
@@ -133,6 +134,14 @@ The full-width overview above shows priorities, investigation queues, research
 production, and service health without exposing internal implementation views
 as competing products.
 
+### Findings and triage
+
+Work the latest evidence-backed detections first. Each row exposes severity,
+confidence, environment impact, evidence state, ownership, and the next safe
+action without turning scanner output into an automatic verdict.
+
+[![Findings backlog ordered latest first with evidence and response state](docs/assets/mission-control/findings.png)](docs/assets/mission-control/findings.png)
+
 ### Model routing
 
 Persist the model you chose, see its current health, and decide explicitly
@@ -141,7 +150,7 @@ queued rather than silently consuming another provider.
 
 [![Model routing with a selected primary model, health, and explicit fallback policy](docs/assets/mission-control/model-routing.png)](docs/assets/mission-control/model-routing.png)
 
-### Artifact Fleet and research intake
+### Research pipeline and Artifact Fleet
 
 Index registry metadata, run deterministic static and YARA checks, minimize the
 context sent to optional model triage, and escalate only suspicious or
@@ -157,14 +166,6 @@ checksums, rule hits, comparison results, IOCs, readiness gates, and a
 review-only publication handoff.
 
 [![Research Case workspace with evidence readiness and guarded next actions](docs/assets/mission-control/research-case.png)](docs/assets/mission-control/research-case.png)
-
-### Findings and triage
-
-Work the latest evidence-backed detections first. Each row exposes severity,
-confidence, environment impact, evidence state, ownership, and the next safe
-action without turning scanner output into an automatic verdict.
-
-[![Findings backlog ordered latest first with evidence and response state](docs/assets/mission-control/findings.png)](docs/assets/mission-control/findings.png)
 
 ### Publications
 
@@ -196,6 +197,10 @@ flowchart LR
     G --> H[Guarded response]
     G --> I[Review-only publication]
 ```
+
+**Safety invariant:** untrusted artifacts are never executed by this workflow;
+models receive bounded evidence, and response, disclosure, and publication stay
+behind explicit operator approval.
 
 1. **Collect:** adapters ingest supported host, agent, Edge, cloud, CI, and registry signals.
 2. **Normalize:** SecOpsAI maps evidence into shared event, finding, asset, and research records.
