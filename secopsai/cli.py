@@ -4047,7 +4047,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         try:
             store = _enterprise_store(args)
             if args.enterprise_cmd == "status":
-                payload = {"store": store.health(), "metrics": MetricsRegistry().snapshot()}
+                payload = {
+                    "store": store.health(),
+                    "summary": store.summary(limit=25),
+                    "metrics": MetricsRegistry().snapshot(),
+                }
             elif args.enterprise_cmd == "ingest":
                 fixture = json.loads(Path(args.input).read_text(encoding="utf-8"))
                 payload = collect_enterprise_connector(

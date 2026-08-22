@@ -31,11 +31,17 @@ def evidence_record(*, control_id: str, source: str, evidence_type: str = "autom
     return {"control_id": _text(control_id, 120), "source": _text(source, 500), "evidence_type": _text(evidence_type, 80), "sha256": digest, "expires_at": _text(expires_at, 40), "reviewer": _text(reviewer, 200), "status": "pending_review", "metadata": {"content_length": len(rendered)}}
 
 
-def questionnaire_answer(*, question_id: str, answer: str, evidence_refs: Iterable[str] = (), status: str = "draft") -> dict[str, Any]:
+def questionnaire_answer(*, question_id: str, answer: str, question: str = "", evidence_refs: Iterable[str] = (), status: str = "draft") -> dict[str, Any]:
     refs = [_text(item, 160) for item in evidence_refs if _text(item, 160)][:20]
     if not _text(question_id, 160):
         raise ValueError("question_id is required")
-    return {"question_id": _text(question_id, 160), "answer": _text(answer, 10_000), "evidence_refs": refs, "status": _text(status, 40)}
+    return {
+        "question_id": _text(question_id, 160),
+        "question": _text(question, 2_000),
+        "answer": _text(answer, 10_000),
+        "evidence_refs": refs,
+        "status": _text(status, 40),
+    }
 
 
 def questionnaire_record(*, questionnaire_id: str, title: str, owner: str, questions: Iterable[dict[str, Any]], customer: str = "") -> dict[str, Any]:
@@ -43,7 +49,13 @@ def questionnaire_record(*, questionnaire_id: str, title: str, owner: str, quest
     for item in list(questions)[:2_000]:
         if not isinstance(item, dict):
             continue
-        normalized.append(questionnaire_answer(question_id=str(item.get("question_id") or item.get("id") or ""), answer=str(item.get("answer") or ""), evidence_refs=item.get("evidence_refs") or [], status=str(item.get("status") or "draft")))
+        normalized.append(questionnaire_answer(
+            question_id=str(item.get("question_id") or item.get("id") or ""),
+            question=str(item.get("question") or ""),
+            answer=str(item.get("answer") or ""),
+            evidence_refs=item.get("evidence_refs") or [],
+            status=str(item.get("status") or "draft"),
+        ))
     return {"questionnaire_id": _text(questionnaire_id, 120), "title": _text(title, 300), "owner": _text(owner, 200), "customer": _text(customer, 300), "status": "draft", "questions": normalized}
 
 

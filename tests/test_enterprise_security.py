@@ -65,6 +65,34 @@ def test_enterprise_store_paginates_events(tmp_path):
     assert len(next_page["events"]) == 1
 
 
+def test_enterprise_store_summary_reports_truthful_operator_state(tmp_path):
+    db_path = str(tmp_path / "enterprise.db")
+    operator = SQLiteEnterpriseStore(
+        db_path,
+        context=EnterpriseContext("org-a", actor_id="operator-1", role="operator"),
+    )
+    operator.append_event(
+        {"event_id": "EVT-1", "source": "aws.cloudtrail", "event_type": "aws.consolelogin", "payload": {}},
+        idempotency_key="aws-1",
+    )
+    operator.upsert_source_cursor({"source": "aws.cloudtrail", "status": "healthy", "last_success_at": "2026-08-22T10:00:00Z"})
+    operator.upsert_vulnerability({"vulnerability_id": "VUL-1", "severity": "high", "status": "open"})
+    operator.upsert_control(control_record(control_id="AC-1", framework="soc2", title="Access review", owner="security"))
+    operator.upsert_questionnaire(questionnaire_record(questionnaire_id="Q-1", title="Customer review", owner="security", questions=[]))
+
+    summary = operator.summary(limit=10)
+
+    assert summary["counts"]["events"] == 1
+    assert summary["counts"]["open_vulnerabilities"] == 1
+    assert summary["counts"]["controls"] == 1
+    assert summary["counts"]["questionnaires"] == 1
+    assert summary["sources"][0]["source"] == "aws.cloudtrail"
+    assert summary["recent_events"][0]["event_id"] == "EVT-1"
+    assert summary["recent_workflows"][0]["kind"] == "questionnaire"
+    assert summary["recent_workflows"][0]["title"] == "Customer review"
+    assert summary["generated_at"].endswith("Z")
+
+
 def test_enterprise_rbac_and_explicit_domain_repositories(tmp_path):
     analyst = SQLiteEnterpriseStore(str(tmp_path / "enterprise.db"), context=EnterpriseContext("org-a", actor_id="analyst-1", role="analyst"))
     assert analyst.upsert_finding({"finding_id": "F-1", "title": "Finding", "status": "open"})["finding_id"] == "F-1"
@@ -176,6 +204,9 @@ def test_dast_requires_authorization_and_parses_sarif():
 def test_vulnerability_priority_and_sla():
     item = normalize_advisory({"advisory_id": "CVE-1", "package_name": "lib", "package_version": "1", "cvss_score": 9.8, "exploitability_score": 8, "kev": True, "internet_exposed": True, "asset_criticality": "critical"})
     assert item["priority_severity"] == "critical"
+    assert item["severity"] == "critical"
+    assert item["metadata"]["priority_score"] == item["priority_score"]
+    assert "active exploitation or KEV match" in item["metadata"]["priority_reasons"]
     assert item["sla_due_at"].endswith("Z")
     assert prioritize_vulnerability({"advisory_id": "CVE-2", "cvss_score": 0})["priority_severity"] == "low"
 
@@ -183,13 +214,14 @@ def test_vulnerability_priority_and_sla():
 def test_enterprise_workflows_are_evidence_and_approval_aware():
     control = control_record(control_id="AC-1", framework="soc2", title="Access review", owner="security")
     evidence = evidence_record(control_id="AC-1", source="github://audit/1", content="reviewed")
-    questionnaire = questionnaire_record(questionnaire_id="Q-1", title="Customer review", owner="security", questions=[{"id": "Q1", "answer": "Yes", "evidence_refs": [evidence["sha256"]]}])
+    questionnaire = questionnaire_record(questionnaire_id="Q-1", title="Customer review", owner="security", questions=[{"id": "Q1", "question": "How is privileged access reviewed?", "answer": "Yes", "evidence_refs": [evidence["sha256"]]}])
     threat = threat_model_record(threat_model_id="TM-1", title="API", owner="security", assets=[{"id": "api"}], threats=[{"id": "spoofing"}])
     pentest = pentest_engagement(engagement_id="PT-1", title="API review", owner="security", scope=["https://app.example"], authorized_by="signed-roe")
     ticket = TicketProposal("github", "Fix AC-1", "Review access", "VUL-1").as_record()
     assert control["framework"] == "soc2"
     assert evidence["sha256"]
     assert questionnaire["questions"][0]["evidence_refs"]
+    assert questionnaire["questions"][0]["question"] == "How is privileged access reviewed?"
     assert threat["status"] == "draft"
     assert pentest["authorized_by"] == "signed-roe"
     assert ticket["approval_required"] is True

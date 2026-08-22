@@ -116,6 +116,7 @@ class RateLimiter:
 
 class EnterpriseRepository(Protocol):
     def health(self) -> dict[str, Any]: ...
+    def summary(self, *, limit: int = 25) -> dict[str, Any]: ...
     def append_event(self, event: dict[str, Any], *, idempotency_key: str = "") -> dict[str, Any]: ...
     def list_events(self, *, limit: int = 100, cursor: str = "") -> dict[str, Any]: ...
     def export_events(self, *, limit: int = 500) -> list[dict[str, Any]]: ...
@@ -208,6 +209,63 @@ class SQLiteEnterpriseStore:
         with self.connect() as conn:
             conn.execute("SELECT 1").fetchone()
         return {"status": "ready", "backend": "sqlite", "organization_id": self.context.organization_id}
+
+    def summary(self, *, limit: int = 25) -> dict[str, Any]:
+        """Return bounded, organization-scoped data for the operator console."""
+        bounded = max(1, min(int(limit), 100))
+        count_queries = {
+            "events": "SELECT COUNT(*) FROM enterprise_events WHERE organization_id=?",
+            "assets": "SELECT COUNT(*) FROM enterprise_assets WHERE organization_id=?",
+            "vulnerabilities": "SELECT COUNT(*) FROM enterprise_vulnerabilities WHERE organization_id=?",
+            "open_vulnerabilities": "SELECT COUNT(*) FROM enterprise_vulnerabilities WHERE organization_id=? AND status NOT IN ('closed','resolved','fixed')",
+            "controls": "SELECT COUNT(*) FROM enterprise_controls WHERE organization_id=?",
+            "evidence": "SELECT COUNT(*) FROM enterprise_evidence WHERE organization_id=?",
+            "questionnaires": "SELECT COUNT(*) FROM enterprise_questionnaires WHERE organization_id=?",
+            "threat_models": "SELECT COUNT(*) FROM enterprise_threat_models WHERE organization_id=?",
+            "pentests": "SELECT COUNT(*) FROM enterprise_pentest_engagements WHERE organization_id=?",
+            "actions": "SELECT COUNT(*) FROM enterprise_actions WHERE organization_id=?",
+            "dead_letters": "SELECT COUNT(*) FROM enterprise_dead_letters WHERE organization_id=?",
+        }
+        with self.connect() as conn:
+            counts = {
+                key: int(conn.execute(query, (self.context.organization_id,)).fetchone()[0])
+                for key, query in count_queries.items()
+            }
+            vulnerabilities = conn.execute(
+                """SELECT * FROM enterprise_vulnerabilities
+                   WHERE organization_id=? ORDER BY updated_at DESC, vulnerability_id DESC LIMIT ?""",
+                (self.context.organization_id, bounded),
+            ).fetchall()
+            controls = conn.execute(
+                """SELECT * FROM enterprise_controls
+                   WHERE organization_id=? ORDER BY updated_at DESC, control_id DESC LIMIT ?""",
+                (self.context.organization_id, bounded),
+            ).fetchall()
+            workflow_rows: list[dict[str, Any]] = []
+            for table, id_column, kind in (
+                ("enterprise_questionnaires", "questionnaire_id", "questionnaire"),
+                ("enterprise_threat_models", "threat_model_id", "threat_model"),
+                ("enterprise_pentest_engagements", "engagement_id", "pentest"),
+            ):
+                rows = conn.execute(
+                    f"SELECT * FROM {table} WHERE organization_id=? ORDER BY updated_at DESC LIMIT ?",
+                    (self.context.organization_id, bounded),
+                ).fetchall()
+                for row in rows:
+                    normalized = self._row(row)
+                    payload = normalized.get("payload") if isinstance(normalized.get("payload"), dict) else {}
+                    workflow_rows.append({**payload, **normalized, "kind": kind, "record_id": row[id_column]})
+        workflow_rows.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+        return {
+            "counts": counts,
+            "sources": self.list_source_cursors(limit=bounded),
+            "recent_events": self.list_events(limit=bounded)["events"],
+            "recent_vulnerabilities": [self._row(row) for row in vulnerabilities],
+            "recent_controls": [self._row(row) for row in controls],
+            "recent_workflows": workflow_rows[:bounded],
+            "dead_letters": self.list_dead_letters(limit=min(bounded, 25)),
+            "generated_at": utc_now(),
+        }
 
     def append_event(self, event: dict[str, Any], *, idempotency_key: str = "") -> dict[str, Any]:
         item = self._scoped(event)
@@ -502,6 +560,62 @@ class PostgresEnterpriseStore:
             conn.execute("SELECT 1")
         return {"status": "ready", "backend": "postgres", "organization_id": self.context.organization_id, "pool_max": self.pool.max_size}
 
+    def summary(self, *, limit: int = 25) -> dict[str, Any]:
+        """Return the same bounded operator summary as the SQLite adapter."""
+        bounded = max(1, min(int(limit), 100))
+        organization_id = self.context.organization_id
+        count_queries = {
+            "events": "SELECT COUNT(*) AS count FROM enterprise_events WHERE organization_id=%s",
+            "assets": "SELECT COUNT(*) AS count FROM enterprise_assets WHERE organization_id=%s",
+            "vulnerabilities": "SELECT COUNT(*) AS count FROM enterprise_vulnerabilities WHERE organization_id=%s",
+            "open_vulnerabilities": "SELECT COUNT(*) AS count FROM enterprise_vulnerabilities WHERE organization_id=%s AND status NOT IN ('closed','resolved','fixed')",
+            "controls": "SELECT COUNT(*) AS count FROM enterprise_controls WHERE organization_id=%s",
+            "evidence": "SELECT COUNT(*) AS count FROM enterprise_evidence WHERE organization_id=%s",
+            "questionnaires": "SELECT COUNT(*) AS count FROM enterprise_questionnaires WHERE organization_id=%s",
+            "threat_models": "SELECT COUNT(*) AS count FROM enterprise_threat_models WHERE organization_id=%s",
+            "pentests": "SELECT COUNT(*) AS count FROM enterprise_pentest_engagements WHERE organization_id=%s",
+            "actions": "SELECT COUNT(*) AS count FROM enterprise_actions WHERE organization_id=%s",
+            "dead_letters": "SELECT COUNT(*) AS count FROM enterprise_dead_letters WHERE organization_id=%s",
+        }
+        with self.pool.connection() as conn:
+            counts = {
+                key: int(conn.execute(query, (organization_id,)).fetchone()["count"])
+                for key, query in count_queries.items()
+            }
+            vulnerabilities = list(conn.execute(
+                "SELECT * FROM enterprise_vulnerabilities WHERE organization_id=%s ORDER BY updated_at DESC, vulnerability_id DESC LIMIT %s",
+                (organization_id, bounded),
+            ).fetchall())
+            controls = list(conn.execute(
+                "SELECT * FROM enterprise_controls WHERE organization_id=%s ORDER BY updated_at DESC, control_id DESC LIMIT %s",
+                (organization_id, bounded),
+            ).fetchall())
+            workflow_rows: list[dict[str, Any]] = []
+            for table, id_column, kind in (
+                ("enterprise_questionnaires", "questionnaire_id", "questionnaire"),
+                ("enterprise_threat_models", "threat_model_id", "threat_model"),
+                ("enterprise_pentest_engagements", "engagement_id", "pentest"),
+            ):
+                rows = conn.execute(
+                    f"SELECT * FROM {table} WHERE organization_id=%s ORDER BY updated_at DESC LIMIT %s",
+                    (organization_id, bounded),
+                ).fetchall()
+                for row in rows:
+                    normalized = self._row(row)
+                    payload = normalized.get("payload") if isinstance(normalized.get("payload"), dict) else {}
+                    workflow_rows.append({**payload, **normalized, "kind": kind, "record_id": row[id_column]})
+        workflow_rows.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+        return {
+            "counts": counts,
+            "sources": self.list_source_cursors(limit=bounded),
+            "recent_events": self.list_events(limit=bounded)["events"],
+            "recent_vulnerabilities": [self._row(row) for row in vulnerabilities],
+            "recent_controls": [self._row(row) for row in controls],
+            "recent_workflows": workflow_rows[:bounded],
+            "dead_letters": self.list_dead_letters(limit=min(bounded, 25)),
+            "generated_at": utc_now(),
+        }
+
     def migrate(self) -> None:
         migration = MIGRATION_PATH.read_text(encoding="utf-8")
         with self.pool.connection() as conn:
@@ -524,11 +638,15 @@ class PostgresEnterpriseStore:
             raise RuntimeError("enterprise record was not persisted")
         result = dict(row)
         for key in ("payload_json", "metadata_json"):
-            if key in result and isinstance(result[key], str):
+            if key not in result:
+                continue
+            if isinstance(result[key], str):
                 try:
                     result[key[:-5]] = json.loads(result[key])
                 except (TypeError, ValueError, json.JSONDecodeError):
                     pass
+            elif isinstance(result[key], (dict, list)):
+                result[key[:-5]] = result[key]
         return result
 
     def append_event(self, event: dict[str, Any], *, idempotency_key: str = "") -> dict[str, Any]:
