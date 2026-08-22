@@ -2,7 +2,7 @@
 
 SecOpsAI Research turns a watchlist lead into a defensible investigation without executing the investigated package. The dashboard buttons call the same typed Core workflow as the CLI; command-copy helpers are only a fallback.
 
-For Rust/crates.io investigations, use **Enterprise Security → Artifact Fleet → Run Rust Package Research** or:
+For Rust/crates.io investigations, use **Administration → Automation → Research pipeline** or:
 
 ```bash
 secopsai research rust-package --package proc-macro1 --version 1.0.107 --compare-package proc-macro2 --compare-version 1.0.107 --json

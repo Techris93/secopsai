@@ -15,7 +15,10 @@ from secopsai.codex_bridge import (
     BridgeSettings,
     clear_provider_health_cache,
     doctor,
+    load_model_routing,
+    persist_model_routing,
     probe_provider_health,
+    resolve_model_routing,
     run_loop,
     run_once,
     _model_chain,
@@ -869,6 +872,82 @@ def test_unconfigured_fallbacks_do_not_probe_exhausted_codex_siblings(tmp_path: 
     assert health["effective_model_chain"] == ["xai/grok-4.6"]
 
 
+def test_model_routing_persists_primary_ordered_fallbacks_and_mode(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    saved = persist_model_routing(
+        "xai/grok-4.6",
+        fallback_models=["google-antigravity/gemini-3.5-flash-low", "gpt-5.6-sol"],
+        fallback_mode="quota_auth",
+        db_path=db,
+        actor="dashboard",
+    )
+    assert saved["fallback_models"] == ["google-antigravity/gemini-3.5-flash-low", "gpt-5.6-sol"]
+    assert load_model_routing(db)["fallback_mode"] == "quota_auth"
+    resolved = resolve_model_routing(BridgeSettings(model=PRIMARY_MODEL), db_path=db)
+    assert resolved == {
+        "primary_model": "xai/grok-4.6",
+        "fallback_models": ["google-antigravity/gemini-3.5-flash-low", "gpt-5.6-sol"],
+        "fallback_mode": "quota_auth",
+        "source": "persisted",
+    }
+
+
+def test_disabled_model_routing_keeps_only_operator_primary(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    saved = persist_model_routing(
+        "xai/grok-4.6",
+        fallback_models=["gpt-5.6-sol"],
+        fallback_mode="disabled",
+        db_path=db,
+    )
+    assert saved["fallback_models"] == []
+    resolved = resolve_model_routing(BridgeSettings(model=PRIMARY_MODEL), db_path=db)
+    assert resolved["primary_model"] == "xai/grok-4.6"
+    assert resolved["fallback_models"] == []
+    assert resolved["fallback_mode"] == "disabled"
+
+
+def test_any_provider_routing_falls_back_on_provider_timeout(tmp_path: Path, monkeypatch):
+    db = str(tmp_path / "core.db")
+    enqueue_job(action="prioritize_findings", requested_by="tester", db_path=db)
+    models = ["xai/grok-4.6", "google-antigravity/gemini-3.5-flash-low"]
+    monkeypatch.setattr(
+        "secopsai.codex_bridge.doctor",
+        lambda settings, runner=None, **kwargs: {
+            "status": "degraded",
+            "live_ready": True,
+            "provider": "opencodex_proxy",
+            "opencodex": {"status": "ready"},
+            "models": {"default_model": models[0], "models": [{"id": item} for item in models]},
+        },
+    )
+    attempted = []
+
+    def runner(command, stdin, environment, timeout):
+        model = command[command.index("--model") + 1]
+        attempted.append(model)
+        if model == models[0]:
+            return subprocess.CompletedProcess(command, 1, "", "provider unavailable: gateway timeout")
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text(json.dumps({"summary": "Fallback completed."}), encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = run_once(
+        db_path=db,
+        settings=BridgeSettings(
+            model=models[0],
+            fallback_models=(models[1],),
+            fallback_mode="any_provider",
+            worker_id="routing-test",
+        ),
+        runner=runner,
+        require_ready_provider=False,
+    )
+    assert result["status"] == "succeeded"
+    assert result["model"] == models[1]
+    assert attempted == models
+
+
 def test_persisted_selection_survives_service_restart_without_model_flag(tmp_path: Path, monkeypatch):
     db = str(tmp_path / "core.db")
     monkeypatch.delenv("SECOPSAI_BRIDGE_MODEL", raising=False)
@@ -921,4 +1000,3 @@ def test_healthy_selected_model_is_the_only_health_probe(tmp_path: Path, monkeyp
     assert calls == ["xai/grok-4.6"]
     assert set(health["providers"]) == {"xai/grok-4.6"}
     assert all(item not in calls for item in DEFAULT_FALLBACK_MODELS)
-

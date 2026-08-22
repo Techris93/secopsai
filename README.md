@@ -7,6 +7,48 @@
 
 SecOpsAI is a local-first security monitoring, investigation, and triage platform. It ingests OpenClaw audit telemetry, Hermes Agent telemetry, and host OS security events, normalizes them into a unified schema, persists findings in a local SOC store, and now includes a native triage engine with queued analyst actions and supply-chain policy controls.
 
+## Mission Control
+
+**SecOpsAI Mission Control is the evidence-first operator console for detection,
+investigation, source-first package research, guarded model automation, and
+reviewed security publishing.** The light workspace keeps dense operational
+data readable while the dark green navigation and green action states preserve
+the product's visual identity.
+
+The screenshots below use representative sample data. They contain no live
+credentials, private telemetry, or customer records.
+
+[![SecOpsAI Mission Control overview showing operational priorities and system health](docs/assets/mission-control/overview.png)](docs/assets/mission-control/overview.png)
+
+<table>
+  <tr>
+    <td width="50%">
+      <a href="docs/assets/mission-control/model-routing.png"><img src="docs/assets/mission-control/model-routing.png" alt="SecOpsAI model routing workspace with a selectable primary model and ordered fallback chain" /></a>
+      <br /><strong>Model routing.</strong> Select and persist any catalog model, then explicitly enable an ordered fallback policy.
+    </td>
+    <td width="50%">
+      <a href="docs/assets/mission-control/research-pipeline.png"><img src="docs/assets/mission-control/research-pipeline.png" alt="SecOpsAI research pipeline showing safe Rust package intake, evidence readiness, and a research case" /></a>
+      <br /><strong>Research pipeline.</strong> Move registry metadata and no-execution artifact evidence through static analysis, bounded model review, analyst review, and a review-only draft.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <a href="docs/assets/mission-control/findings.png"><img src="docs/assets/mission-control/findings.png" alt="SecOpsAI findings backlog ordered by date with evidence and response actions" /></a>
+      <br /><strong>Findings.</strong> Review the latest evidence-backed detections first, with environment impact and the next safe action visible.
+    </td>
+    <td width="50%">
+      <a href="docs/assets/mission-control/publications.png"><img src="docs/assets/mission-control/publications.png" alt="SecOpsAI publication operations with editorial queue, attached media, and separate publish and deploy controls" /></a>
+      <br /><strong>Publications.</strong> Review claims and media, approve editorial content, stage approved posts, and deploy the archive as a separate action.
+    </td>
+  </tr>
+</table>
+
+[![SecOpsAI Enterprise Security workspace showing cloud connector readiness, vulnerability priorities, DAST authorization, and governance workflows](docs/assets/mission-control/enterprise.png)](docs/assets/mission-control/enterprise.png)
+
+The full console keeps high-impact writes approval-gated: models cannot publish
+research, artifact analysis never executes package code, active DAST requires
+authorization, and deployment remains separate from editorial approval.
+
 ## What SecOpsAI does
 
 - Collects telemetry from **OpenClaw**, **Hermes Agent**, **macOS**, **Linux**, and **Windows**
@@ -56,7 +98,8 @@ secopsai artifact-fleet cycle --since 24h --limit 1000 --workers 4 --json
 The fleet never executes package code, build scripts, binaries, or extensions;
 model triage receives only deterministic rule-hit context. See
 [Artifact Fleet Operations](docs/artifact-fleet-operations.md). The local
-dashboard also exposes allowlisted buttons for the cycle, indexing, pending
+dashboard exposes these as one canonical **Administration → Automation →
+Research pipeline** workspace with allowlisted buttons for the cycle, indexing, pending
 scans, model-job queueing, rule validation, analyst queue, and synthetic
 benchmark; exact artifact paths remain CLI-only by design.
 
@@ -65,6 +108,12 @@ workflow verifies crates.io metadata and checksums, quarantines the exact crate,
 compares an explicitly supplied reference package, records Research Case
 evidence, and prepares review-only publication without running Cargo or package
 code. See [Rust Package Research Automation](docs/rust-package-research-automation.md).
+
+Model choice is configured in **Administration → Automation → Models**. Any
+model in the local OpenCodex catalog can be persisted as the primary, while an
+optional ordered fallback chain can be enabled for quota/authentication errors
+or broader provider-availability errors. With fallback disabled, SecOpsAI keeps
+the job queued instead of silently selecting another provider.
 
 ## Platform Support
 

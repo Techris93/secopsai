@@ -136,6 +136,7 @@ from secopsai.codex_bridge import list_models as list_codex_bridge_models
 from secopsai.codex_bridge import PRIMARY_MODEL as codex_bridge_primary_model
 from secopsai.codex_bridge import load_selected_model as load_codex_bridge_selected_model
 from secopsai.codex_bridge import persist_selected_model as persist_codex_bridge_selected_model
+from secopsai.codex_bridge import persist_model_routing as persist_codex_bridge_model_routing
 from secopsai.codex_bridge import run_loop as run_codex_bridge_loop
 from secopsai.codex_bridge import run_once as run_codex_bridge_once
 from secopsai.codex_bridge_service import install_service as install_codex_bridge_service
@@ -1629,6 +1630,18 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     intelligence_bridge_select.add_argument("model")
     intelligence_bridge_select.add_argument("--db-path", default=None)
+    intelligence_bridge_routing = intelligence_bridge_sub.add_parser(
+        "configure-models",
+        help="Persist the primary model, ordered fallbacks, and explicit fallback policy",
+    )
+    intelligence_bridge_routing.add_argument("--primary", required=True)
+    intelligence_bridge_routing.add_argument("--fallback", action="append", default=[])
+    intelligence_bridge_routing.add_argument(
+        "--fallback-mode",
+        choices=["disabled", "quota_auth", "any_provider"],
+        default="disabled",
+    )
+    intelligence_bridge_routing.add_argument("--db-path", default=None)
     intelligence_bridge_run = intelligence_bridge_sub.add_parser("run")
     intelligence_bridge_run.add_argument("--once", action="store_true")
     intelligence_bridge_run.add_argument("--max-iterations", type=int, default=0)
@@ -4345,6 +4358,20 @@ def main(argv: Optional[List[str]] = None) -> int:
                         probe_fallbacks=False,
                         db_path=args.db_path,
                         model=args.model,
+                    )
+                elif args.intelligence_bridge_cmd == "configure-models":
+                    persist_codex_bridge_model_routing(
+                        args.primary,
+                        fallback_models=args.fallback,
+                        fallback_mode=args.fallback_mode,
+                        db_path=args.db_path,
+                        actor="operator",
+                    )
+                    payload = codex_bridge_doctor(
+                        probe=True,
+                        probe_fallbacks=args.fallback_mode != "disabled",
+                        db_path=args.db_path,
+                        model=args.primary,
                     )
                 elif args.intelligence_bridge_cmd == "run":
                     selected_model = str(getattr(args, "model", "") or "").strip() or None

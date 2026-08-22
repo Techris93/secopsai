@@ -18,8 +18,8 @@ secopsai research rust-package --package proc-macro1 --version 1.0.107 --compare
 
 ## Dashboard buttons
 
-In the local dashboard, open **Enterprise Security → Artifact Fleet**. Enter the
-Automation action token in **Native Triage → Intelligence**, then use the
+In the local dashboard, open **Administration → Automation → Research
+pipeline**. Enter the Automation action token in **Automation → Models**, then use the
 buttons for **Run automated cycle**, **Index metadata**, **Scan pending**,
 **Queue model triage**, **Refresh analyst queue**, **Validate rule pack**, and
 **Run fixture benchmark**. The panel shows the output and refreshes queue
@@ -37,7 +37,7 @@ reviewed local artifact path and provenance. This prevents a dashboard click
 from opening an arbitrary filesystem path. `source-health` and `metrics` are
 read through **Refresh fleet** and the panel status response.
 
-The **Run Rust Package Research** drawer adds the crates.io workflow: preview
+The **Exact crates.io package intake** workspace adds the crates.io workflow: preview
 official metadata, fetch the exact crate into quarantine, verify its checksum,
 run Rust static rules, compare an explicitly supplied reference crate, and
 route strong findings into a Research Case. It never runs Cargo or creates a

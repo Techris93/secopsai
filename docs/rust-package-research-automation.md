@@ -37,14 +37,16 @@ command, build script, import, binary, or payload runs.
 
 ## Dashboard
 
-Open **Enterprise Security → Artifact Fleet → Run Rust Package Research**.
-Enter the Automation action token under **Native Triage → Intelligence** and
-provide the crate name, exact version, and optional verified comparison crate.
+Open **Administration → Automation → Research pipeline**. Enter the Automation
+action token under **Automation → Models**, then provide the crate name, exact
+version, and optional verified comparison crate.
 
 - **Preview metadata** performs a metadata-only check.
 - **Run safe research** downloads into quarantine, scans, compares, and routes evidence.
+- **Build evidence matrix** exposes supported facts, gaps, and publication blockers.
+- **Queue selected-model review** sends minimized evidence to the persisted model route.
 - **Persist high-confidence finding** creates a SOC finding only for strong deterministic behavior.
-- **Create review-only draft** never bypasses publication readiness or editorial approval.
+- **Create review-only draft** becomes available only after the Research Case and evidence matrix exist; it never bypasses publication readiness or editorial approval.
 
 The browser sends typed JSON only. The local helper builds an allowlisted CLI
 argument array. Hosted mode returns clear `not_configured` guidance when no

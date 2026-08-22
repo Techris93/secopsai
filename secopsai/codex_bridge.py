@@ -13,7 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from threading import RLock
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -58,6 +58,9 @@ HEALTH_SNAPSHOT_SCHEMA = "secopsai.intelligence.bridge-health.v1"
 HEALTH_SNAPSHOT_FILENAME = "bridge-health.json"
 SELECTED_MODEL_SCHEMA = "secopsai.intelligence.bridge-selected-model.v1"
 SELECTED_MODEL_FILENAME = "bridge-selected-model.json"
+MODEL_ROUTING_SCHEMA = "secopsai.intelligence.bridge-model-routing.v1"
+MODEL_ROUTING_FILENAME = "bridge-model-routing.json"
+FALLBACK_MODES = ("disabled", "quota_auth", "any_provider")
 MAX_PROCESS_OUTPUT_BYTES = 256 * 1024
 Runner = Callable[[Sequence[str], str, dict[str, str], int], subprocess.CompletedProcess[str]]
 
@@ -71,6 +74,7 @@ class BridgeSettings:
     opencodex_binary: str = "opencodex"
     model: str = PRIMARY_MODEL
     fallback_models: tuple[str, ...] = ()
+    fallback_mode: str = "quota_auth"
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     poll_interval_seconds: int = 5
     worker_id: str = ""
@@ -90,6 +94,9 @@ class BridgeSettings:
             opencodex_binary=os.environ.get("SECOPSAI_OPENCODEX_BINARY", "opencodex").strip() or "opencodex",
             model=os.environ.get("SECOPSAI_BRIDGE_MODEL", "").strip(),
             fallback_models=fallback,
+            fallback_mode=_clean_fallback_mode(
+                os.environ.get("SECOPSAI_BRIDGE_FALLBACK_MODE", "quota_auth")
+            ),
             timeout_seconds=_bounded_int("SECOPSAI_CODEX_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS, 30, 1800),
             poll_interval_seconds=_bounded_int("SECOPSAI_CODEX_POLL_SECONDS", 5, 1, 300),
             worker_id=os.environ.get("SECOPSAI_CODEX_WORKER_ID", "").strip(),
@@ -117,30 +124,31 @@ def _selected_model_path(db_path: str | None = None) -> Path:
     return database.with_name(SELECTED_MODEL_FILENAME)
 
 
-def load_selected_model(db_path: str | None = None) -> str:
-    target = _selected_model_path(db_path)
-    try:
-        payload = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ""
-    if not isinstance(payload, dict) or payload.get("schema_version") != SELECTED_MODEL_SCHEMA:
-        return ""
-    return str(payload.get("model") or "").strip()
+def _model_routing_path(db_path: str | None = None) -> Path:
+    configured = os.environ.get("SECOPSAI_BRIDGE_MODEL_ROUTING_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    database = Path(db_path or soc_store.default_db_path()).expanduser().resolve()
+    return database.with_name(MODEL_ROUTING_FILENAME)
 
 
-def persist_selected_model(model: str, *, db_path: str | None = None, actor: str = "operator") -> dict[str, Any]:
+def _clean_model_id(model: str) -> str:
     cleaned = str(model or "").strip()
     if not cleaned:
         raise ValueError("a model id is required")
     if not re.fullmatch(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$", cleaned):
         raise ValueError("bridge model id contains unsupported characters")
-    target = _selected_model_path(db_path)
-    payload = {
-        "schema_version": SELECTED_MODEL_SCHEMA,
-        "model": cleaned,
-        "updated_at": soc_store.utc_now(),
-        "updated_by": str(actor or "operator")[:80],
-    }
+    return cleaned
+
+
+def _clean_fallback_mode(mode: str) -> str:
+    cleaned = str(mode or "").strip().lower() or "disabled"
+    if cleaned not in FALLBACK_MODES:
+        raise ValueError(f"fallback mode must be one of: {', '.join(FALLBACK_MODES)}")
+    return cleaned
+
+
+def _write_private_json(target: Path, payload: dict[str, Any]) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
     try:
@@ -160,7 +168,121 @@ def persist_selected_model(model: str, *, db_path: str | None = None, actor: str
         except OSError:
             pass
         raise
+
+
+def load_selected_model(db_path: str | None = None) -> str:
+    target = _selected_model_path(db_path)
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, dict) or payload.get("schema_version") != SELECTED_MODEL_SCHEMA:
+        return ""
+    return str(payload.get("model") or "").strip()
+
+
+def persist_selected_model(model: str, *, db_path: str | None = None, actor: str = "operator") -> dict[str, Any]:
+    cleaned = _clean_model_id(model)
+    target = _selected_model_path(db_path)
+    payload = {
+        "schema_version": SELECTED_MODEL_SCHEMA,
+        "model": cleaned,
+        "updated_at": soc_store.utc_now(),
+        "updated_by": str(actor or "operator")[:80],
+    }
+    _write_private_json(target, payload)
     return payload
+
+
+def load_model_routing(db_path: str | None = None) -> dict[str, Any]:
+    target = _model_routing_path(db_path)
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict) or payload.get("schema_version") != MODEL_ROUTING_SCHEMA:
+        return {}
+    primary = str(payload.get("primary_model") or "").strip()
+    fallbacks = payload.get("fallback_models")
+    if not primary or not isinstance(fallbacks, list):
+        return {}
+    try:
+        return {
+            **payload,
+            "primary_model": _clean_model_id(primary),
+            "fallback_models": [
+                _clean_model_id(item) for item in fallbacks
+                if str(item or "").strip() and str(item or "").strip() != primary
+            ],
+            "fallback_mode": _clean_fallback_mode(str(payload.get("fallback_mode") or "disabled")),
+        }
+    except ValueError:
+        return {}
+
+
+def persist_model_routing(
+    primary_model: str,
+    *,
+    fallback_models: Sequence[str] = (),
+    fallback_mode: str = "disabled",
+    db_path: str | None = None,
+    actor: str = "operator",
+) -> dict[str, Any]:
+    primary = _clean_model_id(primary_model)
+    mode = _clean_fallback_mode(fallback_mode)
+    fallbacks: list[str] = []
+    for item in fallback_models:
+        cleaned = _clean_model_id(item)
+        if cleaned != primary and cleaned not in fallbacks:
+            fallbacks.append(cleaned)
+    if len(fallbacks) > 8:
+        raise ValueError("at most 8 fallback models may be configured")
+    if mode == "disabled":
+        fallbacks = []
+    payload = {
+        "schema_version": MODEL_ROUTING_SCHEMA,
+        "primary_model": primary,
+        "fallback_models": fallbacks,
+        "fallback_mode": mode,
+        "updated_at": soc_store.utc_now(),
+        "updated_by": str(actor or "operator")[:80],
+    }
+    _write_private_json(_model_routing_path(db_path), payload)
+    # Keep the established selection file in sync for older services and CLIs.
+    persist_selected_model(primary, db_path=db_path, actor=actor)
+    return payload
+
+
+def resolve_model_routing(
+    settings: BridgeSettings | None = None,
+    *,
+    model: str | None = None,
+    db_path: str | None = None,
+    available: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    resolved = settings or BridgeSettings.from_environment()
+    persisted = load_model_routing(db_path)
+    primary = resolve_selected_model(resolved, model=model, db_path=db_path, available=available)
+    env_fallbacks_configured = "SECOPSAI_BRIDGE_FALLBACK_MODELS" in os.environ
+    env_mode_configured = "SECOPSAI_BRIDGE_FALLBACK_MODE" in os.environ
+    if env_fallbacks_configured or resolved.fallback_models:
+        fallback_models = list(resolved.fallback_models)
+    else:
+        fallback_models = list(persisted.get("fallback_models") or [])
+    fallback_models = [item for item in fallback_models if item and item != primary]
+    mode = (
+        resolved.fallback_mode if env_mode_configured
+        else str(persisted.get("fallback_mode") or (resolved.fallback_mode if fallback_models else "disabled"))
+    )
+    mode = _clean_fallback_mode(mode)
+    if mode == "disabled":
+        fallback_models = []
+    return {
+        "primary_model": primary,
+        "fallback_models": fallback_models,
+        "fallback_mode": mode,
+        "source": "environment" if env_fallbacks_configured or env_mode_configured else ("persisted" if persisted else "runtime"),
+    }
 
 
 def resolve_selected_model(
@@ -266,9 +388,16 @@ def doctor(
     codex = _doctor_codex(resolved, run)
     opencodex = _doctor_opencodex(resolved, run)
     models = list_models(settings=resolved, runner=run)
+    routing = resolve_model_routing(resolved, model=model, db_path=db_path, available=models)
+    resolved = replace(
+        resolved,
+        model=str(routing["primary_model"]),
+        fallback_models=tuple(routing["fallback_models"]),
+        fallback_mode=str(routing["fallback_mode"]),
+    )
     remote_configured = bool(resolved.core_api_url and resolved.bridge_token)
     remote_partial = bool(resolved.core_api_url) != bool(resolved.bridge_token)
-    selected_model = resolve_selected_model(resolved, model=model, db_path=db_path, available=models)
+    selected_model = str(routing["primary_model"])
     selected_catalog_available = bool(selected_model) and any(
         item.get("id") == selected_model for item in models.get("models", [])
     )
@@ -284,6 +413,7 @@ def doctor(
         allow_fallbacks = (
             probe_fallbacks
             and bool(resolved.fallback_models)
+            and resolved.fallback_mode != "disabled"
             and selected_health.get("status") != "ready"
             and len(model_chain) > 1
         )
@@ -360,6 +490,11 @@ def doctor(
         "selected_model_last_probe_ready": selected_last_probe_ready,
         "selected_model_ready": selected_model_ready or not selected_model,
         "fallback_models": list(resolved.fallback_models),
+        "fallback_mode": resolved.fallback_mode,
+        "routing_source": routing["source"],
+        "recommended_fallback_models": [
+            item for item in DEFAULT_FALLBACK_MODELS if item != selected_model
+        ],
         "effective_model_chain": list(model_chain),
         "models": models,
         "codex": codex,
@@ -381,6 +516,7 @@ def doctor(
         "selection": {
             "env_model": os.environ.get("SECOPSAI_BRIDGE_MODEL", ""),
             "env_fallback_models": os.environ.get("SECOPSAI_BRIDGE_FALLBACK_MODELS", ""),
+            "env_fallback_mode": os.environ.get("SECOPSAI_BRIDGE_FALLBACK_MODE", ""),
             "cli_flag": "--model provider/model-name",
             "examples": [
                 PRIMARY_MODEL,
@@ -646,12 +782,19 @@ def run_once(
     run = runner or _run
     if require_subscription_login is not None:
         require_ready_provider = require_subscription_login
-    effective_model = resolve_selected_model(resolved, model=model, db_path=db_path)
+    routing = resolve_model_routing(resolved, model=model, db_path=db_path)
+    resolved = replace(
+        resolved,
+        model=str(routing["primary_model"]),
+        fallback_models=tuple(routing["fallback_models"]),
+        fallback_mode=str(routing["fallback_mode"]),
+    )
+    effective_model = str(routing["primary_model"])
     health = doctor(
         resolved,
         runner=run,
         db_path=db_path,
-        probe_fallbacks=probe_fallbacks and bool(resolved.fallback_models),
+        probe_fallbacks=probe_fallbacks and resolved.fallback_mode != "disabled" and bool(resolved.fallback_models),
         model=effective_model,
     )
     if require_ready_provider and not health.get("live_ready"):
@@ -1122,8 +1265,14 @@ def _invoke_with_model_fallback(
             errors.append(f"{model_name or 'default'}: {message}")
             if index + 1 >= len(model_chain):
                 break
-            if not _is_quota_or_auth_failure(message):
-                # Non-quota failures should stay visible.
+            should_fallback = (
+                settings.fallback_mode == "quota_auth" and _is_quota_or_auth_failure(message)
+            ) or (
+                settings.fallback_mode == "any_provider" and _is_provider_availability_failure(message)
+            )
+            if not should_fallback:
+                # Validation, schema, and safety failures stay attached to the
+                # selected model instead of being hidden by provider failover.
                 raise
             continue
     raise RuntimeError("all bridge models failed: " + " | ".join(errors)[:1600])
@@ -1597,6 +1746,32 @@ def _is_quota_or_auth_failure(message: str) -> bool:
             "authentication",
             "auth",
             "insufficient",
+        )
+    )
+
+
+def _is_provider_availability_failure(message: str) -> bool:
+    lowered = message.lower()
+    if _is_quota_or_auth_failure(lowered):
+        return True
+    return any(
+        marker in lowered
+        for marker in (
+            "timed out",
+            "timeout",
+            "connection refused",
+            "connection reset",
+            "failed to connect",
+            "service unavailable",
+            "bad gateway",
+            "gateway timeout",
+            "provider unavailable",
+            "model unavailable",
+            "model not found",
+            "http error: 500",
+            "http error: 502",
+            "http error: 503",
+            "http error: 504",
         )
     )
 

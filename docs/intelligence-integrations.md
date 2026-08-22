@@ -17,6 +17,33 @@ SecOpsAI can use your local OpenCodex proxy so research analysis is not locked t
 
 Research actions request evidence-led structured output rather than a chat-style paragraph. A completed case analysis includes an executive summary, confirmed facts, inferences, unsupported claims, contradictions, missing evidence, prioritized next steps, a confidence-scored verdict, evidence references, limitations, and publication risks. Mission Control presents these fields separately and retains the complete normalized result and job history.
 
+### Persistent model routing
+
+Open **Administration → Automation → Models** to choose any model returned by
+the local OpenCodex catalog. The selected primary model is persisted by Core,
+so a refresh, a closed browser tab, or a restarted bridge does not silently
+replace it with a provider default. The same workspace shows the effective
+chain and lets an operator add, remove, and reorder explicit fallbacks.
+
+Fallback behavior is opt-in and explainable:
+
+- **Primary model only** keeps work queued when the selected model is unavailable.
+- **Quota or authentication failures** uses the ordered fallbacks only for quota, usage-limit, or authentication failures.
+- **Provider availability failures** also permits fallback for timeouts, connection failures, provider 5xx responses, or an unavailable provider/model. Validation, schema, and safety failures never trigger fallback.
+
+The equivalent CLI configuration is:
+
+```bash
+secopsai intelligence bridge configure-models \
+  --primary xai/grok-4.6 \
+  --fallback google-antigravity/gemini-3.7-flash \
+  --fallback kimi/kimi-k2.7-code \
+  --fallback-mode quota_auth
+```
+
+The routing file stores model identifiers and policy only. Provider credentials
+remain owned by OpenCodex or Codex and are never copied into SecOpsAI.
+
 ## Autonomous finding and alert triage
 
 Mission Control can use any model in the local OpenCodex catalog, including Kimi K3, Grok, Gemini, or an available Codex model, to review new canonical findings continuously. This includes host detections, Edge findings, supply-chain findings, and high-confidence research candidates produced by registry monitoring. Open **Administration → Automation**, select the model, then configure **Agent finding and alert review**.
