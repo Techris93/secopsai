@@ -9,7 +9,7 @@ findings triage, guarded automation, and security publishing into one
 local-first workflow. Deterministic evidence stays authoritative; model review
 is bounded, optional, and visible to the operator.
 
-[Website](https://secopsai.dev) · [Documentation](https://docs.secopsai.dev) · [Security research](https://blog.secopsai.dev) · [Mission Control](https://github.com/Techris93/secopsai-dashboard) · [Security policy](SECURITY.md)
+[Website](https://secopsai.dev) · [Documentation](https://docs.secopsai.dev) · [Install](docs/getting-started.md) · [Mission Control](https://github.com/Techris93/secopsai-dashboard) · [Security policy](SECURITY.md)
 
 [![Release](https://img.shields.io/github/v/release/Techris93/secopsai?display_name=tag&color=276c5c)](https://github.com/Techris93/secopsai/releases/latest) [![npm](https://img.shields.io/npm/v/secopsai?color=276c5c)](https://www.npmjs.com/package/secopsai) [![GitHub Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-SecOpsAI%20Guard-276c5c)](https://github.com/marketplace/actions/secopsai-supply-chain-guard) [![License](https://img.shields.io/github/license/Techris93/secopsai?color=276c5c)](LICENSE)
 
@@ -33,6 +33,19 @@ approval boundaries.
 | Investigate with context | Durable Research Cases, IOC extraction, correlations, evidence matrices, and bounded model review |
 | Respond safely | Explainable triage, reversible low-risk automation, protected actions, and complete audit history |
 | Publish defensible research | Evidence-linked drafts, media review, editorial approval, archive-safe staging, and separate deployment |
+
+## Core Capabilities
+
+| Area | Capability | Operator guide |
+| --- | --- | --- |
+| Detection | Cross-platform collection, normalization, correlation, adaptive scoring, and findings | [Platform overview](docs/index.md) |
+| Supply chain | npm, PyPI, Packagist, Go, Maven, NuGet, RubyGems, Open VSX, crates, Hugging Face, and container evidence | [Supply-chain security](docs/supply-chain.md) |
+| AI-built software | Hallucinated, missing, newly registered, lookalike, and source-mismatch dependency review | [AI Dependency Guard](docs/ai-dependency-guard.md) |
+| Artifact analysis | Metadata indexing, quarantine, checksums, static/YARA rules, minimized triage, and analyst escalation | [Artifact Fleet](docs/artifact-fleet-operations.md) |
+| Research | Durable cases, evidence matrices, IOC records, guarded pipelines, disclosure, and sandbox gates | [Research and verification](docs/research-and-verification.md) |
+| Triage | Evidence bundles, dispositions, queued actions, mitigation, and auditable closure | [Findings triage](docs/findings-triage-guide.md) |
+| Publishing | Source-backed drafts, image review, feeds, archive-safe staging, and protected deployment | [Blog publishing](docs/blog-publishing.md) |
+| Enterprise | Read-only cloud adapters, vulnerability context, Kubernetes posture, authorized DAST plans, and governance records | [Enterprise architecture](docs/enterprise-security-operations-architecture.md) |
 
 ## Quick Start
 
@@ -91,12 +104,34 @@ See [Getting Started](docs/getting-started.md) for platform-specific setup,
 GitHub Packages boundaries, and [Deployment](docs/deployment-guide.md) for
 long-running services.
 
+### Open Mission Control
+
+Mission Control is maintained separately so the static Cloudflare-compatible
+console and local helper can evolve without coupling UI delivery to Core:
+
+```bash
+git clone https://github.com/Techris93/secopsai-dashboard.git
+cd secopsai-dashboard/secopsai-dashboard
+cp .env.example .env
+./start-local-dashboard-stack.sh
+```
+
+Open `http://127.0.0.1:45680`. Local helper actions require the configured
+action token; hosted mode fails safely when a helper-backed capability is not
+configured.
+
 ## Product Tour
 
 Mission Control is the operator-facing companion to the SecOpsAI CLI. It keeps
 the dark green navigation and restrained green action language of the product
 concept while using a bright, high-contrast workspace for dense operational
 data.
+
+### Overview
+
+The full-width overview above shows priorities, investigation queues, research
+production, and service health without exposing internal implementation views
+as competing products.
 
 ### Model routing
 
@@ -106,7 +141,7 @@ queued rather than silently consuming another provider.
 
 [![Model routing with a selected primary model, health, and explicit fallback policy](docs/assets/mission-control/model-routing.png)](docs/assets/mission-control/model-routing.png)
 
-### Artifact Fleet
+### Artifact Fleet and research intake
 
 Index registry metadata, run deterministic static and YARA checks, minimize the
 context sent to optional model triage, and escalate only suspicious or
@@ -123,7 +158,7 @@ review-only publication handoff.
 
 [![Research Case workspace with evidence readiness and guarded next actions](docs/assets/mission-control/research-case.png)](docs/assets/mission-control/research-case.png)
 
-### Findings
+### Findings and triage
 
 Work the latest evidence-backed detections first. Each row exposes severity,
 confidence, environment impact, evidence state, ownership, and the next safe
@@ -139,7 +174,7 @@ published posts are preserved during rebuilds.
 
 [![Publication operations with review state, approved media, staging, and deployment](docs/assets/mission-control/publications.png)](docs/assets/mission-control/publications.png)
 
-### Enterprise readiness
+### Enterprise integrations
 
 See the difference between an available adapter, a configured connector, and a
 source producing fresh evidence. Cloud ingestion is read-only by default,
@@ -169,32 +204,25 @@ flowchart LR
 5. **Decide:** an analyst verifies evidence, disposition, mitigation, disclosure, and publication readiness.
 6. **Act:** only allowlisted, approval-appropriate responses are applied and recorded.
 
-## Core Capabilities
+## Integrations and Platform Coverage
 
-| Area | Capability | Operator guide |
-| --- | --- | --- |
-| Detection | Cross-platform collection, normalization, correlation, adaptive scoring, and findings | [Platform overview](docs/index.md) |
-| Supply chain | npm, PyPI, Packagist, Go, Maven, NuGet, RubyGems, Open VSX, crates, Hugging Face, and container evidence | [Supply-chain security](docs/supply-chain.md) |
-| AI-built software | Hallucinated, missing, newly registered, lookalike, and source-mismatch dependency review | [AI Dependency Guard](docs/ai-dependency-guard.md) |
-| Artifact analysis | Metadata indexing, quarantine, checksums, static/YARA rules, minimized triage, and analyst escalation | [Artifact Fleet](docs/artifact-fleet-operations.md) |
-| Research | Durable cases, evidence matrices, IOC records, guarded pipelines, disclosure, and sandbox gates | [Research and verification](docs/research-and-verification.md) |
-| Triage | Evidence bundles, dispositions, queued actions, mitigation, and auditable closure | [Findings triage](docs/findings-triage-guide.md) |
-| Publishing | Source-backed drafts, image review, feeds, archive-safe staging, and protected deployment | [Blog publishing](docs/blog-publishing.md) |
-| Enterprise | Read-only cloud adapters, vulnerability context, Kubernetes posture, authorized DAST plans, and governance records | [Enterprise architecture](docs/enterprise-security-operations-architecture.md) |
-
-## Platform Coverage
+Coverage labels are intentionally strict: **Complete** is production-usable in
+the documented local workflow, **Partial** requires scoped configuration or
+does not cover the full platform surface, **Experimental** is pilot-stage, and
+**Planned** describes target architecture that is not presented as available.
 
 | Source or surface | Support level | Notes |
 | --- | --- | --- |
-| OpenClaw | Supported | Audit telemetry, plugin workflow, detections, and response guidance |
-| Hermes Agent | Supported | Read-only log and tool-call collection with persistent monitoring |
-| macOS | Supported | Unified log, process, file, persistence, and network evidence |
-| Linux | Beta | Auth, process, file, persistence, and network adapters |
-| Windows | Beta | Event, process, PowerShell, persistence, and network adapters |
-| SecOpsAI Edge | Pilot | Normalized asset graph and findings import; raw scan logs remain at the sensor |
-| Package registries | Supported | Registry metadata and safe artifact inspection across the documented ecosystems |
-| AWS, GCP, Kubernetes | Read-only foundation | Normalized fixture/connector contracts and non-mutating posture checks |
-| PostgreSQL | Optional | Pooled shared data-plane adapter; SQLite remains the local default |
+| OpenClaw | Complete | Audit telemetry, plugin workflow, detections, and response guidance |
+| Hermes Agent | Complete | Read-only log and tool-call collection with persistent monitoring |
+| macOS | Complete | Unified log, process, file, persistence, and network evidence |
+| Linux | Partial (beta) | Auth, process, file, persistence, and network adapters |
+| Windows | Partial (beta) | Event, process, PowerShell, persistence, and network adapters |
+| SecOpsAI Edge | Experimental (pilot) | Normalized asset graph and findings import; raw scan logs remain at the sensor |
+| Package registries | Complete | Registry metadata and safe artifact inspection across the documented ecosystems |
+| AWS, GCP, Kubernetes | Partial (read-only) | Normalized connectors and non-mutating posture checks; no infrastructure changes |
+| PostgreSQL data plane | Partial (optional) | Pooled adapter is available; SQLite remains the authoritative local default |
+| Managed hosted control plane | Planned | Target architecture only; not presented as an available hosted service |
 
 ## Safety Boundaries
 
@@ -209,24 +237,7 @@ Read the [Security Policy](SECURITY.md), [Threat Model](docs/threat-model.md),
 [Security and Data Handling](docs/security-and-data-handling.md), and
 [Operator Runbook](docs/operator-runbook.md) before enabling protected actions.
 
-## Mission Control
-
-The dashboard is maintained separately so the static Cloudflare-compatible UI
-and local helper can evolve without coupling the operator console to the Core
-runtime:
-
-```bash
-git clone https://github.com/Techris93/secopsai-dashboard.git
-cd secopsai-dashboard/secopsai-dashboard
-cp .env.example .env
-./start-local-dashboard-stack.sh
-```
-
-Open `http://127.0.0.1:45680`. Local helper actions require the configured
-action token; hosted mode fails safely when a helper-backed capability is not
-configured.
-
-## Documentation
+## Documentation and Community
 
 | Start with | When you need |
 | --- | --- |
@@ -240,28 +251,9 @@ configured.
 | [Security and data handling](docs/security-and-data-handling.md) | Local-first storage, credentials, models, artifacts, and approval boundaries |
 | [Repository layout](docs/repository-layout.md) | Canonical folders, compatibility entry points, and duplication rules |
 | [Background monitoring](docs/deployment-guide.md) | Long-running services and scheduled operation |
-
-## Development
-
-```bash
-git clone https://github.com/Techris93/secopsai.git
-cd secopsai
-python3 -m venv .venv
-.venv/bin/pip install -e '.[dev,enterprise]'
-.venv/bin/python -m pytest -q
-```
-
-Run `python3 scripts/verify_docs_examples.py` and `git diff --check` before
-submitting documentation changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for
-contribution and review expectations.
-
-## Project Status
-
-SecOpsAI is an actively developed local-first security operations platform.
-Production use should start with read-only collection and a limited pilot,
-followed by explicit validation of each connector, rule pack, protected action,
-retention policy, and recovery procedure for your environment.
-
-## License
-
-[MIT](LICENSE)
+| [GitHub Action](https://github.com/Techris93/secopsai-action) | Versioned repository security checks |
+| [Marketplace](https://github.com/marketplace/actions/secopsai-supply-chain-guard) | Install SecOpsAI Supply Chain Guard |
+| [Issue tracker](https://github.com/Techris93/secopsai/issues) | Bugs, feature requests, and operator feedback |
+| [Security reporting](SECURITY.md) | Private vulnerability reporting and response expectations |
+| [Contributing](CONTRIBUTING.md) | Development setup, checks, and review expectations |
+| [MIT License](LICENSE) | Open-source terms |
