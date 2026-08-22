@@ -1,5 +1,7 @@
 # SecOpsAI
 
+**SecOpsAI v1.0.0** is the current stable release.
+
 **Evidence-first security operations for agent telemetry, software supply chains, and analyst-reviewed research.**
 
 SecOpsAI brings host and AI-agent telemetry, package-registry surveillance,
