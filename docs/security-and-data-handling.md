@@ -60,6 +60,27 @@ Models cannot independently:
 - Deploy the blog.
 - Apply cloud, Kubernetes, or active DAST changes.
 
+### Specialist profile supply chain
+
+Specialist profiles are data-only domain guidance, not executable plugins. The
+reviewed catalog pins the upstream source commit and license and records the
+source path and SHA-256 for each adapted profile. Runtime catalog validation
+rejects malformed records, unknown reviewers, and unsafe text patterns across
+capabilities, keywords, guidance, and deliverables.
+SecOpsAI does not run upstream profile installers or allow profile text to grant
+tools, repository scope, provider access, or approval.
+
+Specialist runs capture the persisted operator-selected OpenCodex model and
+explicit fallback policy. Automatic routing cannot exceed read-only analysis.
+Repository changes require separate approval and an isolated worktree;
+PR-ready output remains local and cannot commit, push, merge, deploy, publish,
+disclose, access secrets, or mutate cloud resources.
+The approved contract pins the repository commit. The runner disables command
+networking, web search, apps, MCP servers, plugins, hooks, skill installation,
+and agent delegation; rejects model-created commits; derives review evidence
+from Git; enforces the file limit; and fails closed when `git diff --check`
+fails. Canceling a queued specialist run cancels its linked queued model job.
+
 ## Browser And Helper Boundary
 
 The dashboard calls typed, allowlisted helper routes. The browser cannot submit

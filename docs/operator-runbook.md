@@ -328,7 +328,48 @@ Use this when:
 
 ---
 
-## 8. Automation and JSON mode
+## 8. Specialist Orchestrator workflow
+
+Use Specialist Orchestrator when a Work item needs domain-specific analysis or
+a bounded repository change through the selected OpenCodex model.
+
+1. In Mission Control, open **Work** and confirm the selected model and fallback
+   policy shown in **Specialist Orchestrator**.
+2. Open a work item, select **Open work brief**, and review the recommended primary
+   specialist, independent reviewer, routing reasons, evidence gaps, and risk.
+3. Use **Recommendation only** while scope is incomplete. Use **Read-only
+   analysis** for diagnosis that must not edit the repository.
+4. Use **Isolated worktree** or **PR-ready delivery** only for bounded edits.
+   Confirm the reviewed base commit and file limit, approve the captured
+   contract, then start execution as a separate action.
+5. Inspect tests, the local diff, audit history, and independent review. The
+   orchestrator never commits, pushes, merges, deploys, publishes, discloses,
+   accesses secrets, or mutates external infrastructure.
+6. Cancel queued runs from the brief when they are no longer needed. SecOpsAI
+   cancels the linked queued model job too; an active model job must stop or be
+   recovered before cancellation can complete safely.
+
+CLI preview:
+
+```bash
+secopsai specialists route \
+  --input-json '{"title":"Review the failed CI gate","repo_alias":"secopsai","evidence_refs":["run:473"]}' \
+  --tier read_only --json
+```
+
+Guarded automation may create recommendation or read-only runs only:
+
+```bash
+secopsai specialists policy \
+  --mode guarded --maximum-automatic-tier read_only --json
+```
+
+See [Specialist Orchestrator](specialist-orchestrator.md) for profile
+provenance, model routing, worktree approval, recovery, and troubleshooting.
+
+---
+
+## 9. Automation and JSON mode
 
 For automation and integrations:
 
@@ -357,7 +398,7 @@ The installer writes `~/Library/LaunchAgents/com.secopsai.agent.plist`, reloads 
 
 ---
 
-## 9. Repo-local development wrapper
+## 10. Repo-local development wrapper
 
 For development from the repository:
 
@@ -375,7 +416,7 @@ secopsai ...
 
 ---
 
-## 10. Recommended operating patterns
+## 11. Recommended operating patterns
 
 ### Beginner operator
 
@@ -417,7 +458,7 @@ secopsai live --platform linux --duration 60
 
 ---
 
-## 11. Practical guidance
+## 12. Practical guidance
 
 - Start with one source before enabling everything.
 - Use `refresh` and `list` as your default workflow.
@@ -428,7 +469,7 @@ secopsai live --platform linux --duration 60
 
 ---
 
-## 12. Related documentation
+## 13. Related documentation
 
 - [Beginner Quickstart](quickstart-beginner.md)
 - [Getting Started](getting-started.md)
@@ -436,3 +477,4 @@ secopsai live --platform linux --duration 60
 - [Deployment Guide](deployment-guide.md)
 - [OpenClaw Plugin](OpenClaw-Plugin.md)
 - [Hermes Integration](Hermes-Integration.md)
+- [Specialist Orchestrator](specialist-orchestrator.md)

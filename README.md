@@ -32,6 +32,7 @@ approval boundaries.
 | Find risky software early | Multi-ecosystem registry monitoring, no-execution artifact analysis, advisories, and AI Dependency Guard |
 | Investigate with context | Durable Research Cases, IOC extraction, correlations, evidence matrices, and bounded model review |
 | Respond safely | Explainable triage, reversible low-risk automation, protected actions, and complete audit history |
+| Route engineering work safely | Reviewed specialist profiles, persisted OpenCodex model routing, bounded contracts, isolated worktrees, and independent review |
 | Publish defensible research | Evidence-linked drafts, media review, editorial approval, archive-safe staging, and separate deployment |
 
 ## Core Capabilities
@@ -44,6 +45,7 @@ approval boundaries.
 | Artifact analysis | Metadata indexing, quarantine, checksums, static/YARA rules, minimized triage, and analyst escalation | [Artifact Fleet](docs/artifact-fleet-operations.md) |
 | Research | Durable cases, evidence matrices, IOC records, guarded pipelines, disclosure, and sandbox gates | [Research and verification](docs/research-and-verification.md) |
 | Triage | Evidence bundles, dispositions, queued actions, mitigation, and auditable closure | [Findings triage](docs/findings-triage-guide.md) |
+| Specialist work | Deterministic expertise routing, explicit OpenCodex model/fallback snapshots, guarded worktrees, and independent review | [Specialist Orchestrator](docs/specialist-orchestrator.md) |
 | Publishing | Source-backed drafts, image review, feeds, archive-safe staging, and protected deployment | [Blog publishing](docs/blog-publishing.md) |
 | Enterprise | Read-only cloud adapters, vulnerability context, Kubernetes posture, authorized DAST plans, and governance records | [Enterprise architecture](docs/enterprise-security-operations-architecture.md) |
 
@@ -120,6 +122,12 @@ cp .env.example .env
 Open `http://127.0.0.1:45680`. Local helper actions require the configured
 action token; hosted mode fails safely when a helper-backed capability is not
 configured.
+
+In **Work**, Specialist Orchestrator can preview a deterministic route for each
+item, save a recommendation, queue read-only analysis, or prepare an explicitly
+approved isolated worktree. The specialist defines the expertise; the persisted
+operator-selected OpenCodex model performs the work. OpenClaw and Hermes remain
+separate optional telemetry and compatibility runtimes.
 
 ## Product Tour
 
@@ -249,6 +257,7 @@ Read the [Security Policy](SECURITY.md), [Threat Model](docs/threat-model.md),
 | [Documentation home](https://docs.secopsai.dev) | The complete operator documentation |
 | [Getting Started](docs/getting-started.md) | Installation and first-run checks |
 | [Intelligence integrations](docs/intelligence-integrations.md) | Local model bridge, model routing, and the read-only ChatGPT app |
+| [Specialist Orchestrator](docs/specialist-orchestrator.md) | Work routing, reviewed profiles, automation tiers, approvals, recovery, and profile updates |
 | [Research discovery](docs/research-discovery.md) | Watchlists, candidate intake, orchestration, and promotion |
 | [Triage orchestrator](docs/triage-orchestrator.md) | Evidence collection, action queues, and closure |
 | [Rules registry](docs/rules-registry.md) | Detection rule lifecycle and validation |

@@ -89,6 +89,19 @@ from secopsai.graph_store import show_node as show_graph_node
 from secopsai.intelligence import ACTIONS as INTELLIGENCE_ACTIONS
 from secopsai.intelligence import list_actions as list_intelligence_actions
 from secopsai.intelligence import run_read_action as run_intelligence_read_action
+from secopsai.specialist_catalog import load_catalog as load_specialist_catalog
+from secopsai.specialist_catalog import validate_catalog as validate_specialist_catalog
+from secopsai.specialist_orchestrator import approve_run as approve_specialist_run
+from secopsai.specialist_orchestrator import auto_route_task as auto_route_specialist_task
+from secopsai.specialist_orchestrator import build_execution_contract as build_specialist_contract
+from secopsai.specialist_orchestrator import cancel_run as cancel_specialist_run
+from secopsai.specialist_orchestrator import configure_policy as configure_specialist_policy
+from secopsai.specialist_orchestrator import create_run as create_specialist_run
+from secopsai.specialist_orchestrator import execute_worktree_run as execute_specialist_worktree
+from secopsai.specialist_orchestrator import get_policy as get_specialist_policy
+from secopsai.specialist_orchestrator import get_run as get_specialist_run
+from secopsai.specialist_orchestrator import list_runs as list_specialist_runs
+from secopsai.specialist_orchestrator import status as specialist_status
 from secopsai.hermes_integration import doctor as hermes_doctor
 from secopsai.hermes_integration import refresh as refresh_hermes
 from secopsai.hermes_service import install_service as install_hermes_service
@@ -880,6 +893,21 @@ def _json_object(raw: Optional[str], *, label: str) -> Dict[str, Any]:
     return payload
 
 
+def _specialist_task_input(*, input_path: str = "", input_json: str = "") -> Dict[str, Any]:
+    if bool(input_path) == bool(input_json):
+        raise ValueError("provide exactly one of --input or --input-json")
+    if input_path:
+        path = Path(input_path).expanduser().resolve()
+        if not path.is_file():
+            raise ValueError(f"specialist task input does not exist: {path}")
+        if path.stat().st_size > 24 * 1024:
+            raise ValueError("specialist task input exceeds 24576 bytes")
+        raw = path.read_text(encoding="utf-8")
+    else:
+        raw = input_json
+    return _json_object(raw, label="specialist task input")
+
+
 def _session_subject_for_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
     subject = {
         "finding_id": finding.get("finding_id"),
@@ -1478,6 +1506,56 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     artifact_cycle.add_argument("--workers", type=int, default=4)
     artifact_cycle.add_argument("--fixture", default="")
     artifact_cycle.add_argument("--db-path", default=None)
+
+    specialists = sub.add_parser(
+        "specialists",
+        help="Route and run bounded specialist work with the persisted OpenCodex model",
+    )
+    specialists_sub = specialists.add_subparsers(dest="specialists_cmd", required=True)
+    specialists_status = specialists_sub.add_parser("status", help="Show roster, model routing, policy, tiers, and recent runs")
+    specialists_status.add_argument("--limit", type=int, default=20)
+    specialists_status.add_argument("--db-path", default=None)
+    specialists_catalog = specialists_sub.add_parser("catalog", help="Validate and display the reviewed specialist catalog")
+    specialists_catalog.add_argument("--source-root", default="", help="Optional reviewed Agency Agents checkout for source hash verification")
+    specialists_route = specialists_sub.add_parser("route", help="Preview a deterministic specialist execution contract")
+    specialists_create = specialists_sub.add_parser("create", help="Create a durable specialist run")
+    for command in (specialists_route, specialists_create):
+        source = command.add_mutually_exclusive_group(required=True)
+        source.add_argument("--input", default="", help="Path to a bounded task JSON object")
+        source.add_argument("--input-json", default="", help="Bounded task JSON object")
+        command.add_argument("--tier", choices=["recommend", "read_only", "worktree", "pr_ready"], default="recommend")
+        command.add_argument("--profile", default="", help="Optional reviewed specialist profile ID override")
+        command.add_argument("--db-path", default=None)
+    specialists_create.add_argument("--requested-by", default="operator")
+    specialists_create.add_argument("--enqueue", action="store_true", help="Queue a read-only run on its captured OpenCodex model")
+    specialists_auto = specialists_sub.add_parser("auto-route", help="Apply the persisted guarded policy to one task")
+    auto_source = specialists_auto.add_mutually_exclusive_group(required=True)
+    auto_source.add_argument("--input", default="", help="Path to a bounded task JSON object")
+    auto_source.add_argument("--input-json", default="", help="Bounded task JSON object")
+    specialists_auto.add_argument("--requested-by", default="specialist-policy")
+    specialists_auto.add_argument("--db-path", default=None)
+    specialists_runs = specialists_sub.add_parser("runs", help="List durable specialist runs")
+    specialists_runs.add_argument("--status", default="")
+    specialists_runs.add_argument("--limit", type=int, default=50)
+    specialists_runs.add_argument("--db-path", default=None)
+    specialists_show = specialists_sub.add_parser("show", help="Show one specialist run and its audit history")
+    specialists_show.add_argument("run_id")
+    specialists_show.add_argument("--include-local-paths", action="store_true")
+    specialists_show.add_argument("--db-path", default=None)
+    for command_name, help_text in (
+        ("approve", "Approve an isolated worktree run"),
+        ("execute", "Execute one approved run inside an isolated git worktree"),
+        ("cancel", "Cancel a queued or awaiting-approval run"),
+    ):
+        command = specialists_sub.add_parser(command_name, help=help_text)
+        command.add_argument("run_id")
+        command.add_argument("--actor", default="operator")
+        command.add_argument("--db-path", default=None)
+    specialists_policy = specialists_sub.add_parser("policy", help="Show or configure guarded automatic routing policy")
+    specialists_policy.add_argument("--mode", choices=["off", "recommend", "guarded"], default="")
+    specialists_policy.add_argument("--maximum-automatic-tier", choices=["recommend", "read_only"], default="recommend")
+    specialists_policy.add_argument("--actor", default="operator")
+    specialists_policy.add_argument("--db-path", default=None)
 
     intelligence = sub.add_parser("intelligence", help="Run approved read-only intelligence actions and manage the local Codex bridge")
     intelligence_sub = intelligence.add_subparsers(dest="intelligence_cmd", required=True)
@@ -4122,6 +4200,83 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(to_json(payload))
         else:
             print(to_json(payload))
+        return 0
+
+    if args.cmd == "specialists":
+        try:
+            if args.specialists_cmd == "status":
+                payload = specialist_status(limit=args.limit, db_path=args.db_path)
+            elif args.specialists_cmd == "catalog":
+                catalog = load_specialist_catalog()
+                payload = {
+                    "catalog": catalog,
+                    "validation": validate_specialist_catalog(
+                        catalog,
+                        source_root=args.source_root or None,
+                    ),
+                }
+            elif args.specialists_cmd in {"route", "create"}:
+                task = _specialist_task_input(input_path=args.input, input_json=args.input_json)
+                if args.specialists_cmd == "route":
+                    payload = build_specialist_contract(
+                        task,
+                        tier=args.tier,
+                        profile_id=args.profile,
+                        db_path=args.db_path,
+                    )
+                else:
+                    payload = create_specialist_run(
+                        task,
+                        tier=args.tier,
+                        profile_id=args.profile,
+                        requested_by=args.requested_by,
+                        enqueue=args.enqueue,
+                        db_path=args.db_path,
+                    )
+            elif args.specialists_cmd == "auto-route":
+                task = _specialist_task_input(input_path=args.input, input_json=args.input_json)
+                payload = auto_route_specialist_task(
+                    task,
+                    requested_by=args.requested_by,
+                    db_path=args.db_path,
+                )
+            elif args.specialists_cmd == "runs":
+                payload = {
+                    "schema_version": "secopsai.specialist-run-list.v1",
+                    "runs": list_specialist_runs(status=args.status, limit=args.limit, db_path=args.db_path),
+                }
+            elif args.specialists_cmd == "show":
+                payload = get_specialist_run(
+                    args.run_id,
+                    db_path=args.db_path,
+                    include_local_paths=args.include_local_paths,
+                )
+            elif args.specialists_cmd == "approve":
+                payload = approve_specialist_run(args.run_id, actor=args.actor, db_path=args.db_path)
+            elif args.specialists_cmd == "execute":
+                payload = execute_specialist_worktree(args.run_id, actor=args.actor, db_path=args.db_path)
+            elif args.specialists_cmd == "cancel":
+                payload = cancel_specialist_run(args.run_id, actor=args.actor, db_path=args.db_path)
+            elif args.specialists_cmd == "policy":
+                payload = (
+                    configure_specialist_policy(
+                        mode=args.mode,
+                        maximum_automatic_tier=args.maximum_automatic_tier,
+                        actor=args.actor,
+                        db_path=args.db_path,
+                    )
+                    if args.mode
+                    else get_specialist_policy(db_path=args.db_path)
+                )
+            else:  # pragma: no cover - argparse enforces this command set
+                raise ValueError(f"unsupported specialists command: {args.specialists_cmd}")
+        except Exception as exc:
+            if args.json:
+                print(to_json({"ok": False, "error": str(exc), "command": args.specialists_cmd}))
+            else:
+                print(f"error: {exc}")
+            return 1
+        print(to_json(payload))
         return 0
 
     if args.cmd == "artifact-fleet":

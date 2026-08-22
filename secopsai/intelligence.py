@@ -82,6 +82,8 @@ def _actions() -> tuple[Action, ...]:
         Action("review_publication_safety", "Review publication safety", "Review a case for disclosure, attribution, privacy, and evidentiary risks without approving publication.", "secopsai.research.read", "research_case", True),
         Action("recommend_remediation", "Recommend remediation", "Propose prioritized remediation with verification steps for one finding.", "secopsai.findings.read", "finding", True),
         Action("triage_artifact", "Triage OSS artifact", "Assess deterministic OSS artifact findings and recommend analyst escalation.", "secopsai.artifacts.read", "artifact", True),
+        Action("execute_specialist_work", "Execute specialist analysis", "Run one reviewed specialist profile against a bounded Work contract using the selected OpenCodex model.", "secopsai.work.read", "specialist_run", True),
+        Action("review_specialist_work", "Review specialist result", "Independently review one specialist result without approving protected actions.", "secopsai.work.read", "specialist_run", True),
     )
 
 
@@ -116,7 +118,7 @@ def prepare_bridge_request(name: str, inputs: dict[str, Any] | None = None, *, d
         "action": action.public(),
         "requested_at": soc_store.utc_now(),
         "context": minimize(context),
-        "instructions": _bridge_instructions(action),
+        "instructions": _bridge_instructions(action, normalized, db_path=db_path),
         "safety": {
             "read_only": True,
             "raw_telemetry_included": False,
@@ -273,10 +275,33 @@ def _bridge_context(action: Action, inputs: dict[str, Any], db_path: str | None)
         artifact_db_path = inputs.get("artifact_db_path") or db_path
         triage = triage_show(artifact_id, db_path=artifact_db_path)
         return {"artifact_triage": triage.get("context") or {}, "artifact_id": artifact_id}
+    if action.name in {"execute_specialist_work", "review_specialist_work"}:
+        from secopsai.specialist_orchestrator import specialist_bridge_context
+
+        run_id = _target(inputs, "specialist_run_id")
+        return specialist_bridge_context(
+            run_id,
+            db_path=db_path,
+            review=action.name == "review_specialist_work",
+        )
     raise ValueError(f"no bridge context builder for action: {action.name}")
 
 
-def _bridge_instructions(action: Action) -> str:
+def _bridge_instructions(
+    action: Action,
+    inputs: dict[str, Any] | None = None,
+    *,
+    db_path: str | None = None,
+) -> str:
+    specialist_guidance = ""
+    if action.name in {"execute_specialist_work", "review_specialist_work"}:
+        from secopsai.specialist_orchestrator import specialist_bridge_instructions
+
+        specialist_guidance = specialist_bridge_instructions(
+            _target(inputs or {}, "specialist_run_id"),
+            db_path=db_path,
+            review=action.name == "review_specialist_work",
+        )
     action_guidance = {
         "analyze_research_case": (
             "Produce a comprehensive defensive research assessment, not a generic alert summary. Summarize the scope, method, strongest evidence, and conclusion in clear prose. "
@@ -311,6 +336,8 @@ def _bridge_instructions(action: Action) -> str:
             "and decision_evidence_refs using only supplied artifact rule IDs, file paths, hashes, and IOC identifiers. "
             "Suspicious or inconclusive evidence must escalate to an analyst. Never treat a source URL or missing local usage as proof of benignness. "
         ),
+        "execute_specialist_work": specialist_guidance,
+        "review_specialist_work": specialist_guidance,
     }.get(action.name, "")
     return (
         f"Perform the approved SecOpsAI action '{action.name}'. Use only the supplied normalized context. "

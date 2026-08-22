@@ -41,6 +41,35 @@ Distribution and Marketplace maintenance details live in
 
 ## Command overview
 
+## Specialist Orchestrator commands
+
+```bash
+secopsai specialists status --json
+secopsai specialists catalog --json
+secopsai specialists route --input task.json --tier recommend --json
+secopsai specialists create --input task.json --tier read_only --enqueue --json
+secopsai specialists auto-route --input task.json --json
+secopsai specialists runs --limit 25 --json
+secopsai specialists show SOR-XXXXXXXXXXXXXXXX --json
+secopsai specialists approve SOR-XXXXXXXXXXXXXXXX --json
+secopsai specialists execute SOR-XXXXXXXXXXXXXXXX --json
+secopsai specialists cancel SOR-XXXXXXXXXXXXXXXX --json
+secopsai specialists policy --mode guarded --maximum-automatic-tier read_only --json
+```
+
+`route` is a read-only contract preview. `create` stores a durable run, and
+`--enqueue` is accepted only for the `read_only` tier. `approve` and `execute`
+are separate steps for `worktree` and `pr_ready` runs. Automatic policy can use
+only `recommend` or `read_only`; it cannot edit repositories.
+
+Task JSON accepts bounded fields such as `title`, `description`, `domain`,
+`priority`, `status`, `owner_role`, `reviewer_role`, `repo_alias`,
+`evidence_refs`, `external_facing`, and `requires_security_review`.
+`repo_alias` is restricted to the repositories explicitly allowlisted by Core.
+
+See [Specialist Orchestrator](specialist-orchestrator.md) for routing,
+OpenCodex model snapshots, profile provenance, approval, and recovery behavior.
+
 ## Enterprise security commands
 
 ```bash

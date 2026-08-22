@@ -42,6 +42,7 @@ behind explicit capability and approval boundaries.
 - [Security And Data Handling](security-and-data-handling.md)
 - [SecOpsAI Edge](edge-integration.md)
 - [Local Codex bridge and ChatGPT app](intelligence-integrations.md)
+- [Specialist Orchestrator](specialist-orchestrator.md)
 - [Operator Runbook](operator-runbook.md)
 - [Findings Triage Guide](findings-triage-guide.md)
 - [Research And Verification](research-and-verification.md)

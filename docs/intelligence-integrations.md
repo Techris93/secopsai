@@ -44,6 +44,20 @@ secopsai intelligence bridge configure-models \
 The routing file stores model identifiers and policy only. Provider credentials
 remain owned by OpenCodex or Codex and are never copied into SecOpsAI.
 
+### Specialist Orchestrator model snapshots
+
+Mission Control **Work** uses the same persisted routing through the
+[Specialist Orchestrator](specialist-orchestrator.md). Each durable specialist
+run captures the primary model, ordered fallbacks, fallback mode, specialist,
+reviewer, and execution policy when the run is created. A later global model
+change does not rewrite an existing run. The specialist profile supplies
+reviewed domain guidance only; it cannot select a provider or grant tools.
+
+Read-only specialist work uses the durable OpenCodex bridge. Approved
+implementation work runs only in an isolated allowlisted git worktree and is
+followed by an independent review job. Neither path can autonomously merge,
+push, deploy, publish, disclose, or mutate external infrastructure.
+
 ## Autonomous finding and alert triage
 
 Mission Control can use any model in the local OpenCodex catalog, including Kimi K3, Grok, Gemini, or an available Codex model, to review new canonical findings continuously. This includes host detections, Edge findings, supply-chain findings, and high-confidence research candidates produced by registry monitoring. Open **Administration → Automation**, select the model, then configure **Agent finding and alert review**.

@@ -842,9 +842,30 @@ def run_once(
     try:
         job_inputs = job.get("input") if isinstance(job.get("input"), dict) else {}
         job_model = str(job_inputs.get("selected_model") or job.get("selected_model") or "").strip()
+        job_fallbacks_raw = job_inputs.get("fallback_models")
+        job_fallback_mode_raw = str(job_inputs.get("fallback_mode") or "").strip()
+        job_settings = resolved
+        if isinstance(job_fallbacks_raw, list) or job_fallback_mode_raw:
+            job_fallbacks = tuple(
+                str(item).strip()
+                for item in (job_fallbacks_raw if isinstance(job_fallbacks_raw, list) else [])[:8]
+                if str(item).strip() and str(item).strip() != job_model
+            )
+            job_fallback_mode = _clean_fallback_mode(job_fallback_mode_raw or "disabled")
+            if job_fallback_mode == "disabled":
+                job_fallbacks = ()
+            job_settings = replace(
+                resolved,
+                model=job_model or resolved.model,
+                fallback_models=job_fallbacks,
+                fallback_mode=job_fallback_mode,
+            )
         model_chain = _model_chain(
-            resolved,
-            model=model or job_model or effective_model,
+            job_settings,
+            # A Work contract snapshots the operator-selected OpenCodex model.
+            # Honor that per-job choice before a service-level default so a
+            # later bridge restart cannot silently move queued work.
+            model=job_model or model or effective_model,
             available=health.get("models", {}),
         )
         if bridge_request is None:
@@ -852,7 +873,7 @@ def run_once(
             if job.get("target_id"):
                 inputs.setdefault("target_id", job["target_id"])
             bridge_request = prepare_bridge_request(job["action"], inputs, db_path=db_path)
-        raw, used_model = _invoke_with_model_fallback(bridge_request, resolved, run, model_chain)
+        raw, used_model = _invoke_with_model_fallback(bridge_request, job_settings, run, model_chain)
         used_provider = _provider_for_model(used_model, health)
         result = validate_bridge_result(job["action"], raw, provider=used_provider)
         if remote:
@@ -879,6 +900,26 @@ def run_once(
                 raw,
                 model=used_model,
                 db_path=job_inputs.get("artifact_db_path") or db_path,
+            )
+        elif job.get("action") == "execute_specialist_work":
+            from secopsai.specialist_orchestrator import record_primary_result
+
+            record_primary_result(
+                str(job.get("target_id") or job_inputs.get("specialist_run_id") or ""),
+                raw,
+                model=used_model,
+                actor=resolved.resolved_worker_id(),
+                db_path=db_path,
+            )
+        elif job.get("action") == "review_specialist_work":
+            from secopsai.specialist_orchestrator import record_review_result
+
+            record_review_result(
+                str(job.get("target_id") or job_inputs.get("specialist_run_id") or ""),
+                raw,
+                model=used_model,
+                actor=resolved.resolved_worker_id(),
+                db_path=db_path,
             )
         return {"status": "succeeded", "provider": used_provider, "model": used_model, "job": completed}
     except subprocess.TimeoutExpired:
@@ -1265,17 +1306,23 @@ def _invoke_with_model_fallback(
             errors.append(f"{model_name or 'default'}: {message}")
             if index + 1 >= len(model_chain):
                 break
-            should_fallback = (
-                settings.fallback_mode == "quota_auth" and _is_quota_or_auth_failure(message)
-            ) or (
-                settings.fallback_mode == "any_provider" and _is_provider_availability_failure(message)
-            )
+            should_fallback = provider_failure_allows_fallback(settings.fallback_mode, message)
             if not should_fallback:
                 # Validation, schema, and safety failures stay attached to the
                 # selected model instead of being hidden by provider failover.
                 raise
             continue
     raise RuntimeError("all bridge models failed: " + " | ".join(errors)[:1600])
+
+
+def provider_failure_allows_fallback(mode: str, message: str) -> bool:
+    """Return whether an operator-selected fallback policy permits failover."""
+    normalized = _clean_fallback_mode(mode)
+    return (
+        normalized == "quota_auth" and _is_quota_or_auth_failure(message)
+    ) or (
+        normalized == "any_provider" and _is_provider_availability_failure(message)
+    )
 
 
 def _invoke_codex(
