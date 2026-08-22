@@ -18,11 +18,11 @@ Run the one-line install on the **same machine** as your OpenClaw gateway:
 curl -fsSL https://secopsai.dev/install.sh | bash
 ```
 
-If your environment standardizes on npm-managed CLIs, the public package path
-is:
+The public npm package provides the OpenClaw plugin. It does not replace the
+Core Python installation above:
 
 ```bash
-npm install -g secopsai
+openclaw plugins install secopsai
 ```
 
 Fallback (manual setup):

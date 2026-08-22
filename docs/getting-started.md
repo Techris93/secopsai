@@ -103,15 +103,16 @@ python -m pytest tests/ -v  # Optional: verify installation
 
 ### GitHub-Native Install And CI
 
-For npm users, the clean public package name is `secopsai`:
+The published npm package is the OpenClaw plugin distribution, not the complete
+Python CLI. Install it through OpenClaw after Core is available:
 
 ```bash
-npm install -g secopsai
+openclaw plugins install secopsai
 ```
 
-The package name already exists on npm under the `techris` maintainer account,
-and this repository is prepared for the next `secopsai@1.0.1` wrapper release.
-Publishing still requires explicit maintainer approval and npm authentication.
+The registry currently exposes `secopsai@1.0.0` as that plugin. Do not replace
+it with the prepared supply-chain wrapper without an explicit package-lineage
+and migration decision.
 
 SecOpsAI is also published to GitHub Packages as `@techris93/secopsai` for
 GitHub-native consumers:
@@ -142,7 +143,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Techris93/secopsai-action@v1
+      - uses: Techris93/secopsai-action@v1.0.0
         with:
           mode: advisory-check
           ecosystem: npm
@@ -151,17 +152,11 @@ jobs:
           fail-on-severity: critical
 ```
 
-The action can run advisory checks, supply-chain scans, AI Dependency Guard,
+The published `v1.0.0` action can run advisory checks, supply-chain scans,
 campaign discovery, and triage summaries without accepting arbitrary shell
-commands.
-
-```yaml
-- uses: Techris93/secopsai-action@v1
-  with:
-    mode: ai-dependency-guard
-    scan-path: .
-    fail-on-severity: high
-```
+commands. AI Dependency Guard is currently a Core CLI capability; do not use it
+as a Marketplace Action mode until a tagged Action release advertises that
+input contract.
 
 Local equivalent:
 

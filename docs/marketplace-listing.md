@@ -41,7 +41,7 @@ Free / open source.
 ## Installation
 
 ```yaml
-- uses: Techris93/secopsai-action@v1
+- uses: Techris93/secopsai-action@v1.0.0
   with:
     mode: advisory-check
     ecosystem: npm
@@ -49,13 +49,8 @@ Free / open source.
     version: 12.0.1
 ```
 
-```yaml
-- uses: Techris93/secopsai-action@v1
-  with:
-    mode: ai-dependency-guard
-    scan-path: .
-    fail-on-severity: high
-```
+AI Dependency Guard is intentionally omitted from the published `v1.0.0`
+listing until a later tagged Action release includes that input contract.
 
 ## Published Links
 

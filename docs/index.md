@@ -25,9 +25,21 @@ SecOpsAI connects network discovery, software supply-chain monitoring, host and 
 - Adaptive Response Layer with decaying threat memory, weak-signal routing, response posture, safe probes, and deception recommendations
 - Threat intel pipeline and deployment paths for ongoing monitoring
 
+## Mission Control
+
+Mission Control is the bright, evidence-first operator console for priorities,
+findings, research cases, model routing, artifact review, publication, and
+enterprise readiness. It keeps helper-backed commands and high-impact actions
+behind explicit capability and approval boundaries.
+
+[![SecOpsAI Mission Control overview with representative sample data](assets/mission-control/overview.png)](https://github.com/Techris93/secopsai-dashboard)
+
+[Open the Mission Control repository](https://github.com/Techris93/secopsai-dashboard)
+
 ## Start Here
 
 - [Getting Started](getting-started.md)
+- [Security And Data Handling](security-and-data-handling.md)
 - [SecOpsAI Edge](edge-integration.md)
 - [Local Codex bridge and ChatGPT app](intelligence-integrations.md)
 - [Operator Runbook](operator-runbook.md)
@@ -50,6 +62,7 @@ SecOpsAI connects network discovery, software supply-chain monitoring, host and 
 - [Emergency Supply Chain Advisories](supply-chain-advisories.md)
 - [Security Blog Publishing](blog-publishing.md)
 - [OpenClaw Plugin](OpenClaw-Plugin.md)
+- [Mission Control](https://github.com/Techris93/secopsai-dashboard)
 
 ## Quick Start
 
@@ -98,8 +111,10 @@ secopsai supply-chain ai-dependency-guard --path . --json
 SecOpsAI is available through the original install flow, GitHub Packages, and
 the published **SecOpsAI Supply-Chain Guard** GitHub Marketplace Action.
 
+The npm package is the OpenClaw plugin distribution:
+
 ```bash
-npm install -g secopsai
+openclaw plugins install secopsai
 ```
 
 ```bash
@@ -108,7 +123,7 @@ npm install @techris93/secopsai
 ```
 
 ```yaml
-- uses: Techris93/secopsai-action@v1
+- uses: Techris93/secopsai-action@v1.0.0
   with:
     mode: advisory-check
     ecosystem: npm
@@ -116,13 +131,9 @@ npm install @techris93/secopsai
     version: 12.0.1
 ```
 
-```yaml
-- uses: Techris93/secopsai-action@v1
-  with:
-    mode: ai-dependency-guard
-    scan-path: .
-    fail-on-severity: high
-```
+AI Dependency Guard is available through the Core CLI. The published
+Marketplace Action does not expose that mode until a future tagged release
+adds the corresponding inputs.
 
 See [GitHub Distribution](github-distribution-plan.md) and
 [npm Name Migration](npm-name-migration.md) for package release details, and

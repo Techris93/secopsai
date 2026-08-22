@@ -24,7 +24,7 @@ For CI workflows, the published **SecOpsAI Supply-Chain Guard** GitHub
 Marketplace Action wraps selected CLI modes with fixed, constrained execution:
 
 ```yaml
-- uses: Techris93/secopsai-action@v1
+- uses: Techris93/secopsai-action@v1.0.0
   with:
     mode: advisory-check
     ecosystem: npm
@@ -32,13 +32,8 @@ Marketplace Action wraps selected CLI modes with fixed, constrained execution:
     version: 12.0.1
 ```
 
-```yaml
-- uses: Techris93/secopsai-action@v1
-  with:
-    mode: ai-dependency-guard
-    scan-path: .
-    fail-on-severity: high
-```
+AI Dependency Guard is currently invoked through the Core CLI. The published
+`v1.0.0` Marketplace Action does not advertise that mode.
 
 Distribution and Marketplace maintenance details live in
 [GitHub Distribution](github-distribution-plan.md) and
@@ -554,13 +549,13 @@ secopsai hermes service logs
 
 Service lifecycle actions are `install`, `start`, `stop`, `status`, `run-now`, `logs`, and `uninstall`. Installation accepts `--interval`, `--hermes-home`, `--db-path`, and `--no-start`. The minimum interval is 60 seconds and the default is 300 seconds.
 
-- Public npm package:
+- Public npm OpenClaw plugin:
 
 ```bash
-npm install -g secopsai
+openclaw plugins install secopsai
 ```
 
-- The installer creates a virtualenv and installs the `secopsai` CLI into it.
+- The Core installer creates a virtualenv and installs the `secopsai` CLI into it.
 - The packaged install includes the runtime helper modules required by the CLI entrypoint.
 
 ## Related docs

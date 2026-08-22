@@ -61,15 +61,9 @@ The guard warns by default. To block pull requests, opt into a threshold:
 secopsai supply-chain ai-dependency-guard --path . --fail-on high --json
 ```
 
-GitHub Action example:
-
-```yaml
-- uses: Techris93/secopsai-action@v1
-  with:
-    mode: ai-dependency-guard
-    scan-path: .
-    fail-on-severity: high
-```
+The published Marketplace Action `v1.0.0` does not expose this mode. Run the
+Core CLI in CI until a later immutable Action release advertises and tests the
+AI Dependency Guard inputs.
 
 ## Classifications
 

@@ -121,7 +121,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Techris93/secopsai-action@v1
+      - uses: Techris93/secopsai-action@v1.0.0
         with:
           mode: advisory-check
           ecosystem: npm
@@ -130,13 +130,9 @@ jobs:
           fail-on-severity: critical
 ```
 
-```yaml
-- uses: Techris93/secopsai-action@v1
-  with:
-    mode: ai-dependency-guard
-    scan-path: .
-    fail-on-severity: high
-```
+The published `v1.0.0` Action does not expose AI Dependency Guard. Use the
+Core CLI for that capability until a new immutable Action release advertises
+the required inputs.
 
 ## Why The Main Repo Is Not The Marketplace Repo
 

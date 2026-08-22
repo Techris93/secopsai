@@ -27,13 +27,13 @@ cd ~/secopsai
 source .venv/bin/activate
 ```
 
-### npm install
+### OpenClaw plugin from npm
 
-If you prefer a package-manager entry point, use the public npm package:
+The public npm package is the OpenClaw plugin, not a replacement for the Core
+installation above:
 
 ```bash
-npm install -g secopsai
-secopsai --help
+openclaw plugins install secopsai
 ```
 
 ### Manual install
