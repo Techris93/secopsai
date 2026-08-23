@@ -100,7 +100,10 @@ evidence gap rather than inventing scope.
 
 Automatic policy can never exceed read-only analysis. High- or critical-risk
 work is reduced to recommendation when the deterministic guard requires human
-alignment. Worktree and PR-ready tiers are never automatic.
+alignment. The only exception is a trusted Core-created Research Case task
+marked analysis-only: it may receive read-only specialist analysis and an
+independent review, but it gains no state-changing authority. Worktree and
+PR-ready tiers are never automatic.
 
 The orchestrator never autonomously merges, pushes, opens or approves a pull
 request, deploys, publishes, sends disclosure, submits external research,
@@ -147,6 +150,19 @@ Worktree execution also enforces these controls in the runner:
 The **Route next priority item** control applies the persisted automatic policy
 to the highest-priority open item in the current Work filter. In guarded mode it
 may create a recommendation or read-only run only.
+
+When editing the policy, background status refreshes preserve the unsaved form
+values. **Save policy** verifies the value written to Core before reporting
+success. The safe automatic setting is **Guarded automation** with a
+**Read-only analysis** ceiling. If read-back does not match, the form remains
+dirty and displays an error instead of silently returning to recommendation.
+
+The complete daily workflow also routes Research Cases in `validation` or
+`ready_to_publish` that contain a structured subject and active evidence. Core chooses the reviewed specialist,
+captures the selected OpenCodex model and explicit fallback policy, queues the
+independent reviewer, and attaches the completed summaries once as analyst-note
+evidence. The result still requires operator acceptance and cannot approve or
+publish the case.
 
 ## CLI workflow
 

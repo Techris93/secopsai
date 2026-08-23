@@ -82,19 +82,29 @@ The daily coordinator links the operational steps that previously required
 separate clicks or terminal commands. It runs only when its persisted schedule
 is due and records one durable run with a result for every step:
 
-1. Run due registry collectors, score new events, retry bounded failures, and
+1. Run a read-only telemetry and intelligence health preflight.
+2. Run due registry collectors, score new events, retry bounded failures, and
    recover interrupted collector work.
-2. Apply the configured deterministic candidate-promotion policy. Promotion
+3. Apply the configured deterministic candidate-promotion policy. Promotion
    creates draft research cases only; it is not a maliciousness verdict.
-3. Record every alert as feedback and queue eligible findings for the selected
+4. Index and statically process a bounded Artifact Fleet batch without running
+   package code; model execution remains a later queue stage. Backpressure
+   pauses new metadata indexing when the safe scan queue is already above the
+   bounded threshold, preventing unattended queue growth.
+5. Record every alert as feedback and queue eligible findings for the selected
    model. Unknown outcomes remain active-learning records and are never used as
    labels.
-4. Collect exact package evidence and run bounded static investigations for
+6. Collect exact package evidence and run bounded static investigations for
    eligible high-priority findings.
-5. Run the guarded detection-learning replay, holdout, shadow, and canary
+7. Under `guarded / read_only` specialist policy, synchronize completed
+   independent reviews, route evidence-bearing Research Cases once, and create
+   review-only drafts only for cases whose publication review was already
+   approved by a human.
+8. Run the guarded detection-learning replay, holdout, shadow, and canary
    checks. A failed quality gate produces a proposal or a blocked run; it does
    not silently change a detector.
-6. Deliver configured operational health alerts with the existing retry and
+9. Apply bounded storage retention.
+10. Deliver configured operational health alerts with the existing retry and
    audit controls.
 
 Configure or run the coordinator from **Administration → Automation → Daily
@@ -117,9 +127,10 @@ cancel later steps; the cycle is marked `degraded` and the failed step remains
 retryable on the next due cycle.
 
 Agents may prepare evidence, triage recommendations, reversible finding
-changes, draft cases, and learning proposals. Sandbox submission, disclosure
-delivery, public publication, and unverified detector activation remain
-explicit approval actions.
+changes, specialist reviews, draft cases, review-only editorial drafts, and
+learning proposals. Specialist-result acceptance, publication-review approval,
+sandbox submission, disclosure delivery, publishing approved posts, deployment,
+and unverified detector activation remain explicit approval actions.
 
 The model may propose rule or threshold tuning. Every proposal enters shadow mode. Only an ecosystem threshold that exactly matches a high-confidence deterministic historical replay, includes enough reviewed safe and risky findings, and introduces no known true-positive regression can activate automatically. Rule weights, conditions, and exceptions remain shadow-only.
 

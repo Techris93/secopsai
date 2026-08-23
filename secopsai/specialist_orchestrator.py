@@ -523,6 +523,7 @@ def create_run(
 def auto_route_task(
     task: dict[str, Any],
     *,
+    profile_id: str = "",
     requested_by: str = "specialist-policy",
     db_path: str | None = None,
 ) -> dict[str, Any]:
@@ -535,7 +536,7 @@ def auto_route_task(
             "policy": policy,
             "run": None,
         }
-    preview = build_execution_contract(task, tier="recommend", db_path=db_path)
+    preview = build_execution_contract(task, tier="recommend", profile_id=profile_id, db_path=db_path)
     requested_tier = (
         str(policy.get("maximum_automatic_tier") or "recommend")
         if policy.get("mode") == "guarded"
@@ -543,12 +544,22 @@ def auto_route_task(
     )
     effective_tier = requested_tier
     policy_reasons: list[str] = []
-    if preview["routing"]["risk"] in {"high", "critical"} and requested_tier != "recommend":
+    analysis_only = bool(preview.get("task", {}).get("analysis_only"))
+    if (
+        preview["routing"]["risk"] in {"high", "critical"}
+        and requested_tier != "recommend"
+        and not analysis_only
+    ):
         effective_tier = "recommend"
         policy_reasons.append("High- or critical-risk work was downgraded to recommendation-only by policy.")
+    elif analysis_only and requested_tier == "read_only":
+        policy_reasons.append(
+            "Trusted Core automation limited this high-risk task to read-only analysis; protected actions remain forbidden."
+        )
     run = create_run(
         task,
         tier=effective_tier,
+        profile_id=profile_id,
         requested_by=requested_by,
         enqueue=effective_tier == "read_only",
         db_path=db_path,
@@ -669,6 +680,42 @@ def specialist_bridge_context(run_id: str, *, db_path: str | None = None, review
     }
     if review:
         context["primary_result"] = run.get("result") or {}
+    task_id = str((context.get("task") or {}).get("task_id") or "").upper()
+    if re.fullmatch(r"RSC-[A-F0-9]{12}", task_id):
+        from secopsai.research_cases import get_case
+        from secopsai.research_workflow import build_evidence_matrix
+
+        case = get_case(task_id, db_path=db_path)
+        # The intelligence bridge applies its normal minimizer after this
+        # context is built. Keep local locators out before that boundary too.
+        evidence = []
+        for item in case.get("evidence") or []:
+            evidence.append(
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key in {
+                        "evidence_id", "evidence_type", "title", "sha256",
+                        "provenance", "notes", "status", "collected_at", "metadata",
+                    }
+                }
+            )
+        context["research_case"] = {
+            key: case.get(key)
+            for key in (
+                "case_id", "title", "summary", "case_type", "severity",
+                "confidence", "status", "disclosure_status", "subjects",
+                "iocs", "claims", "verdicts", "publication_reviews",
+                "publication_readiness",
+            )
+        }
+        context["research_case"]["evidence"] = evidence
+        context["evidence_matrix"] = build_evidence_matrix(
+            task_id,
+            persist=False,
+            actor="specialist-orchestrator",
+            db_path=db_path,
+        )
     return context
 
 

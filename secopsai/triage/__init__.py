@@ -11,6 +11,7 @@ from .engine import (
 from .orchestrator import (
     apply_action,
     generate_summary,
+    generate_dashboard_summary,
     orchestrate_findings,
     reconcile_exposure_closures,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "apply_action",
     "close_finding",
     "generate_summary",
+    "generate_dashboard_summary",
     "get_action",
     "infer_category",
     "investigate_finding",

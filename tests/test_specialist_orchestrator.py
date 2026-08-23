@@ -214,6 +214,23 @@ def test_auto_route_policy_never_auto_enters_worktree_and_downgrades_high_risk(t
     assert all(run["automation_tier"] not in {"worktree", "pr_ready"} for run in list_runs(db_path=db))
 
 
+def test_trusted_analysis_only_task_keeps_high_risk_work_read_only(tmp_path: Path) -> None:
+    db = str(tmp_path / "core.db")
+    persist_model_routing("xai/grok-4.6", fallback_mode="disabled", db_path=db)
+    configure_policy(mode="guarded", maximum_automatic_tier="read_only", db_path=db)
+    task = _task("Review critical malware campaign evidence")
+    task["analysis_only"] = True
+    task["requires_security_review"] = True
+
+    result = auto_route_task(task, db_path=db)
+
+    assert result["requested_tier"] == "read_only"
+    assert result["effective_tier"] == "read_only"
+    assert result["run"]["status"] == "queued"
+    assert result["run"]["fallback_mode"] == "disabled"
+    assert result["run"]["fallback_models"] == []
+
+
 def test_invalid_enqueue_is_rejected_before_persistence(tmp_path: Path) -> None:
     db = str(tmp_path / "core.db")
     with pytest.raises(ValueError, match="only read_only"):

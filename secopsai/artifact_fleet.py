@@ -186,6 +186,15 @@ def init_db(path: str | Path | None = None) -> Path:
             );
             """
         )
+        # Older metadata-only rows were labeled scan-pending even though no
+        # approved local artifact existed. Preserve them as collection leads
+        # instead of presenting an impossible static-scan backlog.
+        conn.execute(
+            """UPDATE artifact_queue SET status='awaiting_collection', updated_at=?
+               WHERE stage='scan' AND status='pending'
+                 AND payload_json LIKE '%\"artifact_path\":\"\"%'""",
+            (_now(),),
+        )
         conn.commit()
     try:
         os.chmod(target, 0o600)
@@ -256,8 +265,19 @@ def index_records(records: Iterable[dict[str, Any]], *, source: str, cursor: str
                 )
                 if conn.execute("SELECT changes()").fetchone()[0]:
                     indexed += 1
-                queue_payload = {**metadata.as_dict(), "artifact_id": artifact_id, "artifact_path": _text(raw.get("artifact_path"), 800)}
-                conn.execute("INSERT OR IGNORE INTO artifact_queue(artifact_id, stage, status, payload_json, created_at, updated_at) VALUES (?, 'scan', 'pending', ?, ?, ?)", (artifact_id, _json(queue_payload), now, now))
+                artifact_path = _text(raw.get("artifact_path"), 800)
+                queue_payload = {**metadata.as_dict(), "artifact_id": artifact_id, "artifact_path": artifact_path}
+                queue_status = "pending" if artifact_path else "awaiting_collection"
+                conn.execute(
+                    """INSERT INTO artifact_queue
+                       (artifact_id, stage, status, payload_json, created_at, updated_at)
+                       VALUES (?, 'scan', ?, ?, ?, ?)
+                       ON CONFLICT(artifact_id, stage) DO UPDATE SET
+                         status=CASE WHEN excluded.status='pending' THEN 'pending' ELSE artifact_queue.status END,
+                         payload_json=CASE WHEN excluded.status='pending' THEN excluded.payload_json ELSE artifact_queue.payload_json END,
+                         updated_at=excluded.updated_at""",
+                    (artifact_id, queue_status, _json(queue_payload), now, now),
+                )
             except Exception as exc:
                 dead += 1
                 conn.execute("INSERT INTO artifact_dead_letters(dead_letter_id, source, artifact_id, reason, retryable, payload_json, created_at) VALUES (?, ?, ?, ?, 1, ?, ?)", (_artifact_id("dead", source, str(dead), now), source, "", _text(exc, 1000), _json(raw), now))
@@ -666,7 +686,18 @@ def benchmark(*, artifacts: int = 1000, workers: int = 4, fixture_mode: bool = T
 
 def run_cycle(*, since: str = "24h", limit: int = 1000, workers: int = 4, fixture_path: str | Path | None = None, db_path: str | Path | None = None) -> dict[str, Any]:
     """Run the safe automated funnel up to (but not through) model execution."""
-    if fixture_path:
+    before = fleet_status(db_path=db_path)
+    pending_before = int((before.get("queue") or {}).get("scan_pending") or 0)
+    backpressure_limit = max(200, min(int(limit), 1000) * 2)
+    if not fixture_path and pending_before >= backpressure_limit:
+        indexed = {
+            "status": "skipped",
+            "reason": "scan_queue_backpressure",
+            "scan_pending": pending_before,
+            "resume_below": backpressure_limit,
+            "message": "Metadata indexing paused until the safe artifact scan queue drains.",
+        }
+    elif fixture_path:
         records = json.loads(Path(fixture_path).read_text(encoding="utf-8"))
         if not isinstance(records, list):
             raise ValueError("artifact cycle fixture must be a JSON array")

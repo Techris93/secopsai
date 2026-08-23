@@ -33,6 +33,8 @@ def list_triage_findings(
     source: Optional[str] = None,
     category: Optional[str] = None,
     limit: int = 50,
+    include_payload: bool = True,
+    initialize_db: bool = True,
 ) -> List[Dict[str, Any]]:
     rows = soc_store.list_findings(
         db_path,
@@ -40,7 +42,8 @@ def list_triage_findings(
         status=status,
         source=source,
         limit=limit if category is None else None,
-        include_payload=True,
+        include_payload=include_payload,
+        initialize_db=initialize_db,
     )
     enriched = []
     for row in rows:

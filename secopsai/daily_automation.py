@@ -312,14 +312,21 @@ def run_cycle(
         return {"schema_version": SCHEMA_VERSION, **created}
     run_id = created["run_id"]
     from secopsai.agent_triage import enqueue_due_findings
+    from secopsai.artifact_fleet import run_cycle as run_artifact_fleet_cycle
     from secopsai.detection_learning import run_cycle as run_learning_cycle
     from secopsai.investigation_autopilot import run_due as run_due_investigations
+    from secopsai.research import build_preflight_report
     from secopsai.research_delivery import deliver_pending_operational_alerts
     from secopsai.research_discovery import run_promotion_policy
+    from secopsai.research_specialist_automation import run_cycle as run_specialist_research_cycle
     from secopsai.research_storage import archive_and_prune_history
     from secopsai.research_worker import run_worker_cycle
 
     steps = [
+        (
+            "health_preflight",
+            lambda: build_preflight_report(),
+        ),
         (
             "registry_surveillance",
             lambda: run_worker_cycle(
@@ -341,6 +348,10 @@ def run_cycle(
             ),
         ),
         (
+            "artifact_fleet_safe_cycle",
+            lambda: run_artifact_fleet_cycle(since="24h", limit=100, workers=4),
+        ),
+        (
             "alert_review_queue",
             lambda: enqueue_due_findings(
                 db_path=db_path,
@@ -351,6 +362,13 @@ def run_cycle(
         (
             "evidence_investigations",
             lambda: run_due_investigations(
+                db_path=db_path,
+                limit=int(settings["max_investigations"]),
+            ),
+        ),
+        (
+            "research_specialist_review",
+            lambda: run_specialist_research_cycle(
                 db_path=db_path,
                 limit=int(settings["max_investigations"]),
             ),
@@ -374,7 +392,15 @@ def run_cycle(
         "steps": step_results,
         "completed_steps": len(step_results) - len(failed),
         "failed_steps": len(failed),
-        "operator_gates": ["sandbox_submission", "disclosure_send", "publication", "unverified_rule_activation"],
+        "operator_gates": [
+            "specialist_result_acceptance",
+            "publication_review_approval",
+            "sandbox_submission",
+            "disclosure_send",
+            "publish_approved",
+            "deployment",
+            "unverified_rule_activation",
+        ],
         "agent_boundary": "Models may recommend or apply only evidence-gated reversible actions; external communication and publication remain approved actions.",
     }
     if failed:

@@ -33,6 +33,21 @@ def test_indexer_is_metadata_only_and_deduplicates(tmp_path):
     assert status["queue"]["scan_pending"] >= 1
 
 
+def test_metadata_only_rows_wait_for_approved_collection(tmp_path):
+    result = artifact_fleet.index_records(
+        [{"ecosystem": "npm", "package": "metadata-only", "version": "1.0.0"}],
+        source="fixture",
+        db_path=tmp_path / "fleet.db",
+    )
+    assert result["indexed"] == 1
+    status = artifact_fleet.fleet_status(db_path=tmp_path / "fleet.db")
+    assert status["queue"]["scan_awaiting_collection"] == 1
+    assert status["queue"].get("scan_pending", 0) == 0
+    scanned = artifact_fleet.scan_pending(db_path=tmp_path / "fleet.db")
+    assert scanned["processed"] == 0
+    assert scanned["pending_artifacts"] == 0
+
+
 def test_proc_macro_fixture_flags_build_network_and_credentials(tmp_path):
     archive = _crate_archive(tmp_path, "proc-macro1-1.0.107.crate")
     result = artifact_fleet.scan_artifact(
@@ -118,6 +133,31 @@ def test_pending_scan_queue_processes_fixture_workers(tmp_path):
     result = artifact_fleet.scan_pending(limit=5, workers=2, db_path=tmp_path / "fleet.db")
     assert result["processed"] == 1
     assert result["errors"] == []
+
+
+def test_cycle_pauses_live_indexing_when_scan_queue_has_backpressure(monkeypatch, tmp_path):
+    records = [
+        {
+            "ecosystem": "npm",
+            "package": f"fixture-{index}",
+            "version": "1.0.0",
+            "artifact_path": str(FIXTURES / "proc-macro1-1.0.107.crate"),
+        }
+        for index in range(201)
+    ]
+    artifact_fleet.index_records(records, source="fixture", db_path=tmp_path / "fleet.db")
+
+    def unexpected_index(**kwargs):
+        raise AssertionError("live indexing must pause while scan backlog is above the threshold")
+
+    monkeypatch.setattr(artifact_fleet, "index_live_sources", unexpected_index)
+    result = artifact_fleet.run_cycle(limit=100, workers=1, db_path=tmp_path / "fleet.db")
+
+    assert result["status"] == "completed"
+    assert result["index"]["status"] == "skipped"
+    assert result["index"]["reason"] == "scan_queue_backpressure"
+    assert result["index"]["scan_pending"] == 201
+    assert result["model_execution"] == "not_started"
 
 
 def test_benchmark_reports_synthetic_capacity_without_claiming_production():

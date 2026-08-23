@@ -14,6 +14,10 @@ def _stub_modules(monkeypatch, *, fail_step=None):
         return run
 
     monkeypatch.setattr(
+        "secopsai.research.build_preflight_report",
+        stub("health_preflight"),
+    )
+    monkeypatch.setattr(
         "secopsai.research_worker.run_worker_cycle",
         stub("registry_surveillance"),
     )
@@ -22,12 +26,20 @@ def _stub_modules(monkeypatch, *, fail_step=None):
         stub("candidate_promotion"),
     )
     monkeypatch.setattr(
+        "secopsai.artifact_fleet.run_cycle",
+        stub("artifact_fleet_safe_cycle"),
+    )
+    monkeypatch.setattr(
         "secopsai.agent_triage.enqueue_due_findings",
         stub("alert_review_queue"),
     )
     monkeypatch.setattr(
         "secopsai.investigation_autopilot.run_due",
         stub("evidence_investigations"),
+    )
+    monkeypatch.setattr(
+        "secopsai.research_specialist_automation.run_cycle",
+        stub("research_specialist_review"),
     )
     monkeypatch.setattr(
         "secopsai.detection_learning.run_cycle",
@@ -51,19 +63,22 @@ def test_daily_cycle_runs_all_steps_and_is_persisted(tmp_path, monkeypatch):
     result = daily_automation.run_cycle(db_path=db, trigger="test", force=True)
 
     assert result["status"] == "succeeded"
-    assert result["summary"]["completed_steps"] == 7
+    assert result["summary"]["completed_steps"] == 10
     assert result["summary"]["failed_steps"] == 0
     assert calls == [
+        "health_preflight",
         "registry_surveillance",
         "candidate_promotion",
+        "artifact_fleet_safe_cycle",
         "alert_review_queue",
         "evidence_investigations",
+        "research_specialist_review",
         "detection_learning",
         "storage_retention",
         "operational_alert_delivery",
     ]
     stored = daily_automation.get_run(result["run_id"], db_path=db)
-    assert len(stored["steps"]) == 7
+    assert len(stored["steps"]) == 10
     assert stored["steps"][0]["status"] == "succeeded"
     status = daily_automation.status(db_path=db)
     assert status["summary"]["last_status"] == "succeeded"

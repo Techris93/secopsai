@@ -222,6 +222,10 @@ def _clean_task(task: dict[str, Any]) -> dict[str, Any]:
             output[key] = value[:limit]
     output["external_facing"] = bool(task.get("external_facing"))
     output["requires_security_review"] = bool(task.get("requires_security_review"))
+    # This flag is set only by trusted Core automation. It permits high-risk
+    # security material to receive read-only analysis without granting any
+    # state-changing authority.
+    output["analysis_only"] = bool(task.get("analysis_only"))
     evidence = task.get("evidence_refs") or []
     if not isinstance(evidence, list):
         raise ValueError("evidence_refs must be a list")

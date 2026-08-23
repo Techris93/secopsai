@@ -382,6 +382,53 @@ def apply_action(
 def _write_summary(payload: Dict[str, Any], summary_dir: Optional[str] = None) -> Dict[str, str]:
     json_path, md_path = _report_paths(summary_dir)
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    stamp = json_path.stem.removeprefix("triage-orchestrator-")
+    index_path = json_path.with_name(f"triage-orchestrator-index-{stamp}.json")
+    compact_findings = []
+    for item in payload.get("findings", []):
+        if not isinstance(item, dict):
+            continue
+        compact_findings.append(
+            {
+                key: item.get(key)
+                for key in (
+                    "finding_id",
+                    "title",
+                    "summary",
+                    "severity",
+                    "severity_score",
+                    "status",
+                    "disposition",
+                    "first_seen",
+                    "last_seen",
+                    "source",
+                    "category",
+                    "recommended_disposition",
+                    "outcome",
+                    "confidence",
+                )
+            }
+        )
+    index_path.write_text(
+        json.dumps(
+            {
+                key: payload.get(key)
+                for key in (
+                    "generated_at",
+                    "processed",
+                    "auto_applied",
+                    "queued",
+                    "open_findings",
+                    "pending_actions",
+                    "applied_actions",
+                )
+            }
+            | {"findings": compact_findings},
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
     lines = [
         "# SecOpsAI Triage Orchestrator Summary",
         "",
@@ -436,6 +483,7 @@ def generate_summary(
         "generated_at": _utc_now(),
         "open_findings": len([f for f in findings if str(f.get("status") or "").lower() == "open"]),
         "in_review_findings": len([f for f in findings if str(f.get("status") or "").lower() == "in_review"]),
+        "research_lead_findings": len([f for f in findings if str(f.get("status") or "").lower() == "research_lead"]),
         "severity_counts": severity_counts,
         "pending_actions": len(queued),
         "applied_actions": len(applied),
@@ -452,6 +500,36 @@ def generate_summary(
     }
     payload.update(_write_summary(payload, summary_dir))
     return payload
+
+
+def generate_dashboard_summary(
+    *,
+    db_path: Optional[str] = None,
+    queue_file: Optional[str] = None,
+    limit: int = 20,
+) -> Dict[str, Any]:
+    """Build the dashboard's current summary without report or AI work.
+
+    The operator dashboard needs current counts, queue totals, and a small
+    visible findings sample. It does not need the full adaptive-response
+    analysis or a new report file on every refresh; those remain available
+    through ``generate_summary`` and the dedicated adaptive-response command.
+    """
+    aggregate = soc_store.summarize_findings(db_path, initialize_db=False)
+    queued = list_actions(path=queue_file, status="pending", limit=1000)
+    applied = list_actions(path=queue_file, status="applied", limit=1000)
+    return {
+        "generated_at": _utc_now(),
+        "open_findings": aggregate["open_findings"],
+        "in_review_findings": aggregate["in_review_findings"],
+        "research_lead_findings": aggregate["research_lead_findings"],
+        "severity_counts": aggregate["severity_counts"],
+        "pending_actions": len(queued),
+        "applied_actions": len(applied),
+        "queue_path": str(queue_path(queue_file)),
+        "findings": list_triage_findings(db_path=db_path, limit=limit, initialize_db=False),
+        "historical_findings_count": aggregate["total"],
+    }
 
 
 def orchestrate_findings(
