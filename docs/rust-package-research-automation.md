@@ -1,15 +1,19 @@
-# Rust Package Research Automation
+# Rust Package Research Adapter
 
-SecOpsAI can now run a source-first Rust package investigation from crates.io
-metadata through a quarantined static scan, comparison, Research Case, selected
-model review, and review-only Blog Ops draft.
+This page documents the crates.io adapter of SecOpsAI's universal Source-First
+Artifact Research pipeline. Rust is one supported ecosystem, not a separate
+product workflow. The same evidence, safety, model, case, and publication gates
+apply to npm, PyPI, Packagist, Go, Maven, NuGet, RubyGems, Open VSX, GitHub,
+Hugging Face, containers, and approved local artifacts.
 
 ## CLI
 
 Preview official metadata without downloading the crate:
 
 ```bash
-secopsai research rust-package \
+secopsai research investigate \
+  --ecosystem crates \
+  --research-type package_compromise \
   --package proc-macro1 \
   --version 1.0.107 \
   --compare-package proc-macro2 \
@@ -20,7 +24,9 @@ secopsai research rust-package \
 Run the safe workflow:
 
 ```bash
-secopsai research rust-package \
+secopsai research investigate \
+  --ecosystem crates \
+  --research-type package_compromise \
   --package proc-macro1 \
   --version 1.0.107 \
   --compare-package proc-macro2 \
@@ -29,7 +35,8 @@ secopsai research rust-package \
   --persist-findings --json
 ```
 
-The command uses the crates.io metadata API and the official
+The compatibility command `secopsai research rust-package` maps to the same
+adapter. The universal command uses the crates.io metadata API and the official
 `static.crates.io` artifact host. It verifies the exact package/version,
 metadata checksum, downloaded SHA-256, source repository, and archive format.
 The artifact is stored under the owner-only research quarantine. No Cargo

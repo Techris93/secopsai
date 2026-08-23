@@ -168,20 +168,24 @@ rules used by `scan` and `explain-verdict`. NuGet has limited publish timestamp
 data in the flat-container API, so SecOpsAI reports version-delta monitoring for
 that ecosystem. It does not install or execute suspicious packages.
 
-For a source-first Rust investigation, use the dedicated crates.io workflow:
+For a source-first package or artifact investigation, use the universal workflow
+(crates.io is one adapter):
 
 ```bash
-secopsai research rust-package \
+secopsai research investigate \
+  --ecosystem crates \
+  --research-type package_compromise \
   --package proc-macro1 \
   --version 1.0.107 \
-  --compare-package proc-macro2 \
-  --compare-version 1.0.107 \
+  --comparison-package proc-macro2 \
+  --comparison-version 1.0.107 \
   --persist-findings --json
 ```
 
-This verifies the exact crates.io checksum, quarantines the crate, runs
+This verifies official metadata, quarantines the artifact when supported, runs
 Artifact Fleet static rules, records Research Case evidence, and queues only
-minimized findings for the selected model. It never runs Cargo or `build.rs`.
+minimized findings for the selected model. It never installs or executes
+package code. Existing `research rust-package` commands remain compatible.
 
 For Packagist, `watch-registry` also returns source-first evidence where
 available: source URLs, source references, dist references, historical

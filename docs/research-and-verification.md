@@ -9,7 +9,7 @@ Use these when you want a source-backed explanation before you change findings, 
 ```bash
 secopsai research preflight
 secopsai research finding SCM-FA4BAE45589358A2 --search-root ~/secopsai
-secopsai research package --ecosystem pypi --package litellm --version 1.83.10 --search-root ~/secopsai
+secopsai research investigate --ecosystem pypi --research-type package_compromise --package litellm --version 1.83.10 --search-root ~/secopsai --json
 ```
 
 The reports are written under `reports/research/` by default and can also be attached to an investigation session.

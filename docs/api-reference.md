@@ -102,16 +102,18 @@ The fleet indexes metadata first, scans only authorized artifacts, sends only
 rule-hit context to model triage, and leaves suspicious or inconclusive work
 for analyst review.
 
-## Rust package research
+## Universal source-first research
 
 ```bash
-secopsai research rust-package --package proc-macro1 --version 1.0.107 --dry-run --json
-secopsai research rust-package --package proc-macro1 --version 1.0.107 --compare-package proc-macro2 --compare-version 1.0.107 --persist-findings --json
+secopsai research investigate --ecosystem crates --research-type package_compromise --package proc-macro1 --version 1.0.107 --dry-run --json
+secopsai research investigate --ecosystem npm --research-type package_compromise --package suspicious-package --version 1.2.3 --persist-findings --json
 ```
 
-The Rust workflow verifies crates.io metadata and checksum, quarantines the
-exact crate, performs static-only analysis, and optionally creates a Research
-Case and review-only draft.
+The same command supports npm, PyPI, crates.io, Packagist, Go, Maven, NuGet,
+RubyGems, Open VSX, GitHub, Hugging Face, containers, and approved local
+artifacts. It verifies metadata and checksums where available, performs
+static-only analysis, and optionally creates a Research Case and review-only
+draft. `research rust-package` remains a compatibility alias.
 
 ## Triage commands
 

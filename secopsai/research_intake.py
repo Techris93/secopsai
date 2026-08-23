@@ -278,7 +278,11 @@ class CratesAdapter(RegistryAdapter):
         crate = payload.get("crate") if isinstance(payload.get("crate"), dict) else {}
         versions = payload.get("versions") if isinstance(payload.get("versions"), list) else []
         version_rows = [item for item in versions if isinstance(item, dict) and item.get("num")]
-        version = self._pick_version([str(item["num"]) for item in version_rows], requested_version)
+        versions = [str(item["num"]) for item in version_rows]
+        # crates.io returns versions newest-first. Preserve an explicit
+        # request; otherwise choose the first stable release rather than the
+        # oldest historical crate.
+        version = self._pick_version(versions, requested_version) if requested_version else next((item for item in versions if not _is_prerelease(item)), versions[0] if versions else "")
         selected = next((item for item in version_rows if str(item.get("num")) == version), {})
         # The API download route may return a JSON redirect descriptor when
         # clients advertise JSON. Use the documented static object URL so the
@@ -458,10 +462,49 @@ class OpenVSXAdapter(RegistryAdapter):
         return RegistryMetadata(self.ecosystem, package, version, url, artifact, str(payload.get("namespace") or ""), str(payload.get("timestamp") or ""), {}, {}, payload)
 
 
+class HuggingFaceAdapter(RegistryAdapter):
+    """Metadata-only Hub adapter; model weights require an explicit artifact."""
+
+    ecosystem = "huggingface"
+    metadata_hosts = ("huggingface.co",)
+    artifact_hosts = ("huggingface.co", "cdn-lfs.huggingface.co")
+
+    def metadata_url(self, package: str) -> str:
+        if "/" not in package:
+            raise IntakeError("Hugging Face package must use owner/repository notation")
+        return f"https://huggingface.co/api/models/{urllib.parse.quote(package, safe='/')}"
+
+    def resolve(self, package: str, requested_version: str, fetcher: SafeFetcher) -> RegistryMetadata:
+        package = _safe_package(package)
+        url, payload = self._json(self.metadata_url(package), fetcher)
+        revision = _version(requested_version) or str(payload.get("sha") or payload.get("lastModified") or "main")
+        return RegistryMetadata(self.ecosystem, package, revision, url, "", str(payload.get("author") or ""), str(payload.get("lastModified") or ""), {}, {}, payload)
+
+
+class GitHubRepositoryAdapter(RegistryAdapter):
+    """Read-only repository metadata and tag tarball adapter."""
+
+    ecosystem = "github"
+    metadata_hosts = ("api.github.com",)
+    artifact_hosts = ("api.github.com", "codeload.github.com")
+
+    def metadata_url(self, package: str) -> str:
+        if package.count("/") != 1:
+            raise IntakeError("GitHub package must use owner/repository notation")
+        return f"https://api.github.com/repos/{urllib.parse.quote(package, safe='/')}"
+
+    def resolve(self, package: str, requested_version: str, fetcher: SafeFetcher) -> RegistryMetadata:
+        package = _safe_package(package)
+        url, payload = self._json(self.metadata_url(package), fetcher)
+        revision = _version(requested_version) or str(payload.get("default_branch") or "main")
+        artifact = f"https://api.github.com/repos/{urllib.parse.quote(package, safe='/')}/tarball/{urllib.parse.quote(revision, safe='')}"
+        return RegistryMetadata(self.ecosystem, package, revision, url, artifact, str((payload.get("owner") or {}).get("login") or ""), str(payload.get("updated_at") or ""), {}, {}, payload)
+
+
 ADAPTERS: Dict[str, RegistryAdapter] = {
     item.ecosystem: item for item in (
         NpmAdapter(), CratesAdapter(), PyPiAdapter(), NuGetAdapter(), MavenAdapter(), RubyGemsAdapter(),
-        PackagistAdapter(), GoAdapter(), OpenVSXAdapter(),
+        PackagistAdapter(), GoAdapter(), OpenVSXAdapter(), HuggingFaceAdapter(), GitHubRepositoryAdapter(),
     )
 }
 
@@ -689,6 +732,20 @@ def _metadata_summary(metadata: RegistryMetadata) -> Dict[str, Any]:
         contacts = {"emails": [], "names": [], "urls": [repository] if repository else []}
     else:
         contacts = _extract_contact_candidates(raw, publisher=metadata.publisher)
+        repository_value = raw.get("html_url") or raw.get("web_url") or raw.get("repository") or raw.get("homepage") or ""
+        if isinstance(repository_value, dict):
+            repository_value = repository_value.get("url") or repository_value.get("directory") or repository_value.get("web") or ""
+        repository = str(repository_value).strip()
+    advisory_ids: List[str] = []
+    cve_ids: List[str] = []
+    ghsa_ids: List[str] = []
+    for key, target in (("advisories", advisory_ids), ("vulnerabilities", advisory_ids), ("cves", cve_ids), ("ghsas", ghsa_ids)):
+        value = raw.get(key)
+        values = list(value.keys()) if isinstance(value, dict) else (value if isinstance(value, list) else [value] if value else [])
+        for item in values[:100]:
+            identifier = str((item.get("id") or item.get("cve") or item.get("ghsa")) if isinstance(item, dict) else item).strip()
+            if identifier and len(identifier) <= 160:
+                target.append(identifier)
     return {
         "ecosystem": metadata.ecosystem,
         "package": metadata.package,
@@ -696,12 +753,15 @@ def _metadata_summary(metadata: RegistryMetadata) -> Dict[str, Any]:
         "metadata_url": metadata.metadata_url,
         "artifact_url": metadata.artifact_url,
         "publisher": metadata.publisher[:240],
-        "source_repository": str(crate.get("repository") or "")[:1000],
+        "source_repository": repository[:1000],
         "homepage": str(crate.get("homepage") or "")[:1000],
         "description": str(crate.get("description") or "")[:1000],
         "published_at": metadata.published_at[:80],
         "dependencies": metadata.dependencies if isinstance(metadata.dependencies, (dict, list)) else {},
         "integrity": metadata.integrity,
+        "advisory_ids": sorted(set(advisory_ids))[:100],
+        "cve_ids": sorted(set(cve_ids))[:100],
+        "ghsa_ids": sorted(set(ghsa_ids))[:100],
         "contacts": contacts,
         "raw_keys": sorted(str(key) for key in raw.keys())[:100],
     }
@@ -718,6 +778,8 @@ def collect_package_intake(
     adapter = get_adapter(ecosystem)
     fetcher = fetcher or SafeFetcher()
     metadata = adapter.resolve(package, version, fetcher)
+    if not metadata.artifact_url:
+        raise IntakeError(f"{metadata.ecosystem} metadata is available, but no safe artifact URL was returned; provide a reviewed local artifact")
     final_url, _headers, artifact = fetcher.get(metadata.artifact_url, allowed_hosts=adapter.artifact_hosts, max_bytes=MAX_ARTIFACT_BYTES)
     digest = hashlib.sha256(artifact).hexdigest()
     filename = Path(urllib.parse.urlparse(final_url).path).name or f"{metadata.package}-{metadata.version}.artifact"

@@ -2,18 +2,21 @@
 
 SecOpsAI Research turns a watchlist lead into a defensible investigation without executing the investigated package. The dashboard buttons call the same typed Core workflow as the CLI; command-copy helpers are only a fallback.
 
-For Rust/crates.io investigations, use **Administration → Automation → Research pipeline** or:
+For package and artifact investigations, use **Administration → Automation → Research pipeline** or:
 
 ```bash
-secopsai research rust-package --package proc-macro1 --version 1.0.107 --compare-package proc-macro2 --compare-version 1.0.107 --json
+secopsai research investigate --ecosystem crates --research-type package_compromise \
+  --package proc-macro1 --version 1.0.107 --comparison-package proc-macro2 \
+  --comparison-version 1.0.107 --json
 ```
 
-This source-first workflow verifies crates.io metadata and checksum, stores the
-exact crate in quarantine, runs Artifact Fleet static rules, records evidence
-and validated IOCs, optionally reuses a Research Case, queues the selected
-model with minimized context, and can prepare a review-only draft. Cargo,
-`build.rs`, binaries, sandbox submission, disclosure, publication, and deploy
-remain separate approval-gated actions.
+This source-first workflow supports npm, PyPI, crates.io, Packagist, Go, Maven,
+NuGet, RubyGems, Open VSX, GitHub, Hugging Face, containers, and approved local
+artifacts through one adapter contract. It verifies metadata when available,
+quarantines and statically inspects artifacts, records evidence and validated
+IOCs, queues the selected model with minimized context, and can prepare a
+review-only draft. Installation, activation, execution, sandbox submission,
+disclosure, publication, and deploy remain separate approval-gated actions.
 
 ## Automatic high-priority investigations
 

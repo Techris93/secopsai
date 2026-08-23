@@ -317,6 +317,7 @@ def _compact_intelligence_status_section(payload: dict[str, Any] | None, section
 from secopsai.research_watchlists import promote_watchlist_packages
 from secopsai.research_intake import ADAPTERS as RESEARCH_INTAKE_ADAPTERS, preview_package as preview_research_package
 from secopsai.rust_package_research import run_rust_package_research
+from secopsai.source_first_research import RESEARCH_TYPES as SOURCE_RESEARCH_TYPES, SUPPORTED_ECOSYSTEMS as SOURCE_RESEARCH_ECOSYSTEMS, investigate as investigate_source_first
 from secopsai.research_discovery import (
     capability_registry as research_capability_registry,
     create_monitor as create_research_monitor,
@@ -1765,6 +1766,33 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     research_rust_package.add_argument("--dry-run", action="store_true")
     research_rust_package.add_argument("--artifact-db-path", default=None)
     research_rust_package.add_argument("--db-path", default=None)
+
+    research_investigate = research_sub.add_parser(
+        "investigate",
+        help="Run the universal source-first, static-only package or artifact research pipeline",
+    )
+    research_investigate.add_argument("--ecosystem", required=True, choices=SOURCE_RESEARCH_ECOSYSTEMS)
+    research_investigate.add_argument("--package", required=True, help="Package, extension, repository, or artifact identifier")
+    research_investigate.add_argument("--version", default="", help="Exact version, revision, or tag")
+    research_investigate.add_argument("--research-type", default="package_artifact", choices=SOURCE_RESEARCH_TYPES)
+    research_investigate.add_argument("--namespace", default="")
+    research_investigate.add_argument("--source-reference", default="")
+    research_investigate.add_argument("--source-repository", default="")
+    research_investigate.add_argument("--comparison-ecosystem", default="")
+    research_investigate.add_argument("--comparison-package", default="")
+    research_investigate.add_argument("--comparison-version", default="")
+    research_investigate.add_argument("--artifact", default="", help="Reviewed local archive or source artifact; static inspection only")
+    research_investigate.add_argument("--search-root", default="", help="Bounded local manifest/lockfile search root")
+    research_investigate.add_argument("--lockfile", default="", help="Bounded local lockfile path")
+    research_investigate.add_argument("--case-id", default="")
+    research_investigate.add_argument("--owner", default="SecOpsAI Research")
+    research_investigate.add_argument("--model", default="")
+    research_investigate.add_argument("--persist-findings", action="store_true")
+    research_investigate.add_argument("--draft-blog", action="store_true")
+    research_investigate.add_argument("--no-create-case", action="store_true")
+    research_investigate.add_argument("--dry-run", action="store_true")
+    research_investigate.add_argument("--artifact-db-path", default=None)
+    research_investigate.add_argument("--db-path", default=None)
     research_artifact_case = research_sub.add_parser("artifact-case", help="Prepare a review-only research handoff for an artifact fleet result")
     research_artifact_case.add_argument("artifact_id")
     research_artifact_case.add_argument("--db-path", default=None)
@@ -2084,14 +2112,66 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     research_finding_cmd.add_argument("--session-id", default=None, help="Attach the report to an existing session")
     research_finding_cmd.add_argument("--session-dir", default=None, help="Override session storage directory")
 
-    research_package_cmd = research_sub.add_parser("package", help="Generate a source-backed research report for one package")
-    research_package_cmd.add_argument("--ecosystem", required=True, choices=SUPPORTED_ECOSYSTEM_NAMES)
-    research_package_cmd.add_argument("--package", required=True, help="Package name")
-    research_package_cmd.add_argument("--version", default=None, help="Optional version hint")
+    research_package_cmd = research_sub.add_parser("package", help="Run the universal source-first package research pipeline")
+    research_package_cmd.add_argument("--ecosystem", required=True, choices=SOURCE_RESEARCH_ECOSYSTEMS)
+    research_package_cmd.add_argument("--package", required=True, help="Package, extension, repository, or artifact identifier")
+    research_package_cmd.add_argument("--version", default="", help="Exact version, revision, or tag")
+    research_package_cmd.add_argument("--research-type", default="package_artifact", choices=SOURCE_RESEARCH_TYPES)
+    research_package_cmd.add_argument("--namespace", default="")
+    research_package_cmd.add_argument("--source-reference", default="")
+    research_package_cmd.add_argument("--source-repository", default="")
+    research_package_cmd.add_argument("--comparison-ecosystem", default="")
+    research_package_cmd.add_argument("--comparison-package", default="")
+    research_package_cmd.add_argument("--comparison-version", default="")
+    research_package_cmd.add_argument("--artifact", default="", help="Reviewed local archive or source artifact; static inspection only")
+    research_package_cmd.add_argument("--lockfile", default="", help="Optional local lockfile path reserved for usage analysis")
+    research_package_cmd.add_argument("--case-id", default="")
+    research_package_cmd.add_argument("--owner", default="SecOpsAI Research")
+    research_package_cmd.add_argument("--model", default="")
+    research_package_cmd.add_argument("--persist-findings", action="store_true")
+    research_package_cmd.add_argument("--draft-blog", action="store_true")
+    research_package_cmd.add_argument("--no-create-case", action="store_true")
+    research_package_cmd.add_argument("--dry-run", action="store_true")
+    research_package_cmd.add_argument("--artifact-db-path", default=None)
+    research_package_cmd.add_argument("--db-path", default=None)
+    research_package_cmd.add_argument("--legacy-report", action="store_true", help="Use the pre-universal source-backed report generator")
+    # These options remain accepted for operators migrating from the old
+    # report command. Without --legacy-report they feed the universal workflow.
     research_package_cmd.add_argument("--search-root", default=None, help="Root path to scan for local references")
     research_package_cmd.add_argument("--report-dir", default=None, help="Directory to write research reports")
     research_package_cmd.add_argument("--session-id", default=None, help="Attach the report to an existing session")
     research_package_cmd.add_argument("--session-dir", default=None, help="Override session storage directory")
+
+    def add_research_alias(name, help_text, *, default_type, ecosystems=SOURCE_RESEARCH_ECOSYSTEMS):
+        alias = research_sub.add_parser(name, help=help_text)
+        alias.add_argument("--ecosystem", required=name != "github-incident", default=("github" if name == "github-incident" else None), choices=ecosystems)
+        alias.add_argument("--package", required=True, help="Package, extension, repository, or artifact identifier")
+        alias.add_argument("--version", default="")
+        alias.add_argument("--research-type", default=default_type, choices=SOURCE_RESEARCH_TYPES)
+        alias.add_argument("--namespace", default="")
+        alias.add_argument("--source-reference", default="")
+        alias.add_argument("--source-repository", default="")
+        alias.add_argument("--comparison-ecosystem", default="")
+        alias.add_argument("--comparison-package", default="")
+        alias.add_argument("--comparison-version", default="")
+        alias.add_argument("--artifact", default="")
+        alias.add_argument("--search-root", default="")
+        alias.add_argument("--lockfile", default="")
+        alias.add_argument("--case-id", default="")
+        alias.add_argument("--owner", default="SecOpsAI Research")
+        alias.add_argument("--model", default="")
+        alias.add_argument("--persist-findings", action="store_true")
+        alias.add_argument("--draft-blog", action="store_true")
+        alias.add_argument("--no-create-case", action="store_true")
+        alias.add_argument("--dry-run", action="store_true")
+        alias.add_argument("--artifact-db-path", default=None)
+        alias.add_argument("--db-path", default=None)
+        return alias
+
+    add_research_alias("source", "Run a source-backed universal research intake", default_type="general_threat_intel")
+    add_research_alias("advisory", "Research a vulnerability advisory through the universal evidence pipeline", default_type="vulnerability_advisory")
+    add_research_alias("extension", "Research an Open VSX or Chrome extension", default_type="extension_compromise", ecosystems=("open-vsx", "chrome-web-store"))
+    add_research_alias("github-incident", "Research a GitHub repository or developer-security incident", default_type="github_token_breach", ecosystems=("github",))
 
     research_case = research_sub.add_parser("case", help="Manage durable independent-research cases")
     research_case_sub = research_case.add_subparsers(dest="research_case_cmd", required=True)
@@ -3714,6 +3794,42 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(to_json(payload) if args.json else to_json(payload))
             return 0
 
+        if args.research_cmd == "investigate":
+            try:
+                payload = investigate_source_first(
+                    ecosystem=args.ecosystem,
+                    package=args.package,
+                    version=args.version,
+                    research_type=args.research_type,
+                    namespace=args.namespace,
+                    source_reference=args.source_reference,
+                    source_repository=args.source_repository,
+                    compare_ecosystem=args.comparison_ecosystem,
+                    compare_package=args.comparison_package,
+                    compare_version=args.comparison_version,
+                    artifact=args.artifact,
+                    search_root=args.search_root,
+                    lockfile=args.lockfile,
+                    case_id=args.case_id,
+                    owner=args.owner,
+                    model=args.model,
+                    persist_findings=args.persist_findings,
+                    draft_blog=args.draft_blog,
+                    create_research_case=not args.no_create_case,
+                    dry_run=args.dry_run,
+                    db_path=args.db_path,
+                    artifact_db_path=args.artifact_db_path,
+                    actor="operator",
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"ok": False, "error": str(exc), "command": "research investigate"}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            print(to_json(payload))
+            return 0
+
         if args.research_cmd == "artifact-case":
             try:
                 payload = artifact_research_handoff(args.artifact_id, db_path=args.db_path)
@@ -3731,6 +3847,42 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         if args.research_cmd == "case":
             return _run_research_case_command(args)
+
+        if args.research_cmd in {"source", "advisory", "extension", "github-incident"} or (args.research_cmd == "package" and not args.legacy_report):
+            try:
+                payload = investigate_source_first(
+                    ecosystem=args.ecosystem,
+                    package=args.package,
+                    version=args.version,
+                    research_type=args.research_type,
+                    namespace=args.namespace,
+                    source_reference=args.source_reference,
+                    source_repository=args.source_repository,
+                    compare_ecosystem=args.comparison_ecosystem,
+                    compare_package=args.comparison_package,
+                    compare_version=args.comparison_version,
+                    artifact=args.artifact,
+                    search_root=args.search_root,
+                    lockfile=args.lockfile,
+                    case_id=args.case_id,
+                    owner=args.owner,
+                    model=args.model,
+                    persist_findings=args.persist_findings,
+                    draft_blog=args.draft_blog,
+                    create_research_case=not args.no_create_case,
+                    dry_run=args.dry_run,
+                    db_path=args.db_path,
+                    artifact_db_path=args.artifact_db_path,
+                    actor="operator",
+                )
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"ok": False, "error": str(exc), "command": f"research {args.research_cmd}"}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            print(to_json(payload))
+            return 0
 
         try:
             if args.research_cmd == "finding":

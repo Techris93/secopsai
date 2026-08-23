@@ -99,25 +99,30 @@ must pass the structural gate.
 
 ## Create And Build A Case
 
-### Automated Rust package research
+### Automated source-first package and artifact research
 
-For a crates.io package, the Artifact Fleet Rust workflow can collect the exact
-version, verify its checksum, quarantine and statically inspect the archive,
-compare an explicitly supplied legitimate crate, and create or reuse a case:
+The canonical adapter-driven workflow can collect an exact package or approved
+artifact, verify metadata and checksums where available, quarantine and
+statically inspect the archive, compare an explicitly supplied reference, and
+create or reuse a case:
 
 ```bash
-secopsai research rust-package \
+secopsai research investigate \
+  --ecosystem crates \
+  --research-type package_compromise \
   --package proc-macro1 \
   --version 1.0.107 \
-  --compare-package proc-macro2 \
-  --compare-version 1.0.107 \
+  --comparison-package proc-macro2 \
+  --comparison-version 1.0.107 \
   --persist-findings --json
 ```
 
-The workflow records `execution_performed=false` and does not run Cargo or
-package code. Strong deterministic findings can enter the SOC queue and model
-review, but the case remains subject to evidence, disclosure, publication, and
-deployment gates. See [Rust Package Research Automation](rust-package-research-automation.md).
+Replace `crates` with any supported ecosystem and select the research type that
+matches the question. The workflow records `execution_performed=false` and
+does not install, activate, or run package code. Strong deterministic findings
+can enter the SOC queue and model review, but the case remains subject to
+evidence, disclosure, publication, and deployment gates. See
+[Universal Source-First Security Research](universal-source-first-research.md).
 
 For a fast, safe package-research start, use the guided command. It records a
 package subject and optional analyst-supplied source URL. It does not fetch a

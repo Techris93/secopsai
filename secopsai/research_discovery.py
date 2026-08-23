@@ -148,8 +148,8 @@ CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "display_name": display,
         "metadata_discovery": True,
         "version_history": True,
-        "artifact_download": True,
-        "static_inspection": True,
+        "artifact_download": ecosystem not in {"container", "huggingface", "chrome-web-store"},
+        "static_inspection": ecosystem not in {"container", "huggingface", "chrome-web-store"},
         "deep_analysis": deep,
         "comparison": True,
         "monitoring_mode": mode,
@@ -166,6 +166,10 @@ CAPABILITIES: Dict[str, Dict[str, Any]] = {
         ("packagist", "Packagist", False, "changes_feed_or_watchlist", ["The metadata change log has bounded retention; stale cursors can miss events and raise coverage alerts."], "https://packagist.org/apidoc"),
         ("go", "Go Modules", False, "module_index_or_watchlist", ["The module index records new versions only; retractions and deletions are not index events."], "https://go.dev/ref/mod"),
         ("open-vsx", "Open VSX", False, "search_reconcile_or_watchlist", ["Public search caps offsets at 10000; letter-partitioned enumeration is a best-effort census, not a publish-time feed."], "https://open-vsx.org/"),
+        ("github", "GitHub repositories", False, "repository_metadata_or_watchlist", ["Repository and tag metadata are available; archive collection requires an approved source and remains static-only."], "https://docs.github.com/en/rest"),
+        ("huggingface", "Hugging Face", False, "model_metadata_or_watchlist", ["Model metadata is available; large model weights require an explicitly supplied reviewed artifact."], "https://huggingface.co/docs/hub/api"),
+        ("container", "Container images", False, "digest_metadata_or_watchlist", ["Only digest and registry metadata are represented until a safe layer adapter is configured; no image is pulled or run implicitly."], "https://opencontainers.org/"),
+        ("chrome-web-store", "Chrome Web Store", False, "extension_metadata_or_watchlist", ["Extension metadata is a routing signal; store package collection requires an approved source and static-only review."], "https://developer.chrome.com/docs/webstore"),
     )
 }
 

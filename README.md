@@ -162,8 +162,13 @@ queued rather than silently consuming another provider.
 
 Index registry metadata, run deterministic static and YARA checks, minimize the
 context sent to optional model triage, and escalate only suspicious or
-inconclusive artifacts. Package code, lifecycle scripts, and binaries are never
-executed.
+inconclusive artifacts. **Source-First Artifact Research** is the single
+adapter-driven workflow for npm, PyPI, crates.io, Packagist, Go, Maven, NuGet,
+RubyGems, Open VSX, GitHub, Hugging Face, containers, and approved local
+artifacts. Package code, lifecycle scripts, extensions, and binaries are never
+executed. Use `secopsai research investigate --ecosystem <name> --package
+<identifier> --json`; the existing `research rust-package` command remains a
+compatibility alias.
 
 [![Artifact Fleet funnel from metadata indexing to analyst review](docs/assets/mission-control/artifact-fleet.png)](docs/assets/mission-control/artifact-fleet.png)
 

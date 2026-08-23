@@ -9,6 +9,10 @@
     {"ecosystem": "rubygems", "source_registry": "https://rubygems.org/", "monitoring_mode": "timeframe_feed_or_watchlist"},
     {"ecosystem": "packagist", "source_registry": "https://repo.packagist.org/", "monitoring_mode": "changes_feed_or_watchlist"},
     {"ecosystem": "go", "source_registry": "https://proxy.golang.org/", "monitoring_mode": "module_index_or_watchlist"},
-    {"ecosystem": "open-vsx", "source_registry": "https://open-vsx.org/", "monitoring_mode": "search_reconcile_or_watchlist"}
+    {"ecosystem": "open-vsx", "source_registry": "https://open-vsx.org/", "monitoring_mode": "search_reconcile_or_watchlist"},
+    {"ecosystem": "github", "source_registry": "https://docs.github.com/en/rest", "monitoring_mode": "repository_metadata_or_watchlist"},
+    {"ecosystem": "huggingface", "source_registry": "https://huggingface.co/docs/hub/api", "monitoring_mode": "model_metadata_or_watchlist"},
+    {"ecosystem": "container", "source_registry": "https://opencontainers.org/", "monitoring_mode": "digest_metadata_or_watchlist"},
+    {"ecosystem": "chrome-web-store", "source_registry": "https://developer.chrome.com/docs/webstore", "monitoring_mode": "extension_metadata_or_watchlist"}
   ]
 }

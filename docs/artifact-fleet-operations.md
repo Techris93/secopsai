@@ -37,11 +37,13 @@ reviewed local artifact path and provenance. This prevents a dashboard click
 from opening an arbitrary filesystem path. `source-health` and `metrics` are
 read through **Refresh fleet** and the panel status response.
 
-The **Exact crates.io package intake** workspace adds the crates.io workflow: preview
-official metadata, fetch the exact crate into quarantine, verify its checksum,
-run Rust static rules, compare an explicitly supplied reference crate, and
-route strong findings into a Research Case. It never runs Cargo or creates a
-public draft without the case publication gates.
+The **Source-First Artifact Research** workspace is the canonical package and
+artifact workflow. It previews official metadata, fetches an exact artifact
+into quarantine when a safe adapter is configured, verifies its checksum when
+available, runs deterministic static rules, compares an explicitly supplied
+reference, and routes strong findings into a Research Case. crates.io/Rust is
+one adapter. It never installs or executes package code or creates a public
+draft without the case publication gates.
 
 ## Optional scheduled cycle
 

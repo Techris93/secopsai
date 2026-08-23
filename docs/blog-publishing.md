@@ -124,8 +124,8 @@ secopsai blog draft-finding <FINDING_ID>
 secopsai supply-chain research-campaign --input campaign.json --dry-run --json
 secopsai blog draft-campaign --campaign campaign.json
 
-# SecOpsAI-originated Rust package research
-secopsai research rust-package --package proc-macro1 --version 1.0.107 --compare-package proc-macro2 --compare-version 1.0.107 --draft-blog --json
+# SecOpsAI-originated source-first package research
+secopsai research investigate --ecosystem crates --research-type package_compromise --package proc-macro1 --version 1.0.107 --comparison-package proc-macro2 --comparison-version 1.0.107 --draft-blog --json
 ```
 
 For a first-party post, include:
