@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -410,6 +411,14 @@ def _artifact_score(analysis: Dict[str, Any]) -> Tuple[int, List[Dict[str, Any]]
         "network-endpoint": 5,
     }
     indicators = analysis.get("indicators") if isinstance(analysis.get("indicators"), list) else []
+    lifecycle_scripts = analysis.get("lifecycle_scripts") if isinstance(analysis.get("lifecycle_scripts"), dict) else {}
+    has_lifecycle = bool(lifecycle_scripts and any(name in {"preinstall", "install", "postinstall", "prepublish"} for name in lifecycle_scripts))
+
+    # Scale indicator weighting by bundle-size density for packages > 50KB
+    expanded_bytes = int(analysis.get("expanded_bytes") or analysis.get("artifact_bytes") or 0)
+    size_kb = max(1.0, expanded_bytes / 1024.0)
+    density_damping = 1.0 if size_kb <= 50.0 else max(0.25, min(1.0, 100.0 / math.sqrt(size_kb)))
+
     signals: List[Dict[str, Any]] = []
     seen: set[str] = set()
     score = 0
@@ -420,8 +429,13 @@ def _artifact_score(analysis: Dict[str, Any]) -> Tuple[int, List[Dict[str, Any]]
         if not indicator_id or indicator_id in seen:
             continue
         seen.add(indicator_id)
-        points = weights.get(indicator_id, 0)
-        if points:
+        base_points = weights.get(indicator_id, 0)
+        if base_points:
+            # Apply density scaling to generic string hits on massive bundles without lifecycle scripts
+            if not has_lifecycle and size_kb > 50.0 and indicator_id in {"credential-access", "persistence", "encoded-payload", "dynamic-eval"}:
+                points = max(5, int(base_points * density_damping))
+            else:
+                points = base_points
             score += points
             signals.append({"id": f"artifact_{indicator_id}", "points": points, "indicator_id": indicator_id})
     return min(100, score), signals
@@ -516,8 +530,32 @@ def _store_analysis(
 
 
 def _promote_static_candidate(*, db_path: Optional[str], event: Dict[str, Any], result: Dict[str, Any]) -> Optional[str]:
-    if int(result.get("score") or 0) < 40:
+    score_raw = int(result.get("score") or 0)
+    analysis = result.get("evidence") or {}
+    lifecycle_names = analysis.get("lifecycle_script_names") or []
+    has_lifecycle = bool(lifecycle_names and any(h in {"preinstall", "install", "postinstall", "prepublish"} for h in lifecycle_names))
+    indicators = analysis.get("indicators") or []
+    has_egress = any(ind.get("indicator_id") in {"network-endpoint", "outbound-network"} for ind in indicators)
+    has_exec_sink = any(ind.get("indicator_id") in {"process-execution", "dynamic-eval", "browser-payment-access"} for ind in indicators)
+    has_execution_primitives = has_lifecycle or has_egress or has_exec_sink
+
+    categories = set()
+    if has_lifecycle:
+        categories.add("lifecycle")
+    for ind in indicators:
+        iid = ind.get("indicator_id", "")
+        if "credential" in iid: categories.add("credential")
+        elif "eval" in iid or "process" in iid: categories.add("execution")
+        elif "encoded" in iid: categories.add("obfuscation")
+        elif "network" in iid: categories.add("network")
+        elif "persistence" in iid: categories.add("persistence")
+        elif "install" in iid: categories.add("install_hook")
+
+    # Threshold gate: score >= 65 with execution primitives OR score >= 40 with lifecycle hook and >= 2 categories
+    is_candidate = (score_raw >= 65 and has_execution_primitives) or (score_raw >= 40 and has_lifecycle and len(categories) >= 2) or (score_raw >= 40 and has_execution_primitives and len(categories) >= 2)
+    if not is_candidate:
         return None
+
     evidence = {
         "schema_version": SCHEMA_VERSION,
         "source": "npm_registry_proactive_static",
@@ -578,7 +616,13 @@ def _promote_static_candidate(*, db_path: Optional[str], event: Dict[str, Any], 
     payload["campaign_id"] = ""
     payload["evidence"] = evidence
     payload["score_components"] = result.get("signals") or []
-    severity = "critical" if score >= 90 else "high" if score >= 70 else "medium"
+
+    # Execution primitives gate for high/critical severity promotion:
+    if has_execution_primitives:
+        severity = "critical" if score >= 90 else "high" if score >= 70 else "medium"
+    else:
+        severity = "medium" if score >= 70 else "low"
+
     alert = create_candidate_alert(
         payload,
         db_path=db_path,
