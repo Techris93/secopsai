@@ -236,6 +236,11 @@ Comparison: Baseline ({case_data.get("baseline_version")}) -> Target ({case_data
         "ecosystem": case_data["ecosystem"],
         "version": case_data["version"],
         "severity": case_data["severity"],
+        "content": {
+            "twitter_thread": twitter_content,
+            "reddit_post": reddit_content,
+            "linkedin_post": linkedin_content,
+        },
         "files": {
             "twitter_thread": str(base_dir / "twitter_thread.md"),
             "reddit_post": str(base_dir / "reddit_post.md"),
@@ -257,7 +262,14 @@ def list_content_packs(*, output_dir: Optional[str] = None) -> List[Dict[str, An
         manifest_file = path / "manifest.json"
         if manifest_file.exists():
             try:
-                packs.append(json.loads(manifest_file.read_text(encoding="utf-8")))
+                pack_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                if "content" not in pack_data:
+                    pack_data["content"] = {}
+                    for key, fname in [("twitter_thread", "twitter_thread.md"), ("reddit_post", "reddit_post.md"), ("linkedin_post", "linkedin_post.md")]:
+                        fpath = path / fname
+                        if fpath.exists():
+                            pack_data["content"][key] = fpath.read_text(encoding="utf-8")
+                packs.append(pack_data)
             except Exception:
                 continue
     return packs
