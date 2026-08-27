@@ -43,10 +43,11 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
     except OSError:
         pass
 
-    connection = sqlite3.connect(resolved_path, timeout=30)
+    busy_timeout_ms = int(os.environ.get("SECOPS_BUSY_TIMEOUT_MS", "30000"))
+    connection = sqlite3.connect(resolved_path, timeout=max(30, busy_timeout_ms // 1000))
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 5000")
+    connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
     # Do not query or change journal_mode on every connection. In rollback
     # mode that pragma can itself wait for an active writer, which turns a
     # read-only dashboard request into another source of lock contention. The
