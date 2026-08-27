@@ -2526,6 +2526,18 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     sandbox_approve.add_argument("--actor", default="reviewer")
     sandbox_approve.add_argument("--db-path", default=None)
 
+    content_pack = research_sub.add_parser("content-pack", help="Generate and review multi-platform social media & community content packs")
+    content_pack_sub = content_pack.add_subparsers(dest="content_pack_cmd", required=True)
+    cpk_gen = content_pack_sub.add_parser("generate", help="Generate a content pack for a research case or finding")
+    cpk_gen.add_argument("case_id", help="Research Case ID (RSC-...) or Finding ID (SCM-...)")
+    cpk_gen.add_argument("--db-path", default=None)
+    cpk_gen.add_argument("--output-dir", default=None)
+    cpk_list = content_pack_sub.add_parser("list", help="List all generated content packs")
+    cpk_list.add_argument("--output-dir", default=None)
+    cpk_show = content_pack_sub.add_parser("show", help="Show details of a specific content pack")
+    cpk_show.add_argument("case_id", help="Research Case ID or Pack ID")
+    cpk_show.add_argument("--output-dir", default=None)
+
     blog = sub.add_parser("blog", help="Draft, publish, and verify SecOpsAI security blog posts")
     blog_sub = blog.add_subparsers(dest="blog_cmd", required=True)
 
@@ -3387,6 +3399,17 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = approve_sandbox_submission(args.request_id, actor=args.actor, public_submission_acknowledged=args.public_submission_acknowledged, db_path=args.db_path)
             else:  # pragma: no cover
                 raise ValueError(f"unsupported research workflow command: {command}")
+        elif args.research_cmd == "content-pack":
+            from secopsai.content_packs import generate_content_pack, list_content_packs
+            if args.content_pack_cmd == "generate":
+                payload = generate_content_pack(args.case_id, db_path=args.db_path, output_dir=args.output_dir)
+            elif args.content_pack_cmd == "list":
+                payload = {"content_packs": list_content_packs(output_dir=args.output_dir)}
+            elif args.content_pack_cmd == "show":
+                packs = [p for p in list_content_packs(output_dir=args.output_dir) if args.case_id in (p.get("case_id"), p.get("pack_id"))]
+                payload = packs[0] if packs else {"error": f"Content pack not found for {args.case_id}"}
+            else:
+                raise ValueError(f"unsupported content-pack command: {args.content_pack_cmd}")
         else:  # pragma: no cover
             raise ValueError("unsupported research automation command")
     except Exception as exc:
@@ -3842,7 +3865,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(to_json(payload) if args.json else to_json(payload))
             return 0
 
-        if args.research_cmd in {"rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "external-intel", "npm", "storage", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "resolution", "workflow"}:
+        if args.research_cmd in {"rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "external-intel", "npm", "storage", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "resolution", "workflow", "content-pack"}:
             return _run_research_automation_command(args)
 
         if args.research_cmd == "case":
