@@ -43,7 +43,8 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
     except OSError:
         pass
 
-    busy_timeout_ms = int(os.environ.get("SECOPS_BUSY_TIMEOUT_MS", "30000"))
+    raw_timeout = os.environ.get("SECOPS_BUSY_TIMEOUT_MS", "").strip()
+    busy_timeout_ms = int(raw_timeout) if raw_timeout.isdigit() else 5000
     connection = sqlite3.connect(resolved_path, timeout=max(30, busy_timeout_ms // 1000))
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
