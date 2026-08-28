@@ -26,7 +26,7 @@ Every static observation contains:
 
 - `rule_id`, category, severity, and bounded confidence;
 - archive path, file type, context classification, and source line;
-- analysis method (`json_manifest_parser`, `javascript_syntax`, `python_ast`, or
+- analysis method (`json_manifest_parser`, `javascript_token_context`, `python_ast`, or
   a deliberately non-scoring `textual_heuristic` fallback);
 - reachability status, a safe snippet, and a recommended verification step;
 - a stable fingerprint and `occurrence_count`.
@@ -65,10 +65,11 @@ without deleting history.
 
 ## Subject State Reconciliation
 
-The artifact catalog is authoritative for attached artifact state. A case read
-or an explicit reconciliation updates a stale subject from `missing` to
-`collected` (or another catalog state) and records `subject_state_reconciled`.
-Use the guarded command when repairing older cases:
+The artifact catalog is authoritative for attached artifact state. A normal
+case read reports the current catalog state without changing the case. An
+explicit reconciliation updates a stale subject from `missing` to `collected`
+(or another catalog state) and records `subject_state_reconciled`. Use the
+guarded command when repairing older cases:
 
 ```bash
 secopsai research case reconcile RSC-603DF0DC28E5 \

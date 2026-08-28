@@ -1270,8 +1270,14 @@ def _build_finding(result: ScanResult) -> Dict[str, Any]:
     }
 
 
-def _upsert_findings(findings: Iterable[Dict[str, Any]]) -> str:
-    resolved = soc_store.default_db_path()
+def _upsert_findings(findings: Iterable[Dict[str, Any]], *, db_path: Optional[str] = None) -> str:
+    """Persist findings to an explicit database when supplied.
+
+    Callers that run scans in tests or isolated workers can provide their own
+    database, avoiding writes to the shared operational store. Production
+    callers retain the existing default path when no override is supplied.
+    """
+    resolved = str(db_path) if db_path else soc_store.default_db_path()
     with sqlite_writer_lock(resolved):
         soc_store.init_db(resolved)
         with soc_store.closing(soc_store.connect(resolved)) as connection:
@@ -6834,6 +6840,7 @@ def run_scan(
     max_download_mb: int = DEFAULT_MAX_DOWNLOAD_MB,
     max_files: int = DEFAULT_MAX_FILES,
     timeout: int = 30,
+    db_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     result = _scan_release(
         ecosystem,
@@ -6851,9 +6858,9 @@ def run_scan(
     )
     _append_results([result])
     findings = [_build_finding(result)] if result.verdict == "malicious" and result.finding_id else []
-    db_path = _upsert_findings(findings) if findings else None
+    persisted_db_path = _upsert_findings(findings, db_path=db_path) if findings else None
     slack_meta = alert_new_supply_chain_findings(findings) if slack else {"new_findings": 0, "sent": False}
-    return {"result": result.to_dict(), "db_path": db_path, "slack_alerts_sent": int(bool(slack_meta.get("sent")))}
+    return {"result": result.to_dict(), "db_path": persisted_db_path, "slack_alerts_sent": int(bool(slack_meta.get("sent")))}
 
 
 def run_recent_top_scan(
@@ -6866,6 +6873,7 @@ def run_recent_top_scan(
     model: Optional[str] = None,
     slack: bool = False,
     use_state: bool = False,
+    db_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     if not enable_pypi and not enable_npm:
         raise ValueError("At least one ecosystem must be enabled")
@@ -6884,7 +6892,7 @@ def run_recent_top_scan(
 
     _append_results(results)
     findings = [_build_finding(result) for result in results if result.verdict == "malicious" and result.finding_id]
-    db_path = _upsert_findings(findings) if findings else None
+    persisted_db_path = _upsert_findings(findings, db_path=db_path) if findings else None
     slack_meta = alert_new_supply_chain_findings(findings) if slack else {"new_findings": 0, "sent": False}
     return {
         "total_scanned": len(results),
@@ -6892,7 +6900,7 @@ def run_recent_top_scan(
         "benign": sum(1 for result in results if result.verdict == "benign"),
         "errors": sum(1 for result in results if result.verdict == "error"),
         "skipped": sum(1 for result in results if result.verdict == "skipped"),
-        "db_path": db_path,
+        "db_path": persisted_db_path,
         "slack_alerts_sent": int(bool(slack_meta.get("sent"))),
         "results": [result.to_dict() for result in results],
     }

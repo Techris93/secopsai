@@ -54,6 +54,7 @@ DISCLOSURE_STATUSES = {
     "closed",
 }
 SEVERITIES = {"info", "low", "medium", "high", "critical"}
+POTENTIAL_IMPACTS = SEVERITIES
 SUBJECT_TYPES = {"package", "extension", "repository", "publisher", "brand", "infrastructure", "other"}
 EVIDENCE_TYPES = {
     "source",
@@ -293,6 +294,7 @@ def create_case(
     summary: str = "",
     case_type: str = "other",
     severity: str = "medium",
+    potential_impact: Optional[str] = None,
     confidence: Any = 0,
     owner: str = "",
     db_path: Optional[str] = None,
@@ -306,6 +308,12 @@ def create_case(
         "summary": _clean(summary, field="summary", limit=8000),
         "case_type": _choice(case_type, field="case_type", allowed=CASE_TYPES),
         "severity": _choice(severity, field="severity", allowed=SEVERITIES),
+        "potential_impact": _choice(
+            potential_impact if potential_impact is not None else severity,
+            field="potential_impact",
+            allowed=POTENTIAL_IMPACTS,
+        ),
+        "potential_impact_explicit": int(potential_impact is not None),
         "confidence": _confidence(confidence),
         "owner": _clean(owner, field="owner", limit=160),
     }
@@ -314,9 +322,9 @@ def create_case(
             """
             INSERT INTO research_cases (
                 case_id, title, summary, case_type, severity, confidence, status,
-                owner, disclosure_status, embargo_until, created_at, updated_at,
+                potential_impact, potential_impact_explicit, owner, disclosure_status, embargo_until, created_at, updated_at,
                 closed_at, published_at, payload_json
-            ) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, 'not_started', NULL, ?, ?, NULL, NULL, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, 'not_started', NULL, ?, ?, NULL, NULL, ?)
             """,
             (
                 case_id,
@@ -325,6 +333,8 @@ def create_case(
                 values["case_type"],
                 values["severity"],
                 values["confidence"],
+                values["potential_impact"],
+                values["potential_impact_explicit"],
                 values["owner"],
                 now,
                 now,
@@ -360,7 +370,10 @@ def list_cases(
         rows = connection.execute(
             f"""
             SELECT case_id, title, summary, case_type, severity, confidence, status,
-                   potential_impact, investigation_priority, detection_confidence,
+                   CASE WHEN COALESCE(potential_impact_explicit, 0) = 0
+                             AND severity IN ('high', 'critical')
+                        THEN severity ELSE potential_impact END AS potential_impact,
+                   investigation_priority, detection_confidence,
                    owner, disclosure_status, embargo_until, created_at, updated_at,
                    closed_at, published_at
             FROM research_cases{where}
@@ -447,15 +460,26 @@ def reconcile_subject_artifact_state(case_id: str, *, db_path: Optional[str] = N
     return {"case_id": case_id, "changed": changed, "checked_at": now}
 
 
-def calibrate_case_assessment(case_id: str, *, db_path: Optional[str] = None, actor: str = "signal-calibrator") -> Dict[str, Any]:
-    """Persist distinct prioritization, confidence, impact, and quality fields."""
+def calibrate_case_assessment(
+    case_id: str,
+    *,
+    db_path: Optional[str] = None,
+    actor: str = "signal-calibrator",
+    persist: bool = True,
+) -> Dict[str, Any]:
+    """Calculate calibrated fields, optionally persisting the assessment.
+
+    Read paths use ``persist=False`` so rendering a case never changes its
+    state or creates audit events. Explicit workflow actions keep the default
+    persistent behavior.
+    """
     case_id = _case_id(case_id)
     soc_store.init_db(db_path)
     from secopsai.research_signal_analysis import collect_observations, deduplicate_observations, evidence_quality_summary
 
     with closing(soc_store.connect(db_path)) as connection:
         case_row = connection.execute(
-            "SELECT status, severity, confidence, assessment, investigation_priority, detection_confidence, potential_impact, local_exposure, evidence_quality, publication_readiness FROM research_cases WHERE case_id = ?",
+            "SELECT status, severity, confidence, assessment, investigation_priority, detection_confidence, potential_impact, potential_impact_explicit, local_exposure, evidence_quality, publication_readiness FROM research_cases WHERE case_id = ?",
             (case_id,),
         ).fetchone()
         if case_row is None:
@@ -482,7 +506,13 @@ def calibrate_case_assessment(case_id: str, *, db_path: Optional[str] = None, ac
         detection_confidence = max((int(item.get("confidence") or 0) for item in high_signal), default=0)
         categories = {str(item.get("category") or "") for item in high_signal}
         priority = "high" if len(high_signal) >= 3 or {"execution", "network"}.issubset(categories) else "medium" if high_signal else "normal"
-        impact = str(case_row["potential_impact"] or case_row["severity"] or "medium").lower()
+        severity = str(case_row["severity"] or "medium").lower()
+        impact = str(case_row["potential_impact"] or severity or "medium").lower()
+        # Legacy rows had a medium database default with no way to distinguish
+        # an explicit override. Never understate a high/critical case during
+        # migration; new explicit overrides remain respected.
+        if not bool(case_row["potential_impact_explicit"] or 0) and severity in {"high", "critical"}:
+            impact = severity
         if impact not in {"info", "low", "medium", "high", "critical"}:
             impact = "medium"
         assessment = str(case_row["assessment"] or "unconfirmed")
@@ -494,15 +524,24 @@ def calibrate_case_assessment(case_id: str, *, db_path: Optional[str] = None, ac
             assessment = str(verdict_row["verdict"] or "unconfirmed")
         elif high_signal:
             assessment = "unconfirmed_static_lead"
-        local_exposure = "unknown"
+        usage_states: list[str] = []
         for subject in subjects:
             metadata = _decode(subject["metadata_json"], {})
             usage = metadata.get("local_usage")
             if isinstance(usage, dict) and usage.get("present") is True:
-                local_exposure = "observed"
-                break
-            if isinstance(usage, dict) and usage.get("present") is False:
-                local_exposure = "not_observed"
+                usage_states.append("observed")
+            elif isinstance(usage, dict) and usage.get("present") is False:
+                usage_states.append("not_observed")
+            else:
+                usage_states.append("unknown")
+        if "observed" in usage_states:
+            local_exposure = "observed"
+        elif usage_states and all(state == "not_observed" for state in usage_states):
+            local_exposure = "not_observed"
+        elif any(state == "not_observed" for state in usage_states):
+            local_exposure = "partially_checked"
+        else:
+            local_exposure = "unknown"
         readiness = "ready" if str(case_row["status"]) == "ready_to_publish" else "blocked"
         changed = {
             "investigation_priority": priority,
@@ -514,7 +553,7 @@ def calibrate_case_assessment(case_id: str, *, db_path: Optional[str] = None, ac
             "publication_readiness": readiness,
         }
         previous = {key: case_row[key] for key in changed}
-        if previous != changed:
+        if persist and previous != changed:
             now = soc_store.utc_now()
             assignments = ", ".join(f"{key} = ?" for key in changed)
             connection.execute(
@@ -634,15 +673,13 @@ def reclassify_ioc_candidates(case_id: str, *, db_path: Optional[str] = None, ac
     return {"case_id": case_id, "changed": changed}
 
 
-def get_case(case_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
+def get_case(case_id: str, *, db_path: Optional[str] = None, repair: bool = False) -> Dict[str, Any]:
+    """Return a case without mutating it unless an explicit repair is requested."""
     case_id = _case_id(case_id)
     soc_store.init_db(db_path)
-    # Repair legacy URL candidates on read so older cases receive the same
-    # provenance classification as newly analyzed artifacts. The operation is
-    # idempotent and only writes when a row or status actually changes.
-    ioc_reclassification = reclassify_ioc_candidates(case_id, db_path=db_path)
-    reconciliation = reconcile_subject_artifact_state(case_id, db_path=db_path)
-    calibration = calibrate_case_assessment(case_id, db_path=db_path)
+    ioc_reclassification = reclassify_ioc_candidates(case_id, db_path=db_path) if repair else {"case_id": case_id, "changed": []}
+    reconciliation = reconcile_subject_artifact_state(case_id, db_path=db_path) if repair else {"case_id": case_id, "changed": []}
+    calibration = calibrate_case_assessment(case_id, db_path=db_path, persist=False)
     with closing(soc_store.connect(db_path)) as connection:
         row = connection.execute("SELECT * FROM research_cases WHERE case_id = ?", (case_id,)).fetchone()
         if row is None:
@@ -653,6 +690,9 @@ def get_case(case_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
         result["ioc_reclassification"] = ioc_reclassification
         result["state_reconciliation"] = {"case_id": case_id, "changed": reconciliation.get("changed", [])}
         result["assessment_calibration"] = calibration
+        for key in ("investigation_priority", "detection_confidence", "assessment", "potential_impact", "local_exposure", "evidence_quality"):
+            if key in calibration:
+                result[key] = calibration[key]
         result["metadata"] = _decode(result.pop("payload_json", "{}"), {})
         result["subjects"] = [
             {**dict(item), "metadata": _decode(item["metadata_json"], {})}
@@ -830,7 +870,9 @@ def get_case(case_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
             value["requested_behaviors"] = _decode(value.pop("requested_behaviors_json", "[]"), [])
             value["result"] = _decode(value.pop("result_json", "{}"), {})
             result["sandbox_requests"].append(value)
-    result["publication_readiness"] = publication_readiness(result)
+    readiness = publication_readiness(result)
+    result["publication_readiness"] = readiness
+    result["publication_readiness_state"] = "ready" if readiness["ready"] else "blocked"
     return result
 
 
@@ -848,6 +890,7 @@ def update_case(
         "summary": lambda value: _clean(value, field="summary", limit=8000),
         "case_type": lambda value: _choice(value, field="case_type", allowed=CASE_TYPES),
         "severity": lambda value: _choice(value, field="severity", allowed=SEVERITIES),
+        "potential_impact": lambda value: _choice(value, field="potential_impact", allowed=POTENTIAL_IMPACTS),
         "confidence": _confidence,
         "status": lambda value: _choice(value, field="status", allowed=CASE_STATUSES),
         "owner": lambda value: _clean(value, field="owner", limit=160),
@@ -866,6 +909,12 @@ def update_case(
     changed = {key: value for key, value in normalized.items() if current.get(key) != value}
     if not changed:
         return current
+    derived_impact = False
+    if "severity" in changed and not bool(current.get("potential_impact_explicit") or 0) and "potential_impact" not in changed:
+        changed["potential_impact"] = changed["severity"]
+        derived_impact = True
+    if "potential_impact" in changed:
+        changed["potential_impact_explicit"] = 0 if derived_impact else 1
     now = soc_store.utc_now()
     if changed.get("status") == "published":
         changed["published_at"] = current.get("published_at") or now
@@ -1209,6 +1258,7 @@ def start_package_case(
     summary: str = "",
     case_type: str = "malicious_package",
     severity: str = "medium",
+    potential_impact: Optional[str] = None,
     confidence: Any = 0,
     owner: str = "",
     publisher: str = "",
@@ -1249,6 +1299,7 @@ def start_package_case(
         summary=generated_summary,
         case_type=case_type,
         severity=severity,
+        potential_impact=potential_impact,
         confidence=confidence,
         owner=owner,
         db_path=db_path,

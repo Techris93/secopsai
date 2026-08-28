@@ -20,7 +20,7 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def default_db_path() -> str:
@@ -1380,6 +1380,7 @@ def init_db(db_path: str | None = None) -> None:
                 ("detection_confidence", "INTEGER NOT NULL DEFAULT 0"),
                 ("assessment", "TEXT NOT NULL DEFAULT 'unconfirmed'"),
                 ("potential_impact", "TEXT NOT NULL DEFAULT 'medium'"),
+                ("potential_impact_explicit", "INTEGER NOT NULL DEFAULT 0"),
                 ("local_exposure", "TEXT NOT NULL DEFAULT 'unknown'"),
                 ("evidence_quality", "TEXT NOT NULL DEFAULT 'insufficient'"),
                 ("publication_readiness", "TEXT NOT NULL DEFAULT 'blocked'"),

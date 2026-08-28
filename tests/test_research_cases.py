@@ -84,6 +84,28 @@ class ResearchCaseTests(unittest.TestCase):
                     self.assertEqual(str(status_column["dflt_value"]), "'active'")
             self.assertEqual(list_cases(db_path=db_path), [])
 
+    def test_init_db_migrates_potential_impact_override_column(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = str(Path(temp_dir) / "impact.db")
+            with sqlite3.connect(db_path) as connection:
+                connection.execute(
+                    """CREATE TABLE research_cases (
+                        case_id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL,
+                        case_type TEXT NOT NULL, severity TEXT NOT NULL, confidence INTEGER NOT NULL,
+                        status TEXT NOT NULL, owner TEXT NOT NULL, disclosure_status TEXT NOT NULL,
+                        embargo_until TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                        closed_at TEXT, published_at TEXT, payload_json TEXT NOT NULL,
+                        potential_impact TEXT NOT NULL DEFAULT 'medium'
+                    )"""
+                )
+                connection.execute("PRAGMA user_version = 3")
+                connection.commit()
+            soc_store.init_db(db_path)
+            with soc_store.connect(db_path) as connection:
+                columns = {str(row["name"]): row for row in connection.execute("PRAGMA table_info(research_cases)")}
+            self.assertIn("potential_impact_explicit", columns)
+            self.assertEqual(str(columns["potential_impact_explicit"]["dflt_value"]), "0")
+
     def _build_ready_case(self, db_path: str) -> dict:
         case = create_case(
             title="Typosquatted payment package investigation",

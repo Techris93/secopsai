@@ -2201,6 +2201,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     case_create.add_argument("--summary", default="")
     case_create.add_argument("--type", dest="case_type", choices=sorted(CASE_TYPES), default="other")
     case_create.add_argument("--severity", choices=sorted(RESEARCH_SEVERITIES), default="medium")
+    case_create.add_argument("--potential-impact", choices=sorted(RESEARCH_SEVERITIES), default=None)
     case_create.add_argument("--confidence", default="0", help="0-100 or low/medium/high/confirmed")
     case_create.add_argument("--owner", default="")
     case_create.add_argument("--db-path", default=None)
@@ -2229,6 +2230,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     case_update.add_argument("--summary")
     case_update.add_argument("--type", dest="case_type", choices=sorted(CASE_TYPES))
     case_update.add_argument("--severity", choices=sorted(RESEARCH_SEVERITIES))
+    case_update.add_argument("--potential-impact", choices=sorted(RESEARCH_SEVERITIES))
     case_update.add_argument("--confidence", help="0-100 or low/medium/high/confirmed")
     case_update.add_argument("--status", choices=sorted(CASE_STATUSES))
     case_update.add_argument("--owner")
@@ -2258,6 +2260,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     case_start_package.add_argument("--summary", default="")
     case_start_package.add_argument("--type", dest="case_type", choices=sorted(CASE_TYPES), default="malicious_package")
     case_start_package.add_argument("--severity", choices=sorted(RESEARCH_SEVERITIES), default="medium")
+    case_start_package.add_argument("--potential-impact", choices=sorted(RESEARCH_SEVERITIES), default=None)
     case_start_package.add_argument("--confidence", default="0", help="0-100 or low/medium/high/confirmed")
     case_start_package.add_argument("--owner", default="")
     case_start_package.add_argument("--publisher", default="")
@@ -3445,6 +3448,7 @@ def _run_research_case_command(args: argparse.Namespace) -> int:
                 summary=args.summary,
                 case_type=args.case_type,
                 severity=args.severity,
+                potential_impact=args.potential_impact,
                 confidence=args.confidence,
                 owner=args.owner,
                 db_path=args.db_path,
@@ -3458,6 +3462,7 @@ def _run_research_case_command(args: argparse.Namespace) -> int:
                 summary=args.summary,
                 case_type=args.case_type,
                 severity=args.severity,
+                potential_impact=args.potential_impact,
                 confidence=args.confidence,
                 owner=args.owner,
                 publisher=args.publisher,
@@ -3507,6 +3512,7 @@ def _run_research_case_command(args: argparse.Namespace) -> int:
                 case_type=args.case_type,
                 severity=args.severity,
                 confidence=args.confidence,
+                potential_impact=args.potential_impact,
                 status=args.status,
                 owner=args.owner,
                 disclosure_status=args.disclosure_status,

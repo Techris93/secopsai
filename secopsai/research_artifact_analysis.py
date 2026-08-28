@@ -34,6 +34,10 @@ IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 HASH_RE = re.compile(r"\b[a-f0-9]{64}\b", re.I)
 SCRIPT_NAMES = {"install.ps1", "install.sh"}
 MAX_STRINGS = 5000
+MAX_ARCHIVE_ENTRIES = 10_000
+MAX_MEMBER_BYTES = 50 * 1024 * 1024
+MAX_EXPANDED_BYTES = 250 * 1024 * 1024
+MAX_COMPRESSION_RATIO = 200
 BENIGN_IOC_HOSTS = (
     "nuget.org", "npmjs.com", "npmjs.org", "pypi.org", "rubygems.org",
     "packagist.org", "maven.org", "golang.org", "open-vsx.org", "crates.io",
@@ -118,29 +122,77 @@ def inspect_artifact(artifact_id: str, *, db_path: Optional[str] = None) -> Dict
         with zipfile.ZipFile(path) as archive:
             infos = archive.infolist()
             members = []
-            for info in infos[:10000]:
+            expanded_bytes = 0
+            for index, info in enumerate(infos):
+                if index >= MAX_ARCHIVE_ENTRIES:
+                    result["limitations"].append(
+                        f"archive contains more than {MAX_ARCHIVE_ENTRIES} entries; remaining entries were not inspected"
+                    )
+                    break
                 name = info.filename.replace("\\", "/")
                 if info.is_dir():
                     continue
+                if info.file_size < 0 or info.file_size > MAX_MEMBER_BYTES:
+                    result["limitations"].append(
+                        f"archive member {name} exceeds the {MAX_MEMBER_BYTES} byte member limit; content was not read"
+                    )
+                    members.append({"name": name, "size": info.file_size, "sha256": None, "skipped": "member_size_limit"})
+                    continue
+                if info.compress_size and info.file_size / info.compress_size > MAX_COMPRESSION_RATIO:
+                    result["limitations"].append(
+                        f"archive member {name} exceeds the {MAX_COMPRESSION_RATIO}:1 compression-ratio limit; content was not read"
+                    )
+                    members.append({"name": name, "size": info.file_size, "sha256": None, "skipped": "compression_ratio_limit"})
+                    continue
+                if expanded_bytes + info.file_size > MAX_EXPANDED_BYTES:
+                    result["limitations"].append(
+                        f"archive expanded content exceeds the {MAX_EXPANDED_BYTES} byte limit; remaining entries were not inspected"
+                    )
+                    break
+                # All limits are checked before opening the member. This keeps
+                # hostile compressed entries from allocating unbounded memory.
                 data = archive.read(info)
+                expanded_bytes += len(data)
                 members.append({"name": name, "size": info.file_size, "sha256": hashlib.sha256(data).hexdigest()})
-                if info.file_size <= 50 * 1024 * 1024:
-                    _process_member(name, data, result)
+                _process_member(name, data, result)
             result["archive_members"] = members
             result["archive_format"] = "zip"
     except zipfile.BadZipFile:
         try:
             with tarfile.open(path) as archive:
                 members = []
-                for info in archive.getmembers()[:10000]:
+                expanded_bytes = 0
+                for index, info in enumerate(archive.getmembers()):
+                    if index >= MAX_ARCHIVE_ENTRIES:
+                        result["limitations"].append(
+                            f"archive contains more than {MAX_ARCHIVE_ENTRIES} entries; remaining entries were not inspected"
+                        )
+                        break
                     if not info.isfile():
                         continue
                     name = info.name.replace("\\", "/")
                     data = b""
-                    if info.size <= 50 * 1024 * 1024:
-                        extracted = archive.extractfile(info)
-                        if extracted is not None:
-                            data = extracted.read()
+                    if info.size < 0 or info.size > MAX_MEMBER_BYTES:
+                        result["limitations"].append(
+                            f"archive member {name} exceeds the {MAX_MEMBER_BYTES} byte member limit; content was not read"
+                        )
+                        members.append({"name": name, "size": info.size, "sha256": None, "skipped": "member_size_limit"})
+                        continue
+                    if expanded_bytes + info.size > MAX_EXPANDED_BYTES:
+                        result["limitations"].append(
+                            f"archive expanded content exceeds the {MAX_EXPANDED_BYTES} byte limit; remaining entries were not inspected"
+                        )
+                        break
+                    extracted = archive.extractfile(info)
+                    if extracted is not None:
+                        data = extracted.read(MAX_MEMBER_BYTES + 1)
+                    if len(data) > MAX_MEMBER_BYTES:
+                        result["limitations"].append(
+                            f"archive member {name} exceeded the {MAX_MEMBER_BYTES} byte read limit; content was not analyzed"
+                        )
+                        members.append({"name": name, "size": info.size, "sha256": None, "skipped": "member_read_limit"})
+                        continue
+                    expanded_bytes += len(data)
                     members.append({"name": name, "size": info.size, "sha256": hashlib.sha256(data).hexdigest() if data else None})
                     if data:
                         _process_member(name, data, result)

@@ -242,126 +242,276 @@ def manifest_observations(path: str, text: str) -> tuple[dict[str, str], list[di
     return lifecycle, observations, summary
 
 
+def _javascript_tokens(text: str) -> list[tuple[str, str, int, int]]:
+    """Tokenize JavaScript without interpreting or executing it.
+
+    The scanner only needs call-site and literal context. Ignoring comments and
+    strings here prevents prose, examples, and string contents from becoming
+    executable observations while keeping source offsets for evidence.
+    """
+    tokens: list[tuple[str, str, int, int]] = []
+    index = 0
+    length = len(text)
+    identifier = re.compile(r"[A-Za-z_$][\w$]*")
+    while index < length:
+        char = text[index]
+        if char.isspace():
+            index += 1
+            continue
+        if text.startswith("//", index):
+            newline = text.find("\n", index + 2)
+            index = length if newline < 0 else newline
+            continue
+        if text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            index = length if end < 0 else end + 2
+            continue
+        if char == "/":
+            previous = tokens[-1][1] if tokens else ""
+            regex_context = not tokens or previous in {
+                "=", "(", "[", "{", ",", ":", ";", "!", "&&", "||", "??", "?",
+                "return", "throw", "case", "delete", "void", "typeof", "new", "in", "of",
+            }
+            if regex_context:
+                start = index
+                index += 1
+                in_class = False
+                escaped = False
+                while index < length:
+                    current = text[index]
+                    if escaped:
+                        escaped = False
+                    elif current == "\\":
+                        escaped = True
+                    elif current == "[":
+                        in_class = True
+                    elif current == "]":
+                        in_class = False
+                    elif current == "/" and not in_class:
+                        index += 1
+                        while index < length and text[index].isalpha():
+                            index += 1
+                        break
+                    index += 1
+                tokens.append(("regex", text[start:index], start, index))
+                continue
+        if char in "'\"`":
+            quote = char
+            start = index
+            index += 1
+            value_start = index
+            value_parts: list[str] = []
+            while index < length:
+                if text[index] == "\\" and index + 1 < length:
+                    value_parts.append(text[value_start:index])
+                    value_parts.append(text[index + 1])
+                    index += 2
+                    value_start = index
+                    continue
+                if text[index] == quote:
+                    value_parts.append(text[value_start:index])
+                    index += 1
+                    break
+                index += 1
+            else:
+                value_parts.append(text[value_start:index])
+            tokens.append(("string", "".join(value_parts), start, index))
+            continue
+        match = identifier.match(text, index)
+        if match:
+            tokens.append(("identifier", match.group(0), match.start(), match.end()))
+            index = match.end()
+            continue
+        if char.isdigit():
+            start = index
+            while index < length and (text[index].isalnum() or text[index] in "._-"):
+                index += 1
+            tokens.append(("number", text[start:index], start, index))
+            continue
+        punct = next((candidate for candidate in ("?.", "=>", "===", "!==", "&&", "||", "??", "++", "--") if text.startswith(candidate, index)), char)
+        tokens.append(("punct", punct, index, index + len(punct)))
+        index += len(punct)
+    return tokens
+
+
+def _javascript_call(tokens: Sequence[tuple[str, str, int, int]], index: int, *, allow_member: bool = False) -> bool:
+    if index + 1 >= len(tokens) or tokens[index + 1][1] != "(":
+        return False
+    if index == 0:
+        return True
+    previous = tokens[index - 1][1]
+    if previous in {"function", "class"}:
+        return False
+    return allow_member or previous not in {".", "?."}
+
+
+def _javascript_call_arguments(tokens: Sequence[tuple[str, str, int, int]], index: int) -> tuple[list[tuple[str, str, int, int]], int]:
+    """Return tokens inside a call and the index of its closing parenthesis."""
+    if index + 1 >= len(tokens) or tokens[index + 1][1] != "(":
+        return [], index
+    depth = 0
+    arguments: list[tuple[str, str, int, int]] = []
+    for cursor in range(index + 1, len(tokens)):
+        value = tokens[cursor][1]
+        if value == "(":
+            depth += 1
+            if depth > 1:
+                arguments.append(tokens[cursor])
+        elif value == ")":
+            depth -= 1
+            if depth == 0:
+                return arguments, cursor
+            arguments.append(tokens[cursor])
+        else:
+            arguments.append(tokens[cursor])
+    return arguments, len(tokens) - 1
+
+
+def _javascript_import_bindings(tokens: Sequence[tuple[str, str, int, int]]) -> tuple[set[str], dict[str, str]]:
+    module_aliases: set[str] = set()
+    call_aliases: dict[str, str] = {}
+    child_process_names = {"exec", "execFile", "spawn", "fork", "execSync", "execFileSync", "spawnSync"}
+
+    def add_destructured(start: int, end: int) -> None:
+        cursor = start
+        while cursor < end:
+            if tokens[cursor][0] != "identifier":
+                cursor += 1
+                continue
+            source = tokens[cursor][1]
+            alias = source
+            if cursor + 2 < end and tokens[cursor + 1][1] in {":", "as"} and tokens[cursor + 2][0] == "identifier":
+                alias = tokens[cursor + 2][1]
+                cursor += 2
+            if source in child_process_names:
+                call_aliases[alias] = source
+            cursor += 1
+
+    for index, token in enumerate(tokens):
+        if token[1] != "require" or index + 3 >= len(tokens):
+            continue
+        if tokens[index + 1][1] != "(" or tokens[index + 2][0] != "string" or tokens[index + 3][1] != ")":
+            continue
+        if tokens[index + 2][1] not in {"child_process", "node:child_process"}:
+            continue
+        if index >= 3 and tokens[index - 1][1] == "=" and tokens[index - 2][0] == "identifier":
+            module_aliases.add(tokens[index - 2][1])
+        if index >= 2 and tokens[index - 1][1] == "=" and tokens[index - 2][1] == "}":
+            opening = index - 3
+            while opening >= 0 and tokens[opening][1] != "{":
+                opening -= 1
+            if opening >= 0:
+                add_destructured(opening + 1, index - 2)
+
+    for index, token in enumerate(tokens):
+        if token[1] != "from" or index + 1 >= len(tokens) or tokens[index + 1][0] != "string" or tokens[index + 1][1] not in {"child_process", "node:child_process"}:
+            continue
+        opening = index - 1
+        if opening >= 0 and tokens[opening][1] == "}":
+            opening -= 1
+            while opening >= 0 and tokens[opening][1] != "{":
+                opening -= 1
+            if opening >= 0:
+                add_destructured(opening + 1, index - 1)
+        elif index >= 2 and tokens[index - 2][1] == "as" and tokens[index - 1][0] == "identifier":
+            module_aliases.add(tokens[index - 1][1])
+    return module_aliases, call_aliases
+
+
 def _javascript_observations(path: str, text: str) -> list[dict[str, Any]]:
     info = classify_path(path)
     context = info["context_classification"]
     if context in {"documentation", "static_data", "source_map", "image_font_binary"}:
         return []
     results: list[dict[str, Any]] = []
-    methods = "javascript_syntax"
-    patterns = [
-        ("dynamic-eval", "obfuscation", re.compile(r"(?<![\w$.])eval\s*\("), "eval call", 95, "high"),
-        ("dynamic-function-constructor", "obfuscation", re.compile(r"(?:\bnew\s+)?\bFunction\s*\("), "Function constructor", 95, "high"),
-        ("outbound-network", "network", re.compile(r"(?<![\w$.])fetch\s*\(|\b(?:axios|got|request)\s*\.|\bhttps?\s*\.\s*(?:request|get)\s*\(|\bnet\s*\.\s*(?:connect|createConnection)\s*\(|\bnew\s+WebSocket\s*\("), "network call", 85, "medium"),
-        ("encoded-payload", "obfuscation", re.compile(r"\b(?:atob|btoa)\s*\(|\bBuffer\s*\.\s*from\s*\([^\n]{0,180}['\"]base64['\"]"), "encoded data operation", 70, "low"),
-    ]
-    for rule_id, category, pattern, operation, confidence, severity in patterns:
-        for match in pattern.finditer(text):
-            contributes = context not in {"test", "example", "generated_bundle"}
-            results.append(_observation(
-                rule_id=rule_id,
-                category=category,
-                path_info=info,
-                text=text,
-                start=match.start(),
-                end=match.end(),
-                analysis_method=methods,
-                operation=operation,
-                confidence=confidence if contributes else max(30, confidence - 35),
-                severity=severity,
-                reachability="direct_call" if contributes else "non_production_context",
-                contributes=contributes,
-            ))
+    methods = "javascript_token_context"
+    tokens = _javascript_tokens(text)
+    contributes = context not in {"test", "example", "generated_bundle"}
 
-    module_aliases: set[str] = set()
-    call_aliases: dict[str, str] = {}
-    for match in re.finditer(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*['\"](?:node:)?child_process['\"]\s*\)", text):
-        module_aliases.add(match.group(1))
-    for match in re.finditer(r"import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+['\"](?:node:)?child_process['\"]", text):
-        module_aliases.add(match.group(1))
-    for match in re.finditer(r"(?:const|let|var)\s*\{([^}]+)\}\s*=\s*require\s*\(\s*['\"](?:node:)?child_process['\"]\s*\)", text):
-        for raw in match.group(1).split(","):
-            parts = [part.strip() for part in raw.split(":", 1)]
-            source = parts[0]
-            alias = parts[-1]
-            if source in {"exec", "execFile", "spawn", "fork", "execSync", "execFileSync", "spawnSync"} and re.fullmatch(r"[A-Za-z_$][\w$]*", alias):
-                call_aliases[alias] = source
-    for match in re.finditer(r"import\s*\{([^}]+)\}\s*from\s*['\"](?:node:)?child_process['\"]", text):
-        for raw in match.group(1).split(","):
-            parts = re.split(r"\s+as\s+", raw.strip())
-            source, alias = parts[0], parts[-1]
-            if source in {"exec", "execFile", "spawn", "fork", "execSync", "execFileSync", "spawnSync"}:
-                call_aliases[alias] = source
-    call_patterns: list[tuple[re.Pattern[str], str]] = []
-    for alias, operation in call_aliases.items():
-        call_patterns.append((re.compile(rf"(?<![\w$.]){re.escape(alias)}\s*\("), operation))
-    for alias in module_aliases:
-        call_patterns.append((re.compile(rf"\b{re.escape(alias)}\s*\.\s*(exec|execFile|spawn|fork|execSync|execFileSync|spawnSync)\s*\("), ""))
-    for pattern, operation in call_patterns:
-        for match in pattern.finditer(text):
-            actual = operation or match.group(1)
-            snippet = _safe_snippet(text, match.start(), min(len(text), match.end() + 180))
-            shell = bool(re.search(r"\bshell\s*:\s*true\b", snippet)) or actual in {"exec", "execSync"}
-            contributes = context not in {"test", "example", "generated_bundle"}
-            results.append(_observation(
-                rule_id="process-execution",
-                category="execution",
-                path_info=info,
-                text=text,
-                start=match.start(),
-                end=match.end(),
-                analysis_method=methods,
-                operation=f"child_process.{actual}",
-                confidence=75 if contributes else 40,
-                severity="medium" if shell else "low",
-                reachability="direct_call" if contributes else "non_production_context",
-                contributes=contributes,
-                recommendation="Review command arguments, input provenance, shell usage, and whether a package lifecycle hook reaches this call.",
-                details={"shell_usage": shell, "argument_source": "requires_manual_dataflow_review", "lifecycle_reachable": False},
-            ))
-
-    credential_pattern = re.compile(
-        r"(?:process\.env\.[A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL)[A-Za-z0-9_]*|"
-        r"(?:readFileSync|readFile|createReadStream)\s*\([^\n]{0,220}(?:\.npmrc|\.pypirc|\.ssh|\.aws|\.docker|\.env|credentials|token|secret))",
-        re.I,
-    )
-    for match in credential_pattern.finditer(text):
-        contributes = context not in {"test", "example", "generated_bundle"}
+    def add(rule_id: str, category: str, token: tuple[str, str, int, int], operation: str, confidence: int, severity: str, *, details: Mapping[str, Any] | None = None) -> None:
         results.append(_observation(
-            rule_id="credential-access",
-            category="credential_access",
+            rule_id=rule_id,
+            category=category,
             path_info=info,
             text=text,
-            start=match.start(),
-            end=match.end(),
+            start=token[2],
+            end=token[3],
             analysis_method=methods,
-            operation="developer or CI credential access",
-            confidence=75 if contributes else 35,
-            severity="high" if contributes else "low",
+            operation=operation,
+            confidence=confidence if contributes else max(30, confidence - 35),
+            severity=severity,
             reachability="direct_call" if contributes else "non_production_context",
             contributes=contributes,
-            recommendation="Verify the credential path, data flow, and whether the value leaves the process.",
+            details=details,
         ))
 
+    for index, token in enumerate(tokens):
+        value = token[1]
+        if value == "eval" and _javascript_call(tokens, index):
+            add("dynamic-eval", "obfuscation", token, "eval call", 95, "high")
+        elif value == "Function" and _javascript_call(tokens, index) and not (index and tokens[index - 1][1] in {"function", "class"}):
+            _arguments, close = _javascript_call_arguments(tokens, index)
+            # ``Function(args) { ... }`` is an object/class method declaration,
+            # not the dynamic Function constructor.
+            if not (close + 1 < len(tokens) and tokens[close + 1][1] == "{"):
+                add("dynamic-function-constructor", "obfuscation", token, "Function constructor", 95, "high")
+        elif value in {"fetch", "request"} and _javascript_call(tokens, index):
+            add("outbound-network", "network", token, "network call", 85, "medium")
+        elif value in {"get", "post", "request", "connect", "createConnection"} and _javascript_call(tokens, index, allow_member=True) and index and tokens[index - 1][1] == ".":
+            root = tokens[index - 2][1] if index >= 2 else ""
+            if root in {"axios", "got", "request", "https", "http", "net"}:
+                add("outbound-network", "network", token, "network call", 85, "medium")
+        elif value == "WebSocket" and _javascript_call(tokens, index) and index and tokens[index - 1][1] == "new":
+            add("outbound-network", "network", token, "network call", 85, "medium")
+        elif value in {"atob", "btoa"} and _javascript_call(tokens, index):
+            add("encoded-payload", "obfuscation", token, "encoded data operation", 70, "low")
+        elif value == "from" and _javascript_call(tokens, index, allow_member=True) and index >= 2 and tokens[index - 1][1] == "." and tokens[index - 2][1] == "Buffer":
+            arguments, _end = _javascript_call_arguments(tokens, index)
+            if any(item[0] == "string" and item[1].lower() == "base64" for item in arguments):
+                add("encoded-payload", "obfuscation", token, "encoded data operation", 70, "low")
+
+    module_aliases, call_aliases = _javascript_import_bindings(tokens)
+    for index, token in enumerate(tokens):
+        if token[1] in call_aliases and _javascript_call(tokens, index):
+            actual = call_aliases[token[1]]
+            arguments, _end = _javascript_call_arguments(tokens, index)
+            argument_text = text[token[2]: arguments[-1][3] if arguments else token[3] + 180]
+            shell = actual in {"exec", "execSync"} or bool(re.search(r"\bshell\s*:\s*true\b", argument_text))
+            add("process-execution", "execution", token, f"child_process.{actual}", 75, "medium" if shell else "low", details={"shell_usage": shell, "argument_source": "requires_manual_dataflow_review", "lifecycle_reachable": False})
+        elif token[1] in module_aliases and index + 3 < len(tokens) and tokens[index + 1][1] in {".", "?."} and tokens[index + 2][1] in {"exec", "execFile", "spawn", "fork", "execSync", "execFileSync", "spawnSync"} and tokens[index + 3][1] == "(":
+            actual = tokens[index + 2][1]
+            arguments, _end = _javascript_call_arguments(tokens, index + 2)
+            argument_text = text[token[2]: arguments[-1][3] if arguments else token[3] + 180]
+            shell = actual in {"exec", "execSync"} or bool(re.search(r"\bshell\s*:\s*true\b", argument_text))
+            add("process-execution", "execution", token, f"child_process.{actual}", 75, "medium" if shell else "low", details={"shell_usage": shell, "argument_source": "requires_manual_dataflow_review", "lifecycle_reachable": False})
+
+    credential_words = re.compile(r"(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL)", re.I)
+    credential_paths = re.compile(r"(?:\.npmrc|\.pypirc|\.ssh|\.aws|\.docker|\.env|credentials|token|secret)", re.I)
+    read_functions = {"readFileSync", "readFile", "createReadStream"}
+    for index, token in enumerate(tokens):
+        if token[1] == "process" and index + 3 < len(tokens) and tokens[index + 1][1] == "." and tokens[index + 2][1] == "env" and tokens[index + 3][1] == "." and index + 4 < len(tokens) and credential_words.search(tokens[index + 4][1]):
+            add("credential-access", "credential_access", tokens[index + 4], "developer or CI credential access", 75, "high")
+        elif token[1] in read_functions and _javascript_call(tokens, index, allow_member=True):
+            arguments, _end = _javascript_call_arguments(tokens, index)
+            match = next((item for item in arguments if item[0] == "string" and credential_paths.search(item[1])), None)
+            if match:
+                add("credential-access", "credential_access", match, "developer or CI credential access", 75, "high")
+
     persistence_target = re.compile(r"(?:LaunchAgents?|CurrentVersion[\\/]+Run|/etc/(?:systemd|cron)|\bcrontab\b|\.config/autostart)", re.I)
-    write_primitive = re.compile(r"(?:writeFile|appendFile|copyFile|rename|createWriteStream|exec|spawn)\s*\(")
-    if persistence_target.search(text) and write_primitive.search(text):
-        match = persistence_target.search(text)
-        assert match is not None
-        results.append(_observation(
-            rule_id="persistence-target-write",
-            category="persistence",
-            path_info=info,
-            text=text,
-            start=match.start(),
-            end=match.end(),
-            analysis_method=methods,
-            operation="write to persistence target",
-            confidence=90,
-            severity="high",
-            contributes=context not in {"test", "example"},
-            recommendation="Verify the destination path, write primitive, and calling lifecycle or user action.",
-        ))
+    write_functions = {"writeFile", "writeFileSync", "appendFile", "appendFileSync", "copyFile", "copyFileSync", "rename", "renameSync", "createWriteStream", "exec", "spawn"}
+    variables: dict[str, str] = {}
+    for index in range(len(tokens) - 3):
+        if tokens[index][1] in {"const", "let", "var"} and tokens[index + 1][0] == "identifier" and tokens[index + 2][1] == "=" and tokens[index + 3][0] == "string":
+            variables[tokens[index + 1][1]] = tokens[index + 3][1]
+    for index, token in enumerate(tokens):
+        if token[1] not in write_functions or not _javascript_call(tokens, index, allow_member=True):
+            continue
+        arguments, _end = _javascript_call_arguments(tokens, index)
+        target = next((item for item in arguments if item[0] == "string" and persistence_target.search(item[1])), None)
+        if target is None:
+            target = next((item for item in arguments if item[0] == "identifier" and persistence_target.search(variables.get(item[1], ""))), None)
+        if target:
+            add("persistence-target-write", "persistence", target, "write to persistence target", 90, "high")
     return results
 
 
@@ -375,6 +525,15 @@ def _python_observations(path: str, text: str) -> list[dict[str, Any]]:
         return _textual_fallback(path, text)
     aliases: dict[str, str] = {}
     results: list[dict[str, Any]] = []
+
+    def qualified_name(value: ast.AST) -> str:
+        if isinstance(value, ast.Name):
+            return value.id
+        if isinstance(value, ast.Attribute):
+            prefix = qualified_name(value.value)
+            return f"{prefix}.{value.attr}" if prefix else value.attr
+        return ""
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for item in node.names:
@@ -386,12 +545,12 @@ def _python_observations(path: str, text: str) -> list[dict[str, Any]]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        if isinstance(node.func, ast.Name):
-            called = aliases.get(node.func.id, node.func.id)
-        elif isinstance(node.func, ast.Attribute):
-            root = node.func.value.id if isinstance(node.func.value, ast.Name) else ""
-            called = f"{aliases.get(root, root)}.{node.func.attr}".strip(".")
-        else:
+        qualified = qualified_name(node.func)
+        parts = qualified.split(".") if qualified else []
+        if parts:
+            parts[0] = aliases.get(parts[0], parts[0])
+        called = ".".join(parts)
+        if not called:
             continue
         rule: tuple[str, str, str, int, str] | None = None
         if called in {"eval", "exec", "compile"}:
@@ -416,23 +575,83 @@ def _python_observations(path: str, text: str) -> list[dict[str, Any]]:
         r"(?:TOKEN|API_KEY|SECRET|PASSWORD|CREDENTIAL))",
         re.I,
     )
-    for match in credential_pattern.finditer(text):
-        contributes = info["context_classification"] not in {"test", "example"}
-        results.append(_observation(
-            rule_id="credential-access",
-            category="credential_access",
-            path_info=info,
-            text=text,
-            start=match.start(),
-            end=match.end(),
-            analysis_method="python_ast_context",
-            operation="developer or CI credential path reference",
-            confidence=65 if contributes else 30,
-            severity="medium" if contributes else "low",
-            reachability="contextual_reference",
-            contributes=contributes,
-            recommendation="Confirm that a file read or environment lookup reaches an outbound sink before treating this as exfiltration.",
-        ))
+
+    def constant_strings(node: ast.AST) -> list[tuple[str, int, int]]:
+        values: list[tuple[str, int, int]] = []
+        for child in ast.walk(node):
+            if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                start = getattr(child, "col_offset", 0)
+                line = max(1, int(getattr(child, "lineno", 1)))
+                offset = sum(len(value) + 1 for value in text.splitlines()[: line - 1]) + start
+                values.append((child.value, offset, offset + len(child.value)))
+        return values
+
+    def credential_lookup(node: ast.Call, called: str) -> bool:
+        if called in {
+            "os.getenv", "os.environ.get", "os.environ.setdefault", "os.environ.pop",
+            "os.getenvb", "os.environ.__getitem__",
+        }:
+            return True
+        if called in {"open", "io.open", "read_text", "read_bytes", "read_file", "readfile", "readFile", "pathlib.Path.read_text", "pathlib.Path.read_bytes"}:
+            return True
+        if called.endswith((".read_text", ".read_bytes", ".read_file", ".readfile", ".readFile")):
+            return True
+        return False
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            qualified = qualified_name(node.func)
+            parts = qualified.split(".") if qualified else []
+            if parts:
+                parts[0] = aliases.get(parts[0], parts[0])
+            called = ".".join(parts)
+            if not credential_lookup(node, called):
+                continue
+            for value, start, end in constant_strings(node):
+                if not credential_pattern.search(value):
+                    continue
+                contributes = info["context_classification"] not in {"test", "example"}
+                results.append(_observation(
+                    rule_id="credential-access",
+                    category="credential_access",
+                    path_info=info,
+                    text=text,
+                    start=start,
+                    end=end,
+                    analysis_method="python_ast_context",
+                    operation="developer or CI credential lookup",
+                    confidence=85 if contributes else 40,
+                    severity="high" if contributes else "low",
+                    reachability="direct_call" if contributes else "non_production_context",
+                    contributes=contributes,
+                    recommendation="Confirm that the credential value is intentionally accessed and whether it reaches an outbound sink.",
+                ))
+        elif isinstance(node, ast.Subscript):
+            target = qualified_name(node.value)
+            parts = target.split(".") if target else []
+            if parts:
+                parts[0] = aliases.get(parts[0], parts[0])
+            if ".".join(parts) not in {"os.environ", "os.environb"}:
+                continue
+            for value, start, end in constant_strings(node.slice):
+                if not credential_pattern.search(value):
+                    continue
+                contributes = info["context_classification"] not in {"test", "example"}
+                results.append(_observation(
+                    rule_id="credential-access",
+                    category="credential_access",
+                    path_info=info,
+                    text=text,
+                    start=start,
+                    end=end,
+                    analysis_method="python_ast_context",
+                    operation="developer or CI credential lookup",
+                    confidence=85 if contributes else 40,
+                    severity="high" if contributes else "low",
+                    reachability="direct_call" if contributes else "non_production_context",
+                    contributes=contributes,
+                    recommendation="Confirm that the credential value is intentionally accessed and whether it reaches an outbound sink.",
+                ))
     return results
 
 

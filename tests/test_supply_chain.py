@@ -792,6 +792,7 @@ name = "normalpkg"
                 version="1.0.0",
                 artifact=archive,
                 keep_report=False,
+                db_path=str(Path(temp_dir) / "soc.db"),
             )
         self.assertIn(payload["result"]["verdict"], {"malicious", "benign"})
         self.assertIn("local-artifact", payload["result"]["metadata"]["artifact_status"])
