@@ -195,6 +195,9 @@ from secopsai.research_cases import (
     list_cases as list_research_cases,
     retract_item as retract_research_item,
     start_package_case as start_research_package_case,
+    calibrate_case_assessment,
+    reclassify_ioc_candidates,
+    reconcile_subject_artifact_state,
     update_case as update_research_case,
     update_subject_state,
 )
@@ -2212,6 +2215,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     case_show.add_argument("case_id")
     case_show.add_argument("--db-path", default=None)
 
+    case_reconcile = research_case_sub.add_parser(
+        "reconcile",
+        help="Reconcile subject artifact state and calibrated assessment from canonical evidence",
+    )
+    case_reconcile.add_argument("case_id")
+    case_reconcile.add_argument("--actor", default="analyst")
+    case_reconcile.add_argument("--db-path", default=None)
+
     case_update = research_case_sub.add_parser("update", help="Update research case state and disclosure")
     case_update.add_argument("case_id")
     case_update.add_argument("--title")
@@ -3481,6 +3492,11 @@ def _run_research_case_command(args: argparse.Namespace) -> int:
             }
         elif command == "show":
             payload = get_research_case(args.case_id, db_path=args.db_path)
+        elif command == "reconcile":
+            state = reconcile_subject_artifact_state(args.case_id, db_path=args.db_path, actor=args.actor)
+            assessment = calibrate_case_assessment(args.case_id, db_path=args.db_path, actor=args.actor)
+            iocs = reclassify_ioc_candidates(args.case_id, db_path=args.db_path, actor=args.actor)
+            payload = {"case_id": args.case_id, "state_reconciliation": state, "assessment": assessment, "ioc_reclassification": iocs}
         elif command == "update":
             payload = update_research_case(
                 args.case_id,

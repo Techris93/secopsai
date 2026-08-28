@@ -13,6 +13,23 @@ local-first and stored in the Core SQLite SOC database.
 - Blog Ops receives review-only drafts. It never publishes directly from a
   research case.
 
+## Calibrated Assessments
+
+Case prioritization, detection confidence, maliciousness assessment, potential
+impact, and local exposure are separate fields. A critical-looking source
+heuristic is not a critical verdict. Read the case decision card first, then
+inspect unique observations, path context, reachability, and evidence quality.
+Legacy cases can be repaired without deleting history:
+
+```bash
+secopsai research case reconcile RSC-... \
+  --actor artifact-signal-calibrator --json
+```
+
+The command reconciles subject state with the artifact catalog, reclassifies
+source/documentation URLs, and records an audit event for every change. See
+[Artifact Signal Calibration](artifact-signal-calibration.md).
+
 ## Case Lifecycle
 
 Statuses are:

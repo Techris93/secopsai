@@ -3,6 +3,14 @@
 The artifact fleet is a four-stage funnel: metadata indexing, safe deterministic
 artifact scanning, minimized model triage, and analyst escalation.
 
+Static results are calibrated before they enter the queue. Manifest hooks are
+read from structured package metadata, executable-source rules are
+language-aware, and README/generated-bundle strings do not become lifecycle
+findings. Each observation carries its archive path, context, reachability,
+analysis method, confidence, and stable fingerprint. Repeated evidence is
+counted rather than duplicated. See [Artifact Signal Calibration](artifact-signal-calibration.md)
+for the scoring and provenance contract.
+
 ```bash
 secopsai artifact-fleet status --json
 secopsai artifact-fleet source-health --json
@@ -66,3 +74,11 @@ the analyst queue.
 The benchmark is synthetic unless a production worker measurement is explicitly
 recorded. Never describe the system as scanning 114,000 artifacts per day based
 only on the benchmark.
+
+If an older case still shows a stale `missing` subject or URL-like IOC rows,
+run the guarded repair command. It preserves all rows and records the changes:
+
+```bash
+secopsai research case reconcile RSC-... \
+  --actor artifact-signal-calibrator --json
+```

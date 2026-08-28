@@ -20,7 +20,7 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def default_db_path() -> str:
@@ -1375,6 +1375,32 @@ def init_db(db_path: str | None = None) -> None:
                 ("state_checked_at", "TEXT"),
             ):
                 _ensure_column(connection, "research_subjects", column, definition)
+            for column, definition in (
+                ("investigation_priority", "TEXT NOT NULL DEFAULT 'normal'"),
+                ("detection_confidence", "INTEGER NOT NULL DEFAULT 0"),
+                ("assessment", "TEXT NOT NULL DEFAULT 'unconfirmed'"),
+                ("potential_impact", "TEXT NOT NULL DEFAULT 'medium'"),
+                ("local_exposure", "TEXT NOT NULL DEFAULT 'unknown'"),
+                ("evidence_quality", "TEXT NOT NULL DEFAULT 'insufficient'"),
+                ("publication_readiness", "TEXT NOT NULL DEFAULT 'blocked'"),
+            ):
+                _ensure_column(connection, "research_cases", column, definition)
+            for column, definition in (
+                ("fingerprint", "TEXT NOT NULL DEFAULT ''"),
+                ("occurrence_count", "INTEGER NOT NULL DEFAULT 1"),
+                ("first_observed_at", "TEXT"),
+                ("last_observed_at", "TEXT"),
+                ("independent_source_key", "TEXT NOT NULL DEFAULT ''"),
+            ):
+                _ensure_column(connection, "research_evidence", column, definition)
+            for column, definition in (
+                ("classification", "TEXT NOT NULL DEFAULT 'ioc_candidate'"),
+                ("classification_reason", "TEXT NOT NULL DEFAULT ''"),
+            ):
+                _ensure_column(connection, "research_ioc_candidates", column, definition)
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_research_evidence_fingerprint ON research_evidence (case_id, fingerprint)"
+            )
             _ensure_column(connection, "research_npm_package_snapshots", "known_versions_json", "TEXT NOT NULL DEFAULT '[]'")
             _ensure_column(connection, "research_npm_package_snapshots", "last_published_at", "TEXT")
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

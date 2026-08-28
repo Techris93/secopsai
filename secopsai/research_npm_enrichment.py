@@ -387,9 +387,11 @@ def _suspicion_score(summary: Dict[str, Any], *, previous: Optional[Dict[str, An
     if previous and previous_author and summary.get("author") and summary.get("author") != previous_author:
         score += 25
         signals.append({"id": "publisher_changed", "points": 25})
+    # A first observation has no trustworthy previous version. Treating its
+    # complete dependency set as "new" creates a false anomaly baseline.
     previous_dependencies = set((previous or {}).get("dependencies") or [])
     dependency_delta = sorted(set(summary.get("dependencies") or []) - previous_dependencies)
-    if dependency_delta:
+    if previous and dependency_delta:
         points = min(20, 5 + len(dependency_delta))
         score += points
         signals.append({"id": "new_dependencies", "points": points, "count": len(dependency_delta)})
@@ -409,6 +411,7 @@ def _artifact_score(analysis: Dict[str, Any]) -> Tuple[int, List[Dict[str, Any]]
         "encoded-payload": 20,
         "install-hook": 15,
         "network-endpoint": 5,
+        "outbound-network": 5,
     }
     indicators = analysis.get("indicators") if isinstance(analysis.get("indicators"), list) else []
     lifecycle_scripts = analysis.get("lifecycle_scripts") if isinstance(analysis.get("lifecycle_scripts"), dict) else {}
@@ -425,10 +428,13 @@ def _artifact_score(analysis: Dict[str, Any]) -> Tuple[int, List[Dict[str, Any]]
     for indicator in indicators:
         if not isinstance(indicator, dict):
             continue
-        indicator_id = str(indicator.get("indicator_id") or "")
-        if not indicator_id or indicator_id in seen:
+        if indicator.get("contributes_to_score") is False:
             continue
-        seen.add(indicator_id)
+        indicator_id = str(indicator.get("indicator_id") or "")
+        fingerprint = str(indicator.get("observation_fingerprint") or indicator_id)
+        if not indicator_id or fingerprint in seen:
+            continue
+        seen.add(fingerprint)
         base_points = weights.get(indicator_id, 0)
         if base_points:
             # Apply density scaling to generic string hits on massive bundles without lifecycle scripts
@@ -536,7 +542,7 @@ def _promote_static_candidate(*, db_path: Optional[str], event: Dict[str, Any], 
     has_lifecycle = bool(lifecycle_names and any(h in {"preinstall", "install", "postinstall", "prepublish"} for h in lifecycle_names))
     indicators = analysis.get("indicators") or []
     has_egress = any(ind.get("indicator_id") in {"network-endpoint", "outbound-network"} for ind in indicators)
-    has_exec_sink = any(ind.get("indicator_id") in {"process-execution", "dynamic-eval", "browser-payment-access"} for ind in indicators)
+    has_exec_sink = any(ind.get("indicator_id") in {"process-execution", "dynamic-eval", "dynamic-function-constructor", "browser-payment-access"} for ind in indicators)
     has_execution_primitives = has_lifecycle or has_egress or has_exec_sink
 
     categories = set()
@@ -545,7 +551,7 @@ def _promote_static_candidate(*, db_path: Optional[str], event: Dict[str, Any], 
     for ind in indicators:
         iid = ind.get("indicator_id", "")
         if "credential" in iid: categories.add("credential")
-        elif "eval" in iid or "process" in iid: categories.add("execution")
+        elif "eval" in iid or "function-constructor" in iid or "process" in iid: categories.add("execution")
         elif "encoded" in iid: categories.add("obfuscation")
         elif "network" in iid: categories.add("network")
         elif "persistence" in iid: categories.add("persistence")

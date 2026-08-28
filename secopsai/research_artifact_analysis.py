@@ -20,11 +20,19 @@ import soc_store
 from secopsai import research_artifacts
 from secopsai.research_analysis import inspect_nuget_archive
 from secopsai.research_cases import add_ioc
+from secopsai.research_signal_analysis import (
+    TOOL_NAME as SIGNAL_TOOL_NAME,
+    TOOL_VERSION as SIGNAL_TOOL_VERSION,
+    analyze_text_files,
+    classify_path,
+    classify_url,
+    evidence_quality_summary,
+)
 
 URL_RE = re.compile(r"https?://[^\s\"'<>]{4,2048}", re.I)
 IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 HASH_RE = re.compile(r"\b[a-f0-9]{64}\b", re.I)
-SCRIPT_NAMES = {"install.ps1", "install.sh", "setup.py", "setup.cfg", "pyproject.toml", "package.json", ".nuspec"}
+SCRIPT_NAMES = {"install.ps1", "install.sh"}
 MAX_STRINGS = 5000
 BENIGN_IOC_HOSTS = (
     "nuget.org", "npmjs.com", "npmjs.org", "pypi.org", "rubygems.org",
@@ -75,6 +83,8 @@ def _process_member(name: str, data: bytes, result: Dict[str, Any]) -> None:
         result["lifecycle_scripts"].append({"path": name, "sha256": hashlib.sha256(data).hexdigest()})
     if lower.endswith((".dll", ".exe", ".json", ".xml", ".nuspec", ".cs", ".ps1", ".sh", ".py", ".js", ".ts", ".txt", ".md")):
         result["strings"].extend(_strings(data))
+        if len(data) <= 2 * 1024 * 1024:
+            result["text_files"].append((name, data.decode("utf-8", "ignore")))
 
 
 def inspect_artifact(artifact_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
@@ -89,14 +99,16 @@ def inspect_artifact(artifact_id: str, *, db_path: Optional[str] = None) -> Dict
         "artifact_id": artifact_id,
         "sha256": artifact["sha256"],
         "tool": "secopsai-bounded-archive-inspector",
-        "tool_version": "1",
+        "tool_version": "2",
         "execution_performed": False,
         "loaded": False,
         "assemblies": [],
         "archive_members": [],
         "lifecycle_scripts": [],
         "strings": [],
+        "text_files": [],
         "urls": [],
+        "url_observations": [],
         "ipv4": [],
         "sha256_candidates": [],
         "indicators": [],
@@ -142,15 +154,83 @@ def inspect_artifact(artifact_id: str, *, db_path: Optional[str] = None) -> Dict
             result["limitations"].append("artifact is not a supported ZIP or TAR package; only hash metadata is available")
     strings = list(dict.fromkeys(result["strings"]))[:MAX_STRINGS]
     result["strings"] = strings
-    urls = sorted({match.rstrip(".,);") for value in strings for match in URL_RE.findall(value)})
+    contextual_observations = analyze_text_files(result["text_files"], artifact_sha256=result["sha256"])
+    result["observations"] = contextual_observations
+    result["observation_summary"] = evidence_quality_summary(contextual_observations)
+    declared_sources = [
+        str(artifact.get("provenance", {}).get("metadata_url") or ""),
+        str(artifact.get("provenance", {}).get("artifact_url") or ""),
+    ]
+    # Package metadata is source provenance too. Treat repository, homepage,
+    # and issue URLs declared by a manifest as references rather than IOCs.
+    for member_path, member_text in result["text_files"]:
+        if classify_path(member_path)["context_classification"] != "manifest":
+            continue
+        try:
+            manifest = json.loads(member_text)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        for key in ("homepage", "bugs", "repository", "source", "funding"):
+            value = manifest.get(key)
+            values = value if isinstance(value, list) else [value]
+            for item in values:
+                if isinstance(item, str):
+                    declared_sources.extend(URL_RE.findall(item))
+                elif isinstance(item, dict):
+                    for candidate in item.values():
+                        if isinstance(candidate, str):
+                            declared_sources.extend(URL_RE.findall(candidate))
+    url_rows: list[Dict[str, Any]] = []
+    for member_path, member_text in result["text_files"]:
+        network_evidence = any(
+            item.get("path") == member_path and item.get("category") == "network"
+            for item in contextual_observations
+        )
+        for match in URL_RE.findall(member_text):
+            classified = classify_url(
+                match,
+                path=member_path,
+                declared_source_urls=declared_sources,
+                network_call_evidence=network_evidence,
+            )
+            classified["path"] = member_path
+            classified["context_classification"] = classify_path(member_path)["context_classification"]
+            url_rows.append(classified)
+    classified_values = {item["value"] for item in url_rows}
+    for value in sorted({match for current in strings for match in URL_RE.findall(current)}):
+        classified = classify_url(value)
+        if classified["value"] not in classified_values:
+            classified["path"] = ""
+            classified["context_classification"] = "binary_or_unknown"
+            url_rows.append(classified)
+    deduped_urls: Dict[str, Dict[str, Any]] = {}
+    for item in url_rows:
+        existing = deduped_urls.get(item["value"])
+        if existing is None or int(item.get("confidence") or 0) > int(existing.get("confidence") or 0):
+            deduped_urls[item["value"]] = item
+    result["url_observations"] = list(deduped_urls.values())[:500]
+    urls = sorted(deduped_urls)
     result["urls"] = urls[:500]
     result["ipv4"] = sorted({match for value in strings for match in IP_RE.findall(value) if _safe_ip(match)})[:500]
     result["sha256_candidates"] = sorted({match.lower() for value in strings for match in HASH_RE.findall(value)})[:500]
     result["indicators"] = [
-        *[{"type": "url", "value": value, "source": "bounded_strings"} for value in result["urls"]],
+        *[{
+            "type": "url",
+            "value": item["value"],
+            "source": "bounded_strings",
+            "classification": item["classification"],
+            "classification_reason": item["classification_reason"],
+            "confidence": item["confidence"],
+            "eligible_for_ioc_review": item["eligible_for_ioc_review"],
+            "path": item.get("path", ""),
+        } for item in result["url_observations"]],
         *[{"type": "ipv4", "value": value, "source": "bounded_strings"} for value in result["ipv4"]],
         *[{"type": "sha256", "value": value, "source": "bounded_strings"} for value in result["sha256_candidates"]],
     ]
+    result["analysis_tool"] = SIGNAL_TOOL_NAME
+    result["analysis_tool_version"] = SIGNAL_TOOL_VERSION
     if result["assemblies"]:
         result["limitations"].append("assembly metadata requires the optional isolated Mono.Cecil worker for namespaces, methods, P/Invoke, and resources")
         if artifact.get("ecosystem") == "nuget" and os.environ.get("SECOPSAI_NUGET_ANALYZER_IMAGE", "").strip():
@@ -159,6 +239,7 @@ def inspect_artifact(artifact_id: str, *, db_path: Optional[str] = None) -> Dict
             result["limitations"] = [item for item in result["limitations"] if "optional isolated Mono.Cecil" not in item]
             result["tool"] = result["dotnet"].get("tool", result["tool"])
     result["complete"] = not bool(result["limitations"])
+    result.pop("text_files", None)
     with closing(soc_store.connect(db_path)) as connection:
         connection.execute("UPDATE research_artifacts SET analysis_json = ?, updated_at = ? WHERE artifact_id = ?", (json.dumps(result, sort_keys=True), soc_store.utc_now(), artifact_id))
         connection.commit()
@@ -198,18 +279,37 @@ def extract_ioc_candidates(case_id: str, *, artifact_id: Optional[str] = None, d
         result = inspect_artifact(current, db_path=db_path)
         for indicator in result["indicators"]:
             value = indicator["value"]
-            if indicator["type"] == "url" and _is_benign_ioc_url(value):
+            classification = str(indicator.get("classification") or "")
+            if indicator["type"] == "url" and (
+                _is_benign_ioc_url(value)
+                or classification in {"source_reference", "documentation_url", "shared_legitimate_service"}
+            ):
                 continue
             stable = hashlib.sha256(f"{case_id}|{indicator['type']}|{value}".encode()).hexdigest()[:16].upper()
             candidate_id = f"IOC-C-{stable}"
             with closing(soc_store.connect(db_path)) as connection:
+                confidence = int(indicator.get("confidence") or 50)
+                reason = str(indicator.get("classification_reason") or f"Extracted from bounded static evidence in {current}")
                 connection.execute("""INSERT INTO research_ioc_candidates
-                    (candidate_id, case_id, ioc_type, value, confidence, reason, source_evidence_id, status, created_at)
-                    VALUES (?, ?, ?, ?, 50, ?, NULL, 'pending', ?)
-                    ON CONFLICT(case_id, ioc_type, value) DO UPDATE SET reason=excluded.reason""",
-                    (candidate_id, case_id, indicator["type"], value, f"Extracted from bounded static evidence in {current}", soc_store.utc_now()))
+                    (candidate_id, case_id, ioc_type, value, confidence, reason,
+                     source_evidence_id, status, created_at, classification, classification_reason)
+                    VALUES (?, ?, ?, ?, ?, ?, NULL, 'pending', ?, ?, ?)
+                    ON CONFLICT(case_id, ioc_type, value) DO UPDATE SET
+                      confidence=excluded.confidence, reason=excluded.reason,
+                      classification=excluded.classification,
+                      classification_reason=excluded.classification_reason""",
+                    (candidate_id, case_id, indicator["type"], value, confidence, reason,
+                     soc_store.utc_now(), classification or "ioc_candidate", reason))
                 connection.commit()
-            candidates.append({"candidate_id": candidate_id, "ioc_type": indicator["type"], "value": value, "status": "pending", "artifact_id": current})
+            candidates.append({
+                "candidate_id": candidate_id,
+                "ioc_type": indicator["type"],
+                "value": value,
+                "status": "pending",
+                "classification": classification or "ioc_candidate",
+                "classification_reason": reason,
+                "artifact_id": current,
+            })
     return {"case_id": case_id, "candidates": candidates, "execution_performed": False}
 
 

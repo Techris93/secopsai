@@ -451,6 +451,8 @@ def _run_pipeline(pipeline_id: str, *, actor: str, db_path: Optional[str], fetch
                 "assembly_count": len(deep_analysis.get("assemblies") or []),
                 "lifecycle_script_count": len(deep_analysis.get("lifecycle_scripts") or []),
                 "indicator_count": len(deep_analysis.get("indicators") or []),
+                "observations": (deep_analysis.get("observations") if isinstance(deep_analysis.get("observations"), list) else [])[:200],
+                "observation_summary": deep_analysis.get("observation_summary") or {},
                 "limitations": deep_analysis.get("limitations") or [], "execution_performed": False,
             }
             deep_bytes = _json(normalized_deep).encode()

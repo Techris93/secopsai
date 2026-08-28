@@ -26,6 +26,14 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from secopsai.research_cases import add_evidence, add_subject, get_case
+from secopsai.research_signal_analysis import (
+    TOOL_NAME as SIGNAL_TOOL_NAME,
+    TOOL_VERSION as SIGNAL_TOOL_VERSION,
+    analyze_text_files,
+    classify_path,
+    evidence_quality_summary,
+    manifest_observations,
+)
 
 
 MAX_METADATA_BYTES = 2 * 1024 * 1024
@@ -529,23 +537,7 @@ def _read_text_member(name: str, data: bytes, text_budget: List[int]) -> Optiona
 
 
 def _static_indicators(files: Sequence[Tuple[str, str]]) -> List[Dict[str, Any]]:
-    patterns = (
-        ("install-hook", "lifecycle", re.compile(r"\b(preinstall|postinstall|install|prepare)\b", re.I), "medium"),
-        ("process-execution", "execution", re.compile(r"\b(child_process|subprocess|os\.system|execSync|spawnSync|ProcessBuilder)\b", re.I), "medium"),
-        ("dynamic-eval", "obfuscation", re.compile(r"\b(eval|Function\s*\(|exec\s*\(|compile\s*\()", re.I), "medium"),
-        ("credential-access", "credential_access", re.compile(r"\b(password|passwd|api[_-]?key|access[_-]?token|authorization|secret)\b", re.I), "high"),
-        ("browser-payment-access", "data_access", re.compile(r"\b(localStorage|sessionStorage|cookie|credit.?card|cardNumber|payment)\b", re.I), "high"),
-        ("network-endpoint", "network", re.compile(r"https?://|socket|requests\.|urllib|http\.client", re.I), "low"),
-        ("encoded-payload", "obfuscation", re.compile(r"\b(base64|atob|btoa|fromCharCode|marshal|pickle)\b", re.I), "medium"),
-        ("persistence", "persistence", re.compile(r"launchagents?|systemd|cron|startup|registry\\run", re.I), "high"),
-    )
-    results: List[Dict[str, Any]] = []
-    for name, text in files:
-        for indicator_id, category, pattern, severity in patterns:
-            matches = len(pattern.findall(text))
-            if matches:
-                results.append({"indicator_id": indicator_id, "category": category, "severity": severity, "path": name, "matches": min(matches, 50)})
-    return results[:200]
+    return analyze_text_files(files)[:200]
 
 
 def inspect_archive(data: bytes, filename: str) -> Dict[str, Any]:
@@ -603,15 +595,25 @@ def inspect_archive(data: bytes, filename: str) -> Dict[str, Any]:
                     add_member(info.name, info.size, "file", lambda extracted=extracted: extracted.read(MAX_INSPECTED_FILE_BYTES) if extracted else b"")
     scripts: Dict[str, Any] = {}
     manifest_summary: Dict[str, Any] = {}
+    manifest_observation_rows: List[Dict[str, Any]] = []
     for path, text in text_files:
-        if Path(path).name.lower() == "package.json":
-            try:
-                package_json = json.loads(text)
-                if isinstance(package_json, dict):
-                    scripts = {key: str(value)[:500] for key, value in (package_json.get("scripts") or {}).items() if key in LIFECYCLE_NAMES}
-                    manifest_summary = {key: package_json.get(key) for key in ("name", "version", "description", "license", "repository") if key in package_json}
-            except json.JSONDecodeError:
-                manifest_summary = {"package_json": "invalid_json"}
+        if classify_path(path)["context_classification"] != "manifest":
+            continue
+        parsed_scripts, parsed_observations, parsed_summary = manifest_observations(path, text)
+        scripts.update(parsed_scripts)
+        manifest_observation_rows.extend(parsed_observations)
+        if parsed_summary:
+            manifest_summary.update(parsed_summary)
+    indicators = _static_indicators(text_files)
+    # Manifest observations are normally included by analyze_text_files. Merge
+    # by stable fingerprint to keep adapters that parse additional manifests
+    # backward compatible without double-counting.
+    known = {str(item.get("observation_fingerprint") or "") for item in indicators}
+    indicators.extend(
+        item for item in manifest_observation_rows
+        if str(item.get("observation_fingerprint") or "") not in known
+    )
+    quality = evidence_quality_summary(indicators)
     return {
         "filename": _text(filename, 512),
         "archive_type": "zip" if is_zip else "tar",
@@ -621,7 +623,14 @@ def inspect_archive(data: bytes, filename: str) -> Dict[str, Any]:
         "text_files_inspected": len(text_files),
         "lifecycle_scripts": scripts,
         "manifest_summary": manifest_summary,
-        "indicators": _static_indicators(text_files),
+        "indicators": indicators[:200],
+        "observation_summary": quality,
+        "member_context_counts": {
+            context: sum(classify_path(path)["context_classification"] == context for path, _text_value in text_files)
+            for context in sorted({classify_path(path)["context_classification"] for path, _text_value in text_files})
+        },
+        "analysis_tool": SIGNAL_TOOL_NAME,
+        "analysis_tool_version": SIGNAL_TOOL_VERSION,
         "execution_performed": False,
         "extracted_to_filesystem": False,
     }

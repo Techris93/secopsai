@@ -360,6 +360,7 @@ def list_cases(
         rows = connection.execute(
             f"""
             SELECT case_id, title, summary, case_type, severity, confidence, status,
+                   potential_impact, investigation_priority, detection_confidence,
                    owner, disclosure_status, embargo_until, created_at, updated_at,
                    closed_at, published_at
             FROM research_cases{where}
@@ -390,14 +391,268 @@ def list_cases(
     return output
 
 
+def reconcile_subject_artifact_state(case_id: str, *, db_path: Optional[str] = None, actor: str = "state-reconciler") -> Dict[str, Any]:
+    """Keep subject lifecycle state aligned with the canonical artifact catalog.
+
+    The catalog is authoritative for whether a hash-verified artifact is
+    collected. Reconciliation is idempotent and records an audit event only
+    when a visible subject state actually changes.
+    """
+    case_id = _case_id(case_id)
+    soc_store.init_db(db_path)
+    changed: list[dict[str, Any]] = []
+    now = soc_store.utc_now()
+    with closing(soc_store.connect(db_path)) as connection:
+        subjects = connection.execute(
+            """SELECT subject_id, subject_type, ecosystem, name, version, artifact_state
+               FROM research_subjects WHERE case_id = ? AND status = 'active'""",
+            (case_id,),
+        ).fetchall()
+        for subject in subjects:
+            artifact = connection.execute(
+                """SELECT a.artifact_id, a.state, a.sha256
+                   FROM research_case_artifacts ca
+                   JOIN research_artifacts a ON a.artifact_id = ca.artifact_id
+                   WHERE ca.case_id = ? AND lower(a.ecosystem) = lower(?)
+                     AND a.package_name = ? AND a.version = ?
+                   ORDER BY a.updated_at DESC LIMIT 1""",
+                (case_id, subject["ecosystem"], subject["name"], subject["version"]),
+            ).fetchone()
+            if artifact is None:
+                continue
+            catalog_state = str(artifact["state"] or "missing")
+            desired = catalog_state if catalog_state in {"collected", "externally_supplied", "missing"} else "missing"
+            current = str(subject["artifact_state"] or "missing")
+            if current == desired:
+                continue
+            reason = f"Reconciled from artifact catalog {artifact['artifact_id']} ({desired}; sha256={artifact['sha256']})."
+            connection.execute(
+                """UPDATE research_subjects
+                   SET artifact_state = ?, state_reason = ?, state_checked_at = ?
+                   WHERE subject_id = ?""",
+                (desired, reason, now, subject["subject_id"]),
+            )
+            changed.append({"subject_id": subject["subject_id"], "artifact_id": artifact["artifact_id"], "from": current, "to": desired})
+        if changed:
+            _record_event(
+                connection,
+                case_id,
+                "subject_state_reconciled",
+                f"Reconciled {len(changed)} subject artifact state(s) from the artifact catalog.",
+                actor=actor,
+                data={"changes": changed},
+            )
+            connection.execute("UPDATE research_cases SET updated_at = ? WHERE case_id = ?", (now, case_id))
+        connection.commit()
+    return {"case_id": case_id, "changed": changed, "checked_at": now}
+
+
+def calibrate_case_assessment(case_id: str, *, db_path: Optional[str] = None, actor: str = "signal-calibrator") -> Dict[str, Any]:
+    """Persist distinct prioritization, confidence, impact, and quality fields."""
+    case_id = _case_id(case_id)
+    soc_store.init_db(db_path)
+    from secopsai.research_signal_analysis import collect_observations, deduplicate_observations, evidence_quality_summary
+
+    with closing(soc_store.connect(db_path)) as connection:
+        case_row = connection.execute(
+            "SELECT status, severity, confidence, assessment, investigation_priority, detection_confidence, potential_impact, local_exposure, evidence_quality, publication_readiness FROM research_cases WHERE case_id = ?",
+            (case_id,),
+        ).fetchone()
+        if case_row is None:
+            raise ValueError(f"research case not found: {case_id}")
+        evidence_rows = connection.execute(
+            "SELECT evidence_id, evidence_type, metadata_json, occurrence_count FROM research_evidence WHERE case_id = ? AND status = 'active'",
+            (case_id,),
+        ).fetchall()
+        subjects = connection.execute(
+            "SELECT metadata_json FROM research_subjects WHERE case_id = ? AND status = 'active'",
+            (case_id,),
+        ).fetchall()
+        observations: list[dict[str, Any]] = []
+        for row in evidence_rows:
+            metadata = _decode(row["metadata_json"], {})
+            if isinstance(metadata, dict):
+                observations.extend(collect_observations(metadata))
+        deduped = deduplicate_observations(observations)
+        quality = evidence_quality_summary(deduped["observations"])
+        high_signal = [
+            item for item in deduped["observations"]
+            if item.get("contributes_to_score") and int(item.get("confidence") or 0) >= 80
+        ]
+        detection_confidence = max((int(item.get("confidence") or 0) for item in high_signal), default=0)
+        categories = {str(item.get("category") or "") for item in high_signal}
+        priority = "high" if len(high_signal) >= 3 or {"execution", "network"}.issubset(categories) else "medium" if high_signal else "normal"
+        impact = str(case_row["potential_impact"] or case_row["severity"] or "medium").lower()
+        if impact not in {"info", "low", "medium", "high", "critical"}:
+            impact = "medium"
+        assessment = str(case_row["assessment"] or "unconfirmed")
+        verdict_row = connection.execute(
+            "SELECT verdict, confidence FROM research_verdicts WHERE case_id = ? ORDER BY created_at DESC LIMIT 1",
+            (case_id,),
+        ).fetchone()
+        if verdict_row is not None:
+            assessment = str(verdict_row["verdict"] or "unconfirmed")
+        elif high_signal:
+            assessment = "unconfirmed_static_lead"
+        local_exposure = "unknown"
+        for subject in subjects:
+            metadata = _decode(subject["metadata_json"], {})
+            usage = metadata.get("local_usage")
+            if isinstance(usage, dict) and usage.get("present") is True:
+                local_exposure = "observed"
+                break
+            if isinstance(usage, dict) and usage.get("present") is False:
+                local_exposure = "not_observed"
+        readiness = "ready" if str(case_row["status"]) == "ready_to_publish" else "blocked"
+        changed = {
+            "investigation_priority": priority,
+            "detection_confidence": detection_confidence,
+            "assessment": assessment,
+            "potential_impact": impact,
+            "local_exposure": local_exposure,
+            "evidence_quality": quality["label"],
+            "publication_readiness": readiness,
+        }
+        previous = {key: case_row[key] for key in changed}
+        if previous != changed:
+            now = soc_store.utc_now()
+            assignments = ", ".join(f"{key} = ?" for key in changed)
+            connection.execute(
+                f"UPDATE research_cases SET {assignments}, updated_at = ? WHERE case_id = ?",
+                (*changed.values(), now, case_id),
+            )
+            _record_event(
+                connection,
+                case_id,
+                "case_assessment_calibrated",
+                "Recalibrated priority, confidence, impact, exposure, evidence quality, and publication readiness.",
+                actor=actor,
+                data={"before": previous, "after": changed, "unique_observations": deduped["unique_observations"], "repeat_observations": deduped["repeat_observations"]},
+            )
+            connection.commit()
+        return {
+            "case_id": case_id,
+            **changed,
+            "unique_observations": deduped["unique_observations"],
+            "repeat_observations": deduped["repeat_observations"],
+            "independent_sources": quality["independent_sources"],
+        }
+
+
+def reclassify_ioc_candidates(case_id: str, *, db_path: Optional[str] = None, actor: str = "ioc-classifier") -> Dict[str, Any]:
+    """Reclassify legacy URL candidates without deleting their audit trail.
+
+    Older artifact analyses persisted every URL-like string as a pending IOC.
+    Current extraction separates registry/reporting/documentation references
+    from attacker candidates. This repair applies the same deterministic
+    classifier to existing rows and marks non-IOC references rejected with an
+    explicit reason, preserving the original candidate for audit review.
+    """
+    case_id = _case_id(case_id)
+    soc_store.init_db(db_path)
+    from secopsai.research_signal_analysis import classify_url
+
+    changed: list[dict[str, Any]] = []
+    with closing(soc_store.connect(db_path)) as connection:
+        artifact_classifications: dict[str, tuple[str, str]] = {}
+        for artifact in connection.execute(
+            """SELECT a.analysis_json FROM research_case_artifacts ca
+               JOIN research_artifacts a ON a.artifact_id = ca.artifact_id
+               WHERE ca.case_id = ?""",
+            (case_id,),
+        ).fetchall():
+            analysis = _decode(artifact["analysis_json"], {})
+            observations = analysis.get("url_observations", []) if isinstance(analysis, dict) else []
+            for item in observations:
+                if isinstance(item, dict) and item.get("value"):
+                    artifact_classifications[str(item["value"])] = (
+                        str(item.get("classification") or "ioc_candidate"),
+                        str(item.get("classification_reason") or "Artifact URL classification."),
+                    )
+        rows = connection.execute(
+            """SELECT candidate_id, ioc_type, value, status, classification, classification_reason
+               FROM research_ioc_candidates WHERE case_id = ? ORDER BY created_at, candidate_id""",
+            (case_id,),
+        ).fetchall()
+        for row in rows:
+            value = str(row["value"] or "").strip()
+            # Automatic provenance repair is limited to unresolved legacy
+            # candidates. Never rewrite a human-approved or human-rejected
+            # row, even if its older value contains punctuation or lacks the
+            # new classification fields.
+            if str(row["status"] or "pending") not in {"pending", "needs_review"}:
+                continue
+            if not value or (row["ioc_type"] not in {"url", "domain"} and "://" not in value):
+                continue
+            probe = value if "://" in value else f"https://{value}"
+            artifact_classification = artifact_classifications.get(value)
+            if artifact_classification is None:
+                artifact_classification = artifact_classifications.get(value.rstrip("*).,;:"))
+            if artifact_classification is not None:
+                classification, reason = artifact_classification
+                classified = {"classification": classification, "classification_reason": reason, "value": value.rstrip("*).,;:")}
+            else:
+                classified = classify_url(probe)
+            classification = str(classified.get("classification") or "ioc_candidate")
+            reason = str(classified.get("classification_reason") or "Deterministic URL classification.")
+            normalized_value = str(classified.get("value") or value)
+            status = str(row["status"] or "pending")
+            if classification in {"source_reference", "documentation_url", "shared_legitimate_service"} and status in {"pending", "needs_review"}:
+                status = "rejected"
+            if (
+                str(row["value"] or "") == normalized_value
+                and str(row["classification"] or "ioc_candidate") == classification
+                and str(row["classification_reason"] or "") == reason
+                and str(row["status"] or "") == status
+            ):
+                continue
+            connection.execute(
+                """UPDATE research_ioc_candidates
+                   SET value = ?, classification = ?, classification_reason = ?, status = ?
+                   WHERE candidate_id = ?""",
+                (normalized_value, classification, reason, status, row["candidate_id"]),
+            )
+            changed.append({
+                "candidate_id": row["candidate_id"],
+                "value": normalized_value,
+                "previous_value": value if value != normalized_value else None,
+                "classification": classification,
+                "status": status,
+                "reason": reason,
+            })
+        if changed:
+            _record_event(
+                connection,
+                case_id,
+                "ioc_candidates_reclassified",
+                f"Reclassified {len(changed)} legacy IOC candidate(s) using source and documentation provenance rules.",
+                actor=actor,
+                data={"changes": changed},
+            )
+            connection.execute("UPDATE research_cases SET updated_at = ? WHERE case_id = ?", (soc_store.utc_now(), case_id))
+        connection.commit()
+    return {"case_id": case_id, "changed": changed}
+
+
 def get_case(case_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
     case_id = _case_id(case_id)
     soc_store.init_db(db_path)
+    # Repair legacy URL candidates on read so older cases receive the same
+    # provenance classification as newly analyzed artifacts. The operation is
+    # idempotent and only writes when a row or status actually changes.
+    ioc_reclassification = reclassify_ioc_candidates(case_id, db_path=db_path)
+    reconciliation = reconcile_subject_artifact_state(case_id, db_path=db_path)
+    calibration = calibrate_case_assessment(case_id, db_path=db_path)
     with closing(soc_store.connect(db_path)) as connection:
         row = connection.execute("SELECT * FROM research_cases WHERE case_id = ?", (case_id,)).fetchone()
         if row is None:
             raise ValueError(f"research case not found: {case_id}")
         result = dict(row)
+        # Keep read payloads/export reports deterministic; the persisted
+        # subject state and audit event retain the reconciliation timestamp.
+        result["ioc_reclassification"] = ioc_reclassification
+        result["state_reconciliation"] = {"case_id": case_id, "changed": reconciliation.get("changed", [])}
+        result["assessment_calibration"] = calibration
         result["metadata"] = _decode(result.pop("payload_json", "{}"), {})
         result["subjects"] = [
             {**dict(item), "metadata": _decode(item["metadata_json"], {})}
@@ -747,15 +1002,59 @@ def add_evidence(
     sha256 = _clean(sha256, field="sha256", limit=64).lower()
     if sha256 and not SHA256_RE.match(sha256):
         raise ValueError("sha256 must contain exactly 64 hexadecimal characters")
-    evidence_id = _id("EVD")
     now = soc_store.utc_now()
+    metadata_payload = dict(metadata or {})
+    fingerprint_payload = {
+        "case_id": case_id,
+        "evidence_type": evidence_type,
+        "locator": locator,
+        "sha256": sha256,
+        "tool": str(metadata_payload.get("analysis_tool") or metadata_payload.get("tool") or ""),
+        "tool_version": str(metadata_payload.get("analysis_tool_version") or metadata_payload.get("tool_version") or ""),
+        "artifact_sha256": str(metadata_payload.get("artifact_sha256") or ""),
+    }
+    fingerprint = hashlib.sha256(_json(fingerprint_payload).encode()).hexdigest()
+    source_key = hashlib.sha256(f"{provenance}|{locator}".encode()).hexdigest()[:24]
     with closing(soc_store.connect(db_path)) as connection:
+        existing = connection.execute(
+            """SELECT evidence_id, occurrence_count, metadata_json
+               FROM research_evidence
+               WHERE case_id = ? AND fingerprint = ? AND status = 'active'
+               ORDER BY created_at LIMIT 1""",
+            (case_id, fingerprint),
+        ).fetchone()
+        if existing is not None:
+            evidence_id = str(existing["evidence_id"])
+            occurrence_count = int(existing["occurrence_count"] or 1) + 1
+            existing_metadata = _decode(existing["metadata_json"], {})
+            merged_metadata = {**existing_metadata, **metadata_payload}
+            merged_metadata["repeat_observations"] = occurrence_count - 1
+            connection.execute(
+                """UPDATE research_evidence
+                   SET occurrence_count = ?, last_observed_at = ?, metadata_json = ?
+                   WHERE evidence_id = ?""",
+                (occurrence_count, now, _json(merged_metadata), evidence_id),
+            )
+            _record_event(
+                connection,
+                case_id,
+                "evidence_reobserved",
+                f"Reobserved existing evidence: {title}.",
+                actor=actor,
+                data={"evidence_id": evidence_id, "fingerprint": fingerprint, "occurrence_count": occurrence_count},
+            )
+            connection.execute("UPDATE research_cases SET updated_at = ? WHERE case_id = ?", (now, case_id))
+            connection.commit()
+            return get_case(case_id, db_path=db_path)
+        evidence_id = _id("EVD")
         connection.execute(
             """
             INSERT INTO research_evidence (
                 evidence_id, case_id, evidence_type, title, locator, sha256,
-                provenance, notes, status, collected_at, created_at, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+                provenance, notes, status, collected_at, created_at, metadata_json,
+                fingerprint, occurrence_count, first_observed_at, last_observed_at,
+                independent_source_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, 1, ?, ?, ?)
             """,
             (
                 evidence_id,
@@ -768,7 +1067,11 @@ def add_evidence(
                 _clean(notes, field="notes", limit=12000),
                 _clean(collected_at or now, field="collected_at", required=True, limit=64),
                 now,
-                _json(metadata or {}),
+                _json(metadata_payload),
+                fingerprint,
+                now,
+                now,
+                source_key,
             ),
         )
         _record_event(connection, case_id, "evidence_added", f"Added evidence: {title}.", actor=actor, data={"evidence_id": evidence_id, "type": evidence_type})

@@ -40,6 +40,7 @@ nav:
       - Research Discovery Platform: research-discovery.md
       - Research Cases: research-cases.md
       - Research Automation: research-automation.md
+      - Artifact Signal Calibration: artifact-signal-calibration.md
       - Universal Source-First Research: universal-source-first-research.md
       - Rust Package Research Adapter: rust-package-research-automation.md
       - Research And Verification: research-and-verification.md

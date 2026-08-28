@@ -13,3 +13,10 @@ evidence lead, not an automatic maliciousness verdict.
 Every hit carries a rule ID, severity, confidence, file path, bounded context,
 artifact hash, and mitigation guidance. Rule changes require regression tests
 and review before activation.
+
+The contextual analyzer applies manifest parsers and language-aware call-site
+checks before the rule pack. README prose, theme identifiers, generated
+bundles, and source/documentation URLs are retained as context but do not
+inflate the score. Repeated hits for one artifact are fingerprinted and
+reported as one unique observation with a repeat count; the analyst decision
+card keeps that evidence quality separate from impact severity and verdict.

@@ -170,6 +170,14 @@ executed. Use `secopsai research investigate --ecosystem <name> --package
 <identifier> --json`; the existing `research rust-package` command remains a
 compatibility alias.
 
+Every artifact result is context-calibrated: structured manifests determine
+lifecycle hooks, language-aware rules inspect executable call sites, source and
+documentation URLs stay separate from attacker IOC candidates, and repeated
+observations are deduplicated with an audit count. Mission Control shows a
+decision card with priority, detection confidence, assessment, potential
+impact, local exposure, evidence quality, contradictions, and next action.
+See [Artifact Signal Calibration](docs/artifact-signal-calibration.md).
+
 [![Artifact Fleet funnel from metadata indexing to analyst review](docs/assets/mission-control/artifact-fleet.png)](docs/assets/mission-control/artifact-fleet.png)
 
 ### Research Cases

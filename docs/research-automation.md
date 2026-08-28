@@ -2,6 +2,12 @@
 
 SecOpsAI Research turns a watchlist lead into a defensible investigation without executing the investigated package. The dashboard buttons call the same typed Core workflow as the CLI; command-copy helpers are only a fallback.
 
+Static artifact proposals are calibrated before model review. Read the
+[Artifact Signal Calibration](artifact-signal-calibration.md) guide for the
+distinction between priority, detection confidence, potential impact, local
+exposure, and a human maliciousness verdict. Model output remains bounded,
+evidence-linked review material rather than proof.
+
 For package and artifact investigations, use **Administration → Automation → Research pipeline** or:
 
 ```bash

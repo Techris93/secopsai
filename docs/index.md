@@ -181,7 +181,7 @@ Homebrew, npm, and package-registry ownership.
 - [Enterprise Deployment](enterprise-deployment.md)
 - [OSS Artifact Fleet Operations](artifact-fleet-operations.md)
 - [Universal Source-First Security Research](universal-source-first-research.md)
-- [Universal Source-First Security Research](universal-source-first-research.md)
+- [Artifact Signal Calibration](artifact-signal-calibration.md)
 - [Rust Package Research Adapter](rust-package-research-automation.md)
 - [Artifact Triage](artifact-triage.md)
 - [Artifact Rule Packs](artifact-rule-packs.md)

@@ -191,6 +191,7 @@ def attach_intake_job(job_id: str, *, actor: str = "operator", db_path: Optional
 
 def build_evidence_matrix(case_id: str, *, persist: bool = True, actor: str = "analyst", db_path: Optional[str] = None) -> Dict[str, Any]:
     case = get_case(case_id, db_path=db_path)
+    from secopsai.research_signal_analysis import collect_observations, deduplicate_observations
     evidence = [item for item in case.get("evidence", []) if item.get("status") == "active"]
     subjects = [item for item in case.get("subjects", []) if item.get("status") == "active"]
     claims = []
@@ -199,11 +200,20 @@ def build_evidence_matrix(case_id: str, *, persist: bool = True, actor: str = "a
     artifact_evidence = [item for item in evidence if item.get("evidence_type") == "package_artifact"]
     claims.append({"claim_id": "", "statement": "The collected artifact is hash-identified and was not executed by SecOpsAI.", "confidence": 100 if artifact_evidence else 0, "status": "supported" if artifact_evidence else "missing", "supporting_evidence": [item["evidence_id"] for item in artifact_evidence], "contradicting_evidence": [], "missing_evidence": [] if artifact_evidence else ["quarantined package artifact"], "limitations": ["Hash identity does not prove intent or maliciousness."]})
     analysis_evidence = [item for item in evidence if item.get("evidence_type") == "static_analysis"]
-    indicator_count = sum(len((item.get("metadata") or {}).get("indicators") or []) for item in analysis_evidence)
-    claims.append({"claim_id": "", "statement": f"Bounded static inspection identified {indicator_count} indicator(s); indicators are not proof of maliciousness.", "confidence": 80 if analysis_evidence else 0, "status": "supported" if analysis_evidence else "missing", "supporting_evidence": [item["evidence_id"] for item in analysis_evidence], "contradicting_evidence": [], "missing_evidence": [] if analysis_evidence else ["static intake analysis"], "limitations": ["Static inspection cannot establish runtime behavior.", "Dynamic analysis is not configured by default."]})
+    observations = []
+    repeat_observations = 0
+    for item in analysis_evidence:
+        metadata = item.get("metadata") or {}
+        if isinstance(metadata, dict):
+            observations.extend(collect_observations(metadata))
+        repeat_observations += max(0, int(item.get("occurrence_count") or 1) - 1)
+    deduped_observations = deduplicate_observations(observations)
+    indicator_count = deduped_observations["unique_observations"]
+    total_observations = indicator_count + deduped_observations["repeat_observations"] + repeat_observations
+    claims.append({"claim_id": "", "statement": f"Bounded static inspection identified {indicator_count} unique observation(s) across {total_observations} observation record(s); observations are not proof of maliciousness.", "confidence": 80 if analysis_evidence else 0, "status": "supported" if analysis_evidence else "missing", "supporting_evidence": [item["evidence_id"] for item in analysis_evidence], "contradicting_evidence": [], "missing_evidence": [] if analysis_evidence else ["static intake analysis"], "limitations": ["Static inspection cannot establish runtime behavior.", "Dynamic analysis is not configured by default."]})
     for claim in claims:
         claim["claim_id"] = "CLM-" + hashlib.sha256(f"{case_id}|{claim['statement']}".encode()).hexdigest()[:12].upper()
-    matrix = {"case_id": case_id, "generated_at": soc_store.utc_now(), "claims": claims, "summary": {"claims": len(claims), "supported": sum(item["status"] == "supported" for item in claims), "missing": sum(item["status"] == "missing" for item in claims)}}
+    matrix = {"case_id": case_id, "generated_at": soc_store.utc_now(), "claims": claims, "summary": {"claims": len(claims), "supported": sum(item["status"] == "supported" for item in claims), "missing": sum(item["status"] == "missing" for item in claims), "unique_observations": indicator_count, "repeat_observations": deduped_observations["repeat_observations"] + repeat_observations, "independent_sources": len({str(item.get("independent_source_key") or item.get("provenance") or item.get("evidence_id")) for item in evidence})}}
     if persist:
         now = soc_store.utc_now()
         with closing(soc_store.connect(db_path)) as connection:
