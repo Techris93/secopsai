@@ -391,7 +391,10 @@ def list_cases(
                        (SELECT COUNT(*) FROM research_iocs i WHERE i.case_id = c.case_id AND i.status = 'active') AS ioc_count,
                        (SELECT COUNT(*) FROM research_rules r WHERE r.case_id = c.case_id AND r.status = 'active') AS rule_count,
                        (SELECT COUNT(*) FROM research_rule_proposals p WHERE p.case_id = c.case_id AND p.status = 'review_required') AS rule_proposal_count,
-                       (SELECT COUNT(*) FROM research_case_findings f WHERE f.case_id = c.case_id) AS finding_count
+                       (SELECT COUNT(*) FROM research_case_findings f WHERE f.case_id = c.case_id) AS finding_count,
+                       (SELECT COUNT(*) FROM research_sandbox_requests s WHERE s.case_id = c.case_id) AS sandbox_count,
+                       (SELECT COUNT(*) FROM research_sandbox_requests s WHERE s.case_id = c.case_id
+                          AND s.status IN ('pending_approval', 'approved', 'submitted')) AS sandbox_pending_count
                 FROM research_cases c
                 """
             ).fetchall()
@@ -873,6 +876,11 @@ def get_case(case_id: str, *, db_path: Optional[str] = None, repair: bool = Fals
     readiness = publication_readiness(result)
     result["publication_readiness"] = readiness
     result["publication_readiness_state"] = "ready" if readiness["ready"] else "blocked"
+    # Dynamic-analysis guidance is a pure, read-only policy decision. Keep it
+    # alongside the case payload so the CLI and dashboard use the same result.
+    from secopsai.research_sandbox import recommend_dynamic_analysis
+
+    result["sandbox_recommendation"] = recommend_dynamic_analysis(result)
     return result
 
 

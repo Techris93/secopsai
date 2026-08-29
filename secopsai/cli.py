@@ -366,7 +366,14 @@ from secopsai.research_analysis import compare_intakes, compare_packages, correl
 from secopsai.research_artifacts import attach_to_case, get_artifact, import_artifact, list_artifacts, verify_artifact
 from secopsai.research_artifact_analysis import compare_artifacts, extract_ioc_candidates, inspect_artifact, review_ioc_candidate, queue_artifact_analysis, run_artifact_job, run_artifact_worker_once
 from secopsai.research_acquisition import check_registry_state, create_partner_request, list_partner_requests, update_partner_request
-from secopsai.research_sandbox import normalize_result as normalize_sandbox_result, poll_sandbox_request, prepare_manual_submission, submit_sandbox_request, provider_status as sandbox_provider_status
+from secopsai.research_sandbox import (
+    list_sandbox_recommendations,
+    normalize_result as normalize_sandbox_result,
+    poll_sandbox_request,
+    prepare_manual_submission,
+    provider_status as sandbox_provider_status,
+    submit_sandbox_request,
+)
 from secopsai.research_delivery import send_approved_disclosure, send_research_alert
 from secopsai.research_workflow import (
     attach_intake_job,
@@ -375,6 +382,7 @@ from secopsai.research_workflow import (
     get_research_job,
     get_sandbox_request,
     list_research_jobs,
+    materialize_completed_sandbox_evidence,
     approve_publication_review,
     approve_sandbox_submission,
     cancel_research_job,
@@ -2067,7 +2075,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     research_sandbox = research_sub.add_parser("sandbox", help="Inspect and operate approval-gated sandbox requests")
     research_sandbox_sub = research_sandbox.add_subparsers(dest="research_sandbox_cmd", required=True)
-    research_sandbox_sub.add_parser("status")
+    sandbox_provider = research_sandbox_sub.add_parser("status", help="Show Tria.ge configuration and optional read-only health")
+    sandbox_provider.add_argument("--verify", action="store_true", help="Probe the read-only Tria.ge resources endpoint")
+    sandbox_recommendations = research_sandbox_sub.add_parser("recommendations", help="List cases that need isolated runtime evidence")
+    sandbox_recommendations.add_argument("--limit", type=int, default=100)
+    sandbox_recommendations.add_argument("--db-path", default=None)
     sandbox_submit = research_sandbox_sub.add_parser("submit")
     sandbox_submit.add_argument("request_id")
     sandbox_submit.add_argument("--public-submission-acknowledged", action="store_true")
@@ -2075,6 +2087,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     sandbox_poll = research_sandbox_sub.add_parser("poll")
     sandbox_poll.add_argument("request_id")
     sandbox_poll.add_argument("--db-path", default=None)
+    sandbox_materialize = research_sandbox_sub.add_parser(
+        "materialize-evidence",
+        help="Link completed sanitized sandbox results to case evidence (idempotent)",
+    )
+    sandbox_materialize.add_argument("--case-id", default=None)
+    sandbox_materialize.add_argument("--limit", type=int, default=500)
+    sandbox_materialize.add_argument("--actor", default="sandbox-evidence-reconciler")
+    sandbox_materialize.add_argument("--db-path", default=None)
     sandbox_prepare = research_sandbox_sub.add_parser("prepare-manual", help="Prepare an approved exact artifact for manual public sandbox upload")
     sandbox_prepare.add_argument("request_id")
     sandbox_prepare.add_argument("--output-dir", required=True)
@@ -2525,7 +2545,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     sandbox.add_argument("--artifact-sha256", required=True)
     sandbox.add_argument("--justification", required=True)
     sandbox.add_argument("--behavior", action="append", default=[])
-    sandbox.add_argument("--provider", choices=["manual-result-import", "disabled", "external-isolated-runner"], default="manual-result-import")
+    sandbox.add_argument("--provider", choices=["manual-result-import", "disabled", "external-isolated-runner", "tria.ge"], default="manual-result-import")
     sandbox.add_argument("--actor", default="analyst")
     sandbox.add_argument("--db-path", default=None)
     sandbox_status = workflow_sub.add_parser("sandbox-status")
@@ -3271,7 +3291,9 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 raise ValueError("unsupported campaign command")
         elif args.research_cmd == "sandbox":
             if args.research_sandbox_cmd == "status":
-                payload = sandbox_provider_status()
+                payload = sandbox_provider_status(verify=args.verify)
+            elif args.research_sandbox_cmd == "recommendations":
+                payload = list_sandbox_recommendations(limit=args.limit, db_path=args.db_path)
             elif args.research_sandbox_cmd == "submit":
                 payload = submit_sandbox_request(args.request_id, db_path=args.db_path, public_acknowledged=args.public_submission_acknowledged)
             elif args.research_sandbox_cmd == "prepare-manual":
@@ -3279,6 +3301,13 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                     args.request_id,
                     output_dir=args.output_dir,
                     public_acknowledged=args.public_submission_acknowledged,
+                    actor=args.actor,
+                    db_path=args.db_path,
+                )
+            elif args.research_sandbox_cmd == "materialize-evidence":
+                payload = materialize_completed_sandbox_evidence(
+                    case_id=args.case_id,
+                    limit=args.limit,
                     actor=args.actor,
                     db_path=args.db_path,
                 )

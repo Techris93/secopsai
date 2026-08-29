@@ -114,9 +114,57 @@ Use the individual actions only when diagnosing a step or deliberately running a
 7. Use **Run Publication Safety Check** before drafting public content.
 8. Use **Prepare Disclosure** to create a reviewable maintainer/registry message. Approval and sending are separate actions.
 9. Use **Request Sandbox Approval** only when static evidence leaves an important runtime question. The default provider is manual-result-import; Core never executes packages locally.
-10. When the server-side `TRIAGE_API_TOKEN` is configured, approve the public submission and select **Submit to Tria.ge**. The local helper verifies the approved SHA-256 before upload. Public Tria.ge submissions are visible publicly and cannot be deleted by public-cloud users. Select **Refresh Tria.ge result** after the analysis completes; SecOpsAI stores only the sanitized report metadata.
-11. If API access is not configured, use the manual fallback: approve the public handoff, select **Download exact sample**, upload that hash-verified file through the Tria.ge web interface, and then record only the public report URL, score, and reviewed behavior summary through **Record manual Tria.ge result**.
+10. When the server-side `TRIAGE_API_TOKEN` is configured, approve the public submission and select **Submit to Tria.ge**. The local helper verifies the approved SHA-256 before upload. Public Tria.ge submissions are visible publicly and cannot be deleted by public-cloud users. Select **Refresh Tria.ge result** after the analysis completes; SecOpsAI stores only sanitized report metadata and automatically upserts one linked `sandbox_analysis` evidence record.
+11. If API access is not configured, use the manual fallback: approve the public handoff, select **Download exact sample**, upload that hash-verified file through the Tria.ge web interface, and then record only the public report URL, score, and reviewed behavior summary through **Record manual Tria.ge result**. A valid completed result is normalized and linked to case evidence automatically; no separate **Add evidence** step is required.
 12. Approve the publication review, create the Blog Ops draft, edit it, and complete the existing Blog Ops approval/publish workflow.
+
+## Automatic dynamic-analysis recommendations
+
+SecOpsAI evaluates every recent Research Case with a deterministic, read-only
+policy. It recommends isolated runtime analysis only when high-confidence
+executable behavior is present (for example process execution, lifecycle
+hooks, network egress, credential access, persistence, or obfuscation) and a
+runtime question remains unresolved. Documentation and test-only observations
+do not trigger a recommendation.
+
+The policy never submits a sample, changes a verdict, or publishes research.
+An exact artifact in the local quarantine must be hash-verified before a
+request can be approved. If the case has strong signals but no exact artifact,
+the result is `blocked` and explains that the artifact must be collected or
+lawfully supplied first. Existing requests are reported as `already_requested`
+so repeated dashboard refreshes cannot create duplicate submissions; completed
+results are reported as `completed` only when linked sandbox evidence exists.
+A legacy completed row without a valid report is shown as `completed_unlinked`
+and must be repaired or re-recorded instead of creating a duplicate request.
+
+Inspect the queue from the CLI:
+
+```bash
+secopsai research sandbox recommendations --limit 50 --json
+```
+
+The Mission Control **Research → Sandbox jobs** view uses the same result and
+provides an **Open case** action. A legacy completed request without a linked
+record exposes **Repair evidence link**, which runs the bounded reconciliation
+command without contacting Tria.ge or executing the artifact. The **Verify Tria.ge API** button performs a
+bounded read-only request to `/resources`, reports only configuration/health
+metadata, and never displays the token or raw response. A healthy check means
+the local helper can use the configured server-side token after the separate
+public-submission approval. A missing or failed check leaves the manual,
+hash-verified handoff available.
+
+Check provider configuration without contacting the service, or verify it
+explicitly when needed:
+
+```bash
+secopsai research sandbox status --json
+secopsai research sandbox status --verify --json
+```
+
+Tria.ge public submissions are visible to the public. Do not submit customer
+files, secrets, private source, or any artifact without documented
+authorization. Dynamic analysis remains a human approval gate even when the
+policy recommends it.
 
 ## Manual Tria.ge handoff fallback
 
@@ -130,7 +178,15 @@ Use this path only for an artifact already collected and attached to the case wh
 6. Use a network-disabled profile when network access is not required to answer the research question. Enable controlled network access only when the expected behavior requires it.
 7. Wait for the report to complete. Review process, filesystem, persistence, network, and memory evidence. A sandbox score alone is not a verdict.
 8. In Mission Control, open **Record manual Tria.ge result**, enter the public report URL and score, and write a concise behavior summary that separates observed behavior from inference.
-9. Select **Attach sanitized result**. Then regenerate the evidence matrix and rerun model analysis before changing the verdict.
+9. Select **Attach sanitized result**. SecOpsAI validates the Tria.ge URL, submission ID, and artifact hash, then automatically creates or updates the linked `sandbox_analysis` evidence record and confirms the matching subject. Regenerate the evidence matrix and rerun model analysis before changing the verdict.
+
+Completed API polls and manual results are idempotent: repeated refreshes update the same evidence record rather than creating duplicates. For rows completed before this behavior existed, run the bounded repair command:
+
+```bash
+secopsai research sandbox materialize-evidence --case-id RSC-XXXXXXXXXXXX --json
+```
+
+The command never executes the artifact or contacts Tria.ge; it only links already stored, sanitized terminal results. Rows lacking a valid approved report URL remain `completed_unlinked` and are surfaced for correction.
 
 Never submit customer files, credentials, tokens, private source code, internal documents, or any artifact whose authorization and public-disclosure status is unclear.
 
