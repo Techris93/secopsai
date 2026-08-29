@@ -95,3 +95,82 @@ def test_empty_holdout_is_reported_as_insufficient_data_not_zero_percent(tmp_pat
     assert result["metrics"]["holdout"]["precision"] is None
     assert result["metrics"]["holdout"]["recall"] is None
     assert result["guardrails"]["holdout_evaluable"] is False
+
+
+def test_identical_learning_cycle_reuses_the_existing_evaluation_before_training(tmp_path, monkeypatch):
+    db = str(tmp_path / "soc.db")
+    _seed_examples(db)
+    detection_learning.update_settings(
+        mode="guarded",
+        minimum_examples=20,
+        minimum_precision=.5,
+        maximum_false_negative_regression=10,
+        db_path=db,
+    )
+
+    first = detection_learning.train(db_path=db)
+    def fail_if_retrained(*_args, **_kwargs):
+        raise AssertionError("unchanged evaluation retrained")
+
+    monkeypatch.setattr(detection_learning, "_predict", fail_if_retrained)
+    second = detection_learning.train(db_path=db)
+
+    assert first["reused"] is False
+    assert second["reused"] is True
+    assert second["experiment_id"] == first["experiment_id"]
+    assert second["proposal_id"] == first["proposal_id"]
+    with soc_store.connect(db) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM detection_learning_experiments").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM detection_learning_proposals").fetchone()[0] == 1
+
+
+def test_status_counts_only_genuinely_unresolved_subjects_as_awaiting_adjudication(tmp_path):
+    db = str(tmp_path / "soc.db")
+    for subject in ("resolved-subject", "unresolved-subject"):
+        detection_learning.record_feedback(
+            outcome="unknown",
+            subject_key=subject,
+            source="alert_observed",
+            evidence_refs=[f"OBS-{subject}"],
+            db_path=db,
+        )
+    detection_learning.record_feedback(
+        outcome="false_positive",
+        subject_key="resolved-subject",
+        source="operator_verified",
+        confidence=95,
+        trust_score=95,
+        evidence_refs=["EVD-RESOLUTION"],
+        db_path=db,
+    )
+
+    result = detection_learning.status(db_path=db)
+
+    assert result["summary"]["feedback_by_outcome"]["unknown"] == 2
+    assert result["summary"]["unknown_subjects"] == 2
+    assert result["summary"]["resolved_unknown_subjects"] == 1
+    assert result["summary"]["awaiting_adjudication"] == 1
+    assert [row["subject_key"] for row in result["adjudication_queue"]] == ["unresolved-subject"]
+
+
+def test_status_reports_database_totals_not_recent_result_limits(tmp_path):
+    db = str(tmp_path / "soc.db")
+    _seed_examples(db)
+    detection_learning.update_settings(
+        mode="guarded",
+        minimum_examples=20,
+        minimum_precision=.5,
+        maximum_false_negative_regression=10,
+        db_path=db,
+    )
+    detection_learning.train(db_path=db)
+
+    result = detection_learning.status(db_path=db)
+
+    with soc_store.connect(db) as connection:
+        experiment_count = connection.execute("SELECT COUNT(*) FROM detection_learning_experiments").fetchone()[0]
+        proposal_count = connection.execute("SELECT COUNT(*) FROM detection_learning_proposals").fetchone()[0]
+    assert result["summary"]["experiments"] == experiment_count
+    assert result["summary"]["proposals"] == proposal_count
+    assert result["summary"]["recent_experiments_returned"] == len(result["experiments"])
+    assert result["summary"]["recent_proposals_returned"] == len(result["proposals"])

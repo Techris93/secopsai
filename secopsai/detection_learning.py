@@ -16,6 +16,7 @@ import soc_store
 
 SCHEMA_VERSION = "secopsai.detection-learning.v1"
 FEATURE_VERSION = "dlf-1"
+ALGORITHM_VERSION = "interpretable_logistic_ranker_v1"
 MODES = {"off", "advisory", "guarded"}
 # ``outcome`` describes what happened to an alert or evaluation.  The model
 # still trains on the binary ``learning_label`` because TP/FN are evidence of
@@ -49,6 +50,9 @@ def _decode(v: Any, default: Any) -> Any:
     except (TypeError, ValueError, json.JSONDecodeError): return default
 def _id(prefix: str) -> str: return f"{prefix}-{secrets.token_hex(8).upper()}"
 def _clean(v: Any, n: int = 4000) -> str: return str(v or "").strip()[:n]
+def _positive_number(v: Any) -> bool:
+    try: return float(v or 0) > 0
+    except (TypeError, ValueError): return False
 
 
 def get_settings(*, db_path: Optional[str] = None) -> Dict[str, Any]:
@@ -376,8 +380,58 @@ def _metrics(rows: list[Dict[str,Any]], weights: Dict[str,float]) -> Dict[str,An
     }
 
 
+def _evaluation_policy(settings: Dict[str, Any], dataset: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "algorithm": ALGORITHM_VERSION,
+        "dataset_id": dataset["dataset_id"],
+        "feature_version": FEATURE_VERSION,
+        "minimum_examples": int(settings["minimum_examples"]),
+        "holdout_percent": int(settings["holdout_percent"]),
+        "minimum_precision": float(settings["minimum_precision"]),
+        "maximum_false_negative_regression": int(settings["maximum_false_negative_regression"]),
+    }
+
+
+def _existing_evaluation(*, dataset: Dict[str, Any], policy_fingerprint: str,
+                         db_path: Optional[str]) -> Optional[Dict[str, Any]]:
+    with closing(soc_store.connect(db_path)) as connection:
+        rows = connection.execute(
+            """SELECT e.experiment_id, e.metrics_json, e.guardrails_json,
+                      p.proposal_id, p.status AS proposal_status, p.parameters_json
+               FROM detection_learning_experiments e
+               JOIN detection_learning_proposals p ON p.experiment_id=e.experiment_id
+               WHERE e.dataset_id=? AND e.algorithm=?
+               ORDER BY e.created_at DESC""",
+            (dataset["dataset_id"], ALGORITHM_VERSION),
+        ).fetchall()
+    for row in rows:
+        parameters = _decode(row["parameters_json"], {})
+        if parameters.get("policy_fingerprint") != policy_fingerprint:
+            continue
+        replay_metrics = _decode(row["metrics_json"], {})
+        proposal_status = str(row["proposal_status"])
+        cycle_status = "shadow_ready" if proposal_status == "shadow_ready" else str(replay_metrics.get("evaluation_status") or proposal_status)
+        return {
+            "experiment_id": str(row["experiment_id"]),
+            "proposal_id": str(row["proposal_id"]),
+            "status": cycle_status,
+            "proposal_status": proposal_status,
+            "metrics": replay_metrics,
+            "guardrails": _decode(row["guardrails_json"], {}),
+            "dataset": dataset,
+            "policy_fingerprint": policy_fingerprint,
+            "reused": True,
+        }
+    return None
+
+
 def train(*, db_path: Optional[str]=None) -> Dict[str,Any]:
-    s=get_settings(db_path=db_path); ds=snapshot(db_path=db_path); rows=_rows(db_path); status="blocked"; weights={"bias":0.0,**{k:0.0 for k in FEATURES}}
+    s=get_settings(db_path=db_path); ds=snapshot(db_path=db_path)
+    policy = _evaluation_policy(s, ds)
+    policy_fingerprint = hashlib.sha256(_json(policy).encode()).hexdigest()
+    existing = _existing_evaluation(dataset=ds, policy_fingerprint=policy_fingerprint, db_path=db_path)
+    if existing is not None: return existing
+    rows=_rows(db_path); status="blocked"; weights={"bias":0.0,**{k:0.0 for k in FEATURES}}
     if len(rows)>=int(s["minimum_examples"]) and {r["label"] for r in rows}==LABELS:
         train_rows=[r for r in rows if r["split"]=="train"]
         for _ in range(300):
@@ -387,11 +441,14 @@ def train(*, db_path: Optional[str]=None) -> Dict[str,Any]:
                 for k in FEATURES: grad[k]+=err*float(r["features"].get(k,0))
             for k in weights: weights[k]-=.15*grad[k]/max(1,len(train_rows))
         status="evaluated"
-    metrics={split:_metrics([r for r in rows if r["split"]==split],weights) for split in ("train","validation","holdout")}; hold=metrics["holdout"]; holdout_evaluable=hold["precision"] is not None and hold["recall"] is not None; training_ready=len(rows)>=int(s["minimum_examples"]) and {r["label"] for r in rows}==LABELS; evaluation_status="evaluated" if training_ready and holdout_evaluable else "insufficient_data"; metrics["evaluation_status"]=evaluation_status; gates={"enough_examples":len(rows)>=int(s["minimum_examples"]),"both_labels":{r["label"] for r in rows}==LABELS,"holdout_evaluable":holdout_evaluable,"precision_pass":bool(holdout_evaluable and hold["precision"]>=float(s["minimum_precision"])),"false_negative_regression_pass":bool(holdout_evaluable and hold["fn"]<=int(s["maximum_false_negative_regression"]))}; passed=all(gates.values()); eid=_id("DLX"); pid=_id("DLP"); now=soc_store.utc_now()
+    metrics={split:_metrics([r for r in rows if r["split"]==split],weights) for split in ("train","validation","holdout")}; hold=metrics["holdout"]; holdout_evaluable=hold["precision"] is not None and hold["recall"] is not None; training_ready=len(rows)>=int(s["minimum_examples"]) and {r["label"] for r in rows}==LABELS; evaluation_status="evaluated" if training_ready and holdout_evaluable else "insufficient_data"; metrics["evaluation_status"]=evaluation_status; gates={"enough_examples":len(rows)>=int(s["minimum_examples"]),"both_labels":{r["label"] for r in rows}==LABELS,"holdout_evaluable":holdout_evaluable,"precision_pass":bool(holdout_evaluable and hold["precision"]>=float(s["minimum_precision"])),"false_negative_regression_pass":bool(holdout_evaluable and hold["fn"]<=int(s["maximum_false_negative_regression"]))}; passed=all(gates.values())
+    eid=_id("DLX"); pid=_id("DLP"); now=soc_store.utc_now()
+    model = {"weights":weights,"threshold":.5,"feature_version":FEATURE_VERSION,"evaluation_status":evaluation_status,"policy_fingerprint":policy_fingerprint,"policy":policy}
+    parameters = {"weights":weights,"threshold":.5,"evaluation_status":evaluation_status,"policy_fingerprint":policy_fingerprint,"policy":policy}
     with closing(soc_store.connect(db_path)) as c:
-        c.execute("INSERT INTO detection_learning_experiments VALUES (?,?,?,?,?,?,?,?,?)",(eid,ds["dataset_id"],"interpretable_logistic_ranker_v1","passed" if passed else evaluation_status,_json({"weights":weights,"threshold":.5,"feature_version":FEATURE_VERSION,"evaluation_status":evaluation_status}),_json(metrics),_json(gates),now,now))
-        c.execute("INSERT INTO detection_learning_proposals VALUES (?,?,?,?,?,?,?,?,?,?,?)",(pid,eid,"risk_ranker","global","shadow_ready" if passed else "blocked",_json({"weights":weights,"threshold":.5,"evaluation_status":evaluation_status}),_json(metrics),_json({"previous_proposal_id":None}),now,now,None)); c.commit()
-    return {"experiment_id":eid,"proposal_id":pid,"status":"shadow_ready" if passed else evaluation_status,"metrics":metrics,"guardrails":gates,"dataset":ds}
+        c.execute("INSERT INTO detection_learning_experiments VALUES (?,?,?,?,?,?,?,?,?)",(eid,ds["dataset_id"],ALGORITHM_VERSION,"passed" if passed else evaluation_status,_json(model),_json(metrics),_json(gates),now,now))
+        c.execute("INSERT INTO detection_learning_proposals VALUES (?,?,?,?,?,?,?,?,?,?,?)",(pid,eid,"risk_ranker","global","shadow_ready" if passed else "blocked",_json(parameters),_json(metrics),_json({"previous_proposal_id":None}),now,now,None)); c.commit()
+    return {"experiment_id":eid,"proposal_id":pid,"status":"shadow_ready" if passed else evaluation_status,"proposal_status":"shadow_ready" if passed else "blocked","metrics":metrics,"guardrails":gates,"dataset":ds,"policy_fingerprint":policy_fingerprint,"reused":False}
 
 
 def deploy(proposal_id: str, *, stage: str, db_path: Optional[str]=None) -> Dict[str,Any]:
@@ -463,18 +520,74 @@ def rollback(proposal_id: str, *, db_path: Optional[str]=None) -> Dict[str,Any]:
 def status(*, db_path: Optional[str]=None) -> Dict[str,Any]:
     soc_store.init_db(db_path)
     with closing(soc_store.connect(db_path)) as c:
-        examples=int(c.execute("SELECT COUNT(*) FROM detection_learning_examples").fetchone()[0]); datasets=[dict(r) for r in c.execute("SELECT * FROM detection_learning_datasets ORDER BY created_at DESC LIMIT 10")]; experiments=[dict(r) for r in c.execute("SELECT * FROM detection_learning_experiments ORDER BY created_at DESC LIMIT 20")]; proposals=[dict(r) for r in c.execute("SELECT * FROM detection_learning_proposals ORDER BY updated_at DESC LIMIT 50")]; deployments=[dict(r) for r in c.execute("SELECT * FROM detection_learning_deployments ORDER BY updated_at DESC LIMIT 50")]
+        examples=int(c.execute("SELECT COUNT(*) FROM detection_learning_examples").fetchone()[0]); datasets=[dict(r) for r in c.execute("SELECT * FROM detection_learning_datasets ORDER BY created_at DESC LIMIT 10")]; experiments=[dict(r) for r in c.execute("SELECT * FROM detection_learning_experiments ORDER BY created_at DESC LIMIT 20")]; proposals=[dict(r) for r in c.execute("""SELECT p.*, e.dataset_id, e.guardrails_json
+            FROM detection_learning_proposals p
+            JOIN detection_learning_experiments e ON e.experiment_id=p.experiment_id
+            ORDER BY p.updated_at DESC LIMIT 50""")]; deployments=[dict(r) for r in c.execute("SELECT * FROM detection_learning_deployments ORDER BY updated_at DESC LIMIT 50")]
+        dataset_total = int(c.execute("SELECT COUNT(*) FROM detection_learning_datasets").fetchone()[0])
+        experiment_total = int(c.execute("SELECT COUNT(*) FROM detection_learning_experiments").fetchone()[0])
+        proposal_total = int(c.execute("SELECT COUNT(*) FROM detection_learning_proposals").fetchone()[0])
+        proposal_status_counts = {str(row["status"]): int(row["count"]) for row in c.execute("SELECT status, COUNT(*) AS count FROM detection_learning_proposals GROUP BY status")}
         feedback_total = int(c.execute("SELECT COUNT(*) FROM detection_learning_feedback").fetchone()[0])
         feedback_by_outcome = {
             str(row["outcome"]): int(row["count"])
             for row in c.execute("SELECT outcome, COUNT(*) AS count FROM detection_learning_feedback GROUP BY outcome")
         }
         feedback_eligible = int(c.execute("SELECT COUNT(*) FROM detection_learning_feedback WHERE learning_label IS NOT NULL AND label_source IN ({})".format(",".join("?" for _ in TRUSTED_FEEDBACK_SOURCES)), tuple(sorted(TRUSTED_FEEDBACK_SOURCES))).fetchone()[0])
+        example_by_label = {str(row["label"]): int(row["count"]) for row in c.execute("SELECT label, COUNT(*) AS count FROM detection_learning_examples GROUP BY label")}
+        trusted_sources = tuple(sorted(TRUSTED_FEEDBACK_SOURCES))
+        placeholders = ",".join("?" for _ in trusted_sources)
+        unresolved_sql = f"""SELECT COUNT(*) FROM (
+            SELECT u.organization_key, u.subject_key
+            FROM detection_learning_feedback u
+            WHERE u.outcome='unknown'
+              AND NOT EXISTS (
+                SELECT 1 FROM detection_learning_feedback r
+                WHERE r.organization_key=u.organization_key
+                  AND r.subject_key=u.subject_key
+                  AND r.learning_label IS NOT NULL
+                  AND r.label_source IN ({placeholders})
+                  AND r.confidence>=70 AND r.trust_score>=70
+              )
+            GROUP BY u.organization_key, u.subject_key
+        )"""
+        awaiting_adjudication = int(c.execute(unresolved_sql, trusted_sources).fetchone()[0])
+        unknown_subjects = int(c.execute("SELECT COUNT(*) FROM (SELECT organization_key, subject_key FROM detection_learning_feedback WHERE outcome='unknown' GROUP BY organization_key, subject_key)").fetchone()[0])
+        queue_sql = f"""SELECT u.subject_key, u.finding_id, u.event_id, u.created_at,
+                                 u.evidence_refs_json, u.features_json
+            FROM detection_learning_feedback u
+            WHERE u.outcome='unknown'
+              AND u.rowid=(
+                SELECT u2.rowid FROM detection_learning_feedback u2
+                WHERE u2.organization_key=u.organization_key
+                  AND u2.subject_key=u.subject_key AND u2.outcome='unknown'
+                ORDER BY u2.created_at DESC, u2.rowid DESC LIMIT 1
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM detection_learning_feedback r
+                WHERE r.organization_key=u.organization_key
+                  AND r.subject_key=u.subject_key
+                  AND r.learning_label IS NOT NULL
+                  AND r.label_source IN ({placeholders})
+                  AND r.confidence>=70 AND r.trust_score>=70
+              )
+            ORDER BY u.created_at DESC LIMIT 25"""
+        adjudication_rows = [dict(row) for row in c.execute(queue_sql, trusted_sources)]
     for x in datasets: x["label_counts"]=_decode(x.pop("label_counts_json"),{}); x["split_counts"]=_decode(x.pop("split_counts_json"),{}); x.pop("source_policy_json",None)
     for x in experiments: x["model"]=_decode(x.pop("model_json"),{}); x["metrics"]=_decode(x.pop("metrics_json"),{}); x["guardrails"]=_decode(x.pop("guardrails_json"),{})
-    for x in proposals: x["parameters"]=_decode(x.pop("parameters_json"),{}); x["replay_metrics"]=_decode(x.pop("replay_metrics_json"),{}); x["rollback"]=_decode(x.pop("rollback_json"),{})
+    for x in proposals: x["parameters"]=_decode(x.pop("parameters_json"),{}); x["replay_metrics"]=_decode(x.pop("replay_metrics_json"),{}); x["rollback"]=_decode(x.pop("rollback_json"),{}); x["guardrails"]=_decode(x.pop("guardrails_json"),{})
     for x in deployments: x["observations"]=_decode(x.pop("observations_json"),{})
-    return {"schema_version":SCHEMA_VERSION,"settings":get_settings(db_path=db_path),"summary":{"examples":examples,"datasets":len(datasets),"experiments":len(experiments),"shadow":sum(p["status"]=="shadow" for p in proposals),"canary":sum(p["status"]=="canary" for p in proposals),"active":sum(p["status"]=="active" for p in proposals),"rolled_back":sum(p["status"]=="rolled_back" for p in proposals),"feedback_total":feedback_total,"feedback_eligible":feedback_eligible,"feedback_by_outcome":feedback_by_outcome},"datasets":datasets,"experiments":experiments,"proposals":proposals,"deployments":deployments}
+    adjudication_queue = []
+    for row in adjudication_rows:
+        features = _decode(row.pop("features_json", "{}"), {})
+        refs = _decode(row.pop("evidence_refs_json", "[]"), [])
+        adjudication_queue.append({
+            **row,
+            "evidence_refs": refs[:10],
+            "evidence_ref_count": len(refs),
+            "active_features": [key for key, value in features.items() if _positive_number(value)],
+        })
+    return {"schema_version":SCHEMA_VERSION,"settings":get_settings(db_path=db_path),"summary":{"examples":examples,"datasets":dataset_total,"experiments":experiment_total,"proposals":proposal_total,"recent_experiments_returned":len(experiments),"recent_proposals_returned":len(proposals),"blocked":proposal_status_counts.get("blocked",0),"shadow_ready":proposal_status_counts.get("shadow_ready",0),"shadow":proposal_status_counts.get("shadow",0),"canary":proposal_status_counts.get("canary",0),"active":proposal_status_counts.get("active",0),"rolled_back":proposal_status_counts.get("rolled_back",0),"feedback_total":feedback_total,"feedback_eligible":feedback_eligible,"feedback_by_outcome":feedback_by_outcome,"example_by_label":example_by_label,"awaiting_adjudication":awaiting_adjudication,"unknown_subjects":unknown_subjects,"resolved_unknown_subjects":max(0,unknown_subjects-awaiting_adjudication)},"datasets":datasets,"experiments":experiments,"proposals":proposals,"deployments":deployments,"adjudication_queue":adjudication_queue}
 
 
 def run_cycle(*, db_path: Optional[str]=None) -> Dict[str,Any]:

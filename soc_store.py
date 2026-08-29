@@ -494,6 +494,10 @@ def init_db(db_path: str | None = None) -> None:
                 ON detection_learning_feedback (organization_key, outcome, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_detection_learning_proposals_status
                 ON detection_learning_proposals (status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_detection_learning_experiments_dataset_algorithm
+                ON detection_learning_experiments (dataset_id, algorithm, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_detection_learning_proposals_experiment
+                ON detection_learning_proposals (experiment_id);
 
             CREATE TABLE IF NOT EXISTS research_resolution_settings (
                 settings_id INTEGER PRIMARY KEY CHECK (settings_id = 1),

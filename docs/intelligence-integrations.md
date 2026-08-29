@@ -160,6 +160,26 @@ rollback controls remain in force. This means every alert improves SecOpsAI's
 context and active-learning queue immediately, while production detection rules
 change only after deterministic validation.
 
+Because the ledger is immutable, the number of historical `unknown` feedback
+records is not the live adjudication workload. A subject can first be recorded as
+unknown and later receive a trusted verdict; both records remain for audit. The
+status API and Mission Control therefore report three separate values:
+
+- **Unknown feedback records**: the complete historical audit count.
+- **Previously unknown subjects resolved**: subjects that later received a
+  trusted, evidence-backed label.
+- **Subjects needing evidence**: distinct subjects that still have no trusted
+  resolution. This is the actionable adjudication queue.
+
+`Blocked` or **Rejected by guardrails** applies to a learning proposal, not to an
+alert, finding, or job. It means the proposed ranker did not meet an offline
+quality gate and did not change production detection. Mission Control displays
+unrounded precision, recall, false-positive rate, true negatives, the configured
+gate, and the failed guardrail. Repeating a scheduled cycle with the same dataset,
+algorithm, and policy reuses the prior evaluation rather than creating another
+identical proposal. Operators should add trustworthy adjudications or improve
+the ranker; they should not lower a safety threshold merely to force promotion.
+
 Record a verified outcome explicitly when an investigation finishes:
 
 ```bash
@@ -198,10 +218,12 @@ key. These records do not require a finding ID:
 ```
 
 Run the learning cycle from **Administration → Automation → Detection
-Learning**. The page shows total feedback, trusted examples, unresolved
-feedback, experiments, staged proposals, and rollbacks. A model recommendation
-alone never becomes a label, and no learning cycle can publish, disclose,
-execute packages, or perform destructive response.
+Learning**. The page leads with the current evaluation decision, exact safety
+metrics, failed guardrails, and the evidence decisions still requiring an
+operator. Repeated historical evaluations are collapsed in the interface while
+their immutable records remain available for audit. A model recommendation alone
+never becomes a label, and no learning cycle can publish, disclose, execute
+packages, or perform destructive response.
 
 CLI equivalents:
 

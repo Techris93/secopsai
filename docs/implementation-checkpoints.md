@@ -383,6 +383,16 @@ Mission Control shows total feedback and unresolved adjudication counts, and the
 CLI supports immutable feedback records for later replay. Existing holdout,
 shadow, canary, false-negative, and rollback gates remain mandatory.
 
+The live workload is now calculated by distinct subject rather than by counting
+all historical unknown records. A later trusted disposition resolves the subject
+without deleting its original audit record. Identical scheduled evaluations reuse
+the same experiment and proposal when the dataset, algorithm, feature version,
+and guardrail policy are unchanged. Mission Control presents the latest result as
+a decision card with unrounded precision, recall, false-positive rate, class
+balance, failed gates, and a recommended next action; duplicate history is
+collapsed without deleting it. A rejected evaluation is explicitly inert and
+cannot be mistaken for a blocked alert or production deployment.
+
 # 113 Coordinated Daily Workflow Automation
 
 Status: implemented and locally verified.
