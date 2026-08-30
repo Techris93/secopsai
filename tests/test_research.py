@@ -186,6 +186,35 @@ class ResearchTests(unittest.TestCase):
             self.assertIn(str(report_path), Path(payload["markdown_report"]).read_text(encoding="utf-8"))
             self.assertIn("inside the current code boundary", " ".join(payload["observations"]))
 
+    def test_research_package_prunes_generated_project_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            generated_report = temp_path / "reports" / "old-run" / "package.json"
+            generated_report.parent.mkdir(parents=True)
+            generated_report.write_text(
+                json.dumps({"dependencies": {"generated-only-package": "1.0.0"}}),
+                encoding="utf-8",
+            )
+
+            with mock.patch("secopsai.research.ROOT", temp_path), mock.patch(
+                "secopsai.research.load_recent_results",
+                return_value=[],
+            ), mock.patch(
+                "secopsai.research.explain_policy",
+                return_value={"effective_threshold": 10, "allow_matches": [], "deny_matches": [], "precedence": ["global"]},
+            ):
+                payload = research_package(
+                    ecosystem="npm",
+                    package="generated-only-package",
+                    version="1.0.0",
+                    search_root=str(temp_path),
+                    report_dir=str(temp_path / "output"),
+                )
+
+            self.assertFalse(payload["local_presence"]["present"])
+            self.assertEqual(payload["local_presence"]["manifest_matches"], [])
+            self.assertEqual(payload["local_presence"]["repo_matches"], [])
+
     def test_research_finding_supply_chain_sources_accept_local_report_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

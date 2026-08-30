@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -42,6 +43,11 @@ SKIP_DIRS = {
     "build",
     "site-packages",
     "uploads",
+}
+PROJECT_GENERATED_ROOT_DIRS = {
+    "blog",
+    "data",
+    "reports",
 }
 
 
@@ -96,29 +102,51 @@ def _scan_root(
 
     results: List[Dict[str, Any]] = []
     lowered_terms = [term.lower() for term in terms]
+    resolved_root = root.resolve()
+    project_root = ROOT.resolve()
 
-    for path in root.rglob("*"):
-        if len(results) >= limit:
-            break
-        if not path.is_file() or not _should_scan(path, manifest_only=manifest_only):
-            continue
-        try:
-            content = path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            continue
-        lowered = content.lower()
-        matched = [term for term in lowered_terms if term in lowered]
-        if not matched:
-            continue
-        index = min(lowered.find(term) for term in matched if lowered.find(term) >= 0)
-        results.append(
-            {
-                "path": str(path.resolve()),
-                "matched_terms": matched[:4],
-                "excerpt": _preview(content, index),
-            }
-        )
+    for current, dirnames, filenames in os.walk(resolved_root):
+        current_path = Path(current)
+        ignored = SKIP_DIRS
+        if resolved_root == project_root and current_path == resolved_root:
+            ignored = SKIP_DIRS | PROJECT_GENERATED_ROOT_DIRS
+        dirnames[:] = sorted(name for name in dirnames if name.lower() not in ignored)
+        for filename in sorted(filenames):
+            if len(results) >= limit:
+                return results
+            path = current_path / filename
+            if not _should_scan(path, manifest_only=manifest_only):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+            lowered = content.lower()
+            matched = [term for term in lowered_terms if term in lowered]
+            if not matched:
+                continue
+            index = min(lowered.find(term) for term in matched if lowered.find(term) >= 0)
+            results.append(
+                {
+                    "path": str(path.resolve()),
+                    "matched_terms": matched[:4],
+                    "excerpt": _preview(content, index),
+                }
+            )
     return results
+
+
+def _unique_roots(search_root: Optional[str]) -> List[Path]:
+    candidates = [Path(search_root).expanduser().resolve()] if search_root else []
+    candidates.append(ROOT.resolve())
+    roots: List[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        roots.append(candidate)
+    return roots
 
 
 def _search_urls(query: str) -> List[Dict[str, Any]]:
@@ -435,10 +463,7 @@ def _build_package_payload(
     version: Optional[str],
     search_root: Optional[str],
 ) -> Dict[str, Any]:
-    repo_root = ROOT
-    roots = [repo_root]
-    if search_root:
-        roots.insert(0, Path(search_root).expanduser().resolve())
+    roots = _unique_roots(search_root)
     terms = _normalize_terms([package, f"{ecosystem} {package}", f"{package}@{version or ''}"])
     manifest_matches: List[Dict[str, Any]] = []
     repo_matches: List[Dict[str, Any]] = []
@@ -557,9 +582,7 @@ def research_finding(
         terms = _normalize_terms(
             [query, finding.get("finding_id"), *(finding.get("rule_ids") or [])]
         )
-        roots = [ROOT]
-        if search_root:
-            roots.insert(0, Path(search_root).expanduser().resolve())
+        roots = _unique_roots(search_root)
         local_matches: List[Dict[str, Any]] = []
         for root in roots:
             local_matches.extend(_scan_root(root, terms, manifest_only=False, limit=max(0, 8 - len(local_matches))))

@@ -601,6 +601,16 @@ def test_legacy_binding_uses_same_priority_as_claim(tmp_path: Path):
     assert result["job_ids"] == [priority["job_id"]]
 
 
+def test_specialist_review_is_not_starved_by_research_backlog(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    enqueue_job(action="analyze_research_case", target_id="RSC-GENERIC", requested_by="tester", db_path=db)
+    review = enqueue_job(action="review_specialist_work", target_id="SOR-URGENT", requested_by="tester", db_path=db)
+
+    claimed = claim_next_job(provider="fake", worker_id="worker", db_path=db)
+
+    assert claimed and claimed["job_id"] == review["job_id"]
+
+
 def test_transient_bridge_recovery_is_bounded_and_preserves_permanent_failures(tmp_path: Path):
     db = str(tmp_path / "core.db")
     transient = enqueue_job(action="explain_finding", target_id="FND-TIMEOUT", requested_by="tester", db_path=db)

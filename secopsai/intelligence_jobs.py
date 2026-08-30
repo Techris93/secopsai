@@ -127,11 +127,13 @@ def claim_next_job(
         row = connection.execute(
             """SELECT job_id FROM intelligence_jobs WHERE status = 'queued'
                ORDER BY CASE action
-                 WHEN 'analyze_research_case' THEN 0
-                 WHEN 'generate_analyst_brief' THEN 0
-                 WHEN 'review_publication_safety' THEN 0
+                 WHEN 'execute_specialist_work' THEN 0
+                 WHEN 'review_specialist_work' THEN 0
+                 WHEN 'analyze_research_case' THEN 1
+                 WHEN 'generate_analyst_brief' THEN 1
+                 WHEN 'review_publication_safety' THEN 1
                  WHEN 'triage_finding' THEN 2
-                 ELSE 1 END,
+                 ELSE 3 END,
                  queued_at, job_id LIMIT 1"""
         ).fetchone()
         if row is None:
@@ -165,11 +167,13 @@ def peek_next_job(
         row = connection.execute(
             f"""SELECT job_id FROM intelligence_jobs WHERE status IN {statuses}
                ORDER BY CASE action
-                 WHEN 'analyze_research_case' THEN 0
-                 WHEN 'generate_analyst_brief' THEN 0
-                 WHEN 'review_publication_safety' THEN 0
+                 WHEN 'execute_specialist_work' THEN 0
+                 WHEN 'review_specialist_work' THEN 0
+                 WHEN 'analyze_research_case' THEN 1
+                 WHEN 'generate_analyst_brief' THEN 1
+                 WHEN 'review_publication_safety' THEN 1
                  WHEN 'triage_finding' THEN 2
-                 ELSE 1 END,
+                 ELSE 3 END,
                  CASE status WHEN 'queued' THEN 0 ELSE 1 END,
                  queued_at, job_id LIMIT 1"""
         ).fetchone()
@@ -530,11 +534,13 @@ def bind_legacy_queued_job_models(
             """SELECT job_id, input_json FROM intelligence_jobs
                WHERE status='queued'
                ORDER BY CASE action
-                 WHEN 'analyze_research_case' THEN 0
-                 WHEN 'generate_analyst_brief' THEN 0
-                 WHEN 'review_publication_safety' THEN 0
+                 WHEN 'execute_specialist_work' THEN 0
+                 WHEN 'review_specialist_work' THEN 0
+                 WHEN 'analyze_research_case' THEN 1
+                 WHEN 'generate_analyst_brief' THEN 1
+                 WHEN 'review_publication_safety' THEN 1
                  WHEN 'triage_finding' THEN 2
-                 ELSE 1 END,
+                 ELSE 3 END,
                  queued_at, job_id LIMIT ?""",
             (bounded_limit,),
         ).fetchall()

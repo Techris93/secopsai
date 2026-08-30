@@ -263,7 +263,10 @@ def _run_worker_cycle_unlocked(
 ) -> Dict[str, Any]:
     """Run one worker cycle: due collectors, scoring, retries, recovery."""
     initialize_observability(service="secopsai-research-worker")
-    storage = _writer_stage(db_path, lambda: maintain_research_storage(db_path=db_path))
+    # Storage maintenance serializes only its bounded write sections.  Do not
+    # wrap it in the worker lock: capacity probes (notably freelist_count) are
+    # read-only but can scan a multi-gigabyte database for minutes.
+    storage = maintain_research_storage(db_path=db_path)
     fetcher = fetcher or SafeFetcher()
     try:
         # External threat-intel is a separate signal from registry telemetry.

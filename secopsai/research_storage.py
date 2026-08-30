@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
 
 import soc_store
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 DEFAULT_RESERVE_BYTES = 1024 * 1024
@@ -250,8 +251,20 @@ def _file_size(path: Path) -> int:
         return 0
 
 
-def storage_status(*, db_path: Optional[str] = None) -> Dict[str, Any]:
-    """Return database and filesystem capacity without modifying either."""
+def storage_status(
+    *,
+    db_path: Optional[str] = None,
+    include_page_stats: bool = True,
+    include_freelist: bool = False,
+) -> Dict[str, Any]:
+    """Return database and filesystem capacity without modifying either.
+
+    SQLite page-count and freelist pragmas walk database b-trees and can be
+    expensive on a multi-gigabyte ledger. Capacity checks used by the
+    continuous worker therefore omit page statistics; explicit
+    maintenance/diagnostic callers can opt in when reclaimable-page detail is
+    required. ``include_freelist`` implies ``include_page_stats``.
+    """
     database = _resolved_db_path(db_path)
     root = database.parent
     root.mkdir(parents=True, exist_ok=True)
@@ -260,13 +273,15 @@ def storage_status(*, db_path: Optional[str] = None) -> Dict[str, Any]:
     page_size = 0
     page_count = 0
     freelist_count = 0
-    if database.exists():
+    if database.exists() and (include_page_stats or include_freelist):
         try:
             connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=5)
             try:
                 page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
-                page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
-                freelist_count = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
+                if include_page_stats or include_freelist:
+                    page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
+                if include_freelist:
+                    freelist_count = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
             finally:
                 connection.close()
         except sqlite3.Error:
@@ -316,7 +331,7 @@ def ensure_storage_reserve(*, db_path: Optional[str] = None) -> int:
     current = _file_size(reserve)
     if current == configured:
         return current
-    status = storage_status(db_path=db_path)
+    status = storage_status(db_path=db_path, include_page_stats=False)
     if status["filesystem_free_bytes"] <= configured + status["minimum_free_bytes"]:
         return current
     reserve.parent.mkdir(parents=True, exist_ok=True)
@@ -394,11 +409,53 @@ def maintain_research_storage(
     aggressive: bool = False,
 ) -> Dict[str, Any]:
     """Prune bounded operational history and make freed pages reusable."""
-    before = storage_status(db_path=db_path)
+    before = storage_status(db_path=db_path, include_page_stats=False)
     released = release_storage_reserve(db_path=db_path) if before["pressure"] or aggressive else 0
     database = _resolved_db_path(db_path)
+    batch_size = _env_int("SECOPSAI_STORAGE_PRUNE_BATCH_SIZE", DEFAULT_BATCH_SIZE, minimum=100)
+    max_batches = 200 if aggressive or before["pressure"] else 4
+    deleted: Dict[str, int] = {}
+    # Hold the cross-process writer lock only for schema setup and bounded
+    # deletes.  The expensive read-only capacity probes above/below stay
+    # outside the lock so dashboard requests and bridge heartbeats are not
+    # blocked for minutes on a large SQLite ledger.
     try:
-        soc_store.init_db(str(database))
+        with sqlite_writer_lock(str(database)):
+            soc_store.init_db(str(database))
+            with closing(soc_store.connect(str(database))) as connection:
+                for table, predicate, params in _prune_rules():
+                    count = _delete_batches(
+                        connection,
+                        table=table,
+                        predicate=predicate,
+                        params=params,
+                        batch_size=batch_size,
+                        max_batches=max_batches,
+                    )
+                    deleted[table] = deleted.get(table, 0) + count
+
+                keep_snapshots = _env_int("SECOPSAI_RESEARCH_SNAPSHOTS_PER_COLLECTOR", 2, minimum=1)
+                deleted["registry_snapshots"] = _delete_batches(
+                    connection,
+                    table="registry_snapshots",
+                    predicate="""rowid IN (
+                        SELECT rowid FROM (
+                            SELECT rowid,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY collector_id ORDER BY created_at DESC
+                                   ) AS rank
+                            FROM registry_snapshots
+                        ) WHERE rank > ?
+                    )""",
+                    params=(keep_snapshots,),
+                    batch_size=batch_size,
+                    max_batches=max_batches,
+                )
+                connection.execute("PRAGMA optimize")
+                try:
+                    connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except sqlite3.Error:
+                    pass
     except sqlite3.OperationalError as exc:
         if "full" in str(exc).lower():
             raise ResearchStorageCapacityError(
@@ -407,55 +464,26 @@ def maintain_research_storage(
             ) from exc
         raise
 
-    batch_size = _env_int("SECOPSAI_STORAGE_PRUNE_BATCH_SIZE", DEFAULT_BATCH_SIZE, minimum=100)
-    max_batches = 200 if aggressive or before["pressure"] else 4
-    deleted: Dict[str, int] = {}
-    with closing(soc_store.connect(str(database))) as connection:
-        for table, predicate, params in _prune_rules():
-            count = _delete_batches(
-                connection,
-                table=table,
-                predicate=predicate,
-                params=params,
-                batch_size=batch_size,
-                max_batches=max_batches,
-            )
-            deleted[table] = deleted.get(table, 0) + count
-
-        keep_snapshots = _env_int("SECOPSAI_RESEARCH_SNAPSHOTS_PER_COLLECTOR", 2, minimum=1)
-        deleted["registry_snapshots"] = _delete_batches(
-            connection,
-            table="registry_snapshots",
-            predicate="""rowid IN (
-                SELECT rowid FROM (
-                    SELECT rowid,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY collector_id ORDER BY created_at DESC
-                           ) AS rank
-                    FROM registry_snapshots
-                ) WHERE rank > ?
-            )""",
-            params=(keep_snapshots,),
-            batch_size=batch_size,
-            max_batches=max_batches,
-        )
-        connection.execute("PRAGMA optimize")
-        try:
-            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        except sqlite3.Error:
-            pass
-
     vacuumed = False
-    mid = storage_status(db_path=str(database))
+    mid = storage_status(
+        db_path=str(database),
+        include_page_stats=aggressive,
+        include_freelist=aggressive,
+    )
     if aggressive and mid["sqlite_reclaimable_bytes"] > 0:
         required = mid["database_bytes"] + (64 * 1024 * 1024)
         if mid["filesystem_free_bytes"] > required:
-            with closing(sqlite3.connect(str(database), timeout=30)) as connection:
-                connection.execute("VACUUM")
+            with sqlite_writer_lock(str(database)):
+                with closing(sqlite3.connect(str(database), timeout=30)) as connection:
+                    connection.execute("VACUUM")
             vacuumed = True
 
     reserve = ensure_storage_reserve(db_path=str(database))
-    after = storage_status(db_path=str(database))
+    after = storage_status(
+        db_path=str(database),
+        include_page_stats=aggressive,
+        include_freelist=aggressive,
+    )
     return {
         "before": before,
         "after": after,

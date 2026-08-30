@@ -100,6 +100,37 @@ def test_storage_maintenance_prunes_only_bounded_operational_history(tmp_path, m
     assert snapshot_count == 2
 
 
+def test_storage_retention_predicates_have_supporting_indexes(tmp_path):
+    db_path = _db(tmp_path)
+    soc_store.init_db(db_path)
+
+    required = {
+        "idx_registry_feed_events_retention",
+        "idx_registry_feed_events_ecosystem_state_time",
+        "idx_research_registry_events_retention",
+        "idx_registry_ingestion_runs_retention",
+        "idx_research_monitor_runs_retention",
+        "idx_registry_coverage_retention",
+        "idx_registry_dead_letters_retention",
+        "idx_research_notification_deliveries_retention",
+        "idx_research_npm_release_analyses_status",
+        "idx_research_npm_enrichment_runs_retention",
+        "idx_registry_snapshots_collector",
+        "idx_research_candidates_event",
+        "idx_research_case_findings_finding",
+        "idx_research_pipeline_steps_intelligence_job",
+    }
+    with soc_store.connect(db_path) as connection:
+        present = {
+            str(row["name"])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            ).fetchall()
+        }
+
+    assert required <= present
+
+
 def test_storage_reserve_is_real_and_releasable(tmp_path, monkeypatch):
     monkeypatch.setenv("SECOPSAI_STORAGE_RESERVE_BYTES", "8192")
     monkeypatch.setenv("SECOPSAI_STORAGE_MIN_FREE_BYTES", "0")
@@ -116,6 +147,18 @@ def test_storage_reserve_is_real_and_releasable(tmp_path, monkeypatch):
     assert status["database_bytes"] > 0
     assert release_storage_reserve(db_path=db_path) == 8192
     assert not reserve.exists()
+
+
+def test_storage_status_can_skip_large_page_statistics(tmp_path):
+    db_path = _db(tmp_path)
+    soc_store.init_db(db_path)
+
+    fast = storage_status(db_path=db_path, include_page_stats=False)
+    assert fast["sqlite_page_count"] == 0
+    assert fast["sqlite_freelist_pages"] == 0
+
+    detailed = storage_status(db_path=db_path, include_freelist=True)
+    assert detailed["sqlite_page_count"] > 0
 
 
 def test_storage_cli_dispatches_status_and_maintenance(tmp_path, monkeypatch, capsys):

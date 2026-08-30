@@ -1526,6 +1526,8 @@ def init_db(db_path: str | None = None) -> None:
                 ON research_candidates (status, score DESC, last_seen DESC);
             CREATE INDEX IF NOT EXISTS idx_research_candidates_ecosystem_package
                 ON research_candidates (ecosystem, package, version);
+            CREATE INDEX IF NOT EXISTS idx_research_candidates_event
+                ON research_candidates (event_id);
             CREATE INDEX IF NOT EXISTS idx_research_monitors_due
                 ON research_monitors (enabled, next_run_at);
             CREATE INDEX IF NOT EXISTS idx_research_alerts_status_time
@@ -1540,24 +1542,46 @@ def init_db(db_path: str | None = None) -> None:
                 ON research_npm_release_analyses (status, updated_at);
             CREATE INDEX IF NOT EXISTS idx_research_npm_enrichment_runs_started
                 ON research_npm_enrichment_runs (started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_npm_enrichment_runs_retention
+                ON research_npm_enrichment_runs (status, completed_at);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_registry_one_running
                 ON registry_ingestion_runs (collector_id) WHERE status = 'running';
             CREATE INDEX IF NOT EXISTS idx_registry_ingestion_runs_collector_started
                 ON registry_ingestion_runs (collector_id, started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_registry_ingestion_runs_retention
+                ON registry_ingestion_runs (status, started_at);
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_cursor
                 ON registry_feed_events (collector_id, registry_timestamp);
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_processing_state_time
                 ON registry_feed_events (processing_state, registry_timestamp);
+            CREATE INDEX IF NOT EXISTS idx_registry_feed_events_ecosystem_state_time
+                ON registry_feed_events (ecosystem, processing_state, registry_timestamp, feed_event_id);
+            CREATE INDEX IF NOT EXISTS idx_registry_feed_events_retention
+                ON registry_feed_events (processing_state, collected_at);
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_package
                 ON registry_feed_events (ecosystem, package, version);
             CREATE INDEX IF NOT EXISTS idx_registry_dead_letters_due
                 ON registry_dead_letters (status, next_retry_at);
             CREATE INDEX IF NOT EXISTS idx_registry_dead_letters_collector_status
                 ON registry_dead_letters (collector_id, status);
+            CREATE INDEX IF NOT EXISTS idx_registry_dead_letters_retention
+                ON registry_dead_letters (status, updated_at);
             CREATE INDEX IF NOT EXISTS idx_registry_coverage_state
                 ON registry_coverage_windows (collector_id, state, window_start);
+            CREATE INDEX IF NOT EXISTS idx_registry_coverage_retention
+                ON registry_coverage_windows (state, created_at);
             CREATE INDEX IF NOT EXISTS idx_registry_snapshots_collector
                 ON registry_snapshots (collector_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_registry_events_retention
+                ON research_registry_events (observed_at);
+            CREATE INDEX IF NOT EXISTS idx_research_monitor_runs_retention
+                ON research_monitor_runs (status, started_at);
+            CREATE INDEX IF NOT EXISTS idx_research_notification_deliveries_retention
+                ON research_notification_deliveries (status, updated_at);
+            CREATE INDEX IF NOT EXISTS idx_research_case_findings_finding
+                ON research_case_findings (finding_id, case_id);
+            CREATE INDEX IF NOT EXISTS idx_research_pipeline_steps_intelligence_job
+                ON research_pipeline_steps (intelligence_job_id, status);
                 """
             )
             for table in ("research_subjects", "research_evidence", "research_iocs"):
