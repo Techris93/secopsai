@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import secopsai.research_specialist_automation as specialist_automation
 from secopsai.codex_bridge import persist_model_routing
 from secopsai.research_cases import add_evidence, add_subject, create_case, get_case, update_case
 from secopsai.research_specialist_automation import route_cases, sync_completed_reviews
@@ -120,3 +121,39 @@ def test_completed_independent_review_attaches_once_without_approval(tmp_path: P
             if item.get("locator") == f"specialist-review:{run_id}"
         ]
     ) == 1
+
+
+def test_daily_specialist_cycle_advances_reliability_before_draft_handoff(monkeypatch) -> None:
+    order: list[str] = []
+
+    monkeypatch.setattr(
+        specialist_automation,
+        "sync_completed_reviews",
+        lambda **_: order.append("sync") or {"status": "completed", "attached": []},
+    )
+    monkeypatch.setattr(
+        specialist_automation,
+        "run_guarded_reliability_batch",
+        lambda **_: order.append("reliability") or {
+            "status": "completed",
+            "processed": [
+                {
+                    "case_id": "RSC-FIXTURE",
+                    "stopped_at": "awaiting_model_review",
+                    "reused": False,
+                }
+            ],
+            "skipped": [],
+        },
+    )
+    monkeypatch.setattr(
+        specialist_automation,
+        "create_approved_review_drafts",
+        lambda **_: order.append("drafts") or {"status": "completed", "created": []},
+    )
+
+    result = specialist_automation.run_cycle(limit=5)
+
+    assert order == ["sync", "reliability", "drafts"]
+    assert result["case_routing"]["status"] == "integrated"
+    assert result["case_routing"]["routed"][0]["case_id"] == "RSC-FIXTURE"

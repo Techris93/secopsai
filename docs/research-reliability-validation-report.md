@@ -10,7 +10,7 @@ The execution-grounded research path is implemented as one guarded pipeline:
 
 `Discovery -> hypotheses -> safety/scope -> evidence plan -> scaffold -> transition -> full safe research -> immutable run bundle -> claim ledger -> specialist review -> blind review -> audits -> publication gate`
 
-All core and dashboard regression checks completed successfully during this validation. The full Core suite completed with **683 passed, 4 subtests passed, and 16 warnings**. No package, build script, extension, binary, container, or payload was executed. The deterministic benchmark passed with zero unsupported claims, zero false positives, zero false negatives, complete claim coverage, and complete publication-block accuracy under the full-control fixture mode.
+All core and dashboard regression checks completed successfully during this validation. The full Core suite completed with **689 passed, 4 subtests passed, and 16 warnings**. No package, build script, extension, binary, container, or payload was executed. The deterministic benchmark passed with zero unsupported claims, zero false positives, zero false negatives, complete claim coverage, and complete publication-block accuracy under the full-control fixture mode.
 
 ## Traceability Matrix
 
@@ -28,6 +28,7 @@ All core and dashboard regression checks completed successfully during this vali
 | Specialist plus blinded review | Independent reviewer receives bundle/claims without primary verdict; disagreement persisted | Specialist/blind-review/adjudication tests | Review and adjudication cards |
 | Resource-aware orchestration | CPU/RSS/disk/queue/model/latency/cost snapshots and durable busy/heartbeat state | Bridge/job tests and bundle assertions | Models, Jobs, and run cards |
 | Explicit model routing | Selected OpenCodex model and fallback policy are persisted and snapshotted; no silent switch | Model persistence and probe-scope tests | Automation -> Models |
+| Guarded reliability automation | Idempotent bounded coordinator advances deterministic gates and queues one selected-model read-only review | Reliability automation, duplicate-prevention, policy, and blocked-claim tests | Run Safe Automation and the six-hour daily workflow |
 | Typed APIs and allowlisted actions | Typed CLI and helper routes call direct functions or fixed argument arrays | CLI/API tests and dashboard tests | Button prerequisites and CLI fallback |
 | Adversarial evaluation | 15 isolated fixtures plus ablations for disabled controls and unconstrained baseline | `tests/test_research_reliability.py` benchmark assertions | Reliability Benchmark docs |
 | Visual publication verification | Desktop/mobile metadata, contrast, overflow, alt text, attribution, and licensing checks | Visual-QA tests | Visual QA card |
@@ -40,7 +41,7 @@ All core and dashboard regression checks completed successfully during this vali
 - `python3 -m py_compile secopsai/cli.py secopsai/supply_chain.py secopsai/rust_package_research.py secopsai/artifact_fleet.py secopsai/blog.py secopsai/research_reliability.py secopsai/specialist_orchestrator.py scripts/verify_docs_examples.py` — passed.
 - `.venv/bin/python -m pytest tests/test_research_reliability.py -q` — **15 passed**.
 - `.venv/bin/python -m pytest tests/test_research_reliability.py tests/test_verify_docs_examples.py tests/test_sqlite_writer_lock.py -q` — **25 passed**.
-- `.venv/bin/python -m pytest -q` — **683 passed, 4 subtests passed, 16 warnings** in 384.81 seconds.
+- `.venv/bin/python -m pytest -q` — **689 passed, 4 subtests passed, 16 warnings** in 426.04 seconds after the lock and guarded-automation changes.
 - `python3 scripts/verify_docs_examples.py` — `ok: true`, **14 documents**, **115 commands**.
 - `mkdocs build --strict` — passed. Existing informational notices identify legacy documents outside the pre-existing navigation; all new reliability documents are in navigation.
 - `git diff --check` — passed before release.
@@ -58,7 +59,37 @@ The full suite initially exposed two concrete regressions. The website copy test
 
 The signed-in local console was inspected at `http://127.0.0.1:45680`. Research Cases rendered without the former `artifacts is not defined` `ReferenceError`; the generic Automation -> Research pipeline rendered the adapter-driven workflow, safe-action explanations, selected-model controls, and publication separation. Static and runtime dashboard tests cover the reliability workspace, resolved-review gate, blocked actions, and Guide content.
 
-An eight-request concurrent read probe across collector status, coverage windows, feed events, and triage state returned `ok: true` for every request. A previously cached long-lived tab had shown a transient SQLite lock message while the 5.5 GB local store was under concurrent polling; the direct CLI and subsequent serialized/concurrent probes completed successfully without changing production data.
+The production-visible `Research discovery failed: database is locked` error was
+traced to rollback-journal SQLite reads over a 5.5 GB local store containing
+about 5.45 million registry events. Collector status performed exact event
+recounts while writers ingested evidence, and each connection allowed only five
+seconds for contention. The schema migration now enables WAL once under the
+cross-process writer lock, uses a 30-second default busy timeout, exposes
+query-only read connections, and reads collector totals from the bounded
+ingestion ledger instead of recounting the event stream. Collector status fell
+from about 11.3 seconds to 0.83 seconds on the live database.
+
+A 24-request concurrent read probe returned **24/24 HTTP 200** responses with no
+lock error. A second probe held an active `BEGIN IMMEDIATE` writer transaction
+while requesting collectors, candidates, alerts, and triage state; all four
+requests returned HTTP 200 and the writer was rolled back. The live database
+readback reports WAL journal mode, schema version 7, and the durable guarded
+automation ledger.
+
+The persisted operational policy was also read back from the live store:
+guarded specialist routing is enabled, its automatic ceiling is read-only,
+independent review is required, and high-risk work remains approval-gated. The
+daily workflow is enabled on a six-hour interval and its latest run succeeded.
+That workflow now synchronizes completed reviews, advances every safe
+reliability gate, queues no duplicate model job, prepares only already-approved
+review drafts, and records the exact point where human or external action is
+required.
+
+The macOS research monitor is installed as `ai.secopsai.research-monitor` and
+wakes every 900 seconds. A forced post-fix cycle was run against the live store;
+launchd recorded run 1,478 with exit code 0 and the worker completed at
+`2026-08-30T11:29:45.850426Z`. Its error log was unchanged since 23 August,
+confirming that the verification cycle did not append another lock failure.
 
 ## Benchmark Evidence
 
@@ -83,6 +114,7 @@ Ablation results are retained for comparison only. They never disable controls i
 - Visual-QA checks store sanitized metadata and require human review of screenshots, licensing, and editorial presentation.
 - The benchmark is deterministic and offline; it demonstrates control behavior, not production threat prevalence or the performance of any external model.
 - Local SQLite remains appropriate for local-first operation. A shared high-volume deployment should use the documented transactional/hosted data-plane migration and monitor storage/reader contention.
+- Guarded automation cannot manufacture missing evidence. It records and reuses a waiting outcome until evidence, policy, or model-review state changes, preventing duplicate work and queue growth.
 - The methodology is adapted independently from the cited paper and does not imply affiliation, endorsement, or reproduction of protected material.
 
 ## Operator Acceptance Checklist

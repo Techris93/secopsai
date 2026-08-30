@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 import soc_store
 from secopsai.research_cases import add_evidence, draft_case_blog, get_case, list_cases
+from secopsai.research_reliability import run_guarded_reliability_batch
 from secopsai.research_workflow import build_evidence_matrix, publication_safety_check
 from secopsai.specialist_orchestrator import auto_route_task, get_policy
 
@@ -283,12 +284,24 @@ def create_approved_review_drafts(*, limit: int = 3, db_path: Optional[str] = No
 
 
 def run_cycle(*, limit: int = 5, db_path: Optional[str] = None) -> dict[str, Any]:
-    """Synchronize prior reviews, route new cases, and prepare approved drafts."""
+    """Synchronize reviews, advance safe gates, and prepare approved drafts."""
+    review_sync = sync_completed_reviews(limit=max(limit * 2, 10), db_path=db_path)
+    reliability_progress = run_guarded_reliability_batch(limit=limit, db_path=db_path)
     return {
         "schema_version": SCHEMA_VERSION,
         "status": "completed",
-        "review_sync": sync_completed_reviews(limit=max(limit * 2, 10), db_path=db_path),
-        "case_routing": route_cases(limit=limit, db_path=db_path),
+        "review_sync": review_sync,
+        "reliability_progress": reliability_progress,
+        "case_routing": {
+            "status": "integrated",
+            "reason": "Specialist routing now occurs only after the guarded full-bundle and claim-ledger gates.",
+            "routed": [
+                item
+                for item in reliability_progress.get("processed", [])
+                if item.get("stopped_at") == "awaiting_model_review"
+                and not item.get("reused")
+            ],
+        },
         "review_drafts": create_approved_review_drafts(limit=min(limit, 3), db_path=db_path),
         "operator_gates": [
             "specialist_result_acceptance",

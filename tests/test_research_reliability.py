@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 
 from secopsai import cli as cli_module
-from secopsai.research_cases import add_evidence, add_subject, create_case, get_case
+from secopsai.research_cases import add_evidence, add_subject, create_case, get_case, update_case
 from secopsai.research_reliability import (
     HYPOTHESIS_TYPES,
     audit_completeness,
@@ -22,6 +22,7 @@ from secopsai.research_reliability import (
     reliability_benchmark,
     publication_reliability_gate,
     revise_evidence_plan,
+    run_guarded_reliability_automation,
     run_full_safe_research,
     run_scaffold_research,
     screen_research_safety,
@@ -30,11 +31,95 @@ from secopsai.research_reliability import (
 from secopsai.codex_bridge import persist_model_routing
 from secopsai.specialist_orchestrator import (
     adjudicate_review_disagreement,
+    configure_policy,
     create_run,
+    list_runs,
     record_primary_result,
     record_review_result,
     specialist_bridge_context,
 )
+
+
+def test_guarded_automation_advances_safe_gates_once_and_queues_selected_model(tmp_path):
+    case_id, db = _case(tmp_path)
+    update_case(
+        case_id,
+        title="proc-macro1 1.0.107 source-first review",
+        summary="The investigation concerns proc-macro1@1.0.107.",
+        status="validation",
+        db_path=db,
+    )
+    persist_model_routing("xai/grok-4.6", fallback_mode="disabled", db_path=db)
+    configure_policy(mode="guarded", maximum_automatic_tier="read_only", db_path=db)
+
+    first = run_guarded_reliability_automation(case_id, db_path=db)
+    actions = [item["action"] for item in first["automated_steps"]]
+    assert actions[:7] == [
+        "generate_hypotheses",
+        "rank_hypotheses",
+        "create_plan",
+        "run_scaffold",
+        "verify_transition",
+        "run_full",
+        "build_claim_ledger",
+    ]
+    assert first["stopped_at"] == "awaiting_model_review"
+    assert first["protected_actions_performed"] == []
+    runs = [item for item in list_runs(db_path=db) if item["task_id"] == case_id]
+    assert len(runs) == 1
+    assert runs[0]["selected_model"] == "xai/grok-4.6"
+    assert runs[0]["fallback_mode"] == "disabled"
+
+    second = run_guarded_reliability_automation(case_id, db_path=db)
+    assert second["reused"] is True
+    assert second["automation_id"] == first["automation_id"]
+    assert len([item for item in list_runs(db_path=db) if item["task_id"] == case_id]) == 1
+    workspace = get_reliability_workspace(case_id, db_path=db)
+    assert workspace["automation_runs"][0]["automation_id"] == first["automation_id"]
+    assert workspace["automation_runs"][0]["protected_actions"] == []
+
+
+def test_guarded_automation_resumes_after_an_operator_disables_model_review(tmp_path):
+    case_id, db = _case(tmp_path)
+    update_case(
+        case_id,
+        title="proc-macro1 1.0.107 source-first review",
+        summary="The investigation concerns proc-macro1@1.0.107.",
+        status="validation",
+        db_path=db,
+    )
+    persist_model_routing("xai/grok-4.6", fallback_mode="disabled", db_path=db)
+    configure_policy(mode="guarded", maximum_automatic_tier="read_only", db_path=db)
+
+    paused = run_guarded_reliability_automation(
+        case_id,
+        include_model_review=False,
+        db_path=db,
+    )
+    assert paused["stopped_at"] == "model_review_disabled"
+    assert [item for item in list_runs(db_path=db) if item["task_id"] == case_id] == []
+
+    resumed = run_guarded_reliability_automation(case_id, db_path=db)
+    assert resumed["stopped_at"] == "awaiting_model_review"
+    assert resumed["reused"] is False
+    assert len([item for item in list_runs(db_path=db) if item["task_id"] == case_id]) == 1
+
+
+def test_guarded_automation_stops_at_unsupported_claims_without_clipping(tmp_path):
+    case_id, db = _case(tmp_path)
+    update_case(
+        case_id,
+        summary="CVE-2099-99999 affected 82 victims on 2099-01-01.",
+        status="validation",
+        db_path=db,
+    )
+
+    result = run_guarded_reliability_automation(case_id, include_model_review=False, db_path=db)
+    assert result["stopped_at"] == "evidence_or_claim_review_required"
+    assert result["protected_actions_performed"] == []
+    workspace = get_reliability_workspace(case_id, db_path=db)
+    assert any(item["support_status"] in {"unsupported", "contradicted"} for item in workspace["claim_ledger"])
+    assert workspace["claim_revisions"] == []
 
 
 def _case(tmp_path, *, sandbox: bool = False) -> tuple[str, str]:
@@ -402,6 +487,15 @@ def test_reliability_cli_executes_typed_case_stages_and_benchmark(tmp_path, caps
     assert outputs[4]["status"] == "succeeded"
     assert outputs[5]["payload"]["configuration"]["execution_performed"] is False
     assert outputs[6]["run_bundles"]
+
+    code = cli_module.main([
+        "--json", "research", "reliability", "auto", case_id,
+        "--no-model-review", "--db-path", db,
+    ])
+    automated = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert automated["schema_version"] == "secopsai.research-reliability-automation.v1"
+    assert automated["protected_actions_performed"] == []
 
     code = cli_module.main(["--json", "research", "reliability", "benchmark"])
     benchmark = json.loads(capsys.readouterr().out)

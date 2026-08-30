@@ -2255,32 +2255,46 @@ def recover_interrupted_runs(*, max_age_seconds: int = 3600, db_path: Optional[s
 
 def collector_status(*, ecosystem: Optional[str] = None, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
     """Operational status per collector: cursor lag, last run, gaps, failures."""
-    collectors = ensure_collectors(db_path=db_path)
+    collectors = [
+        collector
+        for collector in ensure_collectors(db_path=db_path)
+        if not ecosystem or collector["ecosystem"] == ecosystem
+    ]
     now = _utcnow()
     report: List[Dict[str, Any]] = []
-    with closing(soc_store.connect(db_path)) as connection:
+    retention_risks: List[tuple[Dict[str, Any], Dict[str, Any]]] = []
+    with closing(soc_store.read_connect(db_path)) as connection:
+        cursor_rows = {
+            str(row["collector_id"]): row
+            for row in connection.execute("SELECT * FROM registry_cursors").fetchall()
+        }
+        # Feed events can number in the millions. The ingestion ledger already
+        # records every successful insert, so status reads use that bounded
+        # operational ledger instead of recounting the artifact stream.
+        event_totals = {
+            str(row["collector_id"]): int(row["total"] or 0)
+            for row in connection.execute(
+                "SELECT collector_id, SUM(events_stored) AS total FROM registry_ingestion_runs GROUP BY collector_id"
+            ).fetchall()
+        }
+        dead_letter_totals = {
+            str(row["collector_id"]): int(row["total"] or 0)
+            for row in connection.execute(
+                "SELECT collector_id, COUNT(*) AS total FROM registry_dead_letters WHERE status='pending' GROUP BY collector_id"
+            ).fetchall()
+        }
+        gap_totals = {
+            str(row["collector_id"]): int(row["total"] or 0)
+            for row in connection.execute(
+                "SELECT collector_id, COUNT(*) AS total FROM registry_coverage_windows WHERE state='gap' GROUP BY collector_id"
+            ).fetchall()
+        }
         for collector in collectors:
-            if ecosystem and collector["ecosystem"] != ecosystem:
-                continue
             collector_id = collector["collector_id"]
-            cursor = connection.execute(
-                "SELECT * FROM registry_cursors WHERE collector_id = ?", (collector_id,)
-            ).fetchone()
+            cursor = cursor_rows.get(collector_id)
             last_run = connection.execute(
                 """SELECT * FROM registry_ingestion_runs WHERE collector_id = ?
                 ORDER BY started_at DESC LIMIT 1""",
-                (collector_id,),
-            ).fetchone()
-            events = connection.execute(
-                "SELECT COUNT(*) AS total FROM registry_feed_events WHERE collector_id = ?",
-                (collector_id,),
-            ).fetchone()
-            dead_letters = connection.execute(
-                "SELECT COUNT(*) AS total FROM registry_dead_letters WHERE collector_id = ? AND status = 'pending'",
-                (collector_id,),
-            ).fetchone()
-            gaps = connection.execute(
-                "SELECT COUNT(*) AS total FROM registry_coverage_windows WHERE collector_id = ? AND state = 'gap'",
                 (collector_id,),
             ).fetchone()
             snapshot = connection.execute(
@@ -2294,7 +2308,7 @@ def collector_status(*, ecosystem: Optional[str] = None, db_path: Optional[str] 
             if retention is not None:
                 lag_seconds = retention["cursor_age_seconds"]
                 if retention["retention_risk"]:
-                    _raise_retention_alert(collector=collector, state=retention, db_path=db_path)
+                    retention_risks.append((collector, retention))
             elif cursor_value and COLLECTOR_DEFINITIONS.get(collector["ecosystem"], {}).get("cursor_seed") == "lookback":
                 lag_seconds = max(0.0, (now - _parse_ts(cursor_value)).total_seconds())
             report.append(
@@ -2306,15 +2320,20 @@ def collector_status(*, ecosystem: Optional[str] = None, db_path: Optional[str] 
                     "enabled": bool(collector["enabled"]),
                     "cursor": cursor_value,
                     "lag_seconds": lag_seconds,
-                    "events_stored": int(events["total"]),
-                    "pending_dead_letters": int(dead_letters["total"]),
-                    "coverage_gaps": int(gaps["total"]),
+                    "events_stored": event_totals.get(collector_id, 0),
+                    "events_stored_source": "ingestion_ledger",
+                    "pending_dead_letters": dead_letter_totals.get(collector_id, 0),
+                    "coverage_gaps": gap_totals.get(collector_id, 0),
                     "last_run": dict(last_run) if last_run else None,
                     "last_snapshot": dict(snapshot) if snapshot else None,
                     "retention": retention,
                     "algorithm_version": ALGORITHM_VERSION,
                 }
             )
+    # Status computation stays query-only. Retention alerts are emitted only
+    # after the read snapshot closes, avoiding read-to-write lock upgrades.
+    for collector, retention in retention_risks:
+        _raise_retention_alert(collector=collector, state=retention, db_path=db_path)
     return report
 
 

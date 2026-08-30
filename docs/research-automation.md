@@ -18,6 +18,17 @@ for the data contract and methodology traceability. This is an independent
 defensive adaptation of the reliability ideas in the cited arXiv paper, not a
 model-generated source of truth.
 
+The daily research specialist step now runs the canonical guarded reliability
+coordinator before model routing. It can automatically generate and rank
+hypotheses, create the evidence plan, run scaffold/transition/full static
+gates, build and verify claims, queue one selected-model read-only specialist
+review under the persisted guarded policy, synchronize completed independent
+review, and run completeness/originality checks. It stops at unsupported
+claims, failed or pending model work, material disagreement, real visual
+evidence, or human publication approval. Sandbox submission, disclosure,
+publication, deployment, destructive response, and external communication are
+never automatic.
+
 For package and artifact investigations, use **Administration → Automation → Research pipeline** or:
 
 ```bash

@@ -187,6 +187,14 @@ with an auditable revision diff before a review-only draft can be created. See
 [Execution-Grounded Research Architecture](docs/execution-grounded-research-architecture.md)
 and [Research Reliability Operations](docs/research-reliability.md).
 
+Use **Run Safe Automation** to advance every deterministic gate that the current
+evidence supports. The same guarded coordinator runs during the enabled daily
+workflow, queues at most one selected-model read-only review, and resumes
+idempotently when evidence or review state changes. It stops for unsupported
+claims, reviewer disagreement, real visual evidence, publication approval,
+sandbox submission, disclosure, publishing, deployment, destructive response,
+and any external communication.
+
 [![Artifact Fleet funnel from metadata indexing to analyst review](docs/assets/mission-control/artifact-fleet.png)](docs/assets/mission-control/artifact-fleet.png)
 
 ### Research Cases

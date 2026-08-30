@@ -17,8 +17,12 @@ workflow. A case becomes publication-ready only when all hard gates pass.
 
 1. Open **Research -> Cases** and select the case.
 2. Scroll to **Evidence reliability workspace**. The **Next** card names the
-   single next action; do not skip a blocked prerequisite.
-3. Click **Generate Hypotheses**, then **Rank Hypotheses**. Review the selected
+   single next action. When the case has a structured subject and evidence,
+   click **Run Safe Automation**. It advances deterministic stages, queues at
+   most one guarded read-only specialist run, and stops at the next real
+   evidence or human decision boundary.
+3. Open **Manual stage controls and recovery** only to diagnose or rerun a
+   specific checkpoint. Click **Generate Hypotheses**, then **Rank Hypotheses**. Review the selected
    alternative and its falsifiers.
 4. Click **Create Evidence Plan**. If a source disappears or the method
    changes, use **Revise Evidence Plan**; the earlier revision remains visible.
@@ -42,11 +46,22 @@ workflow. A case becomes publication-ready only when all hard gates pass.
 The dashboard calls typed helper actions. It never executes a browser-supplied
 shell string, installs a dependency, or activates an artifact.
 
+The normal daily workflow invokes this same bounded coordinator for a limited
+newest-first set of evidence-bearing cases. Repeated cycles reuse an unchanged
+waiting result, so they do not create duplicate specialist jobs or repeatedly
+rewrite the same claim decision. The case shows the latest automation stop,
+reason, safe-step count, and next action directly below the primary button.
+
 ## CLI equivalent
 
 ```bash
 case_id=RSC-XXXXXXXXXXXXXXXX
 
+secopsai research reliability auto "$case_id" --json
+# Or advance up to five eligible cases during an operator cycle:
+secopsai research reliability auto-batch --limit 5 --json
+
+# Granular recovery controls:
 secopsai research reliability generate-hypotheses "$case_id" --json
 secopsai research reliability rank-hypotheses "$case_id" --candidate-budget 6 --comparison-budget 15 --json
 secopsai research reliability plan "$case_id" --json
@@ -62,6 +77,12 @@ secopsai research reliability audit-originality "$case_id" --json
 secopsai research reliability visual-qa "$case_id" --json
 secopsai research reliability status "$case_id" --json
 ```
+
+Safe automation stops rather than guessing when evidence is missing, claims
+remain unsupported or contradicted, the selected model is still running or
+failed, reviewers materially disagree, real desktop/mobile screenshots are
+absent, or publication approval is required. It never resolves those gates on
+the operator's behalf.
 
 To resolve a material reviewer disagreement, use the run ID shown in the
 workspace. The rationale is deliberately bounded and must name the evidence

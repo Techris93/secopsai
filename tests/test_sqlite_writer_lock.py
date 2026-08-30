@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import subprocess
 import sys
 import time
@@ -46,8 +47,8 @@ def test_writer_lock_uses_shared_file_and_sqlite_fallbacks(tmp_path: Path, monke
         connection.execute(
             "CREATE TABLE writer_load (source TEXT NOT NULL, attempt INTEGER NOT NULL, marker TEXT NOT NULL)"
         )
-        assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
-        assert str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower() == "delete"
+        assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 30000
+        assert str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower() == "wal"
 
     assert lock_path(db_path) == tmp_path / "core.db.writer.lock"
     attempts = [(db_path, source, index) for source in ("research", "edge") for index in range(10)]
@@ -102,6 +103,47 @@ def test_schema_version_fast_path_does_not_rewrite_during_reader_status(tmp_path
         connection.execute("BEGIN IMMEDIATE")
         soc_store.init_db(db_path)
         connection.rollback()
+
+
+def test_wal_reader_stays_available_during_exclusive_writer_transaction(tmp_path: Path):
+    db_path = str(tmp_path / "core.db")
+    soc_store.init_db(db_path)
+    with soc_store.connect(db_path) as writer:
+        writer.execute("CREATE TABLE reader_probe (value TEXT NOT NULL)")
+        writer.execute("INSERT INTO reader_probe (value) VALUES ('committed')")
+        writer.commit()
+        writer.execute("BEGIN EXCLUSIVE")
+        writer.execute("INSERT INTO reader_probe (value) VALUES ('uncommitted')")
+        started = time.monotonic()
+        with soc_store.read_connect(db_path) as reader:
+            rows = reader.execute("SELECT value FROM reader_probe ORDER BY value").fetchall()
+        elapsed = time.monotonic() - started
+        writer.rollback()
+
+    assert [str(row[0]) for row in rows] == ["committed"]
+    assert elapsed < 1.0
+
+
+def test_schema_upgrade_moves_existing_rollback_database_to_wal(tmp_path: Path):
+    db_path = str(tmp_path / "legacy.db")
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("CREATE TABLE legacy_probe (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO legacy_probe (value) VALUES ('preserved')")
+        connection.execute("PRAGMA user_version = 5")
+        connection.commit()
+
+    soc_store.init_db(db_path)
+    with soc_store.connect(db_path) as connection:
+        assert str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower() == "wal"
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == soc_store.SCHEMA_VERSION
+        assert connection.execute("SELECT value FROM legacy_probe").fetchone()[0] == "preserved"
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+    assert "research_reliability_automation_runs" in tables
 
 
 def test_registry_scoring_index_is_present(tmp_path: Path):

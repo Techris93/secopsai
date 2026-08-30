@@ -186,6 +186,8 @@ from secopsai.research_reliability import (
     rank_hypotheses as rank_research_hypotheses,
     record_visual_qa as record_research_visual_qa,
     reliability_benchmark as run_research_reliability_benchmark,
+    run_guarded_reliability_automation,
+    run_guarded_reliability_batch,
     revise_evidence_plan as revise_research_evidence_plan,
     run_full_safe_research,
     run_scaffold_research,
@@ -1837,6 +1839,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     reliability_status = reliability_sub.add_parser("status", help="Show the complete reliability workspace for one case")
     reliability_status.add_argument("case_id")
     reliability_status.add_argument("--db-path", default=None)
+    reliability_auto = reliability_sub.add_parser("auto", help="Advance every safe deterministic gate for one case and stop at the next human boundary")
+    reliability_auto.add_argument("case_id")
+    reliability_auto.add_argument("--max-steps", type=int, default=12)
+    reliability_auto.add_argument("--no-model-review", action="store_true")
+    reliability_auto.add_argument("--actor", default="operator")
+    reliability_auto.add_argument("--db-path", default=None)
+    reliability_auto_batch = reliability_sub.add_parser("auto-batch", help="Advance a bounded set of newest evidence-bearing cases")
+    reliability_auto_batch.add_argument("--limit", type=int, default=5)
+    reliability_auto_batch.add_argument("--actor", default="operator")
+    reliability_auto_batch.add_argument("--db-path", default=None)
     reliability_hypotheses = reliability_sub.add_parser("generate-hypotheses", help="Generate bounded competing falsifiable hypotheses")
     reliability_hypotheses.add_argument("case_id")
     reliability_hypotheses.add_argument("--refresh", action="store_true")
@@ -4058,6 +4070,20 @@ def main(argv: Optional[List[str]] = None) -> int:
 
                 if command == "status":
                     payload = get_research_reliability_workspace(args.case_id, db_path=args.db_path)
+                elif command == "auto":
+                    payload = run_guarded_reliability_automation(
+                        args.case_id,
+                        actor=args.actor,
+                        max_steps=args.max_steps,
+                        include_model_review=not args.no_model_review,
+                        db_path=args.db_path,
+                    )
+                elif command == "auto-batch":
+                    payload = run_guarded_reliability_batch(
+                        limit=args.limit,
+                        actor=args.actor,
+                        db_path=args.db_path,
+                    )
                 elif command == "generate-hypotheses":
                     payload = generate_research_hypotheses(args.case_id, refresh=args.refresh, actor=args.actor, db_path=args.db_path)
                 elif command == "rank-hypotheses":

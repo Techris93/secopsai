@@ -20,7 +20,7 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 7
 
 
 def default_db_path() -> str:
@@ -44,20 +44,31 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
         pass
 
     raw_timeout = os.environ.get("SECOPS_BUSY_TIMEOUT_MS", "").strip()
-    busy_timeout_ms = int(raw_timeout) if raw_timeout.isdigit() else 5000
+    busy_timeout_ms = int(raw_timeout) if raw_timeout.isdigit() else 30000
     connection = sqlite3.connect(resolved_path, timeout=max(30, busy_timeout_ms // 1000))
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
-    # Do not query or change journal_mode on every connection. In rollback
-    # mode that pragma can itself wait for an active writer, which turns a
-    # read-only dashboard request into another source of lock contention. The
-    # schema initializer verifies the journal mode once, while holding the
-    # cross-process writer lock.
+    connection.execute("PRAGMA synchronous = FULL")
+    connection.execute("PRAGMA wal_autocheckpoint = 1000")
+    # Do not query or change journal_mode on every connection. The schema
+    # initializer enables WAL once while holding the cross-process writer
+    # lock; status reads then avoid needless mode negotiations.
     try:
         os.chmod(resolved_path, 0o600)  # nosec B103
     except OSError:
         pass
+    return connection
+
+
+def read_connect(db_path: str | None = None) -> sqlite3.Connection:
+    """Open a query-only connection for dashboard and reporting reads.
+
+    WAL keeps these readers available while a collector commits new evidence;
+    query_only prevents a read path from accidentally becoming another writer.
+    """
+    connection = connect(db_path)
+    connection.execute("PRAGMA query_only = ON")
     return connection
 
 
@@ -87,9 +98,10 @@ def init_db(db_path: str | None = None) -> None:
             current_version = int(connection.execute("PRAGMA user_version").fetchone()[0] or 0)
             if current_version >= SCHEMA_VERSION:
                 return
-            journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
-            if journal_mode != "delete":
-                raise RuntimeError(f"unsupported SQLite journal mode for local Core DB: {journal_mode}")
+            journal_mode = str(connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]).lower()
+            if journal_mode != "wal":
+                raise RuntimeError(f"failed to enable WAL for local Core DB: {journal_mode}")
+            connection.execute("PRAGMA synchronous = FULL")
             connection.executescript(
                 """
             CREATE TABLE IF NOT EXISTS findings (
@@ -988,6 +1000,21 @@ def init_db(db_path: str | None = None) -> None:
                 FOREIGN KEY (bundle_id) REFERENCES research_run_bundles (bundle_id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS research_reliability_automation_runs (
+                automation_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                case_fingerprint TEXT NOT NULL,
+                status TEXT NOT NULL,
+                automated_steps_json TEXT NOT NULL,
+                stopped_at TEXT NOT NULL,
+                next_action TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                protected_actions_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS research_verdicts (
                 verdict_id TEXT PRIMARY KEY,
                 case_id TEXT NOT NULL,
@@ -1485,6 +1512,8 @@ def init_db(db_path: str | None = None) -> None:
                 ON research_claim_revisions (case_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_research_reliability_audits_case_type
                 ON research_reliability_audits (case_id, audit_type, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_reliability_automation_case_time
+                ON research_reliability_automation_runs (case_id, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_research_verdicts_case
                 ON research_verdicts (case_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_research_disclosures_case
@@ -1513,6 +1542,8 @@ def init_db(db_path: str | None = None) -> None:
                 ON research_npm_enrichment_runs (started_at DESC);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_registry_one_running
                 ON registry_ingestion_runs (collector_id) WHERE status = 'running';
+            CREATE INDEX IF NOT EXISTS idx_registry_ingestion_runs_collector_started
+                ON registry_ingestion_runs (collector_id, started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_cursor
                 ON registry_feed_events (collector_id, registry_timestamp);
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_processing_state_time
@@ -1521,6 +1552,8 @@ def init_db(db_path: str | None = None) -> None:
                 ON registry_feed_events (ecosystem, package, version);
             CREATE INDEX IF NOT EXISTS idx_registry_dead_letters_due
                 ON registry_dead_letters (status, next_retry_at);
+            CREATE INDEX IF NOT EXISTS idx_registry_dead_letters_collector_status
+                ON registry_dead_letters (collector_id, status);
             CREATE INDEX IF NOT EXISTS idx_registry_coverage_state
                 ON registry_coverage_windows (collector_id, state, window_start);
             CREATE INDEX IF NOT EXISTS idx_registry_snapshots_collector

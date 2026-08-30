@@ -18,6 +18,7 @@ from typing import Any, Iterable, Sequence
 from urllib.parse import urlparse
 
 import soc_store
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 SCHEMA_VERSION = "secopsai.execution-grounded-research.v1"
@@ -1826,6 +1827,11 @@ def get_reliability_workspace(case_id: str, *, db_path: str | None = None) -> di
         claim_rows = connection.execute("SELECT * FROM research_claim_ledger WHERE case_id=? ORDER BY updated_at DESC, source_kind, span_start", (case_id,)).fetchall()
         revision_rows = connection.execute("SELECT * FROM research_claim_revisions WHERE case_id=? ORDER BY created_at DESC", (case_id,)).fetchall()
         audit_rows = connection.execute("SELECT * FROM research_reliability_audits WHERE case_id=? ORDER BY created_at DESC", (case_id,)).fetchall()
+        automation_rows = connection.execute(
+            """SELECT * FROM research_reliability_automation_runs
+               WHERE case_id=? ORDER BY updated_at DESC, automation_id DESC LIMIT 20""",
+            (case_id,),
+        ).fetchall()
     bundles = []
     for row in bundle_rows:
         bundle = inspect_run_bundle(str(row["bundle_id"]), db_path=db_path)
@@ -1837,6 +1843,12 @@ def get_reliability_workspace(case_id: str, *, db_path: str | None = None) -> di
         item["evidence_ids"] = _decode(item.pop("evidence_ids_json", None), [])
         revisions.append(item)
     audits = [_decode_audit(row) for row in audit_rows]
+    automation_runs = []
+    for row in automation_rows:
+        item = _row_dict(row)
+        item["automated_steps"] = _decode(item.pop("automated_steps_json", None), [])
+        item["protected_actions"] = _decode(item.pop("protected_actions_json", None), [])
+        automation_runs.append(item)
     revised_claim_ids = {
         str(item.get("claim_id") or "")
         for item in revisions
@@ -1858,6 +1870,7 @@ def get_reliability_workspace(case_id: str, *, db_path: str | None = None) -> di
         "claim_revisions": revisions,
         "audits": audits,
         "latest_audits": latest_by_type,
+        "automation_runs": automation_runs,
         "specialist_review": _specialist_review_state(case_id, db_path),
         "next_action": _next_action(hypotheses, plans, bundles, effective_claims, latest_by_type, _specialist_review_state(case_id, db_path)),
     }
@@ -1893,6 +1906,348 @@ def _next_action(
         if audit_type not in audits or audits[audit_type]["status"] != "passed":
             return {"action": action, "label": label, "reason": f"The {audit_type.replace('_', ' ')} gate has not passed."}
     return {"action": "publication_review", "label": "Run publication safety", "reason": "Reliability gates passed; a human publication decision is still required."}
+
+
+_AUTOMATION_WAIT_STOPS = {
+    "evidence_or_claim_review_required",
+    "awaiting_model_review",
+    "model_review_failed",
+    "human_adjudication_required",
+    "visual_evidence_required",
+    "human_publication_approval_required",
+    "specialist_policy_required",
+}
+
+
+def _persist_automation_outcome(
+    case_id: str,
+    *,
+    case_fingerprint: str,
+    status: str,
+    automated_steps: list[dict[str, Any]],
+    stopped_at: str,
+    next_action: str,
+    reason: str,
+    actor: str,
+    db_path: str | None,
+) -> dict[str, Any]:
+    automation_id = _id("RRA")
+    now = soc_store.utc_now()
+    protected_actions: list[str] = []
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                """INSERT INTO research_reliability_automation_runs
+                (automation_id, case_id, case_fingerprint, status, automated_steps_json,
+                 stopped_at, next_action, reason, protected_actions_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    automation_id,
+                    case_id,
+                    case_fingerprint,
+                    status,
+                    _json(automated_steps),
+                    stopped_at,
+                    next_action,
+                    _bounded_text(reason, 4000),
+                    _json(protected_actions),
+                    now,
+                    now,
+                ),
+            )
+            _event(
+                connection,
+                case_id,
+                "research_reliability_automation",
+                f"Guarded reliability automation stopped at {stopped_at} after {len(automated_steps)} step(s).",
+                actor,
+                {
+                    "automation_id": automation_id,
+                    "next_action": next_action,
+                    "reason": reason,
+                    "protected_actions_performed": protected_actions,
+                },
+            )
+            connection.commit()
+    return {
+        "schema_version": "secopsai.research-reliability-automation.v1",
+        "automation_id": automation_id,
+        "case_id": case_id,
+        "status": status,
+        "automated_steps": automated_steps,
+        "stopped_at": stopped_at,
+        "next_action": next_action,
+        "reason": reason,
+        "human_or_external_gates": [
+            "unsupported_claim_resolution",
+            "material_review_disagreement",
+            "real_desktop_and_mobile_visual_evidence",
+            "publication_review_approval",
+            "sandbox_submission",
+            "disclosure_send",
+            "publish_approved",
+            "deployment",
+        ],
+        "protected_actions_performed": protected_actions,
+        "reused": False,
+    }
+
+
+def _reusable_automation_outcome(
+    case_id: str,
+    *,
+    case_fingerprint: str,
+    next_action: str,
+    review_status: str,
+    db_path: str | None,
+) -> dict[str, Any] | None:
+    with closing(soc_store.read_connect(db_path)) as connection:
+        row = connection.execute(
+            """SELECT * FROM research_reliability_automation_runs
+               WHERE case_id=? ORDER BY updated_at DESC, automation_id DESC LIMIT 1""",
+            (case_id,),
+        ).fetchone()
+    if not row:
+        return None
+    item = dict(row)
+    if (
+        item.get("case_fingerprint") != case_fingerprint
+        or item.get("next_action") != next_action
+        or item.get("stopped_at") not in _AUTOMATION_WAIT_STOPS
+    ):
+        return None
+    if item.get("stopped_at") == "awaiting_model_review" and review_status in {"failed", "canceled"}:
+        return None
+    if item.get("stopped_at") == "model_review_failed" and review_status not in {"failed", "canceled"}:
+        return None
+    if item.get("stopped_at") == "specialist_policy_required":
+        from secopsai.specialist_orchestrator import get_policy
+
+        policy = get_policy(db_path=db_path)
+        if policy.get("mode") == "guarded" and policy.get("maximum_automatic_tier") == "read_only":
+            return None
+    return {
+        "schema_version": "secopsai.research-reliability-automation.v1",
+        "automation_id": item["automation_id"],
+        "case_id": case_id,
+        "status": item["status"],
+        "automated_steps": _decode(item.get("automated_steps_json"), []),
+        "stopped_at": item["stopped_at"],
+        "next_action": item["next_action"],
+        "reason": item["reason"],
+        "human_or_external_gates": [
+            "unsupported_claim_resolution",
+            "material_review_disagreement",
+            "real_desktop_and_mobile_visual_evidence",
+            "publication_review_approval",
+            "sandbox_submission",
+            "disclosure_send",
+            "publish_approved",
+            "deployment",
+        ],
+        "protected_actions_performed": _decode(item.get("protected_actions_json"), []),
+        "reused": True,
+    }
+
+
+def _run_guarded_reliability_automation(
+    case_id: str,
+    *,
+    actor: str = "secopsai-reliability-automation",
+    max_steps: int = 12,
+    include_model_review: bool = True,
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Advance every safe reliability gate and stop at a real decision boundary.
+
+    The coordinator is idempotent for unchanged evidence and never clips
+    claims, adjudicates reviewers, fabricates screenshots, approves, submits,
+    publishes, deploys, or communicates externally.
+    """
+    bounded_steps = max(1, min(int(max_steps), 25))
+    case = _case(case_id, db_path)
+    fingerprint = _case_fingerprint(case)
+    initial = get_reliability_workspace(case_id, db_path=db_path)
+    initial_action = str((initial.get("next_action") or {}).get("action") or "review")
+    initial_review_status = str((initial.get("specialist_review") or {}).get("status") or "not_started")
+    reusable = _reusable_automation_outcome(
+        case_id,
+        case_fingerprint=fingerprint,
+        next_action=initial_action,
+        review_status=initial_review_status,
+        db_path=db_path,
+    )
+    if reusable:
+        return reusable
+
+    automated_steps: list[dict[str, Any]] = []
+    seen_actions: set[str] = set()
+
+    def stop(stopped_at: str, reason: str, *, status: str = "waiting") -> dict[str, Any]:
+        current = get_reliability_workspace(case_id, db_path=db_path)
+        next_action = str((current.get("next_action") or {}).get("action") or stopped_at)
+        return _persist_automation_outcome(
+            case_id,
+            case_fingerprint=_case_fingerprint(_case(case_id, db_path)),
+            status=status,
+            automated_steps=automated_steps,
+            stopped_at=stopped_at,
+            next_action=next_action,
+            reason=reason,
+            actor=actor,
+            db_path=db_path,
+        )
+
+    for _ in range(bounded_steps):
+        workspace = get_reliability_workspace(case_id, db_path=db_path)
+        action = str((workspace.get("next_action") or {}).get("action") or "review")
+        if action in seen_actions:
+            return stop(
+                "evidence_or_claim_review_required",
+                "The deterministic stage cannot advance until evidence or unsupported claims change.",
+            )
+        seen_actions.add(action)
+
+        if action == "generate_hypotheses":
+            result = generate_hypotheses(case_id, actor=actor, db_path=db_path)
+        elif action == "rank_hypotheses":
+            result = rank_hypotheses(case_id, model_call_budget=0, actor=actor, db_path=db_path)
+        elif action == "create_plan":
+            result = create_evidence_plan(case_id, actor=actor, db_path=db_path)
+        elif action == "run_scaffold":
+            result = run_scaffold_research(case_id, actor=actor, db_path=db_path)
+        elif action == "verify_transition":
+            result = verify_transition(case_id, actor=actor, db_path=db_path)
+        elif action == "run_full":
+            result = run_full_safe_research(case_id, actor=actor, db_path=db_path)
+        elif action == "build_claim_ledger":
+            result = extract_claim_ledger(
+                case_id,
+                source_kind="case_summary",
+                source_locator=case_id,
+                actor=actor,
+                db_path=db_path,
+            )
+        elif action == "verify_claims":
+            result = verify_claims(case_id, actor=actor, db_path=db_path)
+        elif action == "queue_specialist":
+            review = workspace.get("specialist_review") or {}
+            review_status = str(review.get("status") or "not_started")
+            if review_status != "not_started":
+                if review_status in {"failed", "canceled"}:
+                    return stop("model_review_failed", f"Specialist review stopped with status {review_status}; operator retry is required.")
+                return stop("awaiting_model_review", f"Specialist review is {review_status}; no duplicate model job was created.")
+            if not include_model_review:
+                # This is an operator-selected pause, not a durable provider
+                # wait. A later scheduled run with review enabled must be able
+                # to continue and queue the approved specialist.
+                return stop("model_review_disabled", "Automatic model review is disabled for this run.")
+            from secopsai.specialist_orchestrator import get_policy
+
+            policy = get_policy(db_path=db_path)
+            if policy.get("mode") != "guarded" or policy.get("maximum_automatic_tier") != "read_only":
+                return stop(
+                    "specialist_policy_required",
+                    "Enable guarded read-only specialist routing before model work can be queued automatically.",
+                )
+            result = queue_blinded_specialist_review(case_id, actor=actor, db_path=db_path)
+        elif action == "adjudicate_review":
+            return stop("human_adjudication_required", "Material reviewer disagreement requires an evidence-backed human decision.")
+        elif action == "audit_completeness":
+            result = audit_completeness(case_id, actor=actor, db_path=db_path)
+        elif action == "audit_originality":
+            result = audit_originality(case_id, actor=actor, db_path=db_path)
+        elif action == "visual_qa":
+            return stop(
+                "visual_evidence_required",
+                "Real desktop and mobile publication screenshots, contrast results, alt text, and image licensing require rendered evidence.",
+            )
+        elif action == "publication_review":
+            result = publication_reliability_gate(case_id, db_path=db_path)
+            automated_steps.append({"action": action, "status": "assessed", "result": result})
+            return stop(
+                "human_publication_approval_required",
+                "Reliability gates are assessed; a human must approve publication before draft, publish, or deployment actions.",
+            )
+        else:
+            return stop("operator_review_required", f"No guarded automation is defined for {action}.")
+
+        result_summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+        result_status = str(result.get("status") or result_summary.get("status") or "completed")
+        automated_steps.append({
+            "action": action,
+            "status": result_status,
+            "reference": result.get("bundle_id") or result.get("plan_id") or result.get("automation_id"),
+        })
+        if result_status in {"blocked", "failed", "error"}:
+            return stop(
+                "evidence_or_claim_review_required",
+                f"{action.replace('_', ' ')} returned {result_status}; evidence must change before retrying.",
+            )
+        if action == "queue_specialist":
+            return stop("awaiting_model_review", "The selected-model specialist and blinded review were queued once.")
+
+    return stop(
+        "automation_step_budget_reached",
+        f"The bounded automation budget of {bounded_steps} steps was reached; resume safely in the next cycle.",
+        status="partial",
+    )
+
+
+def run_guarded_reliability_automation(
+    case_id: str,
+    *,
+    actor: str = "secopsai-reliability-automation",
+    max_steps: int = 12,
+    include_model_review: bool = True,
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Serialize one idempotent guarded progression for a Research Case."""
+    with sqlite_writer_lock(db_path):
+        return _run_guarded_reliability_automation(
+            case_id,
+            actor=actor,
+            max_steps=max_steps,
+            include_model_review=include_model_review,
+            db_path=db_path,
+        )
+
+
+def run_guarded_reliability_batch(
+    *,
+    limit: int = 5,
+    actor: str = "secopsai-reliability-automation",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Advance a bounded newest-first set of evidence-bearing cases."""
+    from secopsai.research_cases import get_case, list_cases
+
+    bounded = max(1, min(int(limit), 25))
+    results: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    for summary in list_cases(db_path=db_path, limit=500):
+        if len(results) >= bounded:
+            break
+        case_id = str(summary.get("case_id") or "")
+        if summary.get("status") not in {"investigating", "validation", "ready_to_publish"}:
+            continue
+        case = get_case(case_id, db_path=db_path)
+        active_subjects = [item for item in case.get("subjects") or [] if item.get("status", "active") == "active"]
+        active_evidence = [item for item in case.get("evidence") or [] if item.get("status", "active") == "active"]
+        if not active_subjects or not active_evidence:
+            skipped.append({"case_id": case_id, "reason": "active_subject_and_evidence_required"})
+            continue
+        try:
+            results.append(run_guarded_reliability_automation(case_id, actor=actor, db_path=db_path))
+        except (ValueError, RuntimeError) as exc:
+            skipped.append({"case_id": case_id, "reason": str(exc)[:500]})
+    return {
+        "schema_version": "secopsai.research-reliability-automation-batch.v1",
+        "status": "completed",
+        "processed": results,
+        "skipped": skipped,
+        "protected_actions_performed": [],
+    }
 
 
 def _load_reliability_benchmark_fixtures() -> tuple[list[dict[str, Any]], str]:
