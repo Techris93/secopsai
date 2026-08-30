@@ -2,6 +2,12 @@
 
 SecOpsAI Research Discovery turns supported registry observations into reviewable candidates. It is a lead-generation system, not an automatic maliciousness verdict.
 
+For the distinction between active coverage gaps, historical windows, stale
+cursors, and bounded queue recovery, see
+[Operational Queue Recovery](operational-queue-recovery.md). Historical gap
+rows remain immutable audit evidence; only the current coverage state drives
+operator alerts.
+
 ## Coverage model
 
 The capability registry is authoritative:

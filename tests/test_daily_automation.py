@@ -1,3 +1,6 @@
+import sqlite3
+
+import soc_store
 from secopsai import daily_automation
 
 
@@ -16,6 +19,10 @@ def _stub_modules(monkeypatch, *, fail_step=None):
     monkeypatch.setattr(
         "secopsai.research.build_preflight_report",
         stub("health_preflight"),
+    )
+    monkeypatch.setattr(
+        "secopsai.intelligence_jobs.recover_transient_jobs",
+        stub("intelligence_queue_recovery"),
     )
     monkeypatch.setattr(
         "secopsai.research_worker.run_worker_cycle",
@@ -63,10 +70,11 @@ def test_daily_cycle_runs_all_steps_and_is_persisted(tmp_path, monkeypatch):
     result = daily_automation.run_cycle(db_path=db, trigger="test", force=True)
 
     assert result["status"] == "succeeded"
-    assert result["summary"]["completed_steps"] == 10
+    assert result["summary"]["completed_steps"] == 11
     assert result["summary"]["failed_steps"] == 0
     assert calls == [
         "health_preflight",
+        "intelligence_queue_recovery",
         "registry_surveillance",
         "candidate_promotion",
         "artifact_fleet_safe_cycle",
@@ -78,7 +86,7 @@ def test_daily_cycle_runs_all_steps_and_is_persisted(tmp_path, monkeypatch):
         "operational_alert_delivery",
     ]
     stored = daily_automation.get_run(result["run_id"], db_path=db)
-    assert len(stored["steps"]) == 10
+    assert len(stored["steps"]) == 11
     assert stored["steps"][0]["status"] == "succeeded"
     status = daily_automation.status(db_path=db)
     assert status["summary"]["last_status"] == "succeeded"
@@ -119,3 +127,22 @@ def test_daily_settings_reject_unsafe_limits(tmp_path):
         assert "interval" in str(exc)
     else:
         raise AssertionError("unsafe automation interval was accepted")
+
+
+def test_daily_step_retries_only_transient_sqlite_lock(tmp_path, monkeypatch):
+    db = str(tmp_path / "soc.db")
+    soc_store.init_db(db)
+    created = daily_automation._create_run(trigger="test", db_path=db)
+    attempts = {"count": 0}
+
+    def callback():
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return {"status": "ok"}
+
+    monkeypatch.setattr(daily_automation.time, "sleep", lambda _seconds: None)
+    result = daily_automation._record_step(created["run_id"], "lock-retry", callback, db_path=db)
+    assert result["status"] == "succeeded"
+    assert result["result"]["sqlite_retries"] == 1
+    assert attempts["count"] == 2

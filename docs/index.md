@@ -54,6 +54,7 @@ behind explicit capability and approval boundaries.
 - [Research Reliability Benchmark](research-reliability-benchmark.md)
 - [Reliability Validation Report](research-reliability-validation-report.md)
 - [Research Discovery Platform](research-discovery.md)
+- [Operational Queue Recovery](operational-queue-recovery.md)
 - [Triage Orchestrator](triage-orchestrator.md)
 - [Adaptive Response Layer](adaptive-response.md)
 - [Rules Registry](rules-registry.md)

@@ -6,7 +6,7 @@ import sqlite3
 import uuid
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Sequence
 
 import soc_store
 
@@ -428,20 +428,55 @@ def mark_queued_jobs_awaiting_provider(
 def release_waiting_provider_jobs(
     *,
     provider: str,
+    selected_model: str | None = None,
+    fallback_models: Sequence[str] | None = None,
+    fallback_mode: str | None = None,
+    limit: int = 100,
     actor: str = "bridge-health",
     db_path: str | None = None,
 ) -> dict[str, Any]:
-    """Return provider-waiting triage jobs to the normal queue after recovery."""
+    """Return compatible provider-waiting jobs to the normal queue.
+
+    Older jobs may not have captured a model in their bounded input. Bind those
+    legacy rows to the currently selected model before releasing them. Jobs
+    captured for a different model stay parked so an operator selection is
+    never silently replaced by a provider fallback.
+    """
+    provider = _clean(provider, 80)
+    selected_model = _clean(selected_model, 200) if selected_model else ""
     soc_store.init_db(db_path)
     now = soc_store.utc_now()
     released: list[str] = []
+    skipped: list[str] = []
+    legacy_model_bound: list[str] = []
+    bounded_limit = max(1, min(int(limit), 500))
     with closing(soc_store.connect(db_path)) as connection:
         rows = connection.execute(
-            "SELECT job_id FROM intelligence_jobs WHERE status=? AND action='triage_finding' ORDER BY queued_at, job_id",
-            (WAITING_PROVIDER_STATUS,),
+            "SELECT job_id, input_json FROM intelligence_jobs WHERE status=? ORDER BY queued_at, job_id LIMIT ?",
+            (WAITING_PROVIDER_STATUS, bounded_limit),
         ).fetchall()
         for row in rows:
             job_id = str(row["job_id"])
+            inputs = _decode(str(row["input_json"] or "{}"))
+            captured_model = _clean(inputs.get("selected_model"), 200)
+            if captured_model and selected_model and captured_model != selected_model:
+                skipped.append(job_id)
+                continue
+            if not captured_model and selected_model:
+                inputs["selected_model"] = selected_model
+                if fallback_models is not None or fallback_mode is not None:
+                    inputs["fallback_models"] = [
+                        str(item).strip()[:200]
+                        for item in (fallback_models or ())
+                        if str(item).strip() and str(item).strip() != selected_model
+                    ][:8]
+                    inputs["fallback_mode"] = str(fallback_mode or "disabled").strip()[:40]
+                input_json = _bounded_json(inputs, MAX_INPUT_BYTES, "job input")
+                connection.execute(
+                    "UPDATE intelligence_jobs SET input_json=? WHERE job_id=? AND status=?",
+                    (input_json, job_id, WAITING_PROVIDER_STATUS),
+                )
+                legacy_model_bound.append(job_id)
             updated = connection.execute(
                 """UPDATE intelligence_jobs SET status='queued', provider='', updated_at=?,
                    error_code=NULL, error_message=NULL
@@ -449,10 +484,180 @@ def release_waiting_provider_jobs(
                 (now, job_id, WAITING_PROVIDER_STATUS),
             )
             if updated.rowcount == 1:
-                _event(connection, job_id, "provider_recovered", actor, "Provider health recovered; job returned to the normal queue.", {"provider": _clean(provider, 80)})
+                _event(
+                    connection,
+                    job_id,
+                    "provider_recovered",
+                    actor,
+                    "The captured model is healthy; job returned to the normal queue.",
+                    {"provider": provider, "selected_model": selected_model or captured_model},
+                )
                 released.append(job_id)
         connection.commit()
-    return {"status": "released", "provider": _clean(provider, 80), "count": len(released), "job_ids": released}
+    return {
+        "status": "released",
+        "provider": provider,
+        "count": len(released),
+        "job_ids": released,
+        "skipped": skipped,
+        "legacy_model_bound": legacy_model_bound,
+    }
+
+
+def bind_legacy_queued_job_models(
+    *,
+    selected_model: str,
+    fallback_models: Sequence[str] | None = None,
+    fallback_mode: str | None = None,
+    limit: int = 100,
+    actor: str = "bridge-routing",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Pin legacy queued jobs that predate persisted model routing.
+
+    Jobs created before model snapshots were introduced have no selected model
+    in their bounded input. Bind those rows before claim so a later operator
+    selection cannot change an already queued job implicitly. With no captured
+    fallback policy, the safe default is selected-model-only execution.
+    """
+    selected_model = _required(selected_model, "selected_model", 200)
+    soc_store.init_db(db_path)
+    now = soc_store.utc_now()
+    bounded_limit = max(1, min(int(limit), 500))
+    bound: list[str] = []
+    with closing(soc_store.connect(db_path)) as connection:
+        rows = connection.execute(
+            """SELECT job_id, input_json FROM intelligence_jobs
+               WHERE status='queued'
+               ORDER BY CASE action
+                 WHEN 'analyze_research_case' THEN 0
+                 WHEN 'generate_analyst_brief' THEN 0
+                 WHEN 'review_publication_safety' THEN 0
+                 WHEN 'triage_finding' THEN 2
+                 ELSE 1 END,
+                 queued_at, job_id LIMIT ?""",
+            (bounded_limit,),
+        ).fetchall()
+        for row in rows:
+            job_id = str(row["job_id"])
+            inputs = _decode(str(row["input_json"] or "{}"))
+            if _clean(inputs.get("selected_model"), 200):
+                continue
+            inputs["selected_model"] = selected_model
+            if fallback_models is not None or fallback_mode is not None:
+                inputs["fallback_models"] = [
+                    str(item).strip()[:200]
+                    for item in (fallback_models or ())
+                    if str(item).strip() and str(item).strip() != selected_model
+                ][:8]
+                inputs["fallback_mode"] = str(fallback_mode or "disabled").strip()[:40]
+            elif not isinstance(inputs.get("fallback_models"), list) and not inputs.get("fallback_mode"):
+                inputs["fallback_models"] = []
+                inputs["fallback_mode"] = "disabled"
+            input_json = _bounded_json(inputs, MAX_INPUT_BYTES, "job input")
+            updated = connection.execute(
+                "UPDATE intelligence_jobs SET input_json=?, updated_at=? WHERE job_id=? AND status='queued'",
+                (input_json, now, job_id),
+            )
+            if updated.rowcount == 1:
+                _event(
+                    connection,
+                    job_id,
+                    "model_bound",
+                    actor,
+                    "Pinned a legacy queued job to the persisted selected model before claim.",
+                    {"selected_model": selected_model},
+                )
+                bound.append(job_id)
+        connection.commit()
+    return {"status": "bound", "count": len(bound), "job_ids": bound, "selected_model": selected_model}
+
+
+TRANSIENT_BRIDGE_ERROR_MARKERS = (
+    "timeout",
+    "timed out",
+    "timeoutexpired",
+    "429",
+    "426",
+    "adapter_eof",
+    "reconnecting",
+    "upstream",
+    "loopback 500",
+    "connection reset",
+    "temporarily unavailable",
+)
+
+
+def recover_transient_jobs(
+    *,
+    limit: int = 10,
+    max_attempts: int = 3,
+    min_age_seconds: int = 300,
+    actor: str = "bridge-recovery",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Requeue a bounded set of transient bridge failures.
+
+    Only failures explicitly classified as ``bridge_failed`` and carrying a
+    transport/quota marker are eligible. Invalid model output and other
+    permanent failures remain visible for an operator decision.
+    """
+    soc_store.init_db(db_path)
+    now = soc_store.utc_now()
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=max(0, int(min_age_seconds)))
+    cutoff_text = cutoff.isoformat().replace("+00:00", "Z")
+    bounded_limit = max(1, min(int(limit), 100))
+    attempts_limit = max(1, min(int(max_attempts), 10))
+    recovered: list[str] = []
+    skipped: list[dict[str, Any]] = []
+    with closing(soc_store.connect(db_path)) as connection:
+        rows = connection.execute(
+            """SELECT job_id, attempt, error_code, error_message, updated_at
+               FROM intelligence_jobs
+               WHERE status='failed' AND error_code='bridge_failed'
+                 AND attempt < ? AND updated_at <= ?
+               ORDER BY updated_at ASC, job_id ASC LIMIT ?""",
+            (attempts_limit, cutoff_text, bounded_limit),
+        ).fetchall()
+        for row in rows:
+            job_id = str(row["job_id"])
+            message = _clean(row["error_message"], 2000)
+            normalized = message.lower()
+            if not any(marker in normalized for marker in TRANSIENT_BRIDGE_ERROR_MARKERS):
+                skipped.append({"job_id": job_id, "reason": "no_transient_transport_marker"})
+                continue
+            updated = connection.execute(
+                """UPDATE intelligence_jobs
+                   SET status='queued', provider='', started_at=NULL, completed_at=NULL,
+                       updated_at=?, error_code='transient_recovered',
+                       error_message=?
+                   WHERE job_id=? AND status='failed' AND error_code='bridge_failed'""",
+                (
+                    now,
+                    "Recovered a transient bridge failure; retry remains bound to the captured model.",
+                    job_id,
+                ),
+            )
+            if updated.rowcount != 1:
+                continue
+            _event(
+                connection,
+                job_id,
+                "transient_recovered",
+                actor,
+                "A bounded recovery returned a transient bridge failure to the queue.",
+                {"previous_error_code": "bridge_failed", "attempt": int(row["attempt"] or 0)},
+            )
+            recovered.append(job_id)
+        connection.commit()
+    return {
+        "status": "recovered",
+        "count": len(recovered),
+        "job_ids": recovered,
+        "skipped": skipped,
+        "limit": bounded_limit,
+        "max_attempts": attempts_limit,
+    }
 
 
 def recover_running_jobs(

@@ -113,6 +113,7 @@ from secopsai.intelligence_jobs import enqueue_job as enqueue_intelligence_job
 from secopsai.intelligence_jobs import get_job as get_intelligence_job
 from secopsai.intelligence_jobs import job_counts as intelligence_job_counts
 from secopsai.intelligence_jobs import list_jobs as list_intelligence_jobs
+from secopsai.intelligence_jobs import recover_transient_jobs as recover_transient_intelligence_jobs
 from secopsai.agent_triage import enqueue_due_findings as enqueue_agent_triage_findings
 from secopsai.agent_triage import get_settings as get_agent_triage_settings
 from secopsai.agent_triage import list_runs as list_agent_triage_runs
@@ -1630,6 +1631,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     intelligence_jobs_requeue.add_argument("job_id")
     intelligence_jobs_requeue.add_argument("--actor", default="operator")
     intelligence_jobs_requeue.add_argument("--db-path", default=None)
+    intelligence_jobs_recover = intelligence_jobs_sub.add_parser(
+        "recover",
+        help="Requeue bounded transient bridge failures without changing model routing",
+    )
+    intelligence_jobs_recover.add_argument("--limit", type=int, default=10)
+    intelligence_jobs_recover.add_argument("--max-attempts", type=int, default=3)
+    intelligence_jobs_recover.add_argument("--min-age-seconds", type=int, default=300)
+    intelligence_jobs_recover.add_argument("--actor", default="operator")
+    intelligence_jobs_recover.add_argument("--db-path", default=None)
     intelligence_autopilot = intelligence_sub.add_parser(
         "autopilot",
         help="Configure and inspect evidence-gated continuous model triage",
@@ -4891,6 +4901,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                     payload = cancel_intelligence_job(args.job_id, actor=args.actor, db_path=args.db_path)
                 elif args.intelligence_jobs_cmd == "requeue":
                     payload = requeue_intelligence_job(args.job_id, actor=args.actor, db_path=args.db_path)
+                elif args.intelligence_jobs_cmd == "recover":
+                    payload = recover_transient_intelligence_jobs(
+                        limit=args.limit,
+                        max_attempts=args.max_attempts,
+                        min_age_seconds=args.min_age_seconds,
+                        actor=args.actor,
+                        db_path=args.db_path,
+                    )
                 else:
                     raise ValueError(f"unsupported intelligence jobs command: {args.intelligence_jobs_cmd}")
             elif args.intelligence_cmd == "autopilot":

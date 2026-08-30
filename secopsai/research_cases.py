@@ -373,7 +373,8 @@ def list_cases(
                    CASE WHEN COALESCE(potential_impact_explicit, 0) = 0
                              AND severity IN ('high', 'critical')
                         THEN severity ELSE potential_impact END AS potential_impact,
-                   investigation_priority, detection_confidence,
+                   assessment, investigation_priority, detection_confidence,
+                   local_exposure, evidence_quality, publication_readiness,
                    owner, disclosure_status, embargo_until, created_at, updated_at,
                    closed_at, published_at
             FROM research_cases{where}

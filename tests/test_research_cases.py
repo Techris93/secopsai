@@ -612,7 +612,30 @@ class ResearchCaseTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             listed = json.loads(stdout.getvalue())
             self.assertEqual(listed["cases"][0]["case_id"], created["case_id"])
+            self.assertEqual(listed["cases"][0]["assessment"], "unconfirmed")
+            self.assertEqual(listed["cases"][0]["evidence_quality"], "insufficient")
+            self.assertEqual(listed["cases"][0]["local_exposure"], "unknown")
+            self.assertEqual(listed["cases"][0]["potential_impact"], "medium")
             self.assertEqual(len(list_cases(db_path=db_path)), 1)
+
+    def test_case_list_preserves_critical_priority_and_calibration_fields(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = str(Path(temp_dir) / "soc.db")
+            case = create_case(
+                title="Critical package investigation",
+                summary=SUMMARY,
+                case_type="malicious_package",
+                severity="critical",
+                confidence=0,
+                db_path=db_path,
+            )
+            listed = list_cases(db_path=db_path)
+            self.assertEqual(listed[0]["case_id"], case["case_id"])
+            self.assertEqual(listed[0]["potential_impact"], "critical")
+            self.assertIn("assessment", listed[0])
+            self.assertIn("evidence_quality", listed[0])
+            self.assertIn("local_exposure", listed[0])
+            self.assertIn("publication_readiness", listed[0])
 
 
 if __name__ == "__main__":

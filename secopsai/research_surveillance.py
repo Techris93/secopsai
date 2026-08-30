@@ -1975,6 +1975,104 @@ def _retention_state(collector: Dict[str, Any], cursor_value: str) -> Optional[D
     }
 
 
+def _cursor_progressed(current: str, boundary: str, definition: Dict[str, Any]) -> bool:
+    """Return whether a later cursor strictly covers a gap boundary."""
+    current = str(current or "").strip()
+    boundary = str(boundary or "").strip()
+    if not current or not boundary:
+        return False
+    if current.isdigit() and boundary.isdigit():
+        return int(current) > int(boundary)
+    try:
+        return _parse_ts(current) > _parse_ts(boundary)
+    except (CollectorError, TypeError, ValueError):
+        # Some registry cursors are opaque serials. Do not infer coverage from
+        # lexical ordering when their format is unknown.
+        return False
+
+
+def _parse_optional_ts(value: Any) -> Optional[datetime]:
+    try:
+        return _parse_ts(str(value or "")) if str(value or "").strip() else None
+    except (CollectorError, TypeError, ValueError):
+        return None
+
+
+def _coverage_window_classification(
+    row: Dict[str, Any],
+    *,
+    cursor_value: str,
+    definition: Dict[str, Any],
+    now: datetime,
+) -> Tuple[bool, str]:
+    """Classify a gap without mutating its immutable historical record."""
+    if str(row.get("state") or "") != "gap":
+        return False, "complete"
+    if _cursor_progressed(cursor_value, str(row.get("window_end") or ""), definition):
+        return False, "superseded"
+    updated = _parse_optional_ts(row.get("updated_at") or row.get("created_at"))
+    age = (now - updated).total_seconds() if updated else 0
+    threshold = max(7 * 86400, int(definition.get("interval_seconds", 3600)) * 6)
+    if age > threshold:
+        return False, "historical"
+    return True, "active"
+
+
+def _cursor_lag_seconds(
+    *,
+    collector: Dict[str, Any],
+    cursor_value: str,
+    last_success: Optional[Dict[str, Any]],
+    now: datetime,
+) -> Optional[float]:
+    """Compute lag only for cursors with a trustworthy timestamp meaning."""
+    retention = _retention_state(collector, cursor_value)
+    if retention is not None:
+        return retention["cursor_age_seconds"]
+    cursor_time = _parse_optional_ts(cursor_value)
+    if cursor_time is not None:
+        return max(0.0, (now - cursor_time).total_seconds())
+    # Serial/index cursors (for example PyPI's simple-index serial) have no
+    # timestamp meaning. Keep their public lag value unknown rather than
+    # pretending that the collection time is registry freshness.
+    return None
+
+
+def _coverage_state(
+    *,
+    collector: Dict[str, Any],
+    last_run: Optional[Dict[str, Any]],
+    last_success: Optional[Dict[str, Any]],
+    cursor_value: str,
+    active_gaps: int,
+    pending_dead_letters: int,
+    retention: Optional[Dict[str, Any]],
+    lag_seconds: Optional[float],
+    now: datetime,
+) -> Tuple[str, str]:
+    if not bool(collector.get("enabled")):
+        return "paused", "Collector is paused by policy."
+    if retention and retention.get("retention_risk"):
+        return "retention_risk", "Cursor is outside the registry change-log safety window; event loss is possible."
+    if last_run and str(last_run.get("status") or "") in {"failed", "interrupted"}:
+        return "failed", "The latest collector run failed; current coverage is incomplete."
+    if pending_dead_letters:
+        return "dead_letters", f"{pending_dead_letters} failed page or leaf item(s) await bounded retry."
+    if active_gaps:
+        return "gap", f"{active_gaps} active coverage window(s) still need replay."
+    definition = COLLECTOR_DEFINITIONS.get(str(collector.get("ecosystem")), {})
+    stale_threshold = max(int(definition.get("interval_seconds", 3600)) * 4, 86400)
+    if lag_seconds is not None and lag_seconds > stale_threshold:
+        return "stale", "The cursor or last successful run is older than the collector freshness SLA."
+    if lag_seconds is None and last_success:
+        success_time = _parse_optional_ts(last_success.get("completed_at") or last_success.get("started_at"))
+        if success_time is not None and (now - success_time).total_seconds() > stale_threshold:
+            return "stale", "The last successful collector run is older than the collector freshness SLA."
+    if not last_success and not cursor_value:
+        return "not_started", "No successful collector run has established a cursor yet."
+    return "healthy", "Current coverage is healthy; older gap rows are retained as historical evidence."
+
+
 def _raise_retention_alert(*, collector: Dict[str, Any], state: Dict[str, Any], db_path: Optional[str]) -> None:
     now = _format_ts(_utcnow())
     dedupe = f"retention|{collector['collector_id']}|{now[:10]}"
@@ -2283,18 +2381,18 @@ def collector_status(*, ecosystem: Optional[str] = None, db_path: Optional[str] 
                 "SELECT collector_id, COUNT(*) AS total FROM registry_dead_letters WHERE status='pending' GROUP BY collector_id"
             ).fetchall()
         }
-        gap_totals = {
-            str(row["collector_id"]): int(row["total"] or 0)
-            for row in connection.execute(
-                "SELECT collector_id, COUNT(*) AS total FROM registry_coverage_windows WHERE state='gap' GROUP BY collector_id"
-            ).fetchall()
-        }
         for collector in collectors:
             collector_id = collector["collector_id"]
             cursor = cursor_rows.get(collector_id)
             last_run = connection.execute(
                 """SELECT * FROM registry_ingestion_runs WHERE collector_id = ?
                 ORDER BY started_at DESC LIMIT 1""",
+                (collector_id,),
+            ).fetchone()
+            last_success = connection.execute(
+                """SELECT * FROM registry_ingestion_runs
+                   WHERE collector_id = ? AND status = 'completed'
+                   ORDER BY completed_at DESC, run_id DESC LIMIT 1""",
                 (collector_id,),
             ).fetchone()
             snapshot = connection.execute(
@@ -2305,12 +2403,49 @@ def collector_status(*, ecosystem: Optional[str] = None, db_path: Optional[str] 
             cursor_value = str(cursor["cursor_value"]) if cursor else ""
             lag_seconds: Optional[float] = None
             retention = _retention_state(collector, cursor_value)
-            if retention is not None:
-                lag_seconds = retention["cursor_age_seconds"]
-                if retention["retention_risk"]:
-                    retention_risks.append((collector, retention))
-            elif cursor_value and COLLECTOR_DEFINITIONS.get(collector["ecosystem"], {}).get("cursor_seed") == "lookback":
-                lag_seconds = max(0.0, (now - _parse_ts(cursor_value)).total_seconds())
+            last_run_dict = dict(last_run) if last_run else None
+            last_success_dict = dict(last_success) if last_success else None
+            lag_seconds = _cursor_lag_seconds(
+                collector=collector,
+                cursor_value=cursor_value,
+                last_success=last_success_dict,
+                now=now,
+            )
+            if retention is not None and retention["retention_risk"]:
+                retention_risks.append((collector, retention))
+            gap_rows = [
+                dict(row)
+                for row in connection.execute(
+                    """SELECT * FROM registry_coverage_windows
+                       WHERE collector_id = ? AND state = 'gap'
+                       ORDER BY created_at DESC""",
+                    (collector_id,),
+                ).fetchall()
+            ]
+            active_gaps = 0
+            historical_gaps = 0
+            for gap_row in gap_rows:
+                active, classification = _coverage_window_classification(
+                    gap_row,
+                    cursor_value=cursor_value,
+                    definition=COLLECTOR_DEFINITIONS.get(collector["ecosystem"], {}),
+                    now=now,
+                )
+                if active:
+                    active_gaps += 1
+                else:
+                    historical_gaps += 1
+            coverage_state, coverage_note = _coverage_state(
+                collector=collector,
+                last_run=last_run_dict,
+                last_success=last_success_dict,
+                cursor_value=cursor_value,
+                active_gaps=active_gaps,
+                pending_dead_letters=dead_letter_totals.get(collector_id, 0),
+                retention=retention,
+                lag_seconds=lag_seconds,
+                now=now,
+            )
             report.append(
                 {
                     "collector_id": collector_id,
@@ -2323,8 +2458,13 @@ def collector_status(*, ecosystem: Optional[str] = None, db_path: Optional[str] 
                     "events_stored": event_totals.get(collector_id, 0),
                     "events_stored_source": "ingestion_ledger",
                     "pending_dead_letters": dead_letter_totals.get(collector_id, 0),
-                    "coverage_gaps": gap_totals.get(collector_id, 0),
-                    "last_run": dict(last_run) if last_run else None,
+                    "coverage_gaps": active_gaps,
+                    "active_coverage_gaps": active_gaps,
+                    "historical_gaps": historical_gaps,
+                    "coverage_state": coverage_state,
+                    "coverage_note": coverage_note,
+                    "last_run": last_run_dict,
+                    "last_success_at": (last_success_dict or {}).get("completed_at"),
                     "last_snapshot": dict(snapshot) if snapshot else None,
                     "retention": retention,
                     "algorithm_version": ALGORITHM_VERSION,
@@ -2338,9 +2478,15 @@ def collector_status(*, ecosystem: Optional[str] = None, db_path: Optional[str] 
 
 
 def coverage_report(*, days: int = 7, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Coverage windows from the last N days, gaps first."""
+    """Coverage windows from the last N days with active/history context.
+
+    Rows remain immutable evidence. ``is_active`` and ``classification`` are
+    derived at read time from the current cursor, so a recovered collector does
+    not make old failures disappear or continue to look actionable forever.
+    """
     ensure_collectors(db_path=db_path)
     cutoff = _format_ts(_utcnow() - timedelta(days=max(1, int(days))))
+    now = _utcnow()
     with closing(soc_store.connect(db_path)) as connection:
         rows = connection.execute(
             """SELECT * FROM registry_coverage_windows
@@ -2348,7 +2494,29 @@ def coverage_report(*, days: int = 7, db_path: Optional[str] = None) -> List[Dic
             ORDER BY CASE state WHEN 'gap' THEN 0 ELSE 1 END, window_start DESC""",
             (cutoff,),
         ).fetchall()
-    return [dict(row) for row in rows]
+        cursors = {
+            str(row["collector_id"]): str(row["cursor_value"] or "")
+            for row in connection.execute("SELECT collector_id, cursor_value FROM registry_cursors").fetchall()
+        }
+    result: List[Dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        collector = next(
+            (definition for definition in COLLECTOR_DEFINITIONS.values() if definition.get("collector_id") == item.get("collector_id")),
+            {},
+        )
+        active, classification = _coverage_window_classification(
+            item,
+            cursor_value=cursors.get(str(item.get("collector_id")), ""),
+            definition=collector,
+            now=now,
+        )
+        item["is_active"] = active
+        item["classification"] = classification
+        result.append(item)
+    result.sort(key=lambda item: str(item.get("window_start") or ""), reverse=True)
+    result.sort(key=lambda item: not bool(item.get("is_active")))
+    return result
 
 
 def list_feed_events(

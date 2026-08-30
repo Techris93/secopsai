@@ -53,6 +53,12 @@ Use **Administration → Automation → High-priority investigations** to inspec
 
 Investigation status responses include `recovery_available` and `recovery_reason`. A failed, evidence-gap, or canceled run is retriable while its attempt limit has not been reached, even if an older worker wrote a stale `retryable` flag. The console prioritizes these rows and exposes a visible **Retry** action. Runs at the attempt limit remain blocked and explain why they cannot be retried.
 
+The operator status endpoint counts one current investigation per finding and
+returns the complete attempt history separately. The daily workflow and local
+bridge perform bounded transport-failure recovery, but permanent schema or
+validation failures remain visible for review. See [Operational Queue Recovery](operational-queue-recovery.md)
+for the exact limits and safe click path.
+
 The unattended workflow cannot approve a sandbox submission, send external disclosure, or approve and publish an article. Those remain the final operator gates.
 
 ## Primary Mission Control workflow

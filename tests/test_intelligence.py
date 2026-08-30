@@ -33,10 +33,14 @@ from secopsai.intelligence_jobs import (
     claim_next_job,
     complete_job,
     enqueue_job,
+    fail_job,
     get_job,
     list_jobs,
     mark_job_awaiting_provider,
+    bind_legacy_queued_job_models,
     release_job_from_provider_wait,
+    release_waiting_provider_jobs,
+    recover_transient_jobs,
     recover_running_jobs,
 )
 
@@ -532,6 +536,100 @@ def test_provider_recovery_releases_only_the_captured_job(tmp_path: Path):
     assert released["status"] == "queued"
     assert released["error_code"] is None
     assert get_job(second["job_id"], db_path=db)["status"] == "awaiting_provider"
+
+
+def test_provider_recovery_releases_all_matching_jobs_and_binds_legacy_model(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    matching = enqueue_job(
+        action="analyze_research_case", target_id="RSC-ONE", requested_by="tester",
+        inputs={"selected_model": "xai/grok-4.6"}, db_path=db,
+    )
+    different = enqueue_job(
+        action="generate_analyst_brief", target_id="RSC-TWO", requested_by="tester",
+        inputs={"selected_model": "gpt-5.6-luna"}, db_path=db,
+    )
+    legacy = enqueue_job(action="triage_finding", target_id="FND-LEGACY", requested_by="tester", db_path=db)
+    for job in (matching, different, legacy):
+        mark_job_awaiting_provider(job["job_id"], reason="provider unavailable", db_path=db)
+
+    result = release_waiting_provider_jobs(
+        provider="opencodex:xai", selected_model="xai/grok-4.6", db_path=db,
+    )
+    assert result["count"] == 2
+    assert matching["job_id"] in result["job_ids"]
+    assert legacy["job_id"] in result["legacy_model_bound"]
+    assert different["job_id"] in result["skipped"]
+    assert get_job(different["job_id"], db_path=db)["status"] == "awaiting_provider"
+    assert get_job(legacy["job_id"], db_path=db)["input"]["selected_model"] == "xai/grok-4.6"
+
+
+def test_legacy_provider_wait_preserves_explicit_fallback_policy(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    legacy = enqueue_job(action="triage_finding", target_id="FND-LEGACY", requested_by="tester", db_path=db)
+    mark_job_awaiting_provider(legacy["job_id"], reason="provider unavailable", db_path=db)
+    result = release_waiting_provider_jobs(
+        provider="opencodex:xai",
+        selected_model="xai/grok-4.6",
+        fallback_models=("google-antigravity/gemini-3.7-flash",),
+        fallback_mode="any_provider",
+        db_path=db,
+    )
+    assert result["count"] == 1
+    stored = get_job(legacy["job_id"], db_path=db)
+    assert stored["status"] == "queued"
+    assert stored["input"]["selected_model"] == "xai/grok-4.6"
+    assert stored["input"]["fallback_models"] == ["google-antigravity/gemini-3.7-flash"]
+    assert stored["input"]["fallback_mode"] == "any_provider"
+
+
+def test_legacy_queued_job_is_pinned_before_claim(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    legacy = enqueue_job(action="analyze_research_case", target_id="RSC-LEGACY", requested_by="tester", db_path=db)
+    result = bind_legacy_queued_job_models(selected_model="xai/grok-4.6", db_path=db)
+    assert result["job_ids"] == [legacy["job_id"]]
+    stored = get_job(legacy["job_id"], db_path=db)
+    assert stored["input"]["selected_model"] == "xai/grok-4.6"
+    assert stored["input"]["fallback_mode"] == "disabled"
+    assert stored["input"]["fallback_models"] == []
+
+
+def test_legacy_binding_uses_same_priority_as_claim(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    enqueue_job(action="prioritize_findings", target_id="FND-LOW", requested_by="tester", db_path=db)
+    priority = enqueue_job(action="analyze_research_case", target_id="RSC-PRIORITY", requested_by="tester", db_path=db)
+    result = bind_legacy_queued_job_models(selected_model="xai/grok-4.6", limit=1, db_path=db)
+    assert result["job_ids"] == [priority["job_id"]]
+
+
+def test_transient_bridge_recovery_is_bounded_and_preserves_permanent_failures(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    transient = enqueue_job(action="explain_finding", target_id="FND-TIMEOUT", requested_by="tester", db_path=db)
+    claimed = claim_next_job(provider="fake", worker_id="worker", db_path=db)
+    assert claimed["job_id"] == transient["job_id"]
+    fail_job(
+        transient["job_id"], error_code="bridge_failed",
+        error_message="TimeoutExpired: provider returned 429 after retry limit",
+        actor="worker", db_path=db,
+    )
+    permanent = enqueue_job(action="explain_finding", target_id="FND-SCHEMA", requested_by="tester", db_path=db)
+    claimed_permanent = claim_next_job(provider="fake", worker_id="worker", db_path=db)
+    assert claimed_permanent["job_id"] == permanent["job_id"]
+    fail_job(
+        permanent["job_id"], error_code="bridge_failed",
+        error_message="invalid output schema: missing summary", actor="worker", db_path=db,
+    )
+    with soc_store.connect(db) as connection:
+        connection.execute(
+            "UPDATE intelligence_jobs SET updated_at='2020-01-01T00:00:00Z' WHERE job_id IN (?, ?)",
+            (transient["job_id"], permanent["job_id"]),
+        )
+        connection.commit()
+
+    result = recover_transient_jobs(limit=10, min_age_seconds=0, db_path=db)
+    assert result["job_ids"] == [transient["job_id"]]
+    assert get_job(transient["job_id"], db_path=db)["status"] == "queued"
+    assert get_job(transient["job_id"], db_path=db)["error_code"] == "transient_recovered"
+    assert get_job(permanent["job_id"], db_path=db)["status"] == "failed"
 
 
 def test_local_bridge_processes_job_with_injected_runner(tmp_path: Path):

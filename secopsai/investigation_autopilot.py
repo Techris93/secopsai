@@ -273,13 +273,36 @@ def run_due(*, db_path: Optional[str] = None, limit: int = 1) -> Dict[str, Any]:
     if settings["mode"] == "off":
         return {"status": "off", "processed": 0, "runs": []}
     reconciled = reconcile_due_runs(db_path=db_path)
-    recovered = recover_due_runs(db_path=db_path)
-    backfill = enqueue_due_findings(db_path=db_path, limit=max(10, int(settings["max_active_runs"])))
+    recovered = recover_due_runs(
+        db_path=db_path,
+        limit=max(25, int(settings["max_active_runs"]) * 2),
+    )
     with closing(soc_store.connect(db_path)) as connection:
         active_count = int(connection.execute(
             "SELECT COUNT(*) FROM investigation_autopilot_runs WHERE status IN ('collecting','analyzing','awaiting_model','running')"
         ).fetchone()[0])
+        queued_count = int(connection.execute(
+            "SELECT COUNT(*) FROM investigation_autopilot_runs WHERE status='queued'"
+        ).fetchone()[0])
         capacity = max(0, int(settings["max_active_runs"]) - active_count)
+    # Keep the queue bounded relative to worker capacity. Existing queued rows
+    # are durable and remain visible; this only prevents a cycle from adding
+    # another unbounded batch while providers or artifacts are unavailable.
+    queue_budget = max(0, int(settings["max_active_runs"]) * 2 - queued_count)
+    if queue_budget:
+        backfill = enqueue_due_findings(
+            db_path=db_path,
+            limit=min(max(10, int(settings["max_active_runs"])), queue_budget),
+        )
+    else:
+        backfill = {
+            "queued": [],
+            "skipped": 0,
+            "eligible_scanned": 0,
+            "deferred": True,
+            "reason": "investigation_queue_over_capacity",
+        }
+    with closing(soc_store.connect(db_path)) as connection:
         rows = connection.execute(
             "SELECT run_id FROM investigation_autopilot_runs WHERE status='queued' ORDER BY created_at LIMIT ?",
             (min(max(1, int(limit)), capacity) if capacity else 0,),
@@ -287,7 +310,20 @@ def run_due(*, db_path: Optional[str] = None, limit: int = 1) -> Dict[str, Any]:
     results = []
     for row in rows:
         results.append(_run(str(row["run_id"]), db_path=db_path))
-    return {"status": "completed", "processed": len(results), "runs": results, "backfill": backfill, "recovered": recovered, "reconciled": reconciled}
+    return {
+        "status": "completed",
+        "processed": len(results),
+        "runs": results,
+        "backfill": backfill,
+        "recovered": recovered,
+        "reconciled": reconciled,
+        "queue": {
+            "active": active_count,
+            "queued_before_backfill": queued_count,
+            "queue_budget": queue_budget,
+            "deferred": not bool(queue_budget),
+        },
+    }
 
 
 def _timestamp_age_seconds(value: Any) -> Optional[float]:
@@ -305,7 +341,7 @@ def _timestamp_age_seconds(value: Any) -> Optional[float]:
     return max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds())
 
 
-def recover_due_runs(*, db_path: Optional[str] = None) -> Dict[str, Any]:
+def recover_due_runs(*, db_path: Optional[str] = None, limit: int = 25) -> Dict[str, Any]:
     """Requeue stale recoverable runs with bounded exponential backoff.
 
     Evidence gaps are often caused by a temporary registry or analyzer
@@ -322,7 +358,8 @@ def recover_due_runs(*, db_path: Optional[str] = None) -> Dict[str, Any]:
             """SELECT run_id, status, attempt, retryable, updated_at
                FROM investigation_autopilot_runs
                WHERE status IN ('failed', 'evidence_gap', 'canceled')
-               ORDER BY updated_at ASC"""
+               ORDER BY updated_at ASC LIMIT ?""",
+            (max(1, min(int(limit), 200)),),
         ).fetchall()
         recovered: list[str] = []
         for row in rows:
@@ -577,14 +614,32 @@ def list_runs(*, status: str = "", limit: int = 100, db_path: Optional[str] = No
 
 
 def status(*, db_path: Optional[str] = None) -> Dict[str, Any]:
-    # Return a generous recent window for the operator surface, but compute
-    # counters from the complete table. A fixed 200-row window previously
-    # made an old backlog disappear from the dashboard and understated the
-    # number of recoverable investigations.
-    # The summary query below covers the complete table. The operator panel
-    # only renders a bounded recent window; loading hundreds of rows through
-    # get_run() on every status refresh created an avoidable N+1 read burst.
-    runs = list_runs(limit=100, db_path=db_path)
+    # Attempts are append-only audit history, but the operator surface must
+    # report one current state per finding. Read only the routing columns for
+    # the complete table, then hydrate a bounded set of current rows. This
+    # avoids both the old historical-counter inflation and a large N+1 read.
+    soc_store.init_db(db_path)
+    current_rows: Dict[str, Dict[str, Any]] = {}
+    history_counts: Dict[str, int] = {}
+    history_states: Dict[str, int] = {}
+    with closing(soc_store.connect(db_path)) as connection:
+        rows = connection.execute(
+            """SELECT run_id, finding_id, case_id, status, updated_at
+               FROM investigation_autopilot_runs
+               ORDER BY updated_at DESC, run_id DESC"""
+        ).fetchall()
+    for row in rows:
+        item = dict(row)
+        target = _clean(item.get("finding_id"), 160) or _clean(item.get("case_id"), 160) or _clean(item.get("run_id"), 80)
+        history_counts[target] = history_counts.get(target, 0) + 1
+        state = _clean(item.get("status"), 40) or "unknown"
+        history_states[state] = history_states.get(state, 0) + 1
+        current_rows.setdefault(target, item)
+    current_ids = [str(item["run_id"]) for item in list(current_rows.values())[:100]]
+    runs = [get_run(run_id, db_path=db_path) for run_id in current_ids]
+    for item in runs:
+        target = _clean(item.get("finding_id"), 160) or _clean(item.get("case_id"), 160) or _clean(item.get("run_id"), 80)
+        item["history_count"] = history_counts.get(target, 1)
     settings = get_settings(db_path=db_path)
     max_attempts = int(settings.get("max_attempts") or DEFAULTS["max_attempts"])
     # Keep recovery semantics explicit in the API. Older rows may have a
@@ -604,13 +659,20 @@ def status(*, db_path: Optional[str] = None) -> Dict[str, Any]:
         "queued", "collecting", "analyzing", "awaiting_model", "awaiting_input",
         "awaiting_sandbox", "ready_for_decision", "running", "evidence_gap", "resolved", "escalated", "failed", "canceled",
     }
-    with closing(soc_store.connect(db_path)) as connection:
-        rows = connection.execute(
-            "SELECT status, COUNT(*) AS count FROM investigation_autopilot_runs GROUP BY status"
-        ).fetchall()
     states = {name: 0 for name in state_names}
-    for row in rows:
-        states[str(row["status"])] = int(row["count"])
+    for item in current_rows.values():
+        state = _clean(item.get("status"), 40) or "unknown"
+        states[state] = states.get(state, 0) + 1
     states["total"] = sum(states.values())
     states["recovery_available"] = sum(1 for run in runs if run.get("recovery_available"))
-    return {"schema_version": SCHEMA_VERSION, "settings": settings, "summary": states, "runs": runs}
+    # Keep full attempt counts available for audit and capacity analysis, but
+    # do not mix them into the actionable headline counters above.
+    history_states["total"] = sum(history_states.values())
+    states["history_total"] = history_states["total"]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "settings": settings,
+        "summary": states,
+        "history_summary": history_states,
+        "runs": runs,
+    }

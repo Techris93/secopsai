@@ -127,6 +127,42 @@ def test_recovery_status_exposes_retry_for_stale_recoverable_rows(tmp_path):
     assert retried["status"] == "queued"
 
 
+def test_status_counts_one_current_run_per_finding_and_preserves_history(tmp_path):
+    db = str(tmp_path / "soc.db")
+    soc_store.persist_findings([_finding()], source="secopsai-supply-chain", db_path=db)
+    current = investigation_autopilot.enqueue_finding("SCM-AUTOPILOT-1", db_path=db)
+    with soc_store.connect(db) as connection:
+        row = dict(connection.execute(
+            "SELECT * FROM investigation_autopilot_runs WHERE run_id=?",
+            (current["run_id"],),
+        ).fetchone())
+        row.update({
+            "run_id": "IAR-HISTORICAL-0001",
+            "finding_fingerprint": "historical-fingerprint",
+            "status": "failed",
+            "updated_at": "2020-01-01T00:00:00Z",
+        })
+        columns = list(row)
+        connection.execute(
+            f"INSERT INTO investigation_autopilot_runs ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
+            tuple(row[column] for column in columns),
+        )
+        connection.execute(
+            "UPDATE investigation_autopilot_runs SET status='awaiting_model', updated_at='2099-01-01T00:00:00Z' WHERE run_id=?",
+            (current["run_id"],),
+        )
+        connection.commit()
+
+    payload = investigation_autopilot.status(db_path=db)
+    assert payload["summary"]["total"] == 1
+    assert payload["summary"]["awaiting_model"] == 1
+    assert payload["summary"]["failed"] == 0
+    assert payload["summary"]["history_total"] == 2
+    assert payload["history_summary"]["failed"] == 1
+    assert payload["history_summary"]["total"] == 2
+    assert payload["runs"][0]["history_count"] == 2
+
+
 def test_due_recovery_requeues_stale_rows_with_backoff(tmp_path):
     db = str(tmp_path / "soc.db")
     soc_store.persist_findings([_finding()], source="secopsai-supply-chain", db_path=db)
@@ -265,4 +301,3 @@ def test_reconcile_due_runs_releases_review_ready_and_stale_slots(tmp_path, monk
     assert current["status"] == "evidence_gap"
     assert current["blocker_code"] == "stale_active_investigation"
     assert current["retryable"] is True
-

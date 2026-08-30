@@ -30,7 +30,9 @@ from secopsai.intelligence_jobs import (
     job_counts,
     mark_job_awaiting_provider,
     peek_next_job,
-    release_job_from_provider_wait,
+    bind_legacy_queued_job_models,
+    release_waiting_provider_jobs,
+    recover_transient_jobs,
     requeue_job,
 )
 from secopsai.sqlite_writer_lock import sqlite_writer_lock
@@ -1115,13 +1117,34 @@ def run_once(
     else:
         try:
             with sqlite_writer_lock(db_path):
-                if pending_job and pending_job.get("status") == "awaiting_provider":
-                    release_job_from_provider_wait(
-                        str(pending_job["job_id"]),
-                        provider=health.get("provider") or PROVIDER_OPENCODEX,
-                        actor=resolved.resolved_worker_id(),
-                        db_path=db_path,
-                    )
+                provider = health.get("provider") or PROVIDER_OPENCODEX
+                bind_legacy_queued_job_models(
+                    selected_model=effective_model,
+                    fallback_models=routing["fallback_models"],
+                    fallback_mode=routing["fallback_mode"],
+                    actor=resolved.resolved_worker_id(),
+                    db_path=db_path,
+                )
+                # Release every waiting job compatible with the selected model,
+                # not just whichever row happened to sort first. Captured jobs
+                # for another model remain parked and are never silently rerouted.
+                release_waiting_provider_jobs(
+                    provider=provider,
+                    selected_model=effective_model,
+                    fallback_models=routing["fallback_models"],
+                    fallback_mode=routing["fallback_mode"],
+                    actor=resolved.resolved_worker_id(),
+                    db_path=db_path,
+                )
+                # Transport/quota failures are safe to retry, but only through
+                # a bounded, age-gated recovery. Permanent schema failures stay
+                # failed for explicit operator review.
+                recover_transient_jobs(
+                    limit=10,
+                    max_attempts=3,
+                    actor=resolved.resolved_worker_id(),
+                    db_path=db_path,
+                )
                 job = claim_next_job(
                     provider=provider_label,
                     worker_id=resolved.resolved_worker_id(),

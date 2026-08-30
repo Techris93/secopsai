@@ -376,6 +376,37 @@ def test_collector_status_reports_lag_gaps_and_counts(tmp_path):
     assert item["last_run"]["status"] == "failed"
 
 
+def test_recovered_cursor_reclassifies_gap_as_historical_without_mutating_row(tmp_path):
+    db_path = _db(tmp_path)
+    failing = _fetcher(fail_urls={"https://api.nuget.org/v3/catalog0/page1.json"})
+    run_registry_collector(ecosystem="nuget", since=SINCE_ALL, db_path=db_path, fetcher=failing)
+    run_registry_collector(ecosystem="nuget", db_path=db_path, fetcher=_fetcher())
+
+    status = collector_status(ecosystem="nuget", db_path=db_path)[0]
+    assert status["coverage_gaps"] == 0
+    assert status["active_coverage_gaps"] == 0
+    assert status["historical_gaps"] == 1
+    assert status["coverage_state"] == "dead_letters"
+    windows = coverage_report(db_path=db_path)
+    gap = next(item for item in windows if item["state"] == "gap")
+    assert gap["is_active"] is False
+    assert gap["classification"] == "superseded"
+
+
+def test_old_cursor_is_reported_stale_not_as_a_current_gap(tmp_path):
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+    with soc_store.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE registry_cursors SET cursor_value=? WHERE collector_id='COL-NUGET-CATALOG'",
+            (PAGE0_TS,),
+        )
+        connection.commit()
+    status = collector_status(ecosystem="nuget", db_path=db_path)[0]
+    assert status["coverage_state"] == "stale"
+    assert status["coverage_gaps"] == 0
+
+
 def test_unknown_ecosystem_is_rejected(tmp_path):
     with pytest.raises(CollectorError):
         run_registry_collector(ecosystem="cpan", db_path=_db(tmp_path), fetcher=_fetcher())

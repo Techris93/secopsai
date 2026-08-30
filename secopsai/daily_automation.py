@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import secrets
+import sqlite3
+import time
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Optional
@@ -246,14 +248,34 @@ def _record_step(
         )
         step_id = cursor.lastrowid
         connection.commit()
-    try:
-        result = callback() or {}
-        status = "succeeded"
-        error = None
-    except Exception as exc:  # one step must not prevent the remaining workflow
-        result = {"status": "degraded", "error": _clean(exc, 1000)}
-        status = "failed"
-        error = _clean(exc, 2000)
+    result: Dict[str, Any] = {}
+    status = "succeeded"
+    error = None
+    retry_count = 0
+    for attempt in range(4):
+        try:
+            result = callback() or {}
+            break
+        except sqlite3.OperationalError as exc:
+            # A short SQLite writer collision is a recoverable infrastructure
+            # condition. Retry only that narrow error; security or validation
+            # failures remain visible and still fail the step immediately.
+            message = str(exc).lower()
+            if "locked" not in message and "busy" not in message or attempt >= 3:
+                result = {"status": "degraded", "error": _clean(exc, 1000)}
+                status = "failed"
+                error = _clean(exc, 2000)
+                break
+            retry_count += 1
+            time.sleep((0.2, 0.5, 1.0)[attempt])
+        except Exception as exc:  # one step must not prevent the remaining workflow
+            result = {"status": "degraded", "error": _clean(exc, 1000)}
+            status = "failed"
+            error = _clean(exc, 2000)
+            break
+    if retry_count and isinstance(result, dict):
+        result = dict(result)
+        result["sqlite_retries"] = retry_count
     completed = soc_store.utc_now()
     with closing(soc_store.connect(db_path)) as connection:
         connection.execute(
@@ -315,6 +337,7 @@ def run_cycle(
     from secopsai.artifact_fleet import run_cycle as run_artifact_fleet_cycle
     from secopsai.detection_learning import run_cycle as run_learning_cycle
     from secopsai.investigation_autopilot import run_due as run_due_investigations
+    from secopsai.intelligence_jobs import recover_transient_jobs
     from secopsai.research import build_preflight_report
     from secopsai.research_delivery import deliver_pending_operational_alerts
     from secopsai.research_discovery import run_promotion_policy
@@ -326,6 +349,15 @@ def run_cycle(
         (
             "health_preflight",
             lambda: build_preflight_report(),
+        ),
+        (
+            "intelligence_queue_recovery",
+            lambda: recover_transient_jobs(
+                limit=max(10, int(settings["max_alert_reviews"])),
+                max_attempts=3,
+                actor="secopsai-daily-automation",
+                db_path=db_path,
+            ),
         ),
         (
             "registry_surveillance",
@@ -439,7 +471,11 @@ def status(*, db_path: Optional[str] = None, limit: int = 10) -> Dict[str, Any]:
             "last_status": runs[0]["status"] if runs else "never_run",
             "last_run_at": runs[0]["completed_at"] if runs else None,
             "next_run_at": settings.get("next_run_at"),
+            # Keep historical failures visible, but make the headline useful:
+            # operators need to know whether the latest cycle is healthy.
             "failed_steps": sum(int(run.get("summary", {}).get("failed_steps", 0)) for run in runs),
+            "recent_failed_steps": int((runs[0].get("summary", {}) if runs else {}).get("failed_steps", 0)),
+            "historical_failed_steps": sum(int(run.get("summary", {}).get("failed_steps", 0)) for run in runs[1:]),
         },
         "active_run": active,
         "runs": runs,
