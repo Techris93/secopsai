@@ -611,6 +611,16 @@ def test_specialist_review_is_not_starved_by_research_backlog(tmp_path: Path):
     assert claimed and claimed["job_id"] == review["job_id"]
 
 
+def test_explicit_analysis_is_not_preempted_by_background_triage(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    enqueue_job(action="triage_finding", target_id="FND-BACKGROUND", requested_by="autopilot", db_path=db)
+    requested = enqueue_job(action="explain_finding", target_id="FND-REQUESTED", requested_by="operator", db_path=db)
+
+    claimed = claim_next_job(provider="fake", worker_id="worker", db_path=db)
+
+    assert claimed and claimed["job_id"] == requested["job_id"]
+
+
 def test_transient_bridge_recovery_is_bounded_and_preserves_permanent_failures(tmp_path: Path):
     db = str(tmp_path / "core.db")
     transient = enqueue_job(action="explain_finding", target_id="FND-TIMEOUT", requested_by="tester", db_path=db)

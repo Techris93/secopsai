@@ -132,8 +132,8 @@ def claim_next_job(
                  WHEN 'analyze_research_case' THEN 1
                  WHEN 'generate_analyst_brief' THEN 1
                  WHEN 'review_publication_safety' THEN 1
-                 WHEN 'triage_finding' THEN 2
-                 ELSE 3 END,
+                 WHEN 'triage_finding' THEN 3
+                 ELSE 2 END,
                  queued_at, job_id LIMIT 1"""
         ).fetchone()
         if row is None:
@@ -172,8 +172,8 @@ def peek_next_job(
                  WHEN 'analyze_research_case' THEN 1
                  WHEN 'generate_analyst_brief' THEN 1
                  WHEN 'review_publication_safety' THEN 1
-                 WHEN 'triage_finding' THEN 2
-                 ELSE 3 END,
+                 WHEN 'triage_finding' THEN 3
+                 ELSE 2 END,
                  CASE status WHEN 'queued' THEN 0 ELSE 1 END,
                  queued_at, job_id LIMIT 1"""
         ).fetchone()
@@ -539,8 +539,8 @@ def bind_legacy_queued_job_models(
                  WHEN 'analyze_research_case' THEN 1
                  WHEN 'generate_analyst_brief' THEN 1
                  WHEN 'review_publication_safety' THEN 1
-                 WHEN 'triage_finding' THEN 2
-                 ELSE 3 END,
+                 WHEN 'triage_finding' THEN 3
+                 ELSE 2 END,
                  queued_at, job_id LIMIT ?""",
             (bounded_limit,),
         ).fetchall()
