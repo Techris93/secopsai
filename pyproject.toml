@@ -65,4 +65,4 @@ include = ["secopsai*", "openclaw_adapters*", "adapters*", "integrations*"]
 
 [tool.setuptools.package-data]
 "integrations.hermes" = ["plugin.yaml", "after-install.md", "README.md"]
-"secopsai" = ["specialists/*.json", "third_party/*.txt"]
+"secopsai" = ["specialists/*.json", "third_party/*.txt", "reliability_benchmark_fixtures.json"]

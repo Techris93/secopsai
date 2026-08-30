@@ -56,6 +56,23 @@ Retractions require a reason, remain visible in the case history, and are
 excluded from readiness, exports, and publication. An active IOC linked to
 retracted evidence blocks publication until its provenance is corrected.
 
+## Execution-Grounded Reliability
+
+Material research cases expose one reliability workspace rather than separate
+ecosystem-specific workflows. Generate and rank competing hypotheses, create a
+versioned evidence plan, pass scaffold and transition gates, run full safe
+research, and inspect the tamper-evident bundle before drafting. The claim
+ledger then verifies every factual sentence against case evidence. Unsupported
+or contradicted claims are removed or qualified with a revision diff.
+
+The domain specialist and blinded independent reviewer run in separate
+contexts. A material disagreement is a publication blocker until an operator
+records `accept_primary`, `accept_reviewer`, or `request_more_evidence` with an
+evidence-backed rationale. Completeness, originality, visual QA, and
+publication safety remain independent gates. See
+[Research Reliability Operations](research-reliability.md) and
+[Research Review And Adjudication](research-review-and-adjudication.md).
+
 ## Detection Rules
 
 Research cases can carry defensive YARA, Sigma, and Semgrep artifacts. Rules

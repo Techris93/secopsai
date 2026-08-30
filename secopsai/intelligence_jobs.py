@@ -153,6 +153,105 @@ def claim_next_job(
     return get_job(job_id, db_path=db_path)
 
 
+def peek_next_job(
+    *,
+    include_awaiting_provider: bool = False,
+    db_path: str | None = None,
+) -> dict[str, Any] | None:
+    """Return the next durable job without changing queue state."""
+    soc_store.init_db(db_path)
+    statuses = "('queued','awaiting_provider')" if include_awaiting_provider else "('queued')"
+    with closing(soc_store.connect(db_path)) as connection:
+        row = connection.execute(
+            f"""SELECT job_id FROM intelligence_jobs WHERE status IN {statuses}
+               ORDER BY CASE action
+                 WHEN 'analyze_research_case' THEN 0
+                 WHEN 'generate_analyst_brief' THEN 0
+                 WHEN 'review_publication_safety' THEN 0
+                 WHEN 'triage_finding' THEN 2
+                 ELSE 1 END,
+                 CASE status WHEN 'queued' THEN 0 ELSE 1 END,
+                 queued_at, job_id LIMIT 1"""
+        ).fetchone()
+    return get_job(str(row["job_id"]), db_path=db_path) if row else None
+
+
+def heartbeat_job(
+    job_id: str,
+    *,
+    actor: str,
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Refresh a running job lease without changing its status or result."""
+    job_id = _required(job_id, "job_id", 80)
+    actor = _required(actor, "actor", 160)
+    soc_store.init_db(db_path)
+    now = soc_store.utc_now()
+    with closing(soc_store.connect(db_path)) as connection:
+        updated = connection.execute(
+            "UPDATE intelligence_jobs SET updated_at=? WHERE job_id=? AND status='running'",
+            (now, job_id),
+        )
+        if updated.rowcount == 1:
+            _event(connection, job_id, "heartbeat", actor, "Bridge renewed the running job lease.", {})
+        connection.commit()
+    return get_job(job_id, db_path=db_path)
+
+
+def mark_job_awaiting_provider(
+    job_id: str,
+    *,
+    reason: str,
+    actor: str = "bridge-health",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Pause one queued job when its captured model is unavailable."""
+    job_id = _required(job_id, "job_id", 80)
+    soc_store.init_db(db_path)
+    now = soc_store.utc_now()
+    with closing(soc_store.connect(db_path)) as connection:
+        connection.execute(
+            """UPDATE intelligence_jobs SET status=?, provider='', updated_at=?,
+               error_code='provider_unavailable', error_message=?
+               WHERE job_id=? AND status='queued'""",
+            (WAITING_PROVIDER_STATUS, now, _clean(reason, 2000), job_id),
+        )
+        _event(connection, job_id, "provider_wait", actor, "Captured model is unavailable; job remains durable and was not rerouted.", {"reason": _clean(reason, 500)})
+        connection.commit()
+    return get_job(job_id, db_path=db_path)
+
+
+def release_job_from_provider_wait(
+    job_id: str,
+    *,
+    provider: str,
+    actor: str = "bridge-health",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Release exactly one job after its captured model becomes healthy."""
+    job_id = _required(job_id, "job_id", 80)
+    soc_store.init_db(db_path)
+    now = soc_store.utc_now()
+    with closing(soc_store.connect(db_path)) as connection:
+        updated = connection.execute(
+            """UPDATE intelligence_jobs SET status='queued', provider='', updated_at=?,
+               error_code=NULL, error_message=NULL
+               WHERE job_id=? AND status=?""",
+            (now, job_id, WAITING_PROVIDER_STATUS),
+        )
+        if updated.rowcount == 1:
+            _event(
+                connection,
+                job_id,
+                "provider_recovered",
+                actor,
+                "The captured model recovered; this job returned to the normal queue.",
+                {"provider": _clean(provider, 80)},
+            )
+        connection.commit()
+    return get_job(job_id, db_path=db_path)
+
+
 def complete_job(
     job_id: str,
     *,

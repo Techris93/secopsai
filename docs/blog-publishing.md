@@ -4,6 +4,14 @@ SecOpsAI can draft and publish source-backed security blog posts for `blog.secop
 
 The workflow is intentionally conservative: drafts are generated locally, reviewed by a human, and only become public when `--publish` is passed.
 
+Research-derived drafts now pass through the execution-grounded reliability
+gate before they enter Blog Ops. Every claim must be supported or explicitly
+qualified, the specialist and blinded reviewer disagreement must be resolved,
+and completeness, originality, and visual checks must pass. See
+[Research Claim Ledger](research-claim-ledger.md) and
+[Research Visual QA](research-visual-qa.md). This prevents a failed run, empty
+log, model assertion, or unlicensed screenshot from becoming a published fact.
+
 ## Draft Sources
 
 ```bash

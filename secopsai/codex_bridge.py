@@ -12,7 +12,7 @@ import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from threading import RLock
+from threading import Event, RLock, Thread
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -26,9 +26,11 @@ from secopsai.intelligence_jobs import (
     claim_next_job,
     complete_job,
     fail_job,
+    heartbeat_job,
     job_counts,
-    mark_queued_jobs_awaiting_provider,
-    release_waiting_provider_jobs,
+    mark_job_awaiting_provider,
+    peek_next_job,
+    release_job_from_provider_wait,
     requeue_job,
 )
 from secopsai.sqlite_writer_lock import sqlite_writer_lock
@@ -51,6 +53,7 @@ DEFAULT_FALLBACK_MODELS = (
 )
 DEFAULT_TIMEOUT_SECONDS = 300
 PROVIDER_PROBE_TTL_SECONDS = 60
+JOB_HEARTBEAT_INTERVAL_SECONDS = 15
 # Capability probes must finish well inside the 60-second health snapshot TTL.
 # A probe only needs to establish whether the configured runtime can accept a
 # minimal request; it must not wait through a provider's full retry window.
@@ -375,6 +378,30 @@ def _read_health_snapshot(db_path: str | None = None) -> tuple[dict[str, Any] | 
     return dict(health), age
 
 
+def load_bridge_health_snapshot(*, db_path: str | None = None) -> dict[str, Any]:
+    """Return the last durable bridge-health observation without probing a model."""
+    health, age = _read_health_snapshot(db_path)
+    if not health:
+        return {
+            "status": "not_checked",
+            "selected_model": "",
+            "selected_model_probe_status": "unknown",
+            "busy": False,
+            "snapshot_age_seconds": None,
+        }
+    return {
+        "status": str(health.get("status") or "unknown"),
+        "selected_model": str(health.get("selected_model") or ""),
+        "selected_model_probe_status": str(health.get("selected_model_probe_status") or "unknown"),
+        "live_ready": bool(health.get("live_ready")),
+        "busy": bool(health.get("busy")),
+        "active_job_id": str(health.get("active_job_id") or ""),
+        "active_job_action": str(health.get("active_job_action") or ""),
+        "active_model": str(health.get("active_model") or ""),
+        "snapshot_age_seconds": round(age, 1) if age is not None else None,
+    }
+
+
 def doctor(
     settings: BridgeSettings | None = None,
     *,
@@ -406,6 +433,10 @@ def doctor(
     health_source = "live_probe"
     health_stale = False
     snapshot_age_seconds = None
+    busy_snapshot = False
+    active_job_id = ""
+    active_job_action = ""
+    active_model = ""
     if probe:
         # Probe only the operator-selected model. Walk explicitly configured
         # fallbacks only after that model is confirmed down.
@@ -431,11 +462,22 @@ def doctor(
     else:
         snapshot, snapshot_age_seconds = _read_health_snapshot(db_path)
         if snapshot:
+            active_job_id = str(snapshot.get("active_job_id") or "")
+            active_job_action = str(snapshot.get("active_job_action") or "")
+            active_model = str(snapshot.get("active_model") or "")
+            busy_snapshot = bool(snapshot.get("busy")) and (
+                snapshot_age_seconds is not None
+                and snapshot_age_seconds <= JOB_HEARTBEAT_INTERVAL_SECONDS * 3
+            )
             provider_health = {
                 str(item_model): dict(item)
                 for item_model, item in (snapshot.get("providers") or {}).items()
                 if isinstance(item, dict)
-                and (not selected_model or item_model == selected_model)
+                and (
+                    not selected_model
+                    or item_model == selected_model
+                    or (busy_snapshot and item_model == active_model)
+                )
             }
             health_source = "last_live_probe"
             health_stale = snapshot_age_seconds is None or snapshot_age_seconds > PROVIDER_PROBE_TTL_SECONDS
@@ -459,14 +501,23 @@ def doctor(
     )
     if not probe and health_stale and provider_count:
         aggregate_status = "stale"
+    if busy_snapshot:
+        aggregate_status = "busy"
+        health_stale = False
+        ready = True
     if remote_partial:
         message = (
             "Set both SECOPSAI_CODEX_CORE_API_URL and SECOPSAI_CODEX_BRIDGE_TOKEN, "
             "or unset both to use the local SQLite queue."
         )
+    elif busy_snapshot:
+        message = (
+            f"Processing {active_job_id or 'a queued job'} on "
+            f"{active_model or selected_model}; the bridge lease is being renewed."
+        )
     elif ready:
         message = _provider_health_message(provider_health, selected_model)
-    elif not probe and provider_health:
+    elif not probe and health_stale and provider_health:
         message = "The last live provider probe is stale; restart or wait for the bridge service to refresh it."
     else:
         message = _provider_health_message(provider_health, selected_model) if provider_health else (
@@ -512,6 +563,10 @@ def doctor(
         "hosted_queue_configured": remote_configured,
         "health_source": health_source,
         "health_stale": health_stale,
+        "busy": busy_snapshot,
+        "active_job_id": active_job_id,
+        "active_job_action": active_job_action,
+        "active_model": active_model,
         "snapshot_age_seconds": round(snapshot_age_seconds, 1) if snapshot_age_seconds is not None else None,
         "message": message,
         "selection": {
@@ -883,6 +938,117 @@ def list_models(settings: BridgeSettings | None = None, *, runner: Runner | None
     }
 
 
+def _settings_for_captured_job(
+    job: dict[str, Any] | None,
+    resolved: BridgeSettings,
+    *,
+    default_model: str,
+) -> tuple[BridgeSettings, str]:
+    """Resolve the immutable model-routing snapshot captured by a queued job."""
+    if not job:
+        return resolved, default_model
+    inputs = job.get("input") if isinstance(job.get("input"), dict) else {}
+    job_model = str(inputs.get("selected_model") or job.get("selected_model") or "").strip()
+    fallback_value = inputs.get("fallback_models")
+    mode_value = str(inputs.get("fallback_mode") or "").strip()
+    if not job_model and not isinstance(fallback_value, list) and not mode_value:
+        return resolved, default_model
+    # Older jobs that captured only a primary model must remain pinned to it;
+    # they must not silently inherit a fallback policy saved later.
+    fallback_mode = _clean_fallback_mode(mode_value or ("disabled" if job_model else resolved.fallback_mode))
+    if isinstance(fallback_value, list):
+        fallbacks = tuple(
+            str(item).strip()
+            for item in fallback_value[:8]
+            if str(item).strip() and str(item).strip() != job_model
+        )
+    elif job_model:
+        fallbacks = ()
+    else:
+        fallbacks = resolved.fallback_models
+    if fallback_mode == "disabled":
+        fallbacks = ()
+    selected = job_model or default_model
+    return replace(
+        resolved,
+        model=selected,
+        fallback_models=fallbacks,
+        fallback_mode=fallback_mode,
+    ), selected
+
+
+def _publish_busy_health(
+    health: dict[str, Any],
+    job: dict[str, Any],
+    model: str,
+    *,
+    db_path: str | None,
+) -> None:
+    snapshot = dict(health)
+    snapshot.update(
+        {
+            "status": "busy",
+            "live_ready": True,
+            "health_stale": False,
+            "busy": True,
+            "active_job_id": str(job.get("job_id") or ""),
+            "active_job_action": str(job.get("action") or ""),
+            "active_model": model,
+            "message": f"Processing {job.get('job_id')} on {model}; the bridge lease is being renewed.",
+        }
+    )
+    _write_health_snapshot(snapshot, db_path)
+
+
+def _clear_busy_health(health: dict[str, Any], *, db_path: str | None) -> None:
+    snapshot = dict(health)
+    snapshot.update(
+        {
+            "busy": False,
+            "active_job_id": "",
+            "active_job_action": "",
+            "active_model": "",
+        }
+    )
+    _write_health_snapshot(snapshot, db_path)
+
+
+def _invoke_with_job_heartbeat(
+    request: dict[str, Any],
+    settings: BridgeSettings,
+    runner: Runner,
+    model_chain: Sequence[str],
+    *,
+    job: dict[str, Any],
+    health: dict[str, Any],
+    db_path: str | None,
+) -> tuple[dict[str, Any], str]:
+    """Invoke a model while independently renewing the durable job lease."""
+    stop = Event()
+    actor = settings.resolved_worker_id()
+    model = str(model_chain[0] if model_chain else settings.model)
+
+    def pulse() -> None:
+        while not stop.wait(JOB_HEARTBEAT_INTERVAL_SECONDS):
+            try:
+                heartbeat_job(str(job["job_id"]), actor=actor, db_path=db_path)
+                _publish_busy_health(health, job, model, db_path=db_path)
+            except Exception:
+                # A transient heartbeat write must not terminate the bounded
+                # analysis; stale-job recovery remains the final safeguard.
+                continue
+
+    heartbeat_job(str(job["job_id"]), actor=actor, db_path=db_path)
+    _publish_busy_health(health, job, model, db_path=db_path)
+    thread = Thread(target=pulse, name=f"secopsai-heartbeat-{job['job_id']}", daemon=True)
+    thread.start()
+    try:
+        return _invoke_with_model_fallback(request, settings, runner, model_chain)
+    finally:
+        stop.set()
+        thread.join(timeout=1)
+
+
 def run_once(
     *,
     db_path: str | None = None,
@@ -906,27 +1072,41 @@ def run_once(
         fallback_mode=str(routing["fallback_mode"]),
     )
     effective_model = str(routing["primary_model"])
-    health = doctor(
+    remote = bool(resolved.core_api_url and resolved.bridge_token)
+    pending_job = None if remote else peek_next_job(include_awaiting_provider=True, db_path=db_path)
+    probe_settings, probe_model = _settings_for_captured_job(
+        pending_job,
         resolved,
+        default_model=effective_model,
+    )
+    health = doctor(
+        probe_settings,
         runner=run,
         db_path=db_path,
-        probe_fallbacks=probe_fallbacks and resolved.fallback_mode != "disabled" and bool(resolved.fallback_models),
-        model=effective_model,
+        probe_fallbacks=(
+            probe_fallbacks
+            and probe_settings.fallback_mode != "disabled"
+            and bool(probe_settings.fallback_models)
+        ),
+        model=probe_model,
     )
     if require_ready_provider and not health.get("live_ready"):
-        if health.get("configured_provider_count", 0):
+        if health.get("configured_provider_count", 0) and pending_job and not remote:
             try:
                 with sqlite_writer_lock(db_path):
-                    mark_queued_jobs_awaiting_provider(
-                        reason=health.get("message") or "All configured providers failed their live health probe.",
+                    waiting = mark_job_awaiting_provider(
+                        str(pending_job["job_id"]),
+                        reason=health.get("message") or "The job's captured model failed its live health probe.",
+                        actor=resolved.resolved_worker_id(),
                         db_path=db_path,
                     )
             except Exception:
-                pass
-            return {"status": "awaiting_provider", "bridge": health, "job": None}
+                waiting = pending_job
+            return {"status": "awaiting_provider", "bridge": health, "job": waiting}
+        if health.get("configured_provider_count", 0):
+            return {"status": "awaiting_provider", "bridge": health, "job": pending_job}
         return {"status": "blocked", "bridge": health, "job": None}
 
-    remote = bool(resolved.core_api_url and resolved.bridge_token)
     provider_label = PROVIDER_OPENCODEX if health.get("opencodex", {}).get("status") == "ready" else PROVIDER_CODEX_NATIVE
     if remote:
         claimed = _remote_claim(resolved)
@@ -935,11 +1115,13 @@ def run_once(
     else:
         try:
             with sqlite_writer_lock(db_path):
-                release_waiting_provider_jobs(
-                    provider=health.get("provider") or PROVIDER_OPENCODEX,
-                    actor=resolved.resolved_worker_id(),
-                    db_path=db_path,
-                )
+                if pending_job and pending_job.get("status") == "awaiting_provider":
+                    release_job_from_provider_wait(
+                        str(pending_job["job_id"]),
+                        provider=health.get("provider") or PROVIDER_OPENCODEX,
+                        actor=resolved.resolved_worker_id(),
+                        db_path=db_path,
+                    )
                 job = claim_next_job(
                     provider=provider_label,
                     worker_id=resolved.resolved_worker_id(),
@@ -957,25 +1139,11 @@ def run_once(
         return {"status": "idle", "job": None}
     try:
         job_inputs = job.get("input") if isinstance(job.get("input"), dict) else {}
-        job_model = str(job_inputs.get("selected_model") or job.get("selected_model") or "").strip()
-        job_fallbacks_raw = job_inputs.get("fallback_models")
-        job_fallback_mode_raw = str(job_inputs.get("fallback_mode") or "").strip()
-        job_settings = resolved
-        if isinstance(job_fallbacks_raw, list) or job_fallback_mode_raw:
-            job_fallbacks = tuple(
-                str(item).strip()
-                for item in (job_fallbacks_raw if isinstance(job_fallbacks_raw, list) else [])[:8]
-                if str(item).strip() and str(item).strip() != job_model
-            )
-            job_fallback_mode = _clean_fallback_mode(job_fallback_mode_raw or "disabled")
-            if job_fallback_mode == "disabled":
-                job_fallbacks = ()
-            job_settings = replace(
-                resolved,
-                model=job_model or resolved.model,
-                fallback_models=job_fallbacks,
-                fallback_mode=job_fallback_mode,
-            )
+        job_settings, job_model = _settings_for_captured_job(
+            job,
+            resolved,
+            default_model=effective_model,
+        )
         model_chain = _model_chain(
             job_settings,
             # A Work contract snapshots the operator-selected OpenCodex model.
@@ -989,7 +1157,18 @@ def run_once(
             if job.get("target_id"):
                 inputs.setdefault("target_id", job["target_id"])
             bridge_request = prepare_bridge_request(job["action"], inputs, db_path=db_path)
-        raw, used_model = _invoke_with_model_fallback(bridge_request, job_settings, run, model_chain)
+        if remote:
+            raw, used_model = _invoke_with_model_fallback(bridge_request, job_settings, run, model_chain)
+        else:
+            raw, used_model = _invoke_with_job_heartbeat(
+                bridge_request,
+                job_settings,
+                run,
+                model_chain,
+                job=job,
+                health=health,
+                db_path=db_path,
+            )
         used_provider = _provider_for_model(used_model, health)
         result = validate_bridge_result(job["action"], raw, provider=used_provider)
         if remote:
@@ -1058,6 +1237,9 @@ def run_once(
             db_path=db_path,
         )
         return {"status": "failed", "job": failed}
+    finally:
+        if not remote:
+            _clear_busy_health(health, db_path=db_path)
 
 
 def run_loop(

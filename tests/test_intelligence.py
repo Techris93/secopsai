@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import plistlib
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,8 @@ from secopsai.intelligence_jobs import (
     enqueue_job,
     get_job,
     list_jobs,
+    mark_job_awaiting_provider,
+    release_job_from_provider_wait,
     recover_running_jobs,
 )
 
@@ -511,6 +514,24 @@ def test_bridge_moves_triage_job_to_awaiting_provider_when_all_providers_down(tm
     stored = get_job(job["job_id"], db_path=db)
     assert stored["status"] == "awaiting_provider"
     assert stored["error_code"] == "provider_unavailable"
+
+
+def test_provider_recovery_releases_only_the_captured_job(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    first = enqueue_job(action="triage_finding", target_id="FND-ONE", requested_by="tester", db_path=db)
+    second = enqueue_job(action="triage_finding", target_id="FND-TWO", requested_by="tester", db_path=db)
+    mark_job_awaiting_provider(first["job_id"], reason="selected model unavailable", db_path=db)
+    mark_job_awaiting_provider(second["job_id"], reason="different captured model unavailable", db_path=db)
+
+    released = release_job_from_provider_wait(
+        first["job_id"],
+        provider="opencodex:xai",
+        db_path=db,
+    )
+
+    assert released["status"] == "queued"
+    assert released["error_code"] is None
+    assert get_job(second["job_id"], db_path=db)["status"] == "awaiting_provider"
 
 
 def test_local_bridge_processes_job_with_injected_runner(tmp_path: Path):
@@ -1056,3 +1077,97 @@ def test_healthy_selected_model_is_the_only_health_probe(tmp_path: Path, monkeyp
     assert calls == ["xai/grok-4.6"]
     assert set(health["providers"]) == {"xai/grok-4.6"}
     assert all(item not in calls for item in DEFAULT_FALLBACK_MODELS)
+
+
+def test_queued_job_probes_and_runs_its_captured_model_not_global_selection(tmp_path: Path, monkeypatch):
+    db = str(tmp_path / "core.db")
+    captured_model = "google-antigravity/gemini-3.7-flash"
+    enqueue_job(
+        action="prioritize_findings",
+        requested_by="tester",
+        inputs={
+            "selected_model": captured_model,
+            "fallback_mode": "disabled",
+            "fallback_models": [],
+        },
+        db_path=db,
+    )
+    probed = []
+
+    def fake_doctor(settings, runner=None, **kwargs):
+        probed.append((settings.model, kwargs.get("model"), tuple(settings.fallback_models)))
+        return {
+            "status": "ready",
+            "live_ready": True,
+            "configured_provider_count": 1,
+            "provider": "opencodex_proxy",
+            "opencodex": {"status": "ready"},
+            "models": {"models": [{"id": captured_model}]},
+            "providers": {captured_model: {"status": "ready"}},
+        }
+
+    monkeypatch.setattr("secopsai.codex_bridge.doctor", fake_doctor)
+
+    def runner(command, stdin, environment, timeout):
+        assert command[command.index("--model") + 1] == captured_model
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text(json.dumps({"summary": "Captured model completed."}), encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = run_once(
+        db_path=db,
+        settings=BridgeSettings(model="xai/grok-4.6", worker_id="captured-model-test"),
+        runner=runner,
+    )
+    assert result["status"] == "succeeded"
+    assert result["model"] == captured_model
+    assert probed == [(captured_model, captured_model, ())]
+
+
+def test_long_running_job_renews_lease_and_publishes_busy_health(tmp_path: Path, monkeypatch):
+    db = str(tmp_path / "core.db")
+    model = "xai/grok-4.6"
+    enqueue_job(
+        action="prioritize_findings",
+        requested_by="tester",
+        inputs={"selected_model": model, "fallback_mode": "disabled", "fallback_models": []},
+        db_path=db,
+    )
+    health = {
+        "status": "ready",
+        "live_ready": True,
+        "configured_provider_count": 1,
+        "provider": "opencodex_proxy",
+        "opencodex": {"status": "ready"},
+        "models": {"models": [{"id": model}]},
+        "providers": {model: {"status": "ready"}},
+    }
+    monkeypatch.setattr("secopsai.codex_bridge.doctor", lambda *args, **kwargs: dict(health))
+    monkeypatch.setattr("secopsai.codex_bridge.JOB_HEARTBEAT_INTERVAL_SECONDS", 0.02)
+    snapshots = []
+    from secopsai import codex_bridge as bridge_module
+
+    real_write = bridge_module._write_health_snapshot
+
+    def capture_snapshot(payload, path=None):
+        snapshots.append(dict(payload))
+        real_write(payload, path)
+
+    monkeypatch.setattr("secopsai.codex_bridge._write_health_snapshot", capture_snapshot)
+
+    def runner(command, stdin, environment, timeout):
+        time.sleep(0.08)
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text(json.dumps({"summary": "Long review completed."}), encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = run_once(
+        db_path=db,
+        settings=BridgeSettings(model=model, worker_id="heartbeat-test"),
+        runner=runner,
+    )
+    assert result["status"] == "succeeded"
+    assert sum(1 for item in snapshots if item.get("busy")) >= 2
+    assert snapshots[-1]["busy"] is False
+    stored = get_job(result["job"]["job_id"], db_path=db)
+    assert sum(1 for event in stored["events"] if event["event_type"] == "heartbeat") >= 2

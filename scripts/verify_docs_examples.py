@@ -24,6 +24,13 @@ DEFAULT_DOCS = [
     Path("docs/getting-started.md"),
     Path("docs/findings-triage-guide.md"),
     Path("docs/research-and-verification.md"),
+    Path("docs/research-reliability.md"),
+    Path("docs/research-claim-ledger.md"),
+    Path("docs/research-review-and-adjudication.md"),
+    Path("docs/research-visual-qa.md"),
+    Path("docs/research-reliability-benchmark.md"),
+    Path("docs/research-reliability-validation-report.md"),
+    Path("docs/execution-grounded-research-architecture.md"),
     Path("docs/supply-chain-advisories.md"),
     Path("docs/blog-publishing.md"),
     Path("docs/OpenClaw-Plugin.md"),
@@ -38,12 +45,16 @@ TS_TOOL_NAME_RE = re.compile(r'name:\s*"([^"]+)"')
 def extract_fenced_commands(markdown: str) -> List[str]:
     commands: List[str] = []
     in_shell_block = False
+    continuation = ""
     for raw_line in markdown.splitlines():
         line = raw_line.rstrip("\n")
         stripped = line.strip()
         if stripped.startswith("```"):
             fence = stripped[3:].strip().lower()
             if in_shell_block:
+                if continuation:
+                    commands.append(continuation.strip())
+                    continuation = ""
                 in_shell_block = False
             else:
                 in_shell_block = fence in {"", "bash", "sh", "shell", "zsh"}
@@ -56,8 +67,19 @@ def extract_fenced_commands(markdown: str) -> List[str]:
         normalized = re.sub(r"\s+#.*$", "", normalized).strip()
         if not normalized:
             continue
-        if normalized.startswith(COMMAND_PREFIXES):
-            commands.append(normalized)
+        if continuation:
+            continuation = f"{continuation} {normalized}"
+        elif normalized.startswith(COMMAND_PREFIXES):
+            continuation = normalized
+        else:
+            continue
+        if continuation.endswith("\\"):
+            continuation = continuation[:-1].rstrip()
+        else:
+            commands.append(continuation.strip())
+            continuation = ""
+    if continuation:
+        commands.append(continuation.strip())
     return commands
 
 

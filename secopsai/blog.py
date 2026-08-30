@@ -1197,7 +1197,13 @@ secopsai blog draft-campaign --campaign {campaign_id}
     return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
 
 
-def draft_research_case(case: Dict[str, Any], *, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+def draft_research_case(
+    case: Dict[str, Any],
+    *,
+    paths: Optional[BlogPaths] = None,
+    verified_body: str = "",
+    write: bool = True,
+) -> Dict[str, Any]:
     paths = paths or BlogPaths()
     case_id = str(case.get("case_id") or "research-case")
     title = str(case.get("title") or case_id)
@@ -1325,13 +1331,14 @@ This draft reflects disclosure state `{case.get('disclosure_status', 'not_starte
             "research_case_id": case_id,
             "disclosure_status": case.get("disclosure_status"),
             "body_markdown": _redact_preserving_structured_hashes(
-                body,
+                verified_body or body,
                 [item.get("value", "") for item in iocs if item.get("ioc_type") in {"md5", "sha1", "sha256"}],
             ),
         }
     )
     post["reading_time"] = _post_reading_time(post)
-    _write_json(_draft_path(post["slug"], paths), post)
+    if write:
+        _write_json(_draft_path(post["slug"], paths), post)
     return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
 
 

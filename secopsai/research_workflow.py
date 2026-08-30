@@ -583,6 +583,18 @@ def publication_safety_check(case_id: str, *, actor: str = "analyst", db_path: O
         warnings.append("no sandbox evidence is present; explain that dynamic analysis was not performed")
     checks.setdefault("private_network_data", "passed")
     checks.setdefault("secret_scan", "passed")
+    from secopsai.research_reliability import publication_reliability_gate
+
+    reliability = publication_reliability_gate(case_id, db_path=db_path)
+    if reliability["ready"]:
+        checks["execution_grounded_reliability"] = "passed"
+    else:
+        checks["execution_grounded_reliability"] = "blocked"
+        blockers.extend(
+            f"Reliability: {item}"
+            for item in reliability["blockers"]
+            if f"Reliability: {item}" not in blockers
+        )
     checks["human_verdict"] = "review_required"
     status = "blocked" if blockers else "needs_approval"
     review_id = _id("PUB")
@@ -591,7 +603,7 @@ def publication_safety_check(case_id: str, *, actor: str = "analyst", db_path: O
         connection.execute("INSERT INTO research_publication_reviews (review_id, case_id, status, blockers_json, warnings_json, checks_json, waivers_json, approved_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)", (review_id, case_id, status, _json(blockers), _json(warnings), _json(checks), "[]", now, now))
         _event(connection, case_id, "publication_safety_checked", f"Publication safety check completed: {status}.", actor, {"review_id": review_id, "blockers": blockers, "warnings": warnings})
         connection.commit()
-    return {"review_id": review_id, "case_id": case_id, "status": status, "blockers": blockers, "warnings": warnings, "checks": checks, "approval_required": True}
+    return {"review_id": review_id, "case_id": case_id, "status": status, "blockers": blockers, "warnings": warnings, "checks": checks, "reliability": reliability, "approval_required": True}
 
 
 def approve_publication_review(case_id: str, *, review_id: str = "", actor: str = "publisher", waivers: Optional[Sequence[str]] = None, db_path: Optional[str] = None) -> Dict[str, Any]:
@@ -602,7 +614,17 @@ def approve_publication_review(case_id: str, *, review_id: str = "", actor: str 
         raise ValueError("a publication safety review is required before approval")
     blockers = list(review.get("blockers") or [])
     waivers = [str(item).strip() for item in (waivers or []) if str(item).strip()]
-    unresolved = [item for item in blockers if item not in waivers]
+    from secopsai.research_reliability import publication_reliability_gate
+
+    reliability = publication_reliability_gate(case_id, db_path=db_path)
+    if not reliability["ready"]:
+        raise ValueError("publication reliability blockers remain: " + "; ".join(reliability["blockers"]))
+    # Evidence, execution integrity, blind-review disagreement, originality,
+    # completeness, and visual-QA failures are hard gates, not waivable notes.
+    unresolved = [
+        item for item in blockers
+        if item.startswith("Reliability:") or item not in waivers
+    ]
     if unresolved:
         raise ValueError("publication blockers remain: " + "; ".join(unresolved))
     now = soc_store.utc_now()

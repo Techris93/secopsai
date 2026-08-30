@@ -467,13 +467,37 @@ class ResearchCaseTests(unittest.TestCase):
                 draft_case_blog(case["case_id"], db_path=db_path)
 
             ready = self._build_ready_case(db_path)
-            with mock.patch("secopsai.blog.draft_research_case", return_value={"draft_path": "/tmp/review-draft.json", "review_status": "needs_review"}) as draft:
+            with self.assertRaisesRegex(ValueError, "research reliability gates are not ready"):
+                draft_case_blog(ready["case_id"], db_path=db_path)
+
+            preview = {
+                "draft_path": "/tmp/review-draft.json",
+                "post": {"slug": "review-draft", "body_markdown": "Evidence-grounded preview."},
+            }
+            written = {
+                "draft_path": "/tmp/review-draft.json",
+                "review_status": "needs_review",
+                "post": {"slug": "review-draft", "body_markdown": "Evidence-grounded preview."},
+            }
+            gate = {"ready": True, "blockers": [], "quality": {"score": 100}}
+            clipped = {
+                "publication_blocked": False,
+                "corrected_text": "Evidence-grounded preview.",
+                "claim_ledger": {"summary": {"publication_blocked": False, "evidence_coverage_percent": 100}},
+            }
+            with (
+                mock.patch("secopsai.research_reliability.publication_reliability_gate", return_value=gate),
+                mock.patch("secopsai.research_reliability.clip_unsupported_claims", return_value=clipped),
+                mock.patch("secopsai.blog.draft_research_case", side_effect=[preview, written]) as draft,
+            ):
                 payload = draft_case_blog(ready["case_id"], db_path=db_path)
 
             self.assertEqual(payload["draft_path"], "/tmp/review-draft.json")
-            research_case = draft.call_args.args[0]
+            research_case = draft.call_args_list[0].args[0]
             self.assertEqual(research_case["case_id"], ready["case_id"])
             self.assertEqual(research_case["iocs"][0]["value"], "checkout-telemetry.example")
+            self.assertFalse(draft.call_args_list[0].kwargs["write"])
+            self.assertEqual(draft.call_args_list[1].kwargs["verified_body"], "Evidence-grounded preview.")
             self.assertTrue(get_case(ready["case_id"], db_path=db_path)["timeline"][-1]["event_type"] == "blog_draft_created")
 
     def test_invalid_evidence_hash_is_rejected(self) -> None:

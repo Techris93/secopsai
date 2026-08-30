@@ -11,6 +11,14 @@ SecOpsAI is a local-first security operations toolkit that can:
 - ingest and match threat-intelligence indicators
 - support review and response workflows through the CLI and related surfaces
 
+For publication-sensitive investigations, use the single execution-grounded
+Research Case workspace. It adds competing hypotheses, evidence-plan
+revisions, scaffold/transition/full safe stages, claim-level verification,
+blinded review, visual QA, and an explicit human publication gate. Start with
+[Research Reliability Operations](research-reliability.md); it explains the
+dashboard click path and equivalent CLI commands without requiring package
+execution.
+
 ---
 
 ## 1. Core workflow

@@ -97,6 +97,7 @@ from secopsai.specialist_orchestrator import build_execution_contract as build_s
 from secopsai.specialist_orchestrator import cancel_run as cancel_specialist_run
 from secopsai.specialist_orchestrator import configure_policy as configure_specialist_policy
 from secopsai.specialist_orchestrator import create_run as create_specialist_run
+from secopsai.specialist_orchestrator import adjudicate_review_disagreement
 from secopsai.specialist_orchestrator import execute_worktree_run as execute_specialist_worktree
 from secopsai.specialist_orchestrator import get_policy as get_specialist_policy
 from secopsai.specialist_orchestrator import get_run as get_specialist_run
@@ -170,6 +171,26 @@ from secopsai.research import (
     build_preflight_report,
     research_finding as research_finding_report,
     research_package as research_package_report,
+)
+from secopsai.research_reliability import (
+    audit_completeness as audit_research_completeness,
+    audit_originality as audit_research_originality,
+    clip_unsupported_claims as clip_research_claims,
+    create_evidence_plan as create_research_evidence_plan,
+    extract_claim_ledger as extract_research_claim_ledger,
+    generate_hypotheses as generate_research_hypotheses,
+    get_reliability_workspace as get_research_reliability_workspace,
+    inspect_run_bundle as inspect_research_run_bundle,
+    queue_blinded_specialist_review as queue_research_specialist_review,
+    queue_blinded_independent_review as queue_research_blind_review,
+    rank_hypotheses as rank_research_hypotheses,
+    record_visual_qa as record_research_visual_qa,
+    reliability_benchmark as run_research_reliability_benchmark,
+    revise_evidence_plan as revise_research_evidence_plan,
+    run_full_safe_research,
+    run_scaffold_research,
+    verify_claims as verify_research_claims,
+    verify_transition as verify_research_transition,
 )
 from secopsai.research_cases import (
     CASE_STATUSES,
@@ -1808,6 +1829,95 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     research_artifact_case.add_argument("artifact_id")
     research_artifact_case.add_argument("--db-path", default=None)
 
+    research_reliability = research_sub.add_parser(
+        "reliability",
+        help="Operate the execution-grounded hypothesis, plan, run-bundle, claim, review, and publication gates",
+    )
+    reliability_sub = research_reliability.add_subparsers(dest="research_reliability_cmd", required=True)
+    reliability_status = reliability_sub.add_parser("status", help="Show the complete reliability workspace for one case")
+    reliability_status.add_argument("case_id")
+    reliability_status.add_argument("--db-path", default=None)
+    reliability_hypotheses = reliability_sub.add_parser("generate-hypotheses", help="Generate bounded competing falsifiable hypotheses")
+    reliability_hypotheses.add_argument("case_id")
+    reliability_hypotheses.add_argument("--refresh", action="store_true")
+    reliability_hypotheses.add_argument("--actor", default="operator")
+    reliability_hypotheses.add_argument("--db-path", default=None)
+    reliability_rank = reliability_sub.add_parser("rank-hypotheses", help="Run deterministic pairwise and uncertainty-aware hypothesis ranking")
+    reliability_rank.add_argument("case_id")
+    reliability_rank.add_argument("--candidate-budget", type=int, default=6)
+    reliability_rank.add_argument("--comparison-budget", type=int, default=15)
+    reliability_rank.add_argument("--model-call-budget", type=int, default=0)
+    reliability_rank.add_argument("--actor", default="operator")
+    reliability_rank.add_argument("--db-path", default=None)
+    reliability_plan = reliability_sub.add_parser("plan", help="Create or revise the versioned evidence plan")
+    reliability_plan.add_argument("case_id")
+    reliability_plan.add_argument("--reason", default="Initial execution-grounded evidence plan.")
+    reliability_plan.add_argument("--revise", action="store_true")
+    reliability_plan.add_argument("--executed-method", action="append", default=[])
+    reliability_plan.add_argument("--actor", default="operator")
+    reliability_plan.add_argument("--db-path", default=None)
+    for command_name, command_help in (
+        ("run-scaffold", "Validate adapters, identities, checksums, limits, and fixture scope on a minimal sample"),
+        ("verify-transition", "Prove fixtures, mocks, stubs, placeholders, and synthetic outputs cannot reach full research"),
+        ("run-full", "Create an immutable bundle for full safe evidence processing without local artifact execution"),
+        ("verify-claims", "Reverify every stored claim against current canonical evidence"),
+        ("audit-completeness", "Detect selective reporting, method divergence, mocks, placeholders, and omitted failures"),
+        ("audit-originality", "Check source similarity and attribution before publication"),
+        ("queue-specialist", "Route a domain specialist and blinded independent reviewer"),
+        ("queue-blind-review", "Queue or recover the separate blinded independent review stage"),
+    ):
+        command = reliability_sub.add_parser(command_name, help=command_help)
+        command.add_argument("case_id")
+        command.add_argument("--actor", default="operator")
+        command.add_argument("--db-path", default=None)
+        if command_name == "audit-originality":
+            command.add_argument("--text", default="")
+            command.add_argument("--text-file", default="")
+    reliability_adjudicate = reliability_sub.add_parser(
+        "adjudicate-review",
+        help="Record a human decision for a material primary/reviewer disagreement",
+    )
+    reliability_adjudicate.add_argument("run_id")
+    reliability_adjudicate.add_argument(
+        "--decision",
+        required=True,
+        choices=["accept_primary", "accept_reviewer", "request_more_evidence"],
+    )
+    reliability_adjudicate.add_argument("--rationale", required=True)
+    reliability_adjudicate.add_argument("--actor", default="operator")
+    reliability_adjudicate.add_argument("--db-path", default=None)
+    reliability_bundle = reliability_sub.add_parser("show-bundle", help="Inspect and cryptographically verify one immutable run bundle")
+    reliability_bundle.add_argument("bundle_id")
+    reliability_bundle.add_argument("--db-path", default=None)
+    reliability_claims = reliability_sub.add_parser("build-claim-ledger", help="Extract and verify factual claims from a case summary or supplied text")
+    reliability_claims.add_argument("case_id")
+    reliability_claims.add_argument("--text", default="")
+    reliability_claims.add_argument("--text-file", default="")
+    reliability_claims.add_argument("--source-kind", default="case_summary")
+    reliability_claims.add_argument("--source-locator", default="")
+    reliability_claims.add_argument("--actor", default="operator")
+    reliability_claims.add_argument("--db-path", default=None)
+    reliability_clip = reliability_sub.add_parser("clip-claims", help="Qualify or remove unsupported and contradicted claims with a revision diff")
+    reliability_clip.add_argument("case_id")
+    reliability_clip.add_argument("--text", default="")
+    reliability_clip.add_argument("--text-file", default="")
+    reliability_clip.add_argument("--source-kind", default="publication_draft")
+    reliability_clip.add_argument("--source-locator", default="draft")
+    reliability_clip.add_argument("--actor", default="operator")
+    reliability_clip.add_argument("--db-path", default=None)
+    reliability_visual = reliability_sub.add_parser("visual-qa", help="Record deterministic desktop/mobile publication rendering checks")
+    reliability_visual.add_argument("case_id")
+    reliability_visual.add_argument("--desktop-rendered", action="store_true")
+    reliability_visual.add_argument("--mobile-rendered", action="store_true")
+    reliability_visual.add_argument("--overflow-count", type=int, default=0)
+    reliability_visual.add_argument("--contrast-failures", type=int, default=0)
+    reliability_visual.add_argument("--missing-alt-text", type=int, default=0)
+    reliability_visual.add_argument("--unlicensed-images", type=int, default=0)
+    reliability_visual.add_argument("--screenshot", action="append", default=[])
+    reliability_visual.add_argument("--actor", default="operator")
+    reliability_visual.add_argument("--db-path", default=None)
+    reliability_sub.add_parser("benchmark", help="Run the deterministic isolated reliability and ablation benchmark")
+
     research_watchlist = research_sub.add_parser("watchlist", help="Manage cross-ecosystem research watchlists")
     research_watchlist_sub = research_watchlist.add_subparsers(dest="research_watchlist_cmd", required=True)
     research_watchlist_sub.add_parser("list", help="List active research watchlists").add_argument("--ecosystem", default=None)
@@ -2315,6 +2425,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     case_evidence.add_argument("--provenance", default="")
     case_evidence.add_argument("--notes", default="")
     case_evidence.add_argument("--collected-at", default=None)
+    case_evidence.add_argument("--visual-viewport", choices=["desktop", "mobile"], default="")
+    case_evidence.add_argument("--alt-text", default="")
+    case_evidence.add_argument("--license", dest="image_license", default="")
+    case_evidence.add_argument("--source-attribution", default="")
     case_evidence.add_argument("--actor", default="analyst")
     case_evidence.add_argument("--db-path", default=None)
 
@@ -3559,6 +3673,15 @@ def _run_research_case_command(args: argparse.Namespace) -> int:
                 db_path=args.db_path,
             )
         elif command == "add-evidence":
+            evidence_metadata = {}
+            if args.visual_viewport:
+                evidence_metadata["visual_qa_viewport"] = args.visual_viewport
+            if args.alt_text:
+                evidence_metadata["alt"] = args.alt_text
+            if args.image_license:
+                evidence_metadata["license"] = args.image_license
+            if args.source_attribution:
+                evidence_metadata["source_attribution"] = args.source_attribution
             payload = add_research_evidence(
                 args.case_id,
                 evidence_type=args.evidence_type,
@@ -3568,6 +3691,7 @@ def _run_research_case_command(args: argparse.Namespace) -> int:
                 provenance=args.provenance,
                 notes=args.notes,
                 collected_at=args.collected_at,
+                metadata=evidence_metadata,
                 actor=args.actor,
                 db_path=args.db_path,
             )
@@ -3914,6 +4038,125 @@ def main(argv: Optional[List[str]] = None) -> int:
                     print(f"error: {exc}")
                 return 1
             print(to_json(payload) if args.json else to_json(payload))
+            return 0
+
+        if args.research_cmd == "reliability":
+            try:
+                command = args.research_reliability_cmd
+
+                def reliability_text() -> str:
+                    text = str(getattr(args, "text", "") or "")
+                    path_value = str(getattr(args, "text_file", "") or "").strip()
+                    if path_value:
+                        path = Path(path_value).expanduser().resolve()
+                        if not path.is_file() or path.is_symlink():
+                            raise ValueError("text file must be a regular non-symlink file")
+                        if path.stat().st_size > 100_000:
+                            raise ValueError("text file exceeds 100000 bytes")
+                        text = path.read_text(encoding="utf-8")
+                    return text
+
+                if command == "status":
+                    payload = get_research_reliability_workspace(args.case_id, db_path=args.db_path)
+                elif command == "generate-hypotheses":
+                    payload = generate_research_hypotheses(args.case_id, refresh=args.refresh, actor=args.actor, db_path=args.db_path)
+                elif command == "rank-hypotheses":
+                    payload = rank_research_hypotheses(
+                        args.case_id,
+                        candidate_budget=args.candidate_budget,
+                        comparison_budget=args.comparison_budget,
+                        model_call_budget=args.model_call_budget,
+                        actor=args.actor,
+                        db_path=args.db_path,
+                    )
+                elif command == "plan":
+                    payload = (
+                        revise_research_evidence_plan(
+                            args.case_id,
+                            reason=args.reason,
+                            executed_methods=args.executed_method,
+                            actor=args.actor,
+                            db_path=args.db_path,
+                        )
+                        if args.revise
+                        else create_research_evidence_plan(
+                            args.case_id,
+                            change_reason=args.reason,
+                            actor=args.actor,
+                            db_path=args.db_path,
+                        )
+                    )
+                elif command == "run-scaffold":
+                    payload = run_scaffold_research(args.case_id, actor=args.actor, db_path=args.db_path)
+                elif command == "verify-transition":
+                    payload = verify_research_transition(args.case_id, actor=args.actor, db_path=args.db_path)
+                elif command == "run-full":
+                    payload = run_full_safe_research(args.case_id, actor=args.actor, db_path=args.db_path)
+                elif command == "show-bundle":
+                    payload = inspect_research_run_bundle(args.bundle_id, db_path=args.db_path)
+                elif command == "build-claim-ledger":
+                    payload = extract_research_claim_ledger(
+                        args.case_id,
+                        text=reliability_text(),
+                        source_kind=args.source_kind,
+                        source_locator=args.source_locator,
+                        actor=args.actor,
+                        db_path=args.db_path,
+                    )
+                elif command == "verify-claims":
+                    payload = verify_research_claims(args.case_id, actor=args.actor, db_path=args.db_path)
+                elif command == "clip-claims":
+                    text = reliability_text()
+                    if not text:
+                        raise ValueError("--text or --text-file is required for claim clipping")
+                    payload = clip_research_claims(
+                        args.case_id,
+                        text=text,
+                        source_kind=args.source_kind,
+                        source_locator=args.source_locator,
+                        actor=args.actor,
+                        db_path=args.db_path,
+                    )
+                elif command == "audit-completeness":
+                    payload = audit_research_completeness(args.case_id, actor=args.actor, db_path=args.db_path)
+                elif command == "audit-originality":
+                    payload = audit_research_originality(args.case_id, text=reliability_text(), actor=args.actor, db_path=args.db_path)
+                elif command == "visual-qa":
+                    payload = record_research_visual_qa(
+                        args.case_id,
+                        desktop_rendered=args.desktop_rendered,
+                        mobile_rendered=args.mobile_rendered,
+                        overflow_count=args.overflow_count,
+                        contrast_failures=args.contrast_failures,
+                        missing_alt_text=args.missing_alt_text,
+                        unlicensed_images=args.unlicensed_images,
+                        screenshots=args.screenshot,
+                        actor=args.actor,
+                        db_path=args.db_path,
+                    )
+                elif command == "queue-specialist":
+                    payload = queue_research_specialist_review(args.case_id, actor=args.actor, db_path=args.db_path)
+                elif command == "queue-blind-review":
+                    payload = queue_research_blind_review(args.case_id, actor=args.actor, db_path=args.db_path)
+                elif command == "adjudicate-review":
+                    payload = adjudicate_review_disagreement(
+                        args.run_id,
+                        decision=args.decision,
+                        rationale=args.rationale,
+                        actor=args.actor,
+                        db_path=args.db_path,
+                    )
+                elif command == "benchmark":
+                    payload = run_research_reliability_benchmark()
+                else:  # pragma: no cover - argparse enforces command choices
+                    raise ValueError(f"unsupported reliability command: {command}")
+            except Exception as exc:
+                if args.json:
+                    print(to_json({"ok": False, "error": str(exc), "command": f"research reliability {getattr(args, 'research_reliability_cmd', '')}"}))
+                else:
+                    print(f"error: {exc}")
+                return 1
+            print(to_json(payload))
             return 0
 
         if args.research_cmd in {"rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "external-intel", "npm", "storage", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "resolution", "workflow", "content-pack"}:

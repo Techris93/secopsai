@@ -23,6 +23,7 @@ from secopsai.research_workflow import (
     set_disclosure_status,
     set_sandbox_status,
     approve_sandbox_submission,
+    approve_publication_review,
     materialize_completed_sandbox_evidence,
 )
 from secopsai.research_cases import add_evidence, add_subject, create_case, get_case
@@ -227,6 +228,15 @@ def test_workflow_records_human_gates(tmp_path, monkeypatch):
     review = publication_safety_check(case["case_id"], db_path=db)
     assert review["approval_required"] is True
     assert review["status"] in {"needs_approval", "blocked"}
+    reliability_blockers = [item for item in review["blockers"] if item.startswith("Reliability:")]
+    assert reliability_blockers
+    with pytest.raises(ValueError, match="publication reliability blockers remain"):
+        approve_publication_review(
+            case["case_id"],
+            review_id=review["review_id"],
+            waivers=review["blockers"],
+            db_path=db,
+        )
 
 
 def test_completed_sandbox_result_materializes_linked_evidence_and_subject_state(tmp_path):

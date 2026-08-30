@@ -8,6 +8,11 @@ the next tagged release.
 
 ### Added
 
+- Added execution-grounded research reliability controls: competing hypotheses,
+  versioned evidence plans, scaffold/transition/full safe runs, immutable
+  bundles, claim-level verification and clipping, blinded specialist review,
+  human adjudication, completeness/originality/visual audits, and resource
+  accounting.
 - Added approval-gated `research rust-package` automation for crates.io metadata/checksum verification, quarantine, static Artifact Fleet analysis, verified comparison crates, Research Case evidence, selected-model triage, and review-only Blog Ops drafts.
 - Added first-class Hermes Agent 0.18.2+ onboarding with an idempotent public installer, focused setup profile, native read-only Hermes plugin, bounded local telemetry refresh, and persistent launchd/systemd monitoring.
 - Added `secopsai hermes doctor`, `secopsai hermes refresh`, and complete Hermes service lifecycle commands with owner-only state, overlap prevention, explicit degraded health, and retained logs/findings on uninstall.
@@ -46,6 +51,10 @@ the next tagged release.
 
 ### Security
 
+- Added publication blockers for unsupported or contradicted claims, failed or
+  incomplete runs, unresolved specialist disagreement, unsafe compositional
+  plans, and missing visual evidence metadata; all reliability actions remain
+  non-executing and approval-gated.
 - Added separate Core ingest/read credentials, strict host and CORS policy,
   request size and graph limits, duplicate-key rejection, raw-telemetry field
   rejection, stable organization-scoped sync identity, and redacted workspace
@@ -75,6 +84,9 @@ the next tagged release.
 
 ### Docs
 
+- Added execution-grounded architecture, operator, claim-ledger,
+  review/adjudication, visual-QA, and reliability-benchmark guides with
+  traceability to deterministic tests and the cited methodology inspiration.
 - Added the Hermes installation tab, one-command guide, plugin tool reference, service operations, data boundaries, recovery, and uninstall documentation.
 - Documented Edge/Core ownership, privacy boundaries, one-step sync, graph
   inspection, and stable Edge-origin triage workflows.

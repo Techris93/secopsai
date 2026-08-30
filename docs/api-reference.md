@@ -115,6 +115,32 @@ artifacts. It verifies metadata and checksums where available, performs
 static-only analysis, and optionally creates a Research Case and review-only
 draft. `research rust-package` remains a compatibility alias.
 
+## Execution-grounded reliability commands
+
+```bash
+secopsai research reliability generate-hypotheses RSC-... --json
+secopsai research reliability rank-hypotheses RSC-... --candidate-budget 6 --comparison-budget 15 --json
+secopsai research reliability plan RSC-... --json
+secopsai research reliability run-scaffold RSC-... --json
+secopsai research reliability verify-transition RSC-... --json
+secopsai research reliability run-full RSC-... --json
+secopsai research reliability build-claim-ledger RSC-... --json
+secopsai research reliability verify-claims RSC-... --json
+secopsai research reliability clip-claims RSC-... --json
+secopsai research reliability queue-specialist RSC-... --json
+secopsai research reliability queue-blind-review RSC-... --json
+secopsai research reliability adjudicate-review SOR-... --decision accept_primary --rationale "Evidence-backed rationale of at least twenty characters." --json
+secopsai research reliability audit-completeness RSC-... --json
+secopsai research reliability audit-originality RSC-... --json
+secopsai research reliability visual-qa RSC-... --json
+secopsai research reliability benchmark --json
+```
+
+These commands are also available as typed Mission Control actions. They
+persist plan revisions, immutable run bundles, claim revisions, reviewer
+disagreement, and audit results; they never execute an artifact or publish a
+draft. See [Research Reliability Operations](research-reliability.md).
+
 ## Triage commands
 
 ### `secopsai triage list`

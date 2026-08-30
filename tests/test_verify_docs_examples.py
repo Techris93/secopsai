@@ -35,6 +35,21 @@ secopsai research preflight
         self.assertIn("SCM-EXAMPLE0001", normalized)
         self.assertIn("SES-1234567890ab", normalized)
 
+    def test_extract_fenced_commands_joins_shell_continuations(self) -> None:
+        markdown = """
+```bash
+secopsai research reliability adjudicate-review SOR-XXXXXXXXXXXXXXXX \\
+  --decision accept_primary \\
+  --rationale "Evidence-backed rationale with enough detail."
+```
+"""
+        self.assertEqual(
+            extract_fenced_commands(markdown),
+            [
+                'secopsai research reliability adjudicate-review SOR-XXXXXXXXXXXXXXXX --decision accept_primary --rationale "Evidence-backed rationale with enough detail."'
+            ],
+        )
+
     def test_validate_secopsai_command_accepts_real_cli_shapes(self) -> None:
         result = validate_secopsai_command("secopsai triage investigate <FINDING_ID> --open-session --with-research --json")
         self.assertTrue(result["ok"], result)

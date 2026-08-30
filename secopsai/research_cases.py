@@ -879,8 +879,10 @@ def get_case(case_id: str, *, db_path: Optional[str] = None, repair: bool = Fals
     # Dynamic-analysis guidance is a pure, read-only policy decision. Keep it
     # alongside the case payload so the CLI and dashboard use the same result.
     from secopsai.research_sandbox import recommend_dynamic_analysis
+    from secopsai.research_reliability import get_reliability_workspace
 
     result["sandbox_recommendation"] = recommend_dynamic_analysis(result)
+    result["research_reliability"] = get_reliability_workspace(case_id, db_path=db_path)
     return result
 
 
@@ -1728,6 +1730,7 @@ def campaign_payload(case: Dict[str, Any]) -> Dict[str, Any]:
 
 def draft_case_blog(case_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
     from secopsai.blog import draft_research_case
+    from secopsai.research_reliability import clip_unsupported_claims, publication_reliability_gate
 
     case = get_case(case_id, db_path=db_path)
     readiness = publication_readiness(case)
@@ -1736,7 +1739,21 @@ def draft_case_blog(case_id: str, *, db_path: Optional[str] = None) -> Dict[str,
     publication_reviews = case.get("publication_reviews") or []
     if publication_reviews and publication_reviews[0].get("status") != "approved":
         raise ValueError("latest publication safety review is not approved")
-    result = draft_research_case(case)
+    reliability = publication_reliability_gate(case_id, db_path=db_path)
+    if not reliability["ready"]:
+        raise ValueError("research reliability gates are not ready: " + "; ".join(reliability["blockers"]))
+    preview = draft_research_case(case, write=False)
+    verified = clip_unsupported_claims(
+        case_id,
+        text=str(preview["post"].get("body_markdown") or ""),
+        source_kind="publication_draft",
+        source_locator=str(preview["post"].get("slug") or case_id),
+        actor="research-publication-gate",
+        db_path=db_path,
+    )
+    if verified["publication_blocked"]:
+        raise ValueError("generated publication contains claims that remain unsupported or contradicted")
+    result = draft_research_case(case, verified_body=verified["corrected_text"])
     with closing(soc_store.connect(db_path)) as connection:
         _record_event(
             connection,
@@ -1747,4 +1764,10 @@ def draft_case_blog(case_id: str, *, db_path: Optional[str] = None) -> Dict[str,
         )
         connection.execute("UPDATE research_cases SET updated_at = ? WHERE case_id = ?", (soc_store.utc_now(), case["case_id"]))
         connection.commit()
-    return {"case_id": case["case_id"], "publication_readiness": readiness, **result}
+    return {
+        "case_id": case["case_id"],
+        "publication_readiness": readiness,
+        "research_reliability": reliability,
+        "claim_verification": verified["claim_ledger"]["summary"],
+        **result,
+    }

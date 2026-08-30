@@ -8,6 +8,16 @@ distinction between priority, detection confidence, potential impact, local
 exposure, and a human maliciousness verdict. Model output remains bounded,
 evidence-linked review material rather than proof.
 
+For publication-sensitive work, the execution-grounded reliability layer adds
+competing falsifiable hypotheses, versioned plans, scaffold/transition/full
+gates, tamper-evident run bundles, claim-level verification, blinded review,
+adjudication, completeness/originality/visual audits, and resource accounting.
+Use [Research Reliability Operations](research-reliability.md) for the click
+path and [Execution-Grounded Research Architecture](execution-grounded-research-architecture.md)
+for the data contract and methodology traceability. This is an independent
+defensive adaptation of the reliability ideas in the cited arXiv paper, not a
+model-generated source of truth.
+
 For package and artifact investigations, use **Administration → Automation → Research pipeline** or:
 
 ```bash

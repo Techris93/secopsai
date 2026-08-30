@@ -36,7 +36,10 @@ def test_writer_lock_is_reentrant_within_one_process(tmp_path: Path):
             assert lock_path(db_path).exists()
 
 
-def test_writer_lock_uses_shared_file_and_sqlite_fallbacks(tmp_path: Path):
+def test_writer_lock_uses_shared_file_and_sqlite_fallbacks(tmp_path: Path, monkeypatch):
+    # The application may raise this timeout for a busy local service. Keep
+    # the default contract assertion independent of the operator environment.
+    monkeypatch.delenv("SECOPS_BUSY_TIMEOUT_MS", raising=False)
     db_path = str(tmp_path / "core.db")
     soc_store.init_db(db_path)
     with soc_store.connect(db_path) as connection:

@@ -20,7 +20,7 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def default_db_path() -> str:
@@ -844,6 +844,150 @@ def init_db(db_path: str | None = None) -> None:
                 FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS research_hypotheses (
+                hypothesis_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                hypothesis_type TEXT NOT NULL,
+                parent_ids_json TEXT NOT NULL,
+                lineage_json TEXT NOT NULL,
+                statement TEXT NOT NULL,
+                predicted_evidence_json TEXT NOT NULL,
+                falsifiers_json TEXT NOT NULL,
+                contradictions_json TEXT NOT NULL,
+                novelty INTEGER NOT NULL,
+                plausibility INTEGER NOT NULL,
+                testability INTEGER NOT NULL,
+                impact INTEGER NOT NULL,
+                safety INTEGER NOT NULL,
+                estimated_cost REAL NOT NULL,
+                confidence_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                selection_rationale TEXT NOT NULL,
+                evidence_fingerprint TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (case_id, hypothesis_type, revision),
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_hypothesis_comparisons (
+                comparison_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                evidence_fingerprint TEXT NOT NULL,
+                left_hypothesis_id TEXT NOT NULL,
+                right_hypothesis_id TEXT NOT NULL,
+                winner_hypothesis_id TEXT NOT NULL,
+                rationale_json TEXT NOT NULL,
+                evidence_refs_json TEXT NOT NULL,
+                score_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE (case_id, evidence_fingerprint, left_hypothesis_id, right_hypothesis_id),
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE,
+                FOREIGN KEY (left_hypothesis_id) REFERENCES research_hypotheses (hypothesis_id) ON DELETE CASCADE,
+                FOREIGN KEY (right_hypothesis_id) REFERENCES research_hypotheses (hypothesis_id) ON DELETE CASCADE,
+                FOREIGN KEY (winner_hypothesis_id) REFERENCES research_hypotheses (hypothesis_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_evidence_plans (
+                plan_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                parent_plan_id TEXT,
+                selected_hypothesis_id TEXT,
+                status TEXT NOT NULL,
+                intended_methods_json TEXT NOT NULL,
+                executed_methods_json TEXT NOT NULL,
+                required_evidence_json TEXT NOT NULL,
+                expected_outputs_json TEXT NOT NULL,
+                resource_limits_json TEXT NOT NULL,
+                safety_decisions_json TEXT NOT NULL,
+                completion_criteria_json TEXT NOT NULL,
+                change_reason TEXT NOT NULL,
+                evidence_fingerprint TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (case_id, revision),
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE,
+                FOREIGN KEY (parent_plan_id) REFERENCES research_evidence_plans (plan_id) ON DELETE SET NULL,
+                FOREIGN KEY (selected_hypothesis_id) REFERENCES research_hypotheses (hypothesis_id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_run_bundles (
+                bundle_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                plan_id TEXT,
+                stage TEXT NOT NULL,
+                status TEXT NOT NULL,
+                previous_bundle_hash TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                bundle_hash TEXT NOT NULL UNIQUE,
+                completeness_score INTEGER NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE,
+                FOREIGN KEY (plan_id) REFERENCES research_evidence_plans (plan_id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_claim_ledger (
+                claim_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                bundle_id TEXT,
+                revision INTEGER NOT NULL,
+                fingerprint TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                source_locator TEXT NOT NULL,
+                span_start INTEGER NOT NULL,
+                span_end INTEGER NOT NULL,
+                text_span TEXT NOT NULL,
+                claim_type TEXT NOT NULL,
+                support_status TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                evidence_ids_json TEXT NOT NULL,
+                contradicting_evidence_json TEXT NOT NULL,
+                inference_status TEXT NOT NULL,
+                numeric_values_json TEXT NOT NULL,
+                identifiers_json TEXT NOT NULL,
+                source_provenance_json TEXT NOT NULL,
+                limitations_json TEXT NOT NULL,
+                reviewer_decisions_json TEXT NOT NULL,
+                verification_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (case_id, source_kind, source_locator, fingerprint, revision),
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE,
+                FOREIGN KEY (bundle_id) REFERENCES research_run_bundles (bundle_id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS research_claim_revisions (
+                revision_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                claim_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                before_text TEXT NOT NULL,
+                after_text TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                evidence_ids_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE,
+                FOREIGN KEY (claim_id) REFERENCES research_claim_ledger (claim_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_reliability_audits (
+                audit_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                bundle_id TEXT,
+                audit_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                score INTEGER NOT NULL,
+                hard_blockers_json TEXT NOT NULL,
+                warnings_json TEXT NOT NULL,
+                details_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (case_id) REFERENCES research_cases (case_id) ON DELETE CASCADE,
+                FOREIGN KEY (bundle_id) REFERENCES research_run_bundles (bundle_id) ON DELETE SET NULL
+            );
+
             CREATE TABLE IF NOT EXISTS research_verdicts (
                 verdict_id TEXT PRIMARY KEY,
                 case_id TEXT NOT NULL,
@@ -1327,6 +1471,20 @@ def init_db(db_path: str | None = None) -> None:
                 ON research_review_items (pipeline_id, status, created_at);
             CREATE INDEX IF NOT EXISTS idx_research_claims_case
                 ON research_claims (case_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_hypotheses_case_revision
+                ON research_hypotheses (case_id, revision DESC, status);
+            CREATE INDEX IF NOT EXISTS idx_research_hypothesis_comparisons_case
+                ON research_hypothesis_comparisons (case_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_evidence_plans_case_revision
+                ON research_evidence_plans (case_id, revision DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_run_bundles_case_time
+                ON research_run_bundles (case_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_claim_ledger_case_status
+                ON research_claim_ledger (case_id, support_status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_claim_revisions_case_time
+                ON research_claim_revisions (case_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_reliability_audits_case_type
+                ON research_reliability_audits (case_id, audit_type, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_research_verdicts_case
                 ON research_verdicts (case_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_research_disclosures_case

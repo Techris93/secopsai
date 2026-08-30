@@ -24,7 +24,7 @@ from secopsai.specialist_catalog import (
 )
 
 
-RUN_SCHEMA = "secopsai.specialist-run.v1"
+RUN_SCHEMA = "secopsai.specialist-run.v2"
 CONTRACT_SCHEMA = "secopsai.specialist-execution-contract.v1"
 POLICY_SCHEMA = "secopsai.specialist-policy.v1"
 RUN_ID_RE = re.compile(r"^SOR-[A-F0-9]{16}$")
@@ -102,6 +102,11 @@ def _ensure_tables(db_path: str | None = None) -> None:
                 error_code TEXT,
                 error_message TEXT,
                 requested_by TEXT NOT NULL,
+                material_disagreement INTEGER NOT NULL DEFAULT 0,
+                adjudication_status TEXT NOT NULL DEFAULT 'not_required',
+                adjudication_note TEXT NOT NULL DEFAULT '',
+                adjudicated_by TEXT,
+                adjudicated_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 completed_at TEXT
@@ -130,6 +135,20 @@ def _ensure_tables(db_path: str | None = None) -> None:
             );
             """
         )
+        columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(specialist_runs)").fetchall()
+        }
+        migrations = {
+            "material_disagreement": "INTEGER NOT NULL DEFAULT 0",
+            "adjudication_status": "TEXT NOT NULL DEFAULT 'not_required'",
+            "adjudication_note": "TEXT NOT NULL DEFAULT ''",
+            "adjudicated_by": "TEXT",
+            "adjudicated_at": "TEXT",
+        }
+        for column, definition in migrations.items():
+            if column not in columns:
+                connection.execute(f"ALTER TABLE specialist_runs ADD COLUMN {column} {definition}")
         connection.commit()
 
 
@@ -300,6 +319,7 @@ def build_execution_contract(
 
 def _decode_row(row: sqlite3.Row, *, include_local_paths: bool = False) -> dict[str, Any]:
     payload = dict(row)
+    payload["material_disagreement"] = bool(payload.get("material_disagreement"))
     payload["fallback_models"] = _decode(payload.pop("fallback_models_json", "[]"), [])
     payload["contract"] = _decode(payload.pop("contract_json", "{}"), {})
     payload["result"] = _decode(payload.pop("result_json", "{}"), {})
@@ -312,6 +332,58 @@ def _decode_row(row: sqlite3.Row, *, include_local_paths: bool = False) -> dict[
     if include_local_paths and path:
         payload["worktree"]["path"] = path
     return payload
+
+
+def _verdict_family(output: dict[str, Any]) -> str:
+    values = {
+        str(output.get("verdict_recommendation") or "").strip().lower(),
+        str(output.get("finding_verdict") or "").strip().lower(),
+        str(output.get("disposition_recommendation") or "").strip().lower(),
+        str(output.get("automation_recommendation") or "").strip().lower(),
+    }
+    if values & {"credible", "likely", "true_positive", "escalate"}:
+        return "corroborated_risk"
+    if values & {
+        "benign", "not_substantiated", "false_positive", "benign_expected",
+        "expected_behavior", "policy_noise", "suppress_once", "suppress_pattern",
+    }:
+        return "benign_or_not_substantiated"
+    return "uncertain"
+
+
+def compare_specialist_reviews(
+    primary: dict[str, Any],
+    reviewer: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare two completed outputs only after the blinded review finishes."""
+    primary_output = primary.get("output") if isinstance(primary.get("output"), dict) else primary
+    reviewer_output = reviewer.get("output") if isinstance(reviewer.get("output"), dict) else reviewer
+    primary_family = _verdict_family(primary_output)
+    reviewer_family = _verdict_family(reviewer_output)
+    material = {
+        primary_family,
+        reviewer_family,
+    } == {"corroborated_risk", "benign_or_not_substantiated"}
+    evidence_refs = sorted(
+        {
+            str(value)
+            for output in (primary_output, reviewer_output)
+            for key in ("verdict_evidence_refs", "decision_evidence_refs")
+            for value in (output.get(key) or [])
+            if str(value).strip()
+        }
+    )[:100]
+    return {
+        "material_disagreement": material,
+        "primary_verdict_family": primary_family,
+        "reviewer_verdict_family": reviewer_family,
+        "primary_model": str(primary.get("model") or ""),
+        "reviewer_model": str(reviewer.get("model") or ""),
+        "evidence_refs": evidence_refs,
+        "adjudication_required": material,
+        "adjudication_status": "pending_human" if material else "not_required",
+        "comparison_performed_after_blind_review": True,
+    }
 
 
 def get_run(
@@ -678,8 +750,6 @@ def specialist_bridge_context(run_id: str, *, db_path: str | None = None, review
         "execution_policy": run["contract"].get("execution_policy") or {},
         "evidence_requirements": run["contract"].get("evidence_requirements") or {},
     }
-    if review:
-        context["primary_result"] = run.get("result") or {}
     task_id = str((context.get("task") or {}).get("task_id") or "").upper()
     if re.fullmatch(r"RSC-[A-F0-9]{12}", task_id):
         from secopsai.research_cases import get_case
@@ -700,15 +770,16 @@ def specialist_bridge_context(run_id: str, *, db_path: str | None = None, review
                     }
                 }
             )
-        context["research_case"] = {
-            key: case.get(key)
-            for key in (
-                "case_id", "title", "summary", "case_type", "severity",
-                "confidence", "status", "disclosure_status", "subjects",
-                "iocs", "claims", "verdicts", "publication_reviews",
-                "publication_readiness",
-            )
-        }
+        case_fields = (
+            "case_id", "title", "summary", "case_type", "severity",
+            "status", "disclosure_status", "subjects", "iocs", "claims",
+        ) if review else (
+            "case_id", "title", "summary", "case_type", "severity",
+            "confidence", "status", "disclosure_status", "subjects",
+            "iocs", "claims", "verdicts", "publication_reviews",
+            "publication_readiness",
+        )
+        context["research_case"] = {key: case.get(key) for key in case_fields}
         context["research_case"]["evidence"] = evidence
         context["evidence_matrix"] = build_evidence_matrix(
             task_id,
@@ -716,6 +787,36 @@ def specialist_bridge_context(run_id: str, *, db_path: str | None = None, review
             actor="specialist-orchestrator",
             db_path=db_path,
         )
+        if review:
+            from secopsai.research_reliability import get_reliability_workspace
+
+            reliability = get_reliability_workspace(task_id, db_path=db_path)
+            context["blind_review"] = {
+                "blinded": True,
+                "primary_result_included": False,
+                "primary_verdict_included": False,
+                "run_bundles": [
+                    {
+                        key: bundle.get(key)
+                        for key in (
+                            "bundle_id", "stage", "status", "bundle_hash",
+                            "completeness_score", "payload", "verification",
+                        )
+                    }
+                    for bundle in reliability.get("run_bundles") or []
+                ],
+                "claim_ledger": [
+                    {
+                        key: claim.get(key)
+                        for key in (
+                            "claim_id", "text_span", "claim_type", "support_status",
+                            "evidence_ids", "contradicting_evidence", "limitations",
+                            "verification",
+                        )
+                    }
+                    for claim in reliability.get("claim_ledger") or []
+                ],
+            }
     return context
 
 
@@ -726,7 +827,7 @@ def specialist_bridge_instructions(run_id: str, *, db_path: str | None = None, r
     deliverables = ", ".join(str(value) for value in specialist.get("deliverables", []))
     role = str(specialist.get("name") or "reviewed specialist")
     if review:
-        purpose = "Independently review the primary specialist result for correctness, evidence support, security, missing tests, and policy compliance. Do not repeat or self-approve it."
+        purpose = "Independently review the evidence bundle and claim ledger for correctness, support, contradictions, missing evidence, safety, and policy compliance. The primary specialist result and verdict are intentionally withheld."
     else:
         purpose = "Perform a read-only, evidence-bounded analysis. Do not claim implementation, repository inspection, tests, or external research that the supplied context does not prove."
     return (
@@ -762,6 +863,26 @@ def _queue_review(run: dict[str, Any], *, actor: str, db_path: str | None) -> st
         _event(connection, run["run_id"], "review_queued", actor, "Queued independent specialist review.", {"job_id": job["job_id"], "reviewer_profile_id": run["reviewer_profile_id"]})
         connection.commit()
     return str(job["job_id"])
+
+
+def enqueue_blind_review(
+    run_id: str,
+    *,
+    actor: str = "operator",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Queue or return the independent blinded review for one primary run."""
+    run = get_run(run_id, db_path=db_path)
+    if not run.get("result"):
+        raise ValueError("the primary specialist result must complete before blind review")
+    if run.get("review"):
+        return run
+    if run.get("reviewer_job_id"):
+        return run
+    if run.get("status") != "awaiting_review":
+        raise ValueError(f"blind review cannot be queued from status {run.get('status')}")
+    _queue_review(run, actor=actor, db_path=db_path)
+    return get_run(run_id, db_path=db_path)
 
 
 def record_primary_result(
@@ -802,13 +923,76 @@ def record_review_result(
         raise ValueError(f"review result cannot be recorded from status {run['status']}")
     now = soc_store.utc_now()
     payload = {"model": str(model)[:160], "completed_at": now, "reviewer_profile_id": run["reviewer_profile_id"], "output": result}
+    comparison = compare_specialist_reviews(run.get("result") or {}, payload)
+    payload["comparison"] = comparison
     with closing(soc_store.connect(db_path)) as connection:
         connection.execute(
             """UPDATE specialist_runs SET review_json=?, status='needs_review',
-               updated_at=?, completed_at=? WHERE run_id=?""",
-            (_json(payload, limit=MAX_RESULT_JSON_BYTES, label="specialist review"), now, now, run["run_id"]),
+               material_disagreement=?, adjudication_status=?, adjudication_note='',
+               adjudicated_by=NULL, adjudicated_at=NULL, updated_at=?, completed_at=?
+               WHERE run_id=?""",
+            (
+                _json(payload, limit=MAX_RESULT_JSON_BYTES, label="specialist review"),
+                1 if comparison["material_disagreement"] else 0,
+                comparison["adjudication_status"],
+                now,
+                now,
+                run["run_id"],
+            ),
         )
-        _event(connection, run["run_id"], "review_completed", actor, "Independent specialist review completed; operator decision is still required.", {"model": model})
+        _event(
+            connection,
+            run["run_id"],
+            "review_completed",
+            actor,
+            "Independent specialist review completed; operator decision is still required.",
+            {"model": model, "comparison": comparison},
+        )
+        connection.commit()
+    return get_run(run["run_id"], db_path=db_path)
+
+
+def adjudicate_review_disagreement(
+    run_id: str,
+    *,
+    decision: str,
+    rationale: str,
+    actor: str = "operator",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Record the human outcome of a material primary/reviewer disagreement."""
+    run = get_run(run_id, db_path=db_path)
+    decision = str(decision or "").strip().lower()
+    allowed = {"accept_primary", "accept_reviewer", "request_more_evidence"}
+    if decision not in allowed:
+        raise ValueError(f"decision must be one of: {', '.join(sorted(allowed))}")
+    rationale = str(rationale or "").strip()
+    if len(rationale) < 20:
+        raise ValueError("an evidence-backed adjudication rationale of at least 20 characters is required")
+    if run.get("status") != "needs_review" or not run.get("review"):
+        raise ValueError("a completed independent review is required before adjudication")
+    if not run.get("material_disagreement"):
+        raise ValueError("this specialist run has no material disagreement to adjudicate")
+    adjudication_status = (
+        "more_evidence_required"
+        if decision == "request_more_evidence"
+        else f"resolved_{decision.removeprefix('accept_')}"
+    )
+    now = soc_store.utc_now()
+    with closing(soc_store.connect(db_path)) as connection:
+        connection.execute(
+            """UPDATE specialist_runs SET adjudication_status=?, adjudication_note=?,
+               adjudicated_by=?, adjudicated_at=?, updated_at=? WHERE run_id=?""",
+            (adjudication_status, rationale[:8000], str(actor or "operator")[:160], now, now, run["run_id"]),
+        )
+        _event(
+            connection,
+            run["run_id"],
+            "review_adjudicated",
+            actor,
+            "Human adjudication recorded for a material specialist-review disagreement.",
+            {"decision": decision, "status": adjudication_status},
+        )
         connection.commit()
     return get_run(run["run_id"], db_path=db_path)
 

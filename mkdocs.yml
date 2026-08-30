@@ -40,6 +40,13 @@ nav:
       - Research Discovery Platform: research-discovery.md
       - Research Cases: research-cases.md
       - Research Automation: research-automation.md
+      - Research Reliability Operations: research-reliability.md
+      - Research Claim Ledger: research-claim-ledger.md
+      - Research Review And Adjudication: research-review-and-adjudication.md
+      - Research Visual QA: research-visual-qa.md
+      - Research Reliability Benchmark: research-reliability-benchmark.md
+      - Reliability Validation Report: research-reliability-validation-report.md
+      - Execution-Grounded Architecture: execution-grounded-research-architecture.md
       - Artifact Signal Calibration: artifact-signal-calibration.md
       - Universal Source-First Research: universal-source-first-research.md
       - Rust Package Research Adapter: rust-package-research-automation.md

@@ -43,7 +43,7 @@ approval boundaries.
 | Supply chain | npm, PyPI, Packagist, Go, Maven, NuGet, RubyGems, Open VSX, crates, Hugging Face, and container evidence | [Supply-chain security](docs/supply-chain.md) |
 | AI-built software | Hallucinated, missing, newly registered, lookalike, and source-mismatch dependency review | [AI Dependency Guard](docs/ai-dependency-guard.md) |
 | Artifact analysis | Metadata indexing, quarantine, checksums, static/YARA rules, minimized triage, and analyst escalation | [Artifact Fleet](docs/artifact-fleet-operations.md) |
-| Research | Durable cases, evidence matrices, IOC records, guarded pipelines, disclosure, and sandbox gates | [Research and verification](docs/research-and-verification.md) |
+| Research | Durable cases, competing hypotheses, evidence plans, claim ledgers, blinded review, visual QA, disclosure, and sandbox gates | [Research reliability](docs/research-reliability.md) |
 | Triage | Evidence bundles, dispositions, queued actions, mitigation, and auditable closure | [Findings triage](docs/findings-triage-guide.md) |
 | Specialist work | Deterministic expertise routing, explicit OpenCodex model/fallback snapshots, guarded worktrees, and independent review | [Specialist Orchestrator](docs/specialist-orchestrator.md) |
 | Publishing | Source-backed drafts, image review, feeds, archive-safe staging, and protected deployment | [Blog publishing](docs/blog-publishing.md) |
@@ -177,6 +177,15 @@ observations are deduplicated with an audit count. Mission Control shows a
 decision card with priority, detection confidence, assessment, potential
 impact, local exposure, evidence quality, contradictions, and next action.
 See [Artifact Signal Calibration](docs/artifact-signal-calibration.md).
+
+For material investigations, the Research Case reliability workspace adds
+competing hypotheses, versioned evidence plans, scaffold/transition/full safe
+gates, tamper-evident run bundles, claim-level support checks, specialist and
+blinded independent review, adjudication, completeness/originality/visual
+audits, and resource accounting. Unsupported claims are removed or qualified
+with an auditable revision diff before a review-only draft can be created. See
+[Execution-Grounded Research Architecture](docs/execution-grounded-research-architecture.md)
+and [Research Reliability Operations](docs/research-reliability.md).
 
 [![Artifact Fleet funnel from metadata indexing to analyst review](docs/assets/mission-control/artifact-fleet.png)](docs/assets/mission-control/artifact-fleet.png)
 
