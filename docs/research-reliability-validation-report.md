@@ -131,7 +131,7 @@ Detailed operator procedures are in [Research Reliability Operations](research-r
 
 ## Release Evidence
 
-- Core `main` commit: `3aa3d3c` (`Add execution-grounded research reliability`), pushed to `https://github.com/Techris93/secopsai`.
-- Dashboard `main` commit: `7b8662f` (`Expose execution-grounded research controls`), pushed to `https://github.com/Techris93/secopsai-dashboard`.
-- Cloudflare Pages deployment: `https://988d50de.secopsai-dashboard.pages.dev`.
-- Hosted verification: operator sign-in rendered, `app.js?v=20260830-reliability-v1` and `styles.css?v=20260830-reliability-v1` loaded, and the retired `secopsai-helper.secopsai.dev` tunnel was absent.
+- Core `main` implementation commit: `a4ce43f` (`Automate guarded research reliability`), pushed to `https://github.com/Techris93/secopsai`.
+- Dashboard `main` implementation commit: `2c69b5a` (`Expose guarded research automation`), pushed to `https://github.com/Techris93/secopsai-dashboard`.
+- Cloudflare Pages deployment: `https://ec6a0e95.secopsai-dashboard.pages.dev`.
+- Hosted verification: the deployment completed successfully, serves the `20260830-reliability-v3` dashboard assets, and the retired `secopsai-helper.secopsai.dev` tunnel remains absent.
