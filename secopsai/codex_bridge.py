@@ -268,6 +268,18 @@ def persist_model_routing(
     _write_private_json(_model_routing_path(db_path), payload)
     # Keep the established selection file in sync for older services and CLIs.
     persist_selected_model(primary, db_path=db_path, actor=actor)
+    try:
+        from secopsai.intelligence_jobs import rebind_queued_jobs
+
+        rebind_queued_jobs(
+            selected_model=primary,
+            fallback_models=fallbacks,
+            fallback_mode=mode,
+            actor=actor,
+            db_path=db_path,
+        )
+    except Exception:
+        pass
     return payload
 
 

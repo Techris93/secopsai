@@ -1363,5 +1363,52 @@ def test_requeue_failed_jobs(tmp_path):
 
     assert get_job(job1["job_id"], db_path=db)["status"] == "queued"
     assert get_job(job2["job_id"], db_path=db)["status"] == "queued"
+    # Verify stale model metadata was cleared
+    assert "selected_model" not in get_job(job1["job_id"], db_path=db)["input"]
+
+
+def test_rebind_queued_jobs_and_persist_routing(tmp_path):
+    from secopsai.intelligence_jobs import (
+        enqueue_job,
+        rebind_queued_jobs,
+        get_job,
+    )
+    from secopsai.codex_bridge import persist_model_routing
+    db = str(tmp_path / "findings.db")
+    soc_store.init_db(db)
+
+    # Job enqueued with old model
+    job1 = enqueue_job(
+        action="prioritize_findings",
+        target_id="FND-1",
+        inputs={"selected_model": "gpt-5.6-luna", "fallback_models": [], "fallback_mode": "disabled"},
+        db_path=db,
+    )
+    assert get_job(job1["job_id"], db_path=db)["input"]["selected_model"] == "gpt-5.6-luna"
+
+    # Rebind queued jobs to new model
+    res = rebind_queued_jobs(
+        selected_model="google-antigravity/gemini-3.8-flash-high",
+        fallback_models=["xai/grok-4.5"],
+        fallback_mode="any_provider",
+        db_path=db,
+    )
+    assert res["status"] == "rebound"
+    assert res["count"] == 1
+    updated = get_job(job1["job_id"], db_path=db)
+    assert updated["input"]["selected_model"] == "google-antigravity/gemini-3.8-flash-high"
+    assert updated["input"]["fallback_models"] == ["xai/grok-4.5"]
+    assert updated["input"]["fallback_mode"] == "any_provider"
+
+    # Now test persist_model_routing automatically calls rebind_queued_jobs
+    persist_model_routing(
+        "google-antigravity/claude-sonnet-4-6",
+        fallback_models=["gpt-5.4"],
+        fallback_mode="any_provider",
+        db_path=db,
+    )
+    re_updated = get_job(job1["job_id"], db_path=db)
+    assert re_updated["input"]["selected_model"] == "google-antigravity/claude-sonnet-4-6"
+    assert re_updated["input"]["fallback_models"] == ["gpt-5.4"]
 
 
