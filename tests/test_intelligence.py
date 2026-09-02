@@ -1336,3 +1336,32 @@ def test_probe_opencodex_responses_accepts_reasoning_tokens(monkeypatch):
     assert result["status"] == "ready"
     assert result["http_status"] == 200
 
+
+def test_requeue_failed_jobs(tmp_path):
+    from secopsai.intelligence_jobs import (
+        enqueue_job,
+        claim_next_job,
+        fail_job,
+        requeue_failed_jobs,
+        get_job,
+    )
+    db = str(tmp_path / "findings.db")
+    soc_store.init_db(db)
+
+    job1 = enqueue_job(action="prioritize_findings", target_id="FND-1", db_path=db)
+    claim_next_job(provider="opencodex_proxy", worker_id="w1", db_path=db)
+    fail_job(job1["job_id"], error_code="transport_error", error_message="timeout", actor="tester", db_path=db)
+
+    job2 = enqueue_job(action="prioritize_findings", target_id="FND-2", db_path=db)
+    claim_next_job(provider="opencodex_proxy", worker_id="w1", db_path=db)
+    fail_job(job2["job_id"], error_code="transport_error", error_message="timeout", actor="tester", db_path=db)
+
+    res = requeue_failed_jobs(limit=10, actor="tester", db_path=db)
+    assert res["status"] == "requeued"
+    assert res["count"] == 2
+    assert set(res["job_ids"]) == {job1["job_id"], job2["job_id"]}
+
+    assert get_job(job1["job_id"], db_path=db)["status"] == "queued"
+    assert get_job(job2["job_id"], db_path=db)["status"] == "queued"
+
+

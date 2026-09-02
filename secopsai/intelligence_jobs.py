@@ -309,6 +309,43 @@ def requeue_job(
     return get_job(job_id, db_path=db_path)
 
 
+def requeue_failed_jobs(
+    *,
+    limit: int = 100,
+    actor: str = "operator",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Requeue all failed jobs so the bridge can re-process them."""
+    actor = _required(actor, "actor", 160)
+    bounded_limit = max(1, min(int(limit), 500))
+    soc_store.init_db(db_path)
+    now = soc_store.utc_now()
+    requeued_ids: list[str] = []
+    with closing(soc_store.connect(db_path)) as connection:
+        rows = connection.execute(
+            "SELECT job_id FROM intelligence_jobs WHERE status = 'failed' ORDER BY queued_at, job_id LIMIT ?",
+            (bounded_limit,),
+        ).fetchall()
+        for row in rows:
+            job_id = str(row["job_id"])
+            connection.execute(
+                """UPDATE intelligence_jobs
+                   SET status = 'queued', provider = '', started_at = NULL, completed_at = NULL,
+                       updated_at = ?, error_code = NULL, error_message = NULL, result_json = '{}'
+                   WHERE job_id = ? AND status = 'failed'""",
+                (now, job_id),
+            )
+            _event(connection, job_id, "requeued", actor, "Intelligence job requeued for another bridge model.", {})
+            requeued_ids.append(job_id)
+        connection.commit()
+    return {
+        "status": "requeued",
+        "count": len(requeued_ids),
+        "job_ids": requeued_ids,
+        "limit": bounded_limit,
+    }
+
+
 def fail_job(
     job_id: str,
     *,

@@ -109,6 +109,7 @@ from secopsai.hermes_service import install_service as install_hermes_service
 from secopsai.hermes_service import service_action as hermes_service_action
 from secopsai.intelligence_jobs import cancel_job as cancel_intelligence_job
 from secopsai.intelligence_jobs import requeue_job as requeue_intelligence_job
+from secopsai.intelligence_jobs import requeue_failed_jobs as requeue_failed_intelligence_jobs
 from secopsai.intelligence_jobs import enqueue_job as enqueue_intelligence_job
 from secopsai.intelligence_jobs import get_job as get_intelligence_job
 from secopsai.intelligence_jobs import job_counts as intelligence_job_counts
@@ -1628,7 +1629,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "requeue",
         help="Requeue a failed intelligence job so another model can process it",
     )
-    intelligence_jobs_requeue.add_argument("job_id")
+    intelligence_jobs_requeue.add_argument("job_id", nargs="?", default=None)
+    intelligence_jobs_requeue.add_argument("--all", action="store_true", help="Requeue all failed jobs")
+    intelligence_jobs_requeue.add_argument("--limit", type=int, default=100)
     intelligence_jobs_requeue.add_argument("--actor", default="operator")
     intelligence_jobs_requeue.add_argument("--db-path", default=None)
     intelligence_jobs_recover = intelligence_jobs_sub.add_parser(
@@ -4900,7 +4903,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                 elif args.intelligence_jobs_cmd == "cancel":
                     payload = cancel_intelligence_job(args.job_id, actor=args.actor, db_path=args.db_path)
                 elif args.intelligence_jobs_cmd == "requeue":
-                    payload = requeue_intelligence_job(args.job_id, actor=args.actor, db_path=args.db_path)
+                    if args.all or not args.job_id or str(args.job_id).lower() in {"all", "all-failed"}:
+                        payload = requeue_failed_intelligence_jobs(
+                            limit=getattr(args, "limit", 100),
+                            actor=args.actor,
+                            db_path=args.db_path,
+                        )
+                    else:
+                        payload = requeue_intelligence_job(args.job_id, actor=args.actor, db_path=args.db_path)
                 elif args.intelligence_jobs_cmd == "recover":
                     payload = recover_transient_intelligence_jobs(
                         limit=args.limit,
