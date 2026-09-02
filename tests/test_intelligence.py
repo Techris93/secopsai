@@ -1289,3 +1289,50 @@ def test_long_running_job_renews_lease_and_publishes_busy_health(tmp_path: Path,
     assert snapshots[-1]["busy"] is False
     stored = get_job(result["job"]["job_id"], db_path=db)
     assert sum(1 for event in stored["events"] if event["event_type"] == "heartbeat") >= 2
+
+
+def test_persist_model_routing_splits_comma_separated_fallbacks(tmp_path):
+    db = str(tmp_path / "findings.db")
+    soc_store.init_db(db)
+    routing = persist_model_routing(
+        "google-antigravity/gemini-3.8-flash-high",
+        fallback_models=["google-antigravity/gemini-3.8-flash-medium,xai/grok-4.5", "gpt-5.4"],
+        fallback_mode="any_provider",
+        db_path=db,
+    )
+    assert routing["primary_model"] == "google-antigravity/gemini-3.8-flash-high"
+    assert routing["fallback_models"] == [
+        "google-antigravity/gemini-3.8-flash-medium",
+        "xai/grok-4.5",
+        "gpt-5.4",
+    ]
+    loaded = load_model_routing(db)
+    assert loaded["fallback_models"] == [
+        "google-antigravity/gemini-3.8-flash-medium",
+        "xai/grok-4.5",
+        "gpt-5.4",
+    ]
+
+
+def test_probe_opencodex_responses_accepts_reasoning_tokens(monkeypatch):
+    from secopsai import codex_bridge
+
+    monkeypatch.setattr(codex_bridge, "_opencodex_responses_endpoint", lambda: "http://127.0.0.1:53886/v1/responses")
+
+    def mock_post(model, prompt, schema=None, timeout=20):
+        return {
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+            "output": [],
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 0,
+                "output_tokens_details": {"reasoning_tokens": 30},
+            },
+        }
+
+    monkeypatch.setattr(codex_bridge, "_post_opencodex_response", mock_post)
+    result = codex_bridge._probe_opencodex_responses("google-antigravity/gemini-3.7-flash")
+    assert result["status"] == "ready"
+    assert result["http_status"] == 200
+

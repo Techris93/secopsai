@@ -213,12 +213,18 @@ def load_model_routing(db_path: str | None = None) -> dict[str, Any]:
     if not primary or not isinstance(fallbacks, list):
         return {}
     try:
+        raw_fallbacks: list[str] = []
+        for entry in fallbacks:
+            if isinstance(entry, str) and "," in entry:
+                raw_fallbacks.extend(x.strip() for x in entry.split(",") if x.strip())
+            elif str(entry or "").strip():
+                raw_fallbacks.append(str(entry).strip())
         return {
             **payload,
             "primary_model": _clean_model_id(primary),
             "fallback_models": [
-                _clean_model_id(item) for item in fallbacks
-                if str(item or "").strip() and str(item or "").strip() != primary
+                _clean_model_id(item) for item in raw_fallbacks
+                if item and item != primary
             ],
             "fallback_mode": _clean_fallback_mode(str(payload.get("fallback_mode") or "disabled")),
         }
@@ -237,7 +243,13 @@ def persist_model_routing(
     primary = _clean_model_id(primary_model)
     mode = _clean_fallback_mode(fallback_mode)
     fallbacks: list[str] = []
+    raw_fallbacks: list[str] = []
     for item in fallback_models:
+        if isinstance(item, str) and "," in item:
+            raw_fallbacks.extend(x.strip() for x in item.split(",") if x.strip())
+        elif str(item or "").strip():
+            raw_fallbacks.append(str(item).strip())
+    for item in raw_fallbacks:
         cleaned = _clean_model_id(item)
         if cleaned != primary and cleaned not in fallbacks:
             fallbacks.append(cleaned)
@@ -765,7 +777,7 @@ def _post_opencodex_response(model: str, prompt: str, *, schema: dict[str, Any] 
         raise RuntimeError("A loopback OpenCodex Responses endpoint is not configured.")
     body: dict[str, Any] = {"model": model, "input": prompt}
     if schema is None:
-        body["max_output_tokens"] = 8
+        body["max_output_tokens"] = 256
     else:
         body["text"] = {
             "format": {
@@ -811,7 +823,19 @@ def _probe_opencodex_responses(model: str) -> dict[str, Any] | None:
             "Return only the word OK.",
             timeout=_provider_probe_timeout_seconds(),
         )
-        if not _opencodex_output_text(payload):
+        output = _opencodex_output_text(payload)
+        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+        output_tokens = usage.get("output_tokens", 0) or (
+            usage.get("output_tokens_details", {}).get("reasoning_tokens", 0)
+            if isinstance(usage.get("output_tokens_details"), dict)
+            else 0
+        )
+        incomplete_reason = (
+            payload.get("incomplete_details", {}).get("reason")
+            if isinstance(payload.get("incomplete_details"), dict)
+            else None
+        )
+        if not output and output_tokens <= 0 and incomplete_reason != "max_output_tokens":
             raise RuntimeError("OpenCodex loopback returned no model output")
         return {
             "status": "ready",
