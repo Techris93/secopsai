@@ -250,6 +250,41 @@ def test_since_cannot_move_cursor_forward(tmp_path):
     assert result["pages_selected"] == 0
 
 
+def test_nuget_accepts_live_commit_timestamp_casing(tmp_path):
+    db_path = _db(tmp_path)
+
+    def live_casing_fetch(url, max_bytes):
+        fixtures = {
+            "https://api.nuget.org/v3/catalog0/index.json": FIXTURES / "index.json",
+            "https://api.nuget.org/v3/catalog0/page0.json": FIXTURES / "page0.json",
+            "https://api.nuget.org/v3/catalog0/page1.json": FIXTURES / "page1.json",
+        }
+        payload = json.loads(fixtures[url].read_text())
+
+        def rename(value):
+            if isinstance(value, dict):
+                return {
+                    ("commitTimeStamp" if key == "commitTimestamp" else key): rename(item)
+                    for key, item in value.items()
+                }
+            if isinstance(value, list):
+                return [rename(item) for item in value]
+            return value
+
+        return 200, {"content-type": "application/json"}, json.dumps(rename(payload)).encode()
+
+    result = run_registry_collector(
+        ecosystem="nuget",
+        since=SINCE_ALL,
+        db_path=db_path,
+        fetcher=SafeFetcher(fetch=live_casing_fetch),
+    )
+
+    assert result["status"] == "completed"
+    assert result["events_stored"] == 5
+    assert result["cursor_after"] == PAGE1_TS
+
+
 def test_concurrent_run_is_rejected(tmp_path):
     db_path = _db(tmp_path)
     ensure_collectors(db_path=db_path)
@@ -391,6 +426,43 @@ def test_recovered_cursor_reclassifies_gap_as_historical_without_mutating_row(tm
     gap = next(item for item in windows if item["state"] == "gap")
     assert gap["is_active"] is False
     assert gap["classification"] == "superseded"
+
+
+def test_maven_successful_zero_progress_replay_resolves_exact_gap(tmp_path):
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+    with soc_store.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE registry_cursors SET cursor_value='1782000100000' WHERE collector_id='COL-MAVEN-SOLR'"
+        )
+        connection.execute(
+            """INSERT INTO registry_coverage_windows
+               (window_id, collector_id, run_id, window_start, window_end,
+                expected_pages, processed_pages, events_stored, state, gap_reason,
+                created_at, updated_at)
+               VALUES ('RCW-GAP', 'COL-MAVEN-SOLR', 'RIR-GAP',
+                       '1782000100000', '1782000100000', 1, 0, 0, 'gap',
+                       'temporary fetch failure', '2026-09-01T00:00:00.000Z',
+                       '2026-09-01T00:00:00.000Z')"""
+        )
+        connection.execute(
+            """INSERT INTO registry_coverage_windows
+               (window_id, collector_id, run_id, window_start, window_end,
+                expected_pages, processed_pages, events_stored, state, gap_reason,
+                created_at, updated_at)
+               VALUES ('RCW-REPLAY', 'COL-MAVEN-SOLR', 'RIR-REPLAY',
+                       '1782000100000', '1782000100000', 1, 1, 0, 'complete',
+                       NULL, '2026-09-02T00:00:00.000Z',
+                       '2026-09-02T00:00:00.000Z')"""
+        )
+        connection.commit()
+
+    status = collector_status(ecosystem="maven", db_path=db_path)[0]
+    gap = next(item for item in coverage_report(db_path=db_path) if item["window_id"] == "RCW-GAP")
+
+    assert status["active_coverage_gaps"] == 0
+    assert gap["is_active"] is False
+    assert gap["classification"] == "replayed"
 
 
 def test_old_cursor_is_reported_stale_not_as_a_current_gap(tmp_path):
@@ -859,6 +931,7 @@ def test_rubygems_page_budget_flags_incomplete_and_holds_cursor(tmp_path):
     )
     assert result["status"] == "completed"
     assert result["window_incomplete"] is True
+    assert result["coverage"] == "gap"
     assert result["events_stored"] == 2
     # The cursor must not advance past an undrained window.
     assert result["cursor_after"] == cursor_before
@@ -1247,6 +1320,23 @@ def test_maven_caught_up_run_keeps_cursor(tmp_path):
     assert result["status"] == "completed"
     assert result["events_stored"] == 0
     assert result["cursor_after"] == "1782000100000"
+    assert result["pages_processed"] == 1
+
+
+def test_maven_tail_excludes_the_committed_cursor_boundary(tmp_path):
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+    _set_cursor(db_path, "COL-MAVEN-SOLR", "1782000100000")
+    urls = []
+
+    def empty_fetch(url, max_bytes):
+        urls.append(url)
+        return 200, {"content-type": "application/json"}, (MAVEN_FIXTURES / "empty.json").read_bytes()
+
+    run_registry_collector(ecosystem="maven", db_path=db_path, fetcher=SafeFetcher(fetch=empty_fetch))
+
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(urls[0]).query)["q"][0]
+    assert query == "timestamp:{1782000100000 TO *}"
 
 
 def test_maven_rerun_is_idempotent(tmp_path):
@@ -1361,6 +1451,7 @@ def test_openvsx_partial_enumeration_holds_cursor_and_snapshot(tmp_path):
     )
     assert result["status"] == "completed"
     assert result["window_incomplete"] is True
+    assert result["coverage"] == "gap"
     # Partial data must never infer removals or replace the snapshot.
     assert len(_openvsx_snapshots(db_path)) == 1
     assert list_feed_events(db_path=db_path) == []

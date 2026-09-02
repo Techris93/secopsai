@@ -88,6 +88,11 @@ DEFAULT_MAX_DIFF_EVENTS = 10000
 ALGORITHM_VERSION = "registry-surveillance.v1"
 PACKAGIST_BOOTSTRAP_CURSOR = "0"
 
+
+def _nuget_commit_timestamp(item: Dict[str, Any]) -> str:
+    """Read NuGet catalog timestamps across the live and legacy casing."""
+    return str(item.get("commitTimeStamp") or item.get("commitTimestamp") or "").strip()
+
 COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     "nuget": {
         "collector_id": "COL-NUGET-CATALOG",
@@ -203,6 +208,9 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "cursor_seed": "zero",
         "cursor_multiplier": 1000,
         "page_limit": DEFAULT_MAVEN_PAGE_LIMIT,
+        # A fully processed empty exclusive query proves that the exact
+        # committed timestamp boundary has been replayed successfully.
+        "zero_progress_completion_supersedes_gap": True,
         "interval_seconds": 3600,
     },
     "open-vsx": {
@@ -545,7 +553,7 @@ def _persist_page_events(
     """
     allowed_hosts = _decode(collector["config_json"], {}).get("allowed_hosts", [])
     counts = {"seen": 0, "stored": 0, "duplicate": 0, "leaf_failures": 0}
-    page_commit = _format_ts(_parse_ts(str(page.get("commitTimestamp") or "")))
+    page_commit = _format_ts(_parse_ts(_nuget_commit_timestamp(page)))
     now = _format_ts(_utcnow())
     items = page.get("items")
     if not isinstance(items, list):
@@ -558,7 +566,7 @@ def _persist_page_events(
     for item in items:
         if not isinstance(item, dict):
             continue
-        item_ts_raw = str(item.get("commitTimestamp") or "")
+        item_ts_raw = _nuget_commit_timestamp(item)
         if not item_ts_raw:
             continue
         item_ts = _format_ts(_parse_ts(item_ts_raw))
@@ -691,7 +699,13 @@ def _close_run(
     error_message = outcome.get("error")
     status = "failed" if error_message else "completed"
     finished = _format_ts(_utcnow())
-    gap = error_message is not None and outcome["pages_processed"] < outcome["pages_selected"]
+    incomplete = bool(outcome.get("window_incomplete") or outcome.get("diff_truncated"))
+    gap = incomplete or (
+        error_message is not None and outcome["pages_processed"] < outcome["pages_selected"]
+    )
+    gap_reason = error_message
+    if incomplete and not gap_reason:
+        gap_reason = "bounded page budget exhausted before the coverage window drained"
     with sqlite_writer_lock(db_path):
         with closing(soc_store.connect(db_path)) as connection:
             with _write_transaction(connection, db_path):
@@ -728,7 +742,7 @@ def _close_run(
                         outcome["pages_processed"],
                         outcome["events_stored"],
                         "gap" if gap else "complete",
-                        error_message if gap else None,
+                        gap_reason if gap else None,
                         finished,
                         finished,
                     ),
@@ -787,10 +801,13 @@ def _ingest_nuget_catalog(
         pages = [
             item
             for item in index.get("items", [])
-            if isinstance(item, dict) and item.get("@id") and item.get("commitTimestamp")
+            if isinstance(item, dict) and item.get("@id") and _nuget_commit_timestamp(item)
         ]
-        pages.sort(key=lambda item: _format_ts(_parse_ts(str(item["commitTimestamp"]))))
-        pending_pages = [item for item in pages if _format_ts(_parse_ts(str(item["commitTimestamp"]))) > cursor_before]
+        pages.sort(key=lambda item: _format_ts(_parse_ts(_nuget_commit_timestamp(item))))
+        pending_pages = [
+            item for item in pages
+            if _format_ts(_parse_ts(_nuget_commit_timestamp(item))) > cursor_before
+        ]
         selected = pending_pages[:max_pages]
         outcome["pages_selected"] = len(selected)
 
@@ -808,7 +825,7 @@ def _ingest_nuget_catalog(
                             run_id=run_id,
                             url=page_url,
                             item_kind="page",
-                            payload={"commitTimestamp": page_ref.get("commitTimestamp")},
+                            payload={"commitTimestamp": _nuget_commit_timestamp(page_ref)},
                             error=str(exc),
                         )
                     break
@@ -828,7 +845,7 @@ def _ingest_nuget_catalog(
                 outcome["events_duplicate"] += counts.get("duplicate", 0)
                 outcome["leaf_failures"] += counts.get("leaf_failures", 0)
                 outcome["pages_processed"] += 1
-                outcome["cursor_after"] = _format_ts(_parse_ts(str(page.get("commitTimestamp"))))
+                outcome["cursor_after"] = _format_ts(_parse_ts(_nuget_commit_timestamp(page)))
     except (IntakeError, CollectorError) as exc:
         outcome["error"] = str(exc)
     return outcome
@@ -1584,7 +1601,10 @@ def _ingest_maven_solr(
     newest_seen: Optional[int] = None
     with closing(soc_store.connect(db_path)) as connection:
         for page_number in range(1, max(1, min(int(max_pages), 500)) + 1):
-            query = urllib.parse.quote(f"timestamp:[{cursor_before} TO *]")
+            # A committed cursor boundary has already been fully drained.
+            # Excluding it avoids fetching the same newest artifact forever
+            # when Maven Central has no later indexed release.
+            query = urllib.parse.quote(f"timestamp:{{{cursor_before} TO *}}")
             page_url = f"{collector['feed_url']}?q={query}&core=gav&rows={page_limit}&start={start}&wt=json"
             outcome["pages_selected"] += 1
             try:
@@ -1613,6 +1633,7 @@ def _ingest_maven_solr(
                     break
                 num_found = found
             docs = [doc for doc in response["docs"] if isinstance(doc, dict)]
+            outcome["pages_processed"] += 1
             if not docs:
                 drained = True
                 break
@@ -1661,7 +1682,6 @@ def _ingest_maven_solr(
                         outcome["events_duplicate"] += 1
                     else:
                         outcome["events_stored"] += 1
-            outcome["pages_processed"] += 1
             start += len(docs)
             if num_found is not None and start >= num_found:
                 drained = True
@@ -2004,12 +2024,15 @@ def _coverage_window_classification(
     cursor_value: str,
     definition: Dict[str, Any],
     now: datetime,
+    replayed_successfully: bool = False,
 ) -> Tuple[bool, str]:
     """Classify a gap without mutating its immutable historical record."""
     if str(row.get("state") or "") != "gap":
         return False, "complete"
     if _cursor_progressed(cursor_value, str(row.get("window_end") or ""), definition):
         return False, "superseded"
+    if replayed_successfully:
+        return False, "replayed"
     updated = _parse_optional_ts(row.get("updated_at") or row.get("created_at"))
     age = (now - updated).total_seconds() if updated else 0
     threshold = max(7 * 86400, int(definition.get("interval_seconds", 3600)) * 6)
@@ -2425,11 +2448,24 @@ def collector_status(*, ecosystem: Optional[str] = None, db_path: Optional[str] 
             active_gaps = 0
             historical_gaps = 0
             for gap_row in gap_rows:
+                replayed_successfully = False
+                if COLLECTOR_DEFINITIONS.get(collector["ecosystem"], {}).get(
+                    "zero_progress_completion_supersedes_gap"
+                ):
+                    replayed_successfully = connection.execute(
+                        """SELECT 1 FROM registry_coverage_windows
+                           WHERE collector_id = ? AND state = 'complete'
+                             AND created_at > ? AND window_start = ?
+                             AND expected_pages = processed_pages
+                           LIMIT 1""",
+                        (collector_id, gap_row["created_at"], gap_row["window_start"]),
+                    ).fetchone() is not None
                 active, classification = _coverage_window_classification(
                     gap_row,
                     cursor_value=cursor_value,
                     definition=COLLECTOR_DEFINITIONS.get(collector["ecosystem"], {}),
                     now=now,
+                    replayed_successfully=replayed_successfully,
                 )
                 if active:
                     active_gaps += 1
@@ -2498,6 +2534,15 @@ def coverage_report(*, days: int = 7, db_path: Optional[str] = None) -> List[Dic
             str(row["collector_id"]): str(row["cursor_value"] or "")
             for row in connection.execute("SELECT collector_id, cursor_value FROM registry_cursors").fetchall()
         }
+        completed_windows = {
+            str(row["collector_id"]): [dict(item) for item in connection.execute(
+                """SELECT window_start, created_at FROM registry_coverage_windows
+                   WHERE collector_id = ? AND state = 'complete'
+                     AND expected_pages = processed_pages""",
+                (row["collector_id"],),
+            ).fetchall()]
+            for row in connection.execute("SELECT collector_id FROM registry_collectors").fetchall()
+        }
     result: List[Dict[str, Any]] = []
     for row in rows:
         item = dict(row)
@@ -2510,6 +2555,14 @@ def coverage_report(*, days: int = 7, db_path: Optional[str] = None) -> List[Dic
             cursor_value=cursors.get(str(item.get("collector_id")), ""),
             definition=collector,
             now=now,
+            replayed_successfully=bool(
+                collector.get("zero_progress_completion_supersedes_gap")
+                and any(
+                    completed.get("window_start") == item.get("window_start")
+                    and str(completed.get("created_at") or "") > str(item.get("created_at") or "")
+                    for completed in completed_windows.get(str(item.get("collector_id")), [])
+                )
+            ),
         )
         item["is_active"] = active
         item["classification"] = classification

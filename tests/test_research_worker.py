@@ -2,11 +2,12 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 
 import soc_store
-from secopsai.research_surveillance import ensure_collectors, run_registry_collector
+from secopsai.research_surveillance import ensure_collectors
 from secopsai.research_worker import (
     _record_collector_degraded_alert,
     _record_npm_enrichment_alert,
     collector_schedules,
+    collector_page_budget,
     due_collectors,
     run_worker_cycle,
     run_worker_loop,
@@ -36,6 +37,13 @@ def test_collector_schedules_have_respectful_intervals():
     assert schedules["go"] == 900
     assert schedules["maven"] == 3600
     assert schedules["open-vsx"] == 3600
+
+
+def test_dense_collectors_receive_complete_bounded_page_budgets():
+    assert collector_page_budget("rubygems", 25) == 250
+    assert collector_page_budget("open-vsx", 25) == 400
+    assert collector_page_budget("nuget", 25) == 25
+    assert collector_page_budget("rubygems", 300) == 300
 
 
 def test_due_collectors_all_due_when_never_run(tmp_path):

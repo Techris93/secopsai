@@ -39,6 +39,19 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 DEFAULT_CYCLE_INTERVAL_SECONDS = 60
 MAX_PAGES_PER_CYCLE = 25
+# Dense registries need a complete bounded pass before their durable cursor can
+# advance. These per-source budgets are measured below the collector hard cap.
+COLLECTOR_MAX_PAGES_PER_CYCLE = {
+    "rubygems": 250,
+    "open-vsx": 400,
+}
+
+
+def collector_page_budget(ecosystem: str, requested: int) -> int:
+    """Return the bounded worker budget needed for one safe source pass."""
+    return max(requested, COLLECTOR_MAX_PAGES_PER_CYCLE.get(ecosystem, requested))
+
+
 # Scoring performs deterministic watchlist persistence per event. Keep the
 # worker cycle bounded on the production ledger; backlog is drained over
 # successive cycles instead of holding the SQLite writer for several minutes.
@@ -290,7 +303,7 @@ def _run_worker_cycle_unlocked(
         try:
             outcome = run_registry_collector(
                 ecosystem=item["ecosystem"],
-                max_pages=max_pages,
+                max_pages=collector_page_budget(item["ecosystem"], max_pages),
                 db_path=db_path,
                 fetcher=fetcher,
             )
