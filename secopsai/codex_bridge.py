@@ -187,7 +187,13 @@ def load_selected_model(db_path: str | None = None) -> str:
     return str(payload.get("model") or "").strip()
 
 
-def persist_selected_model(model: str, *, db_path: str | None = None, actor: str = "operator") -> dict[str, Any]:
+def persist_selected_model(
+    model: str,
+    *,
+    db_path: str | None = None,
+    actor: str = "operator",
+    sync_routing: bool = True,
+) -> dict[str, Any]:
     cleaned = _clean_model_id(model)
     target = _selected_model_path(db_path)
     payload = {
@@ -197,6 +203,31 @@ def persist_selected_model(model: str, *, db_path: str | None = None, actor: str
         "updated_by": str(actor or "operator")[:80],
     }
     _write_private_json(target, payload)
+    if sync_routing:
+        routing = load_model_routing(db_path)
+        fallbacks = [x for x in (routing.get("fallback_models") or []) if x != cleaned]
+        mode = str(routing.get("fallback_mode") or "disabled")
+        routing_payload = {
+            "schema_version": MODEL_ROUTING_SCHEMA,
+            "primary_model": cleaned,
+            "fallback_models": fallbacks if mode != "disabled" else [],
+            "fallback_mode": mode,
+            "updated_at": soc_store.utc_now(),
+            "updated_by": str(actor or "operator")[:80],
+        }
+        _write_private_json(_model_routing_path(db_path), routing_payload)
+        try:
+            from secopsai.intelligence_jobs import rebind_queued_jobs
+
+            rebind_queued_jobs(
+                selected_model=cleaned,
+                fallback_models=fallbacks if mode != "disabled" else [],
+                fallback_mode=mode,
+                actor=actor,
+                db_path=db_path,
+            )
+        except Exception:
+            pass
     return payload
 
 
@@ -209,12 +240,11 @@ def load_model_routing(db_path: str | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict) or payload.get("schema_version") != MODEL_ROUTING_SCHEMA:
         return {}
     primary = str(payload.get("primary_model") or "").strip()
-    fallbacks = payload.get("fallback_models")
-    if not primary or not isinstance(fallbacks, list):
+    if not primary:
         return {}
     try:
         raw_fallbacks: list[str] = []
-        for entry in fallbacks:
+        for entry in payload.get("fallback_models") or []:
             if isinstance(entry, str) and "," in entry:
                 raw_fallbacks.extend(x.strip() for x in entry.split(",") if x.strip())
             elif str(entry or "").strip():
@@ -267,7 +297,7 @@ def persist_model_routing(
     }
     _write_private_json(_model_routing_path(db_path), payload)
     # Keep the established selection file in sync for older services and CLIs.
-    persist_selected_model(primary, db_path=db_path, actor=actor)
+    persist_selected_model(primary, db_path=db_path, actor=actor, sync_routing=False)
     try:
         from secopsai.intelligence_jobs import rebind_queued_jobs
 
