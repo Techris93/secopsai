@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Sequence
 
 import soc_store
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 SCHEMA_VERSION = "secopsai.intelligence.job.v1"
@@ -289,68 +290,18 @@ def requeue_job(
     actor = _required(actor, "actor", 160)
     soc_store.init_db(db_path)
     now = soc_store.utc_now()
-    with closing(soc_store.connect(db_path)) as connection:
-        row = connection.execute("SELECT status, input_json FROM intelligence_jobs WHERE job_id = ?", (job_id,)).fetchone()
-        if row is None:
-            raise ValueError(f"intelligence job not found: {job_id}")
-        status = str(row["status"])
-        if status == "running":
-            raise ValueError("a running intelligence job cannot be requeued; stop the bridge or wait for recovery")
-        if status == "queued":
-            return get_job(job_id, db_path=db_path)
-        if status not in {"failed", "canceled"}:
-            raise ValueError(f"only failed or canceled intelligence jobs can be requeued (status={status})")
-        inputs = _decode(str(row["input_json"] or "{}"))
-        if selected_model:
-            inputs["selected_model"] = _clean(selected_model, 200)
-            if fallback_models is not None:
-                inputs["fallback_models"] = [
-                    str(item).strip()[:200]
-                    for item in fallback_models
-                    if str(item).strip() and str(item).strip() != selected_model
-                ][:8]
-            if fallback_mode is not None:
-                inputs["fallback_mode"] = str(fallback_mode).strip()[:40]
-        else:
-            inputs.pop("selected_model", None)
-            inputs.pop("fallback_models", None)
-            inputs.pop("fallback_mode", None)
-        new_input_json = _bounded_json(inputs, MAX_INPUT_BYTES, "job input")
-        connection.execute(
-            """UPDATE intelligence_jobs
-               SET status = 'queued', provider = '', started_at = NULL, completed_at = NULL,
-                   updated_at = ?, error_code = NULL, error_message = NULL, result_json = '{}',
-                   input_json = ?
-               WHERE job_id = ?""",
-            (now, new_input_json, job_id),
-        )
-        _event(connection, job_id, "requeued", actor, "Intelligence job requeued for another bridge model.", {})
-        connection.commit()
-    return get_job(job_id, db_path=db_path)
-
-
-def requeue_failed_jobs(
-    *,
-    selected_model: str | None = None,
-    fallback_models: Sequence[str] | None = None,
-    fallback_mode: str | None = None,
-    limit: int = 100,
-    actor: str = "operator",
-    db_path: str | None = None,
-) -> dict[str, Any]:
-    """Requeue all failed jobs so the bridge can re-process them."""
-    actor = _required(actor, "actor", 160)
-    bounded_limit = max(1, min(int(limit), 500))
-    soc_store.init_db(db_path)
-    now = soc_store.utc_now()
-    requeued_ids: list[str] = []
-    with closing(soc_store.connect(db_path)) as connection:
-        rows = connection.execute(
-            "SELECT job_id, input_json FROM intelligence_jobs WHERE status = 'failed' ORDER BY queued_at, job_id LIMIT ?",
-            (bounded_limit,),
-        ).fetchall()
-        for row in rows:
-            job_id = str(row["job_id"])
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            row = connection.execute("SELECT status, input_json FROM intelligence_jobs WHERE job_id = ?", (job_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"intelligence job not found: {job_id}")
+            status = str(row["status"])
+            if status == "running":
+                raise ValueError("a running intelligence job cannot be requeued; stop the bridge or wait for recovery")
+            if status == "queued":
+                return get_job(job_id, db_path=db_path)
+            if status not in {"failed", "canceled"}:
+                raise ValueError(f"only failed or canceled intelligence jobs can be requeued (status={status})")
             inputs = _decode(str(row["input_json"] or "{}"))
             if selected_model:
                 inputs["selected_model"] = _clean(selected_model, 200)
@@ -372,12 +323,64 @@ def requeue_failed_jobs(
                    SET status = 'queued', provider = '', started_at = NULL, completed_at = NULL,
                        updated_at = ?, error_code = NULL, error_message = NULL, result_json = '{}',
                        input_json = ?
-                   WHERE job_id = ? AND status = 'failed'""",
+                   WHERE job_id = ?""",
                 (now, new_input_json, job_id),
             )
             _event(connection, job_id, "requeued", actor, "Intelligence job requeued for another bridge model.", {})
-            requeued_ids.append(job_id)
-        connection.commit()
+            connection.commit()
+    return get_job(job_id, db_path=db_path)
+
+
+def requeue_failed_jobs(
+    *,
+    selected_model: str | None = None,
+    fallback_models: Sequence[str] | None = None,
+    fallback_mode: str | None = None,
+    limit: int = 100,
+    actor: str = "operator",
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Requeue all failed jobs so the bridge can re-process them."""
+    actor = _required(actor, "actor", 160)
+    bounded_limit = max(1, min(int(limit), 500))
+    soc_store.init_db(db_path)
+    now = soc_store.utc_now()
+    requeued_ids: list[str] = []
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            rows = connection.execute(
+                "SELECT job_id, input_json FROM intelligence_jobs WHERE status = 'failed' ORDER BY queued_at, job_id LIMIT ?",
+                (bounded_limit,),
+            ).fetchall()
+            for row in rows:
+                job_id = str(row["job_id"])
+                inputs = _decode(str(row["input_json"] or "{}"))
+                if selected_model:
+                    inputs["selected_model"] = _clean(selected_model, 200)
+                    if fallback_models is not None:
+                        inputs["fallback_models"] = [
+                            str(item).strip()[:200]
+                            for item in fallback_models
+                            if str(item).strip() and str(item).strip() != selected_model
+                        ][:8]
+                    if fallback_mode is not None:
+                        inputs["fallback_mode"] = str(fallback_mode).strip()[:40]
+                else:
+                    inputs.pop("selected_model", None)
+                    inputs.pop("fallback_models", None)
+                    inputs.pop("fallback_mode", None)
+                new_input_json = _bounded_json(inputs, MAX_INPUT_BYTES, "job input")
+                connection.execute(
+                    """UPDATE intelligence_jobs
+                       SET status = 'queued', provider = '', started_at = NULL, completed_at = NULL,
+                           updated_at = ?, error_code = NULL, error_message = NULL, result_json = '{}',
+                           input_json = ?
+                       WHERE job_id = ? AND status = 'failed'""",
+                    (now, new_input_json, job_id),
+                )
+                _event(connection, job_id, "requeued", actor, "Intelligence job requeued for another bridge model.", {})
+                requeued_ids.append(job_id)
+            connection.commit()
     return {
         "status": "requeued",
         "count": len(requeued_ids),
@@ -675,34 +678,35 @@ def rebind_queued_jobs(
         if str(item).strip() and str(item).strip() != selected_model
     ][:8]
     clean_mode = str(fallback_mode or "disabled").strip()[:40]
-    with closing(soc_store.connect(db_path)) as connection:
-        rows = connection.execute(
-            "SELECT job_id, status, input_json FROM intelligence_jobs WHERE status IN ('queued', 'awaiting_provider')"
-        ).fetchall()
-        for row in rows:
-            job_id = str(row["job_id"])
-            inputs = _decode(str(row["input_json"] or "{}"))
-            inputs["selected_model"] = selected_model
-            inputs["fallback_models"] = clean_fallbacks
-            inputs["fallback_mode"] = clean_mode
-            input_json = _bounded_json(inputs, MAX_INPUT_BYTES, "job input")
-            connection.execute(
-                """UPDATE intelligence_jobs
-                   SET input_json = ?, status = 'queued', provider = '',
-                       error_code = NULL, error_message = NULL, updated_at = ?
-                   WHERE job_id = ?""",
-                (input_json, now, job_id),
-            )
-            _event(
-                connection,
-                job_id,
-                "model_rebound",
-                actor,
-                "Rebound queued job to the active selected model routing.",
-                {"selected_model": selected_model},
-            )
-            rebound.append(job_id)
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            rows = connection.execute(
+                "SELECT job_id, status, input_json FROM intelligence_jobs WHERE status IN ('queued', 'awaiting_provider')"
+            ).fetchall()
+            for row in rows:
+                job_id = str(row["job_id"])
+                inputs = _decode(str(row["input_json"] or "{}"))
+                inputs["selected_model"] = selected_model
+                inputs["fallback_models"] = clean_fallbacks
+                inputs["fallback_mode"] = clean_mode
+                input_json = _bounded_json(inputs, MAX_INPUT_BYTES, "job input")
+                connection.execute(
+                    """UPDATE intelligence_jobs
+                       SET input_json = ?, status = 'queued', provider = '',
+                           error_code = NULL, error_message = NULL, updated_at = ?
+                       WHERE job_id = ?""",
+                    (input_json, now, job_id),
+                )
+                _event(
+                    connection,
+                    job_id,
+                    "model_rebound",
+                    actor,
+                    "Rebound queued job to the active selected model routing.",
+                    {"selected_model": selected_model},
+                )
+                rebound.append(job_id)
+            connection.commit()
     return {"status": "rebound", "count": len(rebound), "job_ids": rebound}
 
 
