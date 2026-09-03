@@ -7,6 +7,7 @@ import re
 import signal
 import shutil
 import socket
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -1216,7 +1217,9 @@ def run_once(
                     worker_id=resolved.resolved_worker_id(),
                     db_path=db_path,
                 )
-        except TimeoutError as exc:
+        except (TimeoutError, sqlite3.OperationalError) as exc:
+            if isinstance(exc, sqlite3.OperationalError) and "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
+                raise
             return {
                 "status": "writer_busy",
                 "job": None,
@@ -1368,15 +1371,25 @@ def run_loop(
                 # The bridge must continue processing already-durable jobs when
                 # automatic triage discovery is temporarily degraded.
                 pass
-        result = run_once(
-            db_path=db_path,
-            settings=resolved,
-            runner=runner,
-            model=resolve_selected_model(resolved, model=model, db_path=db_path),
-            probe_fallbacks=True,
-        )
+        try:
+            result = run_once(
+                db_path=db_path,
+                settings=resolved,
+                runner=runner,
+                model=resolve_selected_model(resolved, model=model, db_path=db_path),
+                probe_fallbacks=True,
+            )
+        except Exception as exc:
+            failures += 1
+            if max_iterations > 0 and iterations >= max_iterations:
+                return {"status": "failed", "processed": processed, "failures": failures, "error": _safe_error(exc)}
+            time.sleep(resolved.poll_interval_seconds)
+            continue
         if result["status"] == "blocked":
-            return {"status": "blocked", "processed": processed, "failures": failures, "bridge": result.get("bridge")}
+            if max_iterations > 0 and iterations >= max_iterations:
+                return {"status": "blocked", "processed": processed, "failures": failures, "bridge": result.get("bridge")}
+            time.sleep(resolved.poll_interval_seconds)
+            continue
         if result["status"] == "awaiting_provider":
             if max_iterations > 0 and iterations >= max_iterations:
                 return {"status": "awaiting_provider", "processed": processed, "failures": failures, "bridge": result.get("bridge")}
@@ -2070,14 +2083,22 @@ def _fail_current_job(
                 "error_code": error_code,
                 "error_message": error_message,
             }
-    with sqlite_writer_lock(db_path):
-        return fail_job(
-            job_id,
-            error_code=error_code,
-            error_message=error_message,
-            actor=settings.resolved_worker_id(),
-            db_path=db_path,
-        )
+    try:
+        with sqlite_writer_lock(db_path):
+            return fail_job(
+                job_id,
+                error_code=error_code,
+                error_message=error_message,
+                actor=settings.resolved_worker_id(),
+                db_path=db_path,
+            )
+    except Exception:
+        return {
+            "job_id": job_id,
+            "status": "failed",
+            "error_code": error_code,
+            "error_message": error_message,
+        }
 
 
 def _run(

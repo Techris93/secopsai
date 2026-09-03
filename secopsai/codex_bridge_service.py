@@ -105,7 +105,7 @@ def _install_launchd(home: Path, db_path: str | None, run: RunCommand, start: bo
         "WorkingDirectory": str(working_directory),
         "EnvironmentVariables": environment,
         "RunAtLoad": True,
-        "KeepAlive": {"SuccessfulExit": False},
+        "KeepAlive": True,
         "ThrottleInterval": 15,
         "ProcessType": "Background",
         "StandardOutPath": str(logs / "codex-bridge.out.log"),

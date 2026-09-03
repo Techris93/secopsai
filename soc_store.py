@@ -49,11 +49,10 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
-    connection.execute("PRAGMA synchronous = FULL")
-    connection.execute("PRAGMA wal_autocheckpoint = 1000")
-    # Do not query or change journal_mode on every connection. The schema
-    # initializer enables WAL once while holding the cross-process writer
-    # lock; status reads then avoid needless mode negotiations.
+    # Do not execute mode PRAGMAs (synchronous, wal_autocheckpoint, journal_mode)
+    # on every connection. The schema initializer sets these once while holding
+    # the cross-process writer lock; routine connections must avoid needless
+    # write negotiations that trigger "database is locked".
     try:
         os.chmod(resolved_path, 0o600)  # nosec B103
     except OSError:
@@ -101,7 +100,8 @@ def init_db(db_path: str | None = None) -> None:
             journal_mode = str(connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]).lower()
             if journal_mode != "wal":
                 raise RuntimeError(f"failed to enable WAL for local Core DB: {journal_mode}")
-            connection.execute("PRAGMA synchronous = FULL")
+            connection.execute("PRAGMA synchronous = NORMAL")
+            connection.execute("PRAGMA wal_autocheckpoint = 1000")
             connection.executescript(
                 """
             CREATE TABLE IF NOT EXISTS findings (
