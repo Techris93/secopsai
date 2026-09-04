@@ -90,12 +90,12 @@ candidate remains open until the exact artifact is collected and reviewed.
 
 ## Deployment boundary
 
-The Render worker and Core API use separate persistent disks. The worker must
-be configured with:
+The Render worker and Cloudflare Core Edge service use separate stores. The
+worker must be configured with:
 
 ```text
 SECOPSAI_RESEARCH_EXTERNAL_ALERT_CHANNELS=webhook
-SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL=https://secopsai-core-api.onrender.com/api/v1/research/alerts/webhook
+SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL=https://core.secopsai.dev/api/v1/research/alerts/webhook
 SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET=<the shared server-side secret>
 ```
 

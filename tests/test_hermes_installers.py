@@ -19,10 +19,15 @@ def test_release_version_is_consistent() -> None:
     assert "type=sha,prefix={{branch}}-" not in workflow
 
 
-def test_render_deployment_has_one_authority_and_a_pinned_runtime() -> None:
+def test_hosted_deployment_has_one_render_worker_and_cloudflare_core() -> None:
     blueprint = (ROOT / "render.yaml").read_text(encoding="utf-8")
+    worker = (ROOT / "cloudflare" / "secopsai-core-edge" / "wrangler.jsonc").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "test-and-build.yml").read_text(encoding="utf-8")
-    assert blueprint.count("autoDeployTrigger: checksPass") == 2
+    assert blueprint.count("autoDeployTrigger: checksPass") == 1
+    assert "name: secopsai-core-api" not in blueprint
+    assert "https://core.secopsai.dev/api/v1/research/alerts/webhook" in blueprint
+    assert '"name": "secopsai-core-edge"' in worker
+    assert '"pattern": "core.secopsai.dev"' in worker
     assert "deploy-render:" not in workflow
     assert "RENDER_DEPLOY_HOOK_URL" not in workflow
     assert (ROOT / ".python-version").read_text(encoding="utf-8").strip() == "3.11.15"

@@ -82,6 +82,8 @@ nav:
       - OSS Artifact Fleet Gap Analysis: oss-artifact-fleet-gap-analysis.md
   - Deploy And Reference:
       - Deployment Guide: deployment-guide.md
+      - Core API: core-api.md
+      - Render To Cloudflare Migration: render-to-cloudflare-migration-2026-09.md
       - API Reference: api-reference.md
       - Threat Model: threat-model.md
       - Security And Data Handling: security-and-data-handling.md

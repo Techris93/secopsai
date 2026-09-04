@@ -400,9 +400,11 @@ Also set:
 | `SECOPSAI_MCP_ALLOWED_HOSTS` | Public service hostname only |
 | `SECOPSAI_MCP_ALLOWED_ORIGINS` | `https://chatgpt.com` |
 | `SECOPSAI_MCP_DOCUMENTATION_URL` | `https://docs.secopsai.dev/intelligence-integrations/` |
-| `SECOPSAI_CORE_API_URL` | `https://secopsai-core-api.onrender.com` |
+| `SECOPSAI_CORE_API_URL` | `https://core.secopsai.dev` |
 
-Set the production MCP resource and audience to the exact public Render origin. Change both together if a custom domain is introduced.
+Set the production MCP resource and audience to the exact public MCP service
+origin. The read-only Core upstream is the separate
+`https://core.secopsai.dev` origin.
 
 After the opt-in deployment, verify:
 

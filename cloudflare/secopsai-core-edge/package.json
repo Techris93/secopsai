@@ -1,0 +1,14 @@
+{
+  "name": "@secopsai/core-edge-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/index.js && node --check test/worker.test.js",
+    "test": "node --test",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.129.0"
+  }
+}

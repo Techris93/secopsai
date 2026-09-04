@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "secopsai-core-edge",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-04",
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "core.secopsai.dev",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "secopsai-core-edge",
+      "database_id": "a293a7e9-cc36-44e4-8bcd-2877337bf3dd",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

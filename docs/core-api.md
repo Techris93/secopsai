@@ -83,85 +83,62 @@ only import metadata and counts, never bearer credentials or bundle contents.
 
 ## Hosted deployment
 
-`render.yaml` is the canonical root Render Blueprint for the Core API. Create a
-new Blueprint from the `Techris93/secopsai` repository, select `main`, and use
-the root Blueprint path. It creates one Starter instance and a 1 GB persistent
-disk because SQLite data must survive deploys and Render disks cannot be
-attached to a free service.
+The production-observed hosted Core boundary runs as the Cloudflare Worker in
+`cloudflare/secopsai-core-edge`, backed by D1 and available at
+`https://core.secopsai.dev`. It preserves the routes that were actually used by
+the hosted research worker and operator read path:
 
-The Blueprint is also the only deployment authority for the Core API and the
-research worker. Both services use `autoDeployTrigger: checksPass`; do not add a
-second GitHub deploy hook for this repository. The repository pins Render's
-native Python runtime in `.python-version`, so a platform default update cannot
-change the production interpreter without review.
+- `GET /healthz`
+- `GET /readyz`
+- `POST /api/v1/research/alerts/webhook`
+- `GET /api/v1/workspace`
+- `GET /api/v1/audit-logs`
+- `GET /api/v1/research/alerts`
 
-Before creating it:
+The full FastAPI service and its intelligence, enterprise, and Edge-import
+routes remain available for local deployments. Do not assume those routes are
+implemented by the narrow Cloudflare service. Add a route only after its data
+model, authentication scope, migration, and production caller are verified.
 
-1. Generate four unrelated secrets of at least 32 characters.
-2. Set `SECOPSAI_CORE_INGEST_TOKEN`, `SECOPSAI_CORE_READ_TOKEN`, `SECOPSAI_CORE_INTELLIGENCE_TOKEN`, and `SECOPSAI_CORE_BRIDGE_TOKEN` when prompted.
-3. Set `SECOPSAI_CORE_CORS_ORIGINS` to the exact operator dashboard origin.
-4. Set `SECOPSAI_CORE_ORGANIZATION_ID` to the Edge workspace organization ID.
-5. Confirm the expected hostname in `SECOPSAI_CORE_TRUSTED_HOSTS`.
-6. Review current Render compute and disk pricing before applying the Blueprint.
-
-The Blueprint intentionally uses one process and one persistent disk. Do not
-increase the worker or instance count while Core uses SQLite. The later SaaS
-architecture should move canonical Core state to managed PostgreSQL before
-horizontal scaling or multi-tenant production.
-
-After the service deploys, save its `onrender.com` origin and run the
-secret-safe hosted preflight from the Core repository:
+The Worker configuration binds the `secopsai-core-edge` D1 database and the
+`core.secopsai.dev` custom domain. Configure its unrelated secrets with
+Wrangler; never place them in `wrangler.jsonc`:
 
 ```bash
-cd /Users/chrixchange/secopsai
-SECOPSAI_CORE_API_URL='https://secopsai-core-api.onrender.com' \
-SECOPSAI_CORE_READ_TOKEN='use-the-owner-only-render-secret' \
-./scripts/core-api hosted-check
+cd /Users/chrixchange/secopsai/cloudflare/secopsai-core-edge
+wrangler secret put CORE_READ_TOKEN
+wrangler secret put RESEARCH_WEBHOOK_SECRET
+wrangler d1 migrations apply secopsai-core-edge --remote
+npm test
+wrangler deploy
 ```
 
-The command checks `/healthz`, `/readyz`, and the authenticated workspace
-schema. It prints only status, version, schema, summary-key, and non-secret
-error information. It never prints the bearer token or workspace response
-body. Do not record the token in shell history; prefer an environment file with
-mode `0600` or an approved secret manager.
+The Render research worker uses the same webhook secret under the worker-side
+name `SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET` and posts to:
 
-The check must report `"ok": true` before configuring the canonical dashboard
-Pages Worker with `SECOPSAI_CORE_API_URL` and `SECOPSAI_CORE_READ_TOKEN`. The
-dashboard then calls Core server-side and keeps the read credential out of the
-browser.
-
-The current pilot service is deployed at
-`https://secopsai-core-api.onrender.com`. The first hosted Edge bundle import
-has been verified against the pilot workspace. Treat a transient `502` during
-Render cold start as a retryable deployment event; repeated failures require
-checking the service logs and readiness before sending customer data.
-
-For the first Edge-to-hosted-Core import, use the separate ingest credential
-with Core's existing Edge sync command:
-
-```bash
-SECOPSAI_EDGE_API_URL='https://secopsai-edge-api.onrender.com' \
-SECOPSAI_EDGE_ACCESS_TOKEN='use-the-scoped-edge-export-token' \
-SECOPSAI_CORE_API_URL='https://secopsai-core-api.onrender.com' \
-SECOPSAI_CORE_INGEST_TOKEN='use-the-owner-only-core-ingest-secret' \
-secopsai edge sync --remote-only
+```text
+https://core.secopsai.dev/api/v1/research/alerts/webhook
 ```
 
-The read token used by the dashboard and the ingest token used by Edge are
-unrelated. Rotate either independently. `--remote-only` avoids creating a
-local SQLite mirror; omit it when the operator also wants local graph/triage
-inspection. The hosted endpoint is idempotent for repeated bundle imports.
-The Edge/Core client retries bounded transient `500`, `502`, `503`, `504`, and
-network failures up to three times with short backoff; authentication and
-validation errors are not retried.
+The Worker rejects stale or invalid signatures, payloads larger than 64 KB,
+unknown alert types, and unauthenticated reads. D1 imports are generated from a
+reviewed, sanitized snapshot by `scripts/build_snapshot_import.py`; generated
+SQL belongs in an owner-only backup directory, not the repository.
+
+The stateful registry research worker remains on Render because its SQLite
+database is larger than the free D1 per-database limit and its continuous
+artifact workload requires a persistent filesystem. Moving that service
+requires Cloudflare Workers Paid with Containers or a separately reviewed
+sharded/serverless redesign. Do not delete it as part of the Core migration.
 
 ## Backup and recovery
 
-Render snapshots the attached disk, but SQLite still needs an application-level
-backup drill. Use SQLite's online backup API or `.backup` command against a
-separate destination, verify it with `PRAGMA integrity_check`, and restore only
-into a separate test service during drills. Never copy a live database file
-without a transaction-safe backup operation.
+Use D1 export and Time Travel for hosted Core recovery, and keep an encrypted or
+access-controlled off-platform snapshot. Before deleting any former provider
+service, verify the exported record counts, download the backup again, and
+recompute its checksum. Local SQLite deployments still require the online
+backup API or `.backup`; never copy a live database file without a
+transaction-safe backup operation.
 
 ## Security boundary
 
@@ -169,6 +146,7 @@ without a transaction-safe backup operation.
 - Core receives normalized graph nodes, graph edges, and findings only.
 - Workspace responses omit MAC addresses, BSSIDs, and raw telemetry fields.
 - CORS origins and trusted hosts are explicit in protected environments.
-- Uvicorn runs behind Render TLS with bounded concurrency and request recycling.
+- Cloudflare terminates hosted TLS; the Worker returns restrictive response
+  headers and D1 holds only normalized records.
 - Every successful or rejected contract import is auditable without storing the
   submitted evidence body.

@@ -114,12 +114,12 @@ SMTP messages are multipart email with a plain-text fallback and an escaped HTML
 
 The HTML mark is different from the avatar that mailbox providers may show beside the sender. That inbox-level identity requires BIMI-capable DNS and mail authentication. Do not publish a BIMI record until SPF and DKIM are aligned, DMARC is monitored and moved to enforcement, the logo is converted to SVG Tiny PS, and the chosen mailbox-provider certificate requirements are satisfied.
 
-The hosted Core API exposes `POST /api/v1/research/alerts/webhook` for this
-operational path. The Render Blueprint creates the `secopsai-research-alerts`
-environment group, generates a 256-bit
-`SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET`, and links it to Core and the worker.
-The worker URL is `https://secopsai-core-api.onrender.com/api/v1/research/alerts/webhook`,
-and automatic webhook delivery is enabled in the Blueprint. The separate
+The Cloudflare Core Edge Worker exposes `POST /api/v1/research/alerts/webhook`
+for this operational path. Configure the same generated secret independently
+as the Worker's `RESEARCH_WEBHOOK_SECRET` and the Render research worker's
+`SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET`. The delivery URL is
+`https://core.secopsai.dev/api/v1/research/alerts/webhook`, and automatic
+webhook delivery is enabled in the Blueprint. The separate
 `SECOPSAI_RESEARCH_EXTERNAL_ALERT_CHANNELS=webhook` setting sends
 source-backed campaign leads only to Core. It never inherits the operational
 email channel, because one campaign can contain hundreds of package versions.
@@ -129,17 +129,21 @@ unsupported alert types, invalid signatures, and duplicate JSON keys.
 
 Webhook retries are idempotent. Core assigns a stable local alert ID from the worker alert ID and preserves the operator-owned status and owner fields when the same alert is delivered again. The Core workspace response includes normalized operational research alerts; raw package artifacts and scanner data are not accepted by this endpoint.
 
-Rotate the webhook secret by temporarily disabling automatic webhook delivery, replacing the value once in the shared Render environment group, waiting for both linked services to redeploy, and then re-enabling the channel. A mismatched secret fails closed and produces an audited failed delivery on the worker.
+Rotate the webhook secret by temporarily disabling automatic webhook delivery,
+setting the new value in Cloudflare and on the Render research worker, deploying
+both services, verifying an idempotent signed canary, and only then re-enabling
+the channel. A mismatched secret fails closed and produces an audited failed
+delivery on the worker.
 
 Optional Sentry reporting is also disabled until `SECOPSAI_SENTRY_DSN` is present. When enabled, Core sends no default PII, excludes local variables, and records errors with traces and profiling disabled by default. Set a nonzero `SECOPSAI_SENTRY_TRACES_SAMPLE_RATE` only after reviewing the privacy and cost impact.
 
 The repository includes the manual `Configure Resend DNS` GitHub workflow. It uses the existing server-side `CLOUDFLARE_API_TOKEN` Actions secret plus the public `RESEND_DKIM_PUBLIC_KEY` repository variable to locate `secopsai.dev` by exact zone name and idempotently configure the Resend DKIM record and the `send.secopsai.dev` SPF and return-path records. The token must have Zone read and DNS edit permission for `secopsai.dev`; a Pages-only token fails without changing DNS.
 
-Important deployment boundary: Render persistent disks cannot be shared. The
-signed webhook synchronizes reduced operational and source-backed alert
-context only. Registry events, candidates, artifacts, and full coverage
-history remain on the worker disk until their own authenticated ingestion
-contracts are implemented. Core still treats every external lead as
+Important deployment boundary: the Render research disk and Cloudflare D1 are
+independent. The signed webhook synchronizes reduced operational and
+source-backed alert context only. Registry events, candidates, artifacts, and
+full coverage history remain on the worker disk until their own authenticated
+ingestion contracts are implemented. Core still treats every external lead as
 unverified until its evidence workflow completes.
 
 ### Proactive npm release enrichment

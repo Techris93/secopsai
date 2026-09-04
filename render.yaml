@@ -1,63 +1,12 @@
-envVarGroups:
-  - name: secopsai-research-alerts
-    envVars:
-      - key: SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET
-        generateValue: true
-
 services:
-  - type: web
-    name: secopsai-core-api
-    runtime: python
-    plan: starter
-    autoDeployTrigger: checksPass
-    numInstances: 1
-    buildCommand: pip install -r requirements.txt
-    startCommand: >-
-      uvicorn secopsai.core_api:app
-      --host 0.0.0.0
-      --port $PORT
-      --proxy-headers
-      --forwarded-allow-ips=*
-      --no-server-header
-      --limit-concurrency 100
-      --limit-max-requests 10000
-      --timeout-graceful-shutdown 30
-    healthCheckPath: /readyz
-    envVars:
-      - fromGroup: secopsai-research-alerts
-      - key: SECOPSAI_CORE_ENVIRONMENT
-        value: production
-      - key: SECOPSAI_CORE_DB_PATH
-        value: /var/data/secopsai/core.db
-      - key: SECOPSAI_CORE_INGEST_TOKEN
-        sync: false
-      - key: SECOPSAI_CORE_READ_TOKEN
-        sync: false
-      - key: SECOPSAI_CORE_INTELLIGENCE_TOKEN
-        sync: false
-      - key: SECOPSAI_CORE_BRIDGE_TOKEN
-        sync: false
-      - key: SECOPSAI_CORE_ORGANIZATION_ID
-        sync: false
-      - key: SECOPSAI_CORE_CORS_ORIGINS
-        sync: false
-      - key: SECOPSAI_CORE_TRUSTED_HOSTS
-        value: secopsai-core-api.onrender.com
-      - key: SECOPSAI_CORE_MAX_BUNDLE_BYTES
-        value: "10485760"
-    disk:
-      name: secopsai-core-data
-      mountPath: /var/data/secopsai
-      sizeGB: 1
   - type: worker
     name: secopsai-research-worker
     runtime: python
     plan: starter
     autoDeployTrigger: checksPass
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m secopsai.cli research worker run --interval 60
+    startCommand: python -u -m secopsai.cli research worker run --interval 60
     envVars:
-      - fromGroup: secopsai-research-alerts
       - key: SECOPSAI_CORE_ENVIRONMENT
         value: production
       - key: SECOPS_FINDINGS_DIR
@@ -93,7 +42,9 @@ services:
       - key: SECOPSAI_NPM_STATIC_ANALYSIS_LIMIT
         value: "10"
       - key: SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL
-        value: https://secopsai-core-api.onrender.com/api/v1/research/alerts/webhook
+        value: https://core.secopsai.dev/api/v1/research/alerts/webhook
+      - key: SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET
+        sync: false
       - key: SECOPSAI_SENTRY_TRACES_SAMPLE_RATE
         value: "0"
       - key: SECOPSAI_STORAGE_RESERVE_BYTES
