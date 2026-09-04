@@ -2,9 +2,13 @@ import json
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
 
 from secopsai import cli
 from secopsai.workflows import get_workflow, list_workflows, render_workflow, workflow_names
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class WorkflowCommandTests(unittest.TestCase):
@@ -44,6 +48,15 @@ class WorkflowCommandTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["workflow"]["name"], "ship")
         self.assertIn("commands", payload["workflow"])
+
+    def test_mcp_audit_retries_transient_registry_failures_without_weakening_gate(self):
+        workflow = (ROOT / ".github/workflows/test-and-build.yml").read_text(encoding="utf-8")
+
+        self.assertIn("for attempt in 1 2 3", workflow)
+        self.assertIn("npm audit --audit-level=moderate", workflow)
+        self.assertIn('if [ "$attempt" -eq 3 ]', workflow)
+        self.assertIn("exit 1", workflow)
+        self.assertNotIn("npm audit --audit-level=moderate || true", workflow)
 
 
 if __name__ == "__main__":

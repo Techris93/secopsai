@@ -162,7 +162,18 @@ jobs:
 
       - name: Audit MCP dependencies
         working-directory: apps/secopsai-chatgpt
-        run: npm audit --audit-level=moderate
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if npm audit --audit-level=moderate; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "npm audit remained unsuccessful after ${attempt} attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt * 15))
+          done
 
   build-container:
     needs: [test, chatgpt-app]
