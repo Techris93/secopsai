@@ -82,7 +82,7 @@ const TOOLS = [
 ];
 
 export function createSecOpsMcpServer({ identity, coreClient, config }) {
-  const server = new McpServer({ name: "secopsai", version: "0.1.0" });
+  const server = new McpServer({ name: "secopsai", version: "0.2.0" });
   for (const tool of TOOLS) {
     server.registerTool(
       tool.name,
@@ -102,12 +102,27 @@ export function createSecOpsMcpServer({ identity, coreClient, config }) {
       async (args) => {
         try {
           requireScope(identity, tool.scope);
-          const result = await coreClient.query(tool.action, args || {});
+          const result = await coreClient.query(tool.action, args || {}, { identity, toolName: tool.name });
           return {
             content: [{ type: "text", text: summaryText(tool, result) }],
             structuredContent: { result },
           };
         } catch (error) {
+          try {
+            await coreClient.recordActivity(
+              identity,
+              "tool_call",
+              { result: "failed", error_type: error instanceof AuthenticationError ? error.code : "tool_error" },
+              tool.name,
+            );
+          } catch (auditError) {
+            if (config.auditRequired) {
+              return {
+                content: [{ type: "text", text: "SecOpsAI denied the request because the required audit record could not be written." }],
+                isError: true,
+              };
+            }
+          }
           if (error instanceof AuthenticationError) {
             return {
               content: [{ type: "text", text: error.message }],

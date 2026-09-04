@@ -58,6 +58,8 @@ nav:
       - Blog Publishing: blog-publishing.md
   - Integrations:
       - Intelligence Integrations: intelligence-integrations.md
+      - Universal MCP Gateway: mcp-gateway.md
+      - MCP Gateway Validation: mcp-gateway-validation.md
       - OpenClaw Integration: OpenClaw-Integration.md
       - OpenClaw Plugin: OpenClaw-Plugin.md
       - Hermes Integration: Hermes-Integration.md

@@ -11,7 +11,7 @@ Only SecOpsAI resources were reviewed. Unrelated Render services were excluded.
 | `secopsai-edge-api` | Retire | The suspended FastAPI/PostgreSQL stack is not the active Mission Control data path. Rewriting more than 100 dormant routes into D1 would preserve duplicate architecture rather than reduce cost. |
 | `secopsai-edge-scheduler` | Retire | It only called the suspended Edge API maintenance routes. |
 | `secopsai-edge-postgres` | Retire after verified export | The dormant Edge database was the remaining cost behind the suspended stack. |
-| `secopsai-chatgpt-app` | Retire suspended deployment | The optional service was not production-ready: OAuth issuer/JWKS and Core credentials were not fully configured. Source remains in the repository for a future Worker deployment. |
+| Legacy `secopsai-chatgpt-app` | Retired | Replaced in source by the provider-neutral `secopsai-mcp-gateway`. Deploy the gateway only after OAuth issuer/JWKS, explicit clients, tenant binding, and Core credentials are configured. |
 | legacy `secopsai` worker | Retire | It came from the obsolete `secops-autoresearch` repository and recent production logs repeatedly reported zero input records and zero detections. |
 
 The retirement completed on 4 September 2026. Render now lists only

@@ -1,16 +1,17 @@
 {
-  "name": "@secopsai/chatgpt-app",
-  "version": "0.1.0",
+  "name": "@secopsai/mcp-gateway",
+  "version": "0.2.0",
   "private": true,
-  "description": "Authenticated read-only MCP server for the SecOpsAI ChatGPT app",
+  "description": "Provider-neutral authenticated MCP gateway for SecOpsAI",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "start": "node src/server.js",
+    "start:stdio": "node src/stdio.js",
     "test": "node --test",
-    "check": "node --check src/server.js && node --check src/auth.js && node --check src/core-client.js"
+    "check": "node --check src/server.js && node --check src/stdio.js && node --check src/auth.js && node --check src/core-client.js && node --check src/client-profiles.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

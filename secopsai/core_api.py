@@ -49,6 +49,10 @@ from secopsai.enterprise_store import EnterpriseContext, RateLimiter, build_ente
 from secopsai.enterprise_workflows import pentest_engagement, questionnaire_record, threat_model_record
 from secopsai.vulnerability_management import normalize_advisory
 from secopsai.siem import MetricsRegistry
+from secopsai.mcp_gateway import gateway_status as mcp_gateway_status
+from secopsai.mcp_gateway import record_activity as record_mcp_activity
+from secopsai.mcp_gateway import revoke_session as revoke_mcp_session
+from secopsai.mcp_gateway import session_status as mcp_session_status
 
 
 LOGGER = logging.getLogger(__name__)
@@ -100,6 +104,7 @@ class CoreAPISettings:
     bridge_token: str = ""
     environment: str = "local"
     organization_id: str = ""
+    workspace_id: str = ""
     cors_origins: tuple[str, ...] = ()
     trusted_hosts: tuple[str, ...] = ("127.0.0.1", "localhost", "testserver")
     max_bundle_bytes: int = DEFAULT_MAX_BUNDLE_BYTES
@@ -115,6 +120,12 @@ class CoreAPISettings:
             bridge_token=os.environ.get("SECOPSAI_CORE_BRIDGE_TOKEN", "").strip(),
             environment=os.environ.get("SECOPSAI_CORE_ENVIRONMENT", "local").strip().lower(),
             organization_id=os.environ.get("SECOPSAI_CORE_ORGANIZATION_ID", "").strip(),
+            # Existing single-workspace deployments remain bootable while they
+            # add the explicit setting; new MCP tokens must still carry it.
+            workspace_id=(
+                os.environ.get("SECOPSAI_CORE_WORKSPACE_ID", "").strip()
+                or os.environ.get("SECOPSAI_CORE_ORGANIZATION_ID", "").strip()
+            ),
             cors_origins=_csv_setting("SECOPSAI_CORE_CORS_ORIGINS"),
             trusted_hosts=_csv_setting(
                 "SECOPSAI_CORE_TRUSTED_HOSTS",
@@ -155,6 +166,8 @@ class CoreAPISettings:
             raise RuntimeError("All configured Core bearer credentials must be different")
         if not self.organization_id:
             raise RuntimeError("SECOPSAI_CORE_ORGANIZATION_ID is required in pilot/production")
+        if not self.workspace_id:
+            raise RuntimeError("SECOPSAI_CORE_WORKSPACE_ID is required in pilot/production")
         if not self.trusted_hosts or "*" in self.trusted_hosts:
             raise RuntimeError("SECOPSAI_CORE_TRUSTED_HOSTS must be explicit in pilot/production")
         if "*" in self.cors_origins:
@@ -451,6 +464,58 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return list_intelligence_actions()
 
+    @application.post("/api/v1/mcp/activity")
+    async def mcp_activity(
+        request: Request,
+        _role: str = Depends(require_read),
+    ) -> dict[str, Any]:
+        try:
+            payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "MCP activity")
+            if resolved.organization_id and str(payload.get("organization_id") or "") != resolved.organization_id:
+                raise ValueError("MCP activity organization does not match this Core workspace")
+            if resolved.workspace_id and str(payload.get("workspace_id") or "") != resolved.workspace_id:
+                raise ValueError("MCP activity workspace does not match this Core workspace")
+            return record_mcp_activity(payload, request_id=request.state.request_id, db_path=resolved.db_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @application.get("/api/v1/mcp/sessions")
+    def mcp_sessions(
+        limit: int = 100,
+        _role: str = Depends(require_read),
+    ) -> dict[str, Any]:
+        return mcp_gateway_status(limit=limit, db_path=resolved.db_path)
+
+    @application.get("/api/v1/mcp/sessions/{session_id}/status")
+    def mcp_status(
+        session_id: str,
+        _role: str = Depends(require_read),
+    ) -> dict[str, Any]:
+        try:
+            return mcp_session_status(session_id, db_path=resolved.db_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @application.post("/api/v1/mcp/sessions/{session_id}/revoke")
+    async def mcp_revoke(
+        session_id: str,
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        try:
+            payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "MCP revocation")
+            reason = str(payload.get("reason") or "").strip()
+            if len(reason) < 5:
+                raise ValueError("MCP revocation requires an operator reason")
+            return revoke_mcp_session(
+                session_id,
+                actor=str(payload.get("actor") or "secopsai-operator"),
+                reason=reason,
+                db_path=resolved.db_path,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @application.post("/api/v1/intelligence/query")
     async def intelligence_query(
         request: Request,
@@ -462,15 +527,35 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
             inputs = payload.get("inputs") or {}
             if not isinstance(inputs, dict):
                 raise ValueError("intelligence inputs must be an object")
+            mcp_context = payload.get("mcp_context") if isinstance(payload.get("mcp_context"), dict) else None
+            if mcp_context:
+                if resolved.organization_id and str(mcp_context.get("organization_id") or "") != resolved.organization_id:
+                    raise ValueError("MCP query organization does not match this Core workspace")
+                if resolved.workspace_id and str(mcp_context.get("workspace_id") or "") != resolved.workspace_id:
+                    raise ValueError("MCP query workspace does not match this Core workspace")
             result = run_intelligence_read_action(action, inputs, db_path=resolved.db_path)
+            if mcp_context:
+                record_mcp_activity(
+                    {**mcp_context, "event_type": "tool_call"},
+                    request_id=request.state.request_id,
+                    db_path=resolved.db_path,
+                )
             _write_audit(
                 resolved.db_path,
                 request_id=request.state.request_id,
                 action="intelligence.query.completed",
                 actor_role="operator_read",
                 result="success",
-                source_instance="secopsai-core",
-                details={"intelligence_action": action},
+                source_instance="secopsai-mcp-gateway" if mcp_context else "secopsai-core",
+                details={
+                    "intelligence_action": action,
+                    **({
+                        "mcp_client_id": mcp_context.get("client_id"),
+                        "mcp_session_id": mcp_context.get("session_id"),
+                        "mcp_workspace_id": mcp_context.get("workspace_id"),
+                        "mcp_tool": mcp_context.get("tool_name"),
+                    } if mcp_context else {}),
+                },
             )
             return {**result, "request_id": request.state.request_id}
         except ValueError as exc:

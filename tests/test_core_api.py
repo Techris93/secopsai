@@ -104,6 +104,7 @@ def client(tmp_path: Path):
         bridge_token=BRIDGE_TOKEN,
         environment="test",
         organization_id="org-pilot-1",
+        workspace_id="workspace-pilot-1",
         cors_origins=("https://console.example.test",),
         trusted_hosts=("testserver",),
         max_bundle_bytes=100_000,
@@ -209,6 +210,87 @@ def test_intelligence_read_and_job_routes_use_separate_credentials(client):
     assert "intelligence.query.completed" in audit_actions
     assert "intelligence.job.queued" in audit_actions
     assert "intelligence.job.canceled" in audit_actions
+
+
+def test_mcp_activity_status_and_revocation_are_tenant_bound(client):
+    test_client, _ = client
+    session_id = "c" * 64
+    payload = {
+        "session_id": session_id,
+        "client_id": "chatgpt-client",
+        "client_name": "ChatGPT",
+        "subject_id": "d" * 64,
+        "organization_id": "org-pilot-1",
+        "workspace_id": "workspace-pilot-1",
+        "transport": "streamable-http",
+        "scopes": ["secopsai.workspace.read"],
+        "event_type": "authenticated_request",
+        "details": {"method": "POST"},
+    }
+    denied = test_client.post("/api/v1/mcp/activity", json=payload)
+    assert denied.status_code == 401
+    wrong_org = test_client.post(
+        "/api/v1/mcp/activity",
+        headers={"Authorization": f"Bearer {READ_TOKEN}"},
+        json={**payload, "organization_id": "org-other"},
+    )
+    assert wrong_org.status_code == 422
+    wrong_workspace = test_client.post(
+        "/api/v1/mcp/activity",
+        headers={"Authorization": f"Bearer {READ_TOKEN}"},
+        json={**payload, "workspace_id": "workspace-other"},
+    )
+    assert wrong_workspace.status_code == 422
+    recorded = test_client.post(
+        "/api/v1/mcp/activity",
+        headers={"Authorization": f"Bearer {READ_TOKEN}"},
+        json=payload,
+    )
+    assert recorded.status_code == 200
+    listed = test_client.get("/api/v1/mcp/sessions", headers={"Authorization": f"Bearer {READ_TOKEN}"})
+    assert listed.json()["sessions"][0]["client_id"] == "chatgpt-client"
+    revoked = test_client.post(
+        f"/api/v1/mcp/sessions/{session_id}/revoke",
+        headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"},
+        json={"actor": "security-operator", "reason": "access review"},
+    )
+    assert revoked.status_code == 200
+    checked = test_client.get(
+        f"/api/v1/mcp/sessions/{session_id}/status",
+        headers={"Authorization": f"Bearer {READ_TOKEN}"},
+    )
+    assert checked.json()["session"]["status"] == "revoked"
+
+
+def test_intelligence_query_records_provider_neutral_mcp_tool_context(client):
+    test_client, settings = client
+    session_id = "e" * 64
+    response = test_client.post(
+        "/api/v1/intelligence/query",
+        headers={"Authorization": f"Bearer {READ_TOKEN}"},
+        json={
+            "action": "workspace_summary",
+            "inputs": {},
+            "mcp_context": {
+                "session_id": session_id,
+                "client_id": "vscode-client",
+                "client_name": "Visual Studio Code",
+                "subject_id": "f" * 64,
+                "organization_id": "org-pilot-1",
+                "workspace_id": "workspace-pilot-1",
+                "transport": "streamable-http",
+                "scopes": ["secopsai.workspace.read"],
+                "tool_name": "secopsai_workspace_summary",
+            },
+        },
+    )
+    assert response.status_code == 200
+    with soc_store.read_connect(settings.db_path) as connection:
+        session = connection.execute("SELECT client_id, workspace_id, last_tool FROM mcp_client_sessions WHERE session_id = ?", (session_id,)).fetchone()
+        audit = connection.execute("SELECT details_json FROM core_api_audit_logs ORDER BY audit_id DESC LIMIT 1").fetchone()[0]
+    assert tuple(session) == ("vscode-client", "workspace-pilot-1", "secopsai_workspace_summary")
+    assert "vscode-client" in audit
+    assert "secopsai_workspace_summary" in audit
 
 
 def test_intelligence_autopilot_is_configurable_and_queues_findings(client):
@@ -695,4 +777,19 @@ def test_production_settings_fail_closed():
     )
     with pytest.raises(RuntimeError, match="ORGANIZATION_ID"):
         with TestClient(create_app(missing_scope)):
+            pass
+
+    missing_workspace = CoreAPISettings(
+        db_path=":memory:",
+        ingest_token=INGEST_TOKEN,
+        read_token=READ_TOKEN,
+        intelligence_token=INTELLIGENCE_TOKEN,
+        bridge_token=BRIDGE_TOKEN,
+        environment="production",
+        organization_id="org-pilot-1",
+        cors_origins=("https://console.example.test",),
+        trusted_hosts=("core.example.test",),
+    )
+    with pytest.raises(RuntimeError, match="WORKSPACE_ID"):
+        with TestClient(create_app(missing_workspace)):
             pass

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -53,7 +54,7 @@ class AgentCoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             job = run_isolated_job(
                 name="preflight-help",
-                command=["python3", "-m", "secopsai.cli", "--help"],
+                command=[sys.executable, "-m", "secopsai.cli", "--help"],
                 cwd=str(Path(__file__).resolve().parents[1]),
                 timeout=30,
                 path=tmp,

@@ -135,8 +135,8 @@ jobs:
           name: codecov-umbrella
           fail_ci_if_error: false
 
-  chatgpt-app:
-    name: ChatGPT app MCP
+  mcp-gateway:
+    name: Universal MCP gateway
     runs-on: ubuntu-latest
 
     steps:
@@ -148,20 +148,20 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
-          cache-dependency-path: apps/secopsai-chatgpt/package-lock.json
+          cache-dependency-path: apps/secopsai-mcp/package-lock.json
 
       - name: Install locked dependencies
-        working-directory: apps/secopsai-chatgpt
+        working-directory: apps/secopsai-mcp
         run: npm ci --ignore-scripts
 
       - name: Check and test MCP server
-        working-directory: apps/secopsai-chatgpt
+        working-directory: apps/secopsai-mcp
         run: |
           npm run check
           npm test
 
       - name: Audit MCP dependencies
-        working-directory: apps/secopsai-chatgpt
+        working-directory: apps/secopsai-mcp
         run: |
           set -euo pipefail
           for attempt in 1 2 3; do
@@ -176,7 +176,7 @@ jobs:
           done
 
   build-container:
-    needs: [test, chatgpt-app]
+    needs: [test, mcp-gateway]
     runs-on: ubuntu-latest
     if: >-
       (github.event_name == 'push' &&
@@ -451,7 +451,7 @@ jobs:
           done <<< "$IMAGE_TAGS"
 
   release:
-    needs: [test, chatgpt-app, build-container]
+    needs: [test, mcp-gateway, build-container]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 

@@ -52,6 +52,9 @@ class WorkflowCommandTests(unittest.TestCase):
     def test_mcp_audit_retries_transient_registry_failures_without_weakening_gate(self):
         workflow = (ROOT / ".github/workflows/test-and-build.yml").read_text(encoding="utf-8")
 
+        self.assertIn("mcp-gateway:", workflow)
+        self.assertIn("needs: [test, mcp-gateway, build-container]", workflow)
+        self.assertNotIn("needs: [test, chatgpt-app, build-container]", workflow)
         self.assertIn("for attempt in 1 2 3", workflow)
         self.assertIn("npm audit --audit-level=moderate", workflow)
         self.assertIn('if [ "$attempt" -eq 3 ]', workflow)

@@ -1,4 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createHash } from "node:crypto";
+
+import { clientDisplayName } from "./client-profiles.js";
 
 const jwksCache = new Map();
 
@@ -36,18 +39,55 @@ export async function verifyJwt(token, config) {
       algorithms: ["RS256", "ES256", "EdDSA"],
       clockTolerance: 5,
     });
-    const scopes = tokenScopes(payload);
-    if (!payload.sub) throw new Error("subject claim is required");
-    return Object.freeze({
-      subject: String(payload.sub),
-      organizationId: String(payload.org_id || payload.organization_id || ""),
-      scopes,
-      tokenId: String(payload.jti || ""),
-      algorithm: String(protectedHeader.alg || ""),
-    });
+    return identityFromClaims(payload, protectedHeader, config);
   } catch (error) {
     throw new AuthenticationError(`Access token verification failed: ${safeMessage(error)}`, "invalid_token");
   }
+}
+
+export function identityFromClaims(payload, protectedHeader, config) {
+  const scopes = tokenScopes(payload);
+  if (!payload.sub) throw new Error("subject claim is required");
+  const clientId = String(payload.azp || payload.client_id || "").trim();
+  if (!clientId) throw new Error("authorized client claim is required");
+  if (config.allowedClientIds.length && !config.allowedClientIds.includes(clientId)) {
+    throw new Error("OAuth client is not approved for this SecOpsAI gateway");
+  }
+  const organizationId = String(payload.org_id || payload.organization_id || "").trim();
+  if (config.organizationId && organizationId !== config.organizationId) {
+    throw new Error("access token is not bound to the configured SecOpsAI organization");
+  }
+  const workspaceId = String(payload.workspace_id || "").trim();
+  if (config.workspaceId && workspaceId !== config.workspaceId) {
+    throw new Error("access token is not bound to the configured SecOpsAI workspace");
+  }
+  const tokenMarker = String(payload.jti || payload.iat || payload.exp || "token");
+  return Object.freeze({
+    subjectId: digest(`${config.issuer}\0${payload.sub}`),
+    organizationId,
+    workspaceId,
+    clientId,
+    clientName: clientDisplayName(config, clientId),
+    sessionId: digest(`${config.issuer}\0${payload.sub}\0${clientId}\0${tokenMarker}`),
+    scopes,
+    algorithm: String(protectedHeader.alg || ""),
+    transport: "streamable-http",
+  });
+}
+
+export function localStdioIdentity(config) {
+  if (!config.stdioEnabled) throw new AuthenticationError("The local stdio adapter is not enabled", "access_denied");
+  return Object.freeze({
+    subjectId: digest(`local\0${process.env.USER || "operator"}`),
+    organizationId: config.organizationId || "local",
+    workspaceId: config.workspaceId || "local",
+    clientId: config.stdioClientId,
+    clientName: clientDisplayName(config, config.stdioClientId),
+    sessionId: digest(`stdio\0${config.stdioClientId}\0${process.pid}`),
+    scopes: new Set(config.stdioScopes),
+    algorithm: "local-process-boundary",
+    transport: "stdio",
+  });
 }
 
 export function requireScope(identity, scope) {
@@ -87,4 +127,8 @@ function escapeHeader(value) {
 
 function safeMessage(error) {
   return String(error?.message || "invalid token").replace(/[\r\n]/g, " ").slice(0, 300);
+}
+
+function digest(value) {
+  return createHash("sha256").update(String(value)).digest("hex");
 }

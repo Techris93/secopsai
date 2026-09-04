@@ -7,7 +7,7 @@ SecOpsAI supports two separate model-assisted operating modes. Both use the same
 | Mode | Where the model runs | Authentication | Best use |
 |---|---|---|---|
 | Local Codex bridge | Codex CLI on the operator's Mac or Linux sensor | Existing local ChatGPT sign-in | Private local analysis and Mission Control actions |
-| ChatGPT app | ChatGPT calls the hosted SecOpsAI MCP server | SecOpsAI OAuth plus the user's ChatGPT account | Conversational access to authorized findings, assets, and research cases |
+| MCP Gateway | Any approved compatible MCP host calls the same hosted SecOpsAI gateway | SecOpsAI OAuth plus the client's own model authentication | Provider-neutral access to authorized findings, assets, and research cases |
 
 ChatGPT authentication pays for and identifies the model session. SecOpsAI OAuth separately decides which SecOpsAI data that person may read. One never replaces the other.
 
@@ -338,9 +338,9 @@ Mission Control's **Run Investigation Pipeline** action uses the same durable br
 
 Bridge results return to Core as review proposals. They do not become evidence until an operator accepts them, and model-generated text is stored only as an analyst-reviewed case note. A bridge failure leaves the pipeline retryable; retries create a new revision and preserve the previous attempt for audit. Verdicts, sandbox submission, disclosure delivery, and publication remain independent human approvals.
 
-## ChatGPT app MCP server
+## Universal MCP Gateway
 
-The app exposes nine read-only tools:
+The provider-neutral gateway exposes nine read-only tools:
 
 - workspace summary
 - list and get findings
@@ -349,16 +349,24 @@ The app exposes nine read-only tools:
 - build a non-persisting evidence matrix
 - check publication readiness
 
-The MCP server never runs Codex. ChatGPT provides the reasoning and calls the tools. The server verifies the SecOpsAI OAuth access token, checks issuer, audience, expiry, signature, and per-tool scope, then calls the Core intelligence API with a server-side read credential.
+The MCP server never runs a model. ChatGPT, Codex, Claude-compatible clients,
+VS Code, Cursor-compatible clients, or another MCP host may provide the
+reasoning and call the same tools. The gateway verifies a SecOpsAI OAuth access
+token, checks issuer, audience, expiry, signature, approved client, tenant, workspace, and
+per-tool scope, then calls Core with a server-side read credential. Provider
+tokens are never accepted as SecOpsAI workspace credentials.
 
 ### Local protocol test
 
 ```bash
-cd /Users/chrixchange/secopsai/apps/secopsai-chatgpt
+cd /Users/chrixchange/secopsai/apps/secopsai-mcp
 npm ci --ignore-scripts
 npm test
 npm audit --audit-level=moderate
 ```
+
+The complete deployment, client-profile, stdio, audit, and revocation guide is
+in [Universal MCP Gateway](mcp-gateway.md).
 
 ### Production OAuth requirements
 
@@ -371,21 +379,21 @@ Required scopes:
 - `secopsai.assets.read`
 - `secopsai.research.read`
 
-The primary `render.yaml` deliberately does not provision this service. This keeps ordinary Core and research-worker Blueprint syncs independent from optional OAuth configuration and avoids an unused paid service. When the ChatGPT app is ready for a pilot, create one Render web service manually with:
+The primary `render.yaml` deliberately does not provision this service. This keeps ordinary Core and research-worker Blueprint syncs independent from optional OAuth configuration and avoids an unused paid service. When the MCP Gateway is ready for a pilot, create one web service with:
 
 - Repository: `Techris93/secopsai`
-- Root directory: `apps/secopsai-chatgpt`
+- Root directory: `apps/secopsai-mcp`
 - Runtime: Node
 - Build command: `npm ci --ignore-scripts`
 - Start command: `npm start`
 - Health path: `/readyz`
 - Instance: Starter or higher for a reliable pilot; free is acceptable only for temporary development
 
-Required service values:
+Required service values include:
 
 | Variable | Purpose |
 |---|---|
-| `SECOPSAI_MCP_AUTHORIZATION_SERVER` | OAuth issuer base URL advertised to ChatGPT |
+| `SECOPSAI_MCP_AUTHORIZATION_SERVER` | OAuth issuer base URL advertised to every MCP client |
 | `SECOPSAI_MCP_ISSUER` | Exact expected JWT `iss` value |
 | `SECOPSAI_MCP_JWKS_URL` | Provider signing-key endpoint |
 | `SECOPSAI_CORE_READ_TOKEN` | Same server-side read credential configured on Core |
@@ -398,7 +406,11 @@ Also set:
 | `SECOPSAI_MCP_RESOURCE` | Exact public service origin, without `/mcp` |
 | `SECOPSAI_MCP_AUDIENCE` | Same exact public service origin |
 | `SECOPSAI_MCP_ALLOWED_HOSTS` | Public service hostname only |
-| `SECOPSAI_MCP_ALLOWED_ORIGINS` | `https://chatgpt.com` |
+| `SECOPSAI_MCP_ALLOWED_ORIGINS` | Explicit comma-separated browser origins; no default and no wildcard |
+| `SECOPSAI_MCP_ALLOWED_CLIENT_IDS` | Explicit OAuth client IDs approved for the gateway |
+| `SECOPSAI_MCP_ORGANIZATION_ID` | Exact SecOpsAI tenant required in the token organization claim |
+| `SECOPSAI_MCP_WORKSPACE_ID` | Exact SecOpsAI workspace required in the token workspace claim |
+| `SECOPSAI_MCP_CLIENTS_JSON` | Optional display-name/profile mapping for approved clients |
 | `SECOPSAI_MCP_DOCUMENTATION_URL` | `https://docs.secopsai.dev/intelligence-integrations/` |
 | `SECOPSAI_CORE_API_URL` | `https://core.secopsai.dev` |
 
@@ -409,11 +421,14 @@ origin. The read-only Core upstream is the separate
 After the opt-in deployment, verify:
 
 ```bash
-curl -sS https://secopsai-chatgpt-app.onrender.com/readyz
-curl -sS https://secopsai-chatgpt-app.onrender.com/.well-known/oauth-protected-resource
+curl -sS https://mcp.secopsai.dev/readyz
+curl -sS https://mcp.secopsai.dev/.well-known/oauth-protected-resource
+curl -sS https://mcp.secopsai.dev/.well-known/secopsai-mcp
 ```
 
-Then enable ChatGPT developer mode, create a developer app using `https://secopsai-chatgpt-app.onrender.com/mcp`, complete the OAuth link, and test `secopsai_workspace_summary` before enabling any wider pilot group.
+Register `https://mcp.secopsai.dev/mcp` in one approved client, complete OAuth,
+and test `secopsai_workspace_summary` before enabling a wider pilot group.
+ChatGPT remains a supported client profile, not a separate server.
 
 The current hosted Core is a single-tenant pilot deployment. Limit OAuth access to the same invited SecOpsAI organization. Do not use this deployment for multiple unrelated customers until Core enforces organization membership on every query.
 

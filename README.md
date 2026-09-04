@@ -286,7 +286,8 @@ Read the [Security Policy](SECURITY.md), [Threat Model](docs/threat-model.md),
 | --- | --- |
 | [Documentation home](https://docs.secopsai.dev) | The complete operator documentation |
 | [Getting Started](docs/getting-started.md) | Installation and first-run checks |
-| [Intelligence integrations](docs/intelligence-integrations.md) | Local model bridge, model routing, and the read-only ChatGPT app |
+| [Intelligence integrations](docs/intelligence-integrations.md) | Local model routing and the provider-neutral MCP Gateway |
+| [Universal MCP Gateway](docs/mcp-gateway.md) | Remote OAuth, local stdio, client profiles, audit, and revocation |
 | [Specialist Orchestrator](docs/specialist-orchestrator.md) | Work routing, reviewed profiles, automation tiers, approvals, recovery, and profile updates |
 | [Research discovery](docs/research-discovery.md) | Watchlists, candidate intake, orchestration, and promotion |
 | [Triage orchestrator](docs/triage-orchestrator.md) | Evidence collection, action queues, and closure |

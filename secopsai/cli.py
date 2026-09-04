@@ -449,6 +449,7 @@ from secopsai.sessions import (
     set_session_status,
     update_step as update_session_step,
 )
+from secopsai.mcp_gateway import gateway_status as mcp_gateway_status
 
 from secopsai.supply_chain import (
     SUPPORTED_ECOSYSTEM_NAMES,
@@ -4879,6 +4880,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "bridge": codex_bridge_doctor(probe=False, probe_fallbacks=False, db_path=args.db_path),
                     "service": codex_bridge_service_action("status"),
                     "investigations": investigation_status_payload,
+                    "mcp_gateway": mcp_gateway_status(limit=args.limit, db_path=args.db_path),
                 }
             elif args.intelligence_cmd == "query":
                 inputs = _json_object(args.inputs_json, label="intelligence inputs")

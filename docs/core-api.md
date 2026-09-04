@@ -41,6 +41,11 @@ one Edge workspace. A bundle for any other organization is rejected. This
 single-organization boundary is intentional until canonical state moves to a
 tenant-aware PostgreSQL design.
 
+`SECOPSAI_CORE_WORKSPACE_ID` binds MCP activity and tool calls to one named
+workspace inside that organization. Existing single-workspace deployments
+default it to `SECOPSAI_CORE_ORGANIZATION_ID`; set it explicitly before adding
+another workspace.
+
 ## Endpoints
 
 | Endpoint | Authentication | Purpose |

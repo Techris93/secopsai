@@ -20,7 +20,7 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
 
 
 def default_db_path() -> str:
@@ -200,6 +200,42 @@ def init_db(db_path: str | None = None) -> None:
                 ON asset_graph_edges (to_node_id);
             CREATE INDEX IF NOT EXISTS idx_core_api_audit_time
                 ON core_api_audit_logs (occurred_at DESC, audit_id DESC);
+
+            CREATE TABLE IF NOT EXISTS mcp_client_sessions (
+                session_id TEXT PRIMARY KEY,
+                client_id TEXT NOT NULL,
+                client_name TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                organization_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL DEFAULT 'local',
+                transport TEXT NOT NULL,
+                scopes_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                revoked_at TEXT,
+                revoked_by TEXT,
+                last_tool TEXT NOT NULL DEFAULT '',
+                request_count INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS mcp_client_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                tool_name TEXT NOT NULL DEFAULT '',
+                request_id TEXT NOT NULL,
+                details_json TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES mcp_client_sessions (session_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_mcp_sessions_status_activity
+                ON mcp_client_sessions (status, last_seen_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_mcp_sessions_client_activity
+                ON mcp_client_sessions (client_id, last_seen_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_mcp_events_session_time
+                ON mcp_client_events (session_id, occurred_at DESC);
 
             CREATE TABLE IF NOT EXISTS intelligence_jobs (
                 job_id TEXT PRIMARY KEY,
@@ -1623,6 +1659,7 @@ def init_db(db_path: str | None = None) -> None:
             )
             _ensure_column(connection, "research_npm_package_snapshots", "known_versions_json", "TEXT NOT NULL DEFAULT '[]'")
             _ensure_column(connection, "research_npm_package_snapshots", "last_published_at", "TEXT")
+            _ensure_column(connection, "mcp_client_sessions", "workspace_id", "TEXT NOT NULL DEFAULT 'local'")
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             connection.commit()
 
