@@ -127,6 +127,7 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
     assert "safety check" not in security
     assert "--enablePackageAudit" not in security
     assert "--failOnCVSS 7.0" in security
+    assert "--disableNodeAudit" in security
     assert "--suppression .github/dependency-check-suppressions.xml" in security
     assert "--severity-level high" in security
     assert "pip-audit --desc || true" not in security
