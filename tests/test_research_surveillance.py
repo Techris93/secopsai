@@ -3,7 +3,7 @@ import re
 import sqlite3
 import threading
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -431,6 +431,8 @@ def test_recovered_cursor_reclassifies_gap_as_historical_without_mutating_row(tm
 def test_maven_successful_zero_progress_replay_resolves_exact_gap(tmp_path):
     db_path = _db(tmp_path)
     ensure_collectors(db_path=db_path)
+    gap_created = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat().replace("+00:00", "Z")
+    replay_created = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat().replace("+00:00", "Z")
     with soc_store.connect(db_path) as connection:
         connection.execute(
             "UPDATE registry_cursors SET cursor_value='1782000100000' WHERE collector_id='COL-MAVEN-SOLR'"
@@ -442,8 +444,8 @@ def test_maven_successful_zero_progress_replay_resolves_exact_gap(tmp_path):
                 created_at, updated_at)
                VALUES ('RCW-GAP', 'COL-MAVEN-SOLR', 'RIR-GAP',
                        '1782000100000', '1782000100000', 1, 0, 0, 'gap',
-                       'temporary fetch failure', '2026-09-01T00:00:00.000Z',
-                       '2026-09-01T00:00:00.000Z')"""
+                       'temporary fetch failure', ?, ?)""",
+            (gap_created, gap_created),
         )
         connection.execute(
             """INSERT INTO registry_coverage_windows
@@ -452,8 +454,8 @@ def test_maven_successful_zero_progress_replay_resolves_exact_gap(tmp_path):
                 created_at, updated_at)
                VALUES ('RCW-REPLAY', 'COL-MAVEN-SOLR', 'RIR-REPLAY',
                        '1782000100000', '1782000100000', 1, 1, 0, 'complete',
-                       NULL, '2026-09-02T00:00:00.000Z',
-                       '2026-09-02T00:00:00.000Z')"""
+                       NULL, ?, ?)""",
+            (replay_created, replay_created),
         )
         connection.commit()
 

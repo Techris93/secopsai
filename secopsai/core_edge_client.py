@@ -276,7 +276,9 @@ class CoreEdgeClient:
                     raise ValueError(f"unsupported coordinator command: {command_type}")
                 state = "degraded" if str(result.get("status") if isinstance(result, dict) else "").lower() == "degraded" else "succeeded"
                 self.complete_command(command_id, result if isinstance(result, dict) else {"result": result}, status=state)
-                completed.append({"command_id": command_id, "status": state, "result": result})
+                # Keep the command type in the receipt so the follow-up
+                # heartbeat can materialize the hosted run summary in D1.
+                completed.append({"command_id": command_id, "command_type": command_type, "status": state, "result": result})
             except Exception as exc:
                 message = _clean(exc, 2000)
                 try:
