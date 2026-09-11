@@ -26,6 +26,7 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 DEFAULT_RESERVE_BYTES = 1024 * 1024
 DEFAULT_MIN_FREE_BYTES = 128 * 1024 * 1024
+DEFAULT_WARNING_USED_PERCENT = 70.0
 DEFAULT_MAX_USED_PERCENT = 85.0
 DEFAULT_BATCH_SIZE = 5000
 RESERVE_FILENAME = ".secopsai-storage-reserve"
@@ -288,8 +289,10 @@ def storage_status(
             pass
     reserve = _reserve_path(db_path)
     min_free = _env_int("SECOPSAI_STORAGE_MIN_FREE_BYTES", DEFAULT_MIN_FREE_BYTES)
+    warning_used = _env_float("SECOPSAI_STORAGE_WARNING_USED_PERCENT", DEFAULT_WARNING_USED_PERCENT)
     max_used = _env_float("SECOPSAI_STORAGE_MAX_USED_PERCENT", DEFAULT_MAX_USED_PERCENT)
     pressure = usage.free < min_free or used_percent >= max_used
+    warning = used_percent >= warning_used
     return {
         "database_path": str(database),
         "storage_root": str(root),
@@ -305,6 +308,8 @@ def storage_status(
         "sqlite_page_count": page_count,
         "sqlite_freelist_pages": freelist_count,
         "sqlite_reclaimable_bytes": page_size * freelist_count,
+        "warning": warning,
+        "warning_used_percent": warning_used,
         "pressure": pressure,
         "minimum_free_bytes": min_free,
         "maximum_used_percent": max_used,

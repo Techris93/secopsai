@@ -25,7 +25,13 @@ from secopsai.research_external_intel import refresh_and_sync
 from secopsai.research_intake import SafeFetcher
 from secopsai.research_npm_enrichment import run_npm_enrichment_cycle
 from secopsai.research_scoring import score_pending_events
-from secopsai.research_storage import ResearchStorageCapacityError, maintain_research_storage, storage_status
+from secopsai.research_storage import (
+    DEFAULT_MAX_USED_PERCENT,
+    DEFAULT_WARNING_USED_PERCENT,
+    ResearchStorageCapacityError,
+    maintain_research_storage,
+    storage_status,
+)
 from secopsai.research_surveillance import (
     COLLECTOR_DEFINITIONS,
     CollectorError,
@@ -216,6 +222,75 @@ def _record_npm_enrichment_alert(result: Dict[str, Any], *, db_path: Optional[st
     return str(row["alert_id"]) if row else None
 
 
+def _record_storage_capacity_alert(storage: Dict[str, Any], *, db_path: Optional[str]) -> Optional[str]:
+    """Warn at the early disk threshold and escalate at the pressure limit."""
+    after = (
+        storage.get("after")
+        if isinstance(storage, dict) and isinstance(storage.get("after"), dict)
+        else storage
+    )
+    state = after if isinstance(after, dict) else {}
+    warning = bool(state.get("warning"))
+    now = _utcnow().isoformat().replace("+00:00", "Z")
+    soc_store.init_db(db_path)
+    if not warning:
+        with sqlite_writer_lock(db_path):
+            with closing(soc_store.connect(db_path)) as connection:
+                with connection:
+                    connection.execute(
+                        """UPDATE research_alerts SET status='resolved', updated_at=?
+                           WHERE alert_type='storage_capacity_warning' AND status='open'""",
+                        (now,),
+                    )
+        return None
+
+    used_percent = float(state.get("filesystem_used_percent") or 0.0)
+    warning_threshold = float(state.get("warning_used_percent") or DEFAULT_WARNING_USED_PERCENT)
+    pressure = bool(state.get("pressure"))
+    severity = "high" if pressure else "medium"
+    dedupe_key = f"storage-capacity-warning:{now[:10]}"
+    reason = (
+        f"Research storage is {used_percent:.2f}% full; "
+        f"early warning begins at {warning_threshold:.2f}% and pressure at "
+        f"{float(state.get('maximum_used_percent') or DEFAULT_MAX_USED_PERCENT):.2f}%."
+    )
+    evidence = {
+        "filesystem_used_percent": round(used_percent, 2),
+        "warning_used_percent": round(warning_threshold, 2),
+        "maximum_used_percent": float(state.get("maximum_used_percent") or DEFAULT_MAX_USED_PERCENT),
+        "filesystem_free_bytes": int(state.get("filesystem_free_bytes") or 0),
+        "filesystem_total_bytes": int(state.get("filesystem_total_bytes") or 0),
+        "database_bytes": int(state.get("database_bytes") or 0),
+        "pressure": pressure,
+    }
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            with connection:
+                connection.execute(
+                    """INSERT INTO research_alerts
+                       (alert_id, alert_type, severity, candidate_id, campaign_id, case_id,
+                        dedupe_key, reason, evidence_json, status, owner, created_at, updated_at)
+                       VALUES (?, 'storage_capacity_warning', ?, NULL, NULL, NULL, ?, ?, ?, 'open', '', ?, ?)
+                       ON CONFLICT(dedupe_key) DO UPDATE SET severity=excluded.severity,
+                        reason=excluded.reason, evidence_json=excluded.evidence_json,
+                        updated_at=excluded.updated_at, status='open'""",
+                    (
+                        f"RAL-{secrets.token_hex(8).upper()}",
+                        severity,
+                        dedupe_key,
+                        reason,
+                        json.dumps(evidence, sort_keys=True),
+                        now,
+                        now,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT alert_id FROM research_alerts WHERE dedupe_key=?", (dedupe_key,)
+                ).fetchone()
+    sync_actionable_alert_findings(db_path=db_path)
+    return str(row["alert_id"]) if row else None
+
+
 def collector_schedules() -> Dict[str, int]:
     """Effective per-collector run intervals in seconds."""
     return {
@@ -280,6 +355,10 @@ def _run_worker_cycle_unlocked(
     # wrap it in the worker lock: capacity probes (notably freelist_count) are
     # read-only but can scan a multi-gigabyte database for minutes.
     storage = maintain_research_storage(db_path=db_path)
+    storage_alert_id = _writer_stage(
+        db_path,
+        lambda: _record_storage_capacity_alert(storage, db_path=db_path),
+    )
     fetcher = fetcher or SafeFetcher()
     try:
         # External threat-intel is a separate signal from registry telemetry.
@@ -420,7 +499,7 @@ def _run_worker_cycle_unlocked(
         "retries": retries,
         "recovery": recovery,
         "investigations": investigations,
-        "operational_alert_ids": alert_ids,
+        "operational_alert_ids": alert_ids + ([storage_alert_id] if storage_alert_id else []),
         "npm_enrichment_alert_id": npm_alert_id,
         "alert_delivery": deliveries,
         "daily_automation": daily_automation,

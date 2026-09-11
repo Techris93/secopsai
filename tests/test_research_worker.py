@@ -6,6 +6,7 @@ from secopsai.research_surveillance import ensure_collectors
 from secopsai.research_worker import (
     _record_collector_degraded_alert,
     _record_npm_enrichment_alert,
+    _record_storage_capacity_alert,
     collector_schedules,
     collector_page_budget,
     due_collectors,
@@ -89,6 +90,11 @@ def test_due_collectors_respect_intervals_and_pause(tmp_path):
 
 def test_worker_cycle_isolates_collector_failures(tmp_path, monkeypatch):
     monkeypatch.setenv("SECOPSAI_COLLECTOR_ALERT_THRESHOLD", "1")
+    # Keep this collector-failure test independent of the host filesystem's
+    # own utilization; storage warning behavior is covered separately.
+    monkeypatch.setenv("SECOPSAI_STORAGE_MIN_FREE_BYTES", "0")
+    monkeypatch.setenv("SECOPSAI_STORAGE_WARNING_USED_PERCENT", "100")
+    monkeypatch.setenv("SECOPSAI_STORAGE_MAX_USED_PERCENT", "100")
     db_path = _db(tmp_path)
     # Every registry fetch fails; the cycle must complete and record
     # per-collector failures instead of raising.
@@ -109,6 +115,39 @@ def test_worker_cycle_isolates_collector_failures(tmp_path, monkeypatch):
             "SELECT COUNT(*) AS count FROM research_alerts WHERE alert_type = 'collector_degraded'"
         ).fetchone()["count"]
     assert count == 8
+
+
+def test_storage_capacity_warning_is_deduplicated_and_resolved(tmp_path, monkeypatch):
+    monkeypatch.setenv("SECOPSAI_STORAGE_MIN_FREE_BYTES", "0")
+    db_path = _db(tmp_path)
+    warning = {
+        "filesystem_used_percent": 72.0,
+        "warning_used_percent": 70.0,
+        "maximum_used_percent": 85.0,
+        "filesystem_free_bytes": 28,
+        "filesystem_total_bytes": 100,
+        "database_bytes": 64,
+        "pressure": False,
+        "warning": True,
+    }
+
+    first = _record_storage_capacity_alert(warning, db_path=db_path)
+    second = _record_storage_capacity_alert(warning, db_path=db_path)
+
+    assert first == second
+    with soc_store.connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT alert_id, severity, status FROM research_alerts WHERE alert_type='storage_capacity_warning'"
+        ).fetchone()
+    assert row["alert_id"] == first
+    assert row["severity"] == "medium"
+    assert row["status"] == "open"
+
+    _record_storage_capacity_alert({"warning": False}, db_path=db_path)
+    with soc_store.connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT status FROM research_alerts WHERE alert_id=?", (first,)
+        ).fetchone()["status"] == "resolved"
 
 
 def test_collector_degraded_alert_threshold_and_auto_resolve(tmp_path, monkeypatch):

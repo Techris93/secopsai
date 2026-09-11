@@ -62,7 +62,7 @@ DEFAULT_MAX_BUNDLE_BYTES = 10 * 1024 * 1024
 MAX_RESEARCH_ALERT_BYTES = 64 * 1024
 MAX_INTELLIGENCE_REQUEST_BYTES = 64 * 1024
 RESEARCH_WEBHOOK_MAX_AGE_SECONDS = 300
-RESEARCH_OPERATIONAL_ALERT_TYPES = {"collector_degraded", "collector_retention_risk"}
+RESEARCH_OPERATIONAL_ALERT_TYPES = {"collector_degraded", "collector_retention_risk", "storage_capacity_warning"}
 # These alerts are normalized source-backed leads.  They are accepted by the
 # Core bridge so a worker on a separate Render disk cannot silently hide a new
 # campaign from the operator console.  They remain unverified until intake and

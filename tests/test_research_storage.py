@@ -161,8 +161,24 @@ def test_storage_status_can_skip_large_page_statistics(tmp_path):
     assert detailed["sqlite_page_count"] > 0
 
 
+def test_storage_status_surfaces_early_warning_before_pressure(tmp_path, monkeypatch):
+    monkeypatch.setenv("SECOPSAI_STORAGE_MIN_FREE_BYTES", "0")
+    monkeypatch.setenv("SECOPSAI_STORAGE_WARNING_USED_PERCENT", "70")
+    monkeypatch.setenv("SECOPSAI_STORAGE_MAX_USED_PERCENT", "85")
+    usage = type("Usage", (), {"total": 100, "used": 72, "free": 28})()
+    monkeypatch.setattr("secopsai.research_storage.shutil.disk_usage", lambda _root: usage)
+
+    status = storage_status(db_path=_db(tmp_path), include_page_stats=False)
+
+    assert status["warning"] is True
+    assert status["warning_used_percent"] == 70.0
+    assert status["pressure"] is False
+
+
 def test_storage_cli_dispatches_status_and_maintenance(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("SECOPSAI_STORAGE_RESERVE_BYTES", "0")
+    monkeypatch.setenv("SECOPSAI_STORAGE_MIN_FREE_BYTES", "0")
+    monkeypatch.setenv("SECOPSAI_STORAGE_MAX_USED_PERCENT", "100")
     db_path = _db(tmp_path)
 
     status_code = cli.main(

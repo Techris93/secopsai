@@ -29,7 +29,7 @@ PRIORITIES = {"low", "normal", "high", "critical"}
 STATUSES = {"active", "paused", "archived", "new", "review", "dismissed", "promoted"}
 PROMOTION_MODES = {"review_only", "draft_case"}
 RESEARCH_ALERT_FINDING_SOURCE = "secopsai_research"
-OPERATIONAL_ALERT_TYPES = {"collector_degraded", "collector_retention_risk"}
+OPERATIONAL_ALERT_TYPES = {"collector_degraded", "collector_retention_risk", "storage_capacity_warning"}
 
 
 def _id(prefix: str) -> str:

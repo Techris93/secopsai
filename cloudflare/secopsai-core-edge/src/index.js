@@ -3,6 +3,7 @@ const SIGNATURE_MAX_AGE_SECONDS = 300;
 const ACCEPTED_ALERT_TYPES = new Set([
   "collector_degraded",
   "collector_retention_risk",
+  "storage_capacity_warning",
   "external_advisory_match",
   "external_advisory_feed_degraded",
   "npm_proactive_anomaly",
