@@ -55,6 +55,8 @@ services:
         value: "16777216"
       - key: SECOPSAI_STORAGE_MIN_FREE_BYTES
         value: "134217728"
+      - key: SECOPSAI_STORAGE_WARNING_USED_PERCENT
+        value: "70"
       - key: SECOPSAI_STORAGE_MAX_USED_PERCENT
         value: "85"
       - key: SECOPSAI_RESEARCH_EVENT_RETENTION_HOURS
