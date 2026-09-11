@@ -75,3 +75,23 @@ test("invalid signatures and unauthenticated reads fail closed", async () => {
   assert.equal((await handleRequest(bad, env)).status, 401);
   assert.equal((await handleRequest(new Request("https://core.example/api/v1/workspace"), env)).status, 401);
 });
+
+test("intelligence action catalog is read-token protected", async () => {
+  const env = { DB: new MockD1(), CORE_READ_TOKEN: "r".repeat(44) };
+  const unauthorized = await handleRequest(new Request("https://core.example/api/v1/intelligence/actions"), env);
+  assert.equal(unauthorized.status, 401);
+  const authorized = await handleRequest(new Request("https://core.example/api/v1/intelligence/actions", { headers: { authorization: `Bearer ${env.CORE_READ_TOKEN}` } }), env);
+  assert.equal(authorized.status, 200);
+  const body = await authorized.json();
+  assert.equal(body.schema_version, "secopsai.intelligence.v1");
+  assert.ok(body.actions.some((action) => action.name === "triage_finding"));
+  assert.ok(body.actions.every((action) => action.read_only === true && action.requires_bridge === true));
+});
+
+test("coordinator bridge routes require their separate bridge token", async () => {
+  const env = { DB: new MockD1(), CORE_BRIDGE_TOKEN: "b".repeat(44) };
+  const unauthorized = await handleRequest(new Request("https://core.example/api/v1/intelligence/bridge/state", { method: "POST", body: "{}" }), env);
+  assert.equal(unauthorized.status, 401);
+  const missingWorker = await handleRequest(new Request("https://core.example/api/v1/intelligence/bridge/claim", { method: "POST", body: "{}", headers: { authorization: `Bearer ${env.CORE_BRIDGE_TOKEN}` } }), env);
+  assert.equal(missingWorker.status, 422);
+});

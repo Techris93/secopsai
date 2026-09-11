@@ -478,8 +478,15 @@ def run_worker_loop(
 
     cycles = 0
     last_summary: Dict[str, Any] = {}
+    # The hosted Core coordinator is optional.  A missing or temporarily
+    # unreachable control plane must never stop registry surveillance.
+    from secopsai.core_edge_client import coordinator_client
+
+    core_edge = coordinator_client()
     try:
         while not stop["requested"]:
+            if core_edge.enabled:
+                core_edge.pull_and_apply_settings(db_path=db_path)
             try:
                 last_summary = run_worker_cycle(db_path=db_path, fetcher=fetcher)
             except ResearchStorageCapacityError as exc:
@@ -495,6 +502,24 @@ def run_worker_loop(
                 capture_exception(exc, context={"component": "research_worker_cycle"})
                 raise
             cycles += 1
+            if core_edge.enabled:
+                remote_state = core_edge.sync_state(
+                    last_summary,
+                    status="healthy" if not last_summary.get("error") else "degraded",
+                )
+                commands = core_edge.process_commands(db_path=db_path)
+                if commands:
+                    last_summary = dict(last_summary)
+                    last_summary["hosted_coordinator"] = {
+                        "commands": commands,
+                        "state": remote_state.get("runner") if isinstance(remote_state, dict) else None,
+                    }
+                    # Publish command results as a second, bounded heartbeat so
+                    # hosted Mission Control can show the completed cycle.
+                    core_edge.sync_state(
+                        last_summary,
+                        status="healthy" if not any(item.get("status") == "failed" for item in commands) else "degraded",
+                    )
             if on_cycle:
                 on_cycle(last_summary)
             if max_cycles is not None and cycles >= max_cycles:

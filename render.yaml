@@ -45,6 +45,10 @@ services:
         value: https://core.secopsai.dev/api/v1/research/alerts/webhook
       - key: SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET
         sync: false
+      - key: SECOPSAI_CORE_COORDINATOR_URL
+        value: https://core.secopsai.dev
+      - key: SECOPSAI_CORE_BRIDGE_TOKEN
+        sync: false
       - key: SECOPSAI_SENTRY_TRACES_SAMPLE_RATE
         value: "0"
       - key: SECOPSAI_STORAGE_RESERVE_BYTES

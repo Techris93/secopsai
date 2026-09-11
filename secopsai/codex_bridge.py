@@ -1249,6 +1249,21 @@ def run_once(
             if job.get("target_id"):
                 inputs.setdefault("target_id", job["target_id"])
             bridge_request = prepare_bridge_request(job["action"], inputs, db_path=db_path)
+        elif remote:
+            # The hosted edge can only persist a minimized queue envelope.  If
+            # this process also has the canonical local ledger, rebuild the
+            # evidence context locally before sending the request to the model.
+            # This keeps raw findings and package evidence out of D1 while
+            # preserving the full analysis contract for the remote bridge.
+            try:
+                inputs = dict(job.get("input") or {})
+                if job.get("target_id"):
+                    inputs.setdefault("target_id", job["target_id"])
+                bridge_request = prepare_bridge_request(job["action"], inputs, db_path=db_path)
+            except Exception:
+                # A generic hosted envelope remains usable for actions whose
+                # target does not exist in the local ledger.
+                pass
         if remote:
             raw, used_model = _invoke_with_model_fallback(bridge_request, job_settings, run, model_chain)
         else:

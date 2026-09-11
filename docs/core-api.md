@@ -99,11 +99,19 @@ the hosted research worker and operator read path:
 - `GET /api/v1/workspace`
 - `GET /api/v1/audit-logs`
 - `GET /api/v1/research/alerts`
+- `GET /api/v1/intelligence/actions`
+- `GET /api/v1/mcp/sessions`
+- `GET|POST /api/v1/intelligence/jobs[/{job_id}]`
+- `GET|POST /api/v1/intelligence/autopilot/*`
+- `GET|POST /api/v1/intelligence/daily/*`
+- `POST /api/v1/intelligence/bridge/*`
 
-The full FastAPI service and its intelligence, enterprise, and Edge-import
-routes remain available for local deployments. Do not assume those routes are
-implemented by the narrow Cloudflare service. Add a route only after its data
-model, authentication scope, migration, and production caller are verified.
+The hosted intelligence routes are a bounded control plane. They persist
+queue state, coordinator commands, automation summaries, runner heartbeats,
+and audit metadata in D1; the Render Python worker/local ledger still owns raw
+research evidence, package artifacts, and the execution-heavy workflow. The
+full FastAPI service remains available for local deployments and is the source
+of the detailed evidence views.
 
 The Worker configuration binds the `secopsai-core-edge` D1 database and the
 `core.secopsai.dev` custom domain. Configure its unrelated secrets with
@@ -113,6 +121,8 @@ Wrangler; never place them in `wrangler.jsonc`:
 cd /Users/chrixchange/secopsai/cloudflare/secopsai-core-edge
 wrangler secret put CORE_READ_TOKEN
 wrangler secret put RESEARCH_WEBHOOK_SECRET
+wrangler secret put CORE_INTELLIGENCE_TOKEN
+wrangler secret put CORE_BRIDGE_TOKEN
 wrangler d1 migrations apply secopsai-core-edge --remote
 npm test
 wrangler deploy
