@@ -191,6 +191,7 @@ def send_signed_webhook(*, endpoint: str, secret: str, event: Dict[str, Any]) ->
         method="POST",
         headers={
             "Content-Type": "application/json",
+            "User-Agent": "SecOpsAI-Research/1.0",
             "X-SecOpsAI-Signature": f"sha256={signature}",
             "X-SecOpsAI-Schema": str(event.get("schema_version") or "secopsai.research.alert.v1"),
             "X-SecOpsAI-Timestamp": timestamp,

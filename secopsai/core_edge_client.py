@@ -82,7 +82,7 @@ class CoreEdgeClient:
         response = self.session.request(
             method,
             f"{self.settings.url}{path}",
-            headers={"Authorization": f"Bearer {self.settings.token}", "Accept": "application/json", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {self.settings.token}", "Accept": "application/json", "Content-Type": "application/json", "User-Agent": "SecOpsAI-Research/1.0"},
             json=_bounded_json(payload or {}),
             timeout=self.settings.timeout_seconds,
             allow_redirects=False,
