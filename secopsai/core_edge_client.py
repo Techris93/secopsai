@@ -20,6 +20,7 @@ from secopsai.intelligence import minimize
 
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_RESPONSE_BYTES = 512 * 1024
+MAX_COMMAND_RESULT_BYTES = 28 * 1024
 DEFAULT_URL = "https://core.secopsai.dev"
 
 
@@ -33,6 +34,51 @@ def _bounded_json(value: Any, limit: int = MAX_REQUEST_BYTES) -> dict[str, Any]:
     if len(encoded.encode("utf-8")) > limit:
         return {"status": "truncated", "bytes": len(encoded.encode("utf-8"))}
     return cleaned
+
+
+def _compact_command_result(value: Any) -> dict[str, Any]:
+    """Keep coordinator receipts small while preserving reconciliation keys."""
+    if not isinstance(value, dict):
+        return {"status": "succeeded", "result": str(value)[:1000]}
+    status = _clean(value.get("status"), 40)
+    compact: dict[str, Any] = {"status": status or "succeeded"}
+    for key in ("run_id", "started_at", "completed_at", "next_run_at", "error"):
+        if value.get(key) is not None:
+            compact[key] = _clean(value.get(key), 2000)
+    summary = value.get("summary")
+    if isinstance(summary, dict):
+        compact["summary"] = _bounded_json(
+            {key: summary.get(key) for key in ("status", "completed_steps", "failed_steps", "error") if summary.get(key) is not None},
+            4 * 1024,
+        )
+    queued = value.get("queued")
+    if isinstance(queued, list):
+        compact["queued"] = [
+            {key: item.get(key) for key in ("run_id", "finding_id", "job_id", "status", "selected_model") if item.get(key) is not None}
+            for item in queued[:100]
+            if isinstance(item, dict)
+        ]
+    steps = value.get("steps")
+    if isinstance(steps, list):
+        compact["steps"] = []
+        for step in steps[:32]:
+            if not isinstance(step, dict):
+                continue
+            entry = {key: step.get(key) for key in ("step_name", "status", "started_at", "completed_at", "error", "error_message") if step.get(key) is not None}
+            result = step.get("result")
+            if isinstance(result, dict):
+                entry["result"] = {key: result.get(key) for key in ("status", "run_id", "count", "processed", "sent", "failed", "error") if result.get(key) is not None}
+            compact["steps"].append(entry)
+    # The edge route has its own 32 KiB bound. Drop optional detail if needed.
+    encoded = json.dumps(minimize(compact), sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    if len(encoded) <= MAX_COMMAND_RESULT_BYTES:
+        return minimize(compact)
+    compact.pop("steps", None)
+    encoded = json.dumps(minimize(compact), sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    if len(encoded) <= MAX_COMMAND_RESULT_BYTES:
+        return minimize(compact)
+    compact.pop("queued", None)
+    return minimize(compact)
 
 
 @dataclass(frozen=True)
@@ -133,7 +179,7 @@ class CoreEdgeClient:
         return self._request("POST", "/api/v1/intelligence/bridge/commands/claim", {"worker_id": self.settings.worker_id})
 
     def complete_command(self, command_id: str, result: dict[str, Any], *, status: str = "succeeded") -> dict[str, Any]:
-        return self._request("POST", f"/api/v1/intelligence/bridge/commands/{command_id}/complete", {"worker_id": self.settings.worker_id, "status": status, "result": _bounded_json(result, MAX_REQUEST_BYTES)})
+        return self._request("POST", f"/api/v1/intelligence/bridge/commands/{command_id}/complete", {"worker_id": self.settings.worker_id, "status": status, "result": _compact_command_result(result)})
 
     def fail_command(self, command_id: str, error: Any) -> dict[str, Any]:
         return self._request("POST", f"/api/v1/intelligence/bridge/commands/{command_id}/fail", {"worker_id": self.settings.worker_id, "error_message": _clean(error, 2000)})
