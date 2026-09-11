@@ -150,6 +150,17 @@ class CoreEdgeClient:
         if not self.enabled:
             return {"status": "disabled"}
         storage = summary.get("storage") if isinstance(summary, dict) else {}
+        hosted_commands = []
+        if isinstance(summary, dict) and isinstance(summary.get("hosted_coordinator"), dict):
+            for item in (summary["hosted_coordinator"].get("commands") or [])[:5]:
+                if not isinstance(item, dict):
+                    continue
+                hosted_commands.append({
+                    "command_id": _clean(item.get("command_id"), 100),
+                    "command_type": _clean(item.get("command_type"), 80),
+                    "status": _clean(item.get("status"), 40),
+                    "result": _compact_command_result(item.get("result") or {}),
+                })
         payload = {
             "worker_id": self.settings.worker_id,
             "status": _clean(status, 40) or "healthy",
@@ -160,7 +171,7 @@ class CoreEdgeClient:
                 "collectors_run": summary.get("collectors_run") if isinstance(summary, dict) else None,
                 "daily_automation": summary.get("daily_automation") if isinstance(summary, dict) else None,
                 "alert_delivery": summary.get("alert_delivery") if isinstance(summary, dict) else None,
-                "hosted_commands": (summary.get("hosted_coordinator") or {}).get("commands", []) if isinstance(summary, dict) else [],
+                "hosted_commands": hosted_commands,
             }, 16 * 1024),
             "error_message": _clean(summary.get("error") if isinstance(summary, dict) else "", 2000),
         }
