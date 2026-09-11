@@ -1197,6 +1197,7 @@ def _workspace_payload(db_path: str, limit: int) -> dict[str, Any]:
                       owner, created_at, updated_at
                FROM research_alerts
                WHERE alert_type IN ('collector_degraded', 'collector_retention_risk',
+                                    'storage_capacity_warning',
                                     'external_advisory_match', 'external_advisory_feed_degraded',
                                     'npm_proactive_anomaly', 'npm_enrichment_degraded')
                ORDER BY updated_at DESC
@@ -1224,7 +1225,8 @@ def _workspace_payload(db_path: str, limit: int) -> dict[str, Any]:
         total_operational_alerts = connection.execute(
             """SELECT COUNT(*) FROM research_alerts
                WHERE status = 'open'
-                 AND alert_type IN ('collector_degraded', 'collector_retention_risk')"""
+                 AND alert_type IN ('collector_degraded', 'collector_retention_risk',
+                                    'storage_capacity_warning')"""
         ).fetchone()[0]
         total_external_alerts = connection.execute(
             """SELECT COUNT(*) FROM research_alerts
