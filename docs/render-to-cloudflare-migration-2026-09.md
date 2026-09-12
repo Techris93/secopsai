@@ -98,3 +98,38 @@ paths:
 Until then, Render owns only the stateful research worker. Cloudflare owns the
 public sites, dashboard, blog, Core Edge Worker, D1 Core store, and private
 migration backups.
+
+## Connected operating picture cutover
+
+The ontology projection is now the shared control-plane contract between the
+worker, Core Edge, and Mission Control. D1 migrations `0003_ontology.sql`,
+`0004_control_plane_bounds.sql`, `0005_ontology_ingest_receipts.sql`, and
+`0006_ontology_evidence_scope.sql` and `0007_ontology_entity_validity.sql` add
+bounded entities, aliases, relationships, evidence references, events,
+conflicts, change history, and idempotent ingest receipts. The full Python
+ledger stays on the Render runner/local machine; the hosted projection is
+limited to summaries and references.
+
+Configure the Core Edge deployment with `CORE_READ_TOKEN`,
+`CORE_INTELLIGENCE_TOKEN`, `CORE_BRIDGE_TOKEN`, `CORE_WORKSPACE_ID`, optional
+`CORE_ORGANIZATION_ID`, and the
+existing `RESEARCH_WEBHOOK_SECRET`. Configure Pages with
+`SECOPSAI_CORE_API_URL=https://core.secopsai.dev`,
+`SECOPSAI_CORE_READ_TOKEN`, and `SECOPSAI_CORE_INTELLIGENCE_TOKEN`. The runner
+uses `SECOPSAI_CORE_COORDINATOR_URL` (or `SECOPSAI_CORE_API_URL`) and the
+separate `SECOPSAI_CORE_BRIDGE_TOKEN`. Never print or commit any of these
+values.
+
+Roll out the control plane before touching the Render disk: apply and test D1
+migrations locally, deploy Core Edge, deploy Pages, verify hosted search/detail
+and quality routes, connect the runner, send a signed alert canary twice, then
+queue one daily run and verify its status and audit record. A Core outage must
+leave local collection running and surface `degraded` status. Keep the local
+dashboard at `http://127.0.0.1:45680` for complete historical evidence.
+
+The canonical local SQLite backup used for the ontology backfill is stored
+outside this repository under the owner-only backup directory. Its checksum is
+recorded alongside the backup; no provider disk was deleted or replaced by
+this code change. Render disk reset, deployment, secret rotation, and production
+Cloudflare migration remain provider actions that require the account owner to
+run and verify them.

@@ -20,7 +20,39 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-SCHEMA_VERSION = 9
+# Schema version 10 adds the canonical security ontology tables.  The ontology
+# is an additive semantic layer over the existing findings, research, and Edge
+# graph stores; it does not replace those durable records.
+SCHEMA_VERSION = 10
+REQUIRED_ONTOLOGY_TABLES = frozenset(
+    {
+        "ontology_entities",
+        "ontology_aliases",
+        "ontology_relationships",
+        "ontology_evidence_refs",
+        "ontology_events",
+        "ontology_entity_merges",
+        "ontology_metadata",
+        "ontology_change_log",
+        "ontology_conflicts",
+        "ontology_ingest_receipts",
+        "ontology_sync_outbox",
+    }
+)
+REQUIRED_COORDINATOR_TABLES = frozenset(
+    {
+        "mcp_client_sessions",
+        "mcp_client_events",
+        "intelligence_jobs",
+        "agent_triage_settings",
+        "agent_triage_runs",
+        "daily_automation_settings",
+        "daily_automation_runs",
+        "daily_automation_steps",
+        "coordinator_commands",
+        "runner_heartbeats",
+    }
+)
 
 
 def default_db_path() -> str:
@@ -89,13 +121,25 @@ def init_db(db_path: str | None = None) -> None:
     # critical section.
     with closing(connect(resolved_path)) as connection:
         current_version = int(connection.execute("PRAGMA user_version").fetchone()[0] or 0)
-    if current_version >= SCHEMA_VERSION:
+        existing_tables = {
+            str(row[0])
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        }
+        evidence_ref_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ontology_evidence_refs)").fetchall()} if "ontology_evidence_refs" in existing_tables else set()
+        entity_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ontology_entities)").fetchall()} if "ontology_entities" in existing_tables else set()
+    if current_version >= SCHEMA_VERSION and (REQUIRED_ONTOLOGY_TABLES | REQUIRED_COORDINATOR_TABLES) <= existing_tables and {"workspace_id"} <= evidence_ref_columns and {"valid_from", "valid_to"} <= entity_columns:
         return
 
     with sqlite_writer_lock(resolved_path):
         with closing(connect(resolved_path)) as connection:
             current_version = int(connection.execute("PRAGMA user_version").fetchone()[0] or 0)
-            if current_version >= SCHEMA_VERSION:
+            existing_tables = {
+                str(row[0])
+                for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+            }
+            evidence_ref_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ontology_evidence_refs)").fetchall()} if "ontology_evidence_refs" in existing_tables else set()
+            entity_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ontology_entities)").fetchall()} if "ontology_entities" in existing_tables else set()
+            if current_version >= SCHEMA_VERSION and (REQUIRED_ONTOLOGY_TABLES | REQUIRED_COORDINATOR_TABLES) <= existing_tables and {"workspace_id"} <= evidence_ref_columns and {"valid_from", "valid_to"} <= entity_columns:
                 return
             journal_mode = str(connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]).lower()
             if journal_mode != "wal":
@@ -200,6 +244,205 @@ def init_db(db_path: str | None = None) -> None:
                 ON asset_graph_edges (to_node_id);
             CREATE INDEX IF NOT EXISTS idx_core_api_audit_time
                 ON core_api_audit_logs (occurred_at DESC, audit_id DESC);
+
+            CREATE TABLE IF NOT EXISTS ontology_entities (
+                entity_id TEXT PRIMARY KEY,
+                entity_type TEXT NOT NULL,
+                namespace TEXT NOT NULL,
+                canonical_key TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                source TEXT NOT NULL,
+                source_id TEXT NOT NULL DEFAULT '',
+                workspace_id TEXT NOT NULL DEFAULT 'local',
+                owner_id TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active',
+                properties_json TEXT NOT NULL DEFAULT '{}'
+                    CHECK (length(properties_json) <= 65536),
+                confidence INTEGER NOT NULL DEFAULT 100
+                    CHECK (confidence >= 0 AND confidence <= 100),
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                freshness_at TEXT NOT NULL,
+                valid_from TEXT,
+                valid_to TEXT,
+                schema_version TEXT NOT NULL DEFAULT 'secopsai.ontology.v1',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (namespace, canonical_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS ontology_aliases (
+                alias_id TEXT PRIMARY KEY,
+                entity_id TEXT NOT NULL,
+                alias_type TEXT NOT NULL,
+                alias_value TEXT NOT NULL,
+                normalized_value TEXT NOT NULL,
+                source TEXT NOT NULL,
+                confidence INTEGER NOT NULL DEFAULT 100
+                    CHECK (confidence >= 0 AND confidence <= 100),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (alias_type, normalized_value, source),
+                FOREIGN KEY (entity_id) REFERENCES ontology_entities(entity_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS ontology_relationships (
+                relationship_id TEXT PRIMARY KEY,
+                relationship_type TEXT NOT NULL,
+                from_entity_id TEXT NOT NULL,
+                to_entity_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                source_record_id TEXT NOT NULL DEFAULT '',
+                workspace_id TEXT NOT NULL DEFAULT 'local',
+                evidence_ref_id TEXT,
+                properties_json TEXT NOT NULL DEFAULT '{}'
+                    CHECK (length(properties_json) <= 32768),
+                confidence INTEGER NOT NULL DEFAULT 100
+                    CHECK (confidence >= 0 AND confidence <= 100),
+                observed_at TEXT NOT NULL,
+                valid_from TEXT,
+                valid_to TEXT,
+                freshness_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (relationship_type, from_entity_id, to_entity_id, source, source_record_id),
+                FOREIGN KEY (from_entity_id) REFERENCES ontology_entities(entity_id) ON DELETE CASCADE,
+                FOREIGN KEY (to_entity_id) REFERENCES ontology_entities(entity_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS ontology_evidence_refs (
+                evidence_ref_id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                locator TEXT NOT NULL,
+                content_hash TEXT NOT NULL DEFAULT '',
+                content_type TEXT NOT NULL DEFAULT '',
+                workspace_id TEXT NOT NULL DEFAULT 'local',
+                summary_json TEXT NOT NULL DEFAULT '{}'
+                    CHECK (length(summary_json) <= 32768),
+                observed_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (source, locator, content_hash)
+            );
+
+            CREATE TABLE IF NOT EXISTS ontology_events (
+                event_id TEXT PRIMARY KEY,
+                entity_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                source_record_id TEXT NOT NULL DEFAULT '',
+                summary_json TEXT NOT NULL DEFAULT '{}'
+                    CHECK (length(summary_json) <= 32768),
+                occurred_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (entity_id) REFERENCES ontology_entities(entity_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS ontology_entity_merges (
+                merge_id TEXT PRIMARY KEY,
+                loser_entity_id TEXT NOT NULL,
+                winner_entity_id TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                source TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (loser_entity_id) REFERENCES ontology_entities(entity_id) ON DELETE CASCADE,
+                FOREIGN KEY (winner_entity_id) REFERENCES ontology_entities(entity_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS ontology_metadata (
+                key TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL DEFAULT '{}'
+                    CHECK (length(value_json) <= 32768),
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ontology_change_log (
+                change_id TEXT PRIMARY KEY,
+                object_type TEXT NOT NULL,
+                object_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                before_json TEXT NOT NULL DEFAULT '{}'
+                    CHECK (length(before_json) <= 32768),
+                after_json TEXT NOT NULL DEFAULT '{}'
+                    CHECK (length(after_json) <= 32768),
+                source TEXT NOT NULL DEFAULT 'unknown',
+                actor TEXT NOT NULL DEFAULT 'system',
+                occurred_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ontology_conflicts (
+                conflict_id TEXT PRIMARY KEY,
+                object_type TEXT NOT NULL,
+                object_id TEXT NOT NULL,
+                conflict_type TEXT NOT NULL,
+                details_json TEXT NOT NULL DEFAULT '{}'
+                    CHECK (length(details_json) <= 32768),
+                status TEXT NOT NULL DEFAULT 'open',
+                source TEXT NOT NULL DEFAULT 'reconciler',
+                created_at TEXT NOT NULL,
+                resolved_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS ontology_ingest_receipts (
+                idempotency_key TEXT PRIMARY KEY,
+                request_hash TEXT NOT NULL,
+                source_instance TEXT NOT NULL DEFAULT '',
+                response_json TEXT NOT NULL DEFAULT '{}'
+                    CHECK (length(response_json) <= 32768),
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ontology_sync_outbox (
+                idempotency_key TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL CHECK (length(payload_json) <= 65536),
+                status TEXT NOT NULL DEFAULT 'queued',
+                attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+                next_attempt_at TEXT NOT NULL,
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_ontology_aliases_entity_value
+                ON ontology_aliases (entity_id, alias_type, normalized_value);
+            CREATE INDEX IF NOT EXISTS idx_ontology_sync_outbox_due
+                ON ontology_sync_outbox (status, next_attempt_at, created_at);
+            CREATE INDEX IF NOT EXISTS idx_ontology_entities_type_key
+                ON ontology_entities (entity_type, canonical_key);
+            CREATE INDEX IF NOT EXISTS idx_ontology_entities_source_id
+                ON ontology_entities (source, source_id);
+            CREATE INDEX IF NOT EXISTS idx_ontology_entities_workspace_owner
+                ON ontology_entities (workspace_id, owner_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ontology_entities_freshness
+                ON ontology_entities (freshness_at, last_seen_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ontology_relationships_from_type
+                ON ontology_relationships (from_entity_id, relationship_type, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ontology_relationships_to_type
+                ON ontology_relationships (to_entity_id, relationship_type, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ontology_relationships_workspace
+                ON ontology_relationships (workspace_id, observed_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ontology_evidence_source
+                ON ontology_evidence_refs (source, observed_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ontology_events_entity_time
+                ON ontology_events (entity_id, occurred_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ontology_merges_winner
+                ON ontology_entity_merges (winner_entity_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ontology_changes_object_time
+                ON ontology_change_log (object_type, object_id, occurred_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ontology_conflicts_status_time
+                ON ontology_conflicts (status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ontology_ingest_receipts_created
+                ON ontology_ingest_receipts (created_at DESC, idempotency_key);
+            CREATE TRIGGER IF NOT EXISTS trg_ontology_ingest_receipts_response_bound
+            BEFORE INSERT ON ontology_ingest_receipts
+            WHEN length(COALESCE(NEW.response_json, '{}')) > 32768
+            BEGIN SELECT RAISE(ABORT, 'ontology ingest receipt exceeds 32 KiB'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_ontology_ingest_receipts_update_bound
+            BEFORE UPDATE OF response_json ON ontology_ingest_receipts
+            WHEN length(COALESCE(NEW.response_json, '{}')) > 32768
+            BEGIN SELECT RAISE(ABORT, 'ontology ingest receipt exceeds 32 KiB'); END;
 
             CREATE TABLE IF NOT EXISTS mcp_client_sessions (
                 session_id TEXT PRIMARY KEY,
@@ -533,6 +776,92 @@ def init_db(db_path: str | None = None) -> None:
                 ON daily_automation_runs (status, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_daily_automation_steps_run_time
                 ON daily_automation_steps (run_id, step_id);
+
+            CREATE TABLE IF NOT EXISTS coordinator_commands (
+                command_id TEXT PRIMARY KEY,
+                command_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                requested_by TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                result_json TEXT NOT NULL DEFAULT '{}',
+                worker_id TEXT NOT NULL DEFAULT '',
+                queued_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL,
+                lease_until TEXT,
+                error_message TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_coordinator_commands_status_queue
+                ON coordinator_commands (status, queued_at, command_id);
+            CREATE INDEX IF NOT EXISTS idx_coordinator_commands_updated
+                ON coordinator_commands (updated_at DESC, command_id DESC);
+
+            CREATE TABLE IF NOT EXISTS runner_heartbeats (
+                worker_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                last_cycle_at TEXT,
+                last_cycle_status TEXT NOT NULL DEFAULT '',
+                storage_json TEXT NOT NULL DEFAULT '{}',
+                coordinator_json TEXT NOT NULL DEFAULT '{}',
+                error_message TEXT,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_runner_heartbeats_seen
+                ON runner_heartbeats (last_seen_at DESC);
+
+            CREATE TRIGGER IF NOT EXISTS trg_intelligence_jobs_json_bounds_insert
+            BEFORE INSERT ON intelligence_jobs
+            WHEN length(COALESCE(NEW.input_json, '{}')) > 65536 OR length(COALESCE(NEW.result_json, '{}')) > 131072
+            BEGIN SELECT RAISE(ABORT, 'intelligence job JSON exceeds the bounded limit'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_intelligence_jobs_json_bounds_update
+            BEFORE UPDATE OF input_json, result_json ON intelligence_jobs
+            WHEN length(COALESCE(NEW.input_json, '{}')) > 65536 OR length(COALESCE(NEW.result_json, '{}')) > 131072
+            BEGIN SELECT RAISE(ABORT, 'intelligence job JSON exceeds the bounded limit'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_agent_triage_json_bounds_insert
+            BEFORE INSERT ON agent_triage_runs
+            WHEN length(COALESCE(NEW.deterministic_json, '{}')) > 32768 OR length(COALESCE(NEW.recommendation_json, '{}')) > 32768 OR length(COALESCE(NEW.decision_json, '{}')) > 32768
+            BEGIN SELECT RAISE(ABORT, 'agent triage JSON exceeds the bounded limit'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_agent_triage_json_bounds_update
+            BEFORE UPDATE OF deterministic_json, recommendation_json, decision_json ON agent_triage_runs
+            WHEN length(COALESCE(NEW.deterministic_json, '{}')) > 32768 OR length(COALESCE(NEW.recommendation_json, '{}')) > 32768 OR length(COALESCE(NEW.decision_json, '{}')) > 32768
+            BEGIN SELECT RAISE(ABORT, 'agent triage JSON exceeds the bounded limit'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_daily_automation_json_bounds_insert
+            BEFORE INSERT ON daily_automation_runs
+            WHEN length(COALESCE(NEW.summary_json, '{}')) > 32768
+            BEGIN SELECT RAISE(ABORT, 'daily automation JSON exceeds the bounded limit'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_daily_automation_json_bounds_update
+            BEFORE UPDATE OF summary_json ON daily_automation_runs
+            WHEN length(COALESCE(NEW.summary_json, '{}')) > 32768
+            BEGIN SELECT RAISE(ABORT, 'daily automation JSON exceeds the bounded limit'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_coordinator_commands_json_bounds_insert
+            BEFORE INSERT ON coordinator_commands
+            WHEN length(COALESCE(NEW.payload_json, '{}')) > 32768 OR length(COALESCE(NEW.result_json, '{}')) > 32768
+            BEGIN SELECT RAISE(ABORT, 'coordinator command JSON exceeds the bounded limit'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_coordinator_commands_json_bounds_update
+            BEFORE UPDATE OF payload_json, result_json ON coordinator_commands
+            WHEN length(COALESCE(NEW.payload_json, '{}')) > 32768 OR length(COALESCE(NEW.result_json, '{}')) > 32768
+            BEGIN SELECT RAISE(ABORT, 'coordinator command JSON exceeds the bounded limit'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_runner_heartbeats_json_bounds_insert
+            BEFORE INSERT ON runner_heartbeats
+            WHEN length(COALESCE(NEW.storage_json, '{}')) > 16384 OR length(COALESCE(NEW.coordinator_json, '{}')) > 16384
+            BEGIN SELECT RAISE(ABORT, 'runner heartbeat JSON exceeds the bounded limit'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_runner_heartbeats_json_bounds_update
+            BEFORE UPDATE OF storage_json, coordinator_json ON runner_heartbeats
+            WHEN length(COALESCE(NEW.storage_json, '{}')) > 16384 OR length(COALESCE(NEW.coordinator_json, '{}')) > 16384
+            BEGIN SELECT RAISE(ABORT, 'runner heartbeat JSON exceeds the bounded limit'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_ontology_sync_outbox_json_bounds_insert
+            BEFORE INSERT ON ontology_sync_outbox
+            WHEN length(COALESCE(NEW.payload_json, '{}')) > 65536
+            BEGIN SELECT RAISE(ABORT, 'ontology sync outbox payload exceeds the bounded limit'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_ontology_sync_outbox_json_bounds_update
+            BEFORE UPDATE OF payload_json ON ontology_sync_outbox
+            WHEN length(COALESCE(NEW.payload_json, '{}')) > 65536
+            BEGIN SELECT RAISE(ABORT, 'ontology sync outbox payload exceeds the bounded limit'); END;
 
             CREATE INDEX IF NOT EXISTS idx_detection_learning_examples_split
                 ON detection_learning_examples (organization_key, split, label);
@@ -1660,6 +1989,11 @@ def init_db(db_path: str | None = None) -> None:
             _ensure_column(connection, "research_npm_package_snapshots", "known_versions_json", "TEXT NOT NULL DEFAULT '[]'")
             _ensure_column(connection, "research_npm_package_snapshots", "last_published_at", "TEXT")
             _ensure_column(connection, "mcp_client_sessions", "workspace_id", "TEXT NOT NULL DEFAULT 'local'")
+            _ensure_column(connection, "ontology_evidence_refs", "workspace_id", "TEXT NOT NULL DEFAULT 'local'")
+            _ensure_column(connection, "ontology_entities", "valid_from", "TEXT")
+            _ensure_column(connection, "ontology_entities", "valid_to", "TEXT")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_ontology_entities_validity ON ontology_entities (valid_from, valid_to, freshness_at)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_ontology_evidence_workspace ON ontology_evidence_refs (workspace_id, observed_at DESC)")
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             connection.commit()
 

@@ -435,6 +435,15 @@ def run_cycle(
         ],
         "agent_boundary": "Models may recommend or apply only evidence-gated reversible actions; external communication and publication remain approved actions.",
     }
+    # Persist a bounded semantic health snapshot with every daily run. This
+    # keeps the coordinator and Mission Control operating picture aligned with
+    # the same ontology quality signals used by bridge intelligence requests.
+    try:
+        from secopsai.ontology import quality as ontology_quality
+
+        summary["ontology_quality"] = ontology_quality(db_path=db_path)
+    except Exception as exc:
+        summary["ontology_quality"] = {"status": "degraded", "error": _clean(exc, 500)}
     if failed:
         summary["error"] = "; ".join(item["error"] or item["step_name"] for item in failed)
     status = "degraded" if failed else "succeeded"

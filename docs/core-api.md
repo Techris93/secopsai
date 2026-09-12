@@ -55,6 +55,17 @@ another workspace.
 | `POST /api/v1/edge/bundles` | Ingest token | Idempotent normalized Edge import |
 | `GET /api/v1/workspace` | Read token | Minimized Core/Edge operator context |
 | `GET /api/v1/audit-logs` | Read token | Bundle import audit events |
+| `GET /api/v1/ontology/search` | Read token | Search canonical entities and aliases |
+| `GET /api/v1/ontology/entities/{entity_id}` | Read token | Read one canonical entity, aliases, and relationship counts |
+| `GET /api/v1/ontology/entities/{entity_id}/neighbors` | Read token | Traverse bounded typed relationships |
+| `GET /api/v1/ontology/entities/{entity_id}/timeline` | Read token | Read events and relationship observations |
+| `GET /api/v1/ontology/entities/{entity_id}/lineage` | Read token | Return bounded evidence and dependency paths |
+| `GET /api/v1/ontology/entities/{entity_id}/risk` | Intelligence token | Explain deterministic risk context and proposal contract |
+| `GET /api/v1/ontology/quality` | Read token | Report graph coverage, freshness, orphans, and conflicts |
+| `POST /api/v1/ontology/sync` | Bridge token | Idempotent bounded entity, relationship, event, and evidence-reference sync |
+| `POST /api/v1/ontology/resolve` | Bridge token | Resolve aliases without silently merging identities |
+| `POST /api/v1/ontology/merge` | Bridge token | Apply an operator-reviewed, audited identity merge |
+| `POST /api/v1/ontology/reconcile` | Bridge token | Record duplicate and contradictory observations |
 | `GET /api/v1/intelligence/actions` | Read token | Approved read-only action catalog |
 | `POST /api/v1/intelligence/query` | Read token | Deterministic minimized Core query |
 | `POST /api/v1/intelligence/jobs` | Intelligence token | Queue an approved local Codex action |
@@ -101,6 +112,10 @@ the hosted research worker and operator read path:
 - `GET /api/v1/research/alerts`
 - `GET /api/v1/intelligence/actions`
 - `GET /api/v1/mcp/sessions`
+- `GET /api/v1/ontology/search`
+- `GET /api/v1/ontology/entities/{entity_id}` and bounded `neighbors`, `timeline`, `lineage`, and `risk` views
+- `GET /api/v1/ontology/quality`
+- `POST /api/v1/ontology/sync`
 - `GET|POST /api/v1/intelligence/jobs[/{job_id}]`
 - `GET|POST /api/v1/intelligence/autopilot/*`
 - `GET|POST /api/v1/intelligence/daily/*`

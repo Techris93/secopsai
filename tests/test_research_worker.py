@@ -331,3 +331,62 @@ def test_worker_loop_stays_alive_in_degraded_storage_state(tmp_path, monkeypatch
     assert result["cycles"] == 1
     assert cycles[0]["status"] == "degraded"
     assert cycles[0]["error_code"] == "storage_capacity_exhausted"
+
+
+def test_worker_loop_publishes_ontology_snapshot_without_making_collection_depend_on_core(tmp_path, monkeypatch):
+    import secopsai.core_edge_client as client_module
+
+    class FakeCoordinator:
+        enabled = True
+
+        def __init__(self):
+            self.ontology_snapshots = []
+            self.states = []
+
+        def pull_and_apply_settings(self, **kwargs):
+            return {"status": "accepted"}
+
+        def sync_state(self, summary, **kwargs):
+            self.states.append(summary)
+            return {"status": "accepted", "runner": {"status": "healthy"}}
+
+        def sync_ontology(self, snapshot):
+            self.ontology_snapshots.append(snapshot)
+            return {"status": "accepted"}
+
+        def process_commands(self, **kwargs):
+            return []
+
+    coordinator = FakeCoordinator()
+    monkeypatch.setattr(client_module, "coordinator_client", lambda: coordinator)
+    monkeypatch.setattr("secopsai.research_worker.run_worker_cycle", lambda **kwargs: {"status": "succeeded", "completed_at": "2026-09-12T00:00:00Z"})
+    result = run_worker_loop(db_path=_db(tmp_path), fetcher=_fail_fetcher(), interval_seconds=15, max_cycles=1)
+    assert result["cycles"] == 1
+    assert coordinator.ontology_snapshots
+    assert coordinator.ontology_snapshots[0]["schema_version"] == "secopsai.ontology.v1"
+    assert result["last_cycle"]["ontology"]["status"] == "accepted"
+
+
+def test_worker_loop_keeps_surveillance_running_when_core_is_unavailable(tmp_path, monkeypatch):
+    import secopsai.core_edge_client as client_module
+
+    class OfflineCoordinator:
+        enabled = True
+
+        def pull_and_apply_settings(self, **kwargs):
+            raise OSError("core unavailable")
+
+        def sync_state(self, *args, **kwargs):
+            return {"status": "degraded"}
+
+        def sync_ontology(self, *args, **kwargs):
+            return {"status": "degraded", "error": "core unavailable"}
+
+        def process_commands(self, **kwargs):
+            return []
+
+    monkeypatch.setattr(client_module, "coordinator_client", OfflineCoordinator)
+    monkeypatch.setattr("secopsai.research_worker.run_worker_cycle", lambda **kwargs: {"status": "succeeded", "completed_at": "2026-09-12T00:00:00Z"})
+    result = run_worker_loop(db_path=_db(tmp_path), fetcher=_fail_fetcher(), interval_seconds=15, max_cycles=1)
+    assert result["cycles"] == 1
+    assert result["last_cycle"]["ontology"]["status"] == "degraded"

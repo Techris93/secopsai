@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import sqlite3
 import time
+from urllib.parse import quote
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 
 import soc_store
 from secopsai.core_api import CoreAPISettings, create_app
+from secopsai.ontology import canonical_entity_id
 
 
 INGEST_TOKEN = "ingest-token-with-at-least-thirty-two-characters"
@@ -572,6 +574,83 @@ def test_ingest_rejects_oversized_duplicate_and_compressed_json(client):
         headers={**headers, "Content-Encoding": "gzip"},
     )
     assert compressed.status_code == 415
+
+
+def test_ontology_operating_picture_is_scoped_idempotent_and_evidence_grounded(client):
+    test_client, settings = client
+    package = canonical_entity_id("package", "pypi", "example-package")
+    version = canonical_entity_id("package_version", "pypi", "example-package@1.2.3")
+    advisory = canonical_entity_id("advisory", "osv", "osv-2026-1234")
+    artifact = canonical_entity_id("artifact", "sha256", "abc123")
+    finding = canonical_entity_id("finding", "secopsai", "SCM-ONTOLOGY-1")
+    asset = canonical_entity_id("asset", "edge", "prod-api-1")
+    team = canonical_entity_id("team", "secopsai", "platform-security")
+    case = canonical_entity_id("research_case", "secopsai", "RSC-ONTOLOGY-1")
+    entities = [
+        {"entity_id": package, "entity_type": "package", "namespace": "pypi", "canonical_key": "example-package", "display_name": "example-package", "source": "registry", "source_id": "example-package", "workspace_id": settings.workspace_id},
+        {"entity_id": version, "entity_type": "package_version", "namespace": "pypi", "canonical_key": "example-package@1.2.3", "display_name": "example-package 1.2.3", "source": "registry", "source_id": "example-package@1.2.3", "workspace_id": settings.workspace_id},
+        {"entity_id": advisory, "entity_type": "advisory", "namespace": "osv", "canonical_key": "OSV-2026-1234", "display_name": "OSV-2026-1234", "source": "registry", "source_id": "OSV-2026-1234", "workspace_id": settings.workspace_id},
+        {"entity_id": artifact, "entity_type": "artifact", "namespace": "sha256", "canonical_key": "abc123", "display_name": "abc123", "source": "registry", "source_id": "abc123", "workspace_id": settings.workspace_id},
+        {"entity_id": finding, "entity_type": "finding", "namespace": "secopsai", "canonical_key": "SCM-ONTOLOGY-1", "display_name": "Vulnerable package in production", "source": "scanner", "source_id": "SCM-ONTOLOGY-1", "workspace_id": settings.workspace_id, "properties": {"severity": "high", "severity_score": 80, "asset_criticality": "high", "internet_exposed": True, "token": "must-be-redacted"}},
+        {"entity_id": asset, "entity_type": "asset", "namespace": "edge", "canonical_key": "prod-api-1", "display_name": "Production API", "source": "edge", "source_id": "prod-api-1", "workspace_id": settings.workspace_id},
+        {"entity_id": team, "entity_type": "team", "namespace": "secopsai", "canonical_key": "platform-security", "display_name": "Platform Security", "source": "core", "source_id": "platform-security", "workspace_id": settings.workspace_id},
+        {"entity_id": case, "entity_type": "research_case", "namespace": "secopsai", "canonical_key": "RSC-ONTOLOGY-1", "display_name": "Ontology walkthrough", "source": "secopsai-research", "source_id": "RSC-ONTOLOGY-1", "workspace_id": settings.workspace_id},
+    ]
+    relationships = [
+        {"relationship_type": "VERSION_AFFECTED_BY_ADVISORY", "from_entity_id": version, "to_entity_id": advisory, "source": "osv", "source_record_id": "OSV-2026-1234", "workspace_id": settings.workspace_id},
+        {"relationship_type": "VERSION_HAS_ARTIFACT", "from_entity_id": version, "to_entity_id": artifact, "source": "registry", "source_record_id": "sha-1", "workspace_id": settings.workspace_id},
+        {"relationship_type": "FINDING_ON_VERSION", "from_entity_id": finding, "to_entity_id": version, "source": "scanner", "source_record_id": "SCM-ONTOLOGY-1", "workspace_id": settings.workspace_id},
+        {"relationship_type": "FINDING_ON_ASSET", "from_entity_id": finding, "to_entity_id": asset, "source": "edge", "source_record_id": "SCM-ONTOLOGY-1", "workspace_id": settings.workspace_id},
+        {"relationship_type": "ASSET_OWNED_BY_TEAM", "from_entity_id": asset, "to_entity_id": team, "source": "core", "source_record_id": "owner-1", "workspace_id": settings.workspace_id},
+        {"relationship_type": "CASE_GROUPS_FINDING", "from_entity_id": case, "to_entity_id": finding, "source": "secopsai-research", "source_record_id": "RSC-ONTOLOGY-1:SCM-ONTOLOGY-1", "workspace_id": settings.workspace_id},
+    ]
+    payload = {"schema_version": "secopsai.ontology.v1", "source_instance": "core-api-test", "organization_id": settings.organization_id, "workspace_id": settings.workspace_id, "entities": entities, "relationships": relationships, "evidence_refs": [{"evidence_ref_id": "eref:ontology-1", "source": "osv", "locator": "https://osv.dev/vulnerability/OSV-2026-1234", "summary": {"title": "bounded advisory"}}], "events": [{"entity_id": finding, "event_type": "detected", "source": "scanner", "source_record_id": "scan-1", "summary": {"status": "open"}}]}
+    bridge_headers = {"Authorization": f"Bearer {BRIDGE_TOKEN}", "Idempotency-Key": "ontology-api-sync-1"}
+    first = test_client.post("/api/v1/ontology/sync", headers=bridge_headers, json=payload)
+    assert first.status_code == 200
+    assert first.json()["counts"]["entities"] == len(entities)
+    replay = test_client.post("/api/v1/ontology/sync", headers=bridge_headers, json=payload)
+    assert replay.status_code == 200
+    assert replay.json()["idempotent"] is True
+    conflict = test_client.post("/api/v1/ontology/sync", headers=bridge_headers, json={**payload, "events": []})
+    assert conflict.status_code == 422
+
+    search = test_client.get("/api/v1/ontology/search?q=example", headers={"Authorization": f"Bearer {READ_TOKEN}"})
+    assert search.status_code == 200
+    assert any(row["entity_id"] == package for row in search.json()["entities"])
+    detail = test_client.get(f"/api/v1/ontology/entities/{finding}", headers={"Authorization": f"Bearer {READ_TOKEN}"})
+    assert detail.status_code == 200
+    assert detail.json()["entity"]["properties"].get("token") is None
+    repository = canonical_entity_id("repository", "github", "org/demo")
+    repository_payload = {"schema_version": "secopsai.ontology.v1", "source_instance": "core-api-repo-test", "organization_id": settings.organization_id, "workspace_id": settings.workspace_id, "entities": [{"entity_id": repository, "entity_type": "repository", "namespace": "github", "canonical_key": "org/demo", "display_name": "org/demo", "source": "github", "source_id": "org/demo", "workspace_id": settings.workspace_id}], "relationships": [], "events": [], "evidence_refs": []}
+    repository_sync = test_client.post("/api/v1/ontology/sync", headers={"Authorization": f"Bearer {BRIDGE_TOKEN}", "Idempotency-Key": "ontology-repo-path-1"}, json=repository_payload)
+    assert repository_sync.status_code == 200
+    encoded_repository = quote(repository, safe="")
+    repository_detail = test_client.get(f"/api/v1/ontology/entities/{encoded_repository}", headers={"Authorization": f"Bearer {READ_TOKEN}"})
+    assert repository_detail.status_code == 200
+    assert repository_detail.json()["entity"]["entity_id"] == repository
+    neighbors = test_client.get(f"/api/v1/ontology/entities/{finding}/neighbors?depth=3", headers={"Authorization": f"Bearer {READ_TOKEN}"})
+    assert neighbors.status_code == 200
+    assert any(row["entity_id"] == asset for row in neighbors.json()["nodes"])
+    timeline = test_client.get(f"/api/v1/ontology/entities/{finding}/timeline", headers={"Authorization": f"Bearer {READ_TOKEN}"})
+    assert timeline.status_code == 200
+    assert timeline.json()["events"]
+    lineage = test_client.get(f"/api/v1/ontology/entities/{finding}/lineage?depth=3", headers={"Authorization": f"Bearer {READ_TOKEN}"})
+    assert lineage.status_code == 200
+    assert lineage.json()["paths"]
+    risk = test_client.get(f"/api/v1/ontology/entities/{finding}/risk", headers={"Authorization": f"Bearer {INTELLIGENCE_TOKEN}"})
+    assert risk.status_code == 200
+    assert risk.json()["risk_score"] >= 80
+    assert risk.json()["action_contract"]["approval_required"] is True
+    quality = test_client.get("/api/v1/ontology/quality", headers={"Authorization": f"Bearer {READ_TOKEN}"})
+    assert quality.status_code == 200
+    assert quality.json()["quality"]["findings_total"] >= 1
+    assert test_client.get("/api/v1/ontology/search?workspace_id=other", headers={"Authorization": f"Bearer {READ_TOKEN}"}).status_code == 403
+
+    with soc_store.read_connect(settings.db_path) as connection:
+        actions = [row[0] for row in connection.execute("SELECT action FROM core_api_audit_logs WHERE action LIKE 'ontology.%'")]
+    assert "ontology.sync" in actions
+    assert "ontology.entity.read" in actions
 
 
 def _signed_webhook_headers(body: bytes, *, timestamp: int | None = None, secret: str = WEBHOOK_SECRET):

@@ -10,6 +10,9 @@
       "custom_domain": true
     }
   ],
+  "vars": {
+    "CORE_WORKSPACE_ID": "hosted"
+  },
   "observability": {
     "enabled": true
   },

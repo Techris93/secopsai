@@ -53,7 +53,8 @@ class WorkflowCommandTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/test-and-build.yml").read_text(encoding="utf-8")
 
         self.assertIn("mcp-gateway:", workflow)
-        self.assertIn("needs: [test, mcp-gateway, build-container]", workflow)
+        self.assertIn("needs: [test, mcp-gateway, core-edge]", workflow)
+        self.assertIn("needs: [test, mcp-gateway, core-edge, build-container]", workflow)
         self.assertNotIn("needs: [test, chatgpt-app, build-container]", workflow)
         self.assertIn("for attempt in 1 2 3", workflow)
         self.assertIn("npm audit --audit-level=moderate", workflow)

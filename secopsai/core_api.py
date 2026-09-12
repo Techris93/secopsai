@@ -22,6 +22,20 @@ import soc_store
 from secopsai import __version__
 from secopsai.edge_sync import import_bundle, validate_bundle
 from secopsai.graph_store import list_assets, list_changes
+from secopsai.ontology import (
+    SCHEMA_VERSION as ONTOLOGY_SCHEMA_VERSION,
+    get_entity as get_ontology_entity,
+    neighbors as ontology_neighbors,
+    timeline as ontology_timeline,
+    lineage as ontology_lineage,
+    quality as ontology_quality,
+    reconcile as reconcile_ontology,
+    resolve_identity as resolve_ontology_identity,
+    merge_entities as merge_ontology_entities,
+    risk_context as ontology_risk_context,
+    search_entities as search_ontology_entities,
+    sync_payload as sync_ontology_payload,
+)
 from secopsai.intelligence import get_action as get_intelligence_action
 from secopsai.intelligence import list_actions as list_intelligence_actions
 from secopsai.intelligence import prepare_bridge_request, validate_bridge_result
@@ -205,7 +219,7 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
             allow_origins=list(resolved.cors_origins),
             allow_credentials=False,
             allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+            allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key"],
             expose_headers=["X-Request-ID"],
         )
     if resolved.trusted_hosts and "*" not in resolved.trusted_hosts:
@@ -457,6 +471,243 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         bounded_limit = max(1, min(int(limit), 500))
         return {"audit_logs": _list_audit_logs(resolved.db_path, bounded_limit)}
+
+    @application.get("/api/v1/ontology/search")
+    def ontology_search(
+        request: Request,
+        q: str = "",
+        entity_type: str = "",
+        workspace_id: str = "",
+        limit: int = 100,
+        _role: str = Depends(require_read),
+    ) -> dict[str, Any]:
+        requested_workspace = str(workspace_id or "").strip()
+        if requested_workspace and resolved.workspace_id and requested_workspace != resolved.workspace_id:
+            raise HTTPException(status_code=403, detail="Ontology workspace is not available to this Core instance")
+        try:
+            entities = search_ontology_entities(
+                q,
+                entity_type=entity_type or None,
+                workspace_id=requested_workspace or resolved.workspace_id or None,
+                limit=limit,
+                db_path=resolved.db_path,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _write_audit_safely(resolved.db_path, request_id=request.state.request_id, action="ontology.search", actor_role="operator_read", result="success", source_instance="secopsai-core", details={"query": str(q or "")[:120], "entity_type": str(entity_type or "")[:80], "count": len(entities)})
+        return {"schema_version": ONTOLOGY_SCHEMA_VERSION, "entities": entities, "request_id": request.state.request_id}
+
+    @application.get("/api/v1/ontology/entities/{entity_id}")
+    def ontology_entity(
+        entity_id: str,
+        request: Request,
+        _role: str = Depends(require_read),
+    ) -> dict[str, Any]:
+        entity = get_ontology_entity(entity_id, workspace_id=resolved.workspace_id or None, db_path=resolved.db_path)
+        if entity is None:
+            raise HTTPException(status_code=404, detail="Ontology entity not found")
+        if resolved.workspace_id and entity.get("workspace_id") not in {resolved.workspace_id, "local"}:
+            raise HTTPException(status_code=404, detail="Ontology entity not found")
+        _write_audit_safely(resolved.db_path, request_id=request.state.request_id, action="ontology.entity.read", actor_role="operator_read", result="success", source_instance="secopsai-core", details={"entity_id": entity.get("entity_id")})
+        return {"schema_version": ONTOLOGY_SCHEMA_VERSION, "entity": entity, "request_id": request.state.request_id}
+
+    @application.get("/api/v1/ontology/entities/{entity_id:path}/neighbors")
+    def ontology_entity_neighbors(
+        entity_id: str,
+        request: Request,
+        depth: int = 1,
+        relationship_type: str = "",
+        limit: int = 100,
+        _role: str = Depends(require_read),
+    ) -> dict[str, Any]:
+        try:
+            result = ontology_neighbors(
+                entity_id,
+                depth=depth,
+                relationship_type=relationship_type or None,
+                limit=limit,
+                workspace_id=resolved.workspace_id or None,
+                db_path=resolved.db_path,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _write_audit_safely(resolved.db_path, request_id=request.state.request_id, action="ontology.neighbors.read", actor_role="operator_read", result="success", source_instance="secopsai-core", details={"entity_id": entity_id, "depth": result.get("depth"), "nodes": len(result.get("nodes") or [])})
+        return {"schema_version": ONTOLOGY_SCHEMA_VERSION, **result, "request_id": request.state.request_id}
+
+    @application.get("/api/v1/ontology/entities/{entity_id:path}/timeline")
+    def ontology_entity_timeline(
+        entity_id: str,
+        request: Request,
+        limit: int = 100,
+        _role: str = Depends(require_read),
+    ) -> dict[str, Any]:
+        try:
+            events = ontology_timeline(entity_id, limit=limit, workspace_id=resolved.workspace_id or None, db_path=resolved.db_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _write_audit_safely(resolved.db_path, request_id=request.state.request_id, action="ontology.timeline.read", actor_role="operator_read", result="success", source_instance="secopsai-core", details={"entity_id": entity_id, "events": len(events)})
+        return {
+            "schema_version": ONTOLOGY_SCHEMA_VERSION,
+            "entity_id": entity_id,
+            "events": events,
+            "request_id": request.state.request_id,
+        }
+
+    @application.get("/api/v1/ontology/entities/{entity_id:path}/lineage")
+    def ontology_entity_lineage(
+        entity_id: str,
+        request: Request,
+        depth: int = 2,
+        limit: int = 100,
+        _role: str = Depends(require_read),
+    ) -> dict[str, Any]:
+        try:
+            result = ontology_lineage(entity_id, depth=depth, limit=limit, workspace_id=resolved.workspace_id or None, db_path=resolved.db_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _write_audit_safely(resolved.db_path, request_id=request.state.request_id, action="ontology.lineage.read", actor_role="operator_read", result="success", source_instance="secopsai-core", details={"entity_id": entity_id, "paths": len(result.get("paths") or [])})
+        return {
+            "schema_version": ONTOLOGY_SCHEMA_VERSION,
+            **result,
+            "request_id": request.state.request_id,
+        }
+
+    @application.get("/api/v1/ontology/entities/{entity_id:path}/risk")
+    def ontology_entity_risk(
+        entity_id: str,
+        request: Request,
+        _role: str = Depends(require_intelligence),
+    ) -> dict[str, Any]:
+        try:
+            result = ontology_risk_context(entity_id, workspace_id=resolved.workspace_id or None, db_path=resolved.db_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if result.get("status") == "not_found":
+            raise HTTPException(status_code=404, detail="Ontology entity not found")
+        _write_audit_safely(resolved.db_path, request_id=request.state.request_id, action="ontology.risk.read", actor_role="intelligence_read", result="success", source_instance="secopsai-core", details={"entity_id": entity_id, "risk_score": result.get("risk_score")})
+        return {"schema_version": ONTOLOGY_SCHEMA_VERSION, **result, "request_id": request.state.request_id}
+
+    # Repository and registry identities may contain slashes.  Keep the
+    # ordinary detail route above for simple IDs and provide a path converter
+    # fallback after the operation-specific routes so encoded slash IDs are
+    # addressable without stealing ``/neighbors``/``/risk`` requests.
+    @application.get("/api/v1/ontology/entities/{entity_id:path}")
+    def ontology_entity_with_path(
+        entity_id: str,
+        request: Request,
+        _role: str = Depends(require_read),
+    ) -> dict[str, Any]:
+        return ontology_entity(entity_id, request, _role)
+
+    @application.get("/api/v1/ontology/quality")
+    def ontology_quality_status(
+        request: Request,
+        workspace_id: str = "",
+        _role: str = Depends(require_read),
+    ) -> dict[str, Any]:
+        requested_workspace = str(workspace_id or "").strip()
+        if requested_workspace and resolved.workspace_id and requested_workspace != resolved.workspace_id:
+            raise HTTPException(status_code=403, detail="Ontology workspace is not available to this Core instance")
+        result = ontology_quality(workspace_id=requested_workspace or resolved.workspace_id or None, db_path=resolved.db_path)
+        _write_audit_safely(resolved.db_path, request_id=request.state.request_id, action="ontology.quality.read", actor_role="operator_read", result="success", source_instance="secopsai-core", details={"entities": result.get("entities"), "relationships": result.get("relationships")})
+        return {
+            "schema_version": ONTOLOGY_SCHEMA_VERSION,
+            "quality": result,
+            "request_id": request.state.request_id,
+        }
+
+    @application.post("/api/v1/ontology/sync")
+    async def ontology_sync(
+        request: Request,
+        _role: str = Depends(require_bridge),
+    ) -> dict[str, Any]:
+        try:
+            payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "Ontology synchronization")
+            header_idempotency = request.headers.get("Idempotency-Key", "")[:200].strip()
+            if header_idempotency:
+                body_idempotency = str(payload.get("idempotency_key") or "").strip()
+                if body_idempotency and body_idempotency != header_idempotency:
+                    raise HTTPException(status_code=422, detail="Idempotency-Key header and body value must match")
+                payload["idempotency_key"] = header_idempotency
+            _enforce_ontology_scope(payload, resolved)
+            result = sync_ontology_payload(payload, db_path=resolved.db_path)
+            _write_audit(
+                resolved.db_path,
+                request_id=request.state.request_id,
+                action="ontology.sync",
+                actor_role="intelligence_bridge",
+                result="success",
+                source_instance=str(payload.get("source_instance") or "ontology-bridge")[:160],
+                details={"entities": result["counts"]["entities"], "relationships": result["counts"]["relationships"], "events": result["counts"]["events"]},
+            )
+            return {**result, "request_id": request.state.request_id}
+        except ValueError as exc:
+            _write_audit_safely(
+                resolved.db_path,
+                request_id=request.state.request_id,
+                action="ontology.sync.rejected",
+                actor_role="intelligence_bridge",
+                result="rejected",
+                source_instance="ontology-bridge",
+                details={"reason": str(exc)[:500]},
+            )
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @application.post("/api/v1/ontology/resolve")
+    async def ontology_resolve(
+        request: Request,
+        _role: str = Depends(require_bridge),
+    ) -> dict[str, Any]:
+        try:
+            payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "Ontology identity resolution")
+            _enforce_ontology_scope(payload, resolved)
+            result = resolve_ontology_identity(
+                str(payload.get("entity_type") or ""),
+                str(payload.get("namespace") or "global"),
+                payload.get("value") or payload.get("canonical_key") or "",
+                aliases=payload.get("aliases") or [],
+                source=payload.get("source"),
+                workspace_id=payload.get("workspace_id") or resolved.workspace_id or None,
+                db_path=resolved.db_path,
+            )
+            _write_audit(resolved.db_path, request_id=request.state.request_id, action="ontology.identity.resolved", actor_role="intelligence_bridge", result="success", source_instance=str(payload.get("source_instance") or "ontology-bridge")[:160], details={"entity_type": result.get("entity_type"), "candidate_count": len(result.get("candidates") or []), "conflict": bool(result.get("conflict"))})
+            return {**result, "request_id": request.state.request_id}
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @application.post("/api/v1/ontology/merge")
+    async def ontology_merge(
+        request: Request,
+        _role: str = Depends(require_bridge),
+    ) -> dict[str, Any]:
+        try:
+            payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "Ontology merge")
+            _enforce_ontology_scope(payload, resolved)
+            result = merge_ontology_entities(
+                str(payload.get("loser_entity_id") or ""),
+                str(payload.get("winner_entity_id") or ""),
+                reason=str(payload.get("reason") or "operator-confirmed duplicate"),
+                actor=str(payload.get("actor") or "bridge"),
+                source=str(payload.get("source") or "reconciler"),
+                db_path=resolved.db_path,
+            )
+            _write_audit(resolved.db_path, request_id=request.state.request_id, action="ontology.entity.merged", actor_role="intelligence_bridge", result="success", source_instance=str(payload.get("source_instance") or "ontology-bridge")[:160], details={"merge_id": result.get("merge_id"), "loser_entity_id": result.get("loser_entity_id"), "winner_entity_id": result.get("winner_entity_id")})
+            return {**result, "request_id": request.state.request_id}
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @application.post("/api/v1/ontology/reconcile")
+    def ontology_reconcile(
+        request: Request,
+        limit: int = 500,
+        _role: str = Depends(require_bridge),
+    ) -> dict[str, Any]:
+        try:
+            result = reconcile_ontology(limit=limit, db_path=resolved.db_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _write_audit(resolved.db_path, request_id=request.state.request_id, action="ontology.reconcile", actor_role="intelligence_bridge", result="success", source_instance="ontology-bridge", details={"conflicts": result.get("conflicts", 0)})
+        return {**result, "request_id": request.state.request_id}
 
     @application.get("/api/v1/intelligence/actions")
     def intelligence_actions(
@@ -956,6 +1207,30 @@ def _decode_json_object(body: bytes) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Request body must be a JSON object")
     return payload
+
+
+def _enforce_ontology_scope(payload: dict[str, Any], settings: CoreAPISettings) -> None:
+    """Reject bridge snapshots that attempt to cross the configured tenant."""
+    if not settings.organization_id and not settings.workspace_id:
+        return
+    for key in ("organization_id", "workspace_id"):
+        expected = settings.organization_id if key == "organization_id" else settings.workspace_id
+        supplied = str(payload.get(key) or "").strip()
+        if supplied and expected and supplied != expected:
+            raise HTTPException(status_code=403, detail=f"Ontology {key} does not match this Core workspace")
+    for collection_name in ("entities", "relationships", "events", "evidence_refs"):
+        collection = payload.get(collection_name) or []
+        if not isinstance(collection, list):
+            continue
+        for item in collection:
+            if not isinstance(item, dict):
+                continue
+            supplied = str(item.get("workspace_id") or "").strip()
+            if supplied and settings.workspace_id and supplied not in {settings.workspace_id, "local"}:
+                raise HTTPException(status_code=403, detail="Ontology record workspace does not match this Core workspace")
+            supplied_org = str(item.get("organization_id") or "").strip()
+            if supplied_org and settings.organization_id and supplied_org != settings.organization_id:
+                raise HTTPException(status_code=403, detail="Ontology record organization does not match this Core workspace")
 
 
 def _verify_research_webhook(request: Request, body: bytes, secret: str) -> None:

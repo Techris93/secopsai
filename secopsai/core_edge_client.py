@@ -8,6 +8,7 @@ surveillance depend on a network request succeeding.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import socket
 from dataclasses import dataclass
@@ -15,7 +16,9 @@ from typing import Any, Dict, Optional
 
 import requests
 
+import soc_store
 from secopsai.intelligence import minimize
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 MAX_REQUEST_BYTES = 64 * 1024
@@ -34,6 +37,104 @@ def _bounded_json(value: Any, limit: int = MAX_REQUEST_BYTES) -> dict[str, Any]:
     if len(encoded.encode("utf-8")) > limit:
         return {"status": "truncated", "bytes": len(encoded.encode("utf-8"))}
     return cleaned
+
+
+def _json_size(value: Any) -> int:
+    return len(json.dumps(minimize(value if isinstance(value, dict) else {}), sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+
+
+def _compact_ontology_snapshot(snapshot: Dict[str, Any]) -> dict[str, Any]:
+    """Fit a semantic snapshot under the Core request bound without losing its shape.
+
+    The worker may observe a dense cycle.  Sending ``{"status": "truncated"}``
+    would look like a successful sync while silently dropping every entity, so
+    trim the oldest/least useful list items and optional descriptions first.
+    """
+    payload = dict(snapshot or {})
+    payload.setdefault("schema_version", "secopsai.ontology.v1")
+    payload.setdefault("source_instance", "research-worker")
+    for key in ("entities", "relationships", "events", "evidence_refs"):
+        value = payload.get(key)
+        payload[key] = list(value) if isinstance(value, list) else []
+    payload["snapshot_truncated"] = False
+    target = MAX_REQUEST_BYTES - 512
+    if _json_size(payload) <= target:
+        return payload
+
+    # Keep the newest bounded records first (materialize_recent already orders
+    # them that way) and progressively halve the largest collection.
+    while _json_size(payload) > target and any(payload[key] for key in ("entities", "relationships", "events", "evidence_refs")):
+        largest = max((key for key in ("entities", "relationships", "events", "evidence_refs") if payload[key]), key=lambda key: _json_size({key: payload[key]}))
+        current = payload[largest]
+        keep = max(1, len(current) // 2)
+        payload[largest] = current[:keep]
+        payload["snapshot_truncated"] = True
+
+    if _json_size(payload) > target:
+        # A single unusually large summary can still exceed the bound.  Keep
+        # identity/provenance fields and drop optional properties only after
+        # the list-level reduction above.
+        for key in ("entities", "relationships", "events", "evidence_refs"):
+            compacted = []
+            for item in payload[key]:
+                if not isinstance(item, dict):
+                    continue
+                entry = dict(item)
+                for optional in ("properties", "aliases", "summary"):
+                    if optional in entry:
+                        entry.pop(optional, None)
+                compacted.append(entry)
+            payload[key] = compacted
+        payload["snapshot_truncated"] = True
+
+    # Keep graph batches internally consistent after list trimming.  A
+    # relationship/event that points at an entity removed above would be
+    # rejected by Core and would make an otherwise useful partial snapshot
+    # impossible to apply.  References to entities that were not present in
+    # the original batch are retained because they may already exist in D1.
+    original_entity_ids = {
+        str(item.get("entity_id"))
+        for item in (snapshot.get("entities") if isinstance(snapshot, dict) and isinstance(snapshot.get("entities"), list) else [])
+        if isinstance(item, dict) and item.get("entity_id")
+    }
+    kept_entity_ids = {str(item.get("entity_id")) for item in payload["entities"] if isinstance(item, dict) and item.get("entity_id")}
+    if original_entity_ids != kept_entity_ids:
+        def endpoint_kept(item: Any) -> bool:
+            if not isinstance(item, dict):
+                return False
+            endpoints = [item.get("from_entity_id") or item.get("from"), item.get("to_entity_id") or item.get("to")]
+            return all(not endpoint or str(endpoint) not in original_entity_ids or str(endpoint) in kept_entity_ids for endpoint in endpoints)
+
+        payload["relationships"] = [item for item in payload["relationships"] if endpoint_kept(item)]
+        payload["events"] = [item for item in payload["events"] if not isinstance(item, dict) or not item.get("entity_id") or str(item.get("entity_id")) not in original_entity_ids or str(item.get("entity_id")) in kept_entity_ids]
+
+    # This final fallback preserves a valid, observable heartbeat-shaped sync
+    # rather than allowing _bounded_json to replace the entire payload marker.
+    if _json_size(payload) > target:
+        payload = {
+            "schema_version": payload.get("schema_version", "secopsai.ontology.v1"),
+            "source_instance": _clean(payload.get("source_instance"), 160) or "research-worker",
+            "exported_at": _clean(payload.get("exported_at"), 64),
+            "entities": [],
+            "relationships": [],
+            "events": [],
+            "evidence_refs": [],
+            "snapshot_truncated": True,
+        }
+    return payload
+
+
+def _ontology_idempotency_key(payload: Dict[str, Any]) -> str:
+    material = dict(payload or {})
+    material.pop("idempotency_key", None)
+    # Export snapshots carry observation timestamps for operator visibility;
+    # those envelope timestamps are not content identity and must not create a
+    # new receipt on every worker cycle.
+    for volatile in ("exported_at", "generated_at", "synced_at"):
+        material.pop(volatile, None)
+    return hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
 
 
 def _compact_command_result(value: Any) -> dict[str, Any]:
@@ -122,13 +223,28 @@ class CoreEdgeClient:
     def enabled(self) -> bool:
         return self.settings.enabled
 
-    def _request(self, method: str, path: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        payload: Optional[dict[str, Any]] = None,
+        *,
+        headers: Optional[dict[str, str]] = None,
+    ) -> dict[str, Any]:
         if not self.enabled:
             return {"status": "disabled"}
+        request_headers = {
+            "Authorization": f"Bearer {self.settings.token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "SecOpsAI-Research/1.0",
+        }
+        if headers:
+            request_headers.update({str(key): str(value) for key, value in headers.items()})
         response = self.session.request(
             method,
             f"{self.settings.url}{path}",
-            headers={"Authorization": f"Bearer {self.settings.token}", "Accept": "application/json", "Content-Type": "application/json", "User-Agent": "SecOpsAI-Research/1.0"},
+            headers=request_headers,
             json=_bounded_json(payload or {}),
             timeout=self.settings.timeout_seconds,
             allow_redirects=False,
@@ -182,6 +298,132 @@ class CoreEdgeClient:
         except Exception as exc:  # network failure must not stop collection
             self.last_error = _clean(exc, 500)
             return {"status": "degraded", "error": self.last_error}
+
+    def sync_ontology(self, snapshot: Dict[str, Any]) -> dict[str, Any]:
+        """Send a bounded semantic snapshot without making collection depend on it."""
+        if not self.enabled:
+            return {"status": "disabled"}
+        payload = dict(snapshot or {})
+        payload.setdefault("source_instance", self.settings.worker_id)
+        payload = _compact_ontology_snapshot(payload)
+        # The Core receipt table uses this key to make retries safe across
+        # request timeouts and worker restarts.  Hash the compact payload so
+        # the same bounded snapshot always replays the same receipt.
+        idempotency_key = _ontology_idempotency_key(payload)
+        payload["idempotency_key"] = idempotency_key
+        try:
+            result = self._request(
+                "POST",
+                "/api/v1/ontology/sync",
+                payload,
+                headers={"Idempotency-Key": idempotency_key},
+            )
+            self.last_error = ""
+            return result
+        except Exception as exc:  # ontology sync is an optional control-plane edge
+            self.last_error = _clean(exc, 500)
+            return {"status": "degraded", "error": self.last_error}
+
+    def enqueue_ontology_snapshot(
+        self,
+        snapshot: Dict[str, Any],
+        *,
+        db_path: Optional[str] = None,
+        error: Any = "",
+    ) -> dict[str, Any]:
+        """Persist one bounded snapshot for retry when Core is unavailable.
+
+        The outbox is intentionally compact and latest-observation oriented:
+        each idempotency key is unique, and old rows are pruned after 100
+        pending observations so a prolonged outage cannot consume the local
+        research disk.
+        """
+        payload = _compact_ontology_snapshot(dict(snapshot or {}))
+        idempotency_key = _ontology_idempotency_key(payload)
+        payload["idempotency_key"] = idempotency_key
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+        if len(encoded.encode("utf-8")) > MAX_REQUEST_BYTES:
+            return {"status": "rejected", "error": "ontology outbox payload exceeds the local limit"}
+        resolved_db = db_path or soc_store.default_db_path()
+        try:
+            soc_store.init_db(resolved_db)
+            now = soc_store.utc_now()
+            with sqlite_writer_lock(resolved_db):
+                with soc_store.connect(resolved_db) as connection:
+                    connection.execute(
+                        "INSERT INTO ontology_sync_outbox (idempotency_key, payload_json, status, attempts, next_attempt_at, last_error, created_at, updated_at) VALUES (?, ?, 'queued', 0, ?, ?, ?, ?) ON CONFLICT(idempotency_key) DO UPDATE SET payload_json=excluded.payload_json, status='queued', next_attempt_at=excluded.next_attempt_at, last_error=excluded.last_error, updated_at=excluded.updated_at",
+                        (idempotency_key, encoded, now, _clean(error, 2000), now, now),
+                    )
+                    connection.execute(
+                        "DELETE FROM ontology_sync_outbox WHERE idempotency_key IN (SELECT idempotency_key FROM ontology_sync_outbox ORDER BY updated_at DESC LIMIT -1 OFFSET 100)"
+                    )
+                    connection.commit()
+            return {"status": "queued", "idempotency_key": idempotency_key}
+        except Exception as exc:  # outbox persistence must not stop surveillance
+            self.last_error = _clean(exc, 500)
+            return {"status": "degraded", "error": self.last_error}
+
+    def flush_ontology_outbox(
+        self,
+        *,
+        db_path: Optional[str] = None,
+        max_items: int = 5,
+    ) -> dict[str, Any]:
+        """Retry due ontology snapshots and remove only acknowledged receipts."""
+        if not self.enabled:
+            return {"status": "disabled", "flushed": 0}
+        resolved_db = db_path or soc_store.default_db_path()
+        try:
+            soc_store.init_db(resolved_db)
+            now = soc_store.utc_now()
+            bound = max(1, min(int(max_items), 10))
+            with soc_store.read_connect(resolved_db) as connection:
+                rows = connection.execute(
+                    "SELECT idempotency_key, payload_json, attempts FROM ontology_sync_outbox WHERE status = 'queued' AND next_attempt_at <= ? ORDER BY next_attempt_at, created_at LIMIT ?",
+                    (now, bound),
+                ).fetchall()
+        except Exception as exc:
+            self.last_error = _clean(exc, 500)
+            return {"status": "degraded", "flushed": 0, "error": self.last_error}
+        flushed = 0
+        failed = 0
+        for row in rows:
+            key = str(row["idempotency_key"])
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            try:
+                result = self.sync_ontology(payload)
+                if result.get("status") in {"accepted", "succeeded"} or result.get("idempotent") is True:
+                    with sqlite_writer_lock(resolved_db):
+                        with soc_store.connect(resolved_db) as connection:
+                            connection.execute("DELETE FROM ontology_sync_outbox WHERE idempotency_key = ?", (key,))
+                            connection.commit()
+                    flushed += 1
+                    continue
+                raise RuntimeError(str(result.get("error") or "hosted Core did not acknowledge ontology snapshot"))
+            except Exception as exc:
+                failed += 1
+                attempts = max(0, int(row["attempts"] or 0)) + 1
+                backoff = min(3600, 15 * (2 ** min(attempts - 1, 8)))
+                try:
+                    from datetime import datetime, timedelta, timezone
+
+                    retry_at = (datetime.now(timezone.utc) + timedelta(seconds=backoff)).isoformat().replace("+00:00", "Z")
+                except Exception:
+                    retry_at = now
+                with sqlite_writer_lock(resolved_db):
+                    with soc_store.connect(resolved_db) as connection:
+                        connection.execute(
+                            "UPDATE ontology_sync_outbox SET status='queued', attempts=?, next_attempt_at=?, last_error=?, updated_at=? WHERE idempotency_key=?",
+                            (attempts, retry_at, _clean(exc, 2000), soc_store.utc_now(), key),
+                        )
+                        connection.commit()
+        status = "accepted" if failed == 0 else "degraded"
+        return {"status": status, "flushed": flushed, "failed": failed, "pending": max(0, len(rows) - flushed)}
 
     def hosted_state(self) -> dict[str, Any]:
         return self._request("GET", "/api/v1/intelligence/bridge/state")
@@ -274,7 +516,8 @@ class CoreEdgeClient:
                     result = rollback_tuning_proposal(_clean(payload.get("proposal_id"), 80), actor="hosted-core", db_path=db_path)
                 else:
                     raise ValueError(f"unsupported coordinator command: {command_type}")
-                state = "degraded" if str(result.get("status") if isinstance(result, dict) else "").lower() == "degraded" else "succeeded"
+                result_status = str(result.get("status") if isinstance(result, dict) else "").lower()
+                state = result_status if result_status in {"degraded", "recovered"} else "succeeded"
                 self.complete_command(command_id, result if isinstance(result, dict) else {"result": result}, status=state)
                 # Keep the command type in the receipt so the follow-up
                 # heartbeat can materialize the hosted run summary in D1.

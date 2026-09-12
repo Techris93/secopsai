@@ -41,6 +41,7 @@ from secopsai.research_surveillance import (
     run_registry_collector,
 )
 from secopsai.research_discovery import sync_actionable_alert_findings
+from secopsai.ontology import materialize_recent
 from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 DEFAULT_CYCLE_INTERVAL_SECONDS = 60
@@ -565,7 +566,16 @@ def run_worker_loop(
     try:
         while not stop["requested"]:
             if core_edge.enabled:
-                core_edge.pull_and_apply_settings(db_path=db_path)
+                try:
+                    flush_outbox = getattr(core_edge, "flush_ontology_outbox", None)
+                    if callable(flush_outbox):
+                        flush_outbox(db_path=db_path, max_items=3)
+                except Exception as exc:  # outbox recovery is optional control-plane work
+                    capture_exception(exc, context={"component": "research_ontology_outbox"})
+                try:
+                    core_edge.pull_and_apply_settings(db_path=db_path)
+                except Exception as exc:  # coordinator outages must not stop surveillance
+                    capture_exception(exc, context={"component": "research_coordinator_settings"})
             try:
                 last_summary = run_worker_cycle(db_path=db_path, fetcher=fetcher)
             except ResearchStorageCapacityError as exc:
@@ -586,7 +596,35 @@ def run_worker_loop(
                     last_summary,
                     status="healthy" if not last_summary.get("error") else "degraded",
                 )
-                commands = core_edge.process_commands(db_path=db_path)
+                # Materialize only the bounded, redacted semantic projection for
+                # the hosted operating picture.  Full evidence and artifacts
+                # remain on the local research ledger or R2.
+                try:
+                    ontology_result = materialize_recent(db_path=db_path, limit=100)
+                    ontology_sync = core_edge.sync_ontology(ontology_result.get("snapshot") or {})
+                    if ontology_sync.get("status") == "degraded":
+                        try:
+                            enqueue_outbox = getattr(core_edge, "enqueue_ontology_snapshot", None)
+                            if callable(enqueue_outbox):
+                                enqueue_outbox(ontology_result.get("snapshot") or {}, db_path=db_path, error=ontology_sync.get("error"))
+                        except Exception as outbox_error:
+                            capture_exception(outbox_error, context={"component": "research_ontology_outbox_enqueue"})
+                    last_summary = dict(last_summary)
+                    last_summary["ontology"] = {
+                        "status": ontology_sync.get("status", "accepted"),
+                        "entities": ontology_result.get("counts", {}).get("entities", 0),
+                        "relationships": ontology_result.get("counts", {}).get("relationships", 0),
+                        "events": ontology_result.get("counts", {}).get("events", 0),
+                    }
+                except Exception as exc:  # semantic sync must not stop surveillance
+                    capture_exception(exc, context={"component": "research_ontology_sync"})
+                    last_summary = dict(last_summary)
+                    last_summary["ontology"] = {"status": "degraded", "error": str(exc)[:500]}
+                try:
+                    commands = core_edge.process_commands(db_path=db_path)
+                except Exception as exc:  # command polling is optional control-plane work
+                    capture_exception(exc, context={"component": "research_coordinator_commands"})
+                    commands = []
                 if commands:
                     last_summary = dict(last_summary)
                     last_summary["hosted_coordinator"] = {

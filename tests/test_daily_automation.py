@@ -72,6 +72,7 @@ def test_daily_cycle_runs_all_steps_and_is_persisted(tmp_path, monkeypatch):
     assert result["status"] == "succeeded"
     assert result["summary"]["completed_steps"] == 11
     assert result["summary"]["failed_steps"] == 0
+    assert result["summary"]["ontology_quality"]["schema_version"] == "secopsai.ontology.v1"
     assert calls == [
         "health_preflight",
         "intelligence_queue_recovery",

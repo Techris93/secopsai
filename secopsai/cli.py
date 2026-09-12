@@ -86,6 +86,17 @@ from secopsai.graph_store import list_assets as list_graph_assets
 from secopsai.graph_store import list_changes as list_graph_changes
 from secopsai.graph_store import list_sync_state as list_edge_sync_state
 from secopsai.graph_store import show_node as show_graph_node
+from secopsai.ontology import backfill_existing as backfill_ontology
+from secopsai.ontology import get_entity as get_ontology_entity
+from secopsai.ontology import lineage as ontology_lineage
+from secopsai.ontology import merge_entities as merge_ontology_entities
+from secopsai.ontology import neighbors as ontology_neighbors
+from secopsai.ontology import quality as ontology_quality
+from secopsai.ontology import reconcile as reconcile_ontology
+from secopsai.ontology import resolve_identity as resolve_ontology_identity
+from secopsai.ontology import risk_context as ontology_risk_context
+from secopsai.ontology import search_entities as search_ontology_entities
+from secopsai.ontology import timeline as ontology_timeline
 from secopsai.intelligence import ACTIONS as INTELLIGENCE_ACTIONS
 from secopsai.intelligence import list_actions as list_intelligence_actions
 from secopsai.intelligence import run_read_action as run_intelligence_read_action
@@ -1417,6 +1428,61 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     graph_changes = graph_sub.add_parser("changes", help="Show recently updated graph nodes and edges")
     graph_changes.add_argument("--db-path", default=None, help="Override SQLite SOC/graph database path")
     graph_changes.add_argument("--limit", type=int, default=20)
+
+    ontology = sub.add_parser("ontology", help="Inspect and reconcile the canonical security ontology")
+    ontology_sub = ontology.add_subparsers(dest="ontology_cmd", required=True)
+    ontology_search_cmd = ontology_sub.add_parser("search", help="Search canonical entities and aliases")
+    ontology_search_cmd.add_argument("query", nargs="?", default="")
+    ontology_search_cmd.add_argument("--type", dest="entity_type", default=None)
+    ontology_search_cmd.add_argument("--workspace-id", default=None)
+    ontology_search_cmd.add_argument("--limit", type=int, default=100)
+    ontology_search_cmd.add_argument("--db-path", default=None)
+    ontology_show_cmd = ontology_sub.add_parser("show", help="Show one canonical entity")
+    ontology_show_cmd.add_argument("entity_id")
+    ontology_show_cmd.add_argument("--db-path", default=None)
+    ontology_neighbors_cmd = ontology_sub.add_parser("neighbors", help="Traverse bounded ontology relationships")
+    ontology_neighbors_cmd.add_argument("entity_id")
+    ontology_neighbors_cmd.add_argument("--depth", type=int, default=1)
+    ontology_neighbors_cmd.add_argument("--relationship-type", default=None)
+    ontology_neighbors_cmd.add_argument("--limit", type=int, default=100)
+    ontology_neighbors_cmd.add_argument("--db-path", default=None)
+    ontology_timeline_cmd = ontology_sub.add_parser("timeline", help="Show entity events and relationship changes")
+    ontology_timeline_cmd.add_argument("entity_id")
+    ontology_timeline_cmd.add_argument("--limit", type=int, default=100)
+    ontology_timeline_cmd.add_argument("--db-path", default=None)
+    ontology_lineage_cmd = ontology_sub.add_parser("lineage", help="Show bounded relationship paths")
+    ontology_lineage_cmd.add_argument("entity_id")
+    ontology_lineage_cmd.add_argument("--depth", type=int, default=2)
+    ontology_lineage_cmd.add_argument("--limit", type=int, default=100)
+    ontology_lineage_cmd.add_argument("--db-path", default=None)
+    ontology_risk_cmd = ontology_sub.add_parser("risk", help="Explain deterministic risk context")
+    ontology_risk_cmd.add_argument("entity_id")
+    ontology_risk_cmd.add_argument("--db-path", default=None)
+    ontology_quality_cmd = ontology_sub.add_parser("quality", help="Report graph coverage and data quality")
+    ontology_quality_cmd.add_argument("--workspace-id", default=None)
+    ontology_quality_cmd.add_argument("--stale-after-seconds", type=int, default=7 * 24 * 3600)
+    ontology_quality_cmd.add_argument("--db-path", default=None)
+    ontology_backfill_cmd = ontology_sub.add_parser("backfill", help="Checkpointed backfill from legacy Core records")
+    ontology_backfill_cmd.add_argument("--batch-limit", type=int, default=1000)
+    ontology_backfill_cmd.add_argument("--no-resume", action="store_true")
+    ontology_backfill_cmd.add_argument("--db-path", default=None)
+    ontology_resolve_cmd = ontology_sub.add_parser("resolve", help="Resolve a source identity without merging")
+    ontology_resolve_cmd.add_argument("entity_type")
+    ontology_resolve_cmd.add_argument("namespace")
+    ontology_resolve_cmd.add_argument("value")
+    ontology_resolve_cmd.add_argument("--alias", action="append", default=[])
+    ontology_resolve_cmd.add_argument("--source", default=None)
+    ontology_resolve_cmd.add_argument("--workspace-id", default=None)
+    ontology_resolve_cmd.add_argument("--db-path", default=None)
+    ontology_merge_cmd = ontology_sub.add_parser("merge", help="Merge a verified duplicate entity")
+    ontology_merge_cmd.add_argument("loser_entity_id")
+    ontology_merge_cmd.add_argument("winner_entity_id")
+    ontology_merge_cmd.add_argument("--reason", required=True)
+    ontology_merge_cmd.add_argument("--actor", default="operator")
+    ontology_merge_cmd.add_argument("--db-path", default=None)
+    ontology_reconcile_cmd = ontology_sub.add_parser("reconcile", help="Record duplicate and contradictory observations")
+    ontology_reconcile_cmd.add_argument("--limit", type=int, default=500)
+    ontology_reconcile_cmd.add_argument("--db-path", default=None)
 
     enterprise = sub.add_parser("enterprise", help="Operate enterprise security connectors and governance workflows")
     enterprise_sub = enterprise.add_subparsers(dest="enterprise_cmd", required=True)
@@ -5155,6 +5221,53 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("EDGES:")
             for edge in payload.get("edges", []):
                 print(f"- {edge['last_seen']} | {edge['type']} | {edge['from']} -> {edge['to']}")
+        return 0
+
+    if args.cmd == "ontology":
+        try:
+            if args.ontology_cmd == "search":
+                payload = {"entities": search_ontology_entities(args.query, entity_type=args.entity_type, workspace_id=args.workspace_id, limit=args.limit, db_path=args.db_path)}
+            elif args.ontology_cmd == "show":
+                payload = {"entity": get_ontology_entity(args.entity_id, db_path=args.db_path)}
+                if payload["entity"] is None:
+                    raise ValueError(f"Ontology entity not found: {args.entity_id}")
+            elif args.ontology_cmd == "neighbors":
+                payload = ontology_neighbors(args.entity_id, depth=args.depth, relationship_type=args.relationship_type, limit=args.limit, db_path=args.db_path)
+            elif args.ontology_cmd == "timeline":
+                payload = {"entity_id": args.entity_id, "events": ontology_timeline(args.entity_id, limit=args.limit, db_path=args.db_path)}
+            elif args.ontology_cmd == "lineage":
+                payload = ontology_lineage(args.entity_id, depth=args.depth, limit=args.limit, db_path=args.db_path)
+            elif args.ontology_cmd == "risk":
+                payload = ontology_risk_context(args.entity_id, db_path=args.db_path)
+            elif args.ontology_cmd == "quality":
+                payload = ontology_quality(workspace_id=args.workspace_id, stale_after_seconds=args.stale_after_seconds, db_path=args.db_path)
+            elif args.ontology_cmd == "backfill":
+                payload = backfill_ontology(batch_limit=args.batch_limit, resume=not args.no_resume, db_path=args.db_path)
+            elif args.ontology_cmd == "resolve":
+                payload = resolve_ontology_identity(args.entity_type, args.namespace, args.value, aliases=args.alias, source=args.source, workspace_id=args.workspace_id, db_path=args.db_path)
+            elif args.ontology_cmd == "merge":
+                payload = merge_ontology_entities(args.loser_entity_id, args.winner_entity_id, reason=args.reason, actor=args.actor, db_path=args.db_path)
+            elif args.ontology_cmd == "reconcile":
+                payload = reconcile_ontology(limit=args.limit, db_path=args.db_path)
+            else:
+                raise ValueError(f"unsupported ontology command: {args.ontology_cmd}")
+        except Exception as exc:
+            if args.json:
+                print(to_json({"ok": False, "error": str(exc), "command": args.ontology_cmd}))
+            else:
+                print(f"error: {exc}")
+            return 1
+        if args.json:
+            print(to_json(payload))
+        elif args.ontology_cmd == "search":
+            for entity in payload["entities"]:
+                print(f"{entity['entity_id']} | {entity['entity_type']} | {entity['display_name']} | {entity['freshness_at']}")
+        elif args.ontology_cmd == "show":
+            entity = payload["entity"]
+            print(f"ENTITY: {entity['entity_id']} | {entity['entity_type']} | {entity['display_name']}")
+            print(f"SOURCE: {entity['source']} | WORKSPACE: {entity['workspace_id']} | CONFIDENCE: {entity['confidence']}")
+        else:
+            print(to_json(payload))
         return 0
 
     if args.cmd == "sync-findings":

@@ -253,11 +253,18 @@ def _bridge_context(action: Action, inputs: dict[str, Any], db_path: str | None)
         if action.name == "triage_finding":
             context["deterministic_assessment"] = minimize(inputs.get("deterministic_assessment") or {})
             context["automation_policy"] = minimize(inputs.get("automation_policy") or {})
-        return context
+        return _attach_ontology_context(context, _optional(inputs, "finding_id") or _optional(inputs, "target_id"), "finding", db_path, workspace_id=_optional(inputs, "workspace_id") or None)
     if action.name == "prioritize_findings":
-        return _list_findings({**inputs, "status": inputs.get("status", "open"), "limit": min(_limit(inputs), 50)}, db_path)
+        context = _list_findings({**inputs, "status": inputs.get("status", "open"), "limit": min(_limit(inputs), 50)}, db_path)
+        try:
+            from secopsai.ontology import quality as ontology_quality
+
+            context["ontology_quality"] = minimize(ontology_quality(workspace_id=_optional(inputs, "workspace_id") or None, db_path=db_path))
+        except Exception:
+            context["ontology_quality"] = {"status": "unavailable"}
+        return context
     if action.name == "analyze_asset_change":
-        return _asset_changes(inputs, db_path)
+        return _attach_ontology_context(_asset_changes(inputs, db_path), _optional(inputs, "target_id") or _optional(inputs, "asset_id"), "asset", db_path, workspace_id=_optional(inputs, "workspace_id") or None)
     if action.name in {"analyze_research_case", "generate_analyst_brief", "review_publication_safety"}:
         case = _get_research_case(inputs, db_path)
         matrix = _research_evidence_matrix(inputs, db_path)
@@ -267,24 +274,56 @@ def _bridge_context(action: Action, inputs: dict[str, Any], db_path: str | None)
             from secopsai.research_pipeline import pipeline_intelligence_context
 
             context["investigation_pipeline"] = pipeline_intelligence_context(pipeline_id, db_path=db_path)
-        return context
+        return _attach_ontology_context(context, _optional(inputs, "case_id") or _optional(inputs, "target_id"), "research_case", db_path, workspace_id=_optional(inputs, "workspace_id") or None)
     if action.name == "triage_artifact":
         from secopsai.artifact_fleet import triage_show
 
         artifact_id = _target(inputs, "artifact_id")
         artifact_db_path = inputs.get("artifact_db_path") or db_path
         triage = triage_show(artifact_id, db_path=artifact_db_path)
-        return {"artifact_triage": triage.get("context") or {}, "artifact_id": artifact_id}
+        return _attach_ontology_context({"artifact_triage": triage.get("context") or {}, "artifact_id": artifact_id}, artifact_id, "artifact", db_path, workspace_id=_optional(inputs, "workspace_id") or None)
     if action.name in {"execute_specialist_work", "review_specialist_work"}:
         from secopsai.specialist_orchestrator import specialist_bridge_context
 
         run_id = _target(inputs, "specialist_run_id")
-        return specialist_bridge_context(
+        context = specialist_bridge_context(
             run_id,
             db_path=db_path,
             review=action.name == "review_specialist_work",
         )
+        task_id = str((context.get("task") or {}).get("task_id") or "").strip()
+        if task_id:
+            context = _attach_ontology_context(context, task_id, "research_case", db_path, workspace_id=_optional(inputs, "workspace_id") or None)
+        return context
     raise ValueError(f"no bridge context builder for action: {action.name}")
+
+
+def _attach_ontology_context(context: dict[str, Any], target_id: str | None, target_type: str, db_path: str | None, *, workspace_id: str | None = None) -> dict[str, Any]:
+    """Attach a bounded, evidence-grounded graph context to bridge requests."""
+    try:
+        from secopsai.ontology import get_entity, lineage, neighbors, risk_context, search_entities
+
+        raw_target = str(target_id or "").strip()
+        entity = get_entity(raw_target, workspace_id=workspace_id, db_path=db_path) if raw_target else None
+        if entity is None and raw_target:
+            candidates = search_entities(raw_target, entity_type=target_type, workspace_id=workspace_id, limit=10, db_path=db_path)
+            if len(candidates) == 1:
+                entity = get_entity(candidates[0]["entity_id"], workspace_id=workspace_id, db_path=db_path)
+        if entity is None:
+            return {**context, "ontology": {"status": "unavailable", "reason": "target has no canonical ontology identity"}}
+        entity_id = entity["entity_id"]
+        graph = neighbors(entity_id, depth=2, limit=50, workspace_id=workspace_id, db_path=db_path)
+        result: dict[str, Any] = {
+            "status": "available",
+            "target_entity": entity,
+            "neighbors": graph,
+            "lineage": lineage(entity_id, depth=2, limit=50, workspace_id=workspace_id, db_path=db_path),
+        }
+        if target_type in {"finding", "asset", "artifact", "research_case"}:
+            result["risk"] = risk_context(entity_id, workspace_id=workspace_id, db_path=db_path)
+        return {**context, "ontology": minimize(result)}
+    except Exception as exc:
+        return {**context, "ontology": {"status": "unavailable", "reason": str(exc)[:240]}}
 
 
 def _bridge_instructions(
