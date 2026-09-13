@@ -47,6 +47,9 @@ services:
         sync: false
       - key: SECOPSAI_CORE_COORDINATOR_URL
         value: https://core.secopsai.dev
+      # Stable identity used for hosted coordinator leases and heartbeats.
+      - key: SECOPSAI_CORE_WORKER_ID
+        value: render-secopsai-research-worker
       - key: SECOPSAI_CORE_BRIDGE_TOKEN
         sync: false
       - key: SECOPSAI_SENTRY_TRACES_SAMPLE_RATE
