@@ -3438,7 +3438,7 @@ def backfill_existing(*, db_path: str | None = None, batch_limit: int = 1000, re
     )
 
     def run_relationship_table() -> None:
-        def apply_items(items: list[dict[str, Any]]) -> None:
+        def apply_items(items: list[dict[str, Any]], default_stream_key: str) -> None:
             if not items:
                 return
             with sqlite_writer_lock(db_path):
@@ -3461,7 +3461,7 @@ def backfill_existing(*, db_path: str | None = None, batch_limit: int = 1000, re
                         terminal = bool(raw_item.get("_pending_terminal"))
                         if pending_error:
                             counts["skipped_relationships"] += 1
-                            bump(stream_key or key, "failed" if terminal else "skipped")
+                            bump(stream_key or default_stream_key, "failed" if terminal else "skipped")
                             if stream_key:
                                 queue_pending_connection(
                                     connection,
@@ -3476,7 +3476,7 @@ def backfill_existing(*, db_path: str | None = None, batch_limit: int = 1000, re
                             continue
                         if not isinstance(item, dict):
                             counts["skipped_relationships"] += 1
-                            bump(stream_key or key, "skipped")
+                            bump(stream_key or default_stream_key, "skipped")
                             continue
                         relationship_id = _text(item.get("relationship_id") or item.get("edge_id"), 512) or _semantic_relationship_id(item)
                         existed = connection.execute(
@@ -3486,10 +3486,10 @@ def backfill_existing(*, db_path: str | None = None, batch_limit: int = 1000, re
                         applied, error = apply_relationship_connection(connection, item, now=now)
                         if applied:
                             counts["relationships"] += 1
-                            bump(stream_key or key, "updated" if existed else "inserted")
+                            bump(stream_key or default_stream_key, "updated" if existed else "inserted")
                             continue
                         counts["skipped_relationships"] += 1
-                        bump(stream_key or key, "skipped")
+                        bump(stream_key or default_stream_key, "skipped")
                         if stream_key:
                             queue_pending_connection(
                                 connection,
@@ -3577,7 +3577,7 @@ def backfill_existing(*, db_path: str | None = None, batch_limit: int = 1000, re
                             }
                         )
                         items.append(marked)
-                apply_items(items)
+                apply_items(items, key)
                 state["offset"] = int(state["offset"]) + len(rows)
                 field = cursor_field or str(rows[-1].keys()[0])
                 state["cursor"] = rows[-1][field]
