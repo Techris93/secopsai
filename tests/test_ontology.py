@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ import soc_store
 from secopsai.ontology import (
     backfill_existing,
     canonical_entity_id,
+    export_snapshot,
     get_entity,
     lineage,
     materialize_recent,
@@ -18,9 +20,11 @@ from secopsai.ontology import (
     reconcile,
     resolve_identity,
     risk_context,
+    sanitize_locator,
     search_entities,
     sync_payload,
     timeline,
+    upsert_entities,
 )
 
 
@@ -55,6 +59,34 @@ def test_schema_and_identity_normalization(db_path: str):
         assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == soc_store.SCHEMA_VERSION
         tables = {row["name"] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"ontology_entities", "ontology_relationships", "ontology_aliases", "ontology_change_log", "ontology_conflicts"} <= tables
+
+
+def test_ontology_read_paths_do_not_initialize_missing_or_partial_db(tmp_path: Path, monkeypatch):
+    missing = str(tmp_path / "missing" / "ontology.db")
+
+    def fail_init(*_args, **_kwargs):
+        raise AssertionError("ontology read path initialized the database")
+
+    monkeypatch.setattr(soc_store, "init_db", fail_init)
+    assert search_entities(db_path=missing) == []
+    assert get_entity("asset:edge:missing", db_path=missing) is None
+    assert neighbors("asset:edge:missing", db_path=missing)["nodes"] == []
+    assert timeline("asset:edge:missing", db_path=missing) == []
+    assert lineage("asset:edge:missing", db_path=missing)["paths"] == []
+    assert risk_context("asset:edge:missing", db_path=missing)["status"] == "not_found"
+    assert quality(db_path=missing)["database_present"] is False
+    assert export_snapshot(db_path=missing)["entities"] == []
+    assert not Path(missing).exists()
+
+    partial = str(tmp_path / "partial.db")
+    with sqlite3.connect(partial) as connection:
+        connection.execute("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)")
+    assert search_entities(db_path=partial) == []
+    assert get_entity("asset:edge:missing", db_path=partial) is None
+    assert neighbors("asset:edge:missing", db_path=partial)["relationships"] == []
+    assert timeline("asset:edge:missing", db_path=partial) == []
+    assert quality(db_path=partial)["database_present"] is True
+    assert export_snapshot(db_path=partial)["relationships"] == []
 
 
 def test_entities_preserve_validity_windows_and_workspace_binding(db_path: str):
@@ -117,6 +149,49 @@ def test_sync_redacts_evidence_and_is_idempotent(db_path: str):
         assert int(connection.execute("SELECT COUNT(*) FROM ontology_change_log").fetchone()[0]) >= 3
         evidence = json.loads(connection.execute("SELECT summary_json FROM ontology_evidence_refs").fetchone()[0])
     assert evidence.get("secret") is None
+
+
+def test_sync_relation_and_event_replays_are_semantic_across_request_keys(db_path: str):
+    package = _entity("package", "pypi", "semantic-replay")
+    service = _entity("service", "secopsai", "semantic-replay")
+    package_id = canonical_entity_id("package", "pypi", "semantic-replay")
+    service_id = canonical_entity_id("service", "secopsai", "semantic-replay")
+    base = {
+        "entities": [package, service],
+        "relationships": [{
+            "relationship_id": "caller-id-one",
+            "relationship_type": "ASSET_PROVIDES_SERVICE",
+            "from_entity_id": package_id,
+            "to_entity_id": service_id,
+            "source": "edge",
+            "source_record_id": "semantic-record",
+        }],
+        "events": [{
+            "event_id": "caller-event-one",
+            "entity_id": package_id,
+            "event_type": "observed",
+            "source": "edge",
+            "source_record_id": "semantic-event",
+        }],
+        "evidence_refs": [],
+    }
+    sync_payload({**base, "idempotency_key": "semantic-replay-001"}, db_path=db_path)
+    sync_payload({
+        **base,
+        "idempotency_key": "semantic-replay-002",
+        "relationships": [{**base["relationships"][0], "relationship_id": "caller-id-two"}],
+        "events": [{**base["events"][0], "event_id": "caller-event-two"}],
+    }, db_path=db_path)
+    with soc_store.read_connect(db_path) as connection:
+        relation_rows = connection.execute("SELECT relationship_id FROM ontology_relationships").fetchall()
+        event_rows = connection.execute("SELECT event_id, occurred_at FROM ontology_events").fetchall()
+        relation_changes = connection.execute("SELECT change_id FROM ontology_change_log WHERE object_type='relationship'").fetchall()
+    assert len(relation_rows) == 1
+    assert relation_rows[0][0].startswith("rel:")
+    assert len(event_rows) == 1
+    assert event_rows[0][1] == "1970-01-01T00:00:00Z"
+    assert len(relation_changes) == 1
+    assert relation_changes[0][0].startswith("chg:")
 
 
 def test_traversal_cycle_protection_and_risk(db_path: str):
@@ -318,3 +393,136 @@ def test_materialize_recent_keeps_registry_release_context_and_evidence_refs(db_
     assert any(item["relationship_type"] == "RELEASE_EVENT_FROM_SOURCE" for item in snapshot["relationships"])
     assert any(item["entity_type"] == "release_event" for item in snapshot["entities"])
     assert all("token" not in json.dumps(item) for item in snapshot["evidence_refs"])
+
+
+def test_upsert_entities_does_not_drop_large_batches_or_cross_type_identities(db_path: str):
+    batch = [_entity("asset", "fixture", f"asset-{index}") for index in range(1001)]
+    result = upsert_entities(batch, db_path=db_path)
+    assert result["count"] == 1001
+    with soc_store.read_connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM ontology_entities").fetchone()[0] == 1001
+
+    # A package and a repository can legitimately share a namespace/key.
+    upsert_entities(
+        [_entity("package", "shared", "same-key"), _entity("repository", "shared", "same-key")],
+        db_path=db_path,
+    )
+    with soc_store.read_connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM ontology_entities WHERE namespace='shared' AND canonical_key='same-key'").fetchone()[0] == 2
+
+
+def test_long_identity_and_opaque_locator_are_collision_resistant(db_path: str):
+    first = canonical_entity_id("package", "npm", "x" * 700 + "a")
+    second = canonical_entity_id("package", "npm", "x" * 700 + "b")
+    assert first != second
+    assert first.startswith("pkg:npm:sha256-")
+    assert sanitize_locator("opaque://" + "x" * 500) == sanitize_locator("opaque://" + "x" * 500)
+    opaque = sanitize_locator("opaque://" + "x" * 500)
+    assert opaque.startswith("redacted://opaque/")
+    assert "x" * 64 not in opaque
+
+
+def test_backfill_retries_relationships_with_late_endpoints(db_path: str):
+    now = soc_store.utc_now()
+    with soc_store.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO asset_graph_nodes (node_id,node_type,label,source,source_id,properties_json,first_seen,last_seen,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            ("node-a", "asset", "A", "edge", "A", "{}", now, now, now),
+        )
+        connection.execute(
+            "INSERT INTO asset_graph_edges (edge_id,edge_type,from_node_id,to_node_id,source,properties_json,first_seen,last_seen,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            ("edge-late", "asset_exposes_service", "node-a", "node-b", "edge", "{}", now, now, now),
+        )
+        connection.commit()
+    first = backfill_existing(db_path=db_path, batch_limit=10)
+    assert first["pending_backfill"] >= 1
+    with soc_store.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO asset_graph_nodes (node_id,node_type,label,source,source_id,properties_json,first_seen,last_seen,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            ("node-b", "service", "B", "edge", "B", "{}", now, now, now),
+        )
+        connection.commit()
+    second = backfill_existing(db_path=db_path, batch_limit=10)
+    assert second["pending_backfill"] == 0
+    with soc_store.read_connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM ontology_relationships WHERE relationship_id='edge-late'").fetchone()[0] == 1
+
+
+def test_backfill_large_batch_is_complete_and_records_reconciliation_counts(db_path: str):
+    now = soc_store.utc_now()
+    rows = [
+        (
+            f"FINDING-{index:04d}",
+            f"Fixture finding {index}",
+            "bounded fixture",
+            "medium",
+            50,
+            "open",
+            "needs_review",
+            "fixture",
+            now,
+            now,
+            now,
+            now,
+            "{}",
+        )
+        for index in range(1001)
+    ]
+    with soc_store.connect(db_path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO findings
+                (finding_id, title, summary, severity, severity_score, status,
+                 disposition, source, first_seen, last_seen, created_at,
+                 updated_at, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        connection.commit()
+
+    result = backfill_existing(db_path=db_path, batch_limit=5000, resume=False)
+
+    assert result["status"] == "completed"
+    assert result["scanned"] >= 1001
+    assert result["inserted"] >= 1001
+    assert result["failed"] == 0
+    with soc_store.read_connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM ontology_entities WHERE entity_type='finding'").fetchone()[0] == 1001
+        metadata = connection.execute(
+            "SELECT value_json FROM ontology_metadata WHERE key='backfill:run'"
+        ).fetchone()
+    recorded = json.loads(metadata["value_json"])
+    for key in ("scanned", "inserted", "updated", "skipped", "failed"):
+        assert key in recorded["counts"]
+
+
+def test_materialize_recent_preserves_typed_graph_endpoints(db_path: str):
+    now = soc_store.utc_now()
+    with soc_store.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO asset_graph_nodes (node_id,node_type,label,source,source_id,properties_json,first_seen,last_seen,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            ("asset-node", "asset", "Asset", "edge", "asset-node", "{}", now, now, now),
+        )
+        connection.execute(
+            "INSERT INTO asset_graph_nodes (node_id,node_type,label,source,source_id,properties_json,first_seen,last_seen,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            ("service-node", "service", "Service", "edge", "service-node", "{}", now, now, now),
+        )
+        connection.execute(
+            "INSERT INTO asset_graph_edges (edge_id,edge_type,from_node_id,to_node_id,source,properties_json,first_seen,last_seen,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            ("typed-edge", "asset_exposes_service", "asset-node", "service-node", "edge", "{}", now, now, now),
+        )
+        connection.commit()
+
+    result = materialize_recent(db_path=db_path, limit=20)
+
+    assert result["status"] == "accepted"
+    with soc_store.read_connect(db_path) as connection:
+        relation = connection.execute(
+            "SELECT from_entity_id, to_entity_id FROM ontology_relationships WHERE relationship_type='ASSET_PROVIDES_SERVICE'"
+        ).fetchone()
+        service = connection.execute(
+            "SELECT entity_id FROM ontology_entities WHERE entity_type='service' AND canonical_key='service-node'"
+        ).fetchone()
+    assert relation is not None
+    assert relation[1] == service[0]

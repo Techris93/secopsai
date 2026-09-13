@@ -103,6 +103,7 @@ def test_worker_cycle_isolates_collector_failures(tmp_path, monkeypatch):
     statuses = {item["ecosystem"]: item["status"] for item in result["collector_results"]}
     assert set(statuses) == {"nuget", "packagist", "pypi", "rubygems", "npm", "go", "maven", "open-vsx"}
     assert all(status == "failed" for status in statuses.values())
+    assert result["status"] == "degraded"
     assert "scoring" in result
     assert "retries" in result
     assert "recovery" in result
@@ -331,6 +332,26 @@ def test_worker_loop_stays_alive_in_degraded_storage_state(tmp_path, monkeypatch
     assert result["cycles"] == 1
     assert cycles[0]["status"] == "degraded"
     assert cycles[0]["error_code"] == "storage_capacity_exhausted"
+
+
+def test_worker_loop_survives_unexpected_cycle_writer_failure(tmp_path, monkeypatch):
+    import secopsai.research_worker as worker_module
+
+    monkeypatch.setattr(
+        worker_module,
+        "run_worker_cycle",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("temporary writer failure")),
+    )
+    cycles = []
+    result = run_worker_loop(
+        db_path=_db(tmp_path),
+        interval_seconds=15,
+        max_cycles=1,
+        on_cycle=cycles.append,
+    )
+    assert result["cycles"] == 1
+    assert cycles[0]["status"] == "degraded"
+    assert cycles[0]["error_code"] == "worker_cycle_failed"
 
 
 def test_worker_loop_publishes_ontology_snapshot_without_making_collection_depend_on_core(tmp_path, monkeypatch):

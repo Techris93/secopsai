@@ -20,9 +20,15 @@ const MAX_INTELLIGENCE_BYTES = 64 * 1024;
 const MAX_INTELLIGENCE_RESULT_BYTES = 512 * 1024;
 const MAX_SUMMARY_BYTES = 32 * 1024;
 const ONTOLOGY_SCHEMA_VERSION = "secopsai.ontology.v1";
-const MAX_ONTOLOGY_ENTITIES = 1000;
-const MAX_ONTOLOGY_RELATIONSHIPS = 2000;
-const MAX_ONTOLOGY_EVENTS = 2000;
+// Keep one request below the lowest D1 plan limits.  The paid plan permits
+// more reads/batch statements, but accepting a larger request here would make
+// the same authenticated bridge payload fail when the database is on Free.
+const MAX_ONTOLOGY_D1_READ_QUERIES = 50;
+const MAX_ONTOLOGY_D1_BATCH_STATEMENTS = 1000;
+const MAX_ONTOLOGY_ENTITIES = 500;
+const MAX_ONTOLOGY_RELATIONSHIPS = 500;
+const MAX_ONTOLOGY_EVENTS = 500;
+const MAX_ONTOLOGY_EVIDENCE_REFS = 500;
 const MAX_ONTOLOGY_DEPTH = 4;
 const ONTOLOGY_ENTITY_TYPES = new Set([
   "package", "package_version", "artifact", "registry", "release_event", "advisory", "vulnerability",
@@ -164,7 +170,8 @@ export async function handleRequest(request, env) {
     }
     if (jobMatch && request.method === "POST" && jobMatch[2] === "heartbeat") {
       requireBearer(request, env.CORE_BRIDGE_TOKEN);
-      return response(200, { job: await heartbeatIntelligenceJob(env.DB, decodeURIComponent(jobMatch[1]), requestId) }, requestId);
+      const heartbeatPayload = await readJsonObject(request, MAX_INTELLIGENCE_BYTES, "Bridge heartbeat");
+      return response(200, { job: await heartbeatIntelligenceJob(env.DB, decodeURIComponent(jobMatch[1]), requestId, heartbeatPayload) }, requestId);
     }
     if (request.method === "GET" && url.pathname === "/api/v1/intelligence/autopilot") {
       requireBearer(request, env.CORE_INTELLIGENCE_TOKEN);
@@ -218,13 +225,21 @@ export async function handleRequest(request, env) {
       requireBearer(request, env.CORE_BRIDGE_TOKEN);
       const jobId = decodeURIComponent(bridgeJobMatch[1]);
       if (bridgeJobMatch[2] === "complete") return response(200, await completeIntelligenceJob(request, env.DB, jobId, requestId), requestId);
-      if (bridgeJobMatch[2] === "heartbeat") return response(200, { job: await heartbeatIntelligenceJob(env.DB, jobId, requestId) }, requestId);
+      if (bridgeJobMatch[2] === "heartbeat") {
+        const heartbeatPayload = await readJsonObject(request, MAX_INTELLIGENCE_BYTES, "Bridge heartbeat");
+        return response(200, { job: await heartbeatIntelligenceJob(env.DB, jobId, requestId, heartbeatPayload) }, requestId);
+      }
       return response(200, await failIntelligenceJob(request, env.DB, jobId, requestId), requestId);
     }
-    const bridgeCommandMatch = url.pathname.match(/^\/api\/v1\/intelligence\/bridge\/commands\/([^/]+)\/(complete|fail)$/);
+    const bridgeCommandMatch = url.pathname.match(/^\/api\/v1\/intelligence\/bridge\/commands\/([^/]+)\/(complete|fail|heartbeat)$/);
     if (request.method === "POST" && bridgeCommandMatch) {
       requireBearer(request, env.CORE_BRIDGE_TOKEN);
-      return response(200, await finishCoordinatorCommand(request, env.DB, decodeURIComponent(bridgeCommandMatch[1]), bridgeCommandMatch[2], requestId), requestId);
+      const commandId = decodeURIComponent(bridgeCommandMatch[1]);
+      if (bridgeCommandMatch[2] === "heartbeat") {
+        const heartbeatPayload = await readJsonObject(request, MAX_INTELLIGENCE_BYTES, "Coordinator heartbeat");
+        return response(200, await heartbeatCoordinatorCommand(heartbeatPayload, env.DB, commandId, requestId), requestId);
+      }
+      return response(200, await finishCoordinatorCommand(request, env.DB, commandId, bridgeCommandMatch[2], requestId), requestId);
     }
     return response(404, { error: "not_found" }, requestId);
   } catch (error) {
@@ -306,33 +321,75 @@ function ontologyNormalize(value, maximum = 1024) {
   return clean(value, maximum).normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-function ontologySafeLocator(value) {
-  const raw = clean(value, 2048);
+function ontologySafeLocatorSync(value) {
+  // Keep the full bounded request value for opaque hashing. Truncating before
+  // hashing makes distinct secrets that share a prefix correlate to the same
+  // locator and can leak meaningful path/token prefixes.
+  const raw = String(value || "").trim();
   if (!raw) return "";
   const lowered = raw.toLowerCase();
   if (["file:", "data:", "javascript:", "\\\\", "/"].some((prefix) => lowered.startsWith(prefix))) return "redacted://local";
   try {
     const parsed = new URL(raw);
     if (["http:", "https:"].includes(parsed.protocol) && parsed.hostname) {
-      const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-      const privateHost = host === "localhost" || host.endsWith(".local") || host.endsWith(".internal") || host === "127.0.0.1" || host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:") || /^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[0-1])\./.test(host);
+      const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+      const privateHost = host === "localhost" || host.endsWith(".local") || host.endsWith(".internal") || host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:") || /^(?:0\.|10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(host);
       if (parsed.username || parsed.password || privateHost) return "redacted://url";
       const safeHost = host.includes(":") ? `[${host}]` : host;
       return `${parsed.protocol}//${safeHost}${parsed.port ? `:${parsed.port}` : ""}${parsed.pathname}`.slice(0, 1024);
     }
   } catch {
-    // Preserve a bounded opaque source identifier when the value is not a URL.
+    // Opaque locators may contain bearer tokens, local paths, or credentials.
+    // Keep only a deterministic digest so operators can correlate a reference
+    // without exposing the original value to D1 or the browser.
   }
-  return raw.slice(0, 1024);
+  return `redacted://opaque/${shortDigest(raw)}`;
 }
 
-function ontologyCanonicalKey(type, namespace, value) {
-  let key = ontologyNormalize(value, 1024);
+// Stored evidence references use SHA-256 so Python, Edge, and D1 derive the
+// same redacted locator.  Synchronous response sanitization uses the bounded
+// FNV fallback above because it cannot await Web Crypto; it never participates
+// in an identity or evidence-reference key.
+async function ontologySafeLocator(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const lowered = raw.toLowerCase();
+  const digest = async (kind) => `redacted://${kind}/${(await sha256Hex(raw)).slice(0, 32)}`;
+  if (["file:", "data:", "javascript:", "\\\\", "/"].some((prefix) => lowered.startsWith(prefix))) return digest("local");
+  try {
+    const parsed = new URL(raw);
+    if (["http:", "https:"].includes(parsed.protocol) && parsed.hostname) {
+      const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+      const privateHost = host === "localhost" || host.endsWith(".local") || host.endsWith(".internal") || host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:") || /^(?:0\.|10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(host);
+      if (parsed.username || parsed.password || privateHost) return digest("url");
+      const safeHost = host.includes(":") ? `[${host}]` : host;
+      return `${parsed.protocol}//${safeHost}${parsed.port ? `:${parsed.port}` : ""}${parsed.pathname}`.slice(0, 1024);
+    }
+  } catch {
+    // Opaque locators are represented by a deterministic digest only.
+  }
+  return digest("opaque");
+}
+
+async function ontologyCanonicalKey(type, namespace, value) {
+  // Canonical identity is normalized from the complete request value. The
+  // request itself is bounded by MAX_INTELLIGENCE_BYTES, while the stored key
+  // is reduced to a cryptographic digest below when it exceeds the shared
+  // Python/SQLite identity bounds.
+  let key = String(value || "").normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
   if (["pypi", "python"].includes(namespace) && ["package", "package_version"].includes(type)) key = key.replace(/_/g, "-");
   if (["vulnerability", "advisory"].includes(type)) key = key.toUpperCase();
   if (["artifact", "evidence"].includes(type)) key = key.replace(/^(?:sha(?:256)?|hash):/i, "");
   if (["repository", "registry", "source"].includes(type)) key = key.replace(/\/+$/, "");
-  return key.slice(0, 1024);
+  // Keep the identity contract byte-for-byte compatible with Python. Python
+  // hashes the complete normalized key whenever the stored key or the full
+  // prefixed identifier would exceed its bounded SQLite field. Returning a
+  // prefix plus digest here produced different IDs for long values and could
+  // merge two records after a cross-plane replay.
+  const prefixes = ontologyPrefixes();
+  const prefixedBytes = new TextEncoder().encode(`${prefixes[type] || type}:${namespace}:${key}`).byteLength;
+  if (new TextEncoder().encode(key).byteLength <= 1024 && prefixedBytes <= 512) return key;
+  return `sha256-${(await sha256Hex(key)).slice(0, 40)}`;
 }
 
 function ontologyConfidence(value, fallback = 100) {
@@ -342,12 +399,28 @@ function ontologyConfidence(value, fallback = 100) {
 
 function ontologySourcePriority(value) {
   const priorities = { "secopsai-research": 90, core: 85, registry: 80, edge: 75, github: 70, scanner: 65, legacy: 40, unknown: 0 };
-  const normalized = ontologyNormalize(value, 160);
+  const normalized = ontologySource(value);
   return priorities[normalized] ?? (normalized ? 50 : 0);
 }
 
+function ontologySource(value) {
+  const normalized = ontologyNormalize(value, 160).replace(/_/g, "-");
+  return {
+    "secopsai research": "secopsai-research",
+    research: "secopsai-research",
+    "secopsai-core": "core",
+  }[normalized] || normalized;
+}
+
 async function ontologyEntityId(type, namespace, canonicalKey) {
-  const prefixes = {
+  const prefixes = ontologyPrefixes();
+  const candidate = `${prefixes[type] || type}:${namespace}:${canonicalKey}`;
+  if (new TextEncoder().encode(candidate).byteLength <= 512) return candidate;
+  return `${prefixes[type] || type}:${namespace}:sha256-${(await sha256Hex(canonicalKey)).slice(0, 40)}`;
+}
+
+function ontologyPrefixes() {
+  return {
     package: "pkg", package_version: "pkgver", artifact: "artifact", release_event: "release", advisory: "adv",
     vulnerability: "vuln", repository: "repo", manifest: "manifest", dependency: "dep", build: "build", ci_run: "ci",
     deployment: "deploy", asset: "asset", service: "service", sensor: "sensor", network: "network", workspace: "workspace",
@@ -356,9 +429,6 @@ async function ontologyEntityId(type, namespace, canonicalKey) {
     source: "source", automation_run: "automation", intelligence_job: "job", task: "task", command: "command", model: "model",
     triage_decision: "triage", remediation_action: "action", approval: "approval", publication: "publication",
   };
-  const candidate = `${prefixes[type] || type}:${namespace}:${canonicalKey}`;
-  if (candidate.length <= 512) return candidate;
-  return `${prefixes[type] || type}:${namespace}:sha256-${(await sha256Hex(candidate)).slice(0, 40)}`;
 }
 
 function publicOntologyEntity(row, includeProperties = true) {
@@ -588,22 +658,28 @@ async function ontologyQuality(db, searchParams, expectedWorkspace = "") {
   const provenance = await db.prepare(`SELECT COUNT(*) AS count FROM ontology_relationships${clause}${workspace ? " AND" : " WHERE"} source <> 'unknown' AND source_record_id <> ''`).bind(...params).first();
   const evidence = await db.prepare(`SELECT COUNT(*) AS count FROM ontology_evidence_refs${workspace ? " WHERE workspace_id = ?" : ""}`).bind(...(workspace ? params : [])).first();
   const orphan = workspace
-    ? await db.prepare("SELECT COUNT(*) AS count FROM ontology_relationships r WHERE r.workspace_id = ? AND (NOT EXISTS (SELECT 1 FROM ontology_entities e WHERE e.entity_id=r.from_entity_id) OR NOT EXISTS (SELECT 1 FROM ontology_entities e WHERE e.entity_id=r.to_entity_id))").bind(workspace).first()
+    ? await db.prepare("SELECT COUNT(*) AS count FROM ontology_relationships r WHERE r.workspace_id = ? AND (NOT EXISTS (SELECT 1 FROM ontology_entities e WHERE e.entity_id=r.from_entity_id AND e.workspace_id = ?) OR NOT EXISTS (SELECT 1 FROM ontology_entities e WHERE e.entity_id=r.to_entity_id AND e.workspace_id = ?))").bind(workspace, workspace, workspace).first()
     : await db.prepare("SELECT COUNT(*) AS count FROM ontology_relationships r WHERE NOT EXISTS (SELECT 1 FROM ontology_entities e WHERE e.entity_id=r.from_entity_id) OR NOT EXISTS (SELECT 1 FROM ontology_entities e WHERE e.entity_id=r.to_entity_id)").first();
-  const orphanEntities = await db.prepare(`SELECT COUNT(*) AS count FROM ontology_entities e${clause}${workspace ? " AND" : " WHERE"} NOT EXISTS (SELECT 1 FROM ontology_relationships r WHERE r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id)`).bind(...params).first();
+  const orphanEntities = workspace
+    ? await db.prepare("SELECT COUNT(*) AS count FROM ontology_entities e WHERE e.workspace_id = ? AND NOT EXISTS (SELECT 1 FROM ontology_relationships r JOIN ontology_entities other ON other.entity_id = CASE WHEN r.from_entity_id = e.entity_id THEN r.to_entity_id ELSE r.from_entity_id END WHERE (r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id) AND r.workspace_id = ? AND other.workspace_id = ?)").bind(workspace, workspace, workspace).first()
+    : await db.prepare("SELECT COUNT(*) AS count FROM ontology_entities e WHERE NOT EXISTS (SELECT 1 FROM ontology_relationships r WHERE r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id)").first();
   const findings = await db.prepare(`SELECT COUNT(*) AS count FROM ontology_entities${clause}${workspace ? " AND" : " WHERE"} entity_type = 'finding'`).bind(...params).first();
-  const linkedFindings = await db.prepare(`SELECT COUNT(*) AS count FROM ontology_entities e${clause}${workspace ? " AND" : " WHERE"} e.entity_type = 'finding' AND EXISTS (SELECT 1 FROM ontology_relationships r WHERE (r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id) AND r.relationship_type IN ('FINDING_ON_VERSION','FINDING_ON_ASSET','CASE_GROUPS_FINDING','ALERT_DERIVED_FROM_FINDING'))`).bind(...params).first();
+  const linkedFindings = workspace
+    ? await db.prepare("SELECT COUNT(*) AS count FROM ontology_entities e WHERE e.workspace_id = ? AND e.entity_type = 'finding' AND EXISTS (SELECT 1 FROM ontology_relationships r JOIN ontology_entities other ON other.entity_id = CASE WHEN r.from_entity_id=e.entity_id THEN r.to_entity_id ELSE r.from_entity_id END WHERE (r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id) AND r.workspace_id = ? AND other.workspace_id = ? AND r.relationship_type IN ('FINDING_ON_VERSION','FINDING_ON_ASSET','CASE_GROUPS_FINDING','ALERT_DERIVED_FROM_FINDING'))").bind(workspace, workspace, workspace).first()
+    : await db.prepare("SELECT COUNT(*) AS count FROM ontology_entities e WHERE e.entity_type = 'finding' AND EXISTS (SELECT 1 FROM ontology_relationships r WHERE (r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id) AND r.relationship_type IN ('FINDING_ON_VERSION','FINDING_ON_ASSET','CASE_GROUPS_FINDING','ALERT_DERIVED_FROM_FINDING'))").first();
   const conflicts = await db.prepare("SELECT COUNT(*) AS count FROM ontology_conflicts WHERE status = 'open'").first();
   const changes = await db.prepare("SELECT COUNT(*) AS count FROM ontology_change_log").first();
   const relationshipsWithEvidence = await db.prepare(`SELECT COUNT(*) AS count FROM ontology_relationships${clause}${workspace ? " AND" : " WHERE"} evidence_ref_id IS NOT NULL AND evidence_ref_id <> ''`).bind(...params).first();
   // ``ontologySafeLocator`` uses both a bare redaction marker (for local
   // paths) and a marker with a digest (for URL credentials/private hosts).
   // Treat either form as redacted when reporting citation quality.
-  const evidenceWithLocator = await db.prepare(`SELECT COUNT(*) AS count FROM ontology_evidence_refs WHERE locator <> '' AND locator NOT LIKE 'redacted://local%' AND locator NOT LIKE 'redacted://url%'${workspace ? " AND workspace_id = ?" : ""}`).bind(...(workspace ? params : [])).first();
+  const evidenceWithLocator = await db.prepare(`SELECT COUNT(*) AS count FROM ontology_evidence_refs WHERE locator <> '' AND locator NOT LIKE 'redacted://local%' AND locator NOT LIKE 'redacted://url%' AND locator NOT LIKE 'redacted://opaque%'${workspace ? " AND workspace_id = ?" : ""}`).bind(...(workspace ? params : [])).first();
   const staleRunnerHeartbeats = await db.prepare("SELECT COUNT(*) AS count FROM runner_heartbeats WHERE last_seen_at < ?").bind(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()).first();
   const heartbeatLatest = await db.prepare("SELECT MAX(last_seen_at) AS last_seen_at FROM runner_heartbeats").first();
   const canonicalEntities = await db.prepare(`SELECT COUNT(*) AS count FROM ontology_entities${clause}${workspace ? " AND" : " WHERE"} instr(entity_id, ':') > 0`).bind(...params).first();
-  const connectedEntities = await db.prepare(`SELECT COUNT(*) AS count FROM ontology_entities e${clause}${workspace ? " AND" : " WHERE"} EXISTS (SELECT 1 FROM ontology_relationships r WHERE r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id)`).bind(...params).first();
+  const connectedEntities = workspace
+    ? await db.prepare("SELECT COUNT(*) AS count FROM ontology_entities e WHERE e.workspace_id = ? AND EXISTS (SELECT 1 FROM ontology_relationships r JOIN ontology_entities other ON other.entity_id = CASE WHEN r.from_entity_id=e.entity_id THEN r.to_entity_id ELSE r.from_entity_id END WHERE (r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id) AND r.workspace_id = ? AND other.workspace_id = ?)").bind(workspace, workspace, workspace).first()
+    : await db.prepare("SELECT COUNT(*) AS count FROM ontology_entities e WHERE EXISTS (SELECT 1 FROM ontology_relationships r WHERE r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id)").first();
   const staleSources = await db.prepare(`SELECT COUNT(DISTINCT source) AS count FROM ontology_entities${clause}${workspace ? " AND" : " WHERE"} source <> '' AND freshness_at < ?`).bind(...params, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()).first();
   const queueRow = await db.prepare("SELECT MIN(queued_at) AS queued_at FROM (SELECT queued_at FROM intelligence_jobs WHERE status IN ('queued','running') UNION ALL SELECT queued_at FROM coordinator_commands WHERE status IN ('queued','running'))").first();
   const byType = await db.prepare(`SELECT entity_type, COUNT(*) AS count FROM ontology_entities${clause} GROUP BY entity_type`).bind(...params).all();
@@ -629,7 +705,42 @@ async function ontologyQuality(db, searchParams, expectedWorkspace = "") {
   const duplicateConflicts = Number((await db.prepare("SELECT COUNT(*) AS count FROM ontology_conflicts WHERE status = 'open' AND conflict_type IN ('duplicate_alias','duplicate_identity')").first())?.count || 0);
   const contradictoryRelationships = Number((await db.prepare("SELECT COUNT(*) AS count FROM ontology_conflicts WHERE status = 'open' AND conflict_type IN ('source_contradiction','contradictory_relationship')").first())?.count || 0);
   const heartbeatFreshnessSeconds = heartbeatLatest?.last_seen_at ? Math.max(0, Math.floor((Date.now() - Date.parse(heartbeatLatest.last_seen_at)) / 1000)) : null;
-  return { schema_version: ONTOLOGY_SCHEMA_VERSION, workspace_id: workspace || "all", entities: entityTotal, relationships: totalRelationships, evidence_references: Number(evidence?.count || 0), relationships_with_provenance: withProvenance, relationships_with_evidence: Number(relationshipsWithEvidence?.count || 0), provenance_coverage_percent: totalRelationships ? Math.round((withProvenance / totalRelationships) * 10000) / 100 : 100, evidence_with_valid_locator: Number(evidenceWithLocator?.count || 0), orphan_relationships: orphanRelationshipCount, orphan_entities: orphanEntityCount, stale_entities: Number(stale?.count || 0), stale_runner_heartbeats: staleRunnerCount, heartbeat_freshness_seconds: heartbeatFreshnessSeconds, queue_age_seconds: queueAgeSeconds, quality_alerts: qualityAlerts, stale_after_seconds: 7 * 24 * 60 * 60, canonical_id_coverage_percent: entityTotal ? Math.round((canonicalEntityCount / entityTotal) * 10000) / 100 : 100, graph_coverage_percent: entityTotal ? Math.round((connectedEntityCount / entityTotal) * 10000) / 100 : 100, findings_total: findingTotal, findings_linked_percent: findingTotal ? Math.round((linkedFindingCount / findingTotal) * 10000) / 100 : 100, open_conflicts: Number(conflicts?.count || 0), duplicate_candidates: duplicateConflicts, contradictory_relationships: contradictoryRelationships, stale_sources: Number(staleSources?.count || 0), ai_evidence_completeness_percent: null, false_positive_rate: null, recommendation_acceptance_rate: null, action_completion_rate: null, action_rollback_rate: null, change_history_records: Number(changes?.count || 0), entities_by_type: Object.fromEntries((byType.results || []).map((row) => [row.entity_type, Number(row.count || 0)])) };
+  const heartbeatMeasurementStatus = heartbeatFreshnessSeconds === null ? "unknown" : (staleRunnerCount ? "stale" : "fresh");
+  return { schema_version: ONTOLOGY_SCHEMA_VERSION, workspace_id: workspace || "all", entities: entityTotal, relationships: totalRelationships, evidence_references: Number(evidence?.count || 0), relationships_with_provenance: withProvenance, relationships_with_evidence: Number(relationshipsWithEvidence?.count || 0), provenance_coverage_percent: totalRelationships ? Math.round((withProvenance / totalRelationships) * 10000) / 100 : null, evidence_with_valid_locator: Number(evidenceWithLocator?.count || 0), orphan_relationships: orphanRelationshipCount, orphan_entities: orphanEntityCount, stale_entities: Number(stale?.count || 0), stale_runner_heartbeats: staleRunnerCount, heartbeat_freshness_seconds: heartbeatFreshnessSeconds, heartbeat_measurement_status: heartbeatMeasurementStatus, queue_age_seconds: queueAgeSeconds, quality_alerts: qualityAlerts, stale_after_seconds: 7 * 24 * 60 * 60, canonical_id_coverage_percent: entityTotal ? Math.round((canonicalEntityCount / entityTotal) * 10000) / 100 : null, graph_coverage_percent: entityTotal ? Math.round((connectedEntityCount / entityTotal) * 10000) / 100 : null, findings_total: findingTotal, findings_linked_percent: findingTotal ? Math.round((linkedFindingCount / findingTotal) * 10000) / 100 : null, open_conflicts: Number(conflicts?.count || 0), duplicate_candidates: duplicateConflicts, contradictory_relationships: contradictoryRelationships, stale_sources: Number(staleSources?.count || 0), ai_evidence_completeness_percent: null, false_positive_rate: null, recommendation_acceptance_rate: null, action_completion_rate: null, action_rollback_rate: null, change_history_records: Number(changes?.count || 0), entities_by_type: Object.fromEntries((byType.results || []).map((row) => [row.entity_type, Number(row.count || 0)])) };
+}
+
+function ontologyWriteStatementEstimate(entities, evidenceRefs, relationships, events) {
+  // Each entity always emits its row and one change-log row.  Aliases emit one
+  // alias or conflict row each.  Relationships emit their row and change-log
+  // row; evidence and events emit one row each.  The receipt is part of the
+  // same atomic batch. Keep this estimate in lockstep with queueWrite below so
+  // an oversized batch is rejected before any D1 read or write.
+  let statements = 1;
+  for (const item of entities) {
+    statements += 2;
+    for (const alias of (Array.isArray(item?.aliases) ? item.aliases : []).slice(0, 20)) {
+      const aliasValue = clean(typeof alias === "object" && alias ? alias.value : alias, 512);
+      if (aliasValue) statements += 1;
+    }
+  }
+  statements += evidenceRefs.length;
+  statements += relationships.length * 2;
+  statements += events.length;
+  return statements;
+}
+
+function ontologyReadBudget(maximum) {
+  let used = 0;
+  return {
+    get used() { return used; },
+    async first(statement) {
+      if (used >= maximum) {
+        throw new HttpError(413, "d1_query_budget_exceeded", "Ontology synchronization exceeds the D1 read-query budget; retry with a smaller chunk");
+      }
+      used += 1;
+      return statement.first();
+    },
+  };
 }
 
 async function syncOntology(request, env, requestId) {
@@ -639,7 +750,10 @@ async function syncOntology(request, env, requestId) {
   const events = payload.events || [];
   const evidenceRefs = payload.evidence_refs || [];
   if (!Array.isArray(entities) || !Array.isArray(relationships) || !Array.isArray(events) || !Array.isArray(evidenceRefs)) throw new HttpError(422, "invalid_payload", "entities, relationships, events, and evidence_refs must be arrays");
-  if (entities.length > MAX_ONTOLOGY_ENTITIES || relationships.length > MAX_ONTOLOGY_RELATIONSHIPS || events.length > MAX_ONTOLOGY_EVENTS || evidenceRefs.length > MAX_ONTOLOGY_ENTITIES) throw new HttpError(413, "payload_too_large", "Ontology synchronization batch exceeds its bounded limit");
+  if (entities.length > MAX_ONTOLOGY_ENTITIES || relationships.length > MAX_ONTOLOGY_RELATIONSHIPS || events.length > MAX_ONTOLOGY_EVENTS || evidenceRefs.length > MAX_ONTOLOGY_EVIDENCE_REFS) throw new HttpError(413, "payload_too_large", "Ontology synchronization batch exceeds its bounded limit");
+  if (ontologyWriteStatementEstimate(entities, evidenceRefs, relationships, events) > MAX_ONTOLOGY_D1_BATCH_STATEMENTS) {
+    throw new HttpError(413, "payload_too_large", "Ontology synchronization batch exceeds the D1 statement limit; retry with a smaller chunk");
+  }
   const schemaVersion = clean(payload.schema_version || ONTOLOGY_SCHEMA_VERSION, 80) || ONTOLOGY_SCHEMA_VERSION;
   if (schemaVersion !== ONTOLOGY_SCHEMA_VERSION) throw new HttpError(422, "invalid_schema", `Unsupported ontology schema version: ${schemaVersion}`);
   const headerIdempotency = clean(request.headers.get("Idempotency-Key"), 200);
@@ -661,11 +775,15 @@ async function syncOntology(request, env, requestId) {
   const idempotencyKey = suppliedIdempotency || requestHash;
   const expectedOrganization = clean(env.CORE_ORGANIZATION_ID, 160);
   const expectedWorkspace = clean(env.CORE_WORKSPACE_ID, 160);
+  // D1 Free permits at most 50 read queries per Worker invocation. Count all
+  // ontology preflight/construction reads, including the receipt lookup, so a
+  // paid-plan request cannot accidentally exceed the portable Free budget.
+  const readBudget = ontologyReadBudget(MAX_ONTOLOGY_D1_READ_QUERIES);
   // A retry after a network timeout must return the original bounded receipt
   // without replaying change-log writes.  The table is created by migration
   // 0005; a missing table is surfaced as a normal D1 failure for rollout
   // visibility rather than silently weakening idempotency.
-  const previousReceipt = await env.DB.prepare("SELECT response_json, request_hash FROM ontology_ingest_receipts WHERE idempotency_key = ?").bind(idempotencyKey).first();
+  const previousReceipt = await readBudget.first(env.DB.prepare("SELECT response_json, request_hash FROM ontology_ingest_receipts WHERE idempotency_key = ?").bind(idempotencyKey));
   if (previousReceipt) {
     if (previousReceipt.request_hash && previousReceipt.request_hash !== requestHash) throw new HttpError(409, "idempotency_conflict", "Idempotency-Key was already used for a different ontology payload");
     const previous = parseJson(previousReceipt.response_json, {});
@@ -684,84 +802,205 @@ async function syncOntology(request, env, requestId) {
   const preflightEntityIds = new Set();
   const preflightEntityWorkspaces = new Map();
   const preflightCanonical = new Map();
+  const preflightCanonicalRows = new Map();
+  const preflightAliasRows = new Map();
+  const preflightEntityRows = new Map();
+  const preflightEntityChanges = new Map();
   for (const item of entities) {
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new HttpError(422, "invalid_entity", "Ontology entity must be an object");
+    preflightBoundedJson(item.properties || {}, 64 * 1024, "Ontology properties");
     const type = ontologyEntityType(item.entity_type || item.type);
     const namespace = ontologyNormalize(item.namespace || item.ecosystem || "global", 120) || "global";
     let entityWorkspace = ontologyWorkspace(item.workspace_id, expectedWorkspace);
     if (expectedOrganization && clean(item.organization_id, 160) && clean(item.organization_id, 160) !== expectedOrganization) throw new HttpError(403, "scope_mismatch", "Ontology record organization does not match this Core instance");
     if (expectedWorkspace && entityWorkspace !== expectedWorkspace && entityWorkspace !== "local") throw new HttpError(403, "scope_mismatch", "Ontology record workspace does not match this Core workspace");
-    const canonicalKey = ontologyCanonicalKey(type, namespace, item.canonical_key || item.key || item.source_id || item.entity_id);
+    const rawCanonicalValue = item.canonical_key || item.key || item.source_id || item.entity_id;
+    if (type === "package_version" && !ontologyNormalize(rawCanonicalValue, 4096).includes("@")) throw new HttpError(422, "invalid_entity", "package_version canonical_key must include package@version");
+    const canonicalKey = await ontologyCanonicalKey(type, namespace, rawCanonicalValue);
     if (!canonicalKey) throw new HttpError(422, "invalid_entity", "Ontology canonical_key is required");
-    if (type === "package_version" && !canonicalKey.includes("@")) throw new HttpError(422, "invalid_entity", "package_version canonical_key must include package@version");
-    const explicitEntityId = clean(item.entity_id, 512);
+    const rawExplicitEntityId = String(item.entity_id || "").trim();
+    if (rawExplicitEntityId && new TextEncoder().encode(rawExplicitEntityId).byteLength > 512) throw new HttpError(422, "invalid_entity", "Ontology entity_id must be a namespaced stable identifier no longer than 512 bytes");
+    const explicitEntityId = clean(rawExplicitEntityId, 512);
     if (explicitEntityId && (!explicitEntityId.includes(":") || explicitEntityId.length > 512)) throw new HttpError(422, "invalid_entity", "Ontology entity_id must be a namespaced stable identifier");
     const entityId = explicitEntityId || await ontologyEntityId(type, namespace, canonicalKey);
     if (preflightEntityIds.has(entityId)) throw new HttpError(409, "identity_conflict", `Ontology batch contains duplicate entity: ${entityId}`);
-    const canonicalIdentity = `${namespace}:${canonicalKey}`;
+    const canonicalIdentity = `${type}:${namespace}:${canonicalKey}`;
     const priorBatchEntity = preflightCanonical.get(canonicalIdentity);
     if (priorBatchEntity && priorBatchEntity !== entityId) throw new HttpError(409, "identity_conflict", `Ontology batch contains duplicate canonical identity: ${canonicalKey}`);
     preflightEntityIds.add(entityId);
     preflightCanonical.set(canonicalIdentity, entityId);
-    const existing = await env.DB.prepare("SELECT entity_id, workspace_id FROM ontology_entities WHERE entity_id = ?").bind(entityId).first();
+    const existing = await readBudget.first(env.DB.prepare("SELECT * FROM ontology_entities WHERE entity_id = ?").bind(entityId));
     if (existing?.workspace_id && existing.workspace_id !== "local" && entityWorkspace !== "local" && existing.workspace_id !== entityWorkspace) throw new HttpError(403, "scope_mismatch", "Ontology entity belongs to a different workspace");
     if (existing?.workspace_id && existing.workspace_id !== "local" && entityWorkspace === "local") entityWorkspace = clean(existing.workspace_id, 160) || entityWorkspace;
+    if (explicitEntityId && existing && (
+      String(existing.entity_type || "") !== type
+      || String(existing.namespace || "") !== namespace
+      || String(existing.canonical_key || "") !== canonicalKey
+    )) {
+      throw new HttpError(409, "entity_identity_conflict", "An explicit entity_id cannot be rewired to a different type, namespace, or canonical key");
+    }
+    // Both the incoming and retained entity properties are bounded before any
+    // entity write.  A higher-priority existing source may cause the stored
+    // properties to come from D1 rather than this request.
+    preflightBoundedJson(existing ? parseJson(existing.properties_json, {}) : {}, 64 * 1024, "Ontology properties");
+    const entitySource = ontologySource(item.source || "unknown") || "unknown";
+    const preserve = existing && ontologySourcePriority(existing.source) > ontologySourcePriority(entitySource);
+    const entityProperties = preserve ? parseJson(existing.properties_json, {}) : (item.properties || {});
+    const entityPropertiesJson = preflightBoundedJson(entityProperties, 64 * 1024, "Ontology properties");
+    const entityChangeBeforeJson = preflightBoundedJson(ontologyEntityChangeProjection(existing), MAX_SUMMARY_BYTES, "Ontology change");
+    const entityChangeAfterJson = preflightBoundedJson({ entity_id: entityId, entity_type: type, namespace, canonical_key: canonicalKey, source: preserve ? existing.source : entitySource, workspace_id: entityWorkspace }, MAX_SUMMARY_BYTES, "Ontology change");
+    preflightEntityChanges.set(entityId, { beforeJson: entityChangeBeforeJson, afterJson: entityChangeAfterJson, propertiesJson: entityPropertiesJson, changeId: `chg:${(await sha256Hex(`entity|${entityId}|upsert|${entityChangeAfterJson}`)).slice(0, 40)}` });
+    preflightEntityRows.set(entityId, existing || null);
     preflightEntityWorkspaces.set(entityId, entityWorkspace);
-    const canonicalExisting = await env.DB.prepare("SELECT entity_id FROM ontology_entities WHERE namespace = ? AND canonical_key = ? LIMIT 1").bind(namespace, canonicalKey).first();
+    const canonicalExisting = await readBudget.first(env.DB.prepare("SELECT entity_id FROM ontology_entities WHERE entity_type = ? AND namespace = ? AND canonical_key = ? LIMIT 1").bind(type, namespace, canonicalKey));
     if (canonicalExisting && canonicalExisting.entity_id !== entityId) throw new HttpError(409, "identity_conflict", `Canonical identity already belongs to ${canonicalExisting.entity_id}`);
+    preflightCanonicalRows.set(canonicalIdentity, canonicalExisting || null);
+    for (const alias of (Array.isArray(item.aliases) ? item.aliases : []).slice(0, 20)) {
+      const aliasValue = clean(typeof alias === "object" && alias ? alias.value : alias, 512);
+      if (!aliasValue) continue;
+      const aliasType = clean(typeof alias === "object" && alias ? alias.type : "source", 80) || "source";
+      const normalized = ontologyNormalize(aliasValue, 512);
+      const aliasSource = ontologySource(typeof alias === "object" && alias ? (alias.source || entitySource) : entitySource) || "unknown";
+      const aliasKey = `${aliasType}|${normalized}|${aliasSource}`;
+      if (!preflightAliasRows.has(aliasKey)) {
+        const incumbent = await readBudget.first(env.DB.prepare("SELECT alias_id, entity_id FROM ontology_aliases WHERE alias_type = ? AND normalized_value = ? AND source = ? LIMIT 1").bind(aliasType, normalized, aliasSource));
+        preflightAliasRows.set(aliasKey, incumbent || null);
+      }
+    }
   }
   const preflightEvidenceIds = new Set();
+  const preflightEvidenceWorkspaces = new Map();
+  const preflightEvidenceRows = new Map();
+  const preflightExternalEntityRows = new Map();
+  const preflightExternalEvidenceRows = new Map();
+  const preflightEvidenceRecords = [];
   for (const item of evidenceRefs) {
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new HttpError(422, "invalid_evidence_ref", "Ontology evidence_ref must be an object");
-    const source = clean(item.source || "unknown", 160) || "unknown";
+    const summaryJson = preflightBoundedJson(item.summary || {}, MAX_SUMMARY_BYTES, "Ontology evidence summary");
+    const source = ontologySource(item.source || "unknown") || "unknown";
     if (expectedOrganization && clean(item.organization_id, 160) && clean(item.organization_id, 160) !== expectedOrganization) throw new HttpError(403, "scope_mismatch", "Ontology evidence organization does not match this Core instance");
-    const locator = ontologySafeLocator(item.locator || item.uri || item.source_id);
+    const locator = await ontologySafeLocator(item.locator || item.uri || item.source_id);
     if (!locator) throw new HttpError(422, "invalid_evidence_ref", "Ontology evidence locator is required");
     const contentHash = clean(item.content_hash || item.sha256, 128);
     let evidenceWorkspace = ontologyWorkspace(item.workspace_id, expectedWorkspace);
     if (expectedWorkspace && evidenceWorkspace !== expectedWorkspace && evidenceWorkspace !== "local") throw new HttpError(403, "scope_mismatch", "Ontology evidence workspace does not match this Core workspace");
     const evidenceId = clean(item.evidence_ref_id, 512) || `eref:${(await sha256Hex(`${source}|${locator}|${contentHash}`)).slice(0, 40)}`;
-    const existingEvidence = await env.DB.prepare("SELECT workspace_id FROM ontology_evidence_refs WHERE evidence_ref_id = ?").bind(evidenceId).first();
+    const existingEvidence = await readBudget.first(env.DB.prepare("SELECT workspace_id FROM ontology_evidence_refs WHERE evidence_ref_id = ?").bind(evidenceId));
     if (existingEvidence?.workspace_id && existingEvidence.workspace_id !== "local" && evidenceWorkspace !== "local" && existingEvidence.workspace_id !== evidenceWorkspace) throw new HttpError(403, "scope_mismatch", "Ontology evidence reference belongs to a different workspace");
     if (existingEvidence?.workspace_id && existingEvidence.workspace_id !== "local" && evidenceWorkspace === "local") evidenceWorkspace = clean(existingEvidence.workspace_id, 160) || evidenceWorkspace;
     preflightEvidenceIds.add(evidenceId);
+    preflightEvidenceWorkspaces.set(evidenceId, evidenceWorkspace);
+    preflightEvidenceRows.set(evidenceId, existingEvidence || null);
+    preflightEvidenceRecords.push({
+      source,
+      locator,
+      contentHash,
+      evidenceId,
+      evidenceWorkspace,
+      summaryJson,
+      contentType: clean(item.content_type, 120),
+      observedAt: clean(item.observed_at || "", 64),
+    });
   }
-  for (const item of relationships) {
+  const lookupExternalEntity = async (entityId) => {
+    if (preflightExternalEntityRows.has(entityId)) return preflightExternalEntityRows.get(entityId);
+    const row = await readBudget.first(env.DB.prepare("SELECT workspace_id FROM ontology_entities WHERE entity_id=?").bind(entityId));
+    preflightExternalEntityRows.set(entityId, row || null);
+    return row || null;
+  };
+  const lookupExternalEvidence = async (evidenceId) => {
+    if (preflightExternalEvidenceRows.has(evidenceId)) return preflightExternalEvidenceRows.get(evidenceId);
+    const row = await readBudget.first(env.DB.prepare("SELECT workspace_id FROM ontology_evidence_refs WHERE evidence_ref_id=?").bind(evidenceId));
+    preflightExternalEvidenceRows.set(evidenceId, row || null);
+    return row || null;
+  };
+  const preflightRelationshipRecords = [];
+  for (let index = 0; index < relationships.length; index += 1) {
+    const item = relationships[index];
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new HttpError(422, "invalid_relationship", "Ontology relationship must be an object");
-    ontologyRelationType(item.relationship_type || item.type);
+    const relation = ontologyRelationType(item.relationship_type || item.type);
+    const propertiesJson = preflightBoundedJson(item.properties || {}, MAX_SUMMARY_BYTES, "Ontology relationship properties");
     const from = clean(item.from_entity_id || item.from, 512);
     const to = clean(item.to_entity_id || item.to, 512);
     if (!from || !to || from === to) throw new HttpError(422, "invalid_relationship", "Ontology relationships require distinct endpoints");
-    if (!preflightEntityIds.has(from) && !(await env.DB.prepare("SELECT 1 FROM ontology_entities WHERE entity_id=?").bind(from).first())) throw new HttpError(422, "invalid_relationship", `Unknown relationship source entity: ${from}`);
-    if (!preflightEntityIds.has(to) && !(await env.DB.prepare("SELECT 1 FROM ontology_entities WHERE entity_id=?").bind(to).first())) throw new HttpError(422, "invalid_relationship", `Unknown relationship target entity: ${to}`);
     const fromRow = preflightEntityWorkspaces.has(from)
       ? { workspace_id: preflightEntityWorkspaces.get(from) }
-      : await env.DB.prepare("SELECT workspace_id FROM ontology_entities WHERE entity_id=?").bind(from).first();
+      : await lookupExternalEntity(from);
     const toRow = preflightEntityWorkspaces.has(to)
       ? { workspace_id: preflightEntityWorkspaces.get(to) }
-      : await env.DB.prepare("SELECT workspace_id FROM ontology_entities WHERE entity_id=?").bind(to).first();
+      : await lookupExternalEntity(to);
+    if (!fromRow) throw new HttpError(422, "invalid_relationship", `Unknown relationship source entity: ${from}`);
+    if (!toRow) throw new HttpError(422, "invalid_relationship", `Unknown relationship target entity: ${to}`);
     const relationshipWorkspace = ontologyWorkspace(item.workspace_id, expectedWorkspace || fromRow?.workspace_id || "hosted");
+    const source = ontologySource(item.source || "unknown") || "unknown";
+    const sourceRecord = clean(item.source_record_id || item.source_id, 512);
     if (expectedOrganization && clean(item.organization_id, 160) && clean(item.organization_id, 160) !== expectedOrganization) throw new HttpError(403, "scope_mismatch", "Ontology relationship organization does not match this Core instance");
     if (expectedWorkspace && relationshipWorkspace !== expectedWorkspace && relationshipWorkspace !== "local") throw new HttpError(403, "scope_mismatch", "Ontology relationship workspace does not match this Core workspace");
     if (relationshipWorkspace !== "local" && [fromRow?.workspace_id, toRow?.workspace_id].some((scope) => scope && scope !== relationshipWorkspace && scope !== "local")) throw new HttpError(403, "scope_mismatch", "Ontology relationship endpoints belong to a different workspace");
     const evidenceRefId = clean(item.evidence_ref_id, 512);
-    if (evidenceRefId && !preflightEvidenceIds.has(evidenceRefId) && !(await env.DB.prepare("SELECT 1 FROM ontology_evidence_refs WHERE evidence_ref_id=?").bind(evidenceRefId).first())) throw new HttpError(422, "invalid_relationship", `Unknown relationship evidence reference: ${evidenceRefId}`);
+    const externalEvidence = evidenceRefId && !preflightEvidenceIds.has(evidenceRefId) ? await lookupExternalEvidence(evidenceRefId) : null;
+    if (evidenceRefId && !preflightEvidenceIds.has(evidenceRefId) && !externalEvidence) throw new HttpError(422, "invalid_relationship", `Unknown relationship evidence reference: ${evidenceRefId}`);
+    if (evidenceRefId) {
+      const evidenceRow = preflightEvidenceWorkspaces.has(evidenceRefId)
+        ? { workspace_id: preflightEvidenceWorkspaces.get(evidenceRefId) }
+        : externalEvidence;
+      const evidenceWorkspace = clean(evidenceRow?.workspace_id, 160) || "local";
+      if (evidenceWorkspace !== "local" && relationshipWorkspace !== "local" && evidenceWorkspace !== relationshipWorkspace) throw new HttpError(403, "scope_mismatch", "Ontology relationship evidence belongs to a different workspace");
+      if (evidenceWorkspace !== "local" && relationshipWorkspace === "local" && [fromRow?.workspace_id, toRow?.workspace_id].some((scope) => scope && scope !== evidenceWorkspace && scope !== "local")) throw new HttpError(403, "scope_mismatch", "Ontology relationship evidence endpoints belong to a different workspace");
+    }
+    const relationId = `rel:${(await sha256Hex(`${relation}|${from}|${to}|${source}|${sourceRecord}`)).slice(0, 40)}`;
+    const confidence = ontologyConfidence(item.confidence);
+    const observedAt = clean(item.observed_at, 64);
+    const validFrom = clean(item.valid_from, 64) || null;
+    const validTo = clean(item.valid_to, 64) || null;
+    const freshnessAt = clean(item.freshness_at || item.observed_at, 64);
+    const existingRelationship = await readBudget.first(env.DB.prepare("SELECT relationship_type, from_entity_id, to_entity_id, source, source_record_id, workspace_id FROM ontology_relationships WHERE relationship_id = ?").bind(relationId));
+    if (existingRelationship?.workspace_id && existingRelationship.workspace_id !== "local" && relationshipWorkspace !== "local" && existingRelationship.workspace_id !== relationshipWorkspace) throw new HttpError(403, "scope_mismatch", "Ontology relationship belongs to a different workspace");
+    if (existingRelationship && (existingRelationship.relationship_type !== relation || existingRelationship.from_entity_id !== from || existingRelationship.to_entity_id !== to || existingRelationship.source !== source || String(existingRelationship.source_record_id || "") !== sourceRecord)) {
+      throw new HttpError(409, "relationship_identity_conflict", "A relationship_id cannot be rewired or change type/source identity");
+    }
+    const relationshipChangeAfterJson = preflightBoundedJson({ relationship_id: relationId, relationship_type: relation, from_entity_id: from, to_entity_id: to, source, source_record_id: sourceRecord, workspace_id: relationshipWorkspace }, MAX_SUMMARY_BYTES, "Ontology change");
+    preflightRelationshipRecords.push({ relation, from, to, source, sourceRecord, relationshipWorkspace, evidenceRefId, relationId, propertiesJson, confidence, observedAt, validFrom, validTo, freshnessAt, relationshipChangeAfterJson, changeId: `chg:${(await sha256Hex(`relationship|${relationId}|upsert|${relationshipChangeAfterJson}`)).slice(0, 40)}` });
   }
+  const preflightEventRecords = [];
   for (const item of events) {
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new HttpError(422, "invalid_event", "Ontology event must be an object");
+    const summaryJson = preflightBoundedJson(item.summary || {}, MAX_SUMMARY_BYTES, "Ontology event summary");
     const entityId = clean(item.entity_id, 512);
-    if (!entityId || (!preflightEntityIds.has(entityId) && !(await env.DB.prepare("SELECT 1 FROM ontology_entities WHERE entity_id=?").bind(entityId).first()))) throw new HttpError(422, "invalid_event", `Unknown event entity: ${entityId}`);
+    const externalEventEntity = entityId && !preflightEntityIds.has(entityId) ? await lookupExternalEntity(entityId) : null;
+    if (!entityId || (!preflightEntityIds.has(entityId) && !externalEventEntity)) throw new HttpError(422, "invalid_event", `Unknown event entity: ${entityId}`);
+    const eventType = clean(item.event_type || "observed", 120) || "observed";
+    const source = ontologySource(item.source || "unknown") || "unknown";
+    const sourceRecord = clean(item.source_record_id || item.source_id, 512);
     const eventWorkspace = ontologyWorkspace(item.workspace_id, expectedWorkspace || preflightEntityWorkspaces.get(entityId) || "hosted");
     if (expectedOrganization && clean(item.organization_id, 160) && clean(item.organization_id, 160) !== expectedOrganization) throw new HttpError(403, "scope_mismatch", "Ontology event organization does not match this Core instance");
     if (expectedWorkspace && eventWorkspace !== expectedWorkspace && eventWorkspace !== "local") throw new HttpError(403, "scope_mismatch", "Ontology event workspace does not match this Core workspace");
     if (eventWorkspace !== "local") {
       const eventEntity = preflightEntityWorkspaces.has(entityId)
         ? { workspace_id: preflightEntityWorkspaces.get(entityId) }
-        : await env.DB.prepare("SELECT workspace_id FROM ontology_entities WHERE entity_id=?").bind(entityId).first();
+        : externalEventEntity;
       if (eventEntity?.workspace_id && eventEntity.workspace_id !== eventWorkspace && eventEntity.workspace_id !== "local") throw new HttpError(403, "scope_mismatch", "Ontology event entity belongs to a different workspace");
     }
+    // ``now`` is a transport timestamp and would give the same replay a new
+    // event identity. Use producer observation/creation time when present,
+    // then a fixed epoch so omission remains deterministic.
+    const occurredAt = clean(item.occurred_at || item.observed_at || item.created_at || "1970-01-01T00:00:00Z", 64) || "1970-01-01T00:00:00Z";
+    // Event identity likewise ignores transport/request identifiers so a
+    // replay with a different event_id remains a semantic upsert.
+    const eventId = `event:${(await sha256Hex(`${entityId}|${eventType}|${source}|${sourceRecord}|${occurredAt}`)).slice(0, 40)}`;
+    preflightEventRecords.push({ entityId, eventType, source, sourceRecord, eventWorkspace, occurredAt, eventId, summaryJson });
   }
+  const result = { status: "accepted", schema_version: ONTOLOGY_SCHEMA_VERSION, counts: { entities: entities.length, relationships: relationships.length, events: events.length, evidence_refs: evidenceRefs.length }, idempotency_key: idempotencyKey };
+  const resultJson = preflightBoundedJson(result, 32768, "Ontology ingest receipt");
   const now = nowIso();
+  // D1 batches are transactional: if any prepared write fails, Cloudflare
+  // rolls back the complete batch.  Build every mutation only after the
+  // preflight above has succeeded so a malformed late record cannot leave a
+  // partially materialized ontology snapshot.
+  const writeStatements = [];
+  const queueWrite = (sql, ...values) => {
+    writeStatements.push(env.DB.prepare(sql).bind(...values));
+  };
   const entityIds = new Set();
   for (const item of entities) {
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new HttpError(422, "invalid_entity", "Ontology entity must be an object");
@@ -770,119 +1009,159 @@ async function syncOntology(request, env, requestId) {
     let entityWorkspace = ontologyWorkspace(item.workspace_id, expectedWorkspace);
     if (expectedOrganization && clean(item.organization_id, 160) && clean(item.organization_id, 160) !== expectedOrganization) throw new HttpError(403, "scope_mismatch", "Ontology record organization does not match this Core instance");
     if (expectedWorkspace && entityWorkspace !== expectedWorkspace && entityWorkspace !== "local") throw new HttpError(403, "scope_mismatch", "Ontology record workspace does not match this Core workspace");
-    const canonicalKey = ontologyCanonicalKey(type, namespace, item.canonical_key || item.key || item.source_id || item.entity_id);
+    const rawCanonicalValue = item.canonical_key || item.key || item.source_id || item.entity_id;
+    if (type === "package_version" && !ontologyNormalize(rawCanonicalValue, 4096).includes("@")) throw new HttpError(422, "invalid_entity", "package_version canonical_key must include package@version");
+    const canonicalKey = await ontologyCanonicalKey(type, namespace, rawCanonicalValue);
     if (!canonicalKey) throw new HttpError(422, "invalid_entity", "Ontology canonical_key is required");
-    if (type === "package_version" && !canonicalKey.includes("@")) throw new HttpError(422, "invalid_entity", "package_version canonical_key must include package@version");
-    const explicitEntityId = clean(item.entity_id, 512);
+    const rawExplicitEntityId = String(item.entity_id || "").trim();
+    if (rawExplicitEntityId && new TextEncoder().encode(rawExplicitEntityId).byteLength > 512) throw new HttpError(422, "invalid_entity", "Ontology entity_id must be a namespaced stable identifier no longer than 512 bytes");
+    const explicitEntityId = clean(rawExplicitEntityId, 512);
     if (explicitEntityId && (!explicitEntityId.includes(":") || explicitEntityId.length > 512)) throw new HttpError(422, "invalid_entity", "Ontology entity_id must be a namespaced stable identifier");
     const entityId = explicitEntityId || await ontologyEntityId(type, namespace, canonicalKey);
     if (!item.workspace_id && !expectedWorkspace && preflightEntityWorkspaces.has(entityId)) entityWorkspace = preflightEntityWorkspaces.get(entityId) || entityWorkspace;
     entityIds.add(entityId);
     const firstSeen = clean(item.first_seen_at || item.first_seen || item.observed_at || now, 64);
     const lastSeen = clean(item.last_seen_at || item.last_seen || item.observed_at || now, 64);
-    const source = clean(item.source || "unknown", 160) || "unknown";
-    const existing = await env.DB.prepare("SELECT * FROM ontology_entities WHERE entity_id = ?").bind(entityId).first();
+    const source = ontologySource(item.source || "unknown") || "unknown";
+    const existing = preflightEntityRows.has(entityId)
+      ? preflightEntityRows.get(entityId)
+      : await readBudget.first(env.DB.prepare("SELECT * FROM ontology_entities WHERE entity_id = ?").bind(entityId));
     if (existing?.workspace_id && existing.workspace_id !== "local" && entityWorkspace !== "local" && existing.workspace_id !== entityWorkspace) throw new HttpError(403, "scope_mismatch", "Ontology entity belongs to a different workspace");
     if (existing?.workspace_id && existing.workspace_id !== "local" && entityWorkspace === "local") entityWorkspace = clean(existing.workspace_id, 160) || entityWorkspace;
-    const canonicalExisting = await env.DB.prepare("SELECT entity_id FROM ontology_entities WHERE namespace = ? AND canonical_key = ? LIMIT 1").bind(namespace, canonicalKey).first();
+    const canonicalExisting = preflightCanonicalRows.get(`${type}:${namespace}:${canonicalKey}`) || null;
     if (canonicalExisting && canonicalExisting.entity_id !== entityId) throw new HttpError(409, "identity_conflict", `Canonical identity already belongs to ${canonicalExisting.entity_id}`);
     const preserve = existing && ontologySourcePriority(existing.source) > ontologySourcePriority(source);
-    await env.DB.prepare(`INSERT INTO ontology_entities
+    const entityDisplayName = clean(preserve ? existing.display_name : (item.display_name || item.label || canonicalKey), 512);
+    const entitySourceId = clean(item.source_id, 512) || (preserve ? clean(existing.source_id, 512) : "");
+    const entityOwnerId = clean(item.owner_id || item.owner, 256) || (preserve ? clean(existing.owner_id, 256) : "");
+    const entityStatus = preserve ? (clean(existing.status, 80) || "active") : (clean(item.status || "active", 80) || "active");
+    const entityChange = preflightEntityChanges.get(entityId);
+    if (!entityChange) throw new HttpError(422, "invalid_entity", "Ontology entity preflight did not produce a change envelope");
+    queueWrite(`INSERT INTO ontology_entities
       (entity_id, entity_type, namespace, canonical_key, display_name, source, source_id, workspace_id, owner_id, status, properties_json, confidence, first_seen_at, last_seen_at, observed_at, freshness_at, valid_from, valid_to, schema_version, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(entity_id) DO UPDATE SET entity_type=excluded.entity_type, namespace=excluded.namespace, canonical_key=excluded.canonical_key, display_name=excluded.display_name, source=excluded.source, source_id=CASE WHEN excluded.source_id <> '' THEN excluded.source_id ELSE ontology_entities.source_id END, workspace_id=excluded.workspace_id, owner_id=CASE WHEN excluded.owner_id <> '' THEN excluded.owner_id ELSE ontology_entities.owner_id END, status=excluded.status, properties_json=excluded.properties_json, confidence=excluded.confidence, first_seen_at=CASE WHEN excluded.first_seen_at < ontology_entities.first_seen_at THEN excluded.first_seen_at ELSE ontology_entities.first_seen_at END, last_seen_at=CASE WHEN excluded.last_seen_at > ontology_entities.last_seen_at THEN excluded.last_seen_at ELSE ontology_entities.last_seen_at END, observed_at=excluded.observed_at, freshness_at=excluded.freshness_at, valid_from=COALESCE(excluded.valid_from, ontology_entities.valid_from), valid_to=COALESCE(excluded.valid_to, ontology_entities.valid_to), schema_version=excluded.schema_version, updated_at=excluded.updated_at`)
-      .bind(entityId, type, namespace, canonicalKey, clean(preserve ? existing.display_name : (item.display_name || item.label || canonicalKey), 512), preserve ? existing.source : source, clean(item.source_id, 512) || (preserve ? clean(existing.source_id, 512) : ""), entityWorkspace, clean(item.owner_id || item.owner, 256) || (preserve ? clean(existing.owner_id, 256) : ""), clean(item.status || "active", 80) || (preserve ? existing.status : "active"), boundedJson(preserve ? parseJson(existing.properties_json, {}) : (item.properties || {}), 64 * 1024, "Ontology properties"), ontologyConfidence(item.confidence), firstSeen, lastSeen, clean(item.observed_at || lastSeen, 64), clean(item.freshness_at || lastSeen, 64), clean(item.valid_from, 64) || null, clean(item.valid_to, 64) || null, ONTOLOGY_SCHEMA_VERSION, now, now).run();
-    await env.DB.prepare(`INSERT INTO ontology_change_log (change_id, object_type, object_id, action, before_json, after_json, source, actor, occurred_at)
-      VALUES (?, 'entity', ?, 'upsert', ?, ?, ?, ?, ?)`)
-      .bind(`chg:${await sha256Hex(`entity|${entityId}|${now}|${crypto.randomUUID()}`)}`.slice(0, 52), entityId, boundedJson(existing || {}, MAX_SUMMARY_BYTES, "Ontology change"), boundedJson({ entity_id: entityId, entity_type: type, canonical_key: canonicalKey, source, workspace_id: entityWorkspace }, MAX_SUMMARY_BYTES, "Ontology change"), source, clean(payload.source_instance || "ontology-bridge", 160) || "ontology-bridge", now).run();
+      ON CONFLICT(entity_id) DO UPDATE SET entity_type=excluded.entity_type, namespace=excluded.namespace, canonical_key=excluded.canonical_key, display_name=excluded.display_name, source=excluded.source, source_id=CASE WHEN excluded.source_id <> '' THEN excluded.source_id ELSE ontology_entities.source_id END, workspace_id=excluded.workspace_id, owner_id=CASE WHEN excluded.owner_id <> '' THEN excluded.owner_id ELSE ontology_entities.owner_id END, status=excluded.status, properties_json=excluded.properties_json, confidence=excluded.confidence, first_seen_at=CASE WHEN excluded.first_seen_at < ontology_entities.first_seen_at THEN excluded.first_seen_at ELSE ontology_entities.first_seen_at END, last_seen_at=CASE WHEN excluded.last_seen_at > ontology_entities.last_seen_at THEN excluded.last_seen_at ELSE ontology_entities.last_seen_at END, observed_at=excluded.observed_at, freshness_at=excluded.freshness_at, valid_from=COALESCE(excluded.valid_from, ontology_entities.valid_from), valid_to=COALESCE(excluded.valid_to, ontology_entities.valid_to), schema_version=excluded.schema_version, updated_at=excluded.updated_at`, entityId, type, namespace, canonicalKey, entityDisplayName, preserve ? existing.source : source, entitySourceId, entityWorkspace, entityOwnerId, entityStatus, entityChange.propertiesJson, ontologyConfidence(item.confidence), firstSeen, lastSeen, clean(item.observed_at || lastSeen, 64), clean(item.freshness_at || lastSeen, 64), clean(item.valid_from, 64) || null, clean(item.valid_to, 64) || null, ONTOLOGY_SCHEMA_VERSION, now, now);
+    queueWrite(`INSERT OR IGNORE INTO ontology_change_log (change_id, object_type, object_id, action, before_json, after_json, source, actor, occurred_at)
+      VALUES (?, 'entity', ?, 'upsert', ?, ?, ?, ?, ?)`,
+      entityChange.changeId,
+      entityId,
+      entityChange.beforeJson,
+      entityChange.afterJson,
+      source,
+      clean(payload.source_instance || "ontology-bridge", 160) || "ontology-bridge",
+      now);
     for (const alias of (Array.isArray(item.aliases) ? item.aliases : []).slice(0, 20)) {
-      const aliasValue = clean(typeof alias === "object" ? alias.value : alias, 512);
+      const aliasValue = clean(typeof alias === "object" && alias ? alias.value : alias, 512);
       if (!aliasValue) continue;
-      const aliasType = clean(typeof alias === "object" ? alias.type : "source", 80) || "source";
+      const aliasType = clean(typeof alias === "object" && alias ? alias.type : "source", 80) || "source";
       const normalized = ontologyNormalize(aliasValue, 512);
-      const aliasSource = clean(typeof alias === "object" ? alias.source : item.source, 160) || "unknown";
+      const aliasSource = ontologySource(typeof alias === "object" && alias ? (alias.source || source) : source) || "unknown";
       const aliasId = `alias:${await sha256Hex(`${aliasType}|${normalized}|${aliasSource}`)}`.slice(0, 52);
-      const incumbent = await env.DB.prepare("SELECT alias_id, entity_id FROM ontology_aliases WHERE alias_type = ? AND normalized_value = ? AND source = ? LIMIT 1").bind(aliasType, normalized, aliasSource).first();
+      const incumbent = preflightAliasRows.get(`${aliasType}|${normalized}|${aliasSource}`) || null;
       if (incumbent && incumbent.entity_id !== entityId) {
         const conflictId = `conflict:${(await sha256Hex(`alias|${aliasType}|${normalized}|${aliasSource}|${incumbent.entity_id}|${entityId}`)).slice(0, 40)}`;
-        await env.DB.prepare("INSERT OR IGNORE INTO ontology_conflicts (conflict_id, object_type, object_id, conflict_type, details_json, status, source, created_at) VALUES (?, 'alias', ?, 'duplicate_alias', ?, 'open', ?, ?)")
-          .bind(conflictId, aliasId, boundedJson({ alias_type: aliasType, normalized_value: normalized, source: aliasSource, incumbent_entity_id: incumbent.entity_id, candidate_entity_id: entityId }, MAX_SUMMARY_BYTES, "Ontology conflict"), clean(payload.source_instance || "ontology-bridge", 160) || "ontology-bridge", now).run();
+        queueWrite("INSERT OR IGNORE INTO ontology_conflicts (conflict_id, object_type, object_id, conflict_type, details_json, status, source, created_at) VALUES (?, 'alias', ?, 'duplicate_alias', ?, 'open', ?, ?)",
+          conflictId,
+          aliasId,
+          boundedJson({ alias_type: aliasType, normalized_value: normalized, source: aliasSource, incumbent_entity_id: incumbent.entity_id, candidate_entity_id: entityId }, MAX_SUMMARY_BYTES, "Ontology conflict"),
+          clean(payload.source_instance || "ontology-bridge", 160) || "ontology-bridge",
+          now);
         continue;
       }
-      await env.DB.prepare(`INSERT INTO ontology_aliases (alias_id, entity_id, alias_type, alias_value, normalized_value, source, confidence, created_at, updated_at)
+      queueWrite(`INSERT INTO ontology_aliases (alias_id, entity_id, alias_type, alias_value, normalized_value, source, confidence, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(alias_id) DO UPDATE SET entity_id=excluded.entity_id, alias_value=excluded.alias_value, confidence=excluded.confidence, updated_at=excluded.updated_at`)
-        .bind(aliasId, entityId, aliasType, aliasValue, normalized, aliasSource, ontologyConfidence(typeof alias === "object" ? alias.confidence : 100), now, now).run();
+        ON CONFLICT(alias_id) DO UPDATE SET entity_id=excluded.entity_id, alias_value=excluded.alias_value, confidence=excluded.confidence, updated_at=excluded.updated_at`,
+        aliasId,
+        entityId,
+        aliasType,
+        aliasValue,
+        normalized,
+        aliasSource,
+        ontologyConfidence(typeof alias === "object" && alias ? alias.confidence : 100),
+        now,
+        now);
     }
   }
-  for (const item of evidenceRefs) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) throw new HttpError(422, "invalid_evidence_ref", "Ontology evidence_ref must be an object");
-    const source = clean(item.source || "unknown", 160) || "unknown";
-    const locator = ontologySafeLocator(item.locator || item.uri || item.source_id);
-    if (!locator) throw new HttpError(422, "invalid_evidence_ref", "Ontology evidence locator is required");
-    const contentHash = clean(item.content_hash || item.sha256, 128);
-    const evidenceId = clean(item.evidence_ref_id, 512) || `eref:${(await sha256Hex(`${source}|${locator}|${contentHash}`)).slice(0, 40)}`;
-    let evidenceWorkspace = ontologyWorkspace(item.workspace_id, expectedWorkspace);
+  for (let index = 0; index < evidenceRefs.length; index += 1) {
+    const item = evidenceRefs[index];
+    const evidence = preflightEvidenceRecords[index];
+    if (!evidence) throw new HttpError(422, "invalid_evidence_ref", "Ontology evidence preflight did not produce a record");
+    const { source, locator, contentHash, evidenceId, summaryJson } = evidence;
+    let evidenceWorkspace = evidence.evidenceWorkspace;
     if (expectedWorkspace && evidenceWorkspace !== expectedWorkspace && evidenceWorkspace !== "local") throw new HttpError(403, "scope_mismatch", "Ontology evidence workspace does not match this Core workspace");
-    const existingEvidence = await env.DB.prepare("SELECT workspace_id FROM ontology_evidence_refs WHERE evidence_ref_id = ?").bind(evidenceId).first();
+    const existingEvidence = preflightEvidenceRows.get(evidenceId) || null;
     if (existingEvidence?.workspace_id && existingEvidence.workspace_id !== "local" && evidenceWorkspace !== "local" && existingEvidence.workspace_id !== evidenceWorkspace) throw new HttpError(403, "scope_mismatch", "Ontology evidence reference belongs to a different workspace");
     if (existingEvidence?.workspace_id && existingEvidence.workspace_id !== "local" && evidenceWorkspace === "local") evidenceWorkspace = clean(existingEvidence.workspace_id, 160) || evidenceWorkspace;
-    await env.DB.prepare(`INSERT INTO ontology_evidence_refs (evidence_ref_id, source, locator, content_hash, content_type, workspace_id, summary_json, observed_at, created_at, updated_at)
+    queueWrite(`INSERT INTO ontology_evidence_refs (evidence_ref_id, source, locator, content_hash, content_type, workspace_id, summary_json, observed_at, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(evidence_ref_id) DO UPDATE SET source=excluded.source, locator=excluded.locator, content_hash=excluded.content_hash, content_type=excluded.content_type, workspace_id=excluded.workspace_id, summary_json=excluded.summary_json, observed_at=excluded.observed_at, updated_at=excluded.updated_at`)
-      .bind(evidenceId, source, locator, contentHash, clean(item.content_type, 120), evidenceWorkspace, boundedJson(item.summary || {}, MAX_SUMMARY_BYTES, "Ontology evidence summary"), clean(item.observed_at || now, 64), now, now).run();
+      ON CONFLICT(evidence_ref_id) DO UPDATE SET source=excluded.source, locator=excluded.locator, content_hash=excluded.content_hash, content_type=excluded.content_type, workspace_id=excluded.workspace_id, summary_json=excluded.summary_json, observed_at=excluded.observed_at, updated_at=excluded.updated_at`,
+      evidenceId,
+      source,
+      locator,
+      contentHash,
+      evidence.contentType,
+      evidenceWorkspace,
+      summaryJson,
+      evidence.observedAt || now,
+      now,
+      now);
   }
-  const batchEvidenceIds = new Set();
-  for (const item of evidenceRefs) {
-    const source = clean(item.source || "unknown", 160) || "unknown";
-    const locator = ontologySafeLocator(item.locator || item.uri || item.source_id);
-    const contentHash = clean(item.content_hash || item.sha256, 128);
-    batchEvidenceIds.add(clean(item.evidence_ref_id, 512) || `eref:${(await sha256Hex(`${source}|${locator}|${contentHash}`)).slice(0, 40)}`);
-  }
-  for (const item of relationships) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) throw new HttpError(422, "invalid_relationship", "Ontology relationship must be an object");
-    const relation = ontologyRelationType(item.relationship_type || item.type);
-    const from = clean(item.from_entity_id || item.from, 512);
-    const to = clean(item.to_entity_id || item.to, 512);
-    if (!from || !to || from === to) throw new HttpError(422, "invalid_relationship", "Ontology relationships require distinct endpoints");
-    if (!entityIds.has(from) && !(await env.DB.prepare("SELECT 1 FROM ontology_entities WHERE entity_id=?").bind(from).first())) throw new HttpError(422, "invalid_relationship", `Unknown relationship source entity: ${from}`);
-    if (!entityIds.has(to) && !(await env.DB.prepare("SELECT 1 FROM ontology_entities WHERE entity_id=?").bind(to).first())) throw new HttpError(422, "invalid_relationship", `Unknown relationship target entity: ${to}`);
-    const source = clean(item.source || "unknown", 160) || "unknown";
-    const sourceRecord = clean(item.source_record_id || item.source_id, 512);
-    const relationshipWorkspace = ontologyWorkspace(item.workspace_id, expectedWorkspace || preflightEntityWorkspaces.get(from) || "hosted");
-    if (expectedWorkspace && relationshipWorkspace !== expectedWorkspace && relationshipWorkspace !== "local") throw new HttpError(403, "scope_mismatch", "Ontology relationship workspace does not match this Core workspace");
-    const evidenceRefId = clean(item.evidence_ref_id, 512);
-    if (evidenceRefId && !batchEvidenceIds.has(evidenceRefId) && !(await env.DB.prepare("SELECT 1 FROM ontology_evidence_refs WHERE evidence_ref_id=?").bind(evidenceRefId).first())) throw new HttpError(422, "invalid_relationship", `Unknown relationship evidence reference: ${evidenceRefId}`);
-    const relationId = clean(item.relationship_id || item.edge_id, 512) || `rel:${(await sha256Hex(`${relation}|${from}|${to}|${source}|${sourceRecord}`)).slice(0, 40)}`;
-    const existingRelationship = await env.DB.prepare("SELECT workspace_id FROM ontology_relationships WHERE relationship_id = ?").bind(relationId).first();
-    if (existingRelationship?.workspace_id && existingRelationship.workspace_id !== "local" && relationshipWorkspace !== "local" && existingRelationship.workspace_id !== relationshipWorkspace) throw new HttpError(403, "scope_mismatch", "Ontology relationship belongs to a different workspace");
-    await env.DB.prepare(`INSERT INTO ontology_relationships
+  for (let index = 0; index < relationships.length; index += 1) {
+    const relationship = preflightRelationshipRecords[index];
+    if (!relationship) throw new HttpError(422, "invalid_relationship", "Ontology relationship preflight did not produce a record");
+    const { relation, from, to, source, sourceRecord, relationshipWorkspace, evidenceRefId, relationId, propertiesJson, relationshipChangeAfterJson, changeId: relationshipChangeId } = relationship;
+    queueWrite(`INSERT INTO ontology_relationships
       (relationship_id, relationship_type, from_entity_id, to_entity_id, source, source_record_id, workspace_id, evidence_ref_id, properties_json, confidence, observed_at, valid_from, valid_to, freshness_at, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(relationship_id) DO UPDATE SET relationship_type=excluded.relationship_type, from_entity_id=excluded.from_entity_id, to_entity_id=excluded.to_entity_id, source=excluded.source, source_record_id=excluded.source_record_id, workspace_id=excluded.workspace_id, evidence_ref_id=excluded.evidence_ref_id, properties_json=excluded.properties_json, confidence=excluded.confidence, observed_at=excluded.observed_at, valid_from=excluded.valid_from, valid_to=excluded.valid_to, freshness_at=excluded.freshness_at, updated_at=excluded.updated_at`)
-      .bind(relationId, relation, from, to, source, sourceRecord, relationshipWorkspace, evidenceRefId || null, boundedJson(item.properties || {}, MAX_SUMMARY_BYTES, "Ontology relationship properties"), ontologyConfidence(item.confidence), clean(item.observed_at || now, 64), clean(item.valid_from, 64) || null, clean(item.valid_to, 64) || null, clean(item.freshness_at || item.observed_at || now, 64), now, now).run();
-    await env.DB.prepare(`INSERT INTO ontology_change_log (change_id, object_type, object_id, action, before_json, after_json, source, actor, occurred_at) VALUES (?, 'relationship', ?, 'upsert', '{}', ?, ?, ?, ?)`)
-      .bind(`chg:${await sha256Hex(`relationship|${relationId}|${now}|${crypto.randomUUID()}`)}`.slice(0, 52), relationId, boundedJson({ relationship_id: relationId, relationship_type: relation, from_entity_id: from, to_entity_id: to, source }, MAX_SUMMARY_BYTES, "Ontology change"), source, clean(payload.source_instance || "ontology-bridge", 160) || "ontology-bridge", now).run();
+      ON CONFLICT(relationship_id) DO UPDATE SET relationship_type=excluded.relationship_type, from_entity_id=excluded.from_entity_id, to_entity_id=excluded.to_entity_id, source=excluded.source, source_record_id=excluded.source_record_id, workspace_id=excluded.workspace_id, evidence_ref_id=excluded.evidence_ref_id, properties_json=excluded.properties_json, confidence=excluded.confidence, observed_at=excluded.observed_at, valid_from=excluded.valid_from, valid_to=excluded.valid_to, freshness_at=excluded.freshness_at, updated_at=excluded.updated_at`,
+      relationId,
+      relation,
+      from,
+      to,
+      source,
+      sourceRecord,
+      relationshipWorkspace,
+      evidenceRefId || null,
+      propertiesJson,
+      relationship.confidence,
+      relationship.observedAt || now,
+      relationship.validFrom,
+      relationship.validTo,
+      relationship.freshnessAt || relationship.observedAt || now,
+      now,
+      now);
+    queueWrite(`INSERT OR IGNORE INTO ontology_change_log (change_id, object_type, object_id, action, before_json, after_json, source, actor, occurred_at) VALUES (?, 'relationship', ?, 'upsert', '{}', ?, ?, ?, ?)`,
+      relationshipChangeId,
+      relationId,
+      relationshipChangeAfterJson,
+      source,
+      clean(payload.source_instance || "ontology-bridge", 160) || "ontology-bridge",
+      now);
   }
-  for (const item of events) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) throw new HttpError(422, "invalid_event", "Ontology event must be an object");
-    const entityId = clean(item.entity_id, 512);
-    if (!entityId || (!entityIds.has(entityId) && !(await env.DB.prepare("SELECT 1 FROM ontology_entities WHERE entity_id=?").bind(entityId).first()))) throw new HttpError(422, "invalid_event", `Unknown event entity: ${entityId}`);
-    const eventType = clean(item.event_type || "observed", 120) || "observed";
-    const source = clean(item.source || "unknown", 160) || "unknown";
-    const sourceRecord = clean(item.source_record_id || item.source_id, 512);
-    const eventWorkspace = ontologyWorkspace(item.workspace_id, expectedWorkspace || preflightEntityWorkspaces.get(entityId) || "hosted");
-    if (expectedWorkspace && eventWorkspace !== expectedWorkspace && eventWorkspace !== "local") throw new HttpError(403, "scope_mismatch", "Ontology event workspace does not match this Core workspace");
-    const occurredAt = clean(item.occurred_at || now, 64);
-    const eventId = clean(item.event_id, 512) || `event:${(await sha256Hex(`${entityId}|${eventType}|${source}|${sourceRecord}|${occurredAt}`)).slice(0, 40)}`;
-    await env.DB.prepare(`INSERT INTO ontology_events (event_id, entity_id, event_type, source, source_record_id, summary_json, occurred_at, created_at)
+  for (let index = 0; index < events.length; index += 1) {
+    const event = preflightEventRecords[index];
+    if (!event) throw new HttpError(422, "invalid_event", "Ontology event preflight did not produce a record");
+    const { entityId, eventType, source, sourceRecord, occurredAt, eventId, summaryJson } = event;
+    queueWrite(`INSERT INTO ontology_events (event_id, entity_id, event_type, source, source_record_id, summary_json, occurred_at, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(event_id) DO UPDATE SET event_type=excluded.event_type, source=excluded.source, source_record_id=excluded.source_record_id, summary_json=excluded.summary_json, occurred_at=excluded.occurred_at`)
-      .bind(eventId, entityId, eventType, source, sourceRecord, boundedJson(item.summary || {}, MAX_SUMMARY_BYTES, "Ontology event summary"), occurredAt, now).run();
+      ON CONFLICT(event_id) DO UPDATE SET event_type=excluded.event_type, source=excluded.source, source_record_id=excluded.source_record_id, summary_json=excluded.summary_json, occurred_at=excluded.occurred_at`,
+      eventId,
+      entityId,
+      eventType,
+      source,
+      sourceRecord,
+      summaryJson,
+      occurredAt,
+      now);
   }
-  const result = { status: "accepted", schema_version: ONTOLOGY_SCHEMA_VERSION, counts: { entities: entities.length, relationships: relationships.length, events: events.length, evidence_refs: evidenceRefs.length }, idempotency_key: idempotencyKey };
-  await env.DB.prepare("INSERT INTO ontology_ingest_receipts (idempotency_key, request_hash, source_instance, response_json, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(idempotency_key) DO NOTHING")
-    .bind(idempotencyKey, requestHash, clean(payload.source_instance, 160) || "ontology-bridge", boundedJson(result, 32768, "Ontology ingest receipt"), now).run();
+  queueWrite("INSERT INTO ontology_ingest_receipts (idempotency_key, request_hash, source_instance, response_json, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(idempotency_key) DO NOTHING",
+    idempotencyKey,
+    requestHash,
+    clean(payload.source_instance, 160) || "ontology-bridge",
+    resultJson,
+    now);
+  if (typeof env.DB.batch !== "function") throw new HttpError(503, "d1_batch_unavailable", "Ontology synchronization requires transactional D1 batch support");
+  await env.DB.batch(writeStatements);
   await writeAudit(env.DB, { requestId, action: "ontology.sync", actorRole: "intelligence_bridge", result: "success", sourceInstance: clean(payload.source_instance, 160) || "ontology-bridge", details: { idempotency_key: idempotencyKey, entities: entities.length, relationships: relationships.length, events: events.length }, createdAt: now });
   return result;
 }
@@ -937,6 +1216,55 @@ function boundedJson(value, maximum, label) {
   return encoded;
 }
 
+// ``sanitize`` intentionally truncates individual strings and arrays for
+// stored telemetry.  Ontology ingestion must still reject an oversized input
+// before any row is written; otherwise a late record can be silently reduced
+// and/or leave an earlier part of the snapshot durable.  Keep this check
+// separate from ``boundedJson`` so existing response sanitization retains its
+// established behavior.
+function preflightBoundedJson(value, maximum, label) {
+  let encoded;
+  try {
+    encoded = JSON.stringify(value);
+  } catch {
+    throw new HttpError(422, "invalid_payload", `${label} must be JSON serializable`);
+  }
+  if (encoded === undefined) {
+    throw new HttpError(422, "invalid_payload", `${label} must be JSON serializable`);
+  }
+  if (new TextEncoder().encode(encoded).byteLength > maximum) {
+    throw new HttpError(413, "payload_too_large", `${label} exceeds the size limit`);
+  }
+  return boundedJson(value, maximum, label);
+}
+
+// Change-log rows are bounded control-plane records.  Keep the durable
+// before-image to the entity's scalar identity/state envelope rather than
+// copying the full D1 row (which may contain a 64 KiB properties JSON field)
+// into the 32 KiB change-log column.
+function ontologyEntityChangeProjection(row) {
+  if (!row) return {};
+  return {
+    entity_id: clean(row.entity_id, 512),
+    entity_type: clean(row.entity_type, 80),
+    namespace: clean(row.namespace, 120),
+    canonical_key: clean(row.canonical_key, 1024),
+    display_name: clean(row.display_name, 512),
+    source: clean(row.source, 160),
+    source_id: clean(row.source_id, 512),
+    workspace_id: clean(row.workspace_id, 160),
+    owner_id: clean(row.owner_id, 256),
+    status: clean(row.status, 80),
+    confidence: Number(row.confidence ?? 0),
+    first_seen_at: clean(row.first_seen_at, 64),
+    last_seen_at: clean(row.last_seen_at, 64),
+    observed_at: clean(row.observed_at, 64),
+    freshness_at: clean(row.freshness_at, 64),
+    valid_from: clean(row.valid_from, 64) || null,
+    valid_to: clean(row.valid_to, 64) || null,
+  };
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -949,7 +1277,7 @@ function decodeRowJson(row, column, fallback = {}) {
   return parseJson(row?.[column], fallback);
 }
 
-function publicJob(row, { includeInput = true, includeResult = true } = {}) {
+function publicJob(row, { includeInput = true, includeResult = true, includeLease = false } = {}) {
   if (!row) return null;
   const output = { ...row, schema_version: INTELLIGENCE_JOB_SCHEMA_VERSION };
   delete output.idempotency_key;
@@ -969,6 +1297,10 @@ function publicJob(row, { includeInput = true, includeResult = true } = {}) {
   }
   delete output.input_json;
   delete output.result_json;
+  if (!includeLease) {
+    delete output.lease_token;
+    delete output.lease_generation;
+  }
   return output;
 }
 
@@ -1032,23 +1364,25 @@ async function cancelIntelligenceJob(db, jobId, requestId) {
   if (row.status === "running") throw new HttpError(409, "job_running", "A running intelligence job must be allowed to expire or complete safely");
   if (!JOB_FINAL_STATUSES.has(row.status)) {
     const now = nowIso();
-    await db.prepare("UPDATE intelligence_jobs SET status='canceled', completed_at=?, updated_at=?, lease_until=NULL WHERE job_id=? AND status IN ('queued','awaiting_provider')").bind(now, now, normalized).run();
+    await db.prepare("UPDATE intelligence_jobs SET status='canceled', completed_at=?, updated_at=?, lease_until=NULL, lease_token='' WHERE job_id=? AND status IN ('queued','awaiting_provider')").bind(now, now, normalized).run();
     await writeJobEvent(db, normalized, "canceled", "mission-control", "Intelligence job canceled.", {});
     await writeAudit(db, { requestId, action: "intelligence.job.canceled", actorRole: "intelligence_operator", result: "success", sourceInstance: "secopsai-core-edge", details: { job_id: normalized }, createdAt: now });
   }
   return getIntelligenceJob(db, normalized, false);
 }
 
-async function heartbeatIntelligenceJob(db, jobId, requestId) {
+async function heartbeatIntelligenceJob(db, jobId, requestId, payload = {}) {
   const normalized = clean(jobId, 100);
-  const row = await db.prepare("SELECT status FROM intelligence_jobs WHERE job_id=?").bind(normalized).first();
+  const row = await db.prepare("SELECT * FROM intelligence_jobs WHERE job_id=?").bind(normalized).first();
   if (!row) throw new HttpError(404, "not_found", `Intelligence job not found: ${normalized}`);
   if (row.status !== "running") {
     if (JOB_FINAL_STATUSES.has(row.status)) return getIntelligenceJob(db, normalized, false);
     throw new HttpError(409, "job_not_running", "Only a running intelligence job can receive a heartbeat");
   }
   const now = nowIso();
-  await db.prepare("UPDATE intelligence_jobs SET updated_at=?, lease_until=? WHERE job_id=? AND status='running'").bind(now, futureIso(900), normalized).run();
+  assertLease(row, payload, "job");
+  const updated = await db.prepare("UPDATE intelligence_jobs SET updated_at=?, lease_until=? WHERE job_id=? AND status='running' AND worker_id=? AND lease_generation=? AND lease_token=? AND lease_until > ?").bind(now, futureIso(1800), normalized, clean(payload.worker_id, 160), Number(payload.lease_generation), clean(payload.lease_token, 160), now).run();
+  if (!changed(updated)) throw new HttpError(409, "lease_lost", "The intelligence job lease is no longer owned by this worker");
   await writeJobEvent(db, normalized, "heartbeat", "bridge", "Bridge renewed the running job lease.", {});
   return getIntelligenceJob(db, normalized, false);
 }
@@ -1059,11 +1393,12 @@ async function claimIntelligenceJob(request, db, requestId) {
   if (!workerId) throw new HttpError(422, "invalid_worker", "worker_id is required");
   const now = nowIso();
   const stale = new Date(Date.now() - 900 * 1000).toISOString();
-  await db.prepare("UPDATE intelligence_jobs SET status='queued', provider='', worker_id='', started_at=NULL, lease_until=NULL, updated_at=?, error_code='worker_recovered', error_message='Recovered after the bridge stopped reporting.' WHERE status='running' AND (lease_until < ? OR (lease_until IS NULL AND updated_at < ?))").bind(now, now, stale).run();
+  await db.prepare("UPDATE intelligence_jobs SET status='queued', provider='', worker_id='', started_at=NULL, lease_until=NULL, lease_token='', updated_at=?, error_code='worker_recovered', error_message='Recovered after the bridge stopped reporting.' WHERE status='running' AND (lease_until < ? OR (lease_until IS NULL AND updated_at < ?))").bind(now, now, stale).run();
+  const leaseToken = crypto.randomUUID().replace(/-/g, "");
   const updated = await db.prepare(`UPDATE intelligence_jobs SET status='running', provider='hosted_core_bridge', worker_id=?, attempt=attempt+1,
-    started_at=?, updated_at=?, lease_until=?, error_code=NULL, error_message=NULL
+    started_at=?, updated_at=?, lease_until=?, lease_generation=lease_generation+1, lease_token=?, error_code=NULL, error_message=NULL
     WHERE job_id = (SELECT job_id FROM intelligence_jobs WHERE status='queued' ORDER BY queued_at, job_id LIMIT 1)
-      AND status='queued'`).bind(workerId, now, now, futureIso(900)).run();
+      AND status='queued'`).bind(workerId, now, now, futureIso(1800), leaseToken).run();
   if (!Number(updated?.meta?.changes || updated?.changes || 0)) {
     await writeAudit(db, { requestId, action: "intelligence.bridge.idle", actorRole: "intelligence_bridge", result: "success", sourceInstance: workerId, details: {}, createdAt: now });
     return { status: "idle", job: null, bridge_request: null };
@@ -1076,7 +1411,7 @@ async function claimIntelligenceJob(request, db, requestId) {
   if (row.target_id && input.target_id === undefined) input.target_id = row.target_id;
   return {
     status: "claimed",
-    job: { job_id: row.job_id, action: row.action, target_id: row.target_id, status: row.status, attempt: row.attempt, selected_model: clean(input.selected_model, 200), input: sanitize(input) },
+    job: { job_id: row.job_id, action: row.action, target_id: row.target_id, status: row.status, attempt: row.attempt, selected_model: clean(input.selected_model, 200), input: sanitize(input), worker_id: row.worker_id, lease_generation: Number(row.lease_generation || 0), lease_token: clean(row.lease_token, 160) },
     bridge_request: {
       schema_version: INTELLIGENCE_SCHEMA_VERSION,
       action: { name: row.action, read_only: true, requires_bridge: true },
@@ -1095,6 +1430,7 @@ async function completeIntelligenceJob(request, db, jobId, requestId) {
   if (!row) throw new HttpError(404, "not_found", `Intelligence job not found: ${normalized}`);
   if (row.status === "succeeded") return { status: "succeeded", job: await getIntelligenceJob(db, normalized, false) };
   if (row.status !== "running") throw new HttpError(409, "job_not_running", `Job is ${row.status} and cannot be completed`);
+  assertLease(row, payload, "job");
   const result = payload.result;
   if (!result || typeof result !== "object" || Array.isArray(result)) throw new HttpError(422, "invalid_result", "Bridge result must be an object");
   const required = ["summary", "risk_assessment", "evidence", "recommended_actions", "limitations"];
@@ -1103,7 +1439,8 @@ async function completeIntelligenceJob(request, db, jobId, requestId) {
   const resultJson = boundedJson(result, MAX_INTELLIGENCE_RESULT_BYTES, "Bridge result");
   const now = nowIso();
   const provider = clean(payload.provider, 120) || "hosted_core_bridge";
-  await db.prepare("UPDATE intelligence_jobs SET status='succeeded', provider=?, result_json=?, completed_at=?, updated_at=?, lease_until=NULL, error_code=NULL, error_message=NULL WHERE job_id=? AND status='running'").bind(provider, resultJson, now, now, normalized).run();
+  const updated = await db.prepare("UPDATE intelligence_jobs SET status='succeeded', provider=?, result_json=?, completed_at=?, updated_at=?, lease_until=NULL, lease_token='', error_code=NULL, error_message=NULL WHERE job_id=? AND status='running' AND worker_id=? AND lease_generation=? AND lease_token=? AND lease_until > ?").bind(provider, resultJson, now, now, normalized, clean(payload.worker_id, 160), Number(payload.lease_generation), clean(payload.lease_token, 160), now).run();
+  if (!changed(updated)) throw new HttpError(409, "lease_lost", "The intelligence job lease is no longer owned by this worker");
   await writeJobEvent(db, normalized, "completed", clean(payload.worker_id, 160) || "bridge", "Bridge completed the intelligence job.", { provider, model: clean(payload.model, 200) });
   await writeAudit(db, { requestId, action: "intelligence.bridge.completed", actorRole: "intelligence_bridge", result: "success", sourceInstance: clean(payload.worker_id, 160) || "bridge", details: { job_id: normalized }, createdAt: now });
   return { status: "succeeded", job: await getIntelligenceJob(db, normalized, false) };
@@ -1112,14 +1449,16 @@ async function completeIntelligenceJob(request, db, jobId, requestId) {
 async function failIntelligenceJob(request, db, jobId, requestId) {
   const payload = await readJsonObject(request, MAX_INTELLIGENCE_BYTES, "Bridge failure");
   const normalized = clean(jobId, 100);
-  const row = await db.prepare("SELECT status FROM intelligence_jobs WHERE job_id=?").bind(normalized).first();
+  const row = await db.prepare("SELECT * FROM intelligence_jobs WHERE job_id=?").bind(normalized).first();
   if (!row) throw new HttpError(404, "not_found", `Intelligence job not found: ${normalized}`);
   if (row.status === "failed") return { status: "failed", job: await getIntelligenceJob(db, normalized, false) };
   if (!JOB_ACTIVE_STATUSES.has(row.status)) throw new HttpError(409, "job_not_active", `Job is ${row.status} and cannot be failed`);
+  assertLease(row, payload, "job");
   const now = nowIso();
   const errorCode = clean(payload.error_code, 80) || "bridge_failed";
   const errorMessage = clean(payload.error_message, 2000) || "Remote bridge failed";
-  await db.prepare("UPDATE intelligence_jobs SET status='failed', error_code=?, error_message=?, completed_at=?, updated_at=?, lease_until=NULL WHERE job_id=? AND status IN ('queued','running','awaiting_provider')").bind(errorCode, errorMessage, now, now, normalized).run();
+  const updated = await db.prepare("UPDATE intelligence_jobs SET status='failed', error_code=?, error_message=?, completed_at=?, updated_at=?, lease_until=NULL, lease_token='' WHERE job_id=? AND status='running' AND worker_id=? AND lease_generation=? AND lease_token=? AND lease_until > ?").bind(errorCode, errorMessage, now, now, normalized, clean(payload.worker_id, 160), Number(payload.lease_generation), clean(payload.lease_token, 160), now).run();
+  if (!changed(updated)) throw new HttpError(409, "lease_lost", "The intelligence job lease is no longer owned by this worker");
   await writeJobEvent(db, normalized, "failed", clean(payload.worker_id, 160) || "bridge", errorMessage, { error_code: errorCode });
   await writeAudit(db, { requestId, action: "intelligence.bridge.failed", actorRole: "intelligence_bridge", result: "failed", sourceInstance: clean(payload.worker_id, 160) || "bridge", details: { job_id: normalized, error_code: errorCode }, createdAt: now });
   return { status: "failed", job: await getIntelligenceJob(db, normalized, false) };
@@ -1170,15 +1509,27 @@ async function configureAgentTriage(request, db, requestId) {
 
 async function dailyAutomationStatus(db, limit) {
   const settingsRow = await readSetting(db, "daily_automation_settings", "*");
-  const settings = settingsRow ? { ...settingsRow, schema_version: DAILY_AUTOMATION_SCHEMA_VERSION, enabled: Boolean(settingsRow.enabled), auto_promote_candidates: Boolean(settingsRow.auto_promote_candidates), run_learning: Boolean(settingsRow.run_learning) } : {};
+  const settings = settingsRow ? publicDailyAutomationSettings({ ...settingsRow, schema_version: DAILY_AUTOMATION_SCHEMA_VERSION, enabled: Boolean(settingsRow.enabled), auto_promote_candidates: Boolean(settingsRow.auto_promote_candidates), run_learning: Boolean(settingsRow.run_learning) }) : {};
   const runs = await db.prepare("SELECT * FROM daily_automation_runs ORDER BY started_at DESC, run_id DESC LIMIT ?").bind(limit).all();
   const runRows = runs.results || [];
   const steps = runRows.length ? await db.prepare(`SELECT * FROM daily_automation_steps WHERE run_id IN (${runRows.map(() => "?").join(",")}) ORDER BY step_id`).bind(...runRows.map((row) => row.run_id)).all() : { results: [] };
   const byRun = new Map(runRows.map((row) => [row.run_id, []]));
   for (const step of steps.results || []) byRun.get(step.run_id)?.push({ ...step, result: parseJson(step.result_json, {}) });
-  const hydrated = runRows.map((row) => ({ ...row, summary: parseJson(row.summary_json, {}), steps: byRun.get(row.run_id) || [] }));
+  const hydrated = runRows.map((row) => publicDailyAutomationRun({ ...row, summary: parseJson(row.summary_json, {}), steps: byRun.get(row.run_id) || [] }));
   const commands = await db.prepare("SELECT * FROM coordinator_commands WHERE command_type='daily-run' ORDER BY updated_at DESC LIMIT ?").bind(limit).all();
   return { schema_version: DAILY_AUTOMATION_SCHEMA_VERSION, settings, summary: { runs: hydrated.length, active: hydrated.some((row) => row.status === "running") ? 1 : 0, last_status: hydrated[0]?.status || "never_run", last_run_at: hydrated[0]?.completed_at || null, next_run_at: settings.next_run_at || null }, active_run: hydrated.find((row) => row.status === "running") || null, runs: hydrated, commands: (commands.results || []).map((row) => publicCommand(row, { includeResult: false })) };
+}
+
+function publicDailyAutomationRun(row) {
+  const output = { ...row };
+  delete output.lease_token;
+  return output;
+}
+
+function publicDailyAutomationSettings(row) {
+  const output = { ...row };
+  delete output.updated_lease_token;
+  return output;
 }
 
 async function configureDailyAutomation(request, db, requestId) {
@@ -1194,7 +1545,7 @@ async function configureDailyAutomation(request, db, requestId) {
   const now = nowIso();
   await db.prepare("UPDATE daily_automation_settings SET enabled=?, interval_seconds=?, max_alert_reviews=?, max_investigations=?, max_candidate_cases=?, auto_promote_candidates=?, run_learning=?, updated_at=?, updated_by=? WHERE settings_id=1").bind(Number(enabled), interval, alerts, investigations, candidates, Number(promote), Number(learning), now, "mission-control").run();
   const updated = await readSetting(db, "daily_automation_settings", "*");
-  const settings = { ...updated, schema_version: DAILY_AUTOMATION_SCHEMA_VERSION, enabled, auto_promote_candidates: promote, run_learning: learning };
+  const settings = publicDailyAutomationSettings({ ...updated, schema_version: DAILY_AUTOMATION_SCHEMA_VERSION, enabled, auto_promote_candidates: promote, run_learning: learning });
   await writeAudit(db, { requestId, action: "intelligence.daily.configured", actorRole: "intelligence_operator", result: "success", sourceInstance: "secopsai-core-edge", details: { enabled, interval_seconds: interval }, createdAt: now });
   return settings;
 }
@@ -1222,11 +1573,15 @@ async function queueCoordinatorCommand(request, db, requestId, commandType, fixe
   return { command_id: commandId, command_type: commandType, status: "queued", queued_at: now };
 }
 
-function publicCommand(row, { includeResult = true } = {}) {
+function publicCommand(row, { includeResult = true, includeLease = false } = {}) {
   const output = { ...row, payload: parseJson(row.payload_json, {}), result: includeResult ? parseJson(row.result_json, {}) : {}, schema_version: "secopsai.coordinator.command.v1" };
   delete output.payload_json;
   delete output.result_json;
   delete output.idempotency_key;
+  if (!includeLease) {
+    delete output.lease_token;
+    delete output.lease_generation;
+  }
   return output;
 }
 
@@ -1234,6 +1589,28 @@ function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) throw new HttpError(422, "invalid_limit", `${label} must be between ${minimum} and ${maximum}`);
   return parsed;
+}
+
+function changed(result) {
+  return Number(result?.meta?.changes || result?.changes || 0) > 0;
+}
+
+function assertLease(row, payload, label = "job") {
+  const rawWorkerId = String(payload?.worker_id || "").trim();
+  const workerId = rawWorkerId.length <= 160 ? rawWorkerId : "";
+  const rawToken = String(payload?.lease_token || "").trim();
+  const token = rawToken.length <= 160 ? rawToken : "";
+  const generation = Number(payload?.lease_generation);
+  if (!workerId || !token || !Number.isSafeInteger(generation) || generation < 1) {
+    throw new HttpError(422, "lease_required", `A ${label} lease worker_id, lease_generation, and lease_token are required`);
+  }
+  if (clean(row?.worker_id, 160) !== workerId || Number(row?.lease_generation || 0) !== generation || String(row?.lease_token || "").trim() !== token) {
+    throw new HttpError(409, "lease_lost", `The ${label} lease is no longer owned by this worker`);
+  }
+  const leaseUntil = Date.parse(String(row?.lease_until || ""));
+  if (!Number.isFinite(leaseUntil) || leaseUntil <= Date.now()) {
+    throw new HttpError(409, "lease_lost", `The ${label} lease has expired`);
+  }
 }
 
 async function mcpGatewayStatus(db, limit) {
@@ -1247,27 +1624,115 @@ async function mcpGatewayStatus(db, limit) {
 
 async function syncRunnerState(request, db, requestId) {
   const payload = await readJsonObject(request, MAX_INTELLIGENCE_BYTES, "Runner heartbeat");
-  const workerId = clean(payload.worker_id, 160);
+  const rawWorkerId = String(payload.worker_id || "").trim();
+  const workerId = rawWorkerId.length <= 160 ? rawWorkerId : "";
   if (!workerId) throw new HttpError(422, "invalid_worker", "worker_id is required");
   const now = nowIso();
-  const storage = sanitize(payload.storage || {});
-  const coordinator = sanitize(payload.coordinator || {});
-  await db.prepare(`INSERT INTO runner_heartbeats
-    (worker_id, status, last_seen_at, last_cycle_at, last_cycle_status, storage_json, coordinator_json, error_message, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(worker_id) DO UPDATE SET status=excluded.status, last_seen_at=excluded.last_seen_at,
-      last_cycle_at=excluded.last_cycle_at, last_cycle_status=excluded.last_cycle_status,
-      storage_json=excluded.storage_json, coordinator_json=excluded.coordinator_json,
-      error_message=excluded.error_message, updated_at=excluded.updated_at`)
-    .bind(workerId, clean(payload.status, 40) || "healthy", now, clean(payload.last_cycle_at, 64) || null, clean(payload.last_cycle_status, 40), boundedJson(storage, MAX_SUMMARY_BYTES, "Storage status"), boundedJson(coordinator, MAX_SUMMARY_BYTES, "Coordinator status"), clean(payload.error_message, 2000) || null, now).run();
-  await syncCoordinatorResults(db, coordinator, workerId);
-  await writeAudit(db, { requestId, action: "intelligence.runner.heartbeat", actorRole: "intelligence_bridge", result: "success", sourceInstance: workerId, details: { status: clean(payload.status, 40) || "healthy", last_cycle_status: clean(payload.last_cycle_status, 40) }, createdAt: now });
+  const processGeneration = Number(payload.process_generation);
+  const processRevision = clean(payload.process_revision, 200);
+  const processStartedAt = clean(payload.process_started_at, 64);
+  const rawLeaseToken = String(payload.lease_token || payload.process_lease_token || "").trim();
+  const leaseToken = rawLeaseToken.length <= 160 ? rawLeaseToken : "";
+  if (!Number.isSafeInteger(processGeneration) || processGeneration < 1 || !processRevision || !processStartedAt || !leaseToken) {
+    throw new HttpError(422, "runner_lease_required", "Runner heartbeat requires process_generation, process_revision, process_started_at, and lease_token");
+  }
+  // Preflight the raw JSON before sanitization.  Sanitization is intentionally
+  // lossy for telemetry, but a heartbeat must reject an oversized coordinator
+  // result before the lease row becomes durable.
+  const storageJson = preflightBoundedJson(payload.storage || {}, 16 * 1024, "Storage status");
+  const coordinatorJson = preflightBoundedJson(payload.coordinator || {}, 16 * 1024, "Coordinator status");
+  const storage = parseJson(storageJson, {});
+  const coordinator = parseJson(coordinatorJson, {});
+  preflightCoordinatorResults(coordinator);
+  const current = await db.prepare("SELECT * FROM runner_heartbeats WHERE worker_id=?").bind(workerId).first();
+  const leaseUntil = futureIso(1800);
+  const heartbeatValues = [
+    clean(payload.status, 40) || "healthy",
+    now,
+    clean(payload.last_cycle_at, 64) || null,
+    clean(payload.last_cycle_status, 40),
+    storageJson,
+    coordinatorJson,
+    clean(payload.error_message, 2000) || null,
+    now,
+    processGeneration,
+    processRevision,
+    processStartedAt,
+    leaseToken,
+    leaseUntil,
+  ];
+  if (!current) {
+    try {
+      await db.prepare(`INSERT INTO runner_heartbeats
+        (worker_id, status, last_seen_at, last_cycle_at, last_cycle_status, storage_json, coordinator_json, error_message, updated_at,
+         process_generation, process_revision, process_started_at, lease_token, lease_until)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .bind(workerId, ...heartbeatValues).run();
+    } catch (error) {
+      // Another request may have established the process lease between the
+      // read and insert. Re-read below and apply the same fenced path.
+      const raced = await db.prepare("SELECT * FROM runner_heartbeats WHERE worker_id=?").bind(workerId).first();
+      if (!raced) throw error;
+      await updateRunnerHeartbeat(db, raced, workerId, heartbeatValues, processGeneration, leaseToken, now);
+    }
+  } else {
+    await updateRunnerHeartbeat(db, current, workerId, heartbeatValues, processGeneration, leaseToken, now);
+  }
+  await syncCoordinatorResults(db, coordinator, workerId, processGeneration, leaseToken);
+  await writeAudit(db, { requestId, action: "intelligence.runner.heartbeat", actorRole: "intelligence_bridge", result: "success", sourceInstance: workerId, details: { status: clean(payload.status, 40) || "healthy", last_cycle_status: clean(payload.last_cycle_status, 40), process_generation: processGeneration }, createdAt: now });
   return hostedCoordinatorState(db, 20);
 }
 
-async function syncCoordinatorResults(db, coordinator, workerId) {
+async function updateRunnerHeartbeat(db, current, workerId, values, processGeneration, leaseToken, now = nowIso()) {
+  const currentGeneration = Number(current?.process_generation || 0);
+  const currentToken = String(current?.lease_token || "").trim();
+  const sameLease = currentGeneration === processGeneration && currentToken === leaseToken;
+  const newerProcess = processGeneration > currentGeneration && Boolean(leaseToken);
+  if (!sameLease && !newerProcess) {
+    throw new HttpError(409, "runner_lease_lost", "The runner process lease is no longer owned by this worker");
+  }
+  if (sameLease && (!current?.lease_until || Date.parse(String(current.lease_until)) <= Date.now())) {
+    throw new HttpError(409, "runner_lease_lost", "The runner process lease has expired");
+  }
+  const where = sameLease
+    ? "worker_id=? AND process_generation=? AND lease_token=? AND lease_until > ?"
+    : "worker_id=? AND process_generation<?";
+  const updated = await db.prepare(`UPDATE runner_heartbeats SET status=?, last_seen_at=?, last_cycle_at=?, last_cycle_status=?, storage_json=?, coordinator_json=?, error_message=?, updated_at=?, process_generation=?, process_revision=?, process_started_at=?, lease_token=?, lease_until=? WHERE ${where}`)
+    .bind(...values, workerId, ...(sameLease ? [processGeneration, leaseToken, now] : [processGeneration])).run();
+  if (!changed(updated)) throw new HttpError(409, "runner_lease_lost", "The runner process lease is no longer owned by this worker");
+}
+
+function preflightCoordinatorResults(coordinator) {
   const commands = Array.isArray(coordinator?.hosted_commands) ? coordinator.hosted_commands : [];
   for (const item of commands.slice(0, 5)) {
+    const commandType = clean(item?.command_type, 80);
+    const result = item?.result && typeof item.result === "object" ? item.result : {};
+    if (commandType === "daily-run") {
+      preflightBoundedJson(result.summary && typeof result.summary === "object" ? result.summary : { status: result.status }, MAX_SUMMARY_BYTES, "Daily summary");
+      for (const step of (Array.isArray(result.steps) ? result.steps : []).slice(0, 32)) {
+        if (!step || typeof step !== "object" || Array.isArray(step)) throw new HttpError(422, "invalid_coordinator_result", "Daily step result must be an object");
+        preflightBoundedJson(step?.result || {}, MAX_SUMMARY_BYTES, "Daily step result");
+      }
+    }
+  }
+}
+
+async function assertRunnerLease(db, workerId, processGeneration, leaseToken) {
+  const row = await db.prepare("SELECT process_generation, lease_token, lease_until FROM runner_heartbeats WHERE worker_id=?").bind(workerId).first();
+  if (!row || Number(row.process_generation || 0) !== Number(processGeneration) || String(row.lease_token || "").trim() !== String(leaseToken || "").trim()) {
+    throw new HttpError(409, "runner_lease_lost", "The runner process lease is no longer owned by this worker");
+  }
+  const leaseUntil = Date.parse(String(row.lease_until || ""));
+  if (!Number.isFinite(leaseUntil) || leaseUntil <= Date.now()) {
+    throw new HttpError(409, "runner_lease_lost", "The runner process lease has expired");
+  }
+}
+
+async function syncCoordinatorResults(db, coordinator, workerId, processGeneration, leaseToken) {
+  await assertRunnerLease(db, workerId, processGeneration, leaseToken);
+  const commands = Array.isArray(coordinator?.hosted_commands) ? coordinator.hosted_commands : [];
+  for (const item of commands.slice(0, 5)) {
+    await assertRunnerLease(db, workerId, processGeneration, leaseToken);
     const commandType = clean(item?.command_type, 80);
     const result = item?.result && typeof item.result === "object" ? item.result : {};
     if (commandType === "daily-run" && result.run_id) {
@@ -1276,33 +1741,47 @@ async function syncCoordinatorResults(db, coordinator, workerId) {
       const started = clean(result.started_at, 64) || nowIso();
       const completed = clean(result.completed_at, 64) || (result.status === "running" ? null : nowIso());
       const nextRun = clean(result.next_run_at, 64) || null;
-      await db.prepare(`INSERT INTO daily_automation_runs
-        (run_id, trigger, status, started_at, completed_at, next_run_at, summary_json, error_message, updated_at)
-        VALUES (?, 'hosted-core', ?, ?, ?, ?, ?, ?, ?)
+      const leaseCheckAt = nowIso();
+      const materialized = await db.prepare(`INSERT INTO daily_automation_runs
+        (run_id, trigger, status, started_at, completed_at, next_run_at, summary_json, error_message, updated_at, owner_worker_id, process_generation, lease_token)
+        SELECT ?, 'hosted-core', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE EXISTS (SELECT 1 FROM runner_heartbeats WHERE worker_id=? AND process_generation=? AND lease_token=? AND lease_until > ?)
         ON CONFLICT(run_id) DO UPDATE SET status=excluded.status, completed_at=excluded.completed_at,
           next_run_at=excluded.next_run_at, summary_json=excluded.summary_json,
-          error_message=excluded.error_message, updated_at=excluded.updated_at`)
-        .bind(runId, clean(result.status, 32) || "degraded", started, completed, nextRun, boundedJson(summary, MAX_SUMMARY_BYTES, "Daily summary"), clean(result.error, 2000) || null, nowIso()).run();
-      await db.prepare("DELETE FROM daily_automation_steps WHERE run_id=?").bind(runId).run();
+          error_message=excluded.error_message, updated_at=excluded.updated_at,
+          owner_worker_id=excluded.owner_worker_id, process_generation=excluded.process_generation,
+          lease_token=excluded.lease_token
+        WHERE EXISTS (SELECT 1 FROM runner_heartbeats WHERE worker_id=excluded.owner_worker_id AND process_generation=excluded.process_generation AND lease_token=excluded.lease_token AND lease_until > ?)`)
+        .bind(runId, clean(result.status, 32) || "degraded", started, completed, nextRun, boundedJson(summary, MAX_SUMMARY_BYTES, "Daily summary"), clean(result.error, 2000) || null, nowIso(), workerId, processGeneration, leaseToken, workerId, processGeneration, leaseToken, leaseCheckAt, leaseCheckAt).run();
+      if (!changed(materialized)) throw new HttpError(409, "runner_lease_lost", "The runner process lease is no longer owned by this worker");
+      await assertRunnerLease(db, workerId, processGeneration, leaseToken);
+      await db.prepare("DELETE FROM daily_automation_steps WHERE run_id=? AND EXISTS (SELECT 1 FROM runner_heartbeats WHERE worker_id=? AND process_generation=? AND lease_token=? AND lease_until > ?)").bind(runId, workerId, processGeneration, leaseToken, leaseCheckAt).run();
       const steps = Array.isArray(result.steps) ? result.steps : [];
       for (const step of steps.slice(0, 32)) {
-        await db.prepare("INSERT INTO daily_automation_steps (run_id, step_name, status, started_at, completed_at, result_json, error_message) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(runId, clean(step.step_name, 120), clean(step.status, 32) || "succeeded", clean(step.started_at, 64) || started, clean(step.completed_at, 64) || null, boundedJson(step.result || {}, MAX_SUMMARY_BYTES, "Daily step result"), clean(step.error, 2000) || null).run();
+        const materializedStep = await db.prepare("INSERT INTO daily_automation_steps (run_id, step_name, status, started_at, completed_at, result_json, error_message) SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM runner_heartbeats WHERE worker_id=? AND process_generation=? AND lease_token=? AND lease_until > ?)").bind(runId, clean(step.step_name, 120), clean(step.status, 32) || "succeeded", clean(step.started_at, 64) || started, clean(step.completed_at, 64) || null, boundedJson(step.result || {}, MAX_SUMMARY_BYTES, "Daily step result"), clean(step.error, 2000) || null, workerId, processGeneration, leaseToken, leaseCheckAt).run();
+        if (!changed(materializedStep)) throw new HttpError(409, "runner_lease_lost", "The runner process lease is no longer owned by this worker");
       }
-      await db.prepare("UPDATE daily_automation_settings SET last_run_at=?, next_run_at=?, updated_at=? WHERE settings_id=1").bind(completed || started, nextRun, nowIso()).run();
+      await assertRunnerLease(db, workerId, processGeneration, leaseToken);
+      await db.prepare("UPDATE daily_automation_settings SET last_run_at=?, next_run_at=?, updated_at=?, updated_by_worker_id=?, updated_process_generation=?, updated_lease_token=? WHERE settings_id=1 AND EXISTS (SELECT 1 FROM runner_heartbeats WHERE worker_id=? AND process_generation=? AND lease_token=? AND lease_until > ?)").bind(completed || started, nextRun, nowIso(), workerId, processGeneration, leaseToken, workerId, processGeneration, leaseToken, nowIso()).run();
     }
     if (commandType === "autopilot-run-now") {
+      await assertRunnerLease(db, workerId, processGeneration, leaseToken);
       const queued = Array.isArray(result.queued) ? result.queued : [];
       for (const run of queued.slice(0, 100)) {
         const runId = clean(run.run_id, 80);
         if (!runId) continue;
         const timestamp = nowIso();
-        await db.prepare(`INSERT INTO agent_triage_runs
+        const leaseCheckAt = nowIso();
+        const materialized = await db.prepare(`INSERT INTO agent_triage_runs
           (run_id, target_type, target_id, status, intelligence_job_id, selected_model, provider,
            summary_json, recommendation_json, decision_json, final_action, reversible, queued_at, completed_at, updated_at)
-          VALUES (?, 'finding', ?, 'awaiting_model', ?, '', 'hosted_core_bridge', '{}', '{}', '{}', '', 1, ?, NULL, ?)
+          SELECT ?, 'finding', ?, 'awaiting_model', ?, '', 'hosted_core_bridge', '{}', '{}', '{}', '', 1, ?, NULL, ?
+          WHERE EXISTS (SELECT 1 FROM runner_heartbeats WHERE worker_id=? AND process_generation=? AND lease_token=? AND lease_until > ?)
           ON CONFLICT(run_id) DO UPDATE SET intelligence_job_id=excluded.intelligence_job_id,
-            updated_at=excluded.updated_at`)
-          .bind(runId, clean(run.finding_id, 240), clean(run.job_id, 100), timestamp, timestamp).run();
+            updated_at=excluded.updated_at
+          WHERE EXISTS (SELECT 1 FROM runner_heartbeats WHERE worker_id=? AND process_generation=? AND lease_token=? AND lease_until > ?)`)
+          .bind(runId, clean(run.finding_id, 240), clean(run.job_id, 100), timestamp, timestamp, workerId, processGeneration, leaseToken, leaseCheckAt, workerId, processGeneration, leaseToken, leaseCheckAt).run();
+        if (!changed(materialized)) throw new HttpError(409, "runner_lease_lost", "The runner process lease is no longer owned by this worker");
       }
     }
   }
@@ -1311,10 +1790,18 @@ async function syncCoordinatorResults(db, coordinator, workerId) {
 async function hostedCoordinatorState(db, limit) {
   const triage = publicTriageSettings(await readSetting(db, "agent_triage_settings", "*"));
   const dailyRow = await readSetting(db, "daily_automation_settings", "*");
-  const daily = dailyRow ? { ...dailyRow, schema_version: DAILY_AUTOMATION_SCHEMA_VERSION, enabled: Boolean(dailyRow.enabled), auto_promote_candidates: Boolean(dailyRow.auto_promote_candidates), run_learning: Boolean(dailyRow.run_learning) } : {};
+  const daily = dailyRow ? publicDailyAutomationSettings({ ...dailyRow, schema_version: DAILY_AUTOMATION_SCHEMA_VERSION, enabled: Boolean(dailyRow.enabled), auto_promote_candidates: Boolean(dailyRow.auto_promote_candidates), run_learning: Boolean(dailyRow.run_learning) }) : {};
   const heartbeat = await db.prepare("SELECT * FROM runner_heartbeats ORDER BY last_seen_at DESC LIMIT 1").first();
   const commands = await db.prepare("SELECT * FROM coordinator_commands ORDER BY updated_at DESC LIMIT ?").bind(limit).all();
-  return { schema_version: "secopsai.coordinator.state.v1", generated_at: nowIso(), settings: { agent_triage: triage, daily_automation: daily }, runner: heartbeat ? { ...heartbeat, storage: parseJson(heartbeat.storage_json, {}), coordinator: parseJson(heartbeat.coordinator_json, {}) } : null, commands: (commands.results || []).map((row) => publicCommand(row, { includeResult: false })) };
+  return { schema_version: "secopsai.coordinator.state.v1", generated_at: nowIso(), settings: { agent_triage: triage, daily_automation: daily }, runner: heartbeat ? publicRunnerHeartbeat(heartbeat) : null, commands: (commands.results || []).map((row) => publicCommand(row, { includeResult: false })) };
+}
+
+function publicRunnerHeartbeat(row) {
+  const output = { ...row, storage: parseJson(row.storage_json, {}), coordinator: parseJson(row.coordinator_json, {}) };
+  delete output.storage_json;
+  delete output.coordinator_json;
+  delete output.lease_token;
+  return output;
 }
 
 async function claimCoordinatorCommand(request, db, requestId) {
@@ -1323,14 +1810,15 @@ async function claimCoordinatorCommand(request, db, requestId) {
   if (!workerId) throw new HttpError(422, "invalid_worker", "worker_id is required");
   const now = nowIso();
   const stale = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-  await db.prepare("UPDATE coordinator_commands SET status='queued', worker_id='', started_at=NULL, lease_until=NULL, updated_at=?, error_message='Recovered after the coordinator runner stopped reporting.' WHERE status='running' AND (lease_until < ? OR (lease_until IS NULL AND updated_at < ?))").bind(now, now, stale).run();
-  const updated = await db.prepare(`UPDATE coordinator_commands SET status='running', worker_id=?, started_at=?, updated_at=?, lease_until=?
-    WHERE command_id=(SELECT command_id FROM coordinator_commands WHERE status='queued' ORDER BY queued_at, command_id LIMIT 1) AND status='queued'`).bind(workerId, now, now, futureIso(1800)).run();
+  await db.prepare("UPDATE coordinator_commands SET status='queued', worker_id='', started_at=NULL, lease_until=NULL, lease_token='', updated_at=?, error_message='Recovered after the coordinator runner stopped reporting.' WHERE status='running' AND (lease_until < ? OR (lease_until IS NULL AND updated_at < ?))").bind(now, now, stale).run();
+  const leaseToken = crypto.randomUUID().replace(/-/g, "");
+  const updated = await db.prepare(`UPDATE coordinator_commands SET status='running', worker_id=?, started_at=?, updated_at=?, lease_until=?, lease_generation=lease_generation+1, lease_token=?
+    WHERE command_id=(SELECT command_id FROM coordinator_commands WHERE status='queued' ORDER BY queued_at, command_id LIMIT 1) AND status='queued'`).bind(workerId, now, now, futureIso(1800), leaseToken).run();
   if (!Number(updated?.meta?.changes || updated?.changes || 0)) return { status: "idle", command: null };
   const row = await db.prepare("SELECT * FROM coordinator_commands WHERE status='running' AND worker_id=? ORDER BY started_at DESC, command_id DESC LIMIT 1").bind(workerId).first();
   if (!row) return { status: "idle", command: null };
   await writeAudit(db, { requestId, action: "intelligence.coordinator.claimed", actorRole: "intelligence_bridge", result: "success", sourceInstance: workerId, details: { command_id: row.command_id, command_type: row.command_type }, createdAt: now });
-  return { status: "claimed", command: publicCommand(row) };
+  return { status: "claimed", command: publicCommand(row, { includeLease: true }) };
 }
 
 async function finishCoordinatorCommand(request, db, commandId, outcome, requestId) {
@@ -1340,14 +1828,35 @@ async function finishCoordinatorCommand(request, db, commandId, outcome, request
   if (!row) throw new HttpError(404, "not_found", `Coordinator command not found: ${normalized}`);
   if (COMMAND_FINAL_STATUSES.has(row.status)) return { status: row.status, command: publicCommand(row) };
   if (row.status !== "running") throw new HttpError(409, "command_not_running", `Command is ${row.status} and cannot be completed`);
+  assertLease(row, payload, "coordinator command");
   const requestedStatus = String(payload.status || "succeeded").toLowerCase();
-  const status = outcome === "complete" ? (["degraded", "recovered"].includes(requestedStatus) ? requestedStatus : "succeeded") : "failed";
+  // Preserve an explicitly reported terminal state.  Collapsing failed or
+  // canceled work into succeeded makes the hosted operating picture claim
+  // work completed when the runner actually stopped or lost the task.
+  const status = outcome === "complete"
+    ? (["succeeded", "degraded", "failed", "canceled", "recovered"].includes(requestedStatus) ? requestedStatus : "succeeded")
+    : "failed";
   const now = nowIso();
   const resultJson = boundedJson(payload.result || {}, MAX_SUMMARY_BYTES, "Coordinator result");
   const errorMessage = clean(payload.error_message, 2000) || null;
-  await db.prepare("UPDATE coordinator_commands SET status=?, result_json=?, error_message=?, completed_at=?, updated_at=?, lease_until=NULL WHERE command_id=? AND status='running'").bind(status, resultJson, errorMessage, now, now, normalized).run();
+  const updated = await db.prepare("UPDATE coordinator_commands SET status=?, result_json=?, error_message=?, completed_at=?, updated_at=?, lease_until=NULL, lease_token='' WHERE command_id=? AND status='running' AND worker_id=? AND lease_generation=? AND lease_token=? AND lease_until > ?").bind(status, resultJson, errorMessage, now, now, normalized, clean(payload.worker_id, 160), Number(payload.lease_generation), clean(payload.lease_token, 160), now).run();
+  if (!changed(updated)) throw new HttpError(409, "lease_lost", "The coordinator command lease is no longer owned by this worker");
   await writeAudit(db, { requestId, action: `intelligence.coordinator.${status}`, actorRole: "intelligence_bridge", result: status, sourceInstance: clean(payload.worker_id, 160) || "bridge", details: { command_id: normalized }, createdAt: now });
   return { status, command: publicCommand(await db.prepare("SELECT * FROM coordinator_commands WHERE command_id=?").bind(normalized).first()) };
+}
+
+async function heartbeatCoordinatorCommand(payload, db, commandId, requestId) {
+  const normalized = clean(commandId, 100);
+  const row = await db.prepare("SELECT * FROM coordinator_commands WHERE command_id=?").bind(normalized).first();
+  if (!row) throw new HttpError(404, "not_found", `Coordinator command not found: ${normalized}`);
+  if (COMMAND_FINAL_STATUSES.has(row.status)) return { status: row.status, command: publicCommand(row) };
+  if (row.status !== "running") throw new HttpError(409, "command_not_running", `Command is ${row.status} and cannot receive a heartbeat`);
+  assertLease(row, payload, "coordinator command");
+  const now = nowIso();
+  const updated = await db.prepare("UPDATE coordinator_commands SET updated_at=?, lease_until=? WHERE command_id=? AND status='running' AND worker_id=? AND lease_generation=? AND lease_token=? AND lease_until > ?").bind(now, futureIso(1800), normalized, clean(payload.worker_id, 160), Number(payload.lease_generation), clean(payload.lease_token, 160), now).run();
+  if (!changed(updated)) throw new HttpError(409, "lease_lost", "The coordinator command lease is no longer owned by this worker");
+  await writeAudit(db, { requestId, action: "intelligence.coordinator.heartbeat", actorRole: "intelligence_bridge", result: "success", sourceInstance: clean(payload.worker_id, 160) || "bridge", details: { command_id: normalized }, createdAt: now });
+  return { status: "running", command: publicCommand(await db.prepare("SELECT * FROM coordinator_commands WHERE command_id=?").bind(normalized).first()) };
 }
 
 async function workspacePayload(db, limit) {
@@ -1478,7 +1987,7 @@ function sanitize(value, depth = 0) {
     return Object.fromEntries(Object.entries(value).filter(([key]) => {
       const normalizedKey = key.toLowerCase();
       return !blocked.has(normalizedKey) && !/(?:^|_)(?:token|secret|password|credential|private_key|api_key)(?:_|$)/.test(normalizedKey);
-    }).map(([key, item]) => [key.slice(0, 128), /(?:^|_)(?:url|uri|locator)$/i.test(key) && typeof item === "string" ? ontologySafeLocator(item) : sanitize(item, depth + 1)]));
+    }).map(([key, item]) => [key.slice(0, 128), /(?:^|_)(?:url|uri|locator)$/i.test(key) && typeof item === "string" ? ontologySafeLocatorSync(item) : sanitize(item, depth + 1)]));
   }
   if (typeof value === "string") return value.replace(/[\r\n]+/g, " ").slice(0, 2000);
   return value === null || ["boolean", "number"].includes(typeof value) ? value : String(value).slice(0, 2000);
@@ -1507,6 +2016,22 @@ function clean(value, maximum) {
 
 async function sha256Hex(value) {
   return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))));
+}
+
+// Opaque locator redaction happens in synchronous sanitization paths. This
+// compact digest is never used as an entity identity; canonical keys use
+// SHA-256 in the async ingestion path above.
+function shortDigest(value) {
+  let first = 2166136261;
+  let second = 2654435761;
+  for (const char of String(value || "")) {
+    const code = char.codePointAt(0) || 0;
+    first ^= code;
+    first = Math.imul(first, 16777619) >>> 0;
+    second ^= code + 0x9e3779b9;
+    second = Math.imul(second, 2246822519) >>> 0;
+  }
+  return `${first.toString(16).padStart(8, "0")}${second.toString(16).padStart(8, "0")}`;
 }
 
 function hex(bytes) {

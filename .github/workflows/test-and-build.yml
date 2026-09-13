@@ -199,6 +199,7 @@ jobs:
         run: |
           npm run check
           npm test
+          npm audit --audit-level=moderate
 
       - name: Rehearse D1 migrations locally
         working-directory: cloudflare/secopsai-core-edge

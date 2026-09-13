@@ -15,15 +15,18 @@ import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List
+from urllib.parse import quote
 
 from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-# Schema version 10 adds the canonical security ontology tables.  The ontology
-# is an additive semantic layer over the existing findings, research, and Edge
-# graph stores; it does not replace those durable records.
-SCHEMA_VERSION = 10
+# Schema version 12 adds durable backfill pending records so a relationship or
+# timeline row whose endpoint is projected later is retried instead of being
+# silently lost after its source checkpoint advances.  The ontology is an
+# additive semantic layer over the existing findings, research, and Edge graph
+# stores; it does not replace those durable records.
+SCHEMA_VERSION = 12
 REQUIRED_ONTOLOGY_TABLES = frozenset(
     {
         "ontology_entities",
@@ -37,6 +40,7 @@ REQUIRED_ONTOLOGY_TABLES = frozenset(
         "ontology_conflicts",
         "ontology_ingest_receipts",
         "ontology_sync_outbox",
+        "ontology_backfill_pending",
     }
 )
 REQUIRED_COORDINATOR_TABLES = frozenset(
@@ -97,8 +101,19 @@ def read_connect(db_path: str | None = None) -> sqlite3.Connection:
 
     WAL keeps these readers available while a collector commits new evidence;
     query_only prevents a read path from accidentally becoming another writer.
+    Open SQLite in ``mode=ro`` so a status request cannot create a missing
+    database or directory as a side effect of reading it.
     """
-    connection = connect(db_path)
+    resolved_path = os.path.abspath(os.path.expanduser(db_path or default_db_path()))
+    if not os.path.isfile(resolved_path):
+        raise FileNotFoundError(resolved_path)
+    raw_timeout = os.environ.get("SECOPS_BUSY_TIMEOUT_MS", "").strip()
+    busy_timeout_ms = int(raw_timeout) if raw_timeout.isdigit() else 30000
+    uri = f"file:{quote(resolved_path, safe='/')}?mode=ro"
+    connection = sqlite3.connect(uri, uri=True, timeout=max(30, busy_timeout_ms // 1000))
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
     connection.execute("PRAGMA query_only = ON")
     return connection
 
@@ -107,6 +122,97 @@ def _ensure_column(connection: sqlite3.Connection, table: str, column: str, defi
     columns = {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
     if column not in columns:
         connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _has_type_aware_entity_identity(connection: sqlite3.Connection) -> bool:
+    """Check the actual SQLite unique constraint, including legacy databases."""
+    try:
+        indexes = connection.execute("PRAGMA index_list(ontology_entities)").fetchall()
+    except sqlite3.DatabaseError:
+        return False
+    for index in indexes:
+        if not int(index[2] or 0):
+            continue
+        name = str(index[1])
+        columns = [str(row[2]) for row in connection.execute(f"PRAGMA index_info({name})").fetchall()]
+        if columns == ["entity_type", "namespace", "canonical_key"]:
+            return True
+    return False
+
+
+def _migrate_type_aware_entity_identity(connection: sqlite3.Connection) -> None:
+    """Replace the v10 namespace/key-only unique constraint safely.
+
+    SQLite cannot alter the columns of an auto-generated UNIQUE index.  A
+    short table rebuild keeps all existing ontology rows and child foreign-key
+    references while making cross-type identities legal.  The caller already
+    holds the process-wide writer lock, and this is only reached during schema
+    initialization.
+    """
+    if "ontology_entities" not in {
+        str(row[0]) for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    } or _has_type_aware_entity_identity(connection):
+        return
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute("DROP TABLE IF EXISTS ontology_entities_v11")
+    connection.execute(
+        """
+        CREATE TABLE ontology_entities_v11 (
+            entity_id TEXT PRIMARY KEY,
+            entity_type TEXT NOT NULL,
+            namespace TEXT NOT NULL,
+            canonical_key TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            source TEXT NOT NULL,
+            source_id TEXT NOT NULL DEFAULT '',
+            workspace_id TEXT NOT NULL DEFAULT 'local',
+            owner_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'active',
+            properties_json TEXT NOT NULL DEFAULT '{}'
+                CHECK (length(properties_json) <= 65536),
+            confidence INTEGER NOT NULL DEFAULT 100
+                CHECK (confidence >= 0 AND confidence <= 100),
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            freshness_at TEXT NOT NULL,
+            valid_from TEXT,
+            valid_to TEXT,
+            schema_version TEXT NOT NULL DEFAULT 'secopsai.ontology.v1',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE (entity_type, namespace, canonical_key)
+        )
+        """
+    )
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ontology_entities)").fetchall()}
+    # v10 databases have these columns, but keep the migration tolerant of an
+    # interrupted upgrade from an older ontology revision.
+    for column, definition in (("valid_from", "TEXT"), ("valid_to", "TEXT")):
+        if column not in columns:
+            connection.execute(f"ALTER TABLE ontology_entities ADD COLUMN {column} {definition}")
+    connection.execute(
+        """
+        INSERT INTO ontology_entities_v11 (
+            entity_id, entity_type, namespace, canonical_key, display_name,
+            source, source_id, workspace_id, owner_id, status, properties_json,
+            confidence, first_seen_at, last_seen_at, observed_at, freshness_at,
+            valid_from, valid_to, schema_version, created_at, updated_at
+        )
+        SELECT entity_id, entity_type, namespace, canonical_key, display_name,
+               source, source_id, workspace_id, owner_id, status, properties_json,
+               confidence, first_seen_at, last_seen_at, observed_at, freshness_at,
+               valid_from, valid_to, schema_version, created_at, updated_at
+          FROM ontology_entities
+        """
+    )
+    connection.execute("DROP TABLE ontology_entities")
+    connection.execute("ALTER TABLE ontology_entities_v11 RENAME TO ontology_entities")
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_ontology_entities_type_key ON ontology_entities (entity_type, canonical_key)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_ontology_entities_source_id ON ontology_entities (source, source_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_ontology_entities_workspace_owner ON ontology_entities (workspace_id, owner_id, updated_at DESC)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_ontology_entities_freshness ON ontology_entities (freshness_at, last_seen_at DESC)")
 
 
 def init_db(db_path: str | None = None) -> None:
@@ -127,7 +233,8 @@ def init_db(db_path: str | None = None) -> None:
         }
         evidence_ref_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ontology_evidence_refs)").fetchall()} if "ontology_evidence_refs" in existing_tables else set()
         entity_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ontology_entities)").fetchall()} if "ontology_entities" in existing_tables else set()
-    if current_version >= SCHEMA_VERSION and (REQUIRED_ONTOLOGY_TABLES | REQUIRED_COORDINATOR_TABLES) <= existing_tables and {"workspace_id"} <= evidence_ref_columns and {"valid_from", "valid_to"} <= entity_columns:
+        type_aware_identity = _has_type_aware_entity_identity(connection)
+    if current_version >= SCHEMA_VERSION and (REQUIRED_ONTOLOGY_TABLES | REQUIRED_COORDINATOR_TABLES) <= existing_tables and {"workspace_id"} <= evidence_ref_columns and {"valid_from", "valid_to"} <= entity_columns and type_aware_identity:
         return
 
     with sqlite_writer_lock(resolved_path):
@@ -139,7 +246,7 @@ def init_db(db_path: str | None = None) -> None:
             }
             evidence_ref_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ontology_evidence_refs)").fetchall()} if "ontology_evidence_refs" in existing_tables else set()
             entity_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ontology_entities)").fetchall()} if "ontology_entities" in existing_tables else set()
-            if current_version >= SCHEMA_VERSION and (REQUIRED_ONTOLOGY_TABLES | REQUIRED_COORDINATOR_TABLES) <= existing_tables and {"workspace_id"} <= evidence_ref_columns and {"valid_from", "valid_to"} <= entity_columns:
+            if current_version >= SCHEMA_VERSION and (REQUIRED_ONTOLOGY_TABLES | REQUIRED_COORDINATOR_TABLES) <= existing_tables and {"workspace_id"} <= evidence_ref_columns and {"valid_from", "valid_to"} <= entity_columns and _has_type_aware_entity_identity(connection):
                 return
             journal_mode = str(connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]).lower()
             if journal_mode != "wal":
@@ -269,7 +376,7 @@ def init_db(db_path: str | None = None) -> None:
                 schema_version TEXT NOT NULL DEFAULT 'secopsai.ontology.v1',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                UNIQUE (namespace, canonical_key)
+                UNIQUE (entity_type, namespace, canonical_key)
             );
 
             CREATE TABLE IF NOT EXISTS ontology_aliases (
@@ -405,6 +512,23 @@ def init_db(db_path: str | None = None) -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS ontology_backfill_pending (
+                pending_id TEXT PRIMARY KEY,
+                stream_key TEXT NOT NULL,
+                item_kind TEXT NOT NULL,
+                source_cursor TEXT NOT NULL,
+                item_index INTEGER NOT NULL DEFAULT 0,
+                payload_json TEXT NOT NULL DEFAULT '{}'
+                    CHECK (length(payload_json) <= 32768),
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+                next_attempt_at TEXT NOT NULL,
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (stream_key, item_kind, source_cursor, item_index)
+            );
+
             CREATE UNIQUE INDEX IF NOT EXISTS idx_ontology_aliases_entity_value
                 ON ontology_aliases (entity_id, alias_type, normalized_value);
             CREATE INDEX IF NOT EXISTS idx_ontology_sync_outbox_due
@@ -433,6 +557,10 @@ def init_db(db_path: str | None = None) -> None:
                 ON ontology_change_log (object_type, object_id, occurred_at DESC);
             CREATE INDEX IF NOT EXISTS idx_ontology_conflicts_status_time
                 ON ontology_conflicts (status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ontology_backfill_pending_due
+                ON ontology_backfill_pending (status, next_attempt_at, stream_key, created_at);
+            CREATE INDEX IF NOT EXISTS idx_ontology_backfill_pending_source
+                ON ontology_backfill_pending (stream_key, source_cursor, item_index);
             CREATE INDEX IF NOT EXISTS idx_ontology_ingest_receipts_created
                 ON ontology_ingest_receipts (created_at DESC, idempotency_key);
             CREATE TRIGGER IF NOT EXISTS trg_ontology_ingest_receipts_response_bound
@@ -496,7 +624,11 @@ def init_db(db_path: str | None = None) -> None:
                 error_code TEXT,
                 error_message TEXT,
                 input_json TEXT NOT NULL,
-                result_json TEXT NOT NULL
+                result_json TEXT NOT NULL,
+                worker_id TEXT NOT NULL DEFAULT '',
+                lease_until TEXT,
+                lease_generation INTEGER NOT NULL DEFAULT 0,
+                lease_token TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS intelligence_job_events (
@@ -757,7 +889,10 @@ def init_db(db_path: str | None = None) -> None:
                 next_run_at TEXT,
                 summary_json TEXT NOT NULL,
                 error_message TEXT,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                owner_id TEXT NOT NULL DEFAULT '',
+                generation INTEGER NOT NULL DEFAULT 0,
+                lease_until TEXT
             );
 
             CREATE TABLE IF NOT EXISTS daily_automation_steps (
@@ -1992,6 +2127,14 @@ def init_db(db_path: str | None = None) -> None:
             _ensure_column(connection, "ontology_evidence_refs", "workspace_id", "TEXT NOT NULL DEFAULT 'local'")
             _ensure_column(connection, "ontology_entities", "valid_from", "TEXT")
             _ensure_column(connection, "ontology_entities", "valid_to", "TEXT")
+            _migrate_type_aware_entity_identity(connection)
+            _ensure_column(connection, "intelligence_jobs", "worker_id", "TEXT NOT NULL DEFAULT ''")
+            _ensure_column(connection, "intelligence_jobs", "lease_until", "TEXT")
+            _ensure_column(connection, "intelligence_jobs", "lease_generation", "INTEGER NOT NULL DEFAULT 0")
+            _ensure_column(connection, "intelligence_jobs", "lease_token", "TEXT NOT NULL DEFAULT ''")
+            _ensure_column(connection, "daily_automation_runs", "owner_id", "TEXT NOT NULL DEFAULT ''")
+            _ensure_column(connection, "daily_automation_runs", "generation", "INTEGER NOT NULL DEFAULT 0")
+            _ensure_column(connection, "daily_automation_runs", "lease_until", "TEXT")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_ontology_entities_validity ON ontology_entities (valid_from, valid_to, freshness_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_ontology_evidence_workspace ON ontology_evidence_refs (workspace_id, observed_at DESC)")
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -2100,33 +2243,39 @@ def persist_findings(findings: Iterable[Dict[str, Any]], source: str, db_path: s
 
 
 def set_finding_status(finding_id: str, status: str, db_path: str | None = None) -> None:
-    init_db(db_path)
-    with closing(connect(db_path)) as connection:
-        connection.execute(
-            "UPDATE findings SET status = ?, updated_at = ? WHERE finding_id = ?",
-            (status, utc_now(), finding_id),
-        )
-        connection.commit()
+    resolved_path = db_path or default_db_path()
+    with sqlite_writer_lock(resolved_path):
+        init_db(resolved_path)
+        with closing(connect(resolved_path)) as connection:
+            connection.execute(
+                "UPDATE findings SET status = ?, updated_at = ? WHERE finding_id = ?",
+                (status, utc_now(), finding_id),
+            )
+            connection.commit()
 
 
 def set_finding_disposition(finding_id: str, disposition: str, db_path: str | None = None) -> None:
-    init_db(db_path)
-    with closing(connect(db_path)) as connection:
-        connection.execute(
-            "UPDATE findings SET disposition = ?, updated_at = ? WHERE finding_id = ?",
-            (disposition, utc_now(), finding_id),
-        )
-        connection.commit()
+    resolved_path = db_path or default_db_path()
+    with sqlite_writer_lock(resolved_path):
+        init_db(resolved_path)
+        with closing(connect(resolved_path)) as connection:
+            connection.execute(
+                "UPDATE findings SET disposition = ?, updated_at = ? WHERE finding_id = ?",
+                (disposition, utc_now(), finding_id),
+            )
+            connection.commit()
 
 
 def add_note(finding_id: str, author: str, note: str, db_path: str | None = None) -> None:
-    init_db(db_path)
-    with closing(connect(db_path)) as connection:
-        connection.execute(
-            "INSERT INTO notes (finding_id, author, note, created_at) VALUES (?, ?, ?, ?)",
-            (finding_id, author, note, utc_now()),
-        )
-        connection.commit()
+    resolved_path = db_path or default_db_path()
+    with sqlite_writer_lock(resolved_path):
+        init_db(resolved_path)
+        with closing(connect(resolved_path)) as connection:
+            connection.execute(
+                "INSERT INTO notes (finding_id, author, note, created_at) VALUES (?, ?, ?, ?)",
+                (finding_id, author, note, utc_now()),
+            )
+            connection.commit()
 
 
 def list_findings(
@@ -2141,6 +2290,8 @@ def list_findings(
 ) -> List[Dict[str, Any]]:
     if initialize_db:
         init_db(db_path)
+    elif not os.path.isfile(db_path or default_db_path()):
+        return []
     if limit is not None and limit <= 0:
         return []
     clauses: List[str] = []
@@ -2168,7 +2319,8 @@ def list_findings(
     if limit is not None and limit > 0:
         query += " LIMIT ?"
         params.append(int(limit))
-    with closing(connect(db_path)) as connection:
+    connector = connect if initialize_db else read_connect
+    with closing(connector(db_path)) as connection:
         rows = connection.execute(query, tuple(params)).fetchall()
     results: List[Dict[str, Any]] = []
     for row in rows:
@@ -2206,7 +2358,16 @@ def summarize_findings(db_path: str | None = None, *, initialize_db: bool = True
     """
     if initialize_db:
         init_db(db_path)
-    with closing(connect(db_path)) as connection:
+    elif not os.path.isfile(db_path or default_db_path()):
+        return {
+            "total": 0,
+            "open_findings": 0,
+            "in_review_findings": 0,
+            "research_lead_findings": 0,
+            "severity_counts": {},
+        }
+    connector = connect if initialize_db else read_connect
+    with closing(connector(db_path)) as connection:
         totals = connection.execute(
             """
             SELECT
@@ -2234,9 +2395,19 @@ def summarize_findings(db_path: str | None = None, *, initialize_db: bool = True
     }
 
 
-def get_finding(finding_id: str, db_path: str | None = None) -> Dict[str, Any] | None:
-    init_db(db_path)
-    with closing(connect(db_path)) as connection:
+def get_finding(
+    finding_id: str,
+    db_path: str | None = None,
+    *,
+    initialize_db: bool = True,
+) -> Dict[str, Any] | None:
+    if initialize_db:
+        init_db(db_path)
+    resolved_path = db_path or default_db_path()
+    if not os.path.isfile(resolved_path):
+        return None
+    connector = connect if initialize_db else read_connect
+    with closing(connector(resolved_path)) as connection:
         row = connection.execute(
             "SELECT payload_json, status, disposition FROM findings WHERE finding_id = ?",
             (finding_id,),

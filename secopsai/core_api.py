@@ -46,6 +46,7 @@ from secopsai.intelligence_jobs import complete_job as complete_intelligence_job
 from secopsai.intelligence_jobs import enqueue_job as enqueue_intelligence_job
 from secopsai.intelligence_jobs import fail_job as fail_intelligence_job
 from secopsai.intelligence_jobs import get_job as get_intelligence_job
+from secopsai.intelligence_jobs import heartbeat_job as heartbeat_intelligence_job
 from secopsai.intelligence_jobs import list_jobs as list_intelligence_jobs
 from secopsai.agent_triage import enqueue_due_findings as enqueue_agent_triage_findings
 from secopsai.agent_triage import rollback_run as rollback_agent_triage_run
@@ -62,6 +63,7 @@ from secopsai.observability import initialize_observability
 from secopsai.enterprise_store import EnterpriseContext, RateLimiter, build_enterprise_store
 from secopsai.enterprise_workflows import pentest_engagement, questionnaire_record, threat_model_record
 from secopsai.vulnerability_management import normalize_advisory
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 from secopsai.siem import MetricsRegistry
 from secopsai.mcp_gateway import gateway_status as mcp_gateway_status
 from secopsai.mcp_gateway import record_activity as record_mcp_activity
@@ -1079,7 +1081,19 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
                 "status": "claimed" if job else "idle",
                 "job": (
                     {
-                        **{key: job.get(key) for key in ("job_id", "action", "target_id", "status", "attempt")},
+                        **{
+                            key: job.get(key)
+                            for key in (
+                                "job_id",
+                                "action",
+                                "target_id",
+                                "status",
+                                "attempt",
+                                "worker_id",
+                                "lease_generation",
+                                "lease_token",
+                            )
+                        },
                         "selected_model": str((job.get("input") or {}).get("selected_model") or ""),
                     }
                     if job
@@ -1099,11 +1113,20 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         try:
             payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "Bridge result")
-            worker_id = str(payload.get("worker_id") or "remote-codex-bridge").strip()[:160]
+            worker_id, lease_generation, lease_token = _require_bridge_lease(payload)
             job = get_intelligence_job(job_id, db_path=resolved.db_path)
             provider = str(payload.get("provider") or "codex_chatgpt_subscription").strip()[:120] or "codex_chatgpt_subscription"
             result = validate_bridge_result(job["action"], payload.get("result") or {}, provider=provider)
-            completed = complete_intelligence_job(job_id, result=result, actor=worker_id, provider=provider, db_path=resolved.db_path)
+            completed = complete_intelligence_job(
+                job_id,
+                result=result,
+                actor=worker_id,
+                provider=provider,
+                worker_id=worker_id,
+                lease_generation=lease_generation,
+                lease_token=lease_token,
+                db_path=resolved.db_path,
+            )
             _write_audit(
                 resolved.db_path,
                 request_id=request.state.request_id,
@@ -1115,7 +1138,28 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
             )
             return {"status": "succeeded", "job": completed, "request_id": request.state.request_id}
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise HTTPException(status_code=_bridge_lease_error_status(exc), detail=str(exc)) from exc
+
+    @application.post("/api/v1/intelligence/bridge/jobs/{job_id}/heartbeat")
+    async def intelligence_bridge_heartbeat(
+        job_id: str,
+        request: Request,
+        _role: str = Depends(require_bridge),
+    ) -> dict[str, Any]:
+        try:
+            payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "Bridge heartbeat")
+            worker_id, lease_generation, lease_token = _require_bridge_lease(payload)
+            heartbeated = heartbeat_intelligence_job(
+                job_id,
+                actor=worker_id,
+                worker_id=worker_id,
+                lease_generation=lease_generation,
+                lease_token=lease_token,
+                db_path=resolved.db_path,
+            )
+            return {"status": "running", "job": heartbeated, "request_id": request.state.request_id}
+        except ValueError as exc:
+            raise HTTPException(status_code=_bridge_lease_error_status(exc), detail=str(exc)) from exc
 
     @application.post("/api/v1/intelligence/bridge/jobs/{job_id}/fail")
     async def intelligence_bridge_fail(
@@ -1125,12 +1169,15 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         try:
             payload = await _read_json_object(request, MAX_INTELLIGENCE_REQUEST_BYTES, "Bridge failure")
-            worker_id = str(payload.get("worker_id") or "remote-codex-bridge").strip()[:160]
+            worker_id, lease_generation, lease_token = _require_bridge_lease(payload)
             failed = fail_intelligence_job(
                 job_id,
                 error_code=str(payload.get("error_code") or "remote_bridge_failed")[:80],
                 error_message=str(payload.get("error_message") or "Remote bridge failed")[:2000],
                 actor=worker_id,
+                worker_id=worker_id,
+                lease_generation=lease_generation,
+                lease_token=lease_token,
                 db_path=resolved.db_path,
             )
             _write_audit(
@@ -1144,9 +1191,46 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
             )
             return {"status": "failed", "job": failed, "request_id": request.state.request_id}
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise HTTPException(status_code=_bridge_lease_error_status(exc), detail=str(exc)) from exc
 
     return application
+
+
+def _require_bridge_lease(payload: dict[str, Any]) -> tuple[str, int, str]:
+    """Validate the lease proof required at the local HTTP bridge boundary.
+
+    The job module still supports its legacy direct-call form for local callers,
+    but every HTTP terminal/heartbeat write must identify the worker and prove
+    ownership of the currently claimed lease.
+    """
+
+    raw_worker_id = str(payload.get("worker_id") or "").strip()
+    worker_id = raw_worker_id if len(raw_worker_id) <= 160 else ""
+    raw_lease_token = str(payload.get("lease_token") or "").strip()
+    lease_token = raw_lease_token if len(raw_lease_token) <= 160 else ""
+    raw_generation = payload.get("lease_generation")
+    if not worker_id or not lease_token or raw_generation is None or isinstance(raw_generation, bool):
+        raise ValueError("worker_id, lease_generation, and lease_token are required")
+    try:
+        if isinstance(raw_generation, float) and not raw_generation.is_integer():
+            raise ValueError("lease_generation must be an integer")
+        lease_generation = int(raw_generation)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("lease_generation must be an integer") from exc
+    if lease_generation < 1:
+        raise ValueError("lease_generation must be positive")
+    return worker_id, lease_generation, lease_token
+
+
+def _bridge_lease_error_status(exc: ValueError) -> int:
+    message = str(exc).lower()
+    if "required" in message and "lease" in message:
+        return 422
+    if "must be" in message and any(field in message for field in ("worker_id", "lease_generation", "lease_token")):
+        return 422
+    if "lease" in message or "fenced" in message or "running job" in message or "only a running" in message:
+        return 409
+    return 422
 
 
 def _bearer_dependency(token_provider: Callable[[], str], role: str):
@@ -1281,6 +1365,12 @@ def _validate_research_alert(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _upsert_research_alert(alert: dict[str, Any], db_path: str) -> dict[str, Any]:
+    """Persist one webhook alert under the shared SQLite writer lock."""
+    with sqlite_writer_lock(db_path):
+        return _upsert_research_alert_unlocked(alert, db_path)
+
+
+def _upsert_research_alert_unlocked(alert: dict[str, Any], db_path: str) -> dict[str, Any]:
     now = soc_store.utc_now()
     digest = hashlib.sha256(alert["alert_id"].encode()).hexdigest()[:24].upper()
     alert_id = f"RAL-WEB-{digest}"
@@ -1434,10 +1524,27 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _workspace_payload(db_path: str, limit: int) -> dict[str, Any]:
-    soc_store.init_db(db_path)
-    assets = list_assets(db_path=db_path, limit=limit)
-    changes = _sanitize(list_changes(db_path=db_path, limit=limit))
-    with soc_store.connect(db_path) as connection:
+    if not os.path.isfile(db_path):
+        return {
+            "schema_version": "secopsai.core.workspace.v1",
+            "generated_at": soc_store.utc_now(),
+            "data_classification": "minimized_derived_security_context",
+            "status": "degraded",
+            "error": "Core data store is unavailable",
+            "summary": {"assets": 0, "findings": 0, "open_findings": 0, "research_lead_findings": 0, "priority_findings": 0, "sensors": 0, "sites": 0, "wifi_networks": 0, "operational_research_alerts": 0, "external_research_alerts": 0},
+            "assets": [],
+            "findings": [],
+            "changes": {"nodes": [], "edges": []},
+            "sync_state": [],
+            "research_alerts": [],
+            "sites": [],
+            "sensors": [],
+            "services": [],
+            "wifi_networks": [],
+        }
+    assets = list_assets(db_path=db_path, limit=limit, initialize_db=False)
+    changes = _sanitize(list_changes(db_path=db_path, limit=limit, initialize_db=False))
+    with soc_store.read_connect(db_path) as connection:
         finding_rows = connection.execute(
             """
             SELECT finding_id, title, summary, severity, severity_score, status,
@@ -1581,6 +1688,29 @@ def _write_audit(
     source_instance: str | None,
     details: dict[str, Any],
 ) -> None:
+    """Write an audit record without racing collectors or bridge writers."""
+    with sqlite_writer_lock(db_path):
+        _write_audit_unlocked(
+            db_path,
+            request_id=request_id,
+            action=action,
+            actor_role=actor_role,
+            result=result,
+            source_instance=source_instance,
+            details=details,
+        )
+
+
+def _write_audit_unlocked(
+    db_path: str,
+    *,
+    request_id: str,
+    action: str,
+    actor_role: str,
+    result: str,
+    source_instance: str | None,
+    details: dict[str, Any],
+) -> None:
     soc_store.init_db(db_path)
     with soc_store.connect(db_path) as connection:
         connection.execute(
@@ -1610,8 +1740,9 @@ def _write_audit_safely(db_path: str, **kwargs: Any) -> None:
 
 
 def _list_audit_logs(db_path: str, limit: int) -> list[dict[str, Any]]:
-    soc_store.init_db(db_path)
-    with soc_store.connect(db_path) as connection:
+    if not os.path.isfile(db_path):
+        return []
+    with soc_store.read_connect(db_path) as connection:
         rows = connection.execute(
             """
             SELECT request_id, occurred_at, action, actor_role, result, source_instance, details_json

@@ -4,12 +4,14 @@ import soc_store
 from secopsai import daily_automation
 
 
-def _stub_modules(monkeypatch, *, fail_step=None):
+def _stub_modules(monkeypatch, *, fail_step=None, kwargs_by_name=None):
     calls = []
 
     def stub(name, result=None):
         def run(**kwargs):
             calls.append(name)
+            if kwargs_by_name is not None:
+                kwargs_by_name[name] = dict(kwargs)
             if name == fail_step:
                 raise RuntimeError(f"{name} failed")
             return result or {"status": "ok", "step": name}
@@ -94,6 +96,28 @@ def test_daily_cycle_runs_all_steps_and_is_persisted(tmp_path, monkeypatch):
     assert status["settings"]["next_run_at"]
 
 
+def test_daily_cycle_passes_database_path_to_database_backed_callbacks(tmp_path, monkeypatch):
+    db = str(tmp_path / "soc.db")
+    callback_kwargs = {}
+    _stub_modules(monkeypatch, kwargs_by_name=callback_kwargs)
+
+    daily_automation.run_cycle(db_path=db, trigger="test", force=True)
+
+    for step_name in (
+        "intelligence_queue_recovery",
+        "registry_surveillance",
+        "candidate_promotion",
+        "artifact_fleet_safe_cycle",
+        "alert_review_queue",
+        "evidence_investigations",
+        "research_specialist_review",
+        "detection_learning",
+        "storage_retention",
+        "operational_alert_delivery",
+    ):
+        assert callback_kwargs[step_name]["db_path"] == db
+
+
 def test_daily_cycle_continues_after_step_failure_and_marks_degraded(tmp_path, monkeypatch):
     db = str(tmp_path / "soc.db")
     calls = _stub_modules(monkeypatch, fail_step="candidate_promotion")
@@ -128,6 +152,16 @@ def test_daily_settings_reject_unsafe_limits(tmp_path):
         assert "interval" in str(exc)
     else:
         raise AssertionError("unsafe automation interval was accepted")
+
+
+def test_status_read_does_not_create_or_initialize_database(tmp_path):
+    db = str(tmp_path / "missing-status.db")
+
+    payload = daily_automation.status(db_path=db)
+
+    assert payload["settings"]["schema_version"] == daily_automation.SCHEMA_VERSION
+    assert payload["summary"]["last_status"] == "never_run"
+    assert not (tmp_path / "missing-status.db").exists()
 
 
 def test_daily_step_retries_only_transient_sqlite_lock(tmp_path, monkeypatch):

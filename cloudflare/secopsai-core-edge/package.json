@@ -6,9 +6,11 @@
   "scripts": {
     "check": "node --check src/index.js && node --check test/worker.test.js",
     "test": "node --test",
-    "deploy": "wrangler deploy"
+    "migrate:remote": "wrangler d1 migrations apply secopsai-core-edge --remote",
+    "deploy": "wrangler deploy",
+    "deploy:remote": "npm run migrate:remote && wrangler deploy"
   },
   "devDependencies": {
-    "wrangler": "4.129.0"
+    "wrangler": "4.131.1"
   }
 }

@@ -26,6 +26,7 @@ from secopsai.research_workflow import (
     publication_safety_check,
     record_verdict,
 )
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 SCHEMA_VERSION = "secopsai.research.investigation-pipeline.v1"
@@ -130,30 +131,31 @@ def _set_step(
     if status not in STEP_STATUSES:
         raise ValueError(f"invalid pipeline step status: {status}")
     now = soc_store.utc_now()
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """UPDATE research_pipeline_steps SET status = ?,
-               intelligence_job_id = COALESCE(?, intelligence_job_id),
-               result_json = COALESCE(?, result_json), error_code = ?, error_message = ?,
-               started_at = CASE WHEN ? IN ('running', 'queued') THEN COALESCE(started_at, ?) ELSE started_at END,
-               completed_at = CASE WHEN ? IN ('succeeded', 'failed', 'skipped', 'awaiting_input') THEN ? ELSE NULL END,
-               updated_at = ? WHERE pipeline_id = ? AND step_key = ?""",
-            (
-                status,
-                intelligence_job_id,
-                _json(result) if result is not None else None,
-                error_code,
-                _clean(error_message, 2000) or None,
-                status,
-                now,
-                status,
-                now,
-                now,
-                pipeline_id,
-                step_key,
-            ),
-        )
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                """UPDATE research_pipeline_steps SET status = ?,
+                   intelligence_job_id = COALESCE(?, intelligence_job_id),
+                   result_json = COALESCE(?, result_json), error_code = ?, error_message = ?,
+                   started_at = CASE WHEN ? IN ('running', 'queued') THEN COALESCE(started_at, ?) ELSE started_at END,
+                   completed_at = CASE WHEN ? IN ('succeeded', 'failed', 'skipped', 'awaiting_input') THEN ? ELSE NULL END,
+                   updated_at = ? WHERE pipeline_id = ? AND step_key = ?""",
+                (
+                    status,
+                    intelligence_job_id,
+                    _json(result) if result is not None else None,
+                    error_code,
+                    _clean(error_message, 2000) or None,
+                    status,
+                    now,
+                    status,
+                    now,
+                    now,
+                    pipeline_id,
+                    step_key,
+                ),
+            )
+            connection.commit()
 
 
 def _set_pipeline(
@@ -169,27 +171,28 @@ def _set_pipeline(
     if status not in PIPELINE_STATUSES:
         raise ValueError(f"invalid pipeline status: {status}")
     now = soc_store.utc_now()
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """UPDATE research_pipeline_runs SET status = ?, current_step = ?,
-               summary_json = COALESCE(?, summary_json), error_code = ?, error_message = ?,
-               started_at = COALESCE(started_at, ?),
-               completed_at = CASE WHEN ? IN ('succeeded', 'failed', 'canceled') THEN ? ELSE NULL END,
-               updated_at = ? WHERE pipeline_id = ?""",
-            (
-                status,
-                current_step,
-                _json(summary) if summary is not None else None,
-                error_code,
-                _clean(error_message, 2000) or None,
-                now,
-                status,
-                now,
-                now,
-                pipeline_id,
-            ),
-        )
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                """UPDATE research_pipeline_runs SET status = ?, current_step = ?,
+                   summary_json = COALESCE(?, summary_json), error_code = ?, error_message = ?,
+                   started_at = COALESCE(started_at, ?),
+                   completed_at = CASE WHEN ? IN ('succeeded', 'failed', 'canceled') THEN ? ELSE NULL END,
+                   updated_at = ? WHERE pipeline_id = ?""",
+                (
+                    status,
+                    current_step,
+                    _json(summary) if summary is not None else None,
+                    error_code,
+                    _clean(error_message, 2000) or None,
+                    now,
+                    status,
+                    now,
+                    now,
+                    pipeline_id,
+                ),
+            )
+            connection.commit()
 
 
 def _step_result(pipeline: Dict[str, Any], step_key: str) -> Dict[str, Any]:
@@ -727,32 +730,33 @@ def _put_review_item(
     db_path: Optional[str],
 ) -> None:
     now = soc_store.utc_now()
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """INSERT INTO research_review_items
-            (item_id, pipeline_id, case_id, source_key, item_type, content, confidence,
-             evidence_refs_json, metadata_json, status, reviewer, review_note,
-             edited_content, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, '', '', ?, ?)
-            ON CONFLICT(pipeline_id, source_key) DO UPDATE SET
-              item_type=excluded.item_type, content=excluded.content,
-              confidence=excluded.confidence, evidence_refs_json=excluded.evidence_refs_json,
-              metadata_json=excluded.metadata_json, updated_at=excluded.updated_at""",
-            (
-                _review_id(pipeline_id, source_key),
-                pipeline_id,
-                case_id,
-                source_key[:180],
-                item_type[:80],
-                _clean(content, 12000),
-                max(0, min(int(confidence), 100)),
-                _json(list(evidence_refs)[:50]),
-                _json(metadata or {}),
-                now,
-                now,
-            ),
-        )
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                """INSERT INTO research_review_items
+                (item_id, pipeline_id, case_id, source_key, item_type, content, confidence,
+                 evidence_refs_json, metadata_json, status, reviewer, review_note,
+                 edited_content, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, '', '', ?, ?)
+                ON CONFLICT(pipeline_id, source_key) DO UPDATE SET
+                  item_type=excluded.item_type, content=excluded.content,
+                  confidence=excluded.confidence, evidence_refs_json=excluded.evidence_refs_json,
+                  metadata_json=excluded.metadata_json, updated_at=excluded.updated_at""",
+                (
+                    _review_id(pipeline_id, source_key),
+                    pipeline_id,
+                    case_id,
+                    source_key[:180],
+                    item_type[:80],
+                    _clean(content, 12000),
+                    max(0, min(int(confidence), 100)),
+                    _json(list(evidence_refs)[:50]),
+                    _json(metadata or {}),
+                    now,
+                    now,
+                ),
+            )
+            connection.commit()
 
 
 def reconcile_intelligence_job(job: Dict[str, Any], *, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -816,16 +820,17 @@ def reconcile_intelligence_job(job: Dict[str, Any], *, db_path: Optional[str] = 
         "human_review_required": True,
     }
     _set_pipeline(pipeline_id, "awaiting_review", current_step="human_review", summary=summary, db_path=db_path)
-    with closing(soc_store.connect(db_path)) as connection:
-        _event(
-            connection,
-            current["case_id"],
-            "investigation_pipeline_review_ready",
-            f"Research pipeline {pipeline_id} is ready for structured human review.",
-            "local-codex-bridge",
-            {"pipeline_id": pipeline_id, "pending_review_items": summary["pending_review_items"]},
-        )
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            _event(
+                connection,
+                current["case_id"],
+                "investigation_pipeline_review_ready",
+                f"Research pipeline {pipeline_id} is ready for structured human review.",
+                "local-codex-bridge",
+                {"pipeline_id": pipeline_id, "pending_review_items": summary["pending_review_items"]},
+            )
+            connection.commit()
     if str(os.environ.get("SECOPSAI_RESEARCH_AUTONOMY_MODE") or "").strip().lower() in {"agent_review", "agent_resolve"}:
         return agent_complete_pipeline(
             pipeline_id,

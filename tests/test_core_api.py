@@ -445,7 +445,56 @@ def test_remote_bridge_claims_and_completes_a_hosted_job(client):
     assert claimed.status_code == 200
     claim_payload = claimed.json()
     assert claim_payload["job"]["job_id"] == queued["job_id"]
+    assert claim_payload["job"]["worker_id"] == "macbook-bridge"
+    assert claim_payload["job"]["lease_generation"] >= 1
+    assert claim_payload["job"]["lease_token"]
     assert claim_payload["bridge_request"]["safety"]["raw_telemetry_included"] is False
+
+    lease = {
+        "worker_id": "macbook-bridge",
+        "lease_generation": claim_payload["job"]["lease_generation"],
+        "lease_token": claim_payload["job"]["lease_token"],
+    }
+    missing_lease = test_client.post(
+        f"/api/v1/intelligence/bridge/jobs/{queued['job_id']}/complete",
+        headers={"Authorization": f"Bearer {BRIDGE_TOKEN}"},
+        json={"result": {}},
+    )
+    assert missing_lease.status_code == 422
+    invalid_generation = test_client.post(
+        f"/api/v1/intelligence/bridge/jobs/{queued['job_id']}/heartbeat",
+        headers={"Authorization": f"Bearer {BRIDGE_TOKEN}"},
+        json={**lease, "lease_generation": 1.5},
+    )
+    assert invalid_generation.status_code == 422
+    heartbeat = test_client.post(
+        f"/api/v1/intelligence/bridge/jobs/{queued['job_id']}/heartbeat",
+        headers={"Authorization": f"Bearer {BRIDGE_TOKEN}"},
+        json=lease,
+    )
+    assert heartbeat.status_code == 200
+    stale_completion = test_client.post(
+        f"/api/v1/intelligence/bridge/jobs/{queued['job_id']}/complete",
+        headers={"Authorization": f"Bearer {BRIDGE_TOKEN}"},
+        json={
+            **lease,
+            "lease_token": "stale-lease-token",
+            "result": {
+                "summary": "stale",
+                "risk_assessment": "stale",
+                "evidence": [],
+                "recommended_actions": [],
+                "limitations": [],
+            },
+        },
+    )
+    assert stale_completion.status_code == 409
+    stale_failure = test_client.post(
+        f"/api/v1/intelligence/bridge/jobs/{queued['job_id']}/fail",
+        headers={"Authorization": f"Bearer {BRIDGE_TOKEN}"},
+        json={**lease, "lease_token": "stale-lease-token", "error_message": "stale"},
+    )
+    assert stale_failure.status_code == 409
 
     running_cancel = test_client.post(
         f"/api/v1/intelligence/jobs/{queued['job_id']}/cancel",
@@ -458,7 +507,7 @@ def test_remote_bridge_claims_and_completes_a_hosted_job(client):
         f"/api/v1/intelligence/bridge/jobs/{queued['job_id']}/complete",
         headers={"Authorization": f"Bearer {BRIDGE_TOKEN}"},
         json={
-            "worker_id": "macbook-bridge",
+            **lease,
             "result": {
                 "summary": "Evidence-grounded summary.",
                 "risk_assessment": "High priority.",

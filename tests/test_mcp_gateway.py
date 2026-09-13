@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 import soc_store
+import secopsai.mcp_gateway as mcp_gateway
 from secopsai.mcp_gateway import gateway_status, record_activity, revoke_session, session_status
 
 
@@ -75,6 +77,24 @@ def test_revocation_is_durable_and_activity_cannot_reactivate_session(tmp_path):
     status = gateway_status(db_path=db)
     assert status["summary"]["revoked_sessions"] == 1
     assert status["summary"]["connected_sessions"] == 0
+
+
+def test_mcp_mutations_hold_the_shared_writer_lock(tmp_path, monkeypatch):
+    db = str(tmp_path / "core.db")
+    calls = []
+    real_lock = mcp_gateway.sqlite_writer_lock
+
+    @contextmanager
+    def tracked_lock(path=None, **kwargs):
+        calls.append(path)
+        with real_lock(path, **kwargs):
+            yield
+
+    monkeypatch.setattr(mcp_gateway, "sqlite_writer_lock", tracked_lock)
+    mcp_gateway.record_activity(activity(), request_id="request-1", db_path=db)
+    mcp_gateway.revoke_session(SESSION_ID, actor="security-operator", reason="device retired", db_path=db)
+
+    assert calls == [db, db]
 
 
 def test_old_activity_is_not_presented_as_connected(tmp_path):

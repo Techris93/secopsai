@@ -50,6 +50,20 @@ def _render_help() -> str:
     )
 
 
+def _safe_finding_message(kind: str) -> str:
+    """Return a low-disclosure response for messaging finding lookups.
+
+    WhatsApp is a convenient command surface, but it is not the authenticated
+    Mission Control console.  The Twilio sender allowlist controls who may
+    issue commands; list/show replies still avoid turning finding IDs, titles,
+    or summaries into message content that can be forwarded or retained by a
+    third-party provider.
+    """
+    if kind == "list":
+        return "High-severity findings are available in the authenticated Mission Control console."
+    return "Finding details are available in the authenticated Mission Control console."
+
+
 def _summarize_check(payload: dict) -> str:
     lines = [
         f"Check: {payload.get('check_type')}",
@@ -104,34 +118,10 @@ def handle_message(message: str) -> str:
         return _summarize_check(payload)
 
     if normalized == "list high":
-        rows = _top_rows(
-            [
-                row
-                for row in openclaw_plugin.soc_store.list_findings()
-                if _severity_at_least(str(row.get("severity", "info")), "high")
-            ],
-            max_rows=10,
-        )
-        if not rows:
-            return "No high-severity findings right now."
-        lines = ["High findings:"]
-        for row in rows:
-            lines.append(f"- {row.get('finding_id')} | {row.get('severity')} | {row.get('title')}")
-        return "\n".join(lines)
+        return _safe_finding_message("list")
 
     if normalized.startswith("show "):
-        finding_id = message.strip().split(maxsplit=1)[1]
-        finding = openclaw_plugin.soc_store.get_finding(finding_id)
-        if not finding:
-            return f"Finding not found: {finding_id}"
-        return (
-            f"{finding.get('finding_id')}\n"
-            f"Severity: {finding.get('severity')}\n"
-            f"Status: {finding.get('status')}\n"
-            f"Disposition: {finding.get('disposition')}\n"
-            f"Title: {finding.get('title')}\n"
-            f"Summary: {finding.get('summary')}"
-        )
+        return _safe_finding_message("show")
 
     return "Unknown command. Send 'help' to see supported commands."
 

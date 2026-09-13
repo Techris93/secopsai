@@ -13,6 +13,7 @@ from contextlib import closing
 from typing import Any, Dict, Optional
 
 import soc_store
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 SCHEMA_VERSION = "secopsai.detection-learning.v1"
 FEATURE_VERSION = "dlf-1"
@@ -57,13 +58,14 @@ def _positive_number(v: Any) -> bool:
 
 def get_settings(*, db_path: Optional[str] = None) -> Dict[str, Any]:
     soc_store.init_db(db_path)
-    with closing(soc_store.connect(db_path)) as c:
-        row = c.execute("SELECT * FROM detection_learning_settings WHERE settings_id=1").fetchone()
-        if row is None:
-            now = soc_store.utc_now()
-            c.execute("""INSERT INTO detection_learning_settings VALUES
-                (1,?,?,?,?,?,?,?,?,?,?)""", (DEFAULTS["mode"], DEFAULTS["minimum_examples"], DEFAULTS["holdout_percent"], DEFAULTS["maximum_false_negative_regression"], DEFAULTS["minimum_precision"], DEFAULTS["canary_percent"], 0, 0, now, "secopsai-default"))
-            c.commit(); row = c.execute("SELECT * FROM detection_learning_settings WHERE settings_id=1").fetchone()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as c:
+            row = c.execute("SELECT * FROM detection_learning_settings WHERE settings_id=1").fetchone()
+            if row is None:
+                now = soc_store.utc_now()
+                c.execute("""INSERT INTO detection_learning_settings VALUES
+                    (1,?,?,?,?,?,?,?,?,?,?)""", (DEFAULTS["mode"], DEFAULTS["minimum_examples"], DEFAULTS["holdout_percent"], DEFAULTS["maximum_false_negative_regression"], DEFAULTS["minimum_precision"], DEFAULTS["canary_percent"], 0, 0, now, "secopsai-default"))
+                c.commit(); row = c.execute("SELECT * FROM detection_learning_settings WHERE settings_id=1").fetchone()
     out = dict(row or {}); out["auto_promote_shadow"] = bool(out.get("auto_promote_shadow")); out["auto_promote_canary"] = bool(out.get("auto_promote_canary")); out["schema_version"] = SCHEMA_VERSION; return out
 
 
@@ -77,8 +79,9 @@ def update_settings(*, mode: Optional[str] = None, minimum_examples: Optional[in
     if m not in MODES or not 10 <= values[0] <= 100000 or not 10 <= values[1] <= 40 or not 0 <= values[2] <= 10 or not .5 <= values[3] <= 1 or not 1 <= values[4] <= 50: raise ValueError("invalid detection learning policy")
     shadow = bool(auto_promote_shadow if auto_promote_shadow is not None else s["auto_promote_shadow"]); canary = bool(auto_promote_canary if auto_promote_canary is not None else s["auto_promote_canary"])
     if (shadow or canary) and m != "guarded": raise ValueError("automatic promotion requires guarded mode")
-    with closing(soc_store.connect(db_path)) as c:
-        c.execute("""UPDATE detection_learning_settings SET mode=?,minimum_examples=?,holdout_percent=?,maximum_false_negative_regression=?,minimum_precision=?,canary_percent=?,auto_promote_shadow=?,auto_promote_canary=?,updated_at=?,updated_by=? WHERE settings_id=1""", (m,*values,int(shadow),int(canary),soc_store.utc_now(),_clean(actor,160))); c.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as c:
+            c.execute("""UPDATE detection_learning_settings SET mode=?,minimum_examples=?,holdout_percent=?,maximum_false_negative_regression=?,minimum_precision=?,canary_percent=?,auto_promote_shadow=?,auto_promote_canary=?,updated_at=?,updated_by=? WHERE settings_id=1""", (m,*values,int(shadow),int(canary),soc_store.utc_now(),_clean(actor,160))); c.commit()
     return get_settings(db_path=db_path)
 
 
@@ -129,6 +132,7 @@ def _insert_feedback(
     metadata: Dict[str, Any],
     actor: str,
     settings: Dict[str, Any],
+    db_path: Optional[str],
 ) -> Dict[str, Any]:
     outcome = _clean(outcome, 40).lower()
     if outcome not in OUTCOMES:
@@ -163,46 +167,47 @@ def _insert_feedback(
     )
     now = soc_store.utc_now()
     feedback_id = _id("DLF")
-    cursor = connection.execute(
-        """INSERT OR IGNORE INTO detection_learning_feedback
-           (feedback_id, organization_key, subject_key, finding_id, event_id,
-            outcome, learning_label, label_source, confidence, trust_score,
-            feature_version, features_json, evidence_refs_json, metadata_json,
-            actor, dedupe_key, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            feedback_id, organization_key, subject_key, finding_id or None,
-            event_id or None, outcome, learning_label, label_source,
-            confidence, trust_score, FEATURE_VERSION, _json(values),
-            _json(refs), _json(metadata if isinstance(metadata, dict) else {}),
-            actor, dedupe_key, now,
-        ),
-    )
-    inserted = cursor.rowcount > 0
-    example_id = None
-    if inserted and eligible and learning_label:
-        example_finding_id = finding_id or subject_key
-        example_id = "DLE-" + hashlib.sha256(
-            f"{organization_key}|{example_finding_id}|{FEATURE_VERSION}".encode()
-        ).hexdigest()[:16].upper()
-        connection.execute(
-            """INSERT INTO detection_learning_examples
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(organization_key,finding_id,feature_version) DO UPDATE SET
-                 label=excluded.label,
-                 label_source=excluded.label_source,
-                 trust_score=excluded.trust_score,
-                 features_json=excluded.features_json,
-                 evidence_refs_json=excluded.evidence_refs_json,
-                 updated_at=excluded.updated_at""",
+    with sqlite_writer_lock(db_path):
+        cursor = connection.execute(
+            """INSERT OR IGNORE INTO detection_learning_feedback
+               (feedback_id, organization_key, subject_key, finding_id, event_id,
+                outcome, learning_label, label_source, confidence, trust_score,
+                feature_version, features_json, evidence_refs_json, metadata_json,
+                actor, dedupe_key, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                example_id, organization_key, example_finding_id,
-                metadata.get("case_id") if isinstance(metadata, dict) else None,
-                learning_label, label_source, trust_score, FEATURE_VERSION,
-                _json(values), _split(example_finding_id, int(settings["holdout_percent"])),
-                _json(refs), now, now,
+                feedback_id, organization_key, subject_key, finding_id or None,
+                event_id or None, outcome, learning_label, label_source,
+                confidence, trust_score, FEATURE_VERSION, _json(values),
+                _json(refs), _json(metadata if isinstance(metadata, dict) else {}),
+                actor, dedupe_key, now,
             ),
         )
+        inserted = cursor.rowcount > 0
+        example_id = None
+        if inserted and eligible and learning_label:
+            example_finding_id = finding_id or subject_key
+            example_id = "DLE-" + hashlib.sha256(
+                f"{organization_key}|{example_finding_id}|{FEATURE_VERSION}".encode()
+            ).hexdigest()[:16].upper()
+            connection.execute(
+                """INSERT INTO detection_learning_examples
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(organization_key,finding_id,feature_version) DO UPDATE SET
+                     label=excluded.label,
+                     label_source=excluded.label_source,
+                     trust_score=excluded.trust_score,
+                     features_json=excluded.features_json,
+                     evidence_refs_json=excluded.evidence_refs_json,
+                     updated_at=excluded.updated_at""",
+                (
+                    example_id, organization_key, example_finding_id,
+                    metadata.get("case_id") if isinstance(metadata, dict) else None,
+                    learning_label, label_source, trust_score, FEATURE_VERSION,
+                    _json(values), _split(example_finding_id, int(settings["holdout_percent"])),
+                    _json(refs), now, now,
+                ),
+            )
     return {
         "feedback_id": feedback_id if inserted else None,
         "inserted": inserted,
@@ -234,30 +239,32 @@ def record_feedback(*, outcome: str, subject_key: str = "", finding_id: str = ""
     finding: Dict[str, Any] = {}
     if finding_id:
         finding = soc_store.get_finding(finding_id, db_path) or {}
-    with closing(soc_store.connect(db_path)) as connection:
-        linked = connection.execute(
-            "SELECT case_id FROM research_case_findings WHERE finding_id=? ORDER BY created_at DESC LIMIT 1",
-            (_clean(finding_id, 160),),
-        ).fetchone() if finding_id else None
-        case_id = str(linked["case_id"]) if linked else ""
-        values = features if features is not None else _features(finding, connection, case_id)
-        item = _insert_feedback(
-            connection,
-            organization_key=organization_key,
-            subject_key=subject_key or finding_id,
-            finding_id=finding_id,
-            event_id=event_id,
-            outcome=outcome,
-            label_source=source,
-            confidence=confidence,
-            trust_score=trust_score or confidence,
-            features=values,
-            evidence_refs=evidence_refs or [],
-            metadata={**(metadata or {}), "case_id": case_id} if case_id else (metadata or {}),
-            actor=actor,
-            settings=settings,
-        )
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            linked = connection.execute(
+                "SELECT case_id FROM research_case_findings WHERE finding_id=? ORDER BY created_at DESC LIMIT 1",
+                (_clean(finding_id, 160),),
+            ).fetchone() if finding_id else None
+            case_id = str(linked["case_id"]) if linked else ""
+            values = features if features is not None else _features(finding, connection, case_id)
+            item = _insert_feedback(
+                connection,
+                organization_key=organization_key,
+                subject_key=subject_key or finding_id,
+                finding_id=finding_id,
+                event_id=event_id,
+                outcome=outcome,
+                label_source=source,
+                confidence=confidence,
+                trust_score=trust_score or confidence,
+                features=values,
+                evidence_refs=evidence_refs or [],
+                metadata={**(metadata or {}), "case_id": case_id} if case_id else (metadata or {}),
+                actor=actor,
+                settings=settings,
+                db_path=db_path,
+            )
+            connection.commit()
     return item
 
 
@@ -314,22 +321,25 @@ def collect_examples(*, organization_key: str = "local", db_path: Optional[str] 
                 trust = 0
                 confidence = 0
                 metadata = {"original_disposition": f.get("disposition"), "automatic": True, "active_learning": True}
-            item = _insert_feedback(
-                c,
-                organization_key=organization_key,
-                subject_key=fid,
-                finding_id=fid,
-                event_id=str((f.get("event_ids") or [""])[0] or ""),
-                outcome=outcome,
-                label_source=source,
-                confidence=confidence,
-                trust_score=trust,
-                features=feats,
-                evidence_refs=refs,
-                metadata=metadata,
-                actor="secopsai-learning",
-                settings=settings,
-            )
+            with sqlite_writer_lock(db_path):
+                item = _insert_feedback(
+                    c,
+                    organization_key=organization_key,
+                    subject_key=fid,
+                    finding_id=fid,
+                    event_id=str((f.get("event_ids") or [""])[0] or ""),
+                    outcome=outcome,
+                    label_source=source,
+                    confidence=confidence,
+                    trust_score=trust,
+                    features=feats,
+                    evidence_refs=refs,
+                    metadata=metadata,
+                    actor="secopsai-learning",
+                    settings=settings,
+                    db_path=db_path,
+                )
+                c.commit()
             if item["inserted"]:
                 feedback_inserted += 1
             if outcome == "unknown":
@@ -338,7 +348,6 @@ def collect_examples(*, organization_key: str = "local", db_path: Optional[str] 
                 inserted += 1
             else:
                 excluded += 1
-        c.commit()
     return {
         "accepted": inserted,
         "observed_alerts": observed,
@@ -356,8 +365,9 @@ def _rows(db_path: Optional[str]) -> list[Dict[str,Any]]:
 
 def snapshot(*, db_path: Optional[str]=None) -> Dict[str,Any]:
     rows=_rows(db_path); fp=hashlib.sha256(_json([(r["example_id"],r["label"],r["updated_at"]) for r in rows]).encode()).hexdigest(); did="DLS-"+fp[:16].upper(); labels={x:sum(r["label"]==x for r in rows) for x in LABELS}; splits={x:sum(r["split"]==x for r in rows) for x in ("train","validation","holdout")}; now=soc_store.utc_now()
-    with closing(soc_store.connect(db_path)) as c:
-        c.execute("INSERT OR IGNORE INTO detection_learning_datasets VALUES (?,?,?,?,?,?,?,?,?)",(did,SCHEMA_VERSION,FEATURE_VERSION,fp,len(rows),_json(labels),_json(splits),_json({"trusted_sources":["evidence_gated_research_resolution","evidence_linked_research_verdict","corroborated_agent_escalation"],"model_only_excluded":True}),now)); c.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as c:
+            c.execute("INSERT OR IGNORE INTO detection_learning_datasets VALUES (?,?,?,?,?,?,?,?,?)",(did,SCHEMA_VERSION,FEATURE_VERSION,fp,len(rows),_json(labels),_json(splits),_json({"trusted_sources":["evidence_gated_research_resolution","evidence_linked_research_verdict","corroborated_agent_escalation"],"model_only_excluded":True}),now)); c.commit()
     return {"dataset_id":did,"fingerprint":fp,"example_count":len(rows),"label_counts":labels,"split_counts":splits}
 
 
@@ -445,41 +455,44 @@ def train(*, db_path: Optional[str]=None) -> Dict[str,Any]:
     eid=_id("DLX"); pid=_id("DLP"); now=soc_store.utc_now()
     model = {"weights":weights,"threshold":.5,"feature_version":FEATURE_VERSION,"evaluation_status":evaluation_status,"policy_fingerprint":policy_fingerprint,"policy":policy}
     parameters = {"weights":weights,"threshold":.5,"evaluation_status":evaluation_status,"policy_fingerprint":policy_fingerprint,"policy":policy}
-    with closing(soc_store.connect(db_path)) as c:
-        c.execute("INSERT INTO detection_learning_experiments VALUES (?,?,?,?,?,?,?,?,?)",(eid,ds["dataset_id"],ALGORITHM_VERSION,"passed" if passed else evaluation_status,_json(model),_json(metrics),_json(gates),now,now))
-        c.execute("INSERT INTO detection_learning_proposals VALUES (?,?,?,?,?,?,?,?,?,?,?)",(pid,eid,"risk_ranker","global","shadow_ready" if passed else "blocked",_json(parameters),_json(metrics),_json({"previous_proposal_id":None}),now,now,None)); c.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as c:
+            c.execute("INSERT INTO detection_learning_experiments VALUES (?,?,?,?,?,?,?,?,?)",(eid,ds["dataset_id"],ALGORITHM_VERSION,"passed" if passed else evaluation_status,_json(model),_json(metrics),_json(gates),now,now))
+            c.execute("INSERT INTO detection_learning_proposals VALUES (?,?,?,?,?,?,?,?,?,?,?)",(pid,eid,"risk_ranker","global","shadow_ready" if passed else "blocked",_json(parameters),_json(metrics),_json({"previous_proposal_id":None}),now,now,None)); c.commit()
     return {"experiment_id":eid,"proposal_id":pid,"status":"shadow_ready" if passed else evaluation_status,"proposal_status":"shadow_ready" if passed else "blocked","metrics":metrics,"guardrails":gates,"dataset":ds,"policy_fingerprint":policy_fingerprint,"reused":False}
 
 
 def deploy(proposal_id: str, *, stage: str, db_path: Optional[str]=None) -> Dict[str,Any]:
     if stage not in {"shadow","canary","active"}: raise ValueError("stage must be shadow, canary, or active")
     s=get_settings(db_path=db_path)
-    with closing(soc_store.connect(db_path)) as c:
-        p=c.execute("SELECT * FROM detection_learning_proposals WHERE proposal_id=?",(_clean(proposal_id,40).upper(),)).fetchone()
-        if not p: raise ValueError("learning proposal not found")
-        metrics=_decode(p["replay_metrics_json"],{}); hold=metrics.get("holdout") or {}; precision=hold.get("precision"); allowed=bool(precision is not None and precision>=float(s["minimum_precision"]) and int(hold.get("fn",999))<=int(s["maximum_false_negative_regression"]))
-        expected={"shadow":"shadow_ready","canary":"shadow","active":"canary"}[stage]
-        if stage == "active":
-            prior = c.execute("SELECT observations_json FROM detection_learning_deployments WHERE proposal_id=? AND stage='canary' AND status='running' ORDER BY updated_at DESC LIMIT 1", (p["proposal_id"],)).fetchone()
-            observations = _decode(prior["observations_json"], {}) if prior else {}
-            observed = sum(int(observations.get(key, 0)) for key in ("tp","fp","tn","fn"))
-            if observed < 20 or int(observations.get("fn", 0)) > int(s["maximum_false_negative_regression"]):
-                raise ValueError("canary needs at least 20 reviewed observations with no false-negative regression")
-        if str(p["status"])!=expected or not allowed: raise ValueError("proposal has not passed the previous deployment gate")
-        did=_id("DLD"); traffic={"shadow":0,"canary":int(s["canary_percent"]),"active":100}[stage]; now=soc_store.utc_now(); c.execute("INSERT INTO detection_learning_deployments VALUES (?,?,?,?,?,?,?,?,?)",(did,p["proposal_id"],stage,traffic,"running",_json({"tp":0,"fp":0,"tn":0,"fn":0}),now,None,now)); c.execute("UPDATE detection_learning_proposals SET status=?,updated_at=?,activated_at=CASE WHEN ?='active' THEN ? ELSE activated_at END WHERE proposal_id=?",(stage,now,stage,now,p["proposal_id"])); c.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as c:
+            p=c.execute("SELECT * FROM detection_learning_proposals WHERE proposal_id=?",(_clean(proposal_id,40).upper(),)).fetchone()
+            if not p: raise ValueError("learning proposal not found")
+            metrics=_decode(p["replay_metrics_json"],{}); hold=metrics.get("holdout") or {}; precision=hold.get("precision"); allowed=bool(precision is not None and precision>=float(s["minimum_precision"]) and int(hold.get("fn",999))<=int(s["maximum_false_negative_regression"]))
+            expected={"shadow":"shadow_ready","canary":"shadow","active":"canary"}[stage]
+            if stage == "active":
+                prior = c.execute("SELECT observations_json FROM detection_learning_deployments WHERE proposal_id=? AND stage='canary' AND status='running' ORDER BY updated_at DESC LIMIT 1", (p["proposal_id"],)).fetchone()
+                observations = _decode(prior["observations_json"], {}) if prior else {}
+                observed = sum(int(observations.get(key, 0)) for key in ("tp","fp","tn","fn"))
+                if observed < 20 or int(observations.get("fn", 0)) > int(s["maximum_false_negative_regression"]):
+                    raise ValueError("canary needs at least 20 reviewed observations with no false-negative regression")
+            if str(p["status"])!=expected or not allowed: raise ValueError("proposal has not passed the previous deployment gate")
+            did=_id("DLD"); traffic={"shadow":0,"canary":int(s["canary_percent"]),"active":100}[stage]; now=soc_store.utc_now(); c.execute("INSERT INTO detection_learning_deployments VALUES (?,?,?,?,?,?,?,?,?)",(did,p["proposal_id"],stage,traffic,"running",_json({"tp":0,"fp":0,"tn":0,"fn":0}),now,None,now)); c.execute("UPDATE detection_learning_proposals SET status=?,updated_at=?,activated_at=CASE WHEN ?='active' THEN ? ELSE activated_at END WHERE proposal_id=?",(stage,now,stage,now,p["proposal_id"])); c.commit()
     return {"deployment_id":did,"proposal_id":proposal_id,"stage":stage,"traffic_percent":traffic,"status":"running"}
 
 
 def record_observation(deployment_id: str, *, outcome: str, db_path: Optional[str]=None) -> Dict[str,Any]:
     if outcome not in {"tp","fp","tn","fn"}: raise ValueError("invalid canary outcome")
     s=get_settings(db_path=db_path)
-    with closing(soc_store.connect(db_path)) as c:
-        d=c.execute("SELECT * FROM detection_learning_deployments WHERE deployment_id=?",(_clean(deployment_id,40).upper(),)).fetchone()
-        if not d: raise ValueError("deployment not found")
-        obs=_decode(d["observations_json"],{}); obs[outcome]=int(obs.get(outcome,0))+1; status="rolled_back" if int(obs.get("fn",0))>int(s["maximum_false_negative_regression"]) else str(d["status"]); now=soc_store.utc_now(); c.execute("UPDATE detection_learning_deployments SET observations_json=?,status=?,completed_at=CASE WHEN ?='rolled_back' THEN ? ELSE completed_at END,updated_at=? WHERE deployment_id=?",(_json(obs),status,status,now,now,d["deployment_id"]));
-        if status=="rolled_back":
-            c.execute("UPDATE detection_learning_proposals SET status='rolled_back',updated_at=? WHERE proposal_id=?",(now,d["proposal_id"]))
-        c.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as c:
+            d=c.execute("SELECT * FROM detection_learning_deployments WHERE deployment_id=?",(_clean(deployment_id,40).upper(),)).fetchone()
+            if not d: raise ValueError("deployment not found")
+            obs=_decode(d["observations_json"],{}); obs[outcome]=int(obs.get(outcome,0))+1; status="rolled_back" if int(obs.get("fn",0))>int(s["maximum_false_negative_regression"]) else str(d["status"]); now=soc_store.utc_now(); c.execute("UPDATE detection_learning_deployments SET observations_json=?,status=?,completed_at=CASE WHEN ?='rolled_back' THEN ? ELSE completed_at END,updated_at=? WHERE deployment_id=?",(_json(obs),status,status,now,now,d["deployment_id"]));
+            if status=="rolled_back":
+                c.execute("UPDATE detection_learning_proposals SET status='rolled_back',updated_at=? WHERE proposal_id=?",(now,d["proposal_id"]))
+            c.commit()
     promoted = None
     total = sum(int(obs.get(key, 0)) for key in ("tp","fp","tn","fn"))
     if status != "rolled_back" and str(d["stage"]) == "canary" and total >= 20 and bool(s["auto_promote_canary"]):
@@ -503,17 +516,19 @@ def recommend_action(context: Dict[str,Any], *, db_path: Optional[str]=None) -> 
 def record_action_reward(action: str, reward: float, *, db_path: Optional[str]=None) -> Dict[str,Any]:
     if action not in {"collect_reference","deep_static_analysis","campaign_correlation","model_review","request_sandbox_approval"} or not -1<=float(reward)<=1: raise ValueError("invalid action reward")
     soc_store.init_db(db_path)
-    with closing(soc_store.connect(db_path)) as c:
-        c.execute("""INSERT INTO detection_learning_bandit_actions VALUES (?,1,?,?,?) ON CONFLICT(action_name) DO UPDATE SET pulls=pulls+1,reward_sum=reward_sum+excluded.reward_sum,reward_squared_sum=reward_squared_sum+excluded.reward_squared_sum,updated_at=excluded.updated_at""",(action,float(reward),float(reward)**2,soc_store.utc_now())); c.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as c:
+            c.execute("""INSERT INTO detection_learning_bandit_actions VALUES (?,1,?,?,?) ON CONFLICT(action_name) DO UPDATE SET pulls=pulls+1,reward_sum=reward_sum+excluded.reward_sum,reward_squared_sum=reward_squared_sum+excluded.reward_squared_sum,updated_at=excluded.updated_at""",(action,float(reward),float(reward)**2,soc_store.utc_now())); c.commit()
     return {"action":action,"reward":float(reward),"recorded":True}
 
 
 def rollback(proposal_id: str, *, db_path: Optional[str]=None) -> Dict[str,Any]:
     now=soc_store.utc_now()
-    with closing(soc_store.connect(db_path)) as c:
-        p=c.execute("SELECT proposal_id FROM detection_learning_proposals WHERE proposal_id=?",(_clean(proposal_id,40).upper(),)).fetchone()
-        if not p: raise ValueError("learning proposal not found")
-        c.execute("UPDATE detection_learning_proposals SET status='rolled_back',updated_at=? WHERE proposal_id=?",(now,p["proposal_id"])); c.execute("UPDATE detection_learning_deployments SET status='rolled_back',completed_at=?,updated_at=? WHERE proposal_id=? AND status='running'",(now,now,p["proposal_id"])); c.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as c:
+            p=c.execute("SELECT proposal_id FROM detection_learning_proposals WHERE proposal_id=?",(_clean(proposal_id,40).upper(),)).fetchone()
+            if not p: raise ValueError("learning proposal not found")
+            c.execute("UPDATE detection_learning_proposals SET status='rolled_back',updated_at=? WHERE proposal_id=?",(now,p["proposal_id"])); c.execute("UPDATE detection_learning_deployments SET status='rolled_back',completed_at=?,updated_at=? WHERE proposal_id=? AND status='running'",(now,now,p["proposal_id"])); c.commit()
     return {"proposal_id":proposal_id,"status":"rolled_back"}
 
 

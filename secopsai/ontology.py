@@ -11,11 +11,14 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import os
 import re
+import sqlite3
 import unicodedata
 import uuid
 from collections import deque
-from datetime import datetime, timezone
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 from urllib.parse import urlsplit, urlunsplit
 
@@ -30,6 +33,68 @@ MAX_SUMMARY_BYTES = 32 * 1024
 MAX_SEARCH_LIMIT = 500
 MAX_TRAVERSAL_DEPTH = 4
 MAX_TRAVERSAL_NODES = 500
+
+# Read paths must never use ``init_db``: that helper intentionally opens a
+# writable connection and may create or migrate a database.  Keep the table
+# requirements explicit so a missing or partially-created store degrades to an
+# empty bounded response instead of turning a status request into a 500.
+_ONTOLOGY_GRAPH_READ_TABLES = frozenset({
+    "ontology_entities",
+    "ontology_aliases",
+    "ontology_relationships",
+    "ontology_events",
+})
+_ONTOLOGY_EXPORT_READ_TABLES = frozenset({
+    "ontology_entities",
+    "ontology_relationships",
+    "ontology_events",
+    "ontology_evidence_refs",
+})
+_ONTOLOGY_QUALITY_READ_TABLES = frozenset({
+    "ontology_entities",
+    "ontology_relationships",
+    "ontology_evidence_refs",
+    "ontology_conflicts",
+    "ontology_change_log",
+    "findings",
+    "runner_heartbeats",
+    "intelligence_jobs",
+    "coordinator_commands",
+    "agent_triage_runs",
+})
+_ONTOLOGY_READ_COLUMNS = {
+    "ontology_entities": frozenset({
+        "entity_id", "entity_type", "namespace", "canonical_key", "display_name", "source", "source_id",
+        "workspace_id", "owner_id", "status", "properties_json", "confidence", "first_seen_at", "last_seen_at",
+        "observed_at", "freshness_at", "valid_from", "valid_to", "schema_version", "created_at", "updated_at",
+    }),
+    "ontology_aliases": frozenset({
+        "entity_id", "alias_type", "alias_value", "normalized_value", "source", "confidence",
+    }),
+    "ontology_relationships": frozenset({
+        "relationship_id", "relationship_type", "from_entity_id", "to_entity_id", "source", "source_record_id",
+        "workspace_id", "evidence_ref_id", "properties_json", "confidence", "observed_at", "valid_from",
+        "valid_to", "freshness_at", "created_at", "updated_at",
+    }),
+    "ontology_events": frozenset({
+        "event_id", "entity_id", "event_type", "source", "source_record_id", "summary_json", "occurred_at",
+        "created_at",
+    }),
+    "ontology_evidence_refs": frozenset({
+        "evidence_ref_id", "source", "locator", "content_hash", "content_type", "workspace_id", "summary_json",
+        "observed_at", "created_at", "updated_at",
+    }),
+    "ontology_conflicts": frozenset({"conflict_type", "status"}),
+    "ontology_change_log": frozenset(),
+    "findings": frozenset({
+        "finding_id", "title", "severity", "severity_score", "status", "disposition", "source", "first_seen",
+        "last_seen", "updated_at",
+    }),
+    "runner_heartbeats": frozenset({"last_seen_at"}),
+    "intelligence_jobs": frozenset({"status", "queued_at"}),
+    "coordinator_commands": frozenset({"status", "queued_at"}),
+    "agent_triage_runs": frozenset({"run_id", "target_id", "status", "recommendation_json", "decision_json"}),
+}
 
 ENTITY_TYPES = frozenset(
     {
@@ -154,6 +219,7 @@ ENTITY_PREFIXES = {
     "approval": "approval",
     "publication": "publication",
 }
+ENTITY_TYPES_BY_PREFIX = {prefix: entity_type for entity_type, prefix in ENTITY_PREFIXES.items()}
 
 # Higher-priority sources are allowed to keep their canonical descriptive
 # fields when a lower-priority projection arrives later.  Timestamps still
@@ -168,6 +234,22 @@ SOURCE_PRIORITY = {
     "legacy": 40,
     "unknown": 0,
 }
+
+# Collectors have historically used a few human-readable spellings for the
+# same source.  Keep the stored source value backwards-compatible while
+# normalising it for precedence and deterministic identifiers.
+SOURCE_ALIASES = {
+    "secopsai research": "secopsai-research",
+    "secopsai_research": "secopsai-research",
+    "secopsai-research": "secopsai-research",
+    "research": "secopsai-research",
+    "secopsai core": "core",
+    "secopsai_core": "core",
+}
+
+MAX_CANONICAL_KEY_BYTES = 1024
+MAX_ENTITY_ID_BYTES = 512
+UNKNOWN_OBSERVED_AT = "1970-01-01T00:00:00Z"
 
 FORBIDDEN_KEY_PARTS = {
     "authorization",
@@ -210,7 +292,11 @@ def normalize_value(value: Any, *, limit: int = 512) -> str:
 
 
 def normalize_canonical_key(entity_type: str, namespace: str, value: Any) -> str:
-    key = normalize_value(value, limit=1024)
+    # ``_text`` intentionally bounds ordinary fields, but canonical identity
+    # must hash the complete input before applying a storage bound.  Otherwise
+    # two long keys sharing their first 1,024 characters silently collide and
+    # the prefix can expose sensitive material in the ontology table.
+    key = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", str(value or "")).strip().lower())
     if not key:
         raise ValueError("canonical_key is required")
     if namespace in {"pypi", "python"} and entity_type in {"package", "package_version"}:
@@ -223,12 +309,19 @@ def normalize_canonical_key(entity_type: str, namespace: str, value: Any) -> str
         key = key.rstrip("/")
     if entity_type == "package_version" and "@" not in key:
         raise ValueError("package_version canonical_key must include package@version")
-    return key[:1024]
+    prefix = ENTITY_PREFIXES.get(entity_type, entity_type)
+    if len(key.encode("utf-8")) > MAX_CANONICAL_KEY_BYTES or len(f"{prefix}:{namespace}:{key}".encode("utf-8")) > MAX_ENTITY_ID_BYTES:
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:40]
+        return f"sha256-{digest}"
+    return key
 
 
 def sanitize_locator(value: Any) -> str:
     """Return a safe evidence locator without credentials, query secrets, or local paths."""
-    raw = _text(value, 2048)
+    # Keep the full value for hashing.  Bounding before hashing would let a
+    # long secret leak its first 2 KiB through an attacker-controlled digest
+    # collision and would make two values with a common prefix indistinguishable.
+    raw = str(value or "").strip()
     if not raw:
         return ""
     lowered = raw.lower()
@@ -239,8 +332,14 @@ def sanitize_locator(value: Any) -> str:
         parsed = urlsplit(raw)
     except ValueError:
         parsed = None
+    if parsed and parsed.scheme.lower() in {"http", "https"}:
+        try:
+            host = (parsed.hostname or "").lower().rstrip(".")
+        except ValueError:
+            host = ""
+        if not host:
+            parsed = None
     if parsed and parsed.scheme.lower() in {"http", "https"} and parsed.hostname:
-        host = parsed.hostname.lower().rstrip(".")
         private = host in {"localhost", "localhost.localdomain"}
         try:
             private = private or ipaddress.ip_address(host).is_private or ipaddress.ip_address(host).is_loopback
@@ -259,7 +358,12 @@ def sanitize_locator(value: Any) -> str:
         if port:
             netloc = f"{host}:{port}"
         return urlunsplit((parsed.scheme.lower(), netloc, parsed.path[:1024], "", ""))[:1024]
-    return raw[:1024]
+    # Evidence locators are citation material, so an opaque value (for
+    # example ``evidence://...``, ``s3://...``, a local pseudo-URI, or a bare
+    # source identifier) must never be echoed into the ontology.  Preserve a
+    # stable digest so callers can still correlate repeated observations.
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+    return f"redacted://opaque/{digest}"
 
 
 def canonical_entity_id(entity_type: str, namespace: str, canonical_key: Any) -> str:
@@ -270,9 +374,9 @@ def canonical_entity_id(entity_type: str, namespace: str, canonical_key: Any) ->
     key = normalize_canonical_key(entity_type, namespace, canonical_key)
     prefix = ENTITY_PREFIXES.get(entity_type, entity_type)
     candidate = f"{prefix}:{namespace}:{key}"
-    if len(candidate) <= 512:
+    if len(candidate.encode("utf-8")) <= MAX_ENTITY_ID_BYTES:
         return candidate
-    digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()[:40]
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:40]
     return f"{prefix}:{namespace}:sha256-{digest}"
 
 
@@ -294,7 +398,7 @@ def _stable_legacy_id(entity_type: str, namespace: str, value: Any) -> str:
 
 def _legacy_alias(value: Any, source: str) -> list[dict[str, str]]:
     raw = _text(value, 512)
-    return ([{"type": "source_id", "value": raw, "source": _text(source, 160) or "legacy"}] if raw else [])
+    return ([{"type": "source_id", "value": raw, "source": normalize_source(source) or "legacy"}] if raw else [])
 
 
 def _stable_graph_reference(value: Any) -> str:
@@ -340,8 +444,15 @@ def bounded_json(value: Any, limit: int = MAX_SUMMARY_BYTES) -> str:
 
 
 def _source_priority(source: str) -> int:
-    normalized = normalize_value(source, limit=160)
+    normalized = normalize_source(source)
     return SOURCE_PRIORITY.get(normalized, 50 if normalized else 0)
+
+
+def normalize_source(source: Any) -> str:
+    """Return the stable source spelling used for precedence decisions."""
+    normalized = normalize_value(source, limit=160).replace("_", "-")
+    normalized = re.sub(r"\s+", " ", normalized)
+    return SOURCE_ALIASES.get(normalized, normalized)
 
 
 def _record_change_connection(
@@ -355,6 +466,7 @@ def _record_change_connection(
     source: str,
     actor: str,
     now: str,
+    change_id: str | None = None,
 ) -> None:
     """Persist a bounded, redacted before/after record when state changes."""
     def comparable(value: Any) -> Any:
@@ -364,7 +476,7 @@ def _record_change_connection(
 
     if comparable(before) == comparable(after) and action == "upsert":
         return
-    change_id = "chg:" + hashlib.sha256(f"{object_type}|{object_id}|{action}|{now}|{uuid.uuid4()}".encode()).hexdigest()[:40]
+    change_id = change_id or "chg:" + hashlib.sha256(f"{object_type}|{object_id}|{action}|{now}|{uuid.uuid4()}".encode()).hexdigest()[:40]
     connection.execute(
         """
         INSERT INTO ontology_change_log
@@ -391,6 +503,54 @@ def _loads(value: Any) -> dict[str, Any]:
     except (TypeError, json.JSONDecodeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _open_ontology_read_connection(db_path: str | None, required_tables: Iterable[str]) -> sqlite3.Connection | None:
+    """Open a query-only ontology connection when its schema is available.
+
+    ``soc_store.read_connect`` deliberately refuses to create a missing file.
+    The table check here also handles a zero-byte or partially initialized
+    database, which is common while a first writer is starting up.
+    """
+    required = {str(table) for table in required_tables}
+    try:
+        connection = soc_store.read_connect(db_path)
+    except (FileNotFoundError, sqlite3.Error):
+        return None
+    try:
+        tables = {
+            str(row[0])
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        }
+    except sqlite3.Error:
+        connection.close()
+        return None
+    if not required <= tables:
+        connection.close()
+        return None
+    for table in required:
+        required_columns = _ONTOLOGY_READ_COLUMNS.get(table, frozenset())
+        if not required_columns:
+            continue
+        try:
+            columns = {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+        except sqlite3.Error:
+            connection.close()
+            return None
+        if not required_columns <= columns:
+            connection.close()
+            return None
+    return connection
+
+
+@contextmanager
+def _ontology_read_connection(db_path: str | None, required_tables: Iterable[str]):
+    connection = _open_ontology_read_connection(db_path, required_tables)
+    try:
+        yield connection
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def _confidence(value: Any, default: int = 100) -> int:
@@ -456,11 +616,19 @@ def _relationship_row(row: Any) -> dict[str, Any]:
     }
 
 
-def _upsert_entity_connection(connection: Any, item: dict[str, Any], *, now: str | None = None) -> str:
+def _upsert_entity_connection(
+    connection: Any,
+    item: dict[str, Any],
+    *,
+    now: str | None = None,
+    return_state: bool = False,
+) -> str | tuple[str, bool]:
     entity_type = normalize_value(item.get("entity_type") or item.get("type"), limit=80)
     namespace = normalize_value(item.get("namespace") or item.get("ecosystem") or "global", limit=120) or "global"
     canonical_key = normalize_canonical_key(entity_type, namespace, item.get("canonical_key") or item.get("key") or item.get("source_id") or item.get("entity_id"))
-    entity_id = _text(item.get("entity_id"), 512) or canonical_entity_id(entity_type, namespace, canonical_key)
+    raw_entity_id = item.get("entity_id")
+    explicit_entity_id = _text(raw_entity_id, MAX_ENTITY_ID_BYTES) if len(str(raw_entity_id or "").encode("utf-8")) <= MAX_ENTITY_ID_BYTES else ""
+    entity_id = explicit_entity_id or canonical_entity_id(entity_type, namespace, canonical_key)
     if entity_id != canonical_entity_id(entity_type, namespace, canonical_key):
         # Explicit IDs are accepted for legacy records, but must remain stable
         # and namespaced.  This avoids accidentally merging unrelated objects.
@@ -472,7 +640,7 @@ def _upsert_entity_connection(connection: Any, item: dict[str, Any], *, now: str
     observed = _text(item.get("observed_at") or last_seen or now, 64)
     freshness = _text(item.get("freshness_at") or observed or now, 64)
     properties_json = bounded_json(item.get("properties") or {}, MAX_PROPERTIES_BYTES)
-    source = _text(item.get("source") or "unknown", 160) or "unknown"
+    source = normalize_source(item.get("source") or "unknown") or "unknown"
     display_name = _text(item.get("display_name") or item.get("label") or canonical_key, 512) or canonical_key
     source_id = _text(item.get("source_id"), 512)
     workspace_id = _text(item.get("workspace_id") or "local", 160) or "local"
@@ -481,13 +649,19 @@ def _upsert_entity_connection(connection: Any, item: dict[str, Any], *, now: str
     confidence = _confidence(item.get("confidence"), 100)
     existing = connection.execute("SELECT * FROM ontology_entities WHERE entity_id = ?", (entity_id,)).fetchone()
     canonical_existing = connection.execute(
-        "SELECT entity_id FROM ontology_entities WHERE namespace = ? AND canonical_key = ? LIMIT 1",
-        (namespace, canonical_key),
+        "SELECT entity_id FROM ontology_entities WHERE entity_type = ? AND namespace = ? AND canonical_key = ? LIMIT 1",
+        (entity_type, namespace, canonical_key),
     ).fetchone()
     if canonical_existing and str(canonical_existing["entity_id"]) != entity_id:
         raise ValueError(
             f"canonical identity already belongs to {canonical_existing['entity_id']}; resolve or merge the duplicate first"
         )
+    if existing is not None and (
+        str(existing["entity_type"]) != entity_type
+        or str(existing["namespace"]) != namespace
+        or str(existing["canonical_key"]) != canonical_key
+    ):
+        raise ValueError("entity identity is immutable; use a new entity_id for a different type, namespace, or key")
     # Workspace is an ownership boundary.  A legacy ``local`` projection may
     # be upgraded to a hosted workspace, and an incoming local observation may
     # inherit an already-bound hosted workspace, but two concrete tenant
@@ -503,7 +677,7 @@ def _upsert_entity_connection(connection: Any, item: dict[str, Any], *, now: str
         # recording the observation and advancing freshness.
         source = str(existing["source"])
         display_name = str(existing["display_name"])
-        source_id = source_id or str(existing["source_id"] or "")
+        source_id = str(existing["source_id"] or source_id or "")
         owner_id = owner_id or str(existing["owner_id"] or "")
         status = str(existing["status"] or status)
         properties_json = str(existing["properties_json"] or properties_json)
@@ -581,7 +755,7 @@ def _upsert_entity_connection(connection: Any, item: dict[str, Any], *, now: str
             continue
         alias_type = _text(alias.get("type") if isinstance(alias, dict) else "source", 80) or "source"
         normalized = normalize_value(alias_value, limit=512)
-        alias_source = _text(alias.get("source") if isinstance(alias, dict) else source, 160) or source
+        alias_source = normalize_source(alias.get("source") if isinstance(alias, dict) else source) or source
         alias_id = "alias:" + hashlib.sha256(f"{alias_type}|{normalized}|{alias_source}".encode()).hexdigest()[:40]
         # ``ontology_aliases`` deliberately has a uniqueness constraint for a
         # normalized source value.  Never let a later record silently steal an
@@ -609,7 +783,7 @@ def _upsert_entity_connection(connection: Any, item: dict[str, Any], *, now: str
             """,
             (alias_id, entity_id, alias_type, alias_value, normalized, alias_source, _confidence(alias.get("confidence") if isinstance(alias, dict) else 100), now, now),
         )
-    return entity_id
+    return (entity_id, existing is not None) if return_state else entity_id
 
 
 def upsert_entity(item: dict[str, Any], *, db_path: str | None = None) -> dict[str, Any]:
@@ -626,19 +800,36 @@ def upsert_entities(items: Iterable[dict[str, Any]], *, db_path: str | None = No
     soc_store.init_db(db_path)
     now = utc_now()
     ids: list[str] = []
+    inserted = 0
+    updated = 0
     with sqlite_writer_lock(db_path):
         with soc_store.connect(db_path) as connection:
-            for item in list(items)[:1000]:
+            # Consume every item in one transaction.  The previous safety
+            # slice silently discarded records after the first 1,000, which
+            # made large backfills incomplete while reporting success.
+            for item in items:
                 if not isinstance(item, dict):
                     raise ValueError("each ontology entity must be an object")
-                ids.append(_upsert_entity_connection(connection, item, now=now))
+                entity_id, existed = _upsert_entity_connection(connection, item, now=now, return_state=True)
+                ids.append(entity_id)
+                if existed:
+                    updated += 1
+                else:
+                    inserted += 1
             connection.commit()
-    return {"status": "accepted", "count": len(ids), "entity_ids": ids[:1000], "schema_version": SCHEMA_VERSION}
+    return {
+        "status": "accepted",
+        "count": len(ids),
+        "inserted": inserted,
+        "updated": updated,
+        "entity_ids": ids,
+        "schema_version": SCHEMA_VERSION,
+    }
 
 
 def upsert_evidence_ref(item: dict[str, Any], *, db_path: str | None = None) -> str:
     soc_store.init_db(db_path)
-    source = _text(item.get("source") or "unknown", 160) or "unknown"
+    source = normalize_source(item.get("source") or "unknown") or "unknown"
     locator = sanitize_locator(item.get("locator") or item.get("uri") or item.get("source_id"))
     if not locator:
         raise ValueError("evidence locator is required")
@@ -673,7 +864,37 @@ def upsert_evidence_ref(item: dict[str, Any], *, db_path: str | None = None) -> 
     return evidence_id
 
 
-def _upsert_relationship_connection(connection: Any, item: dict[str, Any], *, now: str | None = None) -> str:
+def _semantic_relationship_id(item: dict[str, Any]) -> str:
+    """Derive one relationship identity from its semantic source tuple.
+
+    Request and caller-generated IDs are transport metadata.  A replay of the
+    same edge under a new request key must address the same row and change
+    record, otherwise each worker cycle grows a duplicate graph edge.
+    """
+    relation = _text(item.get("relationship_type") or item.get("type"), 120).upper()
+    from_id = _text(item.get("from_entity_id") or item.get("from"), 512)
+    to_id = _text(item.get("to_entity_id") or item.get("to"), 512)
+    source = normalize_source(item.get("source") or "unknown") or "unknown"
+    source_record_id = _text(item.get("source_record_id") or item.get("source_id"), 512)
+    return "rel:" + hashlib.sha256(f"{relation}|{from_id}|{to_id}|{source}|{source_record_id}".encode()).hexdigest()[:40]
+
+
+def _relationship_change_id(relation_id: str, after: Any) -> str:
+    """Return a deterministic change ID for one semantic relationship state."""
+    stable = dict(after) if isinstance(after, dict) else {}
+    stable.pop("created_at", None)
+    stable.pop("updated_at", None)
+    encoded = json.dumps(stable, sort_keys=True, separators=(",", ":"), default=str)
+    return "chg:" + hashlib.sha256(f"relationship|{relation_id}|upsert|{encoded}".encode()).hexdigest()[:40]
+
+
+def _upsert_relationship_connection(
+    connection: Any,
+    item: dict[str, Any],
+    *,
+    now: str | None = None,
+    return_state: bool = False,
+) -> str | tuple[str, bool]:
     relation = _text(item.get("relationship_type") or item.get("type"), 120).upper()
     if relation not in RELATION_TYPES:
         raise ValueError(f"unsupported relationship_type: {relation}")
@@ -688,18 +909,18 @@ def _upsert_relationship_connection(connection: Any, item: dict[str, Any], *, no
     if to_entity is None:
         raise ValueError(f"unknown relationship target entity: {to_id}")
     evidence_ref_id = _text(item.get("evidence_ref_id"), 512)
-    if evidence_ref_id and connection.execute("SELECT 1 FROM ontology_evidence_refs WHERE evidence_ref_id = ?", (evidence_ref_id,)).fetchone() is None:
-        raise ValueError(f"unknown relationship evidence reference: {evidence_ref_id}")
-    source = _text(item.get("source") or "unknown", 160) or "unknown"
+    evidence_row = None
+    if evidence_ref_id:
+        evidence_row = connection.execute("SELECT workspace_id FROM ontology_evidence_refs WHERE evidence_ref_id = ?", (evidence_ref_id,)).fetchone()
+        if evidence_row is None:
+            raise ValueError(f"unknown relationship evidence reference: {evidence_ref_id}")
+    source = normalize_source(item.get("source") or "unknown") or "unknown"
     source_record_id = _text(item.get("source_record_id") or item.get("source_id"), 512)
     relation_id = _text(item.get("relationship_id") or item.get("edge_id"), 512)
     if not relation_id:
-        relation_id = "rel:" + hashlib.sha256(f"{relation}|{from_id}|{to_id}|{source}|{source_record_id}".encode()).hexdigest()[:40]
+        relation_id = _semantic_relationship_id(item)
     now = now or utc_now()
     existing = connection.execute("SELECT * FROM ontology_relationships WHERE relationship_id = ?", (relation_id,)).fetchone()
-    if existing is not None and _source_priority(str(existing["source"])) > _source_priority(source):
-        source = str(existing["source"])
-        source_record_id = source_record_id or str(existing["source_record_id"] or "")
     # A missing relationship workspace inherits the source entity's scope.
     # This keeps older local callers compatible while preventing a default
     # ``local`` value from joining two tenant-scoped entities accidentally.
@@ -710,10 +931,39 @@ def _upsert_relationship_connection(connection: Any, item: dict[str, Any], *, no
             raise ValueError("relationship belongs to a different workspace")
         if existing_workspace != "local" and workspace_id == "local":
             workspace_id = existing_workspace
+    if evidence_row is not None:
+        evidence_workspace = _text(evidence_row["workspace_id"], 160) or "local"
+        if evidence_workspace != "local" and workspace_id != "local" and evidence_workspace != workspace_id:
+            raise ValueError("relationship evidence reference belongs to a different workspace")
+        if evidence_workspace != "local" and workspace_id == "local":
+            workspace_id = evidence_workspace
     endpoint_workspaces = {str(from_entity["workspace_id"] or "local"), str(to_entity["workspace_id"] or "local")}
     if workspace_id != "local" and any(scope not in {workspace_id, "local"} for scope in endpoint_workspaces):
         raise ValueError("relationship endpoints belong to a different workspace")
-    observed = _text(item.get("observed_at") or now, 64)
+    if existing is not None:
+        immutable = {
+            "relationship_type": relation,
+            "from_entity_id": from_id,
+            "to_entity_id": to_id,
+            "source": source,
+            "source_record_id": source_record_id,
+            "workspace_id": workspace_id,
+        }
+        for field, incoming in immutable.items():
+            stored = _text(existing[field], 512)
+            if field == "source":
+                stored = normalize_source(stored)
+            if stored != incoming:
+                raise ValueError("relationship identity is immutable; use a new relationship_id for a different relation")
+    observed = _text(
+        item.get("observed_at")
+        or item.get("last_seen_at")
+        or item.get("first_seen_at")
+        or item.get("created_at")
+        or item.get("updated_at")
+        or (existing["observed_at"] if existing is not None else UNKNOWN_OBSERVED_AT),
+        64,
+    ) or UNKNOWN_OBSERVED_AT
     connection.execute(
         """
         INSERT INTO ontology_relationships (
@@ -723,10 +973,7 @@ def _upsert_relationship_connection(connection: Any, item: dict[str, Any], *, no
             freshness_at, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(relationship_id) DO UPDATE SET
-            relationship_type=excluded.relationship_type,
-            from_entity_id=excluded.from_entity_id, to_entity_id=excluded.to_entity_id,
-            source=excluded.source, source_record_id=excluded.source_record_id,
-            workspace_id=excluded.workspace_id, evidence_ref_id=excluded.evidence_ref_id,
+            evidence_ref_id=excluded.evidence_ref_id,
             properties_json=excluded.properties_json, confidence=excluded.confidence,
             observed_at=excluded.observed_at, valid_from=excluded.valid_from,
             valid_to=excluded.valid_to, freshness_at=excluded.freshness_at,
@@ -762,8 +1009,9 @@ def _upsert_relationship_connection(connection: Any, item: dict[str, Any], *, no
         source=source,
         actor=_text(item.get("actor") or item.get("source_instance") or "system", 160),
         now=now,
+        change_id=_relationship_change_id(relation_id, dict(after) if after is not None else {}),
     )
-    return relation_id
+    return (relation_id, existing is not None) if return_state else relation_id
 
 
 def upsert_relationship(item: dict[str, Any], *, db_path: str | None = None) -> dict[str, Any]:
@@ -780,14 +1028,31 @@ def upsert_relationships(items: Iterable[dict[str, Any]], *, db_path: str | None
     soc_store.init_db(db_path)
     now = utc_now()
     ids: list[str] = []
+    inserted = 0
+    updated = 0
     with sqlite_writer_lock(db_path):
         with soc_store.connect(db_path) as connection:
-            for item in list(items)[:2000]:
+            # As with entities, process the complete iterable so callers can
+            # submit a chunk larger than the old response bound without
+            # silently losing relations.
+            for item in items:
                 if not isinstance(item, dict):
                     raise ValueError("each ontology relationship must be an object")
-                ids.append(_upsert_relationship_connection(connection, item, now=now))
+                relationship_id, existed = _upsert_relationship_connection(connection, item, now=now, return_state=True)
+                ids.append(relationship_id)
+                if existed:
+                    updated += 1
+                else:
+                    inserted += 1
             connection.commit()
-    return {"status": "accepted", "count": len(ids), "relationship_ids": ids[:2000], "schema_version": SCHEMA_VERSION}
+    return {
+        "status": "accepted",
+        "count": len(ids),
+        "inserted": inserted,
+        "updated": updated,
+        "relationship_ids": ids,
+        "schema_version": SCHEMA_VERSION,
+    }
 
 
 def resolve_identity(
@@ -810,7 +1075,7 @@ def resolve_identity(
     normalized_namespace = normalize_value(namespace or "global", limit=120) or "global"
     normalized_value = normalize_canonical_key(normalized_type, normalized_namespace, value)
     search_values = [normalized_value, *[_text(item, 512) for item in (aliases or []) if _text(item, 512)]]
-    source_filter = _text(source, 160)
+    source_filter = normalize_source(source) if source else ""
     workspace_filter = _text(workspace_id, 160)
     soc_store.init_db(db_path)
     candidates: dict[str, dict[str, Any]] = {}
@@ -960,9 +1225,9 @@ def record_event(item: dict[str, Any], *, db_path: str | None = None) -> dict[st
     if not entity_id:
         raise ValueError("event entity_id is required")
     event_type = _text(item.get("event_type") or "observed", 120) or "observed"
-    source = _text(item.get("source") or "unknown", 160) or "unknown"
+    source = normalize_source(item.get("source") or "unknown") or "unknown"
     source_record_id = _text(item.get("source_record_id") or item.get("source_id"), 512)
-    occurred_at = _text(item.get("occurred_at") or utc_now(), 64)
+    occurred_at = _text(item.get("occurred_at") or item.get("observed_at") or item.get("created_at") or UNKNOWN_OBSERVED_AT, 64) or UNKNOWN_OBSERVED_AT
     event_id = _text(item.get("event_id"), 512) or "event:" + hashlib.sha256(f"{entity_id}|{event_type}|{source}|{source_record_id}|{occurred_at}".encode()).hexdigest()[:40]
     now = utc_now()
     with sqlite_writer_lock(db_path):
@@ -1035,7 +1300,7 @@ def sync_payload(payload: dict[str, Any], *, db_path: str | None = None) -> dict
             for item in evidence_refs:
                 if not isinstance(item, dict):
                     raise ValueError("ontology evidence_ref must be an object")
-                source = _text(item.get("source") or "unknown", 160) or "unknown"
+                source = normalize_source(item.get("source") or "unknown") or "unknown"
                 locator = sanitize_locator(item.get("locator") or item.get("uri") or item.get("source_id"))
                 if not locator:
                     raise ValueError("evidence locator is required")
@@ -1057,7 +1322,9 @@ def sync_payload(payload: dict[str, Any], *, db_path: str | None = None) -> dict
             for item in relationships:
                 if not isinstance(item, dict):
                     raise ValueError("ontology relationship must be an object")
-                _upsert_relationship_connection(connection, item, now=now)
+                semantic_item = dict(item)
+                semantic_item["relationship_id"] = _semantic_relationship_id(item)
+                _upsert_relationship_connection(connection, semantic_item, now=now)
                 counts["relationships"] += 1
             for item in events:
                 if not isinstance(item, dict):
@@ -1066,10 +1333,16 @@ def sync_payload(payload: dict[str, Any], *, db_path: str | None = None) -> dict
                 if connection.execute("SELECT 1 FROM ontology_entities WHERE entity_id = ?", (entity_id,)).fetchone() is None:
                     raise ValueError(f"unknown event entity: {entity_id}")
                 event_type = _text(item.get("event_type") or "observed", 120) or "observed"
-                source = _text(item.get("source") or "unknown", 160) or "unknown"
+                source = normalize_source(item.get("source") or "unknown") or "unknown"
                 source_record_id = _text(item.get("source_record_id") or item.get("source_id"), 512)
-                occurred_at = _text(item.get("occurred_at") or now, 64)
-                event_id = _text(item.get("event_id"), 512) or "event:" + hashlib.sha256(f"{entity_id}|{event_type}|{source}|{source_record_id}|{occurred_at}".encode()).hexdigest()[:40]
+                # A transport timestamp would make a replay with omitted
+                # occurred_at produce a new event ID on every worker cycle.
+                # Prefer the producer's observation/creation time, then a
+                # fixed epoch so the semantic fallback is deterministic.
+                occurred_at = _text(item.get("occurred_at") or item.get("observed_at") or item.get("created_at") or UNKNOWN_OBSERVED_AT, 64) or UNKNOWN_OBSERVED_AT
+                # Caller event IDs are transport metadata for synchronization;
+                # derive the durable identity from the semantic event tuple.
+                event_id = "event:" + hashlib.sha256(f"{entity_id}|{event_type}|{source}|{source_record_id}|{occurred_at}".encode()).hexdigest()[:40]
                 connection.execute(
                     """
                     INSERT INTO ontology_events
@@ -1093,7 +1366,6 @@ def sync_payload(payload: dict[str, Any], *, db_path: str | None = None) -> dict
 
 
 def search_entities(query: str = "", *, entity_type: str | None = None, workspace_id: str | None = None, limit: int = 100, db_path: str | None = None) -> list[dict[str, Any]]:
-    soc_store.init_db(db_path)
     bounded = _limit(limit)
     clauses: list[str] = []
     params: list[Any] = []
@@ -1112,7 +1384,9 @@ def search_entities(query: str = "", *, entity_type: str | None = None, workspac
         clauses.append("(lower(e.entity_id) LIKE ? OR lower(e.canonical_key) LIKE ? OR lower(e.display_name) LIKE ? OR lower(e.source_id) LIKE ? OR EXISTS (SELECT 1 FROM ontology_aliases a WHERE a.entity_id=e.entity_id AND a.normalized_value LIKE ?))")
         params.extend([like, like, like, like, like])
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    with soc_store.read_connect(db_path) as connection:
+    with _ontology_read_connection(db_path, _ONTOLOGY_GRAPH_READ_TABLES) as connection:
+        if connection is None:
+            return []
         rows = connection.execute(
             f"SELECT e.* FROM ontology_entities e {where} ORDER BY e.updated_at DESC, e.entity_id LIMIT ?",
             (*params, bounded),
@@ -1121,9 +1395,10 @@ def search_entities(query: str = "", *, entity_type: str | None = None, workspac
 
 
 def get_entity(entity_id: str, *, workspace_id: str | None = None, db_path: str | None = None) -> dict[str, Any] | None:
-    soc_store.init_db(db_path)
     identifier = _text(entity_id, 512)
-    with soc_store.read_connect(db_path) as connection:
+    with _ontology_read_connection(db_path, _ONTOLOGY_GRAPH_READ_TABLES) as connection:
+        if connection is None:
+            return None
         row = connection.execute("SELECT * FROM ontology_entities WHERE entity_id = ?", (identifier,)).fetchone()
         if row is None:
             alias = connection.execute("SELECT entity_id FROM ontology_aliases WHERE normalized_value = ? LIMIT 1", (normalize_value(identifier, limit=512),)).fetchone()
@@ -1153,7 +1428,6 @@ def get_entity(entity_id: str, *, workspace_id: str | None = None, db_path: str 
 
 
 def neighbors(entity_id: str, *, depth: int = 1, relationship_type: str | None = None, limit: int = 100, workspace_id: str | None = None, db_path: str | None = None) -> dict[str, Any]:
-    soc_store.init_db(db_path)
     root = _text(entity_id, 512)
     depth = max(1, min(int(depth or 1), MAX_TRAVERSAL_DEPTH))
     bounded = _limit(limit)
@@ -1161,7 +1435,9 @@ def neighbors(entity_id: str, *, depth: int = 1, relationship_type: str | None =
     nodes: dict[str, dict[str, Any]] = {}
     frontier = deque([(root, 0)])
     visited = {root}
-    with soc_store.read_connect(db_path) as connection:
+    with _ontology_read_connection(db_path, _ONTOLOGY_GRAPH_READ_TABLES) as connection:
+        if connection is None:
+            return {"entity_id": root, "depth": depth, "nodes": [], "relationships": []}
         root_row = connection.execute("SELECT workspace_id FROM ontology_entities WHERE entity_id = ?", (root,)).fetchone()
         if root_row is None or (workspace_id and str(root_row["workspace_id"] or "") not in {_text(workspace_id, 160), "local"}):
             return {"entity_id": root, "depth": depth, "nodes": [], "relationships": []}
@@ -1203,10 +1479,11 @@ def neighbors(entity_id: str, *, depth: int = 1, relationship_type: str | None =
 
 
 def timeline(entity_id: str, *, limit: int = 100, workspace_id: str | None = None, db_path: str | None = None) -> list[dict[str, Any]]:
-    soc_store.init_db(db_path)
     bounded = _limit(limit)
     identifier = _text(entity_id, 512)
-    with soc_store.read_connect(db_path) as connection:
+    with _ontology_read_connection(db_path, _ONTOLOGY_GRAPH_READ_TABLES) as connection:
+        if connection is None:
+            return []
         root_row = connection.execute("SELECT workspace_id FROM ontology_entities WHERE entity_id = ?", (identifier,)).fetchone()
         if root_row is None or (workspace_id and str(root_row["workspace_id"] or "") not in {_text(workspace_id, 160), "local"}):
             return []
@@ -1255,26 +1532,55 @@ def risk_context(entity_id: str, *, workspace_id: str | None = None, db_path: st
         return {"entity_id": entity_id, "status": "not_found"}
     graph = neighbors(entity["entity_id"], depth=2, limit=250, workspace_id=workspace_id, db_path=db_path)
     finding_ids = {entity["entity_id"]} if entity["entity_type"] == "finding" else set()
+    # Keep the ontology ID and the owning findings-store ID separate.  Core
+    # projections commonly use ``finding:secopsai:<source-id>`` as their
+    # ontology key, while the durable row is keyed by the source ID itself.
+    # Include the root entity's source fields as well as linked graph nodes so
+    # a direct risk request cannot lose severity just because the root is not
+    # returned in its own neighbor list.
+    finding_source_ids: set[str] = set()
+    root_properties = entity.get("properties") if isinstance(entity.get("properties"), dict) else {}
+    for candidate in (
+        entity.get("source_id"),
+        entity.get("canonical_key"),
+        root_properties.get("finding_id"),
+        root_properties.get("source_id"),
+    ):
+        value = _text(candidate, 512)
+        if value:
+            finding_source_ids.add(value)
     for node in graph["nodes"]:
         if node["entity_type"] == "finding":
             finding_ids.add(node["entity_id"])
+            for candidate in (node.get("source_id"), node.get("canonical_key")):
+                value = _text(candidate, 512)
+                if value:
+                    finding_source_ids.add(value)
     findings: list[dict[str, Any]] = []
     severity_values = {"critical": 95, "high": 80, "medium": 55, "low": 25, "info": 10}
     properties = entity.get("properties") if isinstance(entity.get("properties"), dict) else {}
     severity_score = int(properties.get("severity_score") or severity_values.get(str(properties.get("severity") or "").lower(), 0) or 0)
-    soc_store.init_db(db_path)
-    with soc_store.read_connect(db_path) as connection:
-        for finding_id in list(finding_ids)[:100]:
-            finding_entity = next((node for node in graph["nodes"] if node.get("entity_id") == finding_id), None)
-            source_finding_id = _text((finding_entity or {}).get("source_id") if isinstance(finding_entity, dict) else "", 512)
-            row = connection.execute("SELECT finding_id, title, severity, severity_score, status, disposition, source, first_seen, last_seen, updated_at FROM findings WHERE finding_id = ?", (finding_id,)).fetchone()
-            if row is None and source_finding_id and source_finding_id != finding_id:
-                row = connection.execute("SELECT finding_id, title, severity, severity_score, status, disposition, source, first_seen, last_seen, updated_at FROM findings WHERE finding_id = ?", (source_finding_id,)).fetchone()
-            if row:
-                item = dict(row)
-                item["ontology_entity_id"] = finding_id
-                findings.append(item)
-                severity_score = max(severity_score, int(item.get("severity_score") or 0))
+    # The findings store is an optional legacy dependency of the ontology
+    # projection.  If it is not present, retain the graph-derived context and
+    # report no linked legacy payload rather than initializing a database.
+    with _ontology_read_connection(db_path, {"findings"}) as connection:
+        if connection is not None:
+            for finding_id in list(finding_ids)[:100]:
+                finding_entity = next((node for node in graph["nodes"] if node.get("entity_id") == finding_id), None)
+                source_finding_id = _text((finding_entity or {}).get("source_id") if isinstance(finding_entity, dict) else "", 512)
+                candidates = [finding_id, source_finding_id]
+                if finding_id == entity["entity_id"]:
+                    candidates.extend(finding_source_ids)
+                row = None
+                for candidate in dict.fromkeys(_text(value, 512) for value in candidates if _text(value, 512)):
+                    row = connection.execute("SELECT finding_id, title, severity, severity_score, status, disposition, source, first_seen, last_seen, updated_at FROM findings WHERE finding_id = ?", (candidate,)).fetchone()
+                    if row is not None:
+                        break
+                if row:
+                    item = dict(row)
+                    item["ontology_entity_id"] = finding_id
+                    findings.append(item)
+                    severity_score = max(severity_score, int(item.get("severity_score") or severity_values.get(str(item.get("severity") or "").lower(), 0) or 0))
     evidence_count = sum(1 for relation in graph["relationships"] if relation.get("evidence_ref_id"))
     freshness = entity.get("freshness_at") or entity.get("last_seen_at")
     # Keep the risk score deterministic and explainable.  Optional context
@@ -1336,52 +1642,199 @@ def risk_context(entity_id: str, *, workspace_id: str | None = None, db_path: st
 
 
 def quality(*, workspace_id: str | None = None, stale_after_seconds: int = 7 * 24 * 3600, db_path: str | None = None) -> dict[str, Any]:
-    soc_store.init_db(db_path)
     try:
         stale_after = max(300, min(int(stale_after_seconds), 365 * 24 * 3600))
     except (TypeError, ValueError):
         stale_after = 7 * 24 * 3600
-    cutoff = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() - stale_after, timezone.utc).isoformat().replace("+00:00", "Z")
-    clauses = "WHERE workspace_id = ?" if workspace_id else ""
-    params = (workspace_id,) if workspace_id else ()
-    with soc_store.read_connect(db_path) as connection:
-        entities = int(connection.execute(f"SELECT COUNT(*) FROM ontology_entities {clauses}", params).fetchone()[0])
-        relationships = int(connection.execute(f"SELECT COUNT(*) FROM ontology_relationships {clauses}", params).fetchone()[0])
-        with_provenance = int(connection.execute(f"SELECT COUNT(*) FROM ontology_relationships {clauses + (' AND' if clauses else 'WHERE')} source <> 'unknown' AND source_record_id <> ''", params).fetchone()[0])
-        evidence_clause = "WHERE workspace_id = ?" if workspace_id else ""
-        evidence_params = (workspace_id,) if workspace_id else ()
-        evidence = int(connection.execute(f"SELECT COUNT(*) FROM ontology_evidence_refs {evidence_clause}", evidence_params).fetchone()[0])
-        relationship_scope = "WHERE r.workspace_id = ? AND (NOT EXISTS (SELECT 1 FROM ontology_entities e WHERE e.entity_id=r.from_entity_id AND e.workspace_id = ?) OR NOT EXISTS (SELECT 1 FROM ontology_entities e WHERE e.entity_id=r.to_entity_id AND e.workspace_id = ?))" if workspace_id else "WHERE NOT EXISTS (SELECT 1 FROM ontology_entities e WHERE e.entity_id=r.from_entity_id) OR NOT EXISTS (SELECT 1 FROM ontology_entities e WHERE e.entity_id=r.to_entity_id)"
-        relationship_scope_params = (workspace_id, workspace_id, workspace_id) if workspace_id else ()
-        orphan_relationships = int(connection.execute(f"SELECT COUNT(*) FROM ontology_relationships r {relationship_scope}", relationship_scope_params).fetchone()[0])
-        stale = int(connection.execute(f"SELECT COUNT(*) FROM ontology_entities {clauses + (' AND' if clauses else 'WHERE')} freshness_at < ?", (*params, cutoff)).fetchone()[0])
-        orphan_entities = int(connection.execute(f"SELECT COUNT(*) FROM ontology_entities e {clauses + (' AND' if clauses else 'WHERE')} NOT EXISTS (SELECT 1 FROM ontology_relationships r WHERE r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id)", params).fetchone()[0])
-        finding_total = int(connection.execute(f"SELECT COUNT(*) FROM ontology_entities {clauses + (' AND' if clauses else 'WHERE')} entity_type = 'finding'", params).fetchone()[0])
-        linked_findings = int(connection.execute(f"SELECT COUNT(*) FROM ontology_entities e {clauses + (' AND' if clauses else 'WHERE')} e.entity_type = 'finding' AND EXISTS (SELECT 1 FROM ontology_relationships r WHERE (r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id) AND r.relationship_type IN ('FINDING_ON_VERSION','FINDING_ON_ASSET','CASE_GROUPS_FINDING','ALERT_DERIVED_FROM_FINDING'))", params).fetchone()[0])
+    now_dt = datetime.now(timezone.utc)
+    cutoff_dt = now_dt.timestamp() - stale_after
+    workspace = _text(workspace_id, 160) if workspace_id else ""
+    resolved_path = os.path.abspath(os.path.expanduser(db_path or soc_store.default_db_path()))
+
+    def empty_quality(database_present: bool) -> dict[str, Any]:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "workspace_id": workspace or "all",
+            "database_present": database_present,
+            "entities": 0,
+            "relationships": 0,
+            "evidence_references": 0,
+            "relationships_with_provenance": 0,
+            "relationships_with_evidence": 0,
+            # An empty denominator is unmeasured, not a perfect score.  Null
+            # keeps Mission Control from presenting an empty store as healthy.
+            "provenance_coverage_percent": None,
+            "evidence_with_valid_locator": 0,
+            "orphan_relationships": 0,
+            "orphan_entities": 0,
+            "stale_entities": 0,
+            "stale_after_seconds": stale_after,
+            "canonical_id_coverage_percent": None,
+            "graph_coverage_percent": None,
+            "stale_sources": 0,
+            "duplicate_candidates": 0,
+            "contradictory_relationships": 0,
+            "findings_total": 0,
+            "findings_linked_percent": None,
+            "open_conflicts": 0,
+            "change_history_records": 0,
+            "queue_age_seconds": 0,
+            "stale_runner_heartbeats": 0,
+            "heartbeat_freshness_seconds": None,
+            "heartbeat_measurement_status": "unknown",
+            "ai_evidence_completeness_percent": None,
+            "false_positive_rate": None,
+            "recommendation_acceptance_rate": None,
+            "action_completion_rate": None,
+            "action_rollback_rate": None,
+            "quality_alerts": [],
+            "entities_by_type": {},
+        }
+
+    # Reports must not initialize or otherwise mutate a missing database.  In
+    # particular, a read-only health probe should not create a new file merely
+    # because a deployment has not completed its first write yet.
+    if not os.path.isfile(resolved_path):
+        return empty_quality(False)
+
+    def parse_timestamp(value: Any) -> datetime | None:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    with _ontology_read_connection(resolved_path, _ONTOLOGY_QUALITY_READ_TABLES) as connection:
+        if connection is None:
+            return empty_quality(os.path.isfile(resolved_path))
+        entity_clause = "WHERE workspace_id IN (?, 'local')" if workspace else ""
+        entity_params: tuple[Any, ...] = (workspace,) if workspace else ()
+        entity_rows = connection.execute(f"SELECT * FROM ontology_entities {entity_clause}", entity_params).fetchall()
+        entity_ids = {str(row["entity_id"]) for row in entity_rows}
+        entity_scope = {str(row["entity_id"]): str(row["workspace_id"] or "local") for row in entity_rows}
+        entity_type_by_id = {str(row["entity_id"]): str(row["entity_type"]) for row in entity_rows}
+
+        relation_scope = "r.workspace_id IN (?, 'local')" if workspace else "1 = 1"
+        relation_params: tuple[Any, ...] = (workspace,) if workspace else ()
+        relation_rows = connection.execute(
+            f"""
+            SELECT r.*, f.workspace_id AS from_workspace, t.workspace_id AS to_workspace
+              FROM ontology_relationships r
+              LEFT JOIN ontology_entities f ON f.entity_id = r.from_entity_id
+              LEFT JOIN ontology_entities t ON t.entity_id = r.to_entity_id
+             WHERE {relation_scope}
+            """,
+            relation_params,
+        ).fetchall()
+        evidence_clause = "WHERE workspace_id IN (?, 'local')" if workspace else ""
+        evidence_params: tuple[Any, ...] = (workspace,) if workspace else ()
+        evidence_rows = connection.execute(f"SELECT * FROM ontology_evidence_refs {evidence_clause}", evidence_params).fetchall()
+
+        stale_entities = 0
+        stale_source_names: set[str] = set()
+        for row in entity_rows:
+            parsed = parse_timestamp(row["freshness_at"])
+            if parsed is None or parsed.timestamp() < cutoff_dt:
+                stale_entities += 1
+                source = normalize_source(row["source"] or "")
+                if source:
+                    stale_source_names.add(source)
+
+        valid_relation_rows = []
+        orphan_relationships = 0
+        for row in relation_rows:
+            from_scope = str(row["from_workspace"] or "")
+            to_scope = str(row["to_workspace"] or "")
+            endpoint_ok = bool(row["from_workspace"] and row["to_workspace"])
+            if workspace:
+                endpoint_ok = endpoint_ok and from_scope in {workspace, "local"} and to_scope in {workspace, "local"}
+            if endpoint_ok:
+                valid_relation_rows.append(row)
+            else:
+                orphan_relationships += 1
+        relationships = len(relation_rows)
+        with_provenance = sum(1 for row in relation_rows if normalize_source(row["source"] or "") not in {"", "unknown"} and str(row["source_record_id"] or ""))
+        relationships_with_evidence = sum(1 for row in relation_rows if str(row["evidence_ref_id"] or ""))
+        connected_ids = {str(row[field]) for row in valid_relation_rows for field in ("from_entity_id", "to_entity_id") if row[field]}
+        orphan_entities = len(entity_ids - connected_ids)
+        finding_ids = {item for item, kind in entity_type_by_id.items() if kind == "finding"}
+        linked_finding_ids = {
+            str(row["from_entity_id"] if entity_type_by_id.get(str(row["from_entity_id"])) == "finding" else row["to_entity_id"])
+            for row in valid_relation_rows
+            if row["relationship_type"] in {"FINDING_ON_VERSION", "FINDING_ON_ASSET", "CASE_GROUPS_FINDING", "ALERT_DERIVED_FROM_FINDING"}
+            and (str(row["from_entity_id"]) in finding_ids or str(row["to_entity_id"]) in finding_ids)
+        }
+        evidence_with_locator = sum(1 for row in evidence_rows if str(row["locator"] or "") and not str(row["locator"]).startswith("redacted://"))
+        canonical_id_count = sum(1 for row in entity_rows if ":" in str(row["entity_id"]) and len(str(row["entity_id"]).encode("utf-8")) <= MAX_ENTITY_ID_BYTES)
+        stale_runner_heartbeats = 0
+        heartbeat_ages: list[int] = []
+        for row in connection.execute("SELECT last_seen_at FROM runner_heartbeats").fetchall():
+            parsed = parse_timestamp(row["last_seen_at"])
+            if parsed is None or parsed.timestamp() < cutoff_dt:
+                stale_runner_heartbeats += 1
+            if parsed is not None:
+                heartbeat_ages.append(max(0, int((now_dt - parsed).total_seconds())))
+
+        queue_times: list[datetime] = []
+        for table in ("intelligence_jobs", "coordinator_commands"):
+            for row in connection.execute(f"SELECT queued_at FROM {table} WHERE status IN ('queued','running')").fetchall():
+                parsed = parse_timestamp(row["queued_at"])
+                if parsed is not None:
+                    queue_times.append(parsed)
+        queue_age_seconds = max(0, int((now_dt - min(queue_times)).total_seconds())) if queue_times else 0
         open_conflicts = int(connection.execute("SELECT COUNT(*) FROM ontology_conflicts WHERE status = 'open'").fetchone()[0])
         change_count = int(connection.execute("SELECT COUNT(*) FROM ontology_change_log").fetchone()[0])
-        relationships_with_evidence = int(connection.execute(f"SELECT COUNT(*) FROM ontology_relationships {clauses + (' AND' if clauses else 'WHERE')} evidence_ref_id IS NOT NULL AND evidence_ref_id <> ''", params).fetchone()[0])
-        evidence_with_locator = int(connection.execute(f"SELECT COUNT(*) FROM ontology_evidence_refs {evidence_clause + (' AND' if evidence_clause else 'WHERE')} locator <> '' AND locator NOT LIKE 'redacted://local%' AND locator NOT LIKE 'redacted://url%'", evidence_params).fetchone()[0])
-        stale_runner_heartbeats = int(connection.execute("SELECT COUNT(*) FROM runner_heartbeats WHERE last_seen_at < ?", (cutoff,)).fetchone()[0])
-        canonical_id_count = int(connection.execute(f"SELECT COUNT(*) FROM ontology_entities {clauses + (' AND' if clauses else 'WHERE')} instr(entity_id, ':') > 0", params).fetchone()[0])
-        connected_entities = int(connection.execute(f"SELECT COUNT(*) FROM ontology_entities e {clauses + (' AND' if clauses else 'WHERE')} EXISTS (SELECT 1 FROM ontology_relationships r WHERE r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id)", params).fetchone()[0])
-        stale_sources = int(connection.execute(f"SELECT COUNT(DISTINCT source) FROM ontology_entities {clauses + (' AND' if clauses else 'WHERE')} source <> '' AND freshness_at < ?", (*params, cutoff)).fetchone()[0])
         duplicate_candidates = int(connection.execute("SELECT COUNT(*) FROM ontology_conflicts WHERE status = 'open' AND conflict_type IN ('duplicate_alias','duplicate_identity','duplicate_entity','duplicate')").fetchone()[0])
         contradictory_relationships = int(connection.execute("SELECT COUNT(*) FROM ontology_conflicts WHERE status = 'open' AND conflict_type IN ('source_contradiction','contradictory_relationship','contradiction')").fetchone()[0])
-        queue_row = connection.execute(
-            "SELECT MIN(queued_at) AS queued_at FROM (SELECT queued_at FROM intelligence_jobs WHERE status IN ('queued','running') UNION ALL SELECT queued_at FROM coordinator_commands WHERE status IN ('queued','running'))"
-        ).fetchone()
-        by_type = {str(row["entity_type"]): int(row["count"]) for row in connection.execute(f"SELECT entity_type, COUNT(*) AS count FROM ontology_entities {clauses} GROUP BY entity_type", params).fetchall()}
-    queue_age_seconds = 0
-    queued_at = queue_row["queued_at"] if queue_row else None
-    if queued_at:
-        try:
-            parsed_queue = datetime.fromisoformat(str(queued_at).replace("Z", "+00:00"))
-            if parsed_queue.tzinfo is None:
-                parsed_queue = parsed_queue.replace(tzinfo=timezone.utc)
-            queue_age_seconds = max(0, int((datetime.now(timezone.utc) - parsed_queue).total_seconds()))
-        except (TypeError, ValueError):
-            queue_age_seconds = 0
+        by_type = {str(row["entity_type"]): int(row["count"]) for row in connection.execute(f"SELECT entity_type, COUNT(*) AS count FROM ontology_entities {entity_clause} GROUP BY entity_type", entity_params).fetchall()}
+
+        # These ratios are intentionally unmeasured when their denominator is
+        # empty.  Returning 100% for an empty review/action set falsely turns
+        # missing telemetry into a success signal.
+        allowed_finding_ids: set[str] | None = None
+        if workspace:
+            allowed_finding_ids = set()
+            for row in entity_rows:
+                if row["entity_type"] == "finding":
+                    allowed_finding_ids.add(str(row["source_id"] or ""))
+                    allowed_finding_ids.add(str(row["canonical_key"] or ""))
+                    allowed_finding_ids.add(str(row["entity_id"] or ""))
+        finding_rows = connection.execute("SELECT finding_id, disposition FROM findings").fetchall()
+        if allowed_finding_ids is not None:
+            finding_rows = [row for row in finding_rows if str(row["finding_id"]) in allowed_finding_ids]
+        reviewed_dispositions = {"false_positive", "expected_behavior", "tune_policy", "true_positive", "remediated"}
+        reviewed_rows = [row for row in finding_rows if str(row["disposition"] or "").strip().lower() in reviewed_dispositions]
+        false_positive_rows = [row for row in reviewed_rows if str(row["disposition"] or "").strip().lower() in {"false_positive", "expected_behavior", "tune_policy"}]
+        false_positive_rate = (len(false_positive_rows) / len(reviewed_rows)) if reviewed_rows else None
+
+        triage_rows = connection.execute("SELECT run_id, target_id, status, recommendation_json, decision_json FROM agent_triage_runs").fetchall()
+        if allowed_finding_ids is not None:
+            triage_rows = [row for row in triage_rows if str(row["target_id"] or "") in allowed_finding_ids]
+        terminal_triage = [row for row in triage_rows if str(row["status"] or "") in {"applied", "recommended", "escalated", "rolled_back"}]
+        complete_with_evidence = 0
+        for row in terminal_triage:
+            decision = _loads(row["decision_json"])
+            recommendation = _loads(row["recommendation_json"])
+            refs = decision.get("validated_evidence_refs") if isinstance(decision, dict) else None
+            refs = refs or (recommendation.get("decision_evidence_refs") if isinstance(recommendation, dict) else None)
+            if isinstance(refs, list) and any(str(item).strip() for item in refs):
+                complete_with_evidence += 1
+        ai_evidence_completeness = (complete_with_evidence / len(terminal_triage) * 100) if terminal_triage else None
+        recommendation_terminal = [row for row in terminal_triage if str(row["status"] or "") in {"applied", "recommended", "escalated", "rolled_back"}]
+        recommendation_accepted = sum(str(row["status"] or "") in {"applied", "escalated", "rolled_back"} for row in recommendation_terminal)
+        recommendation_acceptance = (recommendation_accepted / len(recommendation_terminal)) if recommendation_terminal else None
+        action_rows = [row for row in entity_rows if row["entity_type"] == "remediation_action"]
+        action_completed = sum(str(row["status"] or "").lower() in {"completed", "succeeded", "closed", "applied", "done"} for row in action_rows)
+        action_completion = (action_completed / len(action_rows)) if action_rows else None
+        rollback_rows = [row for row in triage_rows if str(row["status"] or "") in {"applied", "escalated", "rolled_back"}]
+        action_rollback = (sum(str(row["status"] or "") == "rolled_back" for row in rollback_rows) / len(rollback_rows)) if rollback_rows else None
+
+        entities = len(entity_rows)
+        evidence = len(evidence_rows)
+        finding_total = len(finding_ids)
+        linked_findings = len(linked_finding_ids)
     quality_alerts: list[dict[str, Any]] = []
     if stale_runner_heartbeats:
         quality_alerts.append({"code": "stale_runner_heartbeat", "count": stale_runner_heartbeats, "threshold": 0})
@@ -1391,37 +1844,41 @@ def quality(*, workspace_id: str | None = None, stale_after_seconds: int = 7 * 2
         quality_alerts.append({"code": "orphaned_graph_records", "entities": orphan_entities, "relationships": orphan_relationships, "threshold": 0})
     if relationships and (with_provenance / relationships) < 0.9:
         quality_alerts.append({"code": "provenance_coverage_low", "percent": round((with_provenance / relationships) * 100, 2), "threshold": 90})
+    heartbeat_freshness_seconds = min(heartbeat_ages) if heartbeat_ages else None
+    heartbeat_measurement_status = "unknown" if heartbeat_freshness_seconds is None else ("stale" if stale_runner_heartbeats else "fresh")
     return {
         "schema_version": SCHEMA_VERSION,
-        "workspace_id": workspace_id or "all",
+        "workspace_id": workspace or "all",
+        "database_present": True,
         "entities": entities,
         "relationships": relationships,
         "evidence_references": evidence,
         "relationships_with_provenance": with_provenance,
         "relationships_with_evidence": relationships_with_evidence,
-        "provenance_coverage_percent": round((with_provenance / relationships) * 100, 2) if relationships else 100.0,
+        "provenance_coverage_percent": round((with_provenance / relationships) * 100, 2) if relationships else None,
         "evidence_with_valid_locator": evidence_with_locator,
         "orphan_relationships": orphan_relationships,
         "orphan_entities": orphan_entities,
-        "stale_entities": stale,
+        "stale_entities": stale_entities,
         "stale_after_seconds": stale_after,
-        "canonical_id_coverage_percent": round((canonical_id_count / entities) * 100, 2) if entities else 100.0,
-        "graph_coverage_percent": round((connected_entities / entities) * 100, 2) if entities else 100.0,
-        "stale_sources": stale_sources,
+        "canonical_id_coverage_percent": round((canonical_id_count / entities) * 100, 2) if entities else None,
+        "graph_coverage_percent": round((len(connected_ids) / entities) * 100, 2) if entities else None,
+        "stale_sources": len(stale_source_names),
         "duplicate_candidates": duplicate_candidates,
         "contradictory_relationships": contradictory_relationships,
         "findings_total": finding_total,
-        "findings_linked_percent": round((linked_findings / finding_total) * 100, 2) if finding_total else 100.0,
+        "findings_linked_percent": round((linked_findings / finding_total) * 100, 2) if finding_total else None,
         "open_conflicts": open_conflicts,
         "change_history_records": change_count,
         "queue_age_seconds": queue_age_seconds,
         "stale_runner_heartbeats": stale_runner_heartbeats,
-        "heartbeat_freshness_seconds": stale_after if stale_runner_heartbeats else 0,
-        "ai_evidence_completeness_percent": None,
-        "false_positive_rate": None,
-        "recommendation_acceptance_rate": None,
-        "action_completion_rate": None,
-        "action_rollback_rate": None,
+        "heartbeat_freshness_seconds": heartbeat_freshness_seconds,
+        "heartbeat_measurement_status": heartbeat_measurement_status,
+        "ai_evidence_completeness_percent": round(ai_evidence_completeness, 2) if ai_evidence_completeness is not None else None,
+        "false_positive_rate": round(false_positive_rate, 6) if false_positive_rate is not None else None,
+        "recommendation_acceptance_rate": round(recommendation_acceptance, 6) if recommendation_acceptance is not None else None,
+        "action_completion_rate": round(action_completion, 6) if action_completion is not None else None,
+        "action_rollback_rate": round(action_rollback, 6) if action_rollback is not None else None,
         "quality_alerts": quality_alerts,
         "entities_by_type": by_type,
     }
@@ -1429,9 +1886,17 @@ def quality(*, workspace_id: str | None = None, stale_after_seconds: int = 7 * 2
 
 def export_snapshot(*, db_path: str | None = None, since: str | None = None, limit: int = 200) -> dict[str, Any]:
     """Export a bounded redacted snapshot for the hosted bridge."""
-    soc_store.init_db(db_path)
     bounded = _limit(limit, 200)
-    with soc_store.read_connect(db_path) as connection:
+    with _ontology_read_connection(db_path, _ONTOLOGY_EXPORT_READ_TABLES) as connection:
+        if connection is None:
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "exported_at": utc_now(),
+                "entities": [],
+                "relationships": [],
+                "evidence_refs": [],
+                "events": [],
+            }
         if since:
             entity_rows = connection.execute("SELECT * FROM ontology_entities WHERE updated_at > ? ORDER BY updated_at ASC LIMIT ?", (_text(since, 64), bounded)).fetchall()
             relation_rows = connection.execute("SELECT * FROM ontology_relationships WHERE updated_at > ? ORDER BY updated_at ASC LIMIT ?", (_text(since, 64), bounded * 2)).fetchall()
@@ -1441,6 +1906,44 @@ def export_snapshot(*, db_path: str | None = None, since: str | None = None, lim
             relation_rows = connection.execute("SELECT * FROM ontology_relationships ORDER BY updated_at DESC LIMIT ?", (bounded * 2,)).fetchall()
             event_rows = connection.execute("SELECT event_id, entity_id, event_type, source, source_record_id, summary_json, occurred_at FROM ontology_events ORDER BY created_at DESC LIMIT ?", (bounded * 2,)).fetchall()
         evidence_rows = connection.execute("SELECT evidence_ref_id, source, locator, content_hash, content_type, workspace_id, summary_json, observed_at FROM ontology_evidence_refs ORDER BY updated_at DESC LIMIT ?", (bounded,)).fetchall()
+        # Close the bounded projection over its foreign-key dependencies.  A
+        # recent relationship may point at an older endpoint that did not fit
+        # the entity window; include that endpoint rather than exporting an
+        # edge which a hosted consumer cannot resolve.
+        entity_by_id = {str(row["entity_id"]): row for row in entity_rows}
+        dependency_ids = {
+            str(row[field])
+            for row in relation_rows
+            for field in ("from_entity_id", "to_entity_id")
+            if row[field]
+        }
+        dependency_ids.update(str(row["entity_id"]) for row in event_rows if row["entity_id"])
+        missing_entity_ids = [item for item in dependency_ids if item not in entity_by_id]
+        if missing_entity_ids:
+            placeholders = ",".join("?" for _ in missing_entity_ids)
+            for row in connection.execute(f"SELECT * FROM ontology_entities WHERE entity_id IN ({placeholders})", missing_entity_ids).fetchall():
+                entity_by_id[str(row["entity_id"])] = row
+        entity_rows = [*entity_rows, *[entity_by_id[item] for item in sorted(entity_by_id) if item not in {str(row["entity_id"]) for row in entity_rows}]]
+        entity_ids = set(entity_by_id)
+        # Foreign keys normally guarantee these rows exist, but retain the
+        # defensive filter for legacy stores with orphaned records.
+        relation_rows = [row for row in relation_rows if str(row["from_entity_id"]) in entity_ids and str(row["to_entity_id"]) in entity_ids]
+        event_rows = [row for row in event_rows if str(row["entity_id"]) in entity_ids]
+
+        # Evidence references are another dependency of relationships.  The
+        # initial bounded evidence window may omit a referenced ref, so fetch
+        # those IDs explicitly and union them with the ordinary recent rows.
+        evidence_by_id = {str(row["evidence_ref_id"]): row for row in evidence_rows}
+        referenced_evidence = {str(row["evidence_ref_id"]) for row in relation_rows if row["evidence_ref_id"]}
+        missing_evidence_ids = [item for item in referenced_evidence if item not in evidence_by_id]
+        if missing_evidence_ids:
+            placeholders = ",".join("?" for _ in missing_evidence_ids)
+            for row in connection.execute(
+                f"SELECT evidence_ref_id, source, locator, content_hash, content_type, workspace_id, summary_json, observed_at FROM ontology_evidence_refs WHERE evidence_ref_id IN ({placeholders})",
+                missing_evidence_ids,
+            ).fetchall():
+                evidence_by_id[str(row["evidence_ref_id"])] = row
+        evidence_rows = list(evidence_by_id.values())
     return {
         "schema_version": SCHEMA_VERSION,
         "exported_at": utc_now(),
@@ -1467,6 +1970,7 @@ def materialize_recent(*, db_path: str | None = None, limit: int = 100) -> dict[
     relationships: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
     evidence_refs: list[dict[str, Any]] = []
+    graph_reference_by_node_id: dict[str, str] = {}
     with soc_store.read_connect(db_path) as connection:
         for row in connection.execute("SELECT node_id, node_type, label, source, source_id, properties_json, first_seen, last_seen FROM asset_graph_nodes ORDER BY updated_at DESC LIMIT ?", (bound,)).fetchall():
             node_type = str(row["node_type"] or "asset")
@@ -1476,11 +1980,19 @@ def materialize_recent(*, db_path: str | None = None, limit: int = 100) -> dict[
             legacy_item = _legacy_entity(mapped_type, str(row["source"] or "edge"), node_id, str(row["label"] or source_id), _loads(row["properties_json"]), str(row["first_seen"]), str(row["last_seen"]))
             legacy_item["source_id"] = source_id
             legacy_item["aliases"] = _legacy_alias(node_id, str(row["source"] or "edge"))
+            # Keep edge endpoints aligned with the exact typed identity used
+            # for the node above.  Falling back to a generic asset ID for a
+            # service, sensor, or repository causes sync_payload to discard
+            # the otherwise valid relationship because its endpoint is not in
+            # the entity batch.
+            graph_reference_by_node_id[node_id] = str(legacy_item["entity_id"])
             entities.append(legacy_item)
         for row in connection.execute("SELECT edge_id, edge_type, from_node_id, to_node_id, source, properties_json, first_seen, last_seen FROM asset_graph_edges ORDER BY updated_at DESC LIMIT ?", (bound * 2,)).fetchall():
             relation = LEGACY_EDGE_RELATIONS.get(str(row["edge_type"] or ""))
             if relation:
-                relationships.append({"relationship_id": str(row["edge_id"]), "relationship_type": relation, "from_entity_id": _stable_graph_reference(row["from_node_id"]), "to_entity_id": _stable_graph_reference(row["to_node_id"]), "source": str(row["source"] or "edge"), "source_record_id": str(row["edge_id"]), "properties": _loads(row["properties_json"]), "observed_at": str(row["last_seen"]), "valid_from": str(row["first_seen"]), "freshness_at": str(row["last_seen"])})
+                from_node_id = _text(row["from_node_id"], 512)
+                to_node_id = _text(row["to_node_id"], 512)
+                relationships.append({"relationship_id": str(row["edge_id"]), "relationship_type": relation, "from_entity_id": graph_reference_by_node_id.get(from_node_id, _stable_graph_reference(from_node_id)), "to_entity_id": graph_reference_by_node_id.get(to_node_id, _stable_graph_reference(to_node_id)), "source": str(row["source"] or "edge"), "source_record_id": str(row["edge_id"]), "properties": _loads(row["properties_json"]), "observed_at": str(row["last_seen"]), "valid_from": str(row["first_seen"]), "freshness_at": str(row["last_seen"])})
         for row in connection.execute("SELECT feed_event_id, collector_id, ecosystem, package, version, event_type, registry_timestamp, page_url, leaf_url, metadata_json, collected_at FROM registry_feed_events ORDER BY collected_at DESC LIMIT ?", (bound,)).fetchall():
             ecosystem = _text(row["ecosystem"], 120).lower() or "unknown"
             package = _text(row["package"], 512)
@@ -1546,6 +2058,7 @@ def materialize_recent(*, db_path: str | None = None, limit: int = 100) -> dict[
             raw_alert_id = str(row["alert_id"])
             alert_id = _stable_legacy_id("alert", "secopsai", raw_alert_id)
             entities.append({"entity_id": alert_id, "entity_type": "alert", "namespace": "secopsai", "canonical_key": raw_alert_id, "display_name": str(row["alert_type"]), "source": "secopsai-research", "source_id": raw_alert_id, "aliases": _legacy_alias(raw_alert_id, "secopsai-research"), "status": row["status"], "properties": {"alert_type": row["alert_type"], "severity": row["severity"], "reason": row["reason"], "candidate_id": row["candidate_id"], "case_id": row["case_id"], "evidence_summary": _loads(row["evidence_json"])}, "first_seen_at": row["created_at"], "last_seen_at": row["updated_at"], "observed_at": row["updated_at"], "freshness_at": row["updated_at"]})
+            events.append({"event_id": f"event:alert:{raw_alert_id}", "entity_id": alert_id, "event_type": "alert_observed", "source": "secopsai-research", "source_record_id": raw_alert_id, "occurred_at": row["updated_at"], "summary": {"alert_type": row["alert_type"], "severity": row["severity"], "status": row["status"]}})
             if row["case_id"]:
                 case_id = _stable_legacy_id("research_case", "secopsai", str(row["case_id"]))
                 relationships.append({"relationship_type": "CASE_GROUPS_ALERT", "from_entity_id": case_id, "to_entity_id": alert_id, "source": "secopsai-research", "source_record_id": raw_alert_id, "observed_at": row["updated_at"], "properties": {"relation": "alert_case"}})
@@ -1553,11 +2066,13 @@ def materialize_recent(*, db_path: str | None = None, limit: int = 100) -> dict[
                 candidate_raw = str(row["candidate_id"])
                 candidate_id = _stable_legacy_id("candidate", "secopsai", candidate_raw)
                 entities.append({"entity_id": candidate_id, "entity_type": "candidate", "namespace": "secopsai", "canonical_key": candidate_raw, "display_name": candidate_raw, "source": "secopsai-research", "source_id": candidate_raw, "aliases": _legacy_alias(candidate_raw, "secopsai-research"), "properties": {"alert_id": raw_alert_id}, "observed_at": row["updated_at"], "freshness_at": row["updated_at"]})
+                events.append({"event_id": f"event:candidate:{candidate_raw}", "entity_id": candidate_id, "event_type": "candidate_observed", "source": "secopsai-research", "source_record_id": candidate_raw, "occurred_at": row["updated_at"], "summary": {"alert_id": raw_alert_id}})
         for row in connection.execute("SELECT finding_id, title, severity, severity_score, status, source, first_seen, last_seen, updated_at, payload_json FROM findings ORDER BY updated_at DESC LIMIT ?", (bound,)).fetchall():
             raw_finding_id = str(row["finding_id"])
             finding_id = _stable_legacy_id("finding", "secopsai", raw_finding_id)
             payload = _loads(row["payload_json"])
             entities.append({"entity_id": finding_id, "entity_type": "finding", "namespace": "secopsai", "canonical_key": raw_finding_id, "display_name": row["title"], "source": row["source"], "source_id": raw_finding_id, "aliases": _legacy_alias(raw_finding_id, str(row["source"] or "legacy")), "status": row["status"], "properties": {"severity": row["severity"], "severity_score": row["severity_score"], "payload_summary": payload}, "first_seen_at": row["first_seen"], "last_seen_at": row["last_seen"], "observed_at": row["last_seen"], "freshness_at": row["updated_at"]})
+            events.append({"event_id": f"event:finding:{raw_finding_id}", "entity_id": finding_id, "event_type": "finding_observed", "source": str(row["source"] or "secopsai"), "source_record_id": raw_finding_id, "occurred_at": row["updated_at"], "summary": {"severity": row["severity"], "status": row["status"], "title": _text(row["title"], 240)}})
             ecosystem = _text(payload.get("ecosystem") or payload.get("package_ecosystem"), 120).lower()
             package = _text(payload.get("package") or payload.get("package_name"), 512)
             version = _text(payload.get("new_version") or payload.get("version"), 256)
@@ -1590,6 +2105,7 @@ def materialize_recent(*, db_path: str | None = None, limit: int = 100) -> dict[
             raw_case_id = str(row["case_id"])
             case_id = _stable_legacy_id("research_case", "secopsai", raw_case_id)
             entities.append({"entity_id": case_id, "entity_type": "research_case", "namespace": "secopsai", "canonical_key": raw_case_id, "display_name": row["title"], "source": "secopsai-research", "source_id": raw_case_id, "aliases": _legacy_alias(raw_case_id, "secopsai-research"), "owner_id": row["owner"], "status": row["status"], "confidence": row["confidence"], "properties": {"summary": row["summary"], "case_type": row["case_type"], "severity": row["severity"], "payload_summary": _loads(row["payload_json"])}, "first_seen_at": row["created_at"], "last_seen_at": row["updated_at"], "observed_at": row["updated_at"], "freshness_at": row["updated_at"]})
+            events.append({"event_id": f"event:case:{raw_case_id}", "entity_id": case_id, "event_type": "case_observed", "source": "secopsai-research", "source_record_id": raw_case_id, "occurred_at": row["updated_at"], "summary": {"case_type": row["case_type"], "severity": row["severity"], "status": row["status"]}})
             for finding in connection.execute("SELECT finding_id, relationship FROM research_case_findings WHERE case_id = ?", (raw_case_id,)).fetchall():
                 raw_finding_id = str(finding["finding_id"])
                 relationships.append({"relationship_type": "CASE_GROUPS_FINDING", "from_entity_id": case_id, "to_entity_id": _stable_legacy_id("finding", "secopsai", raw_finding_id), "source": "secopsai-research", "source_record_id": f"{raw_case_id}:{raw_finding_id}", "observed_at": row["updated_at"], "properties": {"relationship": finding["relationship"]}})
@@ -1621,6 +2137,7 @@ def materialize_recent(*, db_path: str | None = None, limit: int = 100) -> dict[
                 continue
             observed = _text(row["created_at"], 64) or utc_now()
             entities.append({"entity_id": subject_id, "entity_type": entity_type, "namespace": ecosystem, "canonical_key": key, "display_name": f"{name}@{version}" if version else name, "source": "secopsai-research", "source_id": row["subject_id"], "properties": {"subject_id": row["subject_id"], "case_id": row["case_id"], "subject_type": subject_type, "publisher": row["publisher"], "metadata_summary": _loads(row["metadata_json"])}, "observed_at": observed, "freshness_at": observed})
+            events.append({"event_id": f"event:subject:{row['subject_id']}", "entity_id": subject_id, "event_type": "subject_observed", "source": "secopsai-research", "source_record_id": row["subject_id"], "occurred_at": observed, "summary": {"subject_type": subject_type, "case_id": row["case_id"]}})
             if row["case_id"]:
                 relationships.append({"relationship_type": "CASE_HAS_SUBJECT", "from_entity_id": _stable_legacy_id("research_case", "secopsai", row["case_id"]), "to_entity_id": subject_id, "source": "secopsai-research", "source_record_id": f"{row['case_id']}:{row['subject_id']}", "observed_at": observed})
 
@@ -1638,6 +2155,7 @@ def materialize_recent(*, db_path: str | None = None, limit: int = 100) -> dict[
             evidence_ref_id = "eref:" + hashlib.sha256(f"research|{raw_id}|{locator}|{row['sha256'] or ''}".encode()).hexdigest()[:40]
             observed = _text(row["collected_at"] or row["created_at"], 64) or utc_now()
             entities.append({"entity_id": evidence_entity_id, "entity_type": "evidence", "namespace": "secopsai", "canonical_key": f"{case_id}:{raw_id}", "display_name": _text(row["title"] or row["evidence_type"] or raw_id, 512), "source": "secopsai-research", "source_id": raw_id, "properties": {"case_id": case_id, "evidence_type": row["evidence_type"], "locator": locator, "sha256": row["sha256"], "provenance": row["provenance"], "notes": row["notes"], "metadata_summary": _loads(row["metadata_json"])}, "status": row["status"], "observed_at": observed, "freshness_at": observed})
+            events.append({"event_id": f"event:evidence:{case_id}:{raw_id}", "entity_id": evidence_entity_id, "event_type": "evidence_observed", "source": "secopsai-research", "source_record_id": raw_id, "occurred_at": observed, "summary": {"case_id": case_id, "evidence_type": row["evidence_type"], "status": row["status"]}})
             if locator:
                 evidence_refs.append({"evidence_ref_id": evidence_ref_id, "source": "secopsai-research", "locator": locator, "content_hash": _text(row["sha256"], 128), "content_type": _text(row["evidence_type"], 120), "workspace_id": "local", "summary": {"evidence_id": raw_id, "case_id": case_id, "title": row["title"], "provenance": row["provenance"], "status": row["status"]}, "observed_at": observed})
                 relationships.append({"relationship_type": "CASE_SUPPORTED_BY_EVIDENCE", "from_entity_id": _stable_legacy_id("research_case", "secopsai", case_id), "to_entity_id": evidence_entity_id, "source": "secopsai-research", "source_record_id": f"{case_id}:{raw_id}", "evidence_ref_id": evidence_ref_id, "observed_at": observed})
@@ -1648,6 +2166,7 @@ def materialize_recent(*, db_path: str | None = None, limit: int = 100) -> dict[
                 continue
             candidate_id = _stable_legacy_id("candidate", "secopsai", raw_id)
             entities.append({"entity_id": candidate_id, "entity_type": "candidate", "namespace": "secopsai", "canonical_key": raw_id, "display_name": f"{_text(row['package'], 240)}@{_text(row['version'], 120)}".strip("@"), "source": "secopsai-research", "source_id": raw_id, "status": row["status"], "properties": {"ecosystem": row["ecosystem"], "package": row["package"], "version": row["version"]}, "observed_at": row["last_seen"], "freshness_at": row["last_seen"]})
+            events.append({"event_id": f"event:candidate:{raw_id}", "entity_id": candidate_id, "event_type": "candidate_observed", "source": "secopsai-research", "source_record_id": raw_id, "occurred_at": row["last_seen"], "summary": {"status": row["status"], "package": _text(row["package"], 240), "version": _text(row["version"], 120)}})
             if row["case_id"]:
                 relationships.append({"relationship_type": "CANDIDATE_PROMOTED_TO_CASE", "from_entity_id": candidate_id, "to_entity_id": _stable_legacy_id("research_case", "secopsai", row["case_id"]), "source": "secopsai-research", "source_record_id": f"{raw_id}:{row['case_id']}", "observed_at": row["last_seen"]})
     # De-duplicate records in the batch while retaining the freshest values.
@@ -1664,7 +2183,8 @@ def materialize_recent(*, db_path: str | None = None, limit: int = 100) -> dict[
         unique_relationships[item["relationship_id"]] = item
     existing_ids = set(unique_entities)
     filtered_relationships = [item for item in unique_relationships.values() if item["from_entity_id"] in existing_ids and item["to_entity_id"] in existing_ids]
-    return sync_payload({"schema_version": SCHEMA_VERSION, "source_instance": "research-worker", "entities": list(unique_entities.values()), "relationships": filtered_relationships, "evidence_refs": evidence_refs, "events": events}, db_path=db_path) | {"snapshot": export_snapshot(db_path=db_path, limit=bound)}
+    unique_events = {str(item.get("event_id")): item for item in events if item.get("event_id") and item.get("entity_id") in existing_ids}
+    return sync_payload({"schema_version": SCHEMA_VERSION, "source_instance": "research-worker", "entities": list(unique_entities.values()), "relationships": filtered_relationships, "evidence_refs": evidence_refs, "events": list(unique_events.values())}, db_path=db_path) | {"snapshot": export_snapshot(db_path=db_path, limit=bound)}
 
 
 def _legacy_entity(node_type: str, source: str, source_id: str, label: str, properties: dict[str, Any], first_seen: str, last_seen: str) -> dict[str, Any]:
@@ -1701,48 +2221,257 @@ def backfill_existing(*, db_path: str | None = None, batch_limit: int = 1000, re
     except (TypeError, ValueError):
         limit = 1000
 
-    def checkpoint(key: str) -> int:
+    def checkpoint(key: str) -> dict[str, Any]:
         if not resume:
-            return 0
+            return {"offset": 0, "cursor": None, "complete": False}
         with soc_store.read_connect(db_path) as connection:
             row = connection.execute("SELECT value_json FROM ontology_metadata WHERE key = ?", (f"backfill:{key}",)).fetchone()
         value = _loads(row["value_json"]) if row else {}
-        return max(0, int(value.get("offset") or 0))
+        # Offset-only checkpoints from v10 are deliberately restarted from the
+        # beginning.  A source row can be inserted or deleted before that
+        # offset, so resuming it would silently skip data.
+        cursor = value.get("cursor")
+        return {
+            "offset": max(0, int(value.get("offset") or 0)) if cursor is not None else 0,
+            "cursor": cursor,
+            "complete": bool(value.get("complete")),
+        }
 
-    def save_checkpoint(key: str, offset: int, complete: bool = False) -> None:
+    def save_checkpoint(key: str, offset: int, complete: bool = False, cursor: Any = None) -> None:
         now = utc_now()
         with sqlite_writer_lock(db_path):
             with soc_store.connect(db_path) as connection:
                 connection.execute(
                     "INSERT INTO ontology_metadata (key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at",
-                    (f"backfill:{key}", bounded_json({"offset": offset, "complete": complete, "updated_at": now}, MAX_SUMMARY_BYTES), now),
+                    (f"backfill:{key}", bounded_json({"offset": offset, "cursor": cursor, "complete": complete, "updated_at": now}, MAX_SUMMARY_BYTES), now),
                 )
                 connection.commit()
 
-    counts = {"entities": 0, "relationships": 0, "evidence_refs": 0, "skipped_relationships": 0}
+    def page_rows(connection: Any, query: str, state: dict[str, Any], cursor_field: str) -> list[Any]:
+        """Read a stable keyset page instead of an offset page.
+
+        Every backfill query supplies a unique ordered cursor field.  Rows
+        added during a run are picked up on a later invocation, while deletes
+        cannot shift a checkpoint past an unprocessed row.
+        """
+        safe_field = _text(cursor_field, 120)
+        wrapped = f'SELECT * FROM ({query}) AS backfill_source'
+        cursor = state.get("cursor")
+        if cursor is None:
+            return connection.execute(
+                f'{wrapped} ORDER BY backfill_source."{safe_field}" LIMIT ?',
+                (limit,),
+            ).fetchall()
+        return connection.execute(
+            f'{wrapped} WHERE backfill_source."{safe_field}" > ? ORDER BY backfill_source."{safe_field}" LIMIT ?',
+            (cursor, limit),
+        ).fetchall()
+
+    counts = {
+        "entities": 0,
+        "relationships": 0,
+        "events": 0,
+        "evidence_refs": 0,
+        "skipped_relationships": 0,
+        "pending_backfill": 0,
+        # Reconciliation counters describe source rows and projection writes
+        # separately.  They are intentionally persisted with the checkpoint
+        # so an operator can distinguish a complete scan from a complete
+        # projection after a restart.
+        "scanned": 0,
+        "inserted": 0,
+        "updated": 0,
+        "skipped": 0,
+        "failed": 0,
+        "streams": {},
+    }
+
+    def stream_counts(stream_key: str) -> dict[str, int]:
+        streams = counts.setdefault("streams", {})
+        stats = streams.setdefault(
+            _text(stream_key, 160),
+            {"scanned": 0, "inserted": 0, "updated": 0, "skipped": 0, "failed": 0},
+        )
+        return stats
+
+    def bump(stream_key: str, field: str, amount: int = 1) -> None:
+        if field not in {"scanned", "inserted", "updated", "skipped", "failed"}:
+            return
+        counts[field] = int(counts.get(field, 0)) + max(0, int(amount))
+        stats = stream_counts(stream_key)
+        stats[field] = int(stats.get(field, 0)) + max(0, int(amount))
+
+    def pending_id(stream_key: str, item_kind: str, source_cursor: Any, item_index: int) -> str:
+        material = f"{stream_key}|{item_kind}|{_text(source_cursor, 512)}|{int(item_index)}"
+        return "pending:" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:40]
+
+    def pending_payload(item: Any) -> str:
+        """Keep a retryable, redacted projection even for oversized rows."""
+        safe = sanitize_summary(item if isinstance(item, dict) else {"error": str(item)[:1000]})
+        encoded = bounded_json(safe, MAX_SUMMARY_BYTES)
+        try:
+            marker = json.loads(encoded)
+        except json.JSONDecodeError:
+            marker = {}
+        if isinstance(marker, dict) and marker.get("status") == "truncated":
+            # Relationship/event retry needs only these bounded identity fields;
+            # never persist an unbounded source payload as a dead-letter.
+            minimal = {
+                key: item.get(key)
+                for key in (
+                    "event_id", "entity_id", "event_type", "occurred_at", "source",
+                    "source_record_id", "relationship_id", "relationship_type",
+                    "from_entity_id", "to_entity_id", "workspace_id", "evidence_ref_id",
+                    "graph_from_node_id", "graph_to_node_id", "graph_edge_type",
+                )
+                if isinstance(item, dict) and item.get(key) is not None
+            }
+            minimal["properties"] = {}
+            encoded = bounded_json(minimal, MAX_SUMMARY_BYTES)
+        return encoded
+
+    def queue_pending_connection(
+        connection: Any,
+        *,
+        stream_key: str,
+        item_kind: str,
+        source_cursor: Any,
+        item_index: int,
+        item: Any,
+        error: Any,
+        terminal: bool = False,
+    ) -> None:
+        now = utc_now()
+        source_cursor_text = _text(source_cursor, 512) or "unknown"
+        status = "dead_letter" if terminal else "pending"
+        connection.execute(
+            """
+            INSERT INTO ontology_backfill_pending
+                (pending_id, stream_key, item_kind, source_cursor, item_index,
+                 payload_json, status, attempts, next_attempt_at, last_error,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+            ON CONFLICT(stream_key, item_kind, source_cursor, item_index) DO UPDATE SET
+                payload_json=excluded.payload_json,
+                status=CASE WHEN ontology_backfill_pending.status='dead_letter'
+                            THEN ontology_backfill_pending.status ELSE excluded.status END,
+                next_attempt_at=CASE WHEN ontology_backfill_pending.status='dead_letter'
+                                     THEN ontology_backfill_pending.next_attempt_at ELSE excluded.next_attempt_at END,
+                last_error=excluded.last_error,
+                updated_at=excluded.updated_at
+            """,
+            (
+                pending_id(stream_key, item_kind, source_cursor_text, item_index),
+                _text(stream_key, 160),
+                _text(item_kind, 40),
+                source_cursor_text,
+                int(item_index),
+                pending_payload(item),
+                status,
+                now,
+                _text(error, 1000) or "unresolved endpoint",
+                now,
+                now,
+            ),
+        )
+
+    def retry_pending(
+        stream_key: str,
+        item_kind: str,
+        handler: Any,
+        *,
+        limit: int = 100,
+        force: bool = False,
+    ) -> int:
+        """Retry unresolved projections without rewinding source checkpoints."""
+        now = utc_now()
+        recovered = 0
+        with sqlite_writer_lock(db_path):
+            with soc_store.connect(db_path) as connection:
+                pending_query = """
+                    SELECT * FROM ontology_backfill_pending
+                     WHERE stream_key=? AND item_kind=? AND status='pending'
+                """
+                pending_params: list[Any] = [_text(stream_key, 160), _text(item_kind, 40)]
+                if not force:
+                    pending_query += " AND next_attempt_at <= ?"
+                    pending_params.append(now)
+                pending_query += " ORDER BY created_at, pending_id LIMIT ?"
+                pending_params.append(max(1, min(int(limit), 500)))
+                rows = connection.execute(pending_query, pending_params).fetchall()
+                for row in rows:
+                    item = _loads(row["payload_json"])
+                    try:
+                        applied, error = handler(connection, item)
+                    except Exception as exc:  # pending work must remain durable
+                        applied, error = False, str(exc)
+                    if applied:
+                        connection.execute("DELETE FROM ontology_backfill_pending WHERE pending_id=?", (row["pending_id"],))
+                        recovered += 1
+                        if item_kind == "relationship":
+                            counts["relationships"] += 1
+                    else:
+                        attempts = int(row["attempts"] or 0) + 1
+                        # Keep retrying transient endpoint ordering problems,
+                        # but surface permanently malformed rows as dead letters.
+                        status = "dead_letter" if attempts >= 8 else "pending"
+                        delay = min(86400, max(60, 60 * (2 ** min(attempts, 10))))
+                        next_attempt = datetime.now(timezone.utc) + timedelta(seconds=delay)
+                        connection.execute(
+                            "UPDATE ontology_backfill_pending SET attempts=?, status=?, next_attempt_at=?, last_error=?, updated_at=? WHERE pending_id=?",
+                            (attempts, status, next_attempt.isoformat().replace("+00:00", "Z"), _text(error, 1000), now, row["pending_id"]),
+                        )
+                connection.commit()
+        return recovered
+
+    def pending_count() -> int:
+        with soc_store.read_connect(db_path) as connection:
+            return int(connection.execute("SELECT COUNT(*) FROM ontology_backfill_pending WHERE status='pending'").fetchone()[0])
 
     def run_entity_table(key: str, query: str, builder: Any) -> None:
-        offset = checkpoint(key)
+        state = checkpoint(key)
         while True:
             with soc_store.read_connect(db_path) as connection:
-                rows = connection.execute(f"{query} LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+                probe = connection.execute(f"{query} LIMIT 1").fetchone()
+                if probe is None:
+                    rows = []
+                else:
+                    cursor_field = str(probe.keys()[0])
+                    rows = page_rows(connection, query, state, cursor_field)
             if not rows:
-                save_checkpoint(key, offset, True)
+                save_checkpoint(key, int(state["offset"]), True, state.get("cursor"))
                 return
+            bump(key, "scanned", len(rows))
             items: list[dict[str, Any]] = []
             for row in rows:
-                built = builder(row)
+                try:
+                    built = builder(row)
+                except Exception:
+                    # A malformed legacy row must be visible in the
+                    # reconciliation metadata without preventing unrelated
+                    # rows from being projected or checkpointed.
+                    bump(key, "failed")
+                    continue
                 if isinstance(built, list):
-                    items.extend(item for item in built if isinstance(item, dict))
+                    valid_items = [item for item in built if isinstance(item, dict)]
+                    items.extend(valid_items)
+                    bump(key, "skipped", len(built) - len(valid_items))
                 elif isinstance(built, dict):
                     items.append(built)
+                elif built is not None:
+                    bump(key, "skipped")
+                else:
+                    bump(key, "skipped")
             if items:
                 result = upsert_entities(items, db_path=db_path)
                 counts["entities"] += int(result.get("count") or 0)
-            offset += len(rows)
-            save_checkpoint(key, offset)
+                bump(key, "inserted", int(result.get("inserted") or 0))
+                bump(key, "updated", int(result.get("updated") or 0))
+            state["offset"] = int(state["offset"]) + len(rows)
+            state["cursor"] = rows[-1][str(rows[-1].keys()[0])]
+            save_checkpoint(key, int(state["offset"]), False, state.get("cursor"))
             if len(rows) < limit:
-                save_checkpoint(key, offset, True)
+                save_checkpoint(key, int(state["offset"]), True, state.get("cursor"))
                 return
 
     def build_graph_node(row: Any) -> dict[str, Any]:
@@ -2226,35 +2955,42 @@ def backfill_existing(*, db_path: str | None = None, batch_limit: int = 1000, re
     )
 
     def run_evidence_ref_table() -> None:
-        offset = checkpoint("evidence_refs")
+        state = checkpoint("evidence_refs")
+        query = "SELECT evidence_id, case_id, evidence_type, title, locator, sha256, provenance, notes, status, collected_at, created_at, metadata_json, occurrence_count, first_observed_at, last_observed_at FROM research_evidence ORDER BY evidence_id"
         while True:
             with soc_store.read_connect(db_path) as connection:
-                rows = connection.execute(
-                    "SELECT evidence_id, case_id, evidence_type, title, locator, sha256, provenance, notes, status, collected_at, created_at, metadata_json, occurrence_count, first_observed_at, last_observed_at FROM research_evidence ORDER BY evidence_id LIMIT ? OFFSET ?",
-                    (limit, offset),
-                ).fetchall()
+                rows = page_rows(connection, query, state, "evidence_id")
             if not rows:
-                save_checkpoint("evidence_refs", offset, True)
+                save_checkpoint("evidence_refs", int(state["offset"]), True, state.get("cursor"))
                 return
+            bump("evidence_refs", "scanned", len(rows))
             with sqlite_writer_lock(db_path):
                 with soc_store.connect(db_path) as connection:
                     now = utc_now()
                     for row in rows:
                         item = build_evidence(row)
                         if not item:
+                            bump("evidence_refs", "skipped")
                             continue
                         locator = sanitize_locator(_row_value(row, "locator"))
                         evidence_ref_id = str(item.get("evidence_ref_id") or "")
                         if not evidence_ref_id or not locator:
+                            bump("evidence_refs", "skipped")
                             continue
+                        existed = connection.execute(
+                            "SELECT 1 FROM ontology_evidence_refs WHERE evidence_ref_id = ?",
+                            (evidence_ref_id,),
+                        ).fetchone() is not None
                         connection.execute(
                             "INSERT INTO ontology_evidence_refs (evidence_ref_id, source, locator, content_hash, content_type, workspace_id, summary_json, observed_at, created_at, updated_at) VALUES (?, 'secopsai-research', ?, ?, ?, 'local', ?, ?, ?, ?) ON CONFLICT(evidence_ref_id) DO UPDATE SET locator=excluded.locator, content_hash=excluded.content_hash, content_type=excluded.content_type, workspace_id=excluded.workspace_id, summary_json=excluded.summary_json, observed_at=excluded.observed_at, updated_at=excluded.updated_at",
                             (evidence_ref_id, locator, _text(_row_value(row, "sha256"), 128), _text(_row_value(row, "evidence_type"), 120), bounded_json({"evidence_id": _text(_row_value(row, "evidence_id"), 256), "case_id": _text(_row_value(row, "case_id"), 256), "title": _text(_row_value(row, "title"), 512), "provenance": _text(_row_value(row, "provenance"), 1000), "status": _text(_row_value(row, "status"), 80)}, MAX_SUMMARY_BYTES), _text(_row_value(row, "last_observed_at") or _row_value(row, "collected_at") or now, 64), now, now),
                         )
                         counts["evidence_refs"] = counts.get("evidence_refs", 0) + 1
+                        bump("evidence_refs", "updated" if existed else "inserted")
                     connection.commit()
-            offset += len(rows)
-            save_checkpoint("evidence_refs", offset, len(rows) < limit)
+            state["offset"] = int(state["offset"]) + len(rows)
+            state["cursor"] = rows[-1]["evidence_id"]
+            save_checkpoint("evidence_refs", int(state["offset"]), len(rows) < limit, state.get("cursor"))
             if len(rows) < limit:
                 return
 
@@ -2315,44 +3051,107 @@ def backfill_existing(*, db_path: str | None = None, batch_limit: int = 1000, re
         build_research_bundle,
     )
 
-    def run_relationship_stream(key: str, query: str, builder: Any) -> None:
-        """Apply a resumable relationship projection from a legacy table."""
-        offset = checkpoint(key)
+    def apply_relationship_connection(connection: Any, item: Any, *, now: str | None = None) -> tuple[bool, str]:
+        if not isinstance(item, dict):
+            return False, "relationship projection is not an object"
+        from_id = _text(item.get("from_entity_id") or item.get("from"), 512)
+        to_id = _text(item.get("to_entity_id") or item.get("to"), 512)
+        if not from_id or not to_id:
+            return False, "relationship endpoints are missing"
+        if from_id == to_id:
+            return False, "relationship endpoints are identical"
+        if connection.execute("SELECT 1 FROM ontology_entities WHERE entity_id = ?", (from_id,)).fetchone() is None:
+            return False, f"unknown relationship source entity: {from_id}"
+        if connection.execute("SELECT 1 FROM ontology_entities WHERE entity_id = ?", (to_id,)).fetchone() is None:
+            return False, f"unknown relationship target entity: {to_id}"
+        try:
+            _upsert_relationship_connection(connection, item, now=now)
+            return True, ""
+        except (TypeError, ValueError) as exc:
+            return False, str(exc)
+
+    def run_relationship_stream(key: str, query: str, builder: Any, *, cursor_field: str | None = None) -> None:
+        """Apply a resumable relationship projection from a legacy table.
+
+        Missing endpoints are persisted as pending rows before the source
+        checkpoint advances. A later backfill invocation can resolve them once
+        the corresponding entity projection exists, without replaying a whole
+        source table or silently dropping a relationship.
+        """
+        retry_pending(key, "relationship", apply_relationship_connection, force=True)
+        state = checkpoint(key)
         while True:
             with soc_store.read_connect(db_path) as connection:
-                rows = connection.execute(f"{query} LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+                probe = connection.execute(f"{query} LIMIT 1").fetchone()
+                field = cursor_field or (str(probe.keys()[0]) if probe is not None else "")
+                rows = page_rows(connection, query, state, field) if probe is not None else []
             if not rows:
-                save_checkpoint(key, offset, True)
+                save_checkpoint(key, int(state["offset"]), True, state.get("cursor"))
                 return
-            raw_items: list[Any] = []
-            for row in rows:
-                try:
-                    built = builder(row)
-                except (KeyError, TypeError, ValueError):
-                    built = None
-                if built is None:
-                    continue
-                raw_items.extend(built if isinstance(built, list) else [built])
-            if raw_items:
-                with sqlite_writer_lock(db_path):
-                    with soc_store.connect(db_path) as connection:
-                        now = utc_now()
-                        for item in raw_items:
-                            if not isinstance(item, dict) or not item.get("from_entity_id") or not item.get("to_entity_id"):
-                                continue
-                            if item["from_entity_id"] == item["to_entity_id"]:
-                                continue
-                            if connection.execute("SELECT 1 FROM ontology_entities WHERE entity_id = ?", (item["from_entity_id"],)).fetchone() is None or connection.execute("SELECT 1 FROM ontology_entities WHERE entity_id = ?", (item["to_entity_id"],)).fetchone() is None:
+            bump(key, "scanned", len(rows))
+            with sqlite_writer_lock(db_path):
+                with soc_store.connect(db_path) as connection:
+                    now = utc_now()
+                    for row in rows:
+                        source_cursor = row[field]
+                        try:
+                            built = builder(row)
+                            items = built if isinstance(built, list) else [built]
+                        except (KeyError, TypeError, ValueError) as exc:
+                            counts["skipped_relationships"] += 1
+                            bump(key, "failed")
+                            queue_pending_connection(
+                                connection,
+                                stream_key=key,
+                                item_kind="relationship",
+                                source_cursor=source_cursor,
+                                item_index=0,
+                                item={"source_record_id": source_cursor},
+                                error=f"relationship builder failed: {exc}",
+                                terminal=True,
+                            )
+                            continue
+                        for item_index, item in enumerate(items):
+                            if item is None or not isinstance(item, dict):
                                 counts["skipped_relationships"] += 1
+                                bump(key, "skipped")
+                                queue_pending_connection(
+                                    connection,
+                                    stream_key=key,
+                                    item_kind="relationship",
+                                    source_cursor=source_cursor,
+                                    item_index=item_index,
+                                    item={"source_record_id": source_cursor},
+                                    error="relationship builder returned no projection",
+                                    terminal=True,
+                                )
                                 continue
-                            try:
-                                _upsert_relationship_connection(connection, item, now=now)
+                            relation_id = _text(item.get("relationship_id") or item.get("edge_id"), 512) or _semantic_relationship_id(item)
+                            existed = connection.execute(
+                                "SELECT 1 FROM ontology_relationships WHERE relationship_id = ?",
+                                (relation_id,),
+                            ).fetchone() is not None
+                            applied, error = apply_relationship_connection(connection, item, now=now)
+                            if applied:
                                 counts["relationships"] += 1
-                            except ValueError:
+                                bump(key, "updated" if existed else "inserted")
+                            else:
                                 counts["skipped_relationships"] += 1
-                        connection.commit()
-            offset += len(rows)
-            save_checkpoint(key, offset, len(rows) < limit)
+                                bump(key, "skipped")
+                                queue_pending_connection(
+                                    connection,
+                                    stream_key=key,
+                                    item_kind="relationship",
+                                    source_cursor=source_cursor,
+                                    item_index=item_index,
+                                    item=item,
+                                    error=error,
+                                    terminal=error in {"relationship endpoints are identical", "relationship projection is not an object"},
+                                )
+                    connection.commit()
+            state["offset"] = int(state["offset"]) + len(rows)
+            state["cursor"] = rows[-1][field]
+            save_checkpoint(key, int(state["offset"]), len(rows) < limit, state.get("cursor"))
             if len(rows) < limit:
                 return
 
@@ -2376,6 +3175,18 @@ def backfill_existing(*, db_path: str | None = None, batch_limit: int = 1000, re
         if not target:
             return ""
         if ":" in target:
+            # Stored job targets often arrive as a namespaced ID such as
+            # ``case:secopsai:RSC-123``.  Treating that value as opaque keeps
+            # the producer's original casing and can miss the canonical
+            # lower-case entity already projected by the backfill.  Rebuild
+            # known ontology prefixes through the canonical ID function while
+            # leaving genuinely external/opaque identifiers untouched.
+            prefix, remainder = target.split(":", 1)
+            entity_type = ENTITY_TYPES_BY_PREFIX.get(normalize_value(prefix, limit=80))
+            if entity_type and ":" in remainder:
+                namespace, canonical_key = remainder.split(":", 1)
+                if namespace and canonical_key:
+                    return canonical_entity_id(entity_type, namespace, canonical_key)
             return target
         normalized_type = normalize_value(target_type, limit=80)
         if normalized_type in ENTITY_TYPES:
@@ -2393,27 +3204,28 @@ def backfill_existing(*, db_path: str | None = None, batch_limit: int = 1000, re
     run_relationship_stream(
         "case_subjects",
         "SELECT subject_id, case_id, subject_type, ecosystem, name, version, publisher, status, metadata_json, created_at, registry_state, artifact_state, validation_state, state_reason, state_checked_at FROM research_subjects ORDER BY subject_id",
-        lambda row: {"relationship_type": "CASE_HAS_SUBJECT", "from_entity_id": _case_entity_id(_row_value(row, "case_id")), "to_entity_id": _subject_id_from_row(row), "source": "secopsai-research", "source_record_id": f"{_row_value(row, 'case_id')}:{_row_value(row, 'subject_id')}", "observed_at": _row_value(row, "state_checked_at") or _row_value(row, "created_at") or utc_now()},
+        lambda row: {"relationship_type": "CASE_HAS_SUBJECT", "from_entity_id": _case_entity_id(_row_value(row, "case_id")), "to_entity_id": _subject_id_from_row(row), "source": "secopsai-research", "source_record_id": f"{_row_value(row, 'case_id')}:{_row_value(row, 'subject_id')}", "observed_at": _row_value(row, "state_checked_at") or _row_value(row, "created_at") or UNKNOWN_OBSERVED_AT},
     )
     run_relationship_stream(
         "case_artifacts",
-        "SELECT ca.case_id, ca.artifact_id, ca.role, ca.created_at, a.sha256 FROM research_case_artifacts ca JOIN research_artifacts a ON a.artifact_id = ca.artifact_id ORDER BY ca.case_id, ca.artifact_id",
-        lambda row: {"relationship_type": "CASE_HAS_ARTIFACT", "from_entity_id": _case_entity_id(_row_value(row, "case_id")), "to_entity_id": _artifact_id_from_row(row), "source": "secopsai-research", "source_record_id": f"{_row_value(row, 'case_id')}:{_row_value(row, 'artifact_id')}", "properties": {"role": _text(_row_value(row, "role"), 120)}, "observed_at": _row_value(row, "created_at") or utc_now()},
+        "SELECT ca.case_id || ':' || ca.artifact_id AS backfill_key, ca.artifact_id, ca.case_id, ca.role, ca.created_at, a.sha256 FROM research_case_artifacts ca JOIN research_artifacts a ON a.artifact_id = ca.artifact_id ORDER BY backfill_key",
+        lambda row: {"relationship_type": "CASE_HAS_ARTIFACT", "from_entity_id": _case_entity_id(_row_value(row, "case_id")), "to_entity_id": _artifact_id_from_row(row), "source": "secopsai-research", "source_record_id": f"{_row_value(row, 'case_id')}:{_row_value(row, 'artifact_id')}", "properties": {"role": _text(_row_value(row, "role"), 120)}, "observed_at": _row_value(row, "created_at") or UNKNOWN_OBSERVED_AT},
+        cursor_field="backfill_key",
     )
     run_relationship_stream(
         "case_evidence",
         "SELECT evidence_id, case_id, locator, sha256, collected_at, created_at, last_observed_at FROM research_evidence ORDER BY evidence_id",
-        lambda row: {"relationship_type": "CASE_SUPPORTED_BY_EVIDENCE", "from_entity_id": _case_entity_id(_row_value(row, "case_id")), "to_entity_id": _evidence_id_from_values(_row_value(row, "case_id"), _row_value(row, "evidence_id")), "source": "secopsai-research", "source_record_id": f"{_row_value(row, 'case_id')}:{_row_value(row, 'evidence_id')}", "evidence_ref_id": "eref:" + hashlib.sha256(f"research|{_row_value(row, 'evidence_id')}|{sanitize_locator(_row_value(row, 'locator'))}|{_row_value(row, 'sha256')}".encode()).hexdigest()[:40], "observed_at": _row_value(row, "last_observed_at") or _row_value(row, "collected_at") or _row_value(row, "created_at") or utc_now()},
+        lambda row: {"relationship_type": "CASE_SUPPORTED_BY_EVIDENCE", "from_entity_id": _case_entity_id(_row_value(row, "case_id")), "to_entity_id": _evidence_id_from_values(_row_value(row, "case_id"), _row_value(row, "evidence_id")), "source": "secopsai-research", "source_record_id": f"{_row_value(row, 'case_id')}:{_row_value(row, 'evidence_id')}", "evidence_ref_id": "eref:" + hashlib.sha256(f"research|{_row_value(row, 'evidence_id')}|{sanitize_locator(_row_value(row, 'locator'))}|{_row_value(row, 'sha256')}".encode()).hexdigest()[:40], "observed_at": _row_value(row, "last_observed_at") or _row_value(row, "collected_at") or _row_value(row, "created_at") or UNKNOWN_OBSERVED_AT},
     )
     run_relationship_stream(
         "case_iocs",
         "SELECT ioc_id, case_id, created_at, last_seen FROM research_iocs ORDER BY ioc_id",
-        lambda row: {"relationship_type": "CASE_HAS_IOC", "from_entity_id": _case_entity_id(_row_value(row, "case_id")), "to_entity_id": _ioc_id_from_row(row), "source": "secopsai-research", "source_record_id": f"{_row_value(row, 'case_id')}:{_row_value(row, 'ioc_id')}", "observed_at": _row_value(row, "last_seen") or _row_value(row, "created_at") or utc_now()},
+        lambda row: {"relationship_type": "CASE_HAS_IOC", "from_entity_id": _case_entity_id(_row_value(row, "case_id")), "to_entity_id": _ioc_id_from_row(row), "source": "secopsai-research", "source_record_id": f"{_row_value(row, 'case_id')}:{_row_value(row, 'ioc_id')}", "observed_at": _row_value(row, "last_seen") or _row_value(row, "created_at") or UNKNOWN_OBSERVED_AT},
     )
     run_relationship_stream(
         "case_ioc_candidates",
         "SELECT candidate_id, case_id, created_at FROM research_ioc_candidates ORDER BY candidate_id",
-        lambda row: {"relationship_type": "CASE_HAS_IOC", "from_entity_id": _case_entity_id(_row_value(row, "case_id")), "to_entity_id": _ioc_id_from_row(row), "source": "secopsai-research", "source_record_id": f"{_row_value(row, 'case_id')}:{_row_value(row, 'candidate_id')}", "properties": {"candidate": True}, "observed_at": _row_value(row, "created_at") or utc_now()},
+        lambda row: {"relationship_type": "CASE_HAS_IOC", "from_entity_id": _case_entity_id(_row_value(row, "case_id")), "to_entity_id": _ioc_id_from_row(row), "source": "secopsai-research", "source_record_id": f"{_row_value(row, 'case_id')}:{_row_value(row, 'candidate_id')}", "properties": {"candidate": True}, "observed_at": _row_value(row, "created_at") or UNKNOWN_OBSERVED_AT},
     )
     run_relationship_stream(
         "registry_event_links",
@@ -2455,38 +3267,104 @@ def backfill_existing(*, db_path: str | None = None, batch_limit: int = 1000, re
         lambda row: {"relationship_type": "TRIAGE_DECISION_FOR_ENTITY", "from_entity_id": canonical_entity_id("triage_decision", "secopsai", _row_value(row, "run_id")), "to_entity_id": _target_entity_id(_row_value(row, "target_id"), "triage", _row_value(row, "target_type")), "source": "secopsai-research", "source_record_id": _text(_row_value(row, "run_id"), 256), "observed_at": _row_value(row, "queued_at") or utc_now()},
     )
 
+    def apply_event_connection(connection: Any, item: Any, *, now: str | None = None) -> tuple[bool, str]:
+        if not isinstance(item, dict):
+            return False, "event projection is not an object"
+        entity_id = _text(item.get("entity_id"), 512)
+        if not entity_id:
+            return False, "event entity is missing"
+        if connection.execute("SELECT 1 FROM ontology_entities WHERE entity_id = ?", (entity_id,)).fetchone() is None:
+            return False, f"unknown event entity: {entity_id}"
+        now = now or utc_now()
+        event_type = _text(item.get("event_type") or "observed", 120) or "observed"
+        source = normalize_source(item.get("source") or "legacy") or "legacy"
+        source_record_id = _text(item.get("source_record_id"), 512)
+        # Keep event IDs and timelines reproducible when a legacy row has no
+        # timestamp. The epoch marker is explicit and sortable; using
+        # ingestion ``now`` would create a new event on every backfill run.
+        occurred_at = _text(item.get("occurred_at") or UNKNOWN_OBSERVED_AT, 64)
+        event_id = _text(item.get("event_id"), 512) or "event:" + hashlib.sha256(f"{entity_id}|{event_type}|{source}|{source_record_id}|{occurred_at}".encode()).hexdigest()[:40]
+        connection.execute(
+            "INSERT INTO ontology_events (event_id, entity_id, event_type, source, source_record_id, summary_json, occurred_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_id) DO UPDATE SET event_type=excluded.event_type, source=excluded.source, source_record_id=excluded.source_record_id, summary_json=excluded.summary_json, occurred_at=excluded.occurred_at",
+            (event_id, entity_id, event_type, source, source_record_id, bounded_json(item.get("summary") or {}, MAX_SUMMARY_BYTES), occurred_at, now),
+        )
+        return True, ""
+
     def run_event_stream(key: str, query: str, builder: Any) -> None:
-        offset = checkpoint(key)
+        retry_pending(key, "event", apply_event_connection, force=True)
+        state = checkpoint(key)
         while True:
             with soc_store.read_connect(db_path) as connection:
-                rows = connection.execute(f"{query} LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+                probe = connection.execute(f"{query} LIMIT 1").fetchone()
+                field = str(probe.keys()[0]) if probe is not None else ""
+                rows = page_rows(connection, query, state, field) if probe is not None else []
             if not rows:
-                save_checkpoint(key, offset, True)
+                save_checkpoint(key, int(state["offset"]), True, state.get("cursor"))
                 return
+            bump(key, "scanned", len(rows))
             with sqlite_writer_lock(db_path):
                 with soc_store.connect(db_path) as connection:
                     now = utc_now()
                     for row in rows:
+                        source_cursor = row[field]
                         try:
                             item = builder(row)
-                        except (KeyError, TypeError, ValueError):
-                            item = None
-                        if not item or not item.get("entity_id"):
+                        except (KeyError, TypeError, ValueError) as exc:
+                            counts["skipped_relationships"] += 1
+                            bump(key, "failed")
+                            queue_pending_connection(
+                                connection,
+                                stream_key=key,
+                                item_kind="event",
+                                source_cursor=source_cursor,
+                                item_index=0,
+                                item={"source_record_id": source_cursor},
+                                error=f"event builder failed: {exc}",
+                                terminal=True,
+                            )
                             continue
-                        if connection.execute("SELECT 1 FROM ontology_entities WHERE entity_id = ?", (item["entity_id"],)).fetchone() is None:
+                        if item is None or not isinstance(item, dict):
+                            counts["skipped_relationships"] += 1
+                            bump(key, "skipped")
+                            queue_pending_connection(
+                                connection,
+                                stream_key=key,
+                                item_kind="event",
+                                source_cursor=source_cursor,
+                                item_index=0,
+                                item={"source_record_id": source_cursor},
+                                error="event builder returned no projection",
+                                terminal=True,
+                            )
                             continue
-                        event_type = _text(item.get("event_type") or "observed", 120) or "observed"
-                        source = _text(item.get("source") or "legacy", 160) or "legacy"
-                        source_record_id = _text(item.get("source_record_id"), 512)
-                        occurred_at = _text(item.get("occurred_at") or now, 64)
-                        event_id = _text(item.get("event_id"), 512) or "event:" + hashlib.sha256(f"{item['entity_id']}|{event_type}|{source}|{source_record_id}|{occurred_at}".encode()).hexdigest()[:40]
-                        connection.execute(
-                            "INSERT INTO ontology_events (event_id, entity_id, event_type, source, source_record_id, summary_json, occurred_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_id) DO UPDATE SET event_type=excluded.event_type, source=excluded.source, source_record_id=excluded.source_record_id, summary_json=excluded.summary_json, occurred_at=excluded.occurred_at",
-                            (event_id, item["entity_id"], event_type, source, source_record_id, bounded_json(item.get("summary") or {}, MAX_SUMMARY_BYTES), occurred_at, now),
-                        )
+                        event_id = _text(item.get("event_id"), 512) or "event:" + hashlib.sha256(
+                            f"{_text(item.get('entity_id'), 512)}|{_text(item.get('event_type') or 'observed', 120)}|{normalize_source(item.get('source') or 'legacy') or 'legacy'}|{_text(item.get('source_record_id'), 512)}|{_text(item.get('occurred_at') or UNKNOWN_OBSERVED_AT, 64)}".encode()
+                        ).hexdigest()[:40]
+                        existed = connection.execute(
+                            "SELECT 1 FROM ontology_events WHERE event_id = ?",
+                            (event_id,),
+                        ).fetchone() is not None
+                        applied, error = apply_event_connection(connection, item, now=now)
+                        if not applied:
+                            counts["skipped_relationships"] += 1
+                            bump(key, "skipped")
+                            queue_pending_connection(
+                                connection,
+                                stream_key=key,
+                                item_kind="event",
+                                source_cursor=source_cursor,
+                                item_index=0,
+                                item=item,
+                                error=error,
+                                terminal=False,
+                            )
+                        else:
+                            counts["events"] += 1
+                            bump(key, "updated" if existed else "inserted")
                     connection.commit()
-            offset += len(rows)
-            save_checkpoint(key, offset, len(rows) < limit)
+            state["offset"] = int(state["offset"]) + len(rows)
+            state["cursor"] = rows[-1][field]
+            save_checkpoint(key, int(state["offset"]), len(rows) < limit, state.get("cursor"))
             if len(rows) < limit:
                 return
 
@@ -2510,56 +3388,243 @@ def backfill_existing(*, db_path: str | None = None, batch_limit: int = 1000, re
         "SELECT step_id, pipeline_id, step_key, step_order, status, intelligence_job_id, result_json, error_code, error_message, started_at, completed_at, updated_at FROM research_pipeline_steps ORDER BY step_id",
         lambda row: {"event_id": f"pipeline-step:{_row_value(row, 'step_id')}", "entity_id": canonical_entity_id("automation_run", "secopsai", _row_value(row, "pipeline_id")), "event_type": f"step:{_row_value(row, 'step_key')}", "source": "secopsai-research", "source_record_id": _row_value(row, "step_id"), "occurred_at": _row_value(row, "completed_at") or _row_value(row, "updated_at") or _row_value(row, "started_at"), "summary": {"status": _row_value(row, "status"), "step_order": _row_value(row, "step_order"), "intelligence_job_id": _row_value(row, "intelligence_job_id"), "result": _loads(_row_value(row, "result_json")), "error_code": _text(_row_value(row, "error_code"), 120), "error_message": _text(_row_value(row, "error_message"), 1000)}},
     )
+    # Evidence and registry observations are first-class timeline inputs.  A
+    # bounded event summary preserves provenance without copying raw research
+    # payloads, and the stream's endpoint check below skips rows whose owning
+    # entity was not projected in this database.
+    run_event_stream(
+        "evidence_events",
+        "SELECT evidence_id, case_id, evidence_type, title, locator, sha256, provenance, status, collected_at, created_at, first_observed_at, last_observed_at FROM research_evidence ORDER BY evidence_id",
+        lambda row: {
+            "event_id": f"evidence-observed:{_row_value(row, 'evidence_id')}",
+            "entity_id": _evidence_id_from_values(_row_value(row, "case_id"), _row_value(row, "evidence_id")),
+            "event_type": "evidence_observed",
+            "source": "secopsai-research",
+            "source_record_id": _row_value(row, "evidence_id"),
+            "occurred_at": _row_value(row, "last_observed_at") or _row_value(row, "first_observed_at") or _row_value(row, "collected_at") or _row_value(row, "created_at") or UNKNOWN_OBSERVED_AT,
+            "summary": {
+                "case_id": _text(_row_value(row, "case_id"), 256),
+                "evidence_type": _text(_row_value(row, "evidence_type"), 120),
+                "title": _text(_row_value(row, "title"), 512),
+                "locator": sanitize_locator(_row_value(row, "locator")),
+                "sha256": _text(_row_value(row, "sha256"), 128),
+                "provenance": _text(_row_value(row, "provenance"), 1000),
+                "status": _text(_row_value(row, "status"), 80),
+            },
+        },
+    )
+    run_event_stream(
+        "registry_events",
+        "SELECT event_id, source_id, ecosystem, package, version, publisher, source_url, artifact_url, artifact_sha256, observed_at, provenance_json FROM research_registry_events ORDER BY event_id",
+        lambda row: {
+            "event_id": f"registry-observed:{_row_value(row, 'event_id')}",
+            "entity_id": canonical_entity_id("release_event", "registry", _row_value(row, "event_id")),
+            "event_type": "release_observed",
+            "source": "registry",
+            "source_record_id": _row_value(row, "event_id"),
+            "occurred_at": _row_value(row, "observed_at") or UNKNOWN_OBSERVED_AT,
+            "summary": {
+                "source_id": _text(_row_value(row, "source_id"), 256),
+                "ecosystem": _text(_row_value(row, "ecosystem"), 120),
+                "package": _text(_row_value(row, "package"), 512),
+                "version": _text(_row_value(row, "version"), 256),
+                "publisher": _text(_row_value(row, "publisher"), 512),
+                "source_url": sanitize_locator(_row_value(row, "source_url")),
+                "artifact_url": sanitize_locator(_row_value(row, "artifact_url")),
+                "artifact_sha256": _text(_row_value(row, "artifact_sha256"), 128),
+                "provenance": _loads(_row_value(row, "provenance_json")),
+            },
+        },
+    )
 
     def run_relationship_table() -> None:
-        offset = checkpoint("relationships")
-        while True:
-            with soc_store.read_connect(db_path) as connection:
-                graph_map: dict[str, str] = {}
-                for node in connection.execute("SELECT node_id, node_type, source FROM asset_graph_nodes").fetchall():
-                    raw_node = str(node["node_id"])
-                    mapped_node_type = str(node["node_type"] or "asset")
-                    mapped_node_type = mapped_node_type if mapped_node_type in ENTITY_TYPES else ("asset" if mapped_node_type in {"site", "sensor", "service", "wifi_network"} else "source")
-                    graph_map[raw_node] = _stable_legacy_id(mapped_node_type, str(node["source"] or "legacy"), raw_node)
-                edge_rows = connection.execute("SELECT edge_id, edge_type, from_node_id, to_node_id, source, properties_json, first_seen, last_seen FROM asset_graph_edges ORDER BY edge_id LIMIT ? OFFSET ?", (limit * 2, offset)).fetchall()
-                case_rows = connection.execute("SELECT case_id, finding_id, relationship FROM research_case_findings ORDER BY case_id, finding_id LIMIT ? OFFSET ?", (limit * 2, offset)).fetchall()
-                alert_rows = connection.execute("SELECT alert_id, case_id, updated_at FROM research_alerts WHERE case_id <> '' ORDER BY alert_id LIMIT ? OFFSET ?", (limit * 2, offset)).fetchall()
-            items: list[dict[str, Any]] = []
-            for row in edge_rows:
-                relation = LEGACY_EDGE_RELATIONS.get(str(row["edge_type"] or ""))
-                if relation:
-                    items.append({"relationship_id": str(row["edge_id"]), "relationship_type": relation, "from_entity_id": graph_map.get(str(row["from_node_id"]), _stable_legacy_id("asset", "legacy", str(row["from_node_id"]))), "to_entity_id": graph_map.get(str(row["to_node_id"]), _stable_legacy_id("asset", "legacy", str(row["to_node_id"]))), "source": str(row["source"] or "legacy"), "source_record_id": str(row["edge_id"]), "properties": _loads(row["properties_json"]), "observed_at": str(row["last_seen"]), "valid_from": str(row["first_seen"]), "freshness_at": str(row["last_seen"])})
-            for row in case_rows:
-                items.append({"relationship_type": "CASE_GROUPS_FINDING", "from_entity_id": _stable_legacy_id("research_case", "secopsai", str(row["case_id"])), "to_entity_id": _stable_legacy_id("finding", "secopsai", str(row["finding_id"])), "source": "secopsai-research", "source_record_id": f"{row['case_id']}:{row['finding_id']}", "properties": {"relationship": row["relationship"]}, "observed_at": utc_now()})
-            for row in alert_rows:
-                items.append({"relationship_type": "CASE_GROUPS_ALERT", "from_entity_id": _stable_legacy_id("research_case", "secopsai", str(row["case_id"])), "to_entity_id": _stable_legacy_id("alert", "secopsai", str(row["alert_id"])), "source": "secopsai-research", "source_record_id": str(row["alert_id"]), "properties": {"relation": "alert_case"}, "observed_at": str(row["updated_at"])})
-            candidate_rows = connection.execute("SELECT candidate_id, case_id, last_seen FROM research_candidates WHERE case_id <> '' ORDER BY candidate_id LIMIT ? OFFSET ?", (limit * 2, offset)).fetchall()
-            for row in candidate_rows:
-                items.append({"relationship_type": "CANDIDATE_PROMOTED_TO_CASE", "from_entity_id": _stable_legacy_id("candidate", "secopsai", str(row["candidate_id"])), "to_entity_id": _stable_legacy_id("research_case", "secopsai", str(row["case_id"])), "source": "secopsai-research", "source_record_id": f"{row['candidate_id']}:{row['case_id']}", "properties": {"relation": "candidate_case"}, "observed_at": str(row["last_seen"])})
-            if items:
-                with sqlite_writer_lock(db_path):
-                    with soc_store.connect(db_path) as connection:
-                        now = utc_now()
-                        for item in items:
-                            if connection.execute("SELECT 1 FROM ontology_entities WHERE entity_id = ?", (item["from_entity_id"],)).fetchone() is None or connection.execute("SELECT 1 FROM ontology_entities WHERE entity_id = ?", (item["to_entity_id"],)).fetchone() is None:
-                                counts["skipped_relationships"] += 1
-                                continue
-                            _upsert_relationship_connection(connection, item, now=now)
+        def apply_items(items: list[dict[str, Any]]) -> None:
+            if not items:
+                return
+            with sqlite_writer_lock(db_path):
+                with soc_store.connect(db_path) as connection:
+                    now = utc_now()
+                    for raw_item in items:
+                        # The source/cursor markers are local backfill metadata;
+                        # never persist them in ontology properties or pending
+                        # payloads.  They let this older projection family use
+                        # the same durable retry path as the newer streams.
+                        item = {
+                            key: value
+                            for key, value in raw_item.items()
+                            if not key.startswith("_pending_")
+                        }
+                        stream_key = _text(raw_item.get("_pending_stream"), 160)
+                        source_cursor = raw_item.get("_pending_cursor")
+                        item_index = int(raw_item.get("_pending_index") or 0)
+                        pending_error = raw_item.get("_pending_error")
+                        terminal = bool(raw_item.get("_pending_terminal"))
+                        if pending_error:
+                            counts["skipped_relationships"] += 1
+                            bump(stream_key or key, "failed" if terminal else "skipped")
+                            if stream_key:
+                                queue_pending_connection(
+                                    connection,
+                                    stream_key=stream_key,
+                                    item_kind="relationship",
+                                    source_cursor=source_cursor,
+                                    item_index=item_index,
+                                    item=item,
+                                    error=pending_error,
+                                    terminal=terminal,
+                                )
+                            continue
+                        if not isinstance(item, dict):
+                            counts["skipped_relationships"] += 1
+                            bump(stream_key or key, "skipped")
+                            continue
+                        relationship_id = _text(item.get("relationship_id") or item.get("edge_id"), 512) or _semantic_relationship_id(item)
+                        existed = connection.execute(
+                            "SELECT 1 FROM ontology_relationships WHERE relationship_id = ?",
+                            (relationship_id,),
+                        ).fetchone() is not None
+                        applied, error = apply_relationship_connection(connection, item, now=now)
+                        if applied:
                             counts["relationships"] += 1
-                        connection.commit()
-            step = max(len(edge_rows), len(case_rows), len(alert_rows), len(candidate_rows))
-            if step == 0:
-                save_checkpoint("relationships", offset, True)
-                return
-            offset += step
-            save_checkpoint("relationships", offset, len(edge_rows) < limit * 2 and len(case_rows) < limit * 2 and len(alert_rows) < limit * 2 and len(candidate_rows) < limit * 2)
-            if len(edge_rows) < limit * 2 and len(case_rows) < limit * 2 and len(alert_rows) < limit * 2 and len(candidate_rows) < limit * 2:
-                return
+                            bump(stream_key or key, "updated" if existed else "inserted")
+                            continue
+                        counts["skipped_relationships"] += 1
+                        bump(stream_key or key, "skipped")
+                        if stream_key:
+                            queue_pending_connection(
+                                connection,
+                                stream_key=stream_key,
+                                item_kind="relationship",
+                                source_cursor=source_cursor,
+                                item_index=item_index,
+                                item=item,
+                                error=error,
+                                terminal=terminal or error in {
+                                    "relationship endpoints are identical",
+                                    "relationship projection is not an object",
+                                } or (
+                                    error == "relationship endpoints are missing"
+                                    and not ("from_entity_id" in item or "to_entity_id" in item)
+                                ),
+                            )
+                    connection.commit()
+
+        def run_source(key: str, query: str, builder: Any, *, cursor_field: str | None = None) -> None:
+            # Resolve rows left behind by an earlier source ordering before
+            # reading forward from the checkpoint.  This makes a completed
+            # source checkpoint safe even when entities were projected later.
+            def retry_handler(connection: Any, item: Any) -> tuple[bool, str]:
+                if key == "relationships:graph_edges" and isinstance(item, dict):
+                    # Graph endpoints can be projected with a more specific
+                    # entity type (for example service) after the edge row was
+                    # first observed.  Re-resolve the original node IDs before
+                    # retrying instead of persisting an empty/guessed ID.
+                    item = dict(item)
+                    from_node = _text(item.get("graph_from_node_id"), 512)
+                    to_node = _text(item.get("graph_to_node_id"), 512)
+                    if from_node and from_node in graph_map:
+                        item["from_entity_id"] = graph_map[from_node]
+                    if to_node and to_node in graph_map:
+                        item["to_entity_id"] = graph_map[to_node]
+                return apply_relationship_connection(connection, item)
+
+            retry_pending(key, "relationship", retry_handler, force=True)
+            state = checkpoint(key)
+            while True:
+                with soc_store.read_connect(db_path) as connection:
+                    probe = connection.execute(f"{query} LIMIT 1").fetchone()
+                    field = cursor_field or (str(probe.keys()[0]) if probe is not None else "")
+                    rows = page_rows(connection, query, state, field) if probe is not None else []
+                if not rows:
+                    save_checkpoint(key, int(state["offset"]), True, state.get("cursor"))
+                    return
+                bump(key, "scanned", len(rows))
+                items: list[dict[str, Any]] = []
+                for row in rows:
+                    source_cursor = row[field]
+                    try:
+                        built = builder(row)
+                    except (KeyError, TypeError, ValueError) as exc:
+                        items.append(
+                            {
+                                "_pending_stream": key,
+                                "_pending_cursor": source_cursor,
+                                "_pending_index": 0,
+                                "_pending_error": f"relationship builder failed: {exc}",
+                                "_pending_terminal": True,
+                            }
+                        )
+                        continue
+                    built_items = built if isinstance(built, list) else [built]
+                    for item_index, item in enumerate(built_items):
+                        if not isinstance(item, dict):
+                            items.append(
+                                {
+                                    "_pending_stream": key,
+                                    "_pending_cursor": source_cursor,
+                                    "_pending_index": item_index,
+                                    "_pending_error": "relationship builder returned no projection",
+                                    "_pending_terminal": True,
+                                }
+                            )
+                            continue
+                        marked = dict(item)
+                        marked.update(
+                            {
+                                "_pending_stream": key,
+                                "_pending_cursor": source_cursor,
+                                "_pending_index": item_index,
+                            }
+                        )
+                        items.append(marked)
+                apply_items(items)
+                state["offset"] = int(state["offset"]) + len(rows)
+                field = cursor_field or str(rows[-1].keys()[0])
+                state["cursor"] = rows[-1][field]
+                save_checkpoint(key, int(state["offset"]), len(rows) < limit, state.get("cursor"))
+                if len(rows) < limit:
+                    return
+
+        with soc_store.read_connect(db_path) as connection:
+            graph_rows = connection.execute("SELECT node_id, node_type, source FROM asset_graph_nodes").fetchall()
+        graph_map: dict[str, str] = {}
+        for node in graph_rows:
+            raw_node = str(node["node_id"])
+            mapped_node_type = str(node["node_type"] or "asset")
+            mapped_node_type = mapped_node_type if mapped_node_type in ENTITY_TYPES else ("asset" if mapped_node_type in {"site", "sensor", "service", "wifi_network"} else "source")
+            graph_map[raw_node] = _stable_legacy_id(mapped_node_type, str(node["source"] or "legacy"), raw_node)
+
+        run_source(
+            "relationships:graph_edges",
+            "SELECT edge_id, edge_type, from_node_id, to_node_id, source, properties_json, first_seen, last_seen FROM asset_graph_edges ORDER BY edge_id",
+            lambda row: ({"relationship_id": str(row["edge_id"]), "relationship_type": LEGACY_EDGE_RELATIONS[str(row["edge_type"] or "")], "from_entity_id": graph_map.get(str(row["from_node_id"]), ""), "to_entity_id": graph_map.get(str(row["to_node_id"]), ""), "graph_from_node_id": str(row["from_node_id"]), "graph_to_node_id": str(row["to_node_id"]), "graph_edge_type": str(row["edge_type"] or ""), "source": str(row["source"] or "legacy"), "source_record_id": str(row["edge_id"]), "properties": _loads(row["properties_json"]), "observed_at": str(row["last_seen"]), "valid_from": str(row["first_seen"]), "freshness_at": str(row["last_seen"])} if str(row["edge_type"] or "") in LEGACY_EDGE_RELATIONS else None),
+        )
+        run_source(
+            "relationships:case_findings",
+            "SELECT case_id || ':' || finding_id AS backfill_key, case_id, finding_id, relationship, created_at FROM research_case_findings ORDER BY backfill_key",
+            lambda row: {"relationship_type": "CASE_GROUPS_FINDING", "from_entity_id": _stable_legacy_id("research_case", "secopsai", str(row["case_id"])), "to_entity_id": _stable_legacy_id("finding", "secopsai", str(row["finding_id"])), "source": "secopsai-research", "source_record_id": f"{row['case_id']}:{row['finding_id']}", "properties": {"relationship": row["relationship"]}, "observed_at": str(row["created_at"] or UNKNOWN_OBSERVED_AT)},
+            cursor_field="backfill_key",
+        )
+        run_source(
+            "relationships:alerts",
+            "SELECT alert_id, case_id, updated_at FROM research_alerts WHERE case_id <> '' ORDER BY alert_id",
+            lambda row: {"relationship_type": "CASE_GROUPS_ALERT", "from_entity_id": _stable_legacy_id("research_case", "secopsai", str(row["case_id"])), "to_entity_id": _stable_legacy_id("alert", "secopsai", str(row["alert_id"])), "source": "secopsai-research", "source_record_id": str(row["alert_id"]), "properties": {"relation": "alert_case"}, "observed_at": str(row["updated_at"] or UNKNOWN_OBSERVED_AT)},
+        )
+        run_source(
+            "relationships:candidates",
+            "SELECT candidate_id, case_id, last_seen FROM research_candidates WHERE case_id <> '' ORDER BY candidate_id",
+            lambda row: {"relationship_type": "CANDIDATE_PROMOTED_TO_CASE", "from_entity_id": _stable_legacy_id("candidate", "secopsai", str(row["candidate_id"])), "to_entity_id": _stable_legacy_id("research_case", "secopsai", str(row["case_id"])), "source": "secopsai-research", "source_record_id": f"{row['candidate_id']}:{row['case_id']}", "properties": {"relation": "candidate_case"}, "observed_at": str(row["last_seen"] or UNKNOWN_OBSERVED_AT)},
+        )
 
     run_relationship_table()
+    # Surface unresolved projections in the returned summary and metadata.
+    # A completed source checkpoint with pending rows is intentionally
+    # reported as degraded work rather than a clean zero-loss backfill.
+    counts["pending_backfill"] = pending_count()
     with sqlite_writer_lock(db_path):
         with soc_store.connect(db_path) as connection:
             now = utc_now()
-            connection.execute("INSERT INTO ontology_metadata (key, value_json, updated_at) VALUES ('backfill:run', ?, ?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at", (bounded_json({"status": "completed", "completed_at": now, "counts": counts}, MAX_SUMMARY_BYTES), now))
+            backfill_status = "degraded" if counts["pending_backfill"] or counts["skipped_relationships"] else "completed"
+            connection.execute("INSERT INTO ontology_metadata (key, value_json, updated_at) VALUES ('backfill:run', ?, ?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at", (bounded_json({"status": backfill_status, "completed_at": now, "counts": counts}, MAX_SUMMARY_BYTES), now))
             connection.commit()
-    return {"status": "completed", "schema_version": SCHEMA_VERSION, **counts, "quality": quality(db_path=db_path)}
+    return {"status": backfill_status, "schema_version": SCHEMA_VERSION, **counts, "quality": quality(db_path=db_path)}

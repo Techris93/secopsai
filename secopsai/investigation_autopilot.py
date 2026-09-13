@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
+import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -55,30 +57,58 @@ def _id(prefix: str) -> str:
     return f"{prefix}-{secrets.token_hex(8).upper()}"
 
 
-def get_settings(*, db_path: Optional[str] = None) -> Dict[str, Any]:
-    soc_store.init_db(db_path)
-    with closing(soc_store.connect(db_path)) as connection:
-        row = connection.execute("SELECT * FROM investigation_autopilot_settings WHERE settings_id = 1").fetchone()
-        if row is None:
-            now = soc_store.utc_now()
-            connection.execute(
-                """INSERT INTO investigation_autopilot_settings
-                (settings_id, mode, minimum_severity, max_active_runs, max_attempts,
-                 auto_start_pipeline, auto_extract_iocs, auto_correlate, updated_at, updated_by)
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, 'secopsai-default')""",
-                (
-                    DEFAULTS["mode"], DEFAULTS["minimum_severity"], DEFAULTS["max_active_runs"],
-                    DEFAULTS["max_attempts"], int(DEFAULTS["auto_start_pipeline"]),
-                    int(DEFAULTS["auto_extract_iocs"]), int(DEFAULTS["auto_correlate"]), now,
-                ),
-            )
-            connection.commit()
-            row = connection.execute("SELECT * FROM investigation_autopilot_settings WHERE settings_id = 1").fetchone()
+def _settings_payload(row: Any) -> Dict[str, Any]:
     result = dict(row or {})
+    if not result:
+        result = dict(DEFAULTS)
     for key in ("auto_start_pipeline", "auto_extract_iocs", "auto_correlate"):
         result[key] = bool(result.get(key))
     result["schema_version"] = SCHEMA_VERSION
     return result
+
+
+def get_settings(*, db_path: Optional[str] = None) -> Dict[str, Any]:
+    soc_store.init_db(db_path)
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            row = connection.execute("SELECT * FROM investigation_autopilot_settings WHERE settings_id = 1").fetchone()
+            if row is None:
+                now = soc_store.utc_now()
+                connection.execute(
+                    """INSERT INTO investigation_autopilot_settings
+                    (settings_id, mode, minimum_severity, max_active_runs, max_attempts,
+                     auto_start_pipeline, auto_extract_iocs, auto_correlate, updated_at, updated_by)
+                    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, 'secopsai-default')""",
+                    (
+                        DEFAULTS["mode"], DEFAULTS["minimum_severity"], DEFAULTS["max_active_runs"],
+                        DEFAULTS["max_attempts"], int(DEFAULTS["auto_start_pipeline"]),
+                        int(DEFAULTS["auto_extract_iocs"]), int(DEFAULTS["auto_correlate"]), now,
+                    ),
+                )
+                connection.commit()
+                row = connection.execute("SELECT * FROM investigation_autopilot_settings WHERE settings_id = 1").fetchone()
+    return _settings_payload(row)
+
+
+def read_settings(*, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Read autopilot settings without initializing or mutating SQLite."""
+    resolved_path = db_path or soc_store.default_db_path()
+    if not os.path.isfile(resolved_path):
+        result = _settings_payload(None)
+        result["status"] = "degraded"
+        result["error"] = "investigation autopilot settings are unavailable"
+        return result
+    try:
+        with closing(soc_store.read_connect(resolved_path)) as connection:
+            row = connection.execute(
+                "SELECT * FROM investigation_autopilot_settings WHERE settings_id = 1"
+            ).fetchone()
+    except (OSError, sqlite3.Error):
+        result = _settings_payload(None)
+        result["status"] = "degraded"
+        result["error"] = "investigation autopilot settings are unavailable"
+        return result
+    return _settings_payload(row)
 
 
 def update_settings(
@@ -88,31 +118,32 @@ def update_settings(
     auto_correlate: Optional[bool] = None, actor: str = "operator",
     db_path: Optional[str] = None,
 ) -> Dict[str, Any]:
-    current = get_settings(db_path=db_path)
-    next_mode = _clean(mode if mode is not None else current["mode"], 20).lower()
-    severity = _clean(minimum_severity if minimum_severity is not None else current["minimum_severity"], 20).lower()
-    active = int(max_active_runs if max_active_runs is not None else current["max_active_runs"])
-    attempts = int(max_attempts if max_attempts is not None else current["max_attempts"])
-    if next_mode not in MODES:
-        raise ValueError("investigation autopilot mode must be off, advisory, or guarded")
-    if severity not in SEVERITY_ORDER:
-        raise ValueError("minimum severity must be info, low, medium, high, or critical")
-    if not 1 <= active <= 20 or not 1 <= attempts <= 10:
-        raise ValueError("active runs must be 1-20 and attempts must be 1-10")
-    values = (
-        next_mode, severity, active, attempts,
-        int(auto_start_pipeline if auto_start_pipeline is not None else current["auto_start_pipeline"]),
-        int(auto_extract_iocs if auto_extract_iocs is not None else current["auto_extract_iocs"]),
-        int(auto_correlate if auto_correlate is not None else current["auto_correlate"]),
-        soc_store.utc_now(), _clean(actor, 160) or "operator",
-    )
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """UPDATE investigation_autopilot_settings SET mode=?, minimum_severity=?,
-            max_active_runs=?, max_attempts=?, auto_start_pipeline=?, auto_extract_iocs=?,
-            auto_correlate=?, updated_at=?, updated_by=? WHERE settings_id=1""", values,
+    with sqlite_writer_lock(db_path):
+        current = get_settings(db_path=db_path)
+        next_mode = _clean(mode if mode is not None else current["mode"], 20).lower()
+        severity = _clean(minimum_severity if minimum_severity is not None else current["minimum_severity"], 20).lower()
+        active = int(max_active_runs if max_active_runs is not None else current["max_active_runs"])
+        attempts = int(max_attempts if max_attempts is not None else current["max_attempts"])
+        if next_mode not in MODES:
+            raise ValueError("investigation autopilot mode must be off, advisory, or guarded")
+        if severity not in SEVERITY_ORDER:
+            raise ValueError("minimum severity must be info, low, medium, high, or critical")
+        if not 1 <= active <= 20 or not 1 <= attempts <= 10:
+            raise ValueError("active runs must be 1-20 and attempts must be 1-10")
+        values = (
+            next_mode, severity, active, attempts,
+            int(auto_start_pipeline if auto_start_pipeline is not None else current["auto_start_pipeline"]),
+            int(auto_extract_iocs if auto_extract_iocs is not None else current["auto_extract_iocs"]),
+            int(auto_correlate if auto_correlate is not None else current["auto_correlate"]),
+            soc_store.utc_now(), _clean(actor, 160) or "operator",
         )
-        connection.commit()
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                """UPDATE investigation_autopilot_settings SET mode=?, minimum_severity=?,
+                max_active_runs=?, max_attempts=?, auto_start_pipeline=?, auto_extract_iocs=?,
+                auto_correlate=?, updated_at=?, updated_by=? WHERE settings_id=1""", values,
+            )
+            connection.commit()
     return get_settings(db_path=db_path)
 
 
@@ -151,25 +182,26 @@ def enqueue_finding(finding_id: str, *, db_path: Optional[str] = None) -> Dict[s
     if not allowed:
         return {"status": "skipped", "finding_id": finding_id, "reason": reason}
     fingerprint = _fingerprint(finding)
-    with closing(soc_store.connect(db_path)) as connection:
-        existing = connection.execute(
-            "SELECT run_id FROM investigation_autopilot_runs WHERE finding_id=? AND finding_fingerprint=?",
-            (finding_id, fingerprint),
-        ).fetchone()
-        if existing:
-            return get_run(str(existing["run_id"]), db_path=db_path)
-        run_id, now = _id("IAR"), soc_store.utc_now()
-        connection.execute(
-            """INSERT INTO investigation_autopilot_runs
-            (run_id, finding_id, finding_fingerprint, case_id, pipeline_id, status,
-             current_stage, last_successful_stage, attempt, evidence_summary_json,
-             decision_json, blocker_code, blocker_message, retryable, created_at,
-             started_at, completed_at, updated_at)
-            VALUES (?, ?, ?, NULL, NULL, 'queued', 'queued', '', 0, '{}', '{}',
-                    NULL, NULL, 1, ?, NULL, NULL, ?)""",
-            (run_id, finding_id, fingerprint, now, now),
-        )
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            existing = connection.execute(
+                "SELECT run_id FROM investigation_autopilot_runs WHERE finding_id=? AND finding_fingerprint=?",
+                (finding_id, fingerprint),
+            ).fetchone()
+            if existing:
+                return get_run(str(existing["run_id"]), db_path=db_path)
+            run_id, now = _id("IAR"), soc_store.utc_now()
+            connection.execute(
+                """INSERT INTO investigation_autopilot_runs
+                (run_id, finding_id, finding_fingerprint, case_id, pipeline_id, status,
+                 current_stage, last_successful_stage, attempt, evidence_summary_json,
+                 decision_json, blocker_code, blocker_message, retryable, created_at,
+                 started_at, completed_at, updated_at)
+                VALUES (?, ?, ?, NULL, NULL, 'queued', 'queued', '', 0, '{}', '{}',
+                        NULL, NULL, 1, ?, NULL, NULL, ?)""",
+                (run_id, finding_id, fingerprint, now, now),
+            )
+            connection.commit()
     soc_store.add_note(finding_id, "secopsai-investigation-autopilot", f"Queued evidence investigation {run_id}.", db_path)
     return get_run(run_id, db_path=db_path)
 
@@ -199,7 +231,7 @@ def enqueue_due_findings(*, db_path: Optional[str] = None, limit: int = 100) -> 
 
 
 def _existing_case(finding_id: str, *, db_path: Optional[str]) -> Optional[str]:
-    with closing(soc_store.connect(db_path)) as connection:
+    with closing(soc_store.read_connect(db_path)) as connection:
         row = connection.execute(
             "SELECT case_id FROM research_case_findings WHERE finding_id=? ORDER BY created_at LIMIT 1", (finding_id,),
         ).fetchone()
@@ -250,22 +282,23 @@ def _set_run(run_id: str, *, status: str, stage: str, db_path: Optional[str],
              retryable: bool = True, evidence: Optional[Dict[str, Any]] = None,
              decision: Optional[Dict[str, Any]] = None, completed: bool = False) -> None:
     now = soc_store.utc_now()
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """UPDATE investigation_autopilot_runs SET status=?, current_stage=?,
-            last_successful_stage=CASE WHEN ? IN ('failed','blocked') THEN last_successful_stage ELSE ? END,
-            case_id=COALESCE(?, case_id), pipeline_id=COALESCE(?, pipeline_id),
-            blocker_code=?, blocker_message=?, retryable=?,
-            evidence_summary_json=COALESCE(?, evidence_summary_json),
-            decision_json=COALESCE(?, decision_json), started_at=COALESCE(started_at, ?),
-            completed_at=CASE WHEN ? THEN ? ELSE completed_at END, updated_at=? WHERE run_id=?""",
-            (
-                status, stage, status, stage, case_id, pipeline_id, blocker_code,
-                blocker_message, int(retryable), _json(evidence) if evidence is not None else None,
-                _json(decision) if decision is not None else None, now, int(completed), now, now, run_id,
-            ),
-        )
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                """UPDATE investigation_autopilot_runs SET status=?, current_stage=?,
+                last_successful_stage=CASE WHEN ? IN ('failed','blocked') THEN last_successful_stage ELSE ? END,
+                case_id=COALESCE(?, case_id), pipeline_id=COALESCE(?, pipeline_id),
+                blocker_code=?, blocker_message=?, retryable=?,
+                evidence_summary_json=COALESCE(?, evidence_summary_json),
+                decision_json=COALESCE(?, decision_json), started_at=COALESCE(started_at, ?),
+                completed_at=CASE WHEN ? THEN ? ELSE completed_at END, updated_at=? WHERE run_id=?""",
+                (
+                    status, stage, status, stage, case_id, pipeline_id, blocker_code,
+                    blocker_message, int(retryable), _json(evidence) if evidence is not None else None,
+                    _json(decision) if decision is not None else None, now, int(completed), now, now, run_id,
+                ),
+            )
+            connection.commit()
 
 
 def run_due(*, db_path: Optional[str] = None, limit: int = 1) -> Dict[str, Any]:
@@ -277,7 +310,7 @@ def run_due(*, db_path: Optional[str] = None, limit: int = 1) -> Dict[str, Any]:
         db_path=db_path,
         limit=max(25, int(settings["max_active_runs"]) * 2),
     )
-    with closing(soc_store.connect(db_path)) as connection:
+    with closing(soc_store.read_connect(db_path)) as connection:
         active_count = int(connection.execute(
             "SELECT COUNT(*) FROM investigation_autopilot_runs WHERE status IN ('collecting','analyzing','awaiting_model','running')"
         ).fetchone()[0])
@@ -302,7 +335,7 @@ def run_due(*, db_path: Optional[str] = None, limit: int = 1) -> Dict[str, Any]:
             "deferred": True,
             "reason": "investigation_queue_over_capacity",
         }
-    with closing(soc_store.connect(db_path)) as connection:
+    with closing(soc_store.read_connect(db_path)) as connection:
         rows = connection.execute(
             "SELECT run_id FROM investigation_autopilot_runs WHERE status='queued' ORDER BY created_at LIMIT ?",
             (min(max(1, int(limit)), capacity) if capacity else 0,),
@@ -353,33 +386,34 @@ def recover_due_runs(*, db_path: Optional[str] = None, limit: int = 25) -> Dict[
     settings = get_settings(db_path=db_path)
     max_attempts = int(settings.get("max_attempts") or DEFAULTS["max_attempts"])
     now = soc_store.utc_now()
-    with closing(soc_store.connect(db_path)) as connection:
-        rows = connection.execute(
-            """SELECT run_id, status, attempt, retryable, updated_at
-               FROM investigation_autopilot_runs
-               WHERE status IN ('failed', 'evidence_gap', 'canceled')
-               ORDER BY updated_at ASC LIMIT ?""",
-            (max(1, min(int(limit), 200)),),
-        ).fetchall()
-        recovered: list[str] = []
-        for row in rows:
-            attempts = int(row["attempt"] or 0)
-            if attempts >= max_attempts:
-                continue
-            age = _timestamp_age_seconds(row["updated_at"])
-            backoff = min(3600, RECOVERY_BACKOFF_SECONDS * (2 ** max(0, attempts - 1)))
-            if age is None or age < backoff:
-                continue
-            connection.execute(
-                """UPDATE investigation_autopilot_runs
-                   SET status='queued', current_stage='queued',
-                       blocker_code=NULL, blocker_message=NULL,
-                       completed_at=NULL, retryable=1, updated_at=?
-                   WHERE run_id=?""",
-                (now, str(row["run_id"])),
-            )
-            recovered.append(str(row["run_id"]))
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            rows = connection.execute(
+                """SELECT run_id, status, attempt, retryable, updated_at
+                   FROM investigation_autopilot_runs
+                   WHERE status IN ('failed', 'evidence_gap', 'canceled')
+                   ORDER BY updated_at ASC LIMIT ?""",
+                (max(1, min(int(limit), 200)),),
+            ).fetchall()
+            recovered: list[str] = []
+            for row in rows:
+                attempts = int(row["attempt"] or 0)
+                if attempts >= max_attempts:
+                    continue
+                age = _timestamp_age_seconds(row["updated_at"])
+                backoff = min(3600, RECOVERY_BACKOFF_SECONDS * (2 ** max(0, attempts - 1)))
+                if age is None or age < backoff:
+                    continue
+                connection.execute(
+                    """UPDATE investigation_autopilot_runs
+                       SET status='queued', current_stage='queued',
+                           blocker_code=NULL, blocker_message=NULL,
+                           completed_at=NULL, retryable=1, updated_at=?
+                       WHERE run_id=?""",
+                    (now, str(row["run_id"])),
+                )
+                recovered.append(str(row["run_id"]))
+            connection.commit()
     return {"count": len(recovered), "run_ids": recovered}
 
 
@@ -391,7 +425,7 @@ def reconcile_due_runs(*, db_path: Optional[str] = None) -> Dict[str, Any]:
     capacity forever. Reconcile those rows before starting new work so
     queued findings are not blocked by ghost occupancy.
     """
-    with closing(soc_store.connect(db_path)) as connection:
+    with closing(soc_store.read_connect(db_path)) as connection:
         rows = connection.execute(
             """SELECT run_id, pipeline_id, status, updated_at
                FROM investigation_autopilot_runs
@@ -441,9 +475,10 @@ def _run_unlocked(run_id: str, *, db_path: Optional[str]) -> Dict[str, Any]:
         _set_run(run_id, status="failed", stage="finding", blocker_code="finding_missing",
                  blocker_message="The canonical finding no longer exists.", retryable=False, completed=True, db_path=db_path)
         return get_run(run_id, db_path=db_path)
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute("UPDATE investigation_autopilot_runs SET attempt=attempt+1 WHERE run_id=?", (run_id,))
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute("UPDATE investigation_autopilot_runs SET attempt=attempt+1 WHERE run_id=?", (run_id,))
+            connection.commit()
     try:
         _set_run(run_id, status="collecting", stage="case_promotion", db_path=db_path)
         case = _ensure_case(finding, db_path=db_path)
@@ -503,7 +538,7 @@ def _run(run_id: str, *, db_path: Optional[str]) -> Dict[str, Any]:
 
 
 def reconcile_pipeline(pipeline_id: str, *, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    with closing(soc_store.connect(db_path)) as connection:
+    with closing(soc_store.read_connect(db_path)) as connection:
         row = connection.execute("SELECT run_id FROM investigation_autopilot_runs WHERE pipeline_id=?", (pipeline_id,)).fetchone()
     if not row:
         return None
@@ -572,12 +607,13 @@ def retry(run_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
         raise ValueError("only failed, evidence-gap, or canceled investigations can be retried")
     if not run.get("retryable") and attempts >= int(settings.get("max_attempts") or DEFAULTS["max_attempts"]):
         raise ValueError("this investigation reached its retry limit; increase max attempts before retrying")
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            "UPDATE investigation_autopilot_runs SET status='queued', current_stage='queued', blocker_code=NULL, blocker_message=NULL, completed_at=NULL, updated_at=? WHERE run_id=?",
-            (soc_store.utc_now(), run_id),
-        )
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                "UPDATE investigation_autopilot_runs SET status='queued', current_stage='queued', blocker_code=NULL, blocker_message=NULL, completed_at=NULL, updated_at=? WHERE run_id=?",
+                (soc_store.utc_now(), run_id),
+            )
+            connection.commit()
     return get_run(run_id, db_path=db_path)
 
 
@@ -591,8 +627,10 @@ def cancel(run_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
 
 
 def get_run(run_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
-    soc_store.init_db(db_path)
-    with closing(soc_store.connect(db_path)) as connection:
+    resolved_path = db_path or soc_store.default_db_path()
+    if not os.path.isfile(resolved_path):
+        raise ValueError(f"investigation autopilot run not found: {run_id}")
+    with closing(soc_store.read_connect(resolved_path)) as connection:
         row = connection.execute("SELECT * FROM investigation_autopilot_runs WHERE run_id=?", (_clean(run_id, 40).upper(),)).fetchone()
     if row is None:
         raise ValueError(f"investigation autopilot run not found: {run_id}")
@@ -605,12 +643,14 @@ def get_run(run_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
 
 
 def list_runs(*, status: str = "", limit: int = 100, db_path: Optional[str] = None) -> list[Dict[str, Any]]:
-    soc_store.init_db(db_path)
+    resolved_path = db_path or soc_store.default_db_path()
+    if not os.path.isfile(resolved_path):
+        return []
     where, params = (" WHERE status=?", [_clean(status, 40)]) if status else ("", [])
     params.append(max(1, min(int(limit), 500)))
-    with closing(soc_store.connect(db_path)) as connection:
+    with closing(soc_store.read_connect(resolved_path)) as connection:
         rows = connection.execute(f"SELECT run_id FROM investigation_autopilot_runs{where} ORDER BY updated_at DESC LIMIT ?", tuple(params)).fetchall()
-    return [get_run(str(row["run_id"]), db_path=db_path) for row in rows]
+    return [get_run(str(row["run_id"]), db_path=resolved_path) for row in rows]
 
 
 def status(*, db_path: Optional[str] = None) -> Dict[str, Any]:
@@ -618,11 +658,20 @@ def status(*, db_path: Optional[str] = None) -> Dict[str, Any]:
     # report one current state per finding. Read only the routing columns for
     # the complete table, then hydrate a bounded set of current rows. This
     # avoids both the old historical-counter inflation and a large N+1 read.
-    soc_store.init_db(db_path)
+    resolved_path = db_path or soc_store.default_db_path()
+    if not os.path.isfile(resolved_path):
+        settings = read_settings(db_path=resolved_path)
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "settings": settings,
+            "summary": {"runs": 0, "active": 0, "queued": 0, "failed": 0},
+            "runs": [],
+            "history": {"runs": 0, "states": {}},
+        }
     current_rows: Dict[str, Dict[str, Any]] = {}
     history_counts: Dict[str, int] = {}
     history_states: Dict[str, int] = {}
-    with closing(soc_store.connect(db_path)) as connection:
+    with closing(soc_store.read_connect(resolved_path)) as connection:
         rows = connection.execute(
             """SELECT run_id, finding_id, case_id, status, updated_at
                FROM investigation_autopilot_runs
@@ -636,11 +685,11 @@ def status(*, db_path: Optional[str] = None) -> Dict[str, Any]:
         history_states[state] = history_states.get(state, 0) + 1
         current_rows.setdefault(target, item)
     current_ids = [str(item["run_id"]) for item in list(current_rows.values())[:100]]
-    runs = [get_run(run_id, db_path=db_path) for run_id in current_ids]
+    runs = [get_run(run_id, db_path=resolved_path) for run_id in current_ids]
     for item in runs:
         target = _clean(item.get("finding_id"), 160) or _clean(item.get("case_id"), 160) or _clean(item.get("run_id"), 80)
         item["history_count"] = history_counts.get(target, 1)
-    settings = get_settings(db_path=db_path)
+    settings = read_settings(db_path=resolved_path)
     max_attempts = int(settings.get("max_attempts") or DEFAULTS["max_attempts"])
     # Keep recovery semantics explicit in the API. Older rows may have a
     # stale retryable bit after a worker restart, while the status itself is

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
+import sqlite3
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -18,6 +19,7 @@ import soc_store
 from secopsai import supply_chain
 from secopsai.intelligence import minimize
 from secopsai.intelligence_jobs import enqueue_job, get_job
+from secopsai.sqlite_writer_lock import sqlite_writer_lock
 from secopsai.triage.engine import infer_category
 from secopsai.triage.host import investigate_host
 from secopsai.triage.supply_chain import dependency_manifest_paths, investigate_supply_chain
@@ -57,37 +59,65 @@ def _clean(value: Any, limit: int = 4000) -> str:
     return str(value or "").strip()[:limit]
 
 
-def get_settings(*, db_path: Optional[str] = None) -> Dict[str, Any]:
-    soc_store.init_db(db_path)
-    with closing(soc_store.connect(db_path)) as connection:
-        row = connection.execute("SELECT * FROM agent_triage_settings WHERE settings_id = 1").fetchone()
-        if row is None:
-            now = soc_store.utc_now()
-            connection.execute(
-                """INSERT INTO agent_triage_settings
-                   (settings_id, mode, selected_model, poll_interval_seconds,
-                    min_auto_close_confidence, min_evidence_refs, max_records_per_cycle,
-                    auto_create_tuning_proposals, auto_activate_tuning, updated_at, updated_by)
-                   VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'secopsai-default')""",
-                (
-                    DEFAULT_SETTINGS["mode"],
-                    DEFAULT_SETTINGS["selected_model"],
-                    DEFAULT_SETTINGS["poll_interval_seconds"],
-                    DEFAULT_SETTINGS["min_auto_close_confidence"],
-                    DEFAULT_SETTINGS["min_evidence_refs"],
-                    DEFAULT_SETTINGS["max_records_per_cycle"],
-                    int(DEFAULT_SETTINGS["auto_create_tuning_proposals"]),
-                    int(DEFAULT_SETTINGS["auto_activate_tuning"]),
-                    now,
-                ),
-            )
-            connection.commit()
-            row = connection.execute("SELECT * FROM agent_triage_settings WHERE settings_id = 1").fetchone()
+def _settings_payload(row: Any) -> Dict[str, Any]:
     result = dict(row or {})
+    if not result:
+        result = dict(DEFAULT_SETTINGS)
     result["schema_version"] = SCHEMA_VERSION
     result["auto_create_tuning_proposals"] = bool(result.get("auto_create_tuning_proposals"))
     result["auto_activate_tuning"] = bool(result.get("auto_activate_tuning"))
     return result
+
+
+def get_settings(*, db_path: Optional[str] = None) -> Dict[str, Any]:
+    soc_store.init_db(db_path)
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            row = connection.execute("SELECT * FROM agent_triage_settings WHERE settings_id = 1").fetchone()
+            if row is None:
+                now = soc_store.utc_now()
+                connection.execute(
+                    """INSERT INTO agent_triage_settings
+                       (settings_id, mode, selected_model, poll_interval_seconds,
+                        min_auto_close_confidence, min_evidence_refs, max_records_per_cycle,
+                        auto_create_tuning_proposals, auto_activate_tuning, updated_at, updated_by)
+                       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'secopsai-default')""",
+                    (
+                        DEFAULT_SETTINGS["mode"],
+                        DEFAULT_SETTINGS["selected_model"],
+                        DEFAULT_SETTINGS["poll_interval_seconds"],
+                        DEFAULT_SETTINGS["min_auto_close_confidence"],
+                        DEFAULT_SETTINGS["min_evidence_refs"],
+                        DEFAULT_SETTINGS["max_records_per_cycle"],
+                        int(DEFAULT_SETTINGS["auto_create_tuning_proposals"]),
+                        int(DEFAULT_SETTINGS["auto_activate_tuning"]),
+                        now,
+                    ),
+                )
+                connection.commit()
+                row = connection.execute("SELECT * FROM agent_triage_settings WHERE settings_id = 1").fetchone()
+    return _settings_payload(row)
+
+
+def read_settings(*, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Read triage settings without creating a database or default row."""
+    resolved_path = Path(db_path or soc_store.default_db_path())
+    if not resolved_path.is_file():
+        result = _settings_payload(None)
+        result["status"] = "degraded"
+        result["error"] = "agent triage settings are unavailable"
+        return result
+    try:
+        with closing(soc_store.read_connect(str(resolved_path))) as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_triage_settings WHERE settings_id = 1"
+            ).fetchone()
+    except (OSError, sqlite3.Error):
+        result = _settings_payload(None)
+        result["status"] = "degraded"
+        result["error"] = "agent triage settings are unavailable"
+        return result
+    return _settings_payload(row)
 
 
 def update_settings(
@@ -103,54 +133,55 @@ def update_settings(
     actor: str = "operator",
     db_path: Optional[str] = None,
 ) -> Dict[str, Any]:
-    current = get_settings(db_path=db_path)
-    next_mode = _clean(mode if mode is not None else current["mode"], 20).lower()
-    if next_mode not in MODES:
-        raise ValueError("agent triage mode must be off, advisory, or guarded")
-    confidence = int(min_auto_close_confidence if min_auto_close_confidence is not None else current["min_auto_close_confidence"])
-    refs = int(min_evidence_refs if min_evidence_refs is not None else current["min_evidence_refs"])
-    interval = int(poll_interval_seconds if poll_interval_seconds is not None else current["poll_interval_seconds"])
-    limit = int(max_records_per_cycle if max_records_per_cycle is not None else current["max_records_per_cycle"])
-    if not 90 <= confidence <= 100:
-        raise ValueError("automatic closure confidence must be between 90 and 100")
-    if not 1 <= refs <= 10:
-        raise ValueError("minimum evidence references must be between 1 and 10")
-    if not 10 <= interval <= 3600:
-        raise ValueError("poll interval must be between 10 and 3600 seconds")
-    if not 1 <= limit <= 100:
-        raise ValueError("records per cycle must be between 1 and 100")
-    model = _clean(selected_model if selected_model is not None else current["selected_model"], 200)
-    create_proposals = bool(
-        auto_create_tuning_proposals
-        if auto_create_tuning_proposals is not None
-        else current["auto_create_tuning_proposals"]
-    )
-    activate_tuning = bool(
-        auto_activate_tuning if auto_activate_tuning is not None else current["auto_activate_tuning"]
-    )
-    if activate_tuning and next_mode != "guarded":
-        raise ValueError("automatic tuning activation requires guarded mode")
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """UPDATE agent_triage_settings SET mode = ?, selected_model = ?,
-               poll_interval_seconds = ?, min_auto_close_confidence = ?,
-               min_evidence_refs = ?, max_records_per_cycle = ?,
-               auto_create_tuning_proposals = ?, auto_activate_tuning = ?,
-               updated_at = ?, updated_by = ? WHERE settings_id = 1""",
-            (
-                next_mode,
-                model,
-                interval,
-                confidence,
-                refs,
-                limit,
-                int(create_proposals),
-                int(activate_tuning),
-                soc_store.utc_now(),
-                _clean(actor, 160) or "operator",
-            ),
+    with sqlite_writer_lock(db_path):
+        current = get_settings(db_path=db_path)
+        next_mode = _clean(mode if mode is not None else current["mode"], 20).lower()
+        if next_mode not in MODES:
+            raise ValueError("agent triage mode must be off, advisory, or guarded")
+        confidence = int(min_auto_close_confidence if min_auto_close_confidence is not None else current["min_auto_close_confidence"])
+        refs = int(min_evidence_refs if min_evidence_refs is not None else current["min_evidence_refs"])
+        interval = int(poll_interval_seconds if poll_interval_seconds is not None else current["poll_interval_seconds"])
+        limit = int(max_records_per_cycle if max_records_per_cycle is not None else current["max_records_per_cycle"])
+        if not 90 <= confidence <= 100:
+            raise ValueError("automatic closure confidence must be between 90 and 100")
+        if not 1 <= refs <= 10:
+            raise ValueError("minimum evidence references must be between 1 and 10")
+        if not 10 <= interval <= 3600:
+            raise ValueError("poll interval must be between 10 and 3600 seconds")
+        if not 1 <= limit <= 100:
+            raise ValueError("records per cycle must be between 1 and 100")
+        model = _clean(selected_model if selected_model is not None else current["selected_model"], 200)
+        create_proposals = bool(
+            auto_create_tuning_proposals
+            if auto_create_tuning_proposals is not None
+            else current["auto_create_tuning_proposals"]
         )
-        connection.commit()
+        activate_tuning = bool(
+            auto_activate_tuning if auto_activate_tuning is not None else current["auto_activate_tuning"]
+        )
+        if activate_tuning and next_mode != "guarded":
+            raise ValueError("automatic tuning activation requires guarded mode")
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                """UPDATE agent_triage_settings SET mode = ?, selected_model = ?,
+                   poll_interval_seconds = ?, min_auto_close_confidence = ?,
+                   min_evidence_refs = ?, max_records_per_cycle = ?,
+                   auto_create_tuning_proposals = ?, auto_activate_tuning = ?,
+                   updated_at = ?, updated_by = ? WHERE settings_id = 1""",
+                (
+                    next_mode,
+                    model,
+                    interval,
+                    confidence,
+                    refs,
+                    limit,
+                    int(create_proposals),
+                    int(activate_tuning),
+                    soc_store.utc_now(),
+                    _clean(actor, 160) or "operator",
+                ),
+            )
+            connection.commit()
     return get_settings(db_path=db_path)
 
 
@@ -172,6 +203,64 @@ def _finding_fingerprint(finding: Dict[str, Any]) -> str:
         "evidence": minimize(evidence),
     }
     return hashlib.sha256(_json(payload).encode()).hexdigest()
+
+
+def _apply_finding_state_if_current(
+    finding_id: str,
+    expected_fingerprint: str,
+    *,
+    status: str | None = None,
+    disposition: str | None = None,
+    db_path: Optional[str],
+) -> bool:
+    """Apply triage state only when the finding snapshot is still current.
+
+    The fingerprint check and both state columns are committed under the
+    shared writer lock.  This closes the race where a collector or analyst
+    could change a finding after ``_adjudicate`` inspected it but before the
+    model recommendation changed its disposition.
+    """
+    if not status and not disposition:
+        return False
+    normalized_id = _clean(finding_id, 200)
+    if not normalized_id:
+        return False
+    soc_store.init_db(db_path)
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            row = connection.execute(
+                "SELECT payload_json, status, disposition FROM findings WHERE finding_id=?",
+                (normalized_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            current = _decode(row["payload_json"], {})
+            if not isinstance(current, dict):
+                current = {}
+            current["status"] = str(row["status"] or "")
+            current["disposition"] = str(row["disposition"] or "")
+            if _finding_fingerprint(current) != _clean(expected_fingerprint, 128):
+                return False
+            now = soc_store.utc_now()
+            assignments: list[str] = []
+            params: list[Any] = []
+            if status:
+                assignments.append("status=?")
+                params.append(_clean(status, 40))
+            if disposition:
+                assignments.append("disposition=?")
+                params.append(_clean(disposition, 40))
+            assignments.append("updated_at=?")
+            params.extend([now, normalized_id])
+            updated = connection.execute(
+                f"UPDATE findings SET {', '.join(assignments)} WHERE finding_id=?",
+                params,
+            )
+            if updated.rowcount != 1:
+                connection.rollback()
+                return False
+            connection.commit()
+            return True
 
 
 def _deterministic_assessment(
@@ -247,7 +336,7 @@ def enqueue_due_findings(
         # External package leads enter the evidence pipeline before model
         # review. Local dependency absence is not a package-level verdict.
         if (
-            _clean(finding.get("source"), 120).lower() == "secopsai_research"
+            _clean(finding.get("source"), 120).lower().replace("_", "-") in {"secopsai-research", "research"}
             or str(finding.get("alert_type") or "") in {"external_advisory_match", "npm_proactive_anomaly"}
         ):
             try:
@@ -269,17 +358,18 @@ def enqueue_due_findings(
             waiting_for_provider = False
         initial_status = "awaiting_provider" if waiting_for_provider else "queued"
         now = soc_store.utc_now()
-        with closing(soc_store.connect(db_path)) as connection:
-            inserted = connection.execute(
-                """INSERT OR IGNORE INTO agent_triage_runs
-                   (run_id, target_type, target_id, target_fingerprint, status,
-                    intelligence_job_id, selected_model, provider, deterministic_json,
-                    recommendation_json, decision_json, final_action, reversible,
-                    rollback_json, error_code, error_message, queued_at, completed_at, updated_at)
-                   VALUES (?, 'finding', ?, ?, 'queued', NULL, ?, '', ?, '{}', '{}', '', 1, '{}', NULL, NULL, ?, NULL, ?)""",
-                (run_id, finding_id, fingerprint, settings["selected_model"], _json(deterministic), now, now),
-            )
-            connection.commit()
+        with sqlite_writer_lock(db_path):
+            with closing(soc_store.connect(db_path)) as connection:
+                inserted = connection.execute(
+                    """INSERT OR IGNORE INTO agent_triage_runs
+                       (run_id, target_type, target_id, target_fingerprint, status,
+                        intelligence_job_id, selected_model, provider, deterministic_json,
+                        recommendation_json, decision_json, final_action, reversible,
+                        rollback_json, error_code, error_message, queued_at, completed_at, updated_at)
+                       VALUES (?, 'finding', ?, ?, 'queued', NULL, ?, '', ?, '{}', '{}', '', 1, '{}', NULL, NULL, ?, NULL, ?)""",
+                    (run_id, finding_id, fingerprint, settings["selected_model"], _json(deterministic), now, now),
+                )
+                connection.commit()
         if inserted.rowcount != 1:
             skipped += 1
             continue
@@ -310,12 +400,13 @@ def enqueue_due_findings(
         except Exception as exc:
             _fail_run(run_id, "enqueue_failed", str(exc), db_path=db_path)
             continue
-        with closing(soc_store.connect(db_path)) as connection:
-            connection.execute(
-                "UPDATE agent_triage_runs SET status = ?, intelligence_job_id = ?, updated_at = ? WHERE run_id = ?",
-                ("awaiting_provider" if job.get("status") == "awaiting_provider" else "awaiting_model", job["job_id"], soc_store.utc_now(), run_id),
-            )
-            connection.commit()
+        with sqlite_writer_lock(db_path):
+            with closing(soc_store.connect(db_path)) as connection:
+                connection.execute(
+                    "UPDATE agent_triage_runs SET status = ?, intelligence_job_id = ?, updated_at = ? WHERE run_id = ?",
+                    ("awaiting_provider" if job.get("status") == "awaiting_provider" else "awaiting_model", job["job_id"], soc_store.utc_now(), run_id),
+                )
+                connection.commit()
         queued.append({"run_id": run_id, "finding_id": finding_id, "job_id": job["job_id"]})
     return {
         "schema_version": SCHEMA_VERSION,
@@ -351,6 +442,18 @@ def _adjudicate(
     finding = soc_store.get_finding(run["target_id"], db_path)
     if finding is None:
         return _fail_run(run_id, "finding_missing", "The finding no longer exists.", db_path=db_path)
+    current_fingerprint = _finding_fingerprint(finding)
+    if current_fingerprint != _clean(run.get("target_fingerprint"), 128):
+        # A model recommendation is only valid for the exact finding snapshot
+        # used to build its prompt.  Recheck immediately before any disposition,
+        # note, or tuning mutation so a late result cannot overwrite newer
+        # analyst or collector state.
+        return _fail_run(
+            run_id,
+            "stale_fingerprint",
+            "The finding changed after triage was queued; the model result was discarded.",
+            db_path=db_path,
+        )
     settings = get_settings(db_path=db_path)
     deterministic = run["deterministic"]
     verdict = _clean(recommendation.get("finding_verdict"), 40).lower() or "needs_more_evidence"
@@ -391,8 +494,16 @@ def _adjudicate(
     )
     decision["guardrail_reasons"].extend(reasons)
     if settings["mode"] == "guarded" and can_close:
-        soc_store.set_finding_disposition(run["target_id"], close_disposition, db_path)
-        soc_store.set_finding_status(run["target_id"], "closed", db_path)
+        if not _apply_finding_state_if_current(
+            run["target_id"], run["target_fingerprint"],
+            status="closed", disposition=close_disposition, db_path=db_path,
+        ):
+            return _fail_run(
+                run_id,
+                "stale_fingerprint",
+                "The finding changed before the guarded disposition could be applied; the model result was discarded.",
+                db_path=db_path,
+            )
         action = f"auto_closed:{close_disposition}"
         status = "applied"
     elif settings["mode"] == "guarded" and _safe_escalation(
@@ -401,12 +512,29 @@ def _adjudicate(
         confidence=confidence,
         valid_evidence_refs=valid_refs,
     ):
-        soc_store.set_finding_disposition(run["target_id"], "true_positive", db_path)
-        soc_store.set_finding_status(run["target_id"], "in_review", db_path)
+        if not _apply_finding_state_if_current(
+            run["target_id"], run["target_fingerprint"],
+            status="in_review", disposition="true_positive", db_path=db_path,
+        ):
+            return _fail_run(
+                run_id,
+                "stale_fingerprint",
+                "The finding changed before the guarded escalation could be applied; the model result was discarded.",
+                db_path=db_path,
+            )
         action = "auto_escalated:true_positive"
         status = "escalated"
     elif settings["mode"] == "guarded" and finding.get("status") in {"open", "research_lead"}:
-        soc_store.set_finding_status(run["target_id"], "in_review", db_path)
+        if not _apply_finding_state_if_current(
+            run["target_id"], run["target_fingerprint"],
+            status="in_review", db_path=db_path,
+        ):
+            return _fail_run(
+                run_id,
+                "stale_fingerprint",
+                "The finding changed before the guarded review transition could be applied; the model result was discarded.",
+                db_path=db_path,
+            )
         action = "auto_started_review"
         status = "escalated"
 
@@ -429,14 +557,15 @@ def _adjudicate(
     decision["tuning_proposals"] = [item["proposal_id"] for item in proposals]
     decision["activated_tuning_proposals"] = activated
     now = soc_store.utc_now()
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """UPDATE agent_triage_runs SET status = ?, provider = ?, recommendation_json = ?,
-               decision_json = ?, final_action = ?, rollback_json = ?, completed_at = ?, updated_at = ?
-               WHERE run_id = ?""",
-            (status, provider, _json(minimize(recommendation)), _json(decision), action, _json(previous), now, now, run_id),
-        )
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                """UPDATE agent_triage_runs SET status = ?, provider = ?, recommendation_json = ?,
+                   decision_json = ?, final_action = ?, rollback_json = ?, completed_at = ?, updated_at = ?
+                   WHERE run_id = ?""",
+                (status, provider, _json(minimize(recommendation)), _json(decision), action, _json(previous), now, now, run_id),
+            )
+            connection.commit()
     completed_run = get_run(run_id, db_path=db_path)
     try:
         from secopsai.investigation_autopilot import enqueue_finding
@@ -549,30 +678,31 @@ def _store_tuning_proposals(
             continue
         proposal_id = _id("DTP")
         shadow = _shadow_evaluate(finding, target_type, target_id, raw.get("proposed_value"), db_path=db_path)
-        with closing(soc_store.connect(db_path)) as connection:
-            connection.execute(
-                """INSERT INTO detection_tuning_proposals
-                   (proposal_id, run_id, finding_id, target_type, target_id, change_type,
-                    proposed_value_json, rationale, expected_effect, status,
-                    shadow_metrics_json, created_at, updated_at, applied_at, applied_by)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)""",
-                (
-                    proposal_id,
-                    run["run_id"],
-                    run["target_id"],
-                    target_type,
-                    target_id,
-                    change_type,
-                    _json(minimize(raw.get("proposed_value"))),
-                    _clean(raw.get("rationale"), 4000),
-                    _clean(raw.get("expected_effect"), 4000),
-                    shadow["status"],
-                    _json(shadow),
-                    now,
-                    now,
-                ),
-            )
-            connection.commit()
+        with sqlite_writer_lock(db_path):
+            with closing(soc_store.connect(db_path)) as connection:
+                connection.execute(
+                    """INSERT INTO detection_tuning_proposals
+                       (proposal_id, run_id, finding_id, target_type, target_id, change_type,
+                        proposed_value_json, rationale, expected_effect, status,
+                        shadow_metrics_json, created_at, updated_at, applied_at, applied_by)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)""",
+                    (
+                        proposal_id,
+                        run["run_id"],
+                        run["target_id"],
+                        target_type,
+                        target_id,
+                        change_type,
+                        _json(minimize(raw.get("proposed_value"))),
+                        _clean(raw.get("rationale"), 4000),
+                        _clean(raw.get("expected_effect"), 4000),
+                        shadow["status"],
+                        _json(shadow),
+                        now,
+                        now,
+                    ),
+                )
+                connection.commit()
         stored.append(get_tuning_proposal(proposal_id, db_path=db_path))
     return stored
 
@@ -641,19 +771,22 @@ def _decision_note(run_id: str, provider: str, recommendation: Dict[str, Any], d
 
 
 def _fail_run(run_id: str, code: str, message: str, *, db_path: Optional[str]) -> Dict[str, Any]:
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """UPDATE agent_triage_runs SET status = 'failed', error_code = ?, error_message = ?,
-               completed_at = ?, updated_at = ? WHERE run_id = ?""",
-            (_clean(code, 80), _clean(message, 2000), soc_store.utc_now(), soc_store.utc_now(), run_id),
-        )
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                """UPDATE agent_triage_runs SET status = 'failed', error_code = ?, error_message = ?,
+                   completed_at = ?, updated_at = ? WHERE run_id = ?""",
+                (_clean(code, 80), _clean(message, 2000), soc_store.utc_now(), soc_store.utc_now(), run_id),
+            )
+            connection.commit()
     return get_run(run_id, db_path=db_path)
 
 
 def get_run(run_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
-    soc_store.init_db(db_path)
-    with closing(soc_store.connect(db_path)) as connection:
+    resolved_path = Path(db_path or soc_store.default_db_path())
+    if not resolved_path.is_file():
+        raise ValueError(f"agent triage run not found: {run_id}")
+    with closing(soc_store.read_connect(str(resolved_path))) as connection:
         row = connection.execute("SELECT * FROM agent_triage_runs WHERE run_id = ?", (_clean(run_id, 40).upper(),)).fetchone()
     if row is None:
         raise ValueError(f"agent triage run not found: {run_id}")
@@ -664,7 +797,7 @@ def get_run(run_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
     result["decision"] = _decode(result.pop("decision_json"), {})
     result["rollback"] = _decode(result.pop("rollback_json"), {})
     result["reversible"] = bool(result.get("reversible"))
-    finding = soc_store.get_finding(str(result.get("target_id") or ""), db_path)
+    finding = soc_store.get_finding(str(result.get("target_id") or ""), str(resolved_path), initialize_db=False)
     result["target"] = {
         "title": _clean((finding or {}).get("title"), 500),
         "source": _clean((finding or {}).get("source"), 120),
@@ -676,7 +809,9 @@ def get_run(run_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
 
 
 def list_runs(*, status: str = "", limit: int = 100, db_path: Optional[str] = None) -> list[Dict[str, Any]]:
-    soc_store.init_db(db_path)
+    resolved_path = Path(db_path or soc_store.default_db_path())
+    if not resolved_path.is_file():
+        return []
     clauses = []
     params: list[Any] = []
     if status:
@@ -684,34 +819,47 @@ def list_runs(*, status: str = "", limit: int = 100, db_path: Optional[str] = No
         params.append(_clean(status, 40).lower())
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(max(1, min(int(limit), 500)))
-    with closing(soc_store.connect(db_path)) as connection:
+    with closing(soc_store.read_connect(str(resolved_path))) as connection:
         rows = connection.execute(
             f"SELECT run_id FROM agent_triage_runs{where} ORDER BY updated_at DESC LIMIT ?", tuple(params)
         ).fetchall()
-    return [get_run(str(row["run_id"]), db_path=db_path) for row in rows]
+    return [get_run(str(row["run_id"]), db_path=str(resolved_path)) for row in rows]
 
 
 def rollback_run(run_id: str, *, actor: str = "operator", db_path: Optional[str] = None) -> Dict[str, Any]:
-    run = get_run(run_id, db_path=db_path)
-    if run["status"] not in {"applied", "escalated"}:
-        raise ValueError("only an applied or escalated agent triage run can be rolled back")
-    previous = run.get("rollback") or {}
-    if not previous.get("status") or not previous.get("disposition"):
-        raise ValueError("agent triage run has no rollback state")
-    soc_store.set_finding_status(run["target_id"], _clean(previous["status"], 40), db_path)
-    soc_store.set_finding_disposition(run["target_id"], _clean(previous["disposition"], 40), db_path)
-    soc_store.add_note(run["target_id"], _clean(actor, 160) or "operator", f"Rolled back agent triage run {run_id}.", db_path)
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            "UPDATE agent_triage_runs SET status = 'rolled_back', final_action = 'rolled_back', updated_at = ? WHERE run_id = ?",
-            (soc_store.utc_now(), run["run_id"]),
-        )
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        run = get_run(run_id, db_path=db_path)
+        if run["status"] not in {"applied", "escalated"}:
+            raise ValueError("only an applied or escalated agent triage run can be rolled back")
+        previous = run.get("rollback") or {}
+        if not previous.get("status") or not previous.get("disposition"):
+            raise ValueError("agent triage run has no rollback state")
+        restored_status = _clean(previous["status"], 40)
+        restored_disposition = _clean(previous["disposition"], 40)
+        note_author = _clean(actor, 160) or "operator"
+        now = soc_store.utc_now()
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                "UPDATE findings SET status = ?, disposition = ?, updated_at = ? WHERE finding_id = ?",
+                (restored_status, restored_disposition, now, run["target_id"]),
+            )
+            connection.execute(
+                "INSERT INTO notes (finding_id, author, note, created_at) VALUES (?, ?, ?, ?)",
+                (run["target_id"], note_author, f"Rolled back agent triage run {run_id}.", now),
+            )
+            connection.execute(
+                "UPDATE agent_triage_runs SET status = 'rolled_back', final_action = 'rolled_back', updated_at = ? WHERE run_id = ?",
+                (now, run["run_id"]),
+            )
+            connection.commit()
     return get_run(run_id, db_path=db_path)
 
 
 def get_tuning_proposal(proposal_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
-    with closing(soc_store.connect(db_path)) as connection:
+    resolved_path = Path(db_path or soc_store.default_db_path())
+    if not resolved_path.is_file():
+        raise ValueError(f"tuning proposal not found: {proposal_id}")
+    with closing(soc_store.read_connect(str(resolved_path))) as connection:
         row = connection.execute("SELECT * FROM detection_tuning_proposals WHERE proposal_id = ?", (_clean(proposal_id, 40).upper(),)).fetchone()
     if row is None:
         raise ValueError(f"tuning proposal not found: {proposal_id}")
@@ -722,17 +870,20 @@ def get_tuning_proposal(proposal_id: str, *, db_path: Optional[str] = None) -> D
 
 
 def list_tuning_proposals(*, status: str = "", limit: int = 100, db_path: Optional[str] = None) -> list[Dict[str, Any]]:
+    resolved_path = Path(db_path or soc_store.default_db_path())
+    if not resolved_path.is_file():
+        return []
     params: list[Any] = []
     where = ""
     if status:
         where = " WHERE status = ?"
         params.append(_clean(status, 40))
     params.append(max(1, min(int(limit), 500)))
-    with closing(soc_store.connect(db_path)) as connection:
+    with closing(soc_store.read_connect(str(resolved_path))) as connection:
         rows = connection.execute(
             f"SELECT proposal_id FROM detection_tuning_proposals{where} ORDER BY updated_at DESC LIMIT ?", tuple(params)
         ).fetchall()
-    return [get_tuning_proposal(str(row["proposal_id"]), db_path=db_path) for row in rows]
+    return [get_tuning_proposal(str(row["proposal_id"]), db_path=str(resolved_path)) for row in rows]
 
 
 def apply_tuning_proposal(
@@ -759,13 +910,14 @@ def apply_tuning_proposal(
     result = supply_chain.tune_threshold(ecosystem=ecosystem, value=value)
     metrics["activation_result"] = minimize(result)
     metrics["activated_at"] = soc_store.utc_now()
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """UPDATE detection_tuning_proposals SET status = 'active', shadow_metrics_json = ?,
-               applied_at = ?, applied_by = ?, updated_at = ? WHERE proposal_id = ?""",
-            (_json(metrics), soc_store.utc_now(), _clean(actor, 160) or "operator", soc_store.utc_now(), proposal["proposal_id"]),
-        )
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                """UPDATE detection_tuning_proposals SET status = 'active', shadow_metrics_json = ?,
+                   applied_at = ?, applied_by = ?, updated_at = ? WHERE proposal_id = ?""",
+                (_json(metrics), soc_store.utc_now(), _clean(actor, 160) or "operator", soc_store.utc_now(), proposal["proposal_id"]),
+            )
+            connection.commit()
     return get_tuning_proposal(proposal_id, db_path=db_path)
 
 
@@ -788,18 +940,19 @@ def rollback_tuning_proposal(
     result = supply_chain.tune_threshold(ecosystem=ecosystem, value=int(previous))
     metrics["rollback_result"] = minimize(result)
     metrics["rolled_back_at"] = soc_store.utc_now()
-    with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
-            """UPDATE detection_tuning_proposals SET status = 'rolled_back',
-               shadow_metrics_json = ?, updated_at = ?, applied_by = ? WHERE proposal_id = ?""",
-            (_json(metrics), soc_store.utc_now(), _clean(actor, 160) or "operator", proposal["proposal_id"]),
-        )
-        connection.commit()
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute(
+                """UPDATE detection_tuning_proposals SET status = 'rolled_back',
+                   shadow_metrics_json = ?, updated_at = ?, applied_by = ? WHERE proposal_id = ?""",
+                (_json(metrics), soc_store.utc_now(), _clean(actor, 160) or "operator", proposal["proposal_id"]),
+            )
+            connection.commit()
     return get_tuning_proposal(proposal_id, db_path=db_path)
 
 
 def status(*, db_path: Optional[str] = None) -> Dict[str, Any]:
-    settings = get_settings(db_path=db_path)
+    settings = read_settings(db_path=db_path)
     runs = list_runs(limit=50, db_path=db_path)
     proposals = list_tuning_proposals(limit=50, db_path=db_path)
     return {

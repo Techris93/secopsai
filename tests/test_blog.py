@@ -661,7 +661,7 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertIn("blog/assets/social", workflow)
         self.assertIn("blog/assets/posts", workflow)
         rebuild_step = workflow.index("python -m secopsai.cli blog rebuild-feeds")
-        deploy_step = workflow.index("npx --yes wrangler@latest pages deploy blog")
+        deploy_step = workflow.index("npx --yes wrangler@4.131.1 pages deploy blog")
         mark_step = workflow.index("python -m secopsai.cli blog news-mark-deployed --json")
         self.assertLess(rebuild_step, deploy_step)
         self.assertGreater(mark_step, deploy_step)

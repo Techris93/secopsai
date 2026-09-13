@@ -35,6 +35,7 @@ from secopsai.intelligence_jobs import (
     enqueue_job,
     fail_job,
     get_job,
+    heartbeat_job,
     list_jobs,
     mark_job_awaiting_provider,
     bind_legacy_queued_job_models,
@@ -125,6 +126,78 @@ def test_job_lifecycle_is_idempotent_and_audited(tmp_path: Path):
     assert claimed_running and claimed_running["job_id"] == running_source["job_id"]
     with pytest.raises(ValueError, match="cannot be canceled safely"):
         cancel_job(running_source["job_id"], actor="tester", db_path=db)
+
+
+def test_job_lease_fencing_rejects_stale_worker_results(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    queued = enqueue_job(action="explain_finding", target_id="FND-FENCE", requested_by="tester", db_path=db)
+    first = claim_next_job(provider="fake", worker_id="worker-old", db_path=db)
+    assert first and first["job_id"] == queued["job_id"]
+    assert int(first["lease_generation"]) >= 1
+
+    # Simulate an expired lease so a replacement worker can recover it.
+    with soc_store.connect(db) as connection:
+        connection.execute(
+            "UPDATE intelligence_jobs SET lease_until='2000-01-01T00:00:00Z', updated_at='2000-01-01T00:00:00Z' WHERE job_id=?",
+            (queued["job_id"],),
+        )
+        connection.commit()
+    second = claim_next_job(provider="fake", worker_id="worker-new", db_path=db)
+    assert second and second["job_id"] == queued["job_id"]
+    assert int(second["lease_generation"]) > int(first["lease_generation"])
+    with pytest.raises(ValueError, match="lease fenced or expired"):
+        complete_job(
+            queued["job_id"],
+            result={"worker": "old"},
+            actor="worker-old",
+            worker_id="worker-old",
+            lease_generation=first["lease_generation"],
+            lease_token=first["lease_token"],
+            db_path=db,
+        )
+    with pytest.raises(ValueError, match="lease fenced or expired"):
+        heartbeat_job(
+            queued["job_id"],
+            actor="worker-old",
+            worker_id="worker-old",
+            lease_generation=first["lease_generation"],
+            lease_token=first["lease_token"],
+            db_path=db,
+        )
+    finished = complete_job(
+        queued["job_id"],
+        result={"worker": "new"},
+        actor="worker-new",
+        worker_id="worker-new",
+        lease_generation=second["lease_generation"],
+        lease_token=second["lease_token"],
+        db_path=db,
+    )
+    assert finished["status"] == "succeeded"
+
+
+def test_fenced_job_updates_require_the_random_lease_token(tmp_path: Path):
+    db = str(tmp_path / "core.db")
+    queued = enqueue_job(action="explain_finding", target_id="FND-TOKEN", requested_by="tester", db_path=db)
+    claimed = claim_next_job(provider="fake", worker_id="worker-1", db_path=db)
+    assert claimed and claimed["job_id"] == queued["job_id"]
+    with pytest.raises(ValueError, match="lease_token"):
+        heartbeat_job(
+            queued["job_id"],
+            actor="worker-1",
+            worker_id="worker-1",
+            lease_generation=claimed["lease_generation"],
+            db_path=db,
+        )
+    with pytest.raises(ValueError, match="lease_token"):
+        complete_job(
+            queued["job_id"],
+            result={"ok": True},
+            actor="worker-1",
+            worker_id="worker-1",
+            lease_generation=claimed["lease_generation"],
+            db_path=db,
+        )
 
 
 def test_intelligence_status_job_list_is_compact_but_show_keeps_full_result(tmp_path: Path):
@@ -1410,5 +1483,3 @@ def test_rebind_queued_jobs_and_persist_routing(tmp_path):
     re_updated = get_job(job1["job_id"], db_path=db)
     assert re_updated["input"]["selected_model"] == "google-antigravity/claude-sonnet-4-6"
     assert re_updated["input"]["fallback_models"] == ["gpt-5.4"]
-
-

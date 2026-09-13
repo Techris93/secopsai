@@ -491,7 +491,47 @@ def _run_worker_cycle_unlocked(
             daily_automation = {"status": "degraded", "error": str(exc)[:500]}
     else:
         daily_automation = {"status": "skipped", "reason": "coordinated_by_daily_automation"}
+
+    # Publish an honest cycle state.  The previous summary had no top-level
+    # status, so the coordinator defaulted to ``succeeded`` even when every
+    # collector had failed or a downstream stage returned a degraded result.
+    # Keep the individual component payloads for diagnosis while deriving a
+    # bounded aggregate state for heartbeats and Mission Control.
+    degraded_statuses = {"failed", "degraded", "error", "blocked", "awaiting_provider", "writer_busy"}
+
+    def component_degraded(value: Any) -> bool:
+        if not isinstance(value, dict):
+            return False
+        status = str(value.get("status") or "").strip().lower()
+        if status in degraded_statuses or bool(value.get("error")):
+            return True
+        if isinstance(value.get("refresh"), dict) and component_degraded(value["refresh"]):
+            return True
+        if isinstance(value.get("sync"), dict) and component_degraded(value["sync"]):
+            return True
+        return False
+
+    cycle_degraded = any(
+        str(item.get("status") or "").strip().lower() in degraded_statuses
+        or bool(item.get("error"))
+        or bool(item.get("window_incomplete"))
+        or bool(item.get("diff_truncated"))
+        for item in results
+        if isinstance(item, dict)
+    )
+    cycle_degraded = cycle_degraded or any(
+        component_degraded(component)
+        for component in (external_intel, npm_enrichment, scoring, recovery, investigations, daily_automation)
+    )
+    if isinstance(retries, dict) and int(retries.get("failed") or 0) > 0:
+        cycle_degraded = True
+    if isinstance(deliveries, dict) and int(deliveries.get("failed") or 0) > 0:
+        cycle_degraded = True
+    if isinstance(storage, dict) and bool(storage.get("pressure")):
+        cycle_degraded = True
+
     return {
+        "status": "degraded" if cycle_degraded else "succeeded",
         "external_intel": external_intel,
         "collectors_run": len(results),
         "collector_results": results,
@@ -589,13 +629,29 @@ def run_worker_loop(
                 }
             except Exception as exc:
                 capture_exception(exc, context={"component": "research_worker_cycle"})
-                raise
+                # A single local writer/collector fault must not terminate the
+                # always-on process.  Keep the failure visible in the cycle
+                # summary and let the next bounded iteration retry after the
+                # normal interval.  This is especially important for transient
+                # SQLite lock/busy errors during storage maintenance.
+                try:
+                    failed_storage = storage_status(db_path=db_path)
+                except Exception:
+                    failed_storage = {"status": "degraded"}
+                last_summary = {
+                    "status": "degraded",
+                    "error_code": "worker_cycle_failed",
+                    "error": str(exc)[:500],
+                    "storage": failed_storage,
+                    "completed_at": _utcnow().isoformat().replace("+00:00", "Z"),
+                }
             cycles += 1
             if core_edge.enabled:
-                remote_state = core_edge.sync_state(
-                    last_summary,
-                    status="healthy" if not last_summary.get("error") else "degraded",
-                )
+                # Publish the final heartbeat only after ontology sync and
+                # command processing below.  A pre-sync heartbeat made the
+                # hosted dashboard report a healthy cycle even when the data
+                # plane was empty or the coordinator result was still pending.
+                remote_state = {"runner": None}
                 # Materialize only the bounded, redacted semantic projection for
                 # the hosted operating picture.  Full evidence and artifacts
                 # remain on the local research ledger or R2.
@@ -615,6 +671,12 @@ def run_worker_loop(
                         "entities": ontology_result.get("counts", {}).get("entities", 0),
                         "relationships": ontology_result.get("counts", {}).get("relationships", 0),
                         "events": ontology_result.get("counts", {}).get("events", 0),
+                        "counts": ontology_sync.get("counts") or ontology_result.get("counts", {}),
+                        "chunks": ontology_sync.get("chunks", 0),
+                        "accepted_chunks": ontology_sync.get("accepted_chunks", 0),
+                        "rejected_chunks": ontology_sync.get("rejected_chunks", 0),
+                        "accepted_chunk_ids": ontology_sync.get("accepted_chunk_ids", []),
+                        "rejected_chunk_ids": ontology_sync.get("rejected_chunk_ids", []),
                     }
                 except Exception as exc:  # semantic sync must not stop surveillance
                     capture_exception(exc, context={"component": "research_ontology_sync"})
@@ -631,12 +693,21 @@ def run_worker_loop(
                         "commands": commands,
                         "state": remote_state.get("runner") if isinstance(remote_state, dict) else None,
                     }
-                    # Publish command results as a second, bounded heartbeat so
-                    # hosted Mission Control can show the completed cycle.
-                    core_edge.sync_state(
-                        last_summary,
-                        status="healthy" if not any(item.get("status") == "failed" for item in commands) else "degraded",
-                    )
+                # Always publish one post-sync heartbeat, including cycles
+                # where no command was claimed.  This records ontology status,
+                # queue age and the latest collector result atomically from the
+                # operator's perspective.
+                command_failed = any(item.get("status") == "failed" for item in commands)
+                ontology_degraded = (last_summary.get("ontology") or {}).get("status") == "degraded"
+                # A cycle can be degraded because a collector, storage
+                # maintenance step, or delivery component reported a
+                # degraded result without raising an exception.  Use the
+                # cycle's explicit status as part of the hosted heartbeat so
+                # the operator view cannot call a partially failed cycle
+                # healthy merely because synchronization succeeded.
+                cycle_degraded = str(last_summary.get("status") or "").strip().lower() == "degraded"
+                final_status = "degraded" if last_summary.get("error") or command_failed or ontology_degraded or cycle_degraded else "healthy"
+                remote_state = core_edge.sync_state(last_summary, status=final_status)
             if on_cycle:
                 on_cycle(last_summary)
             if max_cycles is not None and cycles >= max_cycles:

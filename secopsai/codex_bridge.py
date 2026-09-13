@@ -1096,18 +1096,38 @@ def _invoke_with_job_heartbeat(
     stop = Event()
     actor = settings.resolved_worker_id()
     model = str(model_chain[0] if model_chain else settings.model)
+    # Keep a leased job alive for the full configured model timeout plus a
+    # small handoff buffer.  The worker still renews every 15 seconds, but a
+    # long provider call must never be eligible for stale recovery early.
+    lease_seconds = max(1800, int(settings.timeout_seconds) + 60)
 
     def pulse() -> None:
         while not stop.wait(JOB_HEARTBEAT_INTERVAL_SECONDS):
             try:
-                heartbeat_job(str(job["job_id"]), actor=actor, db_path=db_path)
+                heartbeat_job(
+                    str(job["job_id"]),
+                    actor=actor,
+                    worker_id=actor,
+                    lease_generation=job.get("lease_generation"),
+                    lease_token=job.get("lease_token"),
+                    lease_seconds=lease_seconds,
+                    db_path=db_path,
+                )
                 _publish_busy_health(health, job, model, db_path=db_path)
             except Exception:
                 # A transient heartbeat write must not terminate the bounded
                 # analysis; stale-job recovery remains the final safeguard.
                 continue
 
-    heartbeat_job(str(job["job_id"]), actor=actor, db_path=db_path)
+    heartbeat_job(
+        str(job["job_id"]),
+        actor=actor,
+        worker_id=actor,
+        lease_generation=job.get("lease_generation"),
+        lease_token=job.get("lease_token"),
+        lease_seconds=lease_seconds,
+        db_path=db_path,
+    )
     _publish_busy_health(health, job, model, db_path=db_path)
     thread = Thread(target=pulse, name=f"secopsai-heartbeat-{job['job_id']}", daemon=True)
     thread.start()
@@ -1212,9 +1232,12 @@ def run_once(
                     actor=resolved.resolved_worker_id(),
                     db_path=db_path,
                 )
+                claim_lease_seconds = max(1800, int(resolved.timeout_seconds) + 60)
                 job = claim_next_job(
                     provider=provider_label,
                     worker_id=resolved.resolved_worker_id(),
+                    stale_after_seconds=claim_lease_seconds,
+                    lease_seconds=claim_lease_seconds,
                     db_path=db_path,
                 )
         except (TimeoutError, sqlite3.OperationalError) as exc:
@@ -1229,6 +1252,25 @@ def run_once(
         bridge_request = None
     if job is None:
         return {"status": "idle", "job": None}
+    remote_heartbeat_stop = Event()
+    remote_heartbeat_thread: Thread | None = None
+    if remote and job.get("lease_token") and job.get("lease_generation"):
+        def remote_pulse() -> None:
+            while not remote_heartbeat_stop.wait(JOB_HEARTBEAT_INTERVAL_SECONDS):
+                try:
+                    _remote_post(
+                        resolved,
+                        f"/api/v1/intelligence/bridge/jobs/{job['job_id']}/heartbeat",
+                        {
+                            "worker_id": resolved.resolved_worker_id(),
+                            "lease_generation": job.get("lease_generation"),
+                            "lease_token": job.get("lease_token"),
+                        },
+                    )
+                except Exception:
+                    continue
+        remote_heartbeat_thread = Thread(target=remote_pulse, name=f"secopsai-remote-heartbeat-{job['job_id']}", daemon=True)
+        remote_heartbeat_thread.start()
     try:
         job_inputs = job.get("input") if isinstance(job.get("input"), dict) else {}
         job_settings, job_model = _settings_for_captured_job(
@@ -1283,7 +1325,7 @@ def run_once(
                 resolved,
                 job["job_id"],
                 "complete",
-                {"result": raw, "provider": used_provider, "model": used_model},
+                {"result": raw, "provider": used_provider, "model": used_model, "lease_generation": job.get("lease_generation"), "lease_token": job.get("lease_token")},
             )["job"]
         else:
             with sqlite_writer_lock(db_path):
@@ -1292,6 +1334,9 @@ def run_once(
                     result=result,
                     actor=resolved.resolved_worker_id(),
                     provider=used_provider,
+                    worker_id=resolved.resolved_worker_id(),
+                    lease_generation=job.get("lease_generation"),
+                    lease_token=job.get("lease_token"),
                     db_path=db_path,
                 )
         if job.get("action") == "triage_artifact":
@@ -1331,6 +1376,8 @@ def run_once(
             remote=remote,
             error_code="bridge_timeout",
             error_message="Bridge model did not complete within the configured timeout.",
+            lease_generation=job.get("lease_generation"),
+            lease_token=job.get("lease_token", ""),
             db_path=db_path,
         )
         return {"status": "failed", "job": failed}
@@ -1341,10 +1388,15 @@ def run_once(
             remote=remote,
             error_code="bridge_failed",
             error_message=_safe_error(exc),
+            lease_generation=job.get("lease_generation"),
+            lease_token=job.get("lease_token", ""),
             db_path=db_path,
         )
         return {"status": "failed", "job": failed}
     finally:
+        remote_heartbeat_stop.set()
+        if remote_heartbeat_thread is not None:
+            remote_heartbeat_thread.join(timeout=1)
         if not remote:
             _clear_busy_health(health, db_path=db_path)
 
@@ -1381,11 +1433,18 @@ def run_loop(
                     run_due_investigations(db_path=db_path, limit=1)
                     counts = job_counts(db_path=db_path)
                     if not counts.get("queued") and not counts.get("running"):
-                        enqueue_due_findings(db_path=db_path, limit=1)
-            except Exception:
+                        enqueue_due_findings(db_path=db_path, limit_override=1)
+            except Exception as exc:
                 # The bridge must continue processing already-durable jobs when
-                # automatic triage discovery is temporarily degraded.
-                pass
+                # automatic triage discovery is temporarily degraded, but a
+                # failed discovery pass must remain visible to operators.  In
+                # particular, do not hide an API/signature regression behind
+                # an empty catch block.
+                _record_background_degraded(
+                    "automatic_triage_discovery",
+                    exc,
+                    db_path=db_path,
+                )
         try:
             result = run_once(
                 db_path=db_path,
@@ -1424,6 +1483,36 @@ def run_loop(
         if max_iterations <= 0 or iterations < max_iterations:
             time.sleep(resolved.poll_interval_seconds)
     return {"status": "stopped", "processed": processed, "failures": failures, "iterations": iterations}
+
+
+def _record_background_degraded(action: str, exc: Exception, *, db_path: str | None) -> None:
+    """Persist a bounded bridge degradation observation for operator review."""
+    try:
+        soc_store.init_db(db_path)
+        now = soc_store.utc_now()
+        with sqlite_writer_lock(db_path):
+            with soc_store.connect(db_path) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO core_api_audit_logs
+                        (request_id, occurred_at, action, actor_role, result, source_instance, details_json)
+                    VALUES (?, ?, ?, 'bridge', 'degraded', 'secopsai-bridge', ?)
+                    """,
+                    (
+                        f"bridge-degraded-{time.time_ns()}",
+                        now,
+                        str(action or "").strip()[:120] or "background",
+                        json.dumps(
+                            {"error_type": type(exc).__name__, "error": _safe_error(exc)},
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )[:32000],
+                    ),
+                )
+                connection.commit()
+    except Exception:
+        # Logging must never prevent the durable queue from being drained.
+        pass
 
 
 def _doctor_codex(settings: BridgeSettings, runner: Runner) -> dict[str, Any]:
@@ -2081,6 +2170,8 @@ def _fail_current_job(
     remote: bool,
     error_code: str,
     error_message: str,
+    lease_generation: Any = None,
+    lease_token: str = "",
     db_path: str | None,
 ) -> dict[str, Any]:
     if remote:
@@ -2089,7 +2180,7 @@ def _fail_current_job(
                 settings,
                 job_id,
                 "fail",
-                {"error_code": error_code, "error_message": error_message},
+                {"error_code": error_code, "error_message": error_message, "lease_generation": lease_generation, "lease_token": lease_token},
             )["job"]
         except Exception:
             return {
@@ -2105,6 +2196,9 @@ def _fail_current_job(
                 error_code=error_code,
                 error_message=error_message,
                 actor=settings.resolved_worker_id(),
+                worker_id=settings.resolved_worker_id(),
+                lease_generation=lease_generation,
+                lease_token=lease_token,
                 db_path=db_path,
             )
     except Exception:

@@ -258,6 +258,14 @@ Set Twilio auth token (from Twilio console):
 export SECOPS_TWILIO_AUTH_TOKEN="YOUR_TWILIO_AUTH_TOKEN"
 ```
 
+Set the exact WhatsApp sender IDs that may issue security commands. Twilio's
+signature proves the request came from Twilio, not which person sent it, so
+the bridge rejects every sender until this allowlist is configured:
+
+```bash
+export SECOPS_TWILIO_ALLOWED_SENDERS="whatsapp:+15551234567"
+```
+
 In Twilio WhatsApp Sandbox configuration:
 
 - Set "When a message comes in" webhook to:
@@ -270,6 +278,8 @@ What this does:
 - Bridge verifies Twilio signature.
 - Bridge routes text to your command handler (`check malware`, `check exfil`, etc.).
 - Bridge returns TwiML reply that Twilio delivers back to WhatsApp.
+- `list high` and `show FINDING_ID` return a generic pointer to authenticated
+  Mission Control; finding IDs, titles, and summaries stay out of WhatsApp.
 
 Why:
 
@@ -282,7 +292,7 @@ Local testing without Twilio (development only):
 export SECOPS_ALLOW_UNSIGNED=1
 curl -X POST http://127.0.0.1:8091/twilio/whatsapp \
 	-H "Content-Type: application/x-www-form-urlencoded" \
-	--data "Body=check+malware"
+	--data "From=whatsapp%3A%2B15551234567&Body=check+malware"
 ```
 
 Important:

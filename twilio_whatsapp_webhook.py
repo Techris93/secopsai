@@ -5,11 +5,17 @@ This adapter receives Twilio webhook requests, validates signatures,
 routes message text to whatsapp_openclaw_router.handle_message, and returns
 TwiML so Twilio can deliver a reply to WhatsApp.
 
+The sender allowlist is checked after the Twilio signature. Finding list/show
+commands return a generic Mission Control pointer so provider message history
+does not contain finding IDs, titles, or summaries.
+
 Environment variables:
   SECOPS_TWILIO_AUTH_TOKEN   Required for signature validation in production.
   SECOPS_PUBLIC_WEBHOOK_URL  Optional full public URL Twilio calls (recommended
                              when using tunnels), e.g.
                              https://abc123.ngrok-free.app/twilio/whatsapp
+  SECOPS_TWILIO_ALLOWED_SENDERS  Comma-separated exact WhatsApp sender IDs
+                                 (for example ``whatsapp:+15551234567``).
   SECOPS_ALLOW_UNSIGNED      Set to "1" only for local testing without Twilio.
 
 Usage:
@@ -78,6 +84,23 @@ def _validate_twilio_signature(handler: BaseHTTPRequestHandler, params: Dict[str
     return hmac.compare_digest(received, expected)
 
 
+def _normalize_sender(value: str) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _sender_authorized(params: Dict[str, str]) -> bool:
+    """Require an explicit allowlist after authenticating Twilio's request.
+
+    Provider signatures authenticate Twilio as the sender of the HTTP request;
+    they do not authenticate the human who sent the WhatsApp message.  Keep
+    the allowlist exact and fail closed when it has not been configured.
+    """
+    raw = os.environ.get("SECOPS_TWILIO_ALLOWED_SENDERS", "").strip()
+    allowed = {_normalize_sender(item) for item in raw.split(",") if _normalize_sender(item)}
+    sender = _normalize_sender(params.get("From", ""))
+    return bool(sender and allowed and sender in allowed)
+
+
 def _twiml_message(text: str) -> bytes:
     safe = html.escape(text)
     payload = f"<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>{safe}</Message></Response>"
@@ -119,6 +142,13 @@ class _TwilioHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.end_headers()
             self.wfile.write(b"forbidden")
+            return
+
+        if not _sender_authorized(params):
+            self.send_response(403)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"sender_not_authorized")
             return
 
         inbound_message = params.get("Body", "")

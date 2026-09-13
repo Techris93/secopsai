@@ -7,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
 import soc_store
 from secopsai.sqlite_writer_lock import lock_path, sqlite_writer_lock
 
@@ -122,6 +123,20 @@ def test_wal_reader_stays_available_during_exclusive_writer_transaction(tmp_path
 
     assert [str(row[0]) for row in rows] == ["committed"]
     assert elapsed < 1.0
+
+
+def test_read_connect_is_query_only_and_does_not_create_missing_database(tmp_path: Path):
+    missing = str(tmp_path / "missing" / "core.db")
+    with pytest.raises(FileNotFoundError):
+        soc_store.read_connect(missing)
+    assert not Path(missing).exists()
+
+    db_path = str(tmp_path / "core.db")
+    soc_store.init_db(db_path)
+    with soc_store.read_connect(db_path) as reader:
+        assert int(reader.execute("PRAGMA query_only").fetchone()[0]) == 1
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            reader.execute("CREATE TABLE read_only_probe (value TEXT)")
 
 
 def test_schema_upgrade_moves_existing_rollback_database_to_wal(tmp_path: Path):

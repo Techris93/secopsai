@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Iterable
 
 import soc_store
@@ -90,9 +91,13 @@ def upsert_graph(
     return {"nodes": node_count, "edges": edge_count}
 
 
-def list_assets(*, db_path: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-    soc_store.init_db(db_path)
-    with soc_store.connect(db_path) as connection:
+def list_assets(*, db_path: str | None = None, limit: int = 50, initialize_db: bool = True) -> list[dict[str, Any]]:
+    if initialize_db:
+        soc_store.init_db(db_path)
+    elif not os.path.isfile(db_path or soc_store.default_db_path()):
+        return []
+    connector = soc_store.connect if initialize_db else soc_store.read_connect
+    with connector(db_path) as connection:
         rows = connection.execute(
             """
             SELECT node_id, label, properties_json, last_seen
@@ -127,9 +132,13 @@ def show_node(identifier: str, *, db_path: str | None = None) -> dict[str, Any] 
     }
 
 
-def list_changes(*, db_path: str | None = None, limit: int = 20) -> dict[str, list[dict[str, Any]]]:
-    soc_store.init_db(db_path)
-    with soc_store.connect(db_path) as connection:
+def list_changes(*, db_path: str | None = None, limit: int = 20, initialize_db: bool = True) -> dict[str, list[dict[str, Any]]]:
+    if initialize_db:
+        soc_store.init_db(db_path)
+    elif not os.path.isfile(db_path or soc_store.default_db_path()):
+        return {"nodes": [], "edges": []}
+    connector = soc_store.connect if initialize_db else soc_store.read_connect
+    with connector(db_path) as connection:
         node_rows = connection.execute(
             """
             SELECT node_id, node_type, label, properties_json, last_seen, updated_at
