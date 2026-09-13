@@ -444,6 +444,10 @@ test("ontology routes use read, intelligence, and bridge scopes", async () => {
   const search = await handleRequest(new Request("https://core.example/api/v1/ontology/search?q=package", { headers: { authorization: `Bearer ${env.CORE_READ_TOKEN}` } }), env);
   assert.equal(search.status, 200);
   assert.deepEqual((await search.json()).entities, []);
+  const trailingSearch = await handleRequest(new Request("https://core.example/api/v1/ontology/search/?q=package", { headers: { authorization: `Bearer ${env.CORE_READ_TOKEN}` } }), env);
+  assert.equal(trailingSearch.status, 200);
+  const baseSearch = await handleRequest(new Request("https://core.example/api/v1/ontology/", { headers: { authorization: `Bearer ${env.CORE_READ_TOKEN}` } }), env);
+  assert.equal(baseSearch.status, 200);
 
   const riskWrongScope = await handleRequest(new Request("https://core.example/api/v1/ontology/entities/finding:test:F-1/risk", { headers: { authorization: `Bearer ${env.CORE_READ_TOKEN}` } }), env);
   assert.equal(riskWrongScope.status, 401);

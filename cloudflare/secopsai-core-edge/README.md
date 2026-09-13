@@ -45,6 +45,11 @@ Sync requests are bounded, workspace-scoped, redacted, and idempotent with an
 worker/local SQLite ledger remains the source of complete research history and
 raw artifacts. Apply migrations before deploying a runner that calls
 `/api/v1/ontology/sync`.
+The search route also accepts the ontology base path (`/api/v1/ontology`) as a
+backward-compatible alias, and all ontology read paths tolerate one or more
+trailing slashes. This keeps the Pages proxy and older dashboard builds from
+falling through to a static `404`; an unknown entity still returns the normal
+authenticated `404` contract.
 Ontology sync accepts at most 500 records of each kind and rejects a request
 whose deterministic mutation plan would exceed 1,000 statements, including the
 receipt. Preflight reads are capped at 50 D1 queries, matching the lowest D1
@@ -80,3 +85,16 @@ latest ontology status/counts. The revision is selected from
 fresh process UUID as the local fallback. `sync_ontology` returns accepted and
 rejected chunk IDs/counts so a partial sync can be resumed with stable
 idempotency keys.
+
+### Deployment verification
+
+Deploy the migration and Worker together with `npm run deploy:remote`. Record
+the resulting Worker version and confirm that the remote migration list reports
+no pending migrations. Before connecting Pages or the runner, check the public
+`/healthz` and `/readyz` endpoints, then make an authenticated request to
+`/api/v1/ontology/search?q=&limit=1` with the read token. A `401` proves the
+route is registered but unauthenticated; an authenticated `200` proves the
+route, token binding, workspace scope, and D1 read path are live. If Pages
+reports `core_ontology_route_unavailable`, compare the deployed Worker version
+with the commit that contains the ontology routes and redeploy Core Edge before
+redeploying Pages.

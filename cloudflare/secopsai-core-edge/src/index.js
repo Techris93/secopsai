@@ -68,6 +68,11 @@ export default {
 export async function handleRequest(request, env) {
   const requestId = boundedHeader(request.headers.get("x-request-id")) || crypto.randomUUID();
   const url = new URL(request.url);
+  // The hosted Pages proxy normalizes ontology paths, but direct API clients
+  // and older dashboard builds may retain a trailing slash.  Keep the
+  // ontology contract tolerant of that harmless URL variant without changing
+  // the matching semantics of unrelated routes.
+  const ontologyPathname = url.pathname.replace(/\/+$/, "") || "/";
   try {
     if (request.method === "GET" && url.pathname === "/healthz") {
       return response(200, { status: "ok", service: "secopsai-core-edge" }, requestId);
@@ -91,13 +96,13 @@ export async function handleRequest(request, env) {
       ).bind(limit).all();
       return response(200, { audit_logs: rows.results.map(decodeAudit) }, requestId);
     }
-    if (request.method === "GET" && url.pathname === "/api/v1/ontology/search") {
+    if (request.method === "GET" && (ontologyPathname === "/api/v1/ontology" || ontologyPathname === "/api/v1/ontology/search")) {
       requireBearer(request, env.CORE_READ_TOKEN);
       const result = await ontologySearch(env.DB, url.searchParams, clean(env.CORE_WORKSPACE_ID, 160));
       await writeAudit(env.DB, { requestId, action: "ontology.search", actorRole: "operator_read", result: "success", sourceInstance: "secopsai-core-edge", details: { query: clean(url.searchParams.get("q"), 120), entity_type: clean(url.searchParams.get("entity_type"), 80), count: result.entities?.length || 0 }, createdAt: nowIso() });
       return response(200, result, requestId);
     }
-    const ontologyEntityMatch = url.pathname.match(/^\/api\/v1\/ontology\/entities\/([^/]+)(?:\/(neighbors|timeline|lineage|risk))?$/);
+    const ontologyEntityMatch = ontologyPathname.match(/^\/api\/v1\/ontology\/entities\/([^/]+)(?:\/(neighbors|timeline|lineage|risk))?$/);
     if (ontologyEntityMatch && request.method === "GET") {
       const entityId = decodeURIComponent(ontologyEntityMatch[1]);
       const operation = ontologyEntityMatch[2] || "detail";
@@ -128,7 +133,7 @@ export async function handleRequest(request, env) {
       await writeAudit(env.DB, { requestId, action: "ontology.entity.read", actorRole: "operator_read", result: "success", sourceInstance: "secopsai-core-edge", details: { entity_id: clean(entityId, 512) }, createdAt: nowIso() });
       return response(200, result, requestId);
     }
-    if (request.method === "GET" && url.pathname === "/api/v1/ontology/quality") {
+    if (request.method === "GET" && ontologyPathname === "/api/v1/ontology/quality") {
       requireBearer(request, env.CORE_READ_TOKEN);
       const result = await ontologyQuality(env.DB, url.searchParams, clean(env.CORE_WORKSPACE_ID, 160));
       await writeAudit(env.DB, { requestId, action: "ontology.quality.read", actorRole: "operator_read", result: "success", sourceInstance: "secopsai-core-edge", details: { entities: result.entities, relationships: result.relationships }, createdAt: nowIso() });
