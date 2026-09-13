@@ -777,8 +777,8 @@ def _upsert_entity_connection(
             INSERT INTO ontology_aliases
                 (alias_id, entity_id, alias_type, alias_value, normalized_value, source, confidence, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(alias_id) DO UPDATE SET
-                entity_id=excluded.entity_id, alias_value=excluded.alias_value,
+            ON CONFLICT(entity_id, alias_type, normalized_value) DO UPDATE SET
+                alias_value=excluded.alias_value,
                 confidence=excluded.confidence, updated_at=excluded.updated_at
             """,
             (alias_id, entity_id, alias_type, alias_value, normalized, alias_source, _confidence(alias.get("confidence") if isinstance(alias, dict) else 100), now, now),

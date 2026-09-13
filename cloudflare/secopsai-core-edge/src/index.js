@@ -869,7 +869,12 @@ async function syncOntology(request, env, requestId) {
       const aliasKey = `${aliasType}|${normalized}|${aliasSource}`;
       if (!preflightAliasRows.has(aliasKey)) {
         const incumbent = await readBudget.first(env.DB.prepare("SELECT alias_id, entity_id FROM ontology_aliases WHERE alias_type = ? AND normalized_value = ? AND source = ? LIMIT 1").bind(aliasType, normalized, aliasSource));
-        preflightAliasRows.set(aliasKey, incumbent || null);
+        // Reserve an alias key for the first entity in this batch even when
+        // D1 has no incumbent.  Without this reservation, two entities that
+        // share an alias would both pass preflight and the later upsert would
+        // silently overwrite the first row by alias_id instead of recording a
+        // duplicate-alias conflict.
+        preflightAliasRows.set(aliasKey, incumbent || { alias_id: "", entity_id: entityId, batch: true });
       }
     }
   }
@@ -1075,7 +1080,10 @@ async function syncOntology(request, env, requestId) {
       }
       queueWrite(`INSERT INTO ontology_aliases (alias_id, entity_id, alias_type, alias_value, normalized_value, source, confidence, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(alias_id) DO UPDATE SET entity_id=excluded.entity_id, alias_value=excluded.alias_value, confidence=excluded.confidence, updated_at=excluded.updated_at`,
+        ON CONFLICT(entity_id, alias_type, normalized_value) DO UPDATE SET
+          alias_value=excluded.alias_value,
+          confidence=excluded.confidence,
+          updated_at=excluded.updated_at`,
         aliasId,
         entityId,
         aliasType,

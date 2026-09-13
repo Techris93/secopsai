@@ -377,6 +377,45 @@ test("ontology synchronization is migration-safe, replay-idempotent, and preflig
   assert.equal(migrated.db.prepare("SELECT entity_type FROM ontology_entities WHERE entity_id=?").get("pkg:pypi:edge-a").entity_type, "package");
 });
 
+test("ontology aliases tolerate source variants and preserve same-batch conflicts", { skip: !DatabaseSync }, async () => {
+  const migrated = migratedSqliteD1();
+  const env = { DB: migrated.d1, CORE_BRIDGE_TOKEN: "b".repeat(44) };
+  const response = await handleRequest(new Request("https://core.example/api/v1/ontology/sync", {
+    method: "POST",
+    headers: { authorization: `Bearer ${env.CORE_BRIDGE_TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      schema_version: "secopsai.ontology.v1",
+      source_instance: "runner-alias-test",
+      entities: [
+        {
+          entity_id: "pkg:pypi:alias-a",
+          entity_type: "package",
+          namespace: "pypi",
+          canonical_key: "alias-a",
+          aliases: [
+            { type: "name", value: "shared-name", source: "registry" },
+            { type: "name", value: "shared-name", source: "research" },
+          ],
+        },
+        {
+          entity_id: "pkg:pypi:alias-b",
+          entity_type: "package",
+          namespace: "pypi",
+          canonical_key: "alias-b",
+          aliases: [{ type: "name", value: "shared-name", source: "registry" }],
+        },
+      ],
+      relationships: [],
+      events: [],
+      evidence_refs: [],
+    }),
+  }), env);
+  assert.equal(response.status, 200);
+  assert.equal(migrated.db.prepare("SELECT COUNT(*) AS count FROM ontology_aliases").get().count, 1);
+  assert.equal(migrated.db.prepare("SELECT entity_id FROM ontology_aliases").get().entity_id, "pkg:pypi:alias-a");
+  assert.equal(migrated.db.prepare("SELECT COUNT(*) AS count FROM ontology_conflicts WHERE conflict_type='duplicate_alias'").get().count, 1);
+});
+
 test("ontology synchronization rejects oversized record counts and mutation batches before D1 work", async () => {
   const env = { DB: new CountingD1(), CORE_BRIDGE_TOKEN: "b".repeat(44) };
   const headers = { authorization: `Bearer ${env.CORE_BRIDGE_TOKEN}`, "content-type": "application/json" };

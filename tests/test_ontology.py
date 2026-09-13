@@ -151,6 +151,28 @@ def test_sync_redacts_evidence_and_is_idempotent(db_path: str):
     assert evidence.get("secret") is None
 
 
+def test_sync_alias_source_variants_do_not_break_entity_uniqueness(db_path: str):
+    package = _entity(
+        "package",
+        "pypi",
+        "alias-source-variant",
+        aliases=[
+            {"type": "name", "value": "Shared Alias", "source": "registry"},
+            {"type": "name", "value": "shared alias", "source": "research"},
+        ],
+    )
+    sync_payload({"entities": [package], "relationships": [], "events": []}, db_path=db_path)
+    with soc_store.read_connect(db_path) as connection:
+        aliases = connection.execute(
+            "SELECT entity_id, alias_type, normalized_value, source FROM ontology_aliases"
+        ).fetchall()
+    # The local schema permits one canonical alias per entity/type/value.  A
+    # source variant updates that row instead of tripping the compatibility
+    # unique index or aborting the complete synchronization transaction.
+    assert len(aliases) == 1
+    assert aliases[0][0] == "pkg:pypi:alias-source-variant"
+
+
 def test_sync_relation_and_event_replays_are_semantic_across_request_keys(db_path: str):
     package = _entity("package", "pypi", "semantic-replay")
     service = _entity("service", "secopsai", "semantic-replay")
