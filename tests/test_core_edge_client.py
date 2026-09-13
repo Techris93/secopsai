@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import soc_store
-from secopsai.core_edge_client import CoreEdgeClient, CoreEdgeSettings, ONTOLOGY_CHUNK_TARGET_BYTES, _compact_command_result, _compact_ontology_snapshot, _ontology_idempotency_key, _ontology_sync_chunks
+from secopsai.core_edge_client import CoreEdgeClient, CoreEdgeSettings, ONTOLOGY_CHUNK_READ_BUDGET, ONTOLOGY_CHUNK_TARGET_BYTES, _compact_command_result, _compact_ontology_snapshot, _ontology_chunk_read_cost, _ontology_idempotency_key, _ontology_sync_chunks
 
 
 class _Response:
@@ -128,6 +128,27 @@ def test_ontology_chunks_leave_wire_room_for_metadata_and_idempotency_key():
     chunks = _ontology_sync_chunks(snapshot)
     assert all(len(json.dumps({**chunk, "idempotency_key": "a" * 64}, separators=(",", ":")).encode()) <= 64 * 1024 for chunk in chunks)
     assert all(len(json.dumps(chunk, separators=(",", ":")).encode()) <= ONTOLOGY_CHUNK_TARGET_BYTES for chunk in chunks)
+
+
+def test_ontology_chunks_respect_edge_read_budget_with_many_aliases():
+    snapshot = {
+        "entities": [
+            {
+                "entity_id": f"pkg:pypi:aliases-{index}",
+                "entity_type": "package",
+                "namespace": "pypi",
+                "canonical_key": f"aliases-{index}",
+                "aliases": [f"alias-{index}-{alias}" for alias in range(20)],
+            }
+            for index in range(20)
+        ],
+        "relationships": [],
+        "events": [],
+        "evidence_refs": [],
+    }
+    chunks = _ontology_sync_chunks(snapshot)
+    assert all(1 + _ontology_chunk_read_cost("entities", chunk.get("entities", [])) <= ONTOLOGY_CHUNK_READ_BUDGET for chunk in chunks)
+    assert sum(len(chunk.get("entities", [])) for chunk in chunks) == 20
 
 
 def test_ontology_chunk_marks_nested_minimization():

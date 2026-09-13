@@ -30,6 +30,11 @@ MAX_REQUEST_BYTES = 64 * 1024
 # attached after records are packed.  Without this margin a chunk can pass the
 # packing check and then exceed the wire bound by a few hundred bytes.
 ONTOLOGY_CHUNK_TARGET_BYTES = MAX_REQUEST_BYTES - 4096
+# Core Edge deliberately caps D1 preflight reads at 50 per request on the
+# portable/free execution path. Keep a small reserve for the receipt lookup
+# and future validation reads; the packer below splits on this budget even
+# when the byte limit would allow a larger chunk.
+ONTOLOGY_CHUNK_READ_BUDGET = 48
 MAX_RESPONSE_BYTES = 512 * 1024
 MAX_COMMAND_RESULT_BYTES = 28 * 1024
 DEFAULT_URL = "https://core.secopsai.dev"
@@ -272,7 +277,10 @@ def _ontology_sync_chunks(snapshot: Dict[str, Any]) -> list[dict[str, Any]]:
         for raw in records_by_kind[kind]:
             record = fit_record(kind, raw)
             candidate = {**base, kind: [*current, record]}
-            if current and _json_size(candidate) > target:
+            if current and (
+                _json_size(candidate) > target
+                or 1 + _ontology_chunk_read_cost(kind, [*current, record]) > ONTOLOGY_CHUNK_READ_BUDGET
+            ):
                 chunks.append({**base, kind: current})
                 current = []
                 candidate = {**base, kind: [record]}
@@ -311,6 +319,34 @@ def _ontology_chunk_counts(chunk: Dict[str, Any]) -> dict[str, int]:
         for key in ("entities", "relationships", "events", "evidence_refs")
         if isinstance(chunk.get(key), list) and chunk.get(key)
     }
+
+
+def _ontology_chunk_read_cost(kind: str, records: list[dict[str, Any]]) -> int:
+    """Estimate Core Edge's D1 preflight reads for one record collection."""
+    if kind == "entities":
+        # Existing entity + canonical identity, plus one lookup per distinct
+        # alias key (the Edge preflight caches repeated aliases in a batch).
+        aliases = 0
+        for item in records:
+            seen: set[str] = set()
+            for alias in item.get("aliases") if isinstance(item.get("aliases"), list) else []:
+                value = alias.get("value") if isinstance(alias, dict) else alias
+                alias_type = alias.get("type") if isinstance(alias, dict) else "source"
+                alias_source = alias.get("source") if isinstance(alias, dict) else item.get("source")
+                key = f"{alias_type}|{value}|{alias_source}"
+                if value and key not in seen:
+                    seen.add(key)
+            aliases += len(seen)
+        return 2 * len(records) + aliases
+    if kind == "evidence_refs":
+        return len(records)
+    if kind == "relationships":
+        # Two endpoint lookups, one relationship lookup, and one optional
+        # evidence lookup per relation. Repeated IDs are cached by Edge.
+        return 4 * len(records)
+    if kind == "events":
+        return len(records)
+    return len(records)
 
 
 def _merge_counts(target: dict[str, int], source: Dict[str, Any]) -> None:
