@@ -207,6 +207,38 @@ def test_sync_state_carries_process_lease_and_ontology_summary():
     assert ontology["rejected_chunks"] == 2
 
 
+def test_sync_state_keeps_large_daily_result_observable_and_carries_ontology_error():
+    session = _Session()
+    client = CoreEdgeClient(_settings(), session=session)
+    client.last_ontology_sync = {
+        "status": "degraded",
+        "chunks": 0,
+        "error": "entities record cannot fit the bounded ontology request",
+    }
+    result = client.sync_state(
+        {
+            "status": "succeeded",
+            "completed_at": "2026-09-12T00:00:00Z",
+            "daily_automation": {
+                "run": {
+                    "status": "running",
+                    "run_id": "DAR-1",
+                    "steps": [
+                        {"step_name": f"step-{index}", "status": "succeeded", "result": {"large": "x" * 5000}}
+                        for index in range(100)
+                    ],
+                }
+            },
+        },
+        status="degraded",
+    )
+    assert result["status"] == "accepted"
+    payload = session.calls[-1][2]["json"]
+    coordinator = payload["coordinator"]
+    assert coordinator["ontology"]["error"] == "entities record cannot fit the bounded ontology request"
+    assert coordinator["daily_automation"]["run_id"] == "DAR-1"
+
+
 def test_command_terminal_payload_preserves_lease_proof():
     session = _Session()
     client = CoreEdgeClient(_settings(), session=session)

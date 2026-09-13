@@ -677,6 +677,7 @@ def run_worker_loop(
                         "rejected_chunks": ontology_sync.get("rejected_chunks", 0),
                         "accepted_chunk_ids": ontology_sync.get("accepted_chunk_ids", []),
                         "rejected_chunk_ids": ontology_sync.get("rejected_chunk_ids", []),
+                        "error": str(ontology_sync.get("error") or "")[:500],
                     }
                 except Exception as exc:  # semantic sync must not stop surveillance
                     capture_exception(exc, context={"component": "research_ontology_sync"})

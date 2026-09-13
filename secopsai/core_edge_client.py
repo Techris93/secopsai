@@ -360,6 +360,66 @@ def _compact_command_result(value: Any) -> dict[str, Any]:
     return minimize(compact)
 
 
+def _compact_cycle_component(value: Any, *, limit: int = 12 * 1024) -> dict[str, Any]:
+    """Keep the heartbeat's cycle summary observable and bounded.
+
+    ``run_worker_cycle`` intentionally returns rich local diagnostics.  The
+    heartbeat is a hosted status record, however, and copying a full daily
+    automation result (including every step payload) can exceed the Edge/D1
+    bound.  Returning a small status envelope prevents the whole coordinator
+    object from being replaced by a generic ``truncated`` marker.
+    """
+    if not isinstance(value, dict):
+        return {}
+    source = value.get("run") if isinstance(value.get("run"), dict) else value
+    compact: dict[str, Any] = {}
+    scalar_keys = (
+        "status",
+        "run_id",
+        "generation",
+        "started_at",
+        "completed_at",
+        "next_run_at",
+        "lease_until",
+        "error",
+        "error_message",
+        "error_code",
+        "collectors_run",
+        "queue_age_seconds",
+        "queue_depth",
+        "deferred",
+        "failed",
+        "sent",
+        "attempted",
+    )
+    for key in scalar_keys:
+        candidate = source.get(key)
+        if candidate is None and source is not value:
+            candidate = value.get(key)
+        if candidate is not None:
+            compact[key] = _clean(candidate, 2000) if isinstance(candidate, str) else candidate
+    settings = value.get("settings")
+    if isinstance(settings, dict):
+        compact["settings"] = {
+            key: settings.get(key)
+            for key in ("enabled", "interval_hours", "interval_seconds", "daily_enabled", "triage_enabled")
+            if settings.get(key) is not None
+        }
+    steps = source.get("steps")
+    if isinstance(steps, list):
+        compact["steps"] = [
+            {
+                key: (_clean(step.get(key), 2000) if isinstance(step.get(key), str) else step.get(key))
+                for key in ("step_id", "step_name", "status", "started_at", "completed_at", "error", "error_message")
+                if step.get(key) is not None
+            }
+            for step in steps[:32]
+            if isinstance(step, dict)
+        ]
+    bounded = _bounded_json(compact, limit=limit)
+    return bounded if isinstance(bounded, dict) else {}
+
+
 @dataclass(frozen=True)
 class CoreEdgeSettings:
     url: str
@@ -504,8 +564,8 @@ class CoreEdgeClient:
             "storage": _bounded_json(storage if isinstance(storage, dict) else {}, 16 * 1024),
             "coordinator": _bounded_json({
                 "collectors_run": summary.get("collectors_run") if isinstance(summary, dict) else None,
-                "daily_automation": summary.get("daily_automation") if isinstance(summary, dict) else None,
-                "alert_delivery": summary.get("alert_delivery") if isinstance(summary, dict) else None,
+                "daily_automation": _compact_cycle_component(summary.get("daily_automation")) if isinstance(summary, dict) else {},
+                "alert_delivery": _compact_cycle_component(summary.get("alert_delivery")) if isinstance(summary, dict) else {},
                 "hosted_commands": hosted_commands,
                 "ontology": _bounded_json({
                     "status": _clean(ontology_summary.get("status"), 40) or "unknown",
@@ -515,6 +575,7 @@ class CoreEdgeClient:
                     "rejected_chunk_ids": ontology_summary.get("rejected_chunk_ids", []),
                     "accepted_chunks": ontology_summary.get("accepted_chunks", 0),
                     "rejected_chunks": ontology_summary.get("rejected_chunks", 0),
+                    "error": _clean(ontology_summary.get("error"), 2000),
                 }, 16 * 1024),
             }, 16 * 1024),
             "error_message": _clean(summary.get("error") if isinstance(summary, dict) else "", 2000),
