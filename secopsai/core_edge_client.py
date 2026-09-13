@@ -26,6 +26,10 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 MAX_REQUEST_BYTES = 64 * 1024
+# Leave room for chunk metadata and the deterministic idempotency key that are
+# attached after records are packed.  Without this margin a chunk can pass the
+# packing check and then exceed the wire bound by a few hundred bytes.
+ONTOLOGY_CHUNK_TARGET_BYTES = MAX_REQUEST_BYTES - 4096
 MAX_RESPONSE_BYTES = 512 * 1024
 MAX_COMMAND_RESULT_BYTES = 28 * 1024
 DEFAULT_URL = "https://core.secopsai.dev"
@@ -120,7 +124,7 @@ def _compact_ontology_snapshot(snapshot: Dict[str, Any]) -> dict[str, Any]:
         value = payload.get(key)
         payload[key] = list(value) if isinstance(value, list) else []
     payload["snapshot_truncated"] = False
-    target = MAX_REQUEST_BYTES - 512
+    target = ONTOLOGY_CHUNK_TARGET_BYTES
     if _json_size(payload) <= target:
         return payload
 
@@ -214,7 +218,7 @@ def _ontology_sync_chunks(snapshot: Dict[str, Any]) -> list[dict[str, Any]]:
         if source.get(envelope_key) is not None:
             base[envelope_key] = _clean(source.get(envelope_key), 160 if envelope_key != "exported_at" else 64)
 
-    target = MAX_REQUEST_BYTES - 512
+    target = ONTOLOGY_CHUNK_TARGET_BYTES
     records_by_kind = {
         "entities": source.get("entities") if isinstance(source.get("entities"), list) else [],
         "evidence_refs": source.get("evidence_refs") if isinstance(source.get("evidence_refs"), list) else [],

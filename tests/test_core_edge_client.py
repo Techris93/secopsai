@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import soc_store
-from secopsai.core_edge_client import CoreEdgeClient, CoreEdgeSettings, _compact_command_result, _compact_ontology_snapshot, _ontology_idempotency_key, _ontology_sync_chunks
+from secopsai.core_edge_client import CoreEdgeClient, CoreEdgeSettings, ONTOLOGY_CHUNK_TARGET_BYTES, _compact_command_result, _compact_ontology_snapshot, _ontology_idempotency_key, _ontology_sync_chunks
 
 
 class _Response:
@@ -105,6 +105,29 @@ def test_sync_ontology_chunks_oversized_snapshots_without_dropping_records():
     assert result["chunks"] == len(chunks)
     assert len(session.calls) == len(chunks)
     assert all(len(json.dumps(call[2]["json"], separators=(",", ":")).encode()) < 64 * 1024 for call in session.calls)
+
+
+def test_ontology_chunks_leave_wire_room_for_metadata_and_idempotency_key():
+    session = _Session()
+    client = CoreEdgeClient(_settings(), session=session)
+    snapshot = {
+        "entities": [
+            {
+                "entity_id": f"pkg:pypi:wire-{index}",
+                "entity_type": "package",
+                "namespace": "pypi",
+                "canonical_key": f"wire-{index}",
+                "properties": {"description": "x" * 3500},
+            }
+            for index in range(100)
+        ],
+        "relationships": [],
+        "events": [],
+        "evidence_refs": [],
+    }
+    chunks = _ontology_sync_chunks(snapshot)
+    assert all(len(json.dumps({**chunk, "idempotency_key": "a" * 64}, separators=(",", ":")).encode()) <= 64 * 1024 for chunk in chunks)
+    assert all(len(json.dumps(chunk, separators=(",", ":")).encode()) <= ONTOLOGY_CHUNK_TARGET_BYTES for chunk in chunks)
 
 
 def test_ontology_chunk_marks_nested_minimization():
