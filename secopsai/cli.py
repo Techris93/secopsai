@@ -1862,14 +1862,25 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     intelligence_bridge_typesafe = intelligence_bridge_sub.add_parser(
         "typesafe",
-        help="Inspect or probe TypeSafe AI (Jev System One) integration",
+        help="Inspect, probe, or configure TypeSafe AI (Jev System One) integration",
     )
     intelligence_bridge_typesafe.add_argument(
         "action",
-        choices=["probe", "test"],
+        choices=["probe", "test", "configure"],
         default="probe",
         nargs="?",
-        help="Action to perform: probe (check API status) or test (run test triage evaluation)",
+        help="Action: probe (check API status), test (run test triage), or configure (save API key)",
+    )
+    intelligence_bridge_typesafe.add_argument(
+        "--api-key",
+        default="",
+        help="TypeSafe API key for configuration or inline probe",
+    )
+    intelligence_bridge_typesafe.add_argument(
+        "--scope",
+        choices=["user", "local"],
+        default="user",
+        help="Storage scope: 'user' (~/.secopsai/typesafe.key) or 'local' (.env)",
     )
 
     research = sub.add_parser("research", help="Generate source-backed research reports and preflight checks")
@@ -5162,8 +5173,25 @@ def main(argv: Optional[List[str]] = None) -> int:
                     else:
                         payload = codex_bridge_service_action(args.action, tail=args.tail, db_path=args.db_path)
                 elif args.intelligence_bridge_cmd == "typesafe":
-                    from secopsai.typesafe_adapter import probe_typesafe, invoke_typesafe_action
-                    if args.action == "test":
+                    from secopsai.typesafe_adapter import (
+                        invoke_typesafe_action,
+                        probe_typesafe,
+                        set_typesafe_api_key,
+                    )
+                    api_key = (getattr(args, "api_key", "") or "").strip()
+                    if args.action == "configure":
+                        resolved_key = api_key or os.environ.get("TYPESAFE_API_KEY", "").strip()
+                        if not resolved_key:
+                            raise ValueError("--api-key is required to configure TypeSafe AI credentials.")
+                        stored_path = set_typesafe_api_key(resolved_key, scope=getattr(args, "scope", "user"))
+                        probe_result = probe_typesafe(api_key=resolved_key)
+                        payload = {
+                            "configured": True,
+                            "stored_at": stored_path,
+                            "scope": getattr(args, "scope", "user"),
+                            "probe": probe_result,
+                        }
+                    elif args.action == "test":
                         sample_request = {
                             "action": {"name": "triage_finding"},
                             "context": {
@@ -5173,9 +5201,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                                 "severity": "medium",
                             },
                         }
-                        payload = invoke_typesafe_action(sample_request)
+                        payload = invoke_typesafe_action(sample_request, api_key=api_key or None)
                     else:
-                        payload = probe_typesafe()
+                        payload = probe_typesafe(api_key=api_key or None)
                 else:
                     raise ValueError(f"unsupported intelligence bridge command: {args.intelligence_bridge_cmd}")
             else:

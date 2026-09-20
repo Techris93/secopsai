@@ -15,8 +15,77 @@ DEFAULT_TIMEOUT_SECONDS = 30
 
 
 def get_typesafe_api_key() -> str:
-    """Return configured TypeSafe API key or empty string."""
-    return os.environ.get("TYPESAFE_API_KEY", "").strip()
+    """Return configured TypeSafe API key or empty string.
+
+    Checks:
+    1. Environment variable: TYPESAFE_API_KEY
+    2. Local .env file in current working directory or repository root
+    3. User credential file: ~/.secopsai/typesafe.key or ~/.secopsai/config.env
+    """
+    key = os.environ.get("TYPESAFE_API_KEY", "").strip()
+    if key:
+        return key
+
+    from pathlib import Path
+
+    candidate_files = [
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[1] / ".env",
+        Path.home() / ".secopsai" / "typesafe.key",
+        Path.home() / ".secopsai" / "config.env",
+    ]
+    for path in candidate_files:
+        try:
+            if path.is_file():
+                if path.suffix == ".key":
+                    val = path.read_text(encoding="utf-8").strip()
+                    if val:
+                        return val
+                else:
+                    for line in path.read_text(encoding="utf-8").splitlines():
+                        stripped = line.strip()
+                        if stripped.startswith("TYPESAFE_API_KEY="):
+                            val = stripped.split("=", 1)[1].strip().strip("\"'")
+                            if val:
+                                return val
+        except Exception:
+            continue
+    return ""
+
+
+def set_typesafe_api_key(api_key: str, scope: str = "user") -> str:
+    """Persist the TypeSafe API key to ~/.secopsai/typesafe.key (user) or .env (local)."""
+    from pathlib import Path
+
+    key = api_key.strip()
+    if not key:
+        raise ValueError("API key cannot be empty.")
+
+    if scope in ("local", "env"):
+        env_file = Path.cwd() / ".env"
+        lines: list[str] = []
+        replaced = False
+        if env_file.is_file():
+            for line in env_file.read_text(encoding="utf-8").splitlines():
+                if line.strip().startswith("TYPESAFE_API_KEY="):
+                    lines.append(f'TYPESAFE_API_KEY="{key}"')
+                    replaced = True
+                else:
+                    lines.append(line)
+        if not replaced:
+            lines.append(f'TYPESAFE_API_KEY="{key}"')
+        env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return str(env_file)
+    else:
+        key_dir = Path.home() / ".secopsai"
+        key_dir.mkdir(parents=True, exist_ok=True)
+        key_file = key_dir / "typesafe.key"
+        key_file.write_text(key + "\n", encoding="utf-8")
+        try:
+            key_file.chmod(0o600)
+        except OSError:
+            pass
+        return str(key_file)
 
 
 def is_typesafe_available() -> bool:
@@ -435,11 +504,15 @@ def invoke_typesafe_action(
         formatter = _format_publication_safety_result
     elif action_name == "prioritize_findings":
         questions = build_prioritize_questions()
-        formatter = lambda answers, state: _format_generic_result(answers, action_name, state)
+
+        def formatter(answers: Any, state: Any) -> dict[str, Any]:
+            return _format_generic_result(answers, action_name, state)
     else:
         # Fallback to triage questions for general finding analysis
         questions = build_triage_questions()
-        formatter = lambda answers, state: _format_generic_result(answers, action_name, state)
+
+        def formatter(answers: Any, state: Any) -> dict[str, Any]:
+            return _format_generic_result(answers, action_name, state)
 
     # Evaluate against Jev
     raw_response = evaluate_system_one(

@@ -8,7 +8,6 @@ from secopsai.codex_bridge import BridgeSettings, _invoke_codex, _provider_for_m
 from secopsai.intelligence import validate_bridge_result
 from secopsai.typesafe_adapter import (
     TYPESAFE_API_URL,
-    TYPESAFE_MODEL,
     build_prioritize_questions,
     build_publication_safety_questions,
     build_triage_questions,
@@ -17,6 +16,7 @@ from secopsai.typesafe_adapter import (
     invoke_typesafe_action,
     is_typesafe_available,
     probe_typesafe,
+    set_typesafe_api_key,
 )
 
 
@@ -28,6 +28,26 @@ def test_typesafe_availability(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TYPESAFE_API_KEY", "ts_test_key_12345")
     assert is_typesafe_available()
     assert get_typesafe_api_key() == "ts_test_key_12345"
+
+
+def test_set_typesafe_api_key(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("pathlib.Path.cwd", lambda: tmp_path)
+
+    # Test user scope (~/.secopsai/typesafe.key)
+    path = set_typesafe_api_key("ts_persisted_user_key", scope="user")
+    assert "typesafe.key" in path
+    assert get_typesafe_api_key() == "ts_persisted_user_key"
+
+    # Test env scope (.env)
+    env_path = set_typesafe_api_key("ts_persisted_env_key", scope="local")
+    assert ".env" in env_path
+    # Environment variable takes precedence if set
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts_override")
+    assert get_typesafe_api_key() == "ts_override"
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    assert get_typesafe_api_key() in ("ts_persisted_env_key", "ts_persisted_user_key")
 
 
 def test_probe_typesafe_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
