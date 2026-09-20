@@ -55,6 +55,9 @@ def test_container_verifies_backport_hashes_and_grype_consumes_vex():
     assert "container/stdlib/3.13/tarfile.py" in dockerfile
     assert "container/stdlib/3.13/html/parser.py" in dockerfile
     assert "sha256sum -c -" in dockerfile
+    manifest = json.loads((ROOT / "container/stdlib/3.13/PATCHES.json").read_text(encoding="utf-8"))
+    for record in manifest["files"]:
+        assert record["sha256"] in dockerfile
     assert "vex: .github/vex/python-3.13.14-backports.openvex.json" in workflow
     assert "Validate evidence-backed container VEX" in workflow
 
