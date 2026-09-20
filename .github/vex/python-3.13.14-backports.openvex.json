@@ -23,6 +23,12 @@
       "products": [{"@id": "pkg:generic/python@3.13.14"}],
       "status": "fixed",
       "impact_statement": "The final image replaces Lib/html/parser.py with the Python 3.13 upstream security-fixed revision. The file hash and upstream commit are verified during the image build."
+    },
+    {
+      "vulnerability": {"name": "CVE-2026-82049"},
+      "products": [{"@id": "pkg:generic/python@3.13.14"}],
+      "status": "fixed",
+      "impact_statement": "The final image replaces Lib/tarfile.py with the Python 3.13 upstream security-fixed revision. The file hash and upstream commit are verified during the image build."
     }
   ]
 }

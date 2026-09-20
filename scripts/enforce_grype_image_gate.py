@@ -20,17 +20,35 @@ def has_available_fix(vulnerability: dict[str, Any]) -> bool:
     return str(fix.get("state") or "").strip().lower() == "fixed"
 
 
-def collect_blocking_findings(report: dict[str, Any]) -> list[str]:
+def load_vex_fixed_cves(vex_path: Path | None) -> set[str]:
+    if not vex_path or not vex_path.is_file():
+        return set()
+    try:
+        data = json.loads(vex_path.read_text(encoding="utf-8"))
+        return {
+            stmt["vulnerability"]["name"]
+            for stmt in data.get("statements", [])
+            if stmt.get("status") in {"fixed", "not_affected"} and "name" in stmt.get("vulnerability", {})
+        }
+    except Exception:
+        return set()
+
+
+def collect_blocking_findings(report: dict[str, Any], vex_cves: set[str] | None = None) -> list[str]:
     failures: list[str] = []
+    suppressed = vex_cves or set()
     for match in report.get("matches") or []:
         vulnerability = match.get("vulnerability") or {}
         artifact = match.get("artifact") or {}
+        vuln_id = str(vulnerability.get("id") or "")
+        if vuln_id in suppressed:
+            continue
         if vulnerability.get("severity") not in HIGH_SEVERITIES:
             continue
         if not has_available_fix(vulnerability):
             continue
         failures.append(
-            f"{vulnerability.get('id')} {artifact.get('name')}@{artifact.get('version')} "
+            f"{vuln_id} {artifact.get('name')}@{artifact.get('version')} "
             f"path={artifact.get('locations') or []}"
         )
     return failures
@@ -43,9 +61,15 @@ def main() -> int:
         type=Path,
         default=Path("container-security/grype-results.json"),
     )
+    parser.add_argument(
+        "--vex",
+        type=Path,
+        default=Path(".github/vex/python-3.13.14-backports.openvex.json"),
+    )
     args = parser.parse_args()
     report = json.loads(args.input.read_text(encoding="utf-8"))
-    failures = collect_blocking_findings(report)
+    vex_cves = load_vex_fixed_cves(args.vex)
+    failures = collect_blocking_findings(report, vex_cves=vex_cves)
     if failures:
         print("\n".join(f"::error title=Grype container vulnerability::{item}" for item in failures))
         raise SystemExit(f"Grype found {len(failures)} HIGH/CRITICAL vulnerabilities")
