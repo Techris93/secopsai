@@ -17,7 +17,7 @@ def test_cpython_backports_match_recorded_upstream_revision():
     manifest = json.loads((ROOT / "container/stdlib/3.13/PATCHES.json").read_text(encoding="utf-8"))
     assert manifest["schema_version"] == "secopsai.cpython-runtime-patches.v1"
     assert manifest["base_runtime"] == "CPython 3.13.14"
-    assert manifest["source_revision"] == "7933f4bf7131aa4140750f9404f5de0aa2969ced"
+    assert manifest["source_revision"] == "b8f23e307097552eaea2604383a12ab280520d0d"
 
     paths = {
         "Lib/tarfile.py": ROOT / "container/stdlib/3.13/tarfile.py",
@@ -30,6 +30,7 @@ def test_cpython_backports_match_recorded_upstream_revision():
     parser_source = paths["Lib/html/parser.py"].read_text(encoding="utf-8")
     assert "if not data:\n                    break" in tarfile_source
     assert "filter_function(\n                    unfiltered.replace(name=tarinfo.name, deep=False)" in tarfile_source
+    assert "os.link(os.path.realpath(tarinfo._link_target), targetpath)" in tarfile_source
     assert "self._parse_threshold = len(self.rawdata)" in parser_source
 
 
@@ -40,6 +41,7 @@ def test_openvex_covers_only_verified_python_backports():
         "CVE-2026-11940",
         "CVE-2026-11972",
         "CVE-2026-15308",
+        "CVE-2026-82049",
     }
     for statement in vex["statements"]:
         assert statement["status"] == "fixed"
@@ -62,7 +64,12 @@ def test_vex_policy_is_time_limited_and_matches_patch_manifest():
     payload = validate(ROOT, policy, now=datetime(2026, 7, 30, tzinfo=timezone.utc))
     assert payload["status"] == "valid"
     assert payload["review_after"] == "2026-10-30T00:00:00Z"
-    assert payload["vulnerabilities"] == ["CVE-2026-11940", "CVE-2026-11972", "CVE-2026-15308"]
+    assert payload["vulnerabilities"] == [
+        "CVE-2026-11940",
+        "CVE-2026-11972",
+        "CVE-2026-15308",
+        "CVE-2026-82049",
+    ]
 
 def test_grype_image_gate_blocks_fixed_high_findings_only(tmp_path):
     from scripts.enforce_grype_image_gate import collect_blocking_findings, has_available_fix
