@@ -1860,6 +1860,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default="",
         help="Persist this OpenCodex provider/model for the background bridge",
     )
+    intelligence_bridge_typesafe = intelligence_bridge_sub.add_parser(
+        "typesafe",
+        help="Inspect or probe TypeSafe AI (Jev System One) integration",
+    )
+    intelligence_bridge_typesafe.add_argument(
+        "action",
+        choices=["probe", "test"],
+        default="probe",
+        nargs="?",
+        help="Action to perform: probe (check API status) or test (run test triage evaluation)",
+    )
 
     research = sub.add_parser("research", help="Generate source-backed research reports and preflight checks")
     research_sub = research.add_subparsers(dest="research_cmd", required=True)
@@ -5150,6 +5161,21 @@ def main(argv: Optional[List[str]] = None) -> int:
                         )
                     else:
                         payload = codex_bridge_service_action(args.action, tail=args.tail, db_path=args.db_path)
+                elif args.intelligence_bridge_cmd == "typesafe":
+                    from secopsai.typesafe_adapter import probe_typesafe, invoke_typesafe_action
+                    if args.action == "test":
+                        sample_request = {
+                            "action": {"name": "triage_finding"},
+                            "context": {
+                                "finding_id": "TEST-FINDING-001",
+                                "title": "Unauthenticated API Endpoint Disclosed",
+                                "summary": "Internal metrics endpoint accessible without bearer token.",
+                                "severity": "medium",
+                            },
+                        }
+                        payload = invoke_typesafe_action(sample_request)
+                    else:
+                        payload = probe_typesafe()
                 else:
                     raise ValueError(f"unsupported intelligence bridge command: {args.intelligence_bridge_cmd}")
             else:

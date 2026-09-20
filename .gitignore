@@ -49,3 +49,7 @@ secopsai/vendor/**/logs/
 # Generated blog news-ingestion artifacts
 blog/data/news-cache.json
 blog/drafts/*.json
+
+# Agent skill installations
+.agents/
+skills-lock.json
