@@ -210,6 +210,12 @@ jobs:
           npm run check
           npm test
 
+      - name: Test ledger store Worker
+        working-directory: cloudflare/secopsai-ledger-store
+        run: |
+          npm run check
+          npm test
+
       - name: Rehearse D1 migrations locally
         working-directory: cloudflare/secopsai-core-edge
         run: |

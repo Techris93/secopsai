@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check src/index.js && node --check test/runner.test.js",
+    "check": "node --check src/ledger.js && node --check src/index.js && node --check test/runner.test.js",
     "test": "node --import ./test/register.mjs --test test/runner.test.js",
     "deploy": "wrangler deploy"
   },

@@ -79,3 +79,28 @@ def test_checkpoint_and_restore_round_trip_a_live_wal_database(tmp_path, monkeyp
     count = sqlite3.connect(restored).execute("SELECT count(*) FROM research_verdicts").fetchone()[0]
     assert count == 500
     live.close()
+
+
+def test_supervisor_refuses_to_start_an_empty_ledger(tmp_path, monkeypatch):
+    server = FakeLedgerServer()
+    monkeypatch.setattr(supervisor.urllib.request, "urlopen", server)
+    monkeypatch.setenv("SECOPS_FINDINGS_DIR", str(tmp_path / "research"))
+    monkeypatch.setenv("LEDGER_STORE_URL", "http://ledger.internal")
+    monkeypatch.setenv("LEDGER_STORE_TOKEN", "tok")
+    monkeypatch.delenv("SECOPSAI_LEDGER_ALLOW_EMPTY", raising=False)
+    monkeypatch.setattr(supervisor.LedgerStore, "__init__", lambda self, url, token: (setattr(self, "base_url", url), setattr(self, "token", token), setattr(self, "_open", server)) and None)
+    assert supervisor.main(["--cycles", "1"]) == 2
+    assert not (tmp_path / "research" / "openclaw_soc.db").exists()
+
+
+def test_checkpoint_only_uploads_existing_ledger(tmp_path, monkeypatch):
+    server = FakeLedgerServer()
+    data = tmp_path / "research"
+    data.mkdir()
+    sqlite3.connect(data / "openclaw_soc.db").execute("CREATE TABLE t (x)").connection.commit()
+    monkeypatch.setenv("SECOPS_FINDINGS_DIR", str(data))
+    monkeypatch.setenv("LEDGER_STORE_URL", "http://ledger.internal")
+    monkeypatch.setenv("LEDGER_STORE_TOKEN", "tok")
+    monkeypatch.setattr(supervisor.LedgerStore, "__init__", lambda self, url, token: (setattr(self, "base_url", url), setattr(self, "token", token), setattr(self, "_open", server)) and None)
+    assert supervisor.main(["--checkpoint-only"]) == 0
+    assert server.latest is not None

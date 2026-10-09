@@ -1,0 +1,89 @@
+name: Research Worker
+
+# Free replacement for the Render background worker.  Each run restores the
+# research ledger from R2 (via ledger.secopsai.dev), runs a bounded number of
+# worker cycles, checkpoints the ledger back, and exits.  The concurrency
+# group guarantees a single ledger writer.  Scheduled runs are inert until the
+# repository variable RESEARCH_WORKER_ENABLED is "true" (set it only after the
+# Render worker is suspended).
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: "Worker cycles to run"
+        required: false
+        default: "20"
+      allow_empty_ledger:
+        description: "Start a new empty ledger if none exists in R2 (first run only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: secopsai-research-ledger
+  cancel-in-progress: false
+
+jobs:
+  run:
+    if: github.event_name == 'workflow_dispatch' || vars.RESEARCH_WORKER_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      SECOPS_FINDINGS_DIR: /home/runner/research
+      SECOPSAI_LEDGER_ALLOW_EMPTY: ${{ inputs.allow_empty_ledger && 'true' || 'false' }}
+      LEDGER_STORE_URL: https://ledger.secopsai.dev
+      LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+      SECOPSAI_CORE_ENVIRONMENT: production
+      SECOPSAI_CORE_COORDINATOR_URL: https://core.secopsai.dev
+      SECOPSAI_CORE_WORKER_ID: github-actions-research-worker
+      SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
+      SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL: https://core.secopsai.dev/api/v1/research/alerts/webhook
+      SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET: ${{ secrets.SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET }}
+      SECOPSAI_RESEARCH_ALERT_EMAIL: research@secopsai.dev
+      SECOPSAI_RESEARCH_FROM_EMAIL: research@secopsai.dev
+      SECOPSAI_EMAIL_LOGO_URL: https://secopsai.dev/assets/favicon-512.png
+      SECOPSAI_EMAIL_PRODUCT_URL: https://secopsai.dev/
+      SECOPSAI_RESEARCH_ALERT_MAX_ATTEMPTS: "5"
+      SECOPSAI_SMTP_HOST: smtp.resend.com
+      SECOPSAI_SMTP_PORT: "465"
+      SECOPSAI_SMTP_USERNAME: resend
+      SECOPSAI_SMTP_PASSWORD: ${{ secrets.SECOPSAI_SMTP_PASSWORD }}
+      SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS: email,webhook
+      SECOPSAI_RESEARCH_EXTERNAL_ALERT_CHANNELS: webhook
+      SECOPSAI_NPM_ENRICHMENT_EVENT_LIMIT: "100"
+      SECOPSAI_NPM_STATIC_ANALYSIS_LIMIT: "10"
+      SECOPSAI_SENTRY_TRACES_SAMPLE_RATE: "0"
+      SECOPSAI_STORAGE_WARNING_USED_PERCENT: "70"
+      SECOPSAI_STORAGE_MAX_USED_PERCENT: "85"
+      SECOPSAI_RESEARCH_EVENT_RETENTION_HOURS: "24"
+      SECOPSAI_RESEARCH_CANDIDATE_EVENT_RETENTION_DAYS: "90"
+      SECOPSAI_RESEARCH_RUN_RETENTION_DAYS: "30"
+      SECOPSAI_RESEARCH_NPM_ANALYSIS_RETENTION_DAYS: "30"
+      SECOPSAI_RESEARCH_GAP_RETENTION_DAYS: "180"
+      SECOPSAI_RESEARCH_DELIVERY_RETENTION_DAYS: "90"
+      SECOPSAI_RESEARCH_SNAPSHOTS_PER_COLLECTOR: "2"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Require the ledger token
+        run: test -n "$LEDGER_STORE_TOKEN" || { echo "LEDGER_STORE_TOKEN secret is required" >&2; exit 1; }
+
+      - name: Restore ledger, run worker cycles, checkpoint
+        run: python -u cloudflare/secopsai-research-runner/container/supervisor.py --cycles "${{ inputs.cycles || '20' }}"

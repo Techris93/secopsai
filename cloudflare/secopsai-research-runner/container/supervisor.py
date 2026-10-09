@@ -112,21 +112,38 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str
         return key
 
 
-def main() -> int:
+def main(argv: Optional[list] = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--cycles", type=int, default=0, help="Run N worker cycles then checkpoint and exit (0 = run until SIGTERM)")
+    parser.add_argument("--checkpoint-only", action="store_true", help="Upload the existing local ledger and exit (migration)")
+    args = parser.parse_args(argv)
+
     data_dir = Path(os.environ.get("SECOPS_FINDINGS_DIR", "/home/secops/research"))
     data_dir.mkdir(parents=True, exist_ok=True)
     db_path = data_dir / "openclaw_soc.db"
     store = LedgerStore(os.environ["LEDGER_STORE_URL"], os.environ["LEDGER_STORE_TOKEN"])
     interval = max(300, int(os.environ.get("SECOPSAI_LEDGER_CHECKPOINT_SECONDS", "3600")))
 
+    if args.checkpoint_only:
+        key = checkpoint(db_path, store, data_dir)
+        _log("migration_checkpoint", key=key)
+        return 0 if key else 1
+
     if not db_path.exists():
         restored = store.download(db_path)
+        if not restored and os.environ.get("SECOPSAI_LEDGER_ALLOW_EMPTY", "").lower() != "true":
+            # Never silently start over: an empty ledger would later be
+            # checkpointed as LATEST and hide the migrated research history.
+            _log("ledger_missing", hint="migrate with --checkpoint-only or set SECOPSAI_LEDGER_ALLOW_EMPTY=true")
+            return 2
         _log("ledger_restored" if restored else "ledger_initialized", path=str(db_path))
 
-    worker = subprocess.Popen(
-        [sys.executable, "-u", "-m", "secopsai.cli", "research", "worker", "run", "--interval", os.environ.get("SECOPSAI_WORKER_INTERVAL", "60")],
-        env={**os.environ, "SECOPS_FINDINGS_DIR": str(data_dir)},
-    )
+    command = [sys.executable, "-u", "-m", "secopsai.cli", "research", "worker", "run", "--interval", os.environ.get("SECOPSAI_WORKER_INTERVAL", "60")]
+    if args.cycles > 0:
+        command += ["--max-cycles", str(args.cycles)]
+    worker = subprocess.Popen(command, env={**os.environ, "SECOPS_FINDINGS_DIR": str(data_dir)})
     stopping = threading.Event()
     lock = threading.Lock()
 
@@ -155,7 +172,13 @@ def main() -> int:
     exit_code = worker.wait()
     stopping.set()
     # Final checkpoint after the worker released its write transactions.
-    safe_checkpoint("shutdown")
+    # A failed final checkpoint fails the run so a lost update is visible.
+    with lock:
+        try:
+            checkpoint(db_path, store, data_dir)
+        except Exception as exc:
+            _log("checkpoint_failed", reason="shutdown", error=str(exc)[:500])
+            return 1
     _log("worker_exited", exit_code=exit_code)
     return exit_code if exit_code is not None else 1
 

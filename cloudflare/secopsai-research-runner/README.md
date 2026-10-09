@@ -1,5 +1,25 @@
 # SecOpsAI Research Runner (Cloudflare)
 
+> **Recommended free path:** `.github/workflows/research-worker.yml` runs the
+> same supervisor on a GitHub Actions schedule (free for this public
+> repository) and keeps the ledger in R2 through the free-plan
+> `secopsai-ledger-store` Worker at `https://ledger.secopsai.dev`. The
+> Container runner below is the always-on alternative (Workers Paid).
+>
+> Free-path cutover:
+> 1. Set GitHub secrets `SECOPSAI_CORE_BRIDGE_TOKEN`,
+>    `SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET`, `SECOPSAI_SMTP_PASSWORD`
+>    (same values as on Render). `LEDGER_STORE_TOKEN` is already set.
+> 2. Suspend the Render worker, then in a Render shell run
+>    `LEDGER_STORE_URL=https://ledger.secopsai.dev LEDGER_STORE_TOKEN=<token>
+>    SECOPS_FINDINGS_DIR=/var/data/secopsai-research python
+>    cloudflare/secopsai-research-runner/container/supervisor.py --checkpoint-only`
+>    to migrate the ledger (or start fresh with the `allow_empty_ledger`
+>    workflow input).
+> 3. Run **Research Worker** manually once, confirm a heartbeat for
+>    `github-actions-research-worker` on Core Edge, then set the repository
+>    variable `RESEARCH_WORKER_ENABLED=true`.
+
 Replaces the Render background worker (`render.yaml`). A Cron Trigger asks a
 single Durable Object to keep one Container running the unchanged Python
 research worker (`secopsai.cli research worker run`). Core API, alerts,
