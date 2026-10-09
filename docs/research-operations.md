@@ -250,15 +250,21 @@ npx wrangler d1 execute secopsai-blog-comments --remote \
 
 ## Mission Control
 
-- Sign in at `https://dashboard.secopsai.dev`. A session is not enough on its
-  own: the account must be in `DASHBOARD_OPERATOR_EMAILS` (Pages secret) or
-  carry `app_metadata.secopsai_role=operator`.
-- Cloudflare-native mode (Access + D1) activates when `CF_ACCESS_TEAM_DOMAIN`
-  and `CF_ACCESS_AUD` are set on the Pages project; the `DASHBOARD_DB` D1
-  binding is already in place. See the dashboard repository's
-  `CLOUDFLARE_PAGES.md`.
-- Local mode: `./start-local-dashboard-stack.sh` in
+- **Hosted:** `https://dashboard.secopsai.dev`, protected by Cloudflare Zero
+  Trust Access (application *SecOpsAI Mission Control*, team
+  `divine-fog-e63b.cloudflareaccess.com`). Sign in with an allowed email and
+  the one-time PIN Cloudflare sends. The Worker verifies the Access token and
+  also requires the email to be in `DASHBOARD_OPERATOR_EMAILS` (Pages secret).
+  Data lives in the `DASHBOARD_DB` D1 database.
+- **Add an operator:** add the email to the Access policy *Operators* **and**
+  to `DASHBOARD_OPERATOR_EMAILS`, then redeploy the dashboard (any push to
+  its `main`).
+- **Local:** `./start-local-dashboard-stack.sh` in
   `secopsai-dashboard/secopsai-dashboard`, then `http://127.0.0.1:45680`.
+  Sign in with `DASHBOARD_LOCAL_AUTH_TOKEN` from that folder's `.env`. The
+  local console shows the helper-backed panels (research, triage, ontology,
+  intelligence); runs, work items and findings live in the hosted console.
+- Supabase was retired on 9 October 2026; nothing depends on it.
 
 ## Model bridge
 
@@ -291,6 +297,8 @@ Run on 9 October 2026 with an isolated ledger; no production data changed.
 | Ledger migration (Render → R2) | 4.22 GB ledger streamed in 16 parts in 155 s; Render idled, then deleted |
 | Hosted worker (GitHub Actions) | Ledger restored from R2, cycles ran, heartbeat in Core, checkpoint (526 MB compressed) uploaded |
 | Hosted case projection | 23 cases visible to Mission Control; sync cursor carried over with the ledger |
+| Mission Control on Cloudflare | Access redirect for anonymous requests; signed-in operator loads all data from D1; zero Supabase requests; local console opens only with the valid local token |
+| Email alerts | Worker run with `SECOPSAI_SMTP_PASSWORD` set reports channels `email` + `webhook` |
 | Self-test after migration | All 8 stages pass (visual QA included); `--skip-visual-qa` confirms publication stays blocked |
 | News intake (live feeds) | KEV and CERT/CC notes pass; marketing, newsletters, navigation junk blocked |
 
