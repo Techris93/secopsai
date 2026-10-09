@@ -359,9 +359,21 @@
         .tag-live { color: var(--ok); }
         .tag-beta { color: var(--note); }
 
+        /* ── Share row ───────────────────────────────────────── */
+        .share-row { margin-top: 56px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+        .share-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+        .share-links { display: flex; flex-wrap: wrap; gap: 8px; }
+        .share-link {
+            font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+            color: var(--ink); background: transparent; border: 1px solid var(--rule, #c9cdd2);
+            padding: 7px 10px; text-decoration: none; cursor: pointer; line-height: 1.2;
+        }
+        .share-link:hover, .share-link:focus-visible { color: var(--note); border-color: var(--note); }
+        .share-native { color: var(--paper, #fbfaf6); background: var(--ink); border-color: var(--ink); }
+
         /* ── Footer ──────────────────────────────────────────── */
         .doc-footer {
-            margin-top: 64px;
+            margin-top: 24px;
             border-top: 2px solid var(--ink);
             padding-top: 16px;
             display: flex;
@@ -770,6 +782,20 @@
                 <tr><td>[R6]</td><td>Research cases and disclosure workflow</td><td><a href="https://docs.secopsai.dev/research-cases/">docs.secopsai.dev/research-cases</a></td></tr>
             </tbody>
         </table>
+    </section>
+
+    <section class="share-row" aria-label="Share SecOpsAI">
+        <span class="share-label">Share SecOpsAI</span>
+        <div class="share-links">
+                <button class="share-link share-native" type="button" data-share-native data-share-url="https://secopsai.dev/" data-share-title="SecOpsAI" hidden>Share…</button>
+                <a class="share-link" href="https://x.com/intent/post?text=SecOpsAI%3A%20security%20visibility%20for%20your%20network%20and%20your%20software%20supply%20chain%2C%20local-first&amp;url=https%3A%2F%2Fsecopsai.dev%2F" target="_blank" rel="noopener noreferrer" aria-label="Share on X">X</a>
+                <a class="share-link" href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fsecopsai.dev%2F" target="_blank" rel="noopener noreferrer" aria-label="Share on LinkedIn">LinkedIn</a>
+                <a class="share-link" href="https://bsky.app/intent/compose?text=SecOpsAI%3A%20security%20visibility%20for%20your%20network%20and%20your%20software%20supply%20chain%2C%20local-first%20https%3A%2F%2Fsecopsai.dev%2F" target="_blank" rel="noopener noreferrer" aria-label="Share on Bluesky">Bluesky</a>
+                <a class="share-link" href="https://www.reddit.com/submit?url=https%3A%2F%2Fsecopsai.dev%2F&amp;title=SecOpsAI%3A%20security%20visibility%20for%20your%20network%20and%20your%20software%20supply%20chain%2C%20local-first" target="_blank" rel="noopener noreferrer" aria-label="Share on Reddit">Reddit</a>
+                <a class="share-link" href="https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fsecopsai.dev%2F&amp;t=SecOpsAI%3A%20security%20visibility%20for%20your%20network%20and%20your%20software%20supply%20chain%2C%20local-first" target="_blank" rel="noopener noreferrer" aria-label="Share on Hacker News">Hacker News</a>
+                <a class="share-link" href="mailto:?subject=SecOpsAI&amp;body=https%3A%2F%2Fsecopsai.dev%2F" aria-label="Share by email">Email</a>
+                <button class="share-link copy-btn" type="button" data-copy="https://secopsai.dev/" aria-label="Copy link to secopsai.dev">Copy link</button>
+        </div>
     </section>
 
     <footer class="doc-footer">

@@ -49,3 +49,13 @@ document.querySelectorAll(".copy-btn").forEach((button) => {
     }, 1600);
   });
 });
+
+// Native share sheet where the browser offers one (mostly phones).
+if (typeof navigator.share === "function") {
+  document.querySelectorAll("[data-share-native]").forEach((button) => {
+    button.hidden = false;
+    button.addEventListener("click", () => {
+      navigator.share({ title: button.dataset.shareTitle || document.title, url: button.dataset.shareUrl || location.href }).catch(() => {});
+    });
+  });
+}

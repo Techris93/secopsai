@@ -1119,7 +1119,13 @@ def test_posts_have_share_links_and_raster_social_cards(tmp_path):
     paths = blog.BlogPaths(root)
     post = {"slug": "share-test", "title": "Share test post", "severity": "info", "categories": ["Original Research"], "published_at": "2026-10-09T00:00:00Z"}
     src = blog._write_social_card_png(post, paths)
-    assert src == "/assets/social/share-test.png" and (paths.social / "share-test.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    try:
+        import PIL  # noqa: F401  (Pillow is installed only where the blog is built)
+    except ImportError:
+        assert src == "", "without Pillow the SVG card must stay in use"
+    else:
+        assert src == "/assets/social/share-test.png"
+        assert (paths.social / "share-test.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
     bar = blog._render_share_bar(post)
     for host in ("x.com/intent/post", "linkedin.com/sharing", "bsky.app/intent/compose", "reddit.com/submit", "news.ycombinator.com/submitlink", "facebook.com/sharer"):
         assert host in bar
