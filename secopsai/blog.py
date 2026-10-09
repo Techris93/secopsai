@@ -2424,6 +2424,11 @@ def retire_posts(slugs: Iterable[str], *, paths: Optional[BlogPaths] = None) -> 
     for slug in retired:
         for path in (_post_json_path(slug, paths), _post_html_path(slug, paths), _social_card_path(slug, paths)):
             path.unlink(missing_ok=True)
+        # Copied source media belongs to the original publisher; do not keep
+        # serving it once the post is retired.
+        media_dir = paths.root / "assets" / "posts" / slug
+        if media_dir.is_dir() and media_dir.resolve().parent == (paths.root / "assets" / "posts").resolve():
+            shutil.rmtree(media_dir)
         draft = _draft_path(slug, paths)
         if draft.exists():
             record = _load_json(draft)
