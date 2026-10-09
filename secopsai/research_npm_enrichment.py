@@ -373,7 +373,8 @@ def _suspicion_score(summary: Dict[str, Any], *, previous: Optional[Dict[str, An
         score += points
         signals.append({"id": "new_lifecycle_hook", "points": points, "hooks": new_lifecycle})
     elif lifecycle:
-        points = 40 if baseline_only or not previous else 20
+        # An unchanged or first-observed hook is common and not a release delta.
+        points = 15 if baseline_only or not previous else 10
         score += points
         signals.append({"id": "lifecycle_hook", "points": points, "hooks": sorted(lifecycle)})
     tokens = sorted(str(token) for token in summary.get("script_risk_tokens") or [])
@@ -400,31 +401,58 @@ def _suspicion_score(summary: Dict[str, Any], *, previous: Optional[Dict[str, An
     return min(100, score), signals
 
 
+# Generic capability strings (network URLs, eval, child_process, "token")
+# occur in most benign bundles.  Measured against the research ledger, they
+# fired on 79-98% of candidates later judged not_substantiated, and summing
+# them pushed the median score of both benign and suspicious releases to 99.
+# They now contribute a small, capped amount; high scores require corroborated
+# behaviour chains.
+CAPABILITY_WEIGHTS = {
+    "network-endpoint": 2,
+    "outbound-network": 2,
+    "dynamic-eval": 5,
+    "install-hook": 5,
+    "encoded-payload": 6,
+    "process-execution": 6,
+    "credential-access": 8,
+    "browser-payment-access": 8,
+    "persistence": 8,
+}
+CAPABILITY_CAP = 25
+INSTALL_HOOKS = {"preinstall", "install", "postinstall", "prepublish"}
+SCORING_ALGORITHM_VERSION = "npm-proactive-static.v2"
+
+
+def _behaviour_chains(indicator_ids: set[str], *, install_time: bool) -> List[Dict[str, Any]]:
+    network = bool(indicator_ids & {"network-endpoint", "outbound-network"})
+    chains: List[Dict[str, Any]] = []
+    if install_time and "process-execution" in indicator_ids and (network or "encoded-payload" in indicator_ids):
+        chains.append({"id": "chain_install_time_execution", "points": 35})
+    if install_time and indicator_ids & {"credential-access", "browser-payment-access"} and network:
+        chains.append({"id": "chain_install_time_credential_egress", "points": 30})
+    if "persistence" in indicator_ids and "process-execution" in indicator_ids:
+        chains.append({"id": "chain_persistence_with_execution", "points": 15})
+    if "encoded-payload" in indicator_ids and indicator_ids & {"dynamic-eval", "process-execution"}:
+        chains.append({"id": "chain_obfuscated_execution", "points": 15})
+    return chains
+
+
 def _artifact_score(analysis: Dict[str, Any]) -> Tuple[int, List[Dict[str, Any]]]:
-    """Convert bounded static indicators into a conservative triage score."""
-    weights = {
-        "credential-access": 40,
-        "browser-payment-access": 40,
-        "persistence": 35,
-        "process-execution": 20,
-        "dynamic-eval": 20,
-        "encoded-payload": 20,
-        "install-hook": 15,
-        "network-endpoint": 5,
-        "outbound-network": 5,
-    }
+    """Convert bounded static indicators into a calibrated triage score."""
     indicators = analysis.get("indicators") if isinstance(analysis.get("indicators"), list) else []
     lifecycle_scripts = analysis.get("lifecycle_scripts") if isinstance(analysis.get("lifecycle_scripts"), dict) else {}
-    has_lifecycle = bool(lifecycle_scripts and any(name in {"preinstall", "install", "postinstall", "prepublish"} for name in lifecycle_scripts))
+    lifecycle_names = set(lifecycle_scripts) | set(analysis.get("lifecycle_script_names") or [])
+    install_time = bool(lifecycle_names & INSTALL_HOOKS)
 
-    # Scale indicator weighting by bundle-size density for packages > 50KB
+    # Scale generic indicator weighting by bundle-size density for packages > 50KB
     expanded_bytes = int(analysis.get("expanded_bytes") or analysis.get("artifact_bytes") or 0)
     size_kb = max(1.0, expanded_bytes / 1024.0)
     density_damping = 1.0 if size_kb <= 50.0 else max(0.25, min(1.0, 100.0 / math.sqrt(size_kb)))
 
     signals: List[Dict[str, Any]] = []
     seen: set[str] = set()
-    score = 0
+    indicator_ids: set[str] = set()
+    capability = 0
     for indicator in indicators:
         if not isinstance(indicator, dict):
             continue
@@ -435,16 +463,29 @@ def _artifact_score(analysis: Dict[str, Any]) -> Tuple[int, List[Dict[str, Any]]
         if not indicator_id or fingerprint in seen:
             continue
         seen.add(fingerprint)
-        base_points = weights.get(indicator_id, 0)
-        if base_points:
-            # Apply density scaling to generic string hits on massive bundles without lifecycle scripts
-            if not has_lifecycle and size_kb > 50.0 and indicator_id in {"credential-access", "persistence", "encoded-payload", "dynamic-eval"}:
-                points = max(5, int(base_points * density_damping))
-            else:
-                points = base_points
-            score += points
-            signals.append({"id": f"artifact_{indicator_id}", "points": points, "indicator_id": indicator_id})
+        base_points = CAPABILITY_WEIGHTS.get(indicator_id, 0)
+        if not base_points or indicator_id in indicator_ids:
+            continue
+        indicator_ids.add(indicator_id)
+        if not install_time and size_kb > 50.0 and indicator_id in {"credential-access", "persistence", "encoded-payload", "dynamic-eval"}:
+            points = max(1, int(base_points * density_damping))
+        else:
+            points = base_points
+        capability += points
+        signals.append({"id": f"artifact_{indicator_id}", "points": points, "indicator_id": indicator_id})
+    score = min(CAPABILITY_CAP, capability)
+    chains = _behaviour_chains(indicator_ids, install_time=install_time)
+    signals.extend(chains)
+    score += sum(int(chain["points"]) for chain in chains)
     return min(100, score), signals
+
+
+def _combine_scores(metadata_score: int, artifact_score: int) -> Tuple[int, List[Dict[str, Any]]]:
+    """Release-delta evidence and artifact behaviour reinforce each other."""
+    score = max(metadata_score, artifact_score)
+    if metadata_score >= 30 and artifact_score >= 30:
+        return min(100, score + 15), [{"id": "metadata_and_artifact_corroborate", "points": 15}]
+    return score, []
 
 
 def _analysis_evidence(intake: Dict[str, Any]) -> Dict[str, Any]:
@@ -484,8 +525,8 @@ def _store_analysis(
             intake.get("analysis") if isinstance(intake.get("analysis"), dict) else {}
         )
         if artifact_signals:
-            score = max(score, artifact_score)
-            signals = [*signals, *artifact_signals]
+            score, corroboration = _combine_scores(int(score), artifact_score)
+            signals = [*signals, *artifact_signals, *corroboration]
     artifact_sha256 = str(evidence.get("artifact_sha256") or "")
     status = "completed" if intake else "failed"
     now = _now()
@@ -557,8 +598,10 @@ def _promote_static_candidate(*, db_path: Optional[str], event: Dict[str, Any], 
         elif "persistence" in iid: categories.add("persistence")
         elif "install" in iid: categories.add("install_hook")
 
-    # Threshold gate: score >= 65 with execution primitives OR score >= 40 with lifecycle hook and >= 2 categories
-    is_candidate = (score_raw >= 65 and has_execution_primitives) or (score_raw >= 40 and has_lifecycle and len(categories) >= 2) or (score_raw >= 40 and has_execution_primitives and len(categories) >= 2)
+    # Promote on calibrated evidence: a corroborated behaviour chain, or a
+    # strong release delta (changed/new install hook, publisher change).
+    has_chain = any(str(signal.get("id") or "").startswith("chain_") for signal in result.get("signals") or [] if isinstance(signal, dict))
+    is_candidate = has_execution_primitives and len(categories) >= 2 and (score_raw >= 50 or (has_chain and score_raw >= 40))
     if not is_candidate:
         return None
 
@@ -587,7 +630,8 @@ def _promote_static_candidate(*, db_path: Optional[str], event: Dict[str, Any], 
         f"New npm release {event.get('package')}@{event.get('version')} triggered explainable static-risk signals. "
         "SecOpsAI collected the exact artifact without executing it; this is a proactive lead, not a maliciousness verdict."
     )
-    score = max(40, min(99, int(result.get("score") or 0) + (25 if result.get("status") == "completed" else 0)))
+    # The score is used as-is: completing static analysis is not evidence.
+    score = max(1, min(99, int(result.get("score") or 0)))
     with closing(soc_store.connect(db_path)) as connection:
         with _write_transaction(connection, db_path):
             connection.execute(
@@ -598,7 +642,8 @@ def _promote_static_candidate(*, db_path: Optional[str], event: Dict[str, Any], 
                VALUES (?, NULL, NULL, 'npm', ?, ?, 'npm-proactive-static.v1', ?, ?, ?, 'new', NULL, ?, ?, ?, ?)
                ON CONFLICT(ecosystem, package, version, reference_identifier)
                DO UPDATE SET score=excluded.score, score_components_json=excluded.score_components_json,
-                 reason=excluded.reason, evidence_json=excluded.evidence_json, last_seen=excluded.last_seen""",
+                 reason=excluded.reason, evidence_json=excluded.evidence_json, last_seen=excluded.last_seen,
+                 algorithm_version=excluded.algorithm_version""",
             (
                 candidate_id,
                 event.get("package"),
@@ -609,7 +654,7 @@ def _promote_static_candidate(*, db_path: Optional[str], event: Dict[str, Any], 
                 _json(evidence),
                 event.get("registry_timestamp") or _now(),
                 _now(),
-                "npm-proactive-static.v1",
+                SCORING_ALGORITHM_VERSION,
             ),
             )
             candidate = connection.execute(
@@ -623,11 +668,16 @@ def _promote_static_candidate(*, db_path: Optional[str], event: Dict[str, Any], 
     payload["evidence"] = evidence
     payload["score_components"] = result.get("signals") or []
 
-    # Execution primitives gate for high/critical severity promotion:
-    if has_execution_primitives:
-        severity = "critical" if score >= 90 else "high" if score >= 70 else "medium"
+    # Critical requires a corroborated behaviour chain, not a sum of generic hits.
+    has_chain = any(str(signal.get("id") or "").startswith("chain_") for signal in result.get("signals") or [] if isinstance(signal, dict))
+    if has_chain and score >= 85:
+        severity = "critical"
+    elif has_chain and score >= 60:
+        severity = "high"
+    elif score >= 50:
+        severity = "medium"
     else:
-        severity = "medium" if score >= 70 else "low"
+        severity = "low"
 
     alert = create_candidate_alert(
         payload,
