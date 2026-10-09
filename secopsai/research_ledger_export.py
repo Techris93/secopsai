@@ -44,6 +44,9 @@ class _Uploader:
     def _call(self, method: str, path: str, body: Optional[bytes] = None) -> dict:
         request = urllib.request.Request(f"{self.base_url}{path}", data=body, method=method)
         request.add_header("Authorization", f"Bearer {self.token}")
+        # Cloudflare's browser integrity check rejects the default
+        # Python-urllib agent with 403 (error 1010) before the Worker runs.
+        request.add_header("User-Agent", "SecOpsAI-Research/1.0")
         if body is not None:
             request.add_header("Content-Type", "application/octet-stream")
         for attempt in range(5):

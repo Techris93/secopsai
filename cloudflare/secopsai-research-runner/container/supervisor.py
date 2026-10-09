@@ -35,6 +35,9 @@ from typing import Callable, Optional
 
 PART_BYTES = 32 * 1024 * 1024
 REQUEST_TIMEOUT_SECONDS = 300
+# Cloudflare's browser integrity check rejects the default Python-urllib
+# agent with 403 (error 1010) before the Worker runs.
+USER_AGENT = "SecOpsAI-Research/1.0"
 
 
 def _log(event: str, **fields: object) -> None:
@@ -52,6 +55,7 @@ class LedgerStore:
     def _request(self, method: str, path: str, body: Optional[bytes] = None) -> bytes:
         request = urllib.request.Request(f"{self.base_url}{path}", data=body, method=method)
         request.add_header("Authorization", f"Bearer {self.token}")
+        request.add_header("User-Agent", USER_AGENT)
         if body is not None:
             request.add_header("Content-Type", "application/octet-stream")
         with self._open(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
@@ -60,6 +64,7 @@ class LedgerStore:
     def download(self, destination: Path) -> bool:
         request = urllib.request.Request(f"{self.base_url}/snapshot", method="GET")
         request.add_header("Authorization", f"Bearer {self.token}")
+        request.add_header("User-Agent", USER_AGENT)
         try:
             with self._open(request, timeout=REQUEST_TIMEOUT_SECONDS) as response, gzip.GzipFile(fileobj=response) as stream:
                 partial = destination.with_suffix(".restore")

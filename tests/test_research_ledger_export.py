@@ -41,3 +41,22 @@ def test_export_runs_once_and_requests_idle(tmp_path, monkeypatch):
     assert len(calls) == 1
     monkeypatch.delenv("SECOPSAI_LEDGER_EXPORT_URL")
     assert export.maybe_export_before_worker(str(db)) is False
+
+
+def test_export_requests_send_a_non_default_user_agent():
+    # Cloudflare answers the default Python-urllib agent with 403 (error 1010).
+    seen = []
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def opener(request, timeout=None):
+        seen.append(request.get_header("User-agent"))
+        return Response(json.dumps({"upload_id": "u", "key": "ledger/snapshots/x.db.gz"}).encode())
+
+    export._Uploader("https://ledger.example", "tok", opener)
+    assert seen == ["SecOpsAI-Research/1.0"]
