@@ -84,23 +84,14 @@
 <ul>
 <li>Source type: Threat Intelligence</li>
 <li>Severity hint: medium (Security-relevant vulnerability/news signal.)</li>
-<li>Extracted signals: none detected deterministically</li>
 </ul>
 <h2>What SecOpsAI Can Detect</h2>
 <p>SecOpsAI can help operators review token exposure, credential-rotation tasks, CI/CD workflow risk, and SOC findings related to secret leakage or suspicious authentication activity.</p>
 <h2>Extracted Intelligence</h2>
-<h3>CVEs</h3>
-<ul>
-<li>None found deterministically; reviewer should confirm source details.</li>
-</ul>
 <h3>Affected Packages Or Products</h3>
 <ul>
 <li>Cloudflare</li>
 <li>OAuth</li>
-</ul>
-<h2>IOCs</h2>
-<ul>
-<li>None found deterministically; reviewer should add source-backed indicators if present.</li>
 </ul>
 <h2>Recommended Actions</h2>
 <ul>
@@ -112,8 +103,7 @@
 <h2>Operator Commands</h2>
 <pre><code>secopsai triage summary
 secopsai research preflight
-secopsai supply-chain advisory list
-secopsai blog news-review show news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all</code></pre>
+secopsai supply-chain advisory list</code></pre>
 <h2>References</h2>
 <ul>
 <li><a class="inline-ref" href="https://blog.cloudflare.com/oauth-for-all/" rel="noopener noreferrer" target="_blank">https://blog.cloudflare.com/oauth-for-all/</a></li>

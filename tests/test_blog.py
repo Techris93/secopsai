@@ -414,6 +414,7 @@ class BlogPublishingTests(unittest.TestCase):
                 "review_status": "needs_review",
                 "review_checklist": blog._review_checklist(),
                 "body_markdown": "# External story\n\nNeeds review.",
+                "extracted": {"cves": ["CVE-2026-12345"], "products": ["Example Build Server"]},
             })
             draft_path = paths.drafts / "external-story.json"
             draft_path.write_text(json.dumps(draft), encoding="utf-8")
@@ -556,6 +557,7 @@ class BlogPublishingTests(unittest.TestCase):
                 "review_status": "approved",
                 "review_checklist": blog._review_checklist(),
                 "body_markdown": ready_body,
+                "extracted": {"cves": ["CVE-2026-12345"]},
             })
             draft_path = paths.drafts / "updated-public-story.json"
             draft_path.write_text(json.dumps(draft), encoding="utf-8")
@@ -1042,3 +1044,33 @@ class BlogPublishingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BlogQualityGateTests(unittest.TestCase):
+    def _news(self, **overrides):
+        post = blog._base_post(title="Vendor update", summary="A distinct summary of the source.", categories=["Security News"], sources=["https://example.com/a"])
+        post.update({"external_news": True, "body_markdown": "## Recommended Actions\n\nPatch.\n\n## What SecOpsAI Can Detect\n\n" + blog._secopsai_detection_context("general")})
+        post.update(overrides)
+        return post
+
+    def test_news_without_extracted_intelligence_is_blocked(self):
+        blockers = blog.score_external_news_readiness(self._news())["readiness_blockers"]
+        self.assertIn("no extracted intelligence (CVE, package, product, or IOC)", blockers)
+        self.assertTrue(any("generic template" in item for item in blockers))
+
+    def test_vendor_marketing_titles_are_blocked(self):
+        post = self._news(title="Microsoft a Leader in the Forrester Wave for endpoint management", extracted={"products": ["Intune"]})
+        self.assertTrue(any("marketing" in item for item in blog.score_external_news_readiness(post)["readiness_blockers"]))
+
+    def test_public_bodies_drop_template_placeholders(self):
+        body = (
+            "## Extracted Intelligence\n\n### CVEs\n\n- None found deterministically; reviewer should confirm source details.\n\n"
+            "## IOCs\n\n- None found deterministically; reviewer should add source-backed indicators if present.\n\n"
+            "## Operator Commands\n\n```bash\nsecopsai blog news-review show news-x\n```\n\n"
+            "## References\n\n- https://example.com/a\n"
+        )
+        cleaned = blog.strip_public_template_lines(body)
+        self.assertNotIn("deterministically", cleaned)
+        self.assertNotIn("news-review", cleaned)
+        self.assertNotIn("## IOCs", cleaned)
+        self.assertIn("## References", cleaned)
