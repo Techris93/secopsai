@@ -101,7 +101,7 @@ jobs:
           bash -n setup.sh
           sh -n docs/install.sh
           sh -n docs/install-hermes.sh
-          cmp website/index.html www/index.html
+          diff -r website www
           cmp docs/install.sh website/install.sh
           cmp docs/install.sh www/install.sh
           cmp docs/install-hermes.sh website/install-hermes.sh
