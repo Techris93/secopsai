@@ -30,7 +30,7 @@ Every public domain publishes `/.well-known/security.txt` (RFC 9116).
 
 1. **The worker runs every 30 minutes** (`.github/workflows/research-worker.yml`),
    started by the ledger-store Worker's Cron Trigger (`:07` and `:37`).
-   Each run restores the ledger from R2, runs up to 6 worker cycles within a 30-minute budget (eight
+   Each run restores the ledger from R2, runs up to 6 worker cycles within a 20-minute budget (eight
    registry collectors, npm enrichment and static triage, external advisory
    intake, scoring, daily automation, retention), checkpoints the ledger and
    exits. One run at a time is enforced.

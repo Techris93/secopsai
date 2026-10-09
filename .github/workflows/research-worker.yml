@@ -93,6 +93,6 @@ jobs:
         run: test -n "$LEDGER_STORE_TOKEN" || { echo "LEDGER_STORE_TOKEN secret is required" >&2; exit 1; }
 
       - name: Restore ledger, run worker cycles, checkpoint
-        # Cycles take ~8-10 minutes; the 30-minute budget leaves time to
-        # restore and checkpoint inside the 45-minute job timeout.
-        run: python -u cloudflare/secopsai-research-runner/container/supervisor.py --cycles "${{ inputs.cycles || '6' }}" --max-seconds 1800
+        # Cycles take ~3-10 minutes; restore + checkpoint add ~5. A 20-minute
+        # budget keeps each run (~25 min) inside the 30-minute cadence.
+        run: python -u cloudflare/secopsai-research-runner/container/supervisor.py --cycles "${{ inputs.cycles || '6' }}" --max-seconds 1200
