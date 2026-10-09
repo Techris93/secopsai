@@ -104,3 +104,26 @@ def test_checkpoint_only_uploads_existing_ledger(tmp_path, monkeypatch):
     monkeypatch.setattr(supervisor.LedgerStore, "__init__", lambda self, url, token: (setattr(self, "base_url", url), setattr(self, "token", token), setattr(self, "_open", server)) and None)
     assert supervisor.main(["--checkpoint-only"]) == 0
     assert server.latest is not None
+
+
+def test_time_budget_stops_the_worker_and_still_checkpoints(tmp_path, monkeypatch):
+    # Regression: a run that outlived the CI job timeout was killed before the
+    # final checkpoint and lost all of its work.
+    import subprocess as real_subprocess
+    import time
+
+    server = FakeLedgerServer()
+    data = tmp_path / "research"
+    data.mkdir()
+    sqlite3.connect(data / "openclaw_soc.db").execute("CREATE TABLE t (x)").connection.commit()
+    monkeypatch.setenv("SECOPS_FINDINGS_DIR", str(data))
+    monkeypatch.setenv("LEDGER_STORE_URL", "http://ledger.internal")
+    monkeypatch.setenv("LEDGER_STORE_TOKEN", "tok")
+    monkeypatch.setattr(supervisor.LedgerStore, "__init__", lambda self, url, token: (setattr(self, "base_url", url), setattr(self, "token", token), setattr(self, "_open", server)) and None)
+    slow_worker = [supervisor.sys.executable, "-c", "import time; time.sleep(120)"]
+    original_popen = real_subprocess.Popen
+    monkeypatch.setattr(supervisor.subprocess, "Popen", lambda _cmd, **kw: original_popen(slow_worker, **kw))
+    started = time.monotonic()
+    assert supervisor.main(["--cycles", "5", "--max-seconds", "1"]) == 0
+    assert time.monotonic() - started < 60
+    assert server.latest is not None, "budget stop must still checkpoint the ledger"

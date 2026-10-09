@@ -117,12 +117,16 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str
         return key
 
 
+GRACE_SECONDS = 180
+
+
 def main(argv: Optional[list] = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--cycles", type=int, default=0, help="Run N worker cycles then checkpoint and exit (0 = run until SIGTERM)")
     parser.add_argument("--checkpoint-only", action="store_true", help="Upload the existing local ledger and exit (migration)")
+    parser.add_argument("--max-seconds", type=int, default=0, help="Stop the worker after this many seconds, then checkpoint (0 = no budget)")
     args = parser.parse_args(argv)
 
     data_dir = Path(os.environ.get("SECOPS_FINDINGS_DIR", "/home/secops/research"))
@@ -174,7 +178,25 @@ def main(argv: Optional[list] = None) -> int:
     signal.signal(signal.SIGTERM, handle_term)
     signal.signal(signal.SIGINT, handle_term)
 
+    if args.max_seconds > 0:
+        # A CI job timeout kills the runner without a final checkpoint, losing
+        # the whole run.  Stop the worker inside the budget instead, so the
+        # ledger is always saved.
+        def budget() -> None:
+            if not stopping.wait(args.max_seconds) and worker.poll() is None:
+                _log("time_budget_reached", seconds=args.max_seconds)
+                worker.terminate()
+                try:
+                    worker.wait(timeout=GRACE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    _log("worker_killed", reason="did not stop within grace period")
+                    worker.kill()
+
+        threading.Thread(target=budget, daemon=True).start()
+
     exit_code = worker.wait()
+    if exit_code in (-signal.SIGTERM, -signal.SIGKILL) and args.max_seconds > 0:
+        exit_code = 0  # stopped by our own budget, not a failure
     stopping.set()
     # Final checkpoint after the worker released its write transactions.
     # A failed final checkpoint fails the run so a lost update is visible.
