@@ -143,6 +143,25 @@ export async function handleRequest(request, env) {
       requireBearer(request, env.CORE_BRIDGE_TOKEN);
       return response(200, await syncOntology(request, env, requestId), requestId);
     }
+    if (request.method === "POST" && url.pathname === "/api/v1/research/cases/sync") {
+      requireBearer(request, env.CORE_BRIDGE_TOKEN);
+      return response(200, await syncResearchCases(request, env, requestId), requestId);
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/research/cases") {
+      requireBearer(request, env.CORE_READ_TOKEN);
+      const result = await listResearchCaseProjections(env.DB, url.searchParams, clean(env.CORE_WORKSPACE_ID, 160));
+      return response(200, result, requestId);
+    }
+    const researchCaseMatch = url.pathname.match(/^\/api\/v1\/research\/cases\/(RSC-[A-F0-9]{12})$/);
+    if (researchCaseMatch && request.method === "GET") {
+      requireBearer(request, env.CORE_READ_TOKEN);
+      const row = await env.DB.prepare(
+        "SELECT detail_json, synced_at FROM research_case_projections WHERE workspace_id=? AND case_id=?",
+      ).bind(clean(env.CORE_WORKSPACE_ID, 160) || "hosted", researchCaseMatch[1]).first();
+      if (!row) throw new HttpError(404, "not_found", "Research case is not synchronized to the hosted Core");
+      await writeAudit(env.DB, { requestId, action: "research.case.read", actorRole: "operator_read", result: "success", sourceInstance: "secopsai-core-edge", details: { case_id: researchCaseMatch[1] }, createdAt: nowIso() });
+      return response(200, { case: { ...parseJson(row.detail_json, {}), hosted_projection: true, synced_at: row.synced_at } }, requestId);
+    }
     if (request.method === "GET" && url.pathname === "/api/v1/research/alerts") {
       requireBearer(request, env.CORE_READ_TOKEN);
       const limit = boundedLimit(url.searchParams.get("limit"), 100, 500);
@@ -746,6 +765,63 @@ function ontologyReadBudget(maximum) {
       return statement.first();
     },
   };
+}
+
+const RESEARCH_CASE_ID_RE = /^RSC-[A-F0-9]{12}$/;
+const MAX_RESEARCH_CASE_SYNC = 100;
+const MAX_RESEARCH_CASE_SYNC_BYTES = 4 * 1024 * 1024;
+const RESEARCH_CASE_STATUSES = new Set(["draft", "investigating", "validation", "disclosure_pending", "ready_to_publish", "published", "closed"]);
+
+async function syncResearchCases(request, env, requestId) {
+  const payload = await readJsonObject(request, MAX_RESEARCH_CASE_SYNC_BYTES, "Research case synchronization");
+  const cases = payload.cases;
+  if (!Array.isArray(cases)) throw new HttpError(422, "invalid_payload", "cases must be an array");
+  if (cases.length > MAX_RESEARCH_CASE_SYNC) throw new HttpError(413, "payload_too_large", `At most ${MAX_RESEARCH_CASE_SYNC} cases per request`);
+  const workspace = clean(env.CORE_WORKSPACE_ID, 160) || "hosted";
+  const now = nowIso();
+  const statements = [];
+  const rejected = [];
+  for (const item of cases) {
+    const caseId = clean(item?.case_id, 32);
+    const summary = item?.summary;
+    const detail = item?.detail;
+    const updatedAt = clean(item?.updated_at, 40);
+    const summaryJson = JSON.stringify(summary ?? {});
+    const detailJson = JSON.stringify(detail ?? {});
+    if (!RESEARCH_CASE_ID_RE.test(caseId) || !updatedAt || typeof summary !== "object" || typeof detail !== "object") {
+      rejected.push({ case_id: caseId, reason: "invalid_case" });
+      continue;
+    }
+    if (summaryJson.length > 16384 || detailJson.length > 98304) {
+      rejected.push({ case_id: caseId, reason: "too_large" });
+      continue;
+    }
+    const status = RESEARCH_CASE_STATUSES.has(clean(summary.status, 40)) ? clean(summary.status, 40) : "draft";
+    // Newer-wins: an older replay never overwrites a newer projection.
+    statements.push(env.DB.prepare(`
+      INSERT INTO research_case_projections (workspace_id, case_id, case_updated_at, status, severity, case_type, title, summary_json, detail_json, synced_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(workspace_id, case_id) DO UPDATE SET
+        case_updated_at=excluded.case_updated_at, status=excluded.status, severity=excluded.severity,
+        case_type=excluded.case_type, title=excluded.title, summary_json=excluded.summary_json,
+        detail_json=excluded.detail_json, synced_at=excluded.synced_at
+      WHERE excluded.case_updated_at >= research_case_projections.case_updated_at
+    `).bind(workspace, caseId, updatedAt, status, clean(summary.severity, 20) || "medium", clean(summary.case_type, 60) || "other", clean(summary.title, 300) || caseId, summaryJson, detailJson, now));
+  }
+  if (statements.length) await env.DB.batch(statements);
+  await writeAudit(env.DB, { requestId, action: "research.cases.sync", actorRole: "bridge", result: rejected.length ? "partial" : "success", sourceInstance: "secopsai-core-edge", details: { accepted: statements.length, rejected: rejected.length }, createdAt: now });
+  return { status: "accepted", accepted: statements.length, rejected };
+}
+
+async function listResearchCaseProjections(db, params, workspaceId) {
+  const workspace = workspaceId || "hosted";
+  const limit = boundedLimit(params.get("limit"), 100, 500);
+  const status = clean(params.get("status"), 40);
+  const rows = status
+    ? await db.prepare("SELECT summary_json, synced_at FROM research_case_projections WHERE workspace_id=? AND status=? ORDER BY case_updated_at DESC LIMIT ?").bind(workspace, status, limit).all()
+    : await db.prepare("SELECT summary_json, synced_at FROM research_case_projections WHERE workspace_id=? ORDER BY case_updated_at DESC LIMIT ?").bind(workspace, limit).all();
+  const cases = (rows.results || []).map((row) => ({ ...parseJson(row.summary_json, {}), hosted_projection: true, synced_at: row.synced_at }));
+  return { cases, count: cases.length, hosted_projection: true };
 }
 
 async function syncOntology(request, env, requestId) {

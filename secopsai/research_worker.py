@@ -661,6 +661,17 @@ def run_worker_loop(
                 # Materialize only the bounded, redacted semantic projection for
                 # the hosted operating picture.  Full evidence and artifacts
                 # remain on the local research ledger or R2.
+                # Research cases feed the hosted Research page; a failure is
+                # retried next cycle from the last accepted batch.
+                try:
+                    from secopsai.research_case_sync import sync_research_cases
+
+                    last_summary = dict(last_summary)
+                    last_summary["research_case_sync"] = sync_research_cases(core_edge, db_path=db_path)
+                except Exception as exc:
+                    capture_exception(exc, context={"component": "research_case_sync"})
+                    last_summary = dict(last_summary)
+                    last_summary["research_case_sync"] = {"status": "degraded", "error": str(exc)[:500]}
                 try:
                     ontology_result = materialize_recent(db_path=db_path, limit=100)
                     ontology_sync = core_edge.sync_ontology(ontology_result.get("snapshot") or {})

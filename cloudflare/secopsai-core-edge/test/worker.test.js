@@ -647,3 +647,35 @@ test("ontology synchronization rolls back all writes when a transactional batch 
   assert.equal(migrated.db.prepare("SELECT COUNT(*) AS count FROM ontology_entities WHERE entity_id=?").get("pkg:pypi:rollback").count, 0);
   assert.equal(migrated.db.prepare("SELECT COUNT(*) AS count FROM ontology_ingest_receipts").get().count, 0);
 });
+
+test("research case projections sync newer-wins and serve hosted reads", { skip: !DatabaseSync }, async () => {
+  const { d1 } = migratedSqliteD1();
+  const env = { DB: d1, CORE_BRIDGE_TOKEN: "b".repeat(44), CORE_READ_TOKEN: "r".repeat(44), CORE_WORKSPACE_ID: "hosted" };
+  const sync = (cases, token = env.CORE_BRIDGE_TOKEN) => handleRequest(new Request("https://core.example/api/v1/research/cases/sync", {
+    method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ cases }),
+  }), env);
+  const read = (path, token = env.CORE_READ_TOKEN) => handleRequest(new Request(`https://core.example${path}`, { headers: { authorization: `Bearer ${token}` } }), env);
+  const item = (updatedAt, status) => ({
+    case_id: "RSC-98BE7E080D02", updated_at: updatedAt,
+    summary: { case_id: "RSC-98BE7E080D02", title: "Synthetic exfil demo", status, severity: "high", case_type: "malicious_package" },
+    detail: { case_id: "RSC-98BE7E080D02", title: "Synthetic exfil demo", status, evidence: [{ evidence_id: "EVD-1", title: "Static analysis" }] },
+  });
+
+  assert.equal((await sync([item("2026-10-09T03:00:00Z", "investigating")], "wrong")).status, 401);
+  const first = await (await sync([item("2026-10-09T03:00:00Z", "investigating"), { case_id: "../etc", updated_at: "x", summary: {}, detail: {} }])).json();
+  assert.equal(first.accepted, 1);
+  assert.equal(first.rejected[0].reason, "invalid_case");
+  await sync([item("2026-10-09T04:00:00Z", "ready_to_publish")]);
+  await sync([item("2026-10-09T02:00:00Z", "draft")]); // stale replay is ignored
+
+  const list = await (await read("/api/v1/research/cases?limit=10")).json();
+  assert.equal(list.cases.length, 1);
+  assert.equal(list.cases[0].status, "ready_to_publish");
+  assert.equal(list.cases[0].hosted_projection, true);
+  const filtered = await (await read("/api/v1/research/cases?status=draft")).json();
+  assert.equal(filtered.cases.length, 0);
+  const detail = await (await read("/api/v1/research/cases/RSC-98BE7E080D02")).json();
+  assert.equal(detail.case.evidence[0].evidence_id, "EVD-1");
+  assert.equal((await read("/api/v1/research/cases/RSC-000000000000")).status, 404);
+  assert.equal((await read("/api/v1/research/cases", "wrong")).status, 401);
+});

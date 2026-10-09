@@ -543,6 +543,8 @@ class CoreEdgeClient:
             if path == "/api/v1/intelligence/bridge/state"
             else _bounded_bridge_command(payload or {})
             if path.startswith("/api/v1/intelligence/bridge/commands/")
+            else _bounded_json(payload or {}, limit=4 * 1024 * 1024, preserve_lists=True)
+            if path == "/api/v1/research/cases/sync"
             else _bounded_json(payload or {}, preserve_lists=path == "/api/v1/ontology/sync")
         )
         if path == "/api/v1/ontology/sync" and isinstance(body, dict) and body.get("status") == "truncated":
@@ -571,6 +573,12 @@ class CoreEdgeClient:
             detail = _clean(result.get("detail") or result.get("error") or "request failed", 500)
             raise RuntimeError(f"hosted Core rejected {path} ({response.status_code}): {detail}")
         return result
+
+    def sync_research_cases(self, cases: list[dict[str, Any]]) -> dict[str, Any]:
+        """Upsert bounded research-case projections into the hosted Core."""
+        if not self.enabled:
+            return {"status": "disabled"}
+        return self._request("POST", "/api/v1/research/cases/sync", {"cases": cases})
 
     def sync_state(self, summary: Dict[str, Any], *, status: str = "healthy") -> dict[str, Any]:
         if not self.enabled:
