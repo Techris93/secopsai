@@ -14,7 +14,7 @@
     "check": "node --check src/server.js && node --check src/stdio.js && node --check src/auth.js && node --check src/core-client.js && node --check src/client-profiles.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.31.0",
     "jose": "6.2.3",
     "zod": "4.4.3"
   },
