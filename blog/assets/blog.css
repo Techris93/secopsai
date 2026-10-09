@@ -229,7 +229,10 @@ button.button {
   font-size: 14px;
   margin: 0 0 10px;
 }
-.intelligence-card { padding: 18px; border-left: 3px solid var(--note); }
+.intelligence-card { padding: 18px; border-left: 3px solid var(--note); display: block; color: inherit; text-decoration: none; }
+.intelligence-card h2 { color: var(--ink); }
+.intelligence-card:hover h2, .intelligence-card:focus-visible h2 { color: var(--note); }
+.card-cta { display: inline-block; margin-top: 10px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--note); }
 .intelligence-card h2 { font-size: 16px; margin: 6px 0 8px; }
 
 /* ── Subscribe ───────────────────────────────────────────── */

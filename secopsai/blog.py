@@ -3776,11 +3776,12 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
             <span>{_post_reading_time(featured)} min read</span>
           </div>
         </a>
-        <aside class="card intelligence-card">
-          <p class="section-label">Operator Intelligence Model</p>
+        <a class="card intelligence-card" href="https://docs.secopsai.dev/research-operations/">
+          <p class="section-label">How we research</p>
           <h2>Source-backed. Detection-aware. Mitigation-first.</h2>
-          <p>Every published post is designed to connect external reporting, SecOpsAI detections, IOCs, and concrete response commands.</p>
-        </aside>
+          <p>How we take a package from first signal to evidence, verdict, review and publication.</p>
+          <span class="card-cta">Read our research method &rarr;</span>
+        </a>
       </section>"""
     else:
         featured_html = ""
