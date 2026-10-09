@@ -411,3 +411,22 @@ def test_worker_loop_keeps_surveillance_running_when_core_is_unavailable(tmp_pat
     result = run_worker_loop(db_path=_db(tmp_path), fetcher=_fail_fetcher(), interval_seconds=15, max_cycles=1)
     assert result["cycles"] == 1
     assert result["last_cycle"]["ontology"]["status"] == "degraded"
+
+
+def test_collector_degradation_reuses_one_open_alert_across_days(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from contextlib import closing
+
+    import soc_store
+    from secopsai import research_worker
+
+    db = str(tmp_path / "research.db")
+    soc_store.init_db(db)
+    for day in (1, 2, 3):
+        monkeypatch.setattr(research_worker, "_utcnow", lambda day=day: datetime(2026, 9, day, tzinfo=timezone.utc))
+        research_worker._record_collector_degraded_alert(
+            {"status": "rejected", "coverage": "unknown", "ecosystem": "rubygems"}, db_path=db
+        )
+    with closing(soc_store.connect(db)) as connection:
+        rows = connection.execute("SELECT status FROM research_alerts WHERE alert_type='collector_degraded'").fetchall()
+    assert [row["status"] for row in rows] == ["open"]

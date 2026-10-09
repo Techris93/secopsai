@@ -113,3 +113,29 @@ def test_due_monitor_records_version_change_without_false_typosquat(tmp_path):
     alerts = list_alerts(db_path=db)
     assert len(alerts) == 1
     assert alerts[0]["alert_type"] == "watched_package_version"
+
+
+def test_unverified_external_advisory_versions_group_into_one_lead(tmp_path):
+    from secopsai.research_discovery import create_candidate_alert
+
+    db = str(tmp_path / "research.db")
+    soc_store.init_db(db)
+    for version in ("0.0.18", "0.0.20", "0.0.19"):
+        create_candidate_alert(
+            {
+                "candidate_id": f"CAN-{version}",
+                "ecosystem": "npm",
+                "package": "@onereach/content-builder",
+                "version": version,
+                "score": 90,
+                "reason": "External advisory reports this version",
+                "evidence": {"advisory_id": "ADV-1", "package": "@onereach/content-builder"},
+            },
+            db_path=db,
+            alert_type="external_advisory_match",
+        )
+    alerts = [item for item in list_alerts(db_path=db) if item["alert_type"] == "external_advisory_match"]
+    assert len(alerts) == 1
+    evidence = alerts[0]["evidence"] if isinstance(alerts[0].get("evidence"), dict) else json.loads(alerts[0]["evidence_json"])
+    assert evidence["affected_versions"] == ["0.0.18", "0.0.19", "0.0.20"]
+    assert "3 versions" in alerts[0]["reason"]

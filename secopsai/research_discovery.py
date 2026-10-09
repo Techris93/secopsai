@@ -715,15 +715,35 @@ def create_candidate_alert(
     severity = severity.lower()
     if severity not in {"critical", "high", "medium", "low", "info"}:
         severity = "medium"
-    if alert_type in {"external_advisory_match", "npm_proactive_anomaly"} and package_key and version_key:
+    group_versions = alert_type == "external_advisory_match" and not artifact_evidence and bool(package_key)
+    if group_versions:
+        # One unverified advisory lead per package: a campaign listing 97
+        # versions of one package is one lead to verify, not 97 alerts.
+        stable_dedupe_key = f"package-lead:{alert_type}:{ecosystem}:{package_key}"
+    elif alert_type in {"external_advisory_match", "npm_proactive_anomaly"} and package_key and version_key:
         # Group repeat observations of one package release into one lead.
         stable_dedupe_key = f"package-lead:{alert_type}:{ecosystem}:{package_key}:{version_key}"
     else:
         stable_dedupe_key = dedupe_key or f"candidate:{candidate.get('candidate_id')}:{candidate.get('last_seen')}"
     alert_id = _id("RAL")
     now = _now()
+    alert_evidence = dict(candidate.get("evidence") or {})
+    reason_text = str(reason_override or candidate.get("reason") or "Candidate requires analyst review")
     with sqlite_writer_lock(db_path):
         with closing(soc_store.connect(db_path)) as connection:
+            if group_versions:
+                existing = connection.execute(
+                    "SELECT evidence_json FROM research_alerts WHERE dedupe_key = ?", (stable_dedupe_key,)
+                ).fetchone()
+                previous_versions = _decode(existing["evidence_json"], {}).get("affected_versions") if existing else []
+                versions = sorted({*(previous_versions or []), *([version] if version else [])})
+                alert_evidence["affected_versions"] = versions
+                if len(versions) > 1:
+                    reason_text = (
+                        f"External advisory reports {len(versions)} versions of {package} "
+                        f"({', '.join(versions[:5])}{', ...' if len(versions) > 5 else ''}). "
+                        "Source-backed lead, not a local exposure verdict; verify the exact artifacts before publication."
+                    )
             connection.execute(
                 """INSERT INTO research_alerts
                     (alert_id, alert_type, severity, candidate_id, campaign_id, case_id, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at)
@@ -733,8 +753,7 @@ def create_candidate_alert(
                     evidence_json=excluded.evidence_json, updated_at=excluded.updated_at,
                     status='open'""",
                 (alert_id, alert_type, severity, candidate.get("candidate_id"), candidate.get("campaign_id"), stable_dedupe_key,
-                 str(reason_override or candidate.get("reason") or "Candidate requires analyst review")[:2000],
-                 _json(candidate.get("evidence") or {}), now, now),
+                 reason_text[:2000], _json(alert_evidence), now, now),
             )
             row = connection.execute("SELECT * FROM research_alerts WHERE dedupe_key = ?", (stable_dedupe_key,)).fetchone()
             finding_id = None
