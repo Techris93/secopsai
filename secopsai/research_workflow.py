@@ -490,8 +490,13 @@ def generate_analyst_brief(case_id: str, *, actor: str = "analyst", db_path: Opt
     matrix = build_evidence_matrix(case_id, persist=True, actor=actor, db_path=db_path)
     indicators = []
     for item in case.get("evidence", []):
-        if item.get("evidence_type") == "static_analysis":
-            indicators.extend((item.get("metadata") or {}).get("indicators") or [])
+        if item.get("evidence_type") == "static_analysis" and item.get("status", "active") == "active":
+            metadata = item.get("metadata") or {}
+            # Intake evidence stores ``indicators``; Artifact Fleet scans store
+            # rule hits as ``findings``.  Reading only one reported "0
+            # indicators" for cases whose scan had detections.
+            indicators.extend(metadata.get("indicators") or [])
+            indicators.extend(metadata.get("findings") or [])
     severity_counts: Dict[str, int] = {}
     for item in indicators:
         severity = str(item.get("severity") or "info")
@@ -515,6 +520,7 @@ def generate_analyst_brief(case_id: str, *, actor: str = "analyst", db_path: Opt
         "key_observations": [
             f"{matrix['summary']['supported']} of {matrix['summary']['claims']} evidence claims currently have supporting evidence.",
             f"Static indicator severity counts: {severity_counts or {'none': 0}}.",
+            f"Detections: {', '.join(sorted({str(item.get('rule_id') or item.get('indicator_id') or '') for item in indicators} - {''})[:12]) or 'none'}.",
             runtime_observation,
         ],
         "questions_for_analyst": [
