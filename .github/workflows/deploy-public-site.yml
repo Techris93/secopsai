@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/deploy-public-site.yml"
+      - "www/**"
       - "website/**"
   workflow_dispatch:
 
@@ -28,12 +29,15 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Deploy reviewed website directory
+      # Cloudflare Pages Git integration builds `www/` for this project too.
+      # Deploy the same directory so concurrent deploys can never publish a
+      # copy without `_headers` (CSP/HSTS).
+      - name: Deploy reviewed public site directory
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          npx --yes wrangler@4.114.0 pages deploy website \
+          npx --yes wrangler@4.114.0 pages deploy www \
             --project-name website \
             --branch main \
             --commit-hash "${GITHUB_SHA}" \

@@ -14,8 +14,8 @@ serve different deployment targets; they are not interchangeable duplicates.
 | `tests/`, `eval/` | Regression, workflow, and detection-quality validation | Keep deterministic fixtures free of credentials and live malware |
 | `docs/` | Maintained operator and developer documentation | Put new long-form documentation here |
 | `marketplace/`, `supply-chain/` | GitHub Action and npm/OpenClaw distribution wrappers | Do not treat these wrappers as replacements for the Python runtime |
-| `website/` | Reviewed source deployed to `secopsai.dev` | Keep synchronized with the compatibility mirror required by CI |
-| `www/` | Public-site compatibility mirror | CI verifies parity with `website/`; do not edit only one copy |
+| `www/` | Source deployed to `secopsai.dev` (Pages Git build output and `deploy-public-site.yml`) | Edit here, then `rsync -a --delete www/ website/` |
+| `website/` | Byte-identical mirror of `www/` | CI fails on any difference (`diff -r website www`) |
 | `blog/` | Editorial state and generated security-research site | Preserve the complete published archive during rebuilds |
 | `data/`, `reports/`, `results/` | Runtime inputs, local state, and generated evidence | Commit only explicit safe fixtures or reviewed public artifacts |
 | `.github/` | CI, release, security, and deployment automation | Keep permissions least-privilege and actions pinned |

@@ -65,7 +65,7 @@ copies under `docs/`:
 This is the recommended path because the existing Cloudflare Pages Git
 deployment requires no separate Worker route. The repository also runs
 `.github/workflows/deploy-public-site.yml` after relevant `main` changes. That
-workflow publishes the reviewed `website/` directory explicitly and verifies
+workflow publishes `www/` (the same directory the Pages Git build uses) explicitly and verifies
 the contents of both public installer endpoints before it succeeds.
 
 You have two fallback options if the apex site is moved away from these Pages

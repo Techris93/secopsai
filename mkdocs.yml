@@ -19,6 +19,9 @@ theme:
     - search.highlight
     - content.code.copy
 
+hooks:
+  - scripts/mkdocs_hooks/csp_hashes.py
+
 extra_css:
   - assets/stylesheets/extra.css
 

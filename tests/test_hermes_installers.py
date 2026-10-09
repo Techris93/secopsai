@@ -58,9 +58,31 @@ def test_public_hermes_installer_and_worker_route_are_wired() -> None:
     assert (ROOT / "website" / "install.sh").read_text(encoding="utf-8") == standard
     assert (ROOT / "www" / "install.sh").read_text(encoding="utf-8") == standard
     deployment = (ROOT / ".github" / "workflows" / "deploy-public-site.yml").read_text(encoding="utf-8")
-    assert "wrangler@4.114.0 pages deploy website" in deployment
+    assert "wrangler@4.114.0 pages deploy www" in deployment
     assert "verify_installer \"install-hermes.sh\"" in deployment
     assert "CLOUDFLARE_API_TOKEN" in deployment
+
+
+def test_website_is_a_complete_mirror_of_www() -> None:
+    # Both directories are deployed to the same Pages project (Git integration
+    # builds www/, older automation used website/).  A partial copy would ship
+    # without _headers, i.e. without CSP and HSTS.
+    def tree(root: Path) -> dict:
+        return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+    assert tree(ROOT / "website") == tree(ROOT / "www")
+    assert (ROOT / "www" / "_headers").exists()
+
+
+def test_public_site_security_txt_is_current() -> None:
+    import datetime as dt
+    import re
+
+    text = (ROOT / "www" / ".well-known" / "security.txt").read_text(encoding="utf-8")
+    assert "Contact: mailto:security@secopsai.dev" in text
+    expires = dt.datetime.fromisoformat(re.search(r"^Expires: (\S+)$", text, re.M).group(1).replace("Z", "+00:00"))
+    # RFC 9116 recommends less than a year; renew before it lapses.
+    assert expires - dt.datetime.now(dt.timezone.utc) > dt.timedelta(days=30), "renew www/.well-known/security.txt"
 
 
 def test_tracked_website_copies_are_identical_and_contain_hermes_tab() -> None:
