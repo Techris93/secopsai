@@ -1099,3 +1099,11 @@ class NewsIntakeParsingTests(unittest.TestCase):
     def test_cert_vulnerability_notes_count_as_advisory_intelligence(self):
         fields = blog.extract_news_security_fields({"title": "VU#553437: InsydeH2O SMM write", "summary": "An out-of-bounds write."})
         self.assertEqual(fields["advisories"], ["VU#553437"])
+
+
+def test_markdown_joins_wrapped_paragraphs_and_renders_bold():
+    from secopsai.blog import markdown_to_html
+
+    rendered = markdown_to_html("First line\nsecond line **bold** `**raw**`\n\n- item\n  continued\n- next\n")
+    assert "<p>First line second line <strong>bold</strong> <code>**raw**</code></p>" in rendered
+    assert "<li>item continued</li>" in rendered and "<li>next</li>" in rendered

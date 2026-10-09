@@ -481,6 +481,7 @@ button.button {
   vertical-align: top;
 }
 .post-body th {
+  white-space: nowrap;
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.08em;

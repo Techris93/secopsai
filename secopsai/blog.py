@@ -253,6 +253,12 @@ def _markdown_inline(text: str) -> str:
         escaped,
     )
     escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+    # Bold only outside inline code.
+    parts = re.split(r"(<code>.*?</code>)", escaped)
+    escaped = "".join(
+        part if part.startswith("<code>") else re.sub(r"\*\*([^*\n]+?)\*\*", r"<strong>\1</strong>", part)
+        for part in parts
+    )
     return escaped
 
 
@@ -264,12 +270,6 @@ def markdown_to_html(markdown: str) -> str:
     code_lines: List[str] = []
 
     table_rows: List[str] = []
-
-    def close_list() -> None:
-        nonlocal in_list
-        if in_list:
-            html_lines.append("</ul>")
-            in_list = False
 
     def cells(row: str) -> List[str]:
         return [cell.strip() for cell in row.strip().strip("|").split("|")]
@@ -290,9 +290,32 @@ def markdown_to_html(markdown: str) -> str:
         else:
             html_lines.extend(f"<p>{_markdown_inline(row.strip())}</p>" for row in rows)
 
+    paragraph: List[str] = []
+    list_item: List[str] = []
+
+    def flush_paragraph() -> None:
+        # Consecutive text lines form one paragraph, as in standard Markdown;
+        # hard-wrapped sources previously rendered one <p> per line.
+        if paragraph:
+            html_lines.append(f"<p>{_markdown_inline(' '.join(paragraph))}</p>")
+            paragraph.clear()
+
+    def flush_item() -> None:
+        if list_item:
+            html_lines.append(f"<li>{_markdown_inline(' '.join(list_item))}</li>")
+            list_item.clear()
+
+    def close_list() -> None:
+        nonlocal in_list
+        flush_item()
+        if in_list:
+            html_lines.append("</ul>")
+            in_list = False
+
     for line in lines:
         stripped = line.strip()
         if not in_code and stripped.startswith("|") and stripped.endswith("|") and len(stripped) > 1:
+            flush_paragraph()
             close_list()
             table_rows.append(stripped)
             continue
@@ -303,6 +326,7 @@ def markdown_to_html(markdown: str) -> str:
                 code_lines = []
                 in_code = False
             else:
+                flush_paragraph()
                 close_list()
                 in_code = True
             continue
@@ -310,25 +334,31 @@ def markdown_to_html(markdown: str) -> str:
             code_lines.append(redact(line))
             continue
         if not stripped:
+            flush_paragraph()
             close_list()
             continue
-        if stripped.startswith("### "):
+        if stripped.startswith("#"):
+            flush_paragraph()
             close_list()
+        if stripped.startswith("### "):
             html_lines.append(f"<h3>{_markdown_inline(stripped[4:])}</h3>")
         elif stripped.startswith("## "):
-            close_list()
             html_lines.append(f"<h2>{_markdown_inline(stripped[3:])}</h2>")
         elif stripped.startswith("# "):
-            close_list()
             html_lines.append(f"<h1>{_markdown_inline(stripped[2:])}</h1>")
         elif stripped.startswith("- "):
+            flush_paragraph()
+            flush_item()
             if not in_list:
                 html_lines.append("<ul>")
                 in_list = True
-            html_lines.append(f"<li>{_markdown_inline(stripped[2:])}</li>")
+            list_item.append(stripped[2:])
+        elif in_list and line[:1] in {" ", "\t"}:
+            list_item.append(stripped)  # continuation of the current item
         else:
             close_list()
-            html_lines.append(f"<p>{_markdown_inline(stripped)}</p>")
+            paragraph.append(stripped)
+    flush_paragraph()
     flush_table()
     close_list()
     return "\n".join(html_lines)
