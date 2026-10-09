@@ -64,7 +64,7 @@ def main() -> int:
     parser.add_argument(
         "--vex",
         type=Path,
-        default=Path(".github/vex/python-3.13.14-backports.openvex.json"),
+        default=None,
     )
     args = parser.parse_args()
     report = json.loads(args.input.read_text(encoding="utf-8"))
