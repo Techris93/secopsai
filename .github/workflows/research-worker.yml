@@ -15,7 +15,7 @@ on:
       cycles:
         description: "Worker cycles to run"
         required: false
-        default: "20"
+        default: "12"
       allow_empty_ledger:
         description: "Start a new empty ledger if none exists in R2 (first run only)"
         type: boolean
@@ -93,4 +93,4 @@ jobs:
         run: test -n "$LEDGER_STORE_TOKEN" || { echo "LEDGER_STORE_TOKEN secret is required" >&2; exit 1; }
 
       - name: Restore ledger, run worker cycles, checkpoint
-        run: python -u cloudflare/secopsai-research-runner/container/supervisor.py --cycles "${{ inputs.cycles || '20' }}"
+        run: python -u cloudflare/secopsai-research-runner/container/supervisor.py --cycles "${{ inputs.cycles || '12' }}"

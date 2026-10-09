@@ -34,7 +34,9 @@ SCHEMA_VERSION = "secopsai.research.npm-enrichment.v1"
 NPM_METADATA_HOSTS = ("registry.npmjs.org",)
 NPM_METADATA_BASE = "https://registry.npmjs.org/"
 NPM_COLLECTOR_ID = "COL-NPM-CHANGES"
-MAX_PACKUMENT_BYTES = 2 * 1024 * 1024
+# 2 MiB fitted the old 512 MB Render worker but rejected every large,
+# popular package.  The GitHub Actions runner has ~7 GB.
+MAX_PACKUMENT_BYTES = max(1, int(os.environ.get("SECOPSAI_NPM_MAX_PACKUMENT_BYTES", str(32 * 1024 * 1024))))
 MAX_PACKUMENT_VERSIONS = 5000
 MAX_SNAPSHOT_SUMMARIES = 256
 MAX_SNAPSHOT_VERSION_NAMES = 2000
@@ -42,6 +44,11 @@ MAX_PACKAGE_EVENTS_PER_CYCLE = 100
 MAX_STATIC_ANALYSES_PER_CYCLE = 10
 MAX_RETRY_SECONDS = 300
 MAX_ATTEMPTS = 8
+MAX_STATIC_ATTEMPTS = 3
+# Events older than this are not worth analysing as "new release" signals and
+# would otherwise sit in the queue forever.
+STALE_PENDING_DAYS = 7
+STATIC_RANKING_WINDOW = 200
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9@._:/+\-]+$")
 LIFECYCLE_NAMES = {
     "preinstall",
@@ -775,6 +782,37 @@ def _enrich_package(
     return {"package": package, "versions_created": created, "versions": new_versions, "baseline_only": baseline_only}
 
 
+def _ignore_event(db_path: Optional[str], row: Dict[str, Any], metadata: Dict[str, Any], stage: str, reason: str) -> None:
+    """Retire an event from the work queue with an auditable reason.
+
+    'ignored' events are removed by normal retention instead of being
+    selected again on every cycle.
+    """
+    metadata.update({f"{stage}_status": "skipped", f"{stage}_skip_reason": reason, f"{stage}_skipped_at": _now()})
+    with closing(soc_store.connect(db_path)) as connection:
+        with _write_transaction(connection, db_path):
+            connection.execute(
+                "UPDATE registry_feed_events SET processing_state='ignored', metadata_json=? WHERE feed_event_id=?",
+                (_json(metadata), row["feed_event_id"]),
+            )
+
+
+def expire_stale_pending(*, db_path: Optional[str] = None, days: int = STALE_PENDING_DAYS, limit: int = 50000) -> int:
+    """Mark npm events older than ``days`` that were never processed as ignored."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+    with closing(soc_store.connect(db_path)) as connection:
+        with _write_transaction(connection, db_path):
+            cursor = connection.execute(
+                """UPDATE registry_feed_events SET processing_state='ignored'
+                   WHERE rowid IN (
+                     SELECT rowid FROM registry_feed_events
+                     WHERE ecosystem='npm' AND processing_state IN ('pending', 'enrichment_failed', 'analysis_failed')
+                       AND registry_timestamp < ? LIMIT ?)""",
+                (cutoff, int(limit)),
+            )
+            return int(cursor.rowcount or 0)
+
+
 def _oversized_error(error: Any) -> bool:
     return "exceeded the safety limit" in str(error or "") or "exceeds the safety limit" in str(error or "")
 
@@ -791,27 +829,28 @@ def _run_static_triage(*, db_path: Optional[str], fetcher: SafeFetcher, limit: i
         rows = connection.execute(
             """SELECT * FROM registry_feed_events
                WHERE ecosystem='npm' AND processing_state IN ('pending', 'analysis_failed') AND version <> ''
-               ORDER BY registry_timestamp ASC LIMIT ?""",
-            (max(1, min(int(limit), MAX_STATIC_ANALYSES_PER_CYCLE * 4)),),
+               ORDER BY registry_timestamp DESC LIMIT ?""",
+            (STATIC_RANKING_WINDOW,),
         ).fetchall()
     analyses = 0
     candidates = 0
     failures = 0
     skipped = 0
-    for row in rows:
+    # Rank a wide window of new releases by the cheap metadata score and spend
+    # the bounded artifact downloads on the most suspicious ones first.
+    ranked: List[Tuple[int, int, Dict[str, Any], Dict[str, Any], List[Any]]] = []
+    for position, row in enumerate(rows):
         event = dict(row)
         metadata = _event_metadata(event)
+        if int(metadata.get("npm_static_attempts") or 0) >= MAX_STATIC_ATTEMPTS:
+            # Malformed archives fail the same way every time; record the
+            # reason once instead of retrying them on every cycle.
+            _ignore_event(db_path, event, metadata, "npm_static", "retries_exhausted")
+            continue
         if not _static_retry_allowed(metadata):
             continue
         summary = metadata.get("version_summary") if isinstance(metadata.get("version_summary"), dict) else {}
         previous = None
-        with closing(soc_store.connect(db_path)) as connection:
-            prior = connection.execute(
-                "SELECT versions_json FROM research_npm_package_snapshots WHERE package=?", (event.get("package"),)
-            ).fetchone()
-        # Snapshot contains the current version after enrichment.  The event's
-        # explicit previous_version is therefore used only when it exists in
-        # the compact event metadata.
         previous_version = str(metadata.get("previous_version") or "")
         if previous_version:
             with closing(soc_store.connect(db_path)) as connection:
@@ -825,8 +864,9 @@ def _run_static_triage(*, db_path: Optional[str], fetcher: SafeFetcher, limit: i
             previous=previous,
             baseline_only=bool(metadata.get("baseline_only")),
         )
-        if analyses >= max(1, min(int(limit), MAX_STATIC_ANALYSES_PER_CYCLE)):
-            break
+        ranked.append((int(score), -position, event, metadata, signals))
+    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    for score, _position, event, metadata, signals in ranked[: max(1, min(int(limit), MAX_STATIC_ANALYSES_PER_CYCLE))]:
         analyses += 1
         intake: Optional[Dict[str, Any]] = None
         error = ""
@@ -865,6 +905,7 @@ def run_npm_enrichment_cycle(
 ) -> Dict[str, Any]:
     """Resolve npm package events and inspect explainably suspicious releases."""
     soc_store.init_db(db_path)
+    expired_stale = expire_stale_pending(db_path=db_path)
     configured_event_limit = event_limit if event_limit is not None else os.environ.get("SECOPSAI_NPM_ENRICHMENT_EVENT_LIMIT", MAX_PACKAGE_EVENTS_PER_CYCLE)
     configured_static_limit = static_limit if static_limit is not None else os.environ.get("SECOPSAI_NPM_STATIC_ANALYSIS_LIMIT", MAX_STATIC_ANALYSES_PER_CYCLE)
     event_limit = _bounded_limit(configured_event_limit, MAX_PACKAGE_EVENTS_PER_CYCLE, MAX_PACKAGE_EVENTS_PER_CYCLE)
@@ -880,8 +921,8 @@ def run_npm_enrichment_cycle(
             )
         rows = connection.execute(
             """SELECT * FROM registry_feed_events
-               WHERE ecosystem='npm' AND processing_state IN ('pending', 'enrichment_failed')
-               ORDER BY registry_timestamp ASC LIMIT ?""",
+               WHERE ecosystem='npm' AND processing_state IN ('pending', 'enrichment_failed') AND version = ''
+               ORDER BY registry_timestamp DESC LIMIT ?""",
             (max(1, min(int(event_limit), MAX_PACKAGE_EVENTS_PER_CYCLE * 4)),),
         ).fetchall()
     grouped: Dict[str, List[Dict[str, Any]]] = {}
@@ -896,6 +937,11 @@ def run_npm_enrichment_cycle(
             with closing(soc_store.connect(db_path)) as connection:
                 with _write_transaction(connection, db_path):
                     connection.execute("UPDATE registry_feed_events SET processing_state='enriched', metadata_json=? WHERE feed_event_id=?", (_json(metadata), row["feed_event_id"]))
+            continue
+        if int(metadata.get("npm_enrichment_attempts") or 0) >= MAX_ATTEMPTS or _oversized_error(metadata.get("npm_enrichment_error")):
+            # Retrying cannot succeed; leaving it queued blocked every newer
+            # release behind it (head-of-line blocking).
+            _ignore_event(db_path, row, metadata, "npm_enrichment", "retries_exhausted" if not _oversized_error(metadata.get("npm_enrichment_error")) else "packument_exceeds_safety_limit")
             continue
         if not _retry_allowed(metadata):
             skipped += 1
@@ -957,6 +1003,7 @@ def run_npm_enrichment_cycle(
         "run_id": run_id,
         "status": status,
         "events_seen": len(rows),
+        "expired_stale": expired_stale,
         "packages_fetched": packages_fetched,
         "versions_created": versions_created,
         "skipped_backoff": skipped,

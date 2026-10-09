@@ -193,3 +193,71 @@ def test_metadata_and_artifact_evidence_corroborate():
     assert _combine_scores(50, 20) == (50, [])
     score, extra = _combine_scores(50, 40)
     assert score == 65 and extra[0]["id"] == "metadata_and_artifact_corroborate"
+
+
+def test_exhausted_events_leave_the_queue_so_new_releases_are_processed(tmp_path):
+    # Regression: 100 events that hit the retry cap filled the oldest-first
+    # selection window forever and starved every newer release for weeks.
+    from secopsai import research_npm_enrichment as enrichment
+
+    db = str(tmp_path / "research.db")
+    ensure_collectors(db_path=db)
+    _event(db, "huge-package", 1)
+    _event(db, "fresh-package", 2)
+    with soc_store.connect(db) as connection:
+        connection.execute(
+            "UPDATE registry_feed_events SET processing_state='enrichment_failed', metadata_json=? WHERE package='huge-package'",
+            (json.dumps({"npm_enrichment_attempts": enrichment.MAX_ATTEMPTS, "npm_enrichment_error": "registry response exceeded the safety limit"}),),
+        )
+        connection.commit()
+    fetched = []
+
+    def fetch(url, _max_bytes):
+        fetched.append(url)
+        return 503, {"content-type": "text/plain"}, b"down"
+
+    run_npm_enrichment_cycle(db_path=db, fetcher=SafeFetcher(fetch=fetch), event_limit=2)
+    with soc_store.connect(db) as connection:
+        states = dict(connection.execute("SELECT package, processing_state FROM registry_feed_events").fetchall())
+        meta = json.loads(connection.execute("SELECT metadata_json FROM registry_feed_events WHERE package='huge-package'").fetchone()[0])
+    assert states["huge-package"] == "ignored"
+    assert any("fresh-package" in url for url in fetched), "newer release was starved"
+    assert meta["npm_enrichment_skip_reason"] == "packument_exceeds_safety_limit"
+
+
+def test_stale_pending_events_expire(tmp_path):
+    from secopsai.research_npm_enrichment import expire_stale_pending
+
+    db = str(tmp_path / "research.db")
+    ensure_collectors(db_path=db)
+    _event(db, "old-package", 1)
+    _event(db, "new-package", 2)
+    with soc_store.connect(db) as connection:
+        connection.execute("UPDATE registry_feed_events SET registry_timestamp='2020-01-01T00:00:00Z' WHERE package='old-package'")
+        connection.commit()
+    assert expire_stale_pending(db_path=db) == 1
+    with soc_store.connect(db) as connection:
+        states = dict(connection.execute("SELECT package, processing_state FROM registry_feed_events").fetchall())
+    assert states == {"old-package": "ignored", "new-package": "pending"}
+
+
+def test_static_triage_spends_downloads_on_the_most_suspicious_release(tmp_path, monkeypatch):
+    from secopsai import research_npm_enrichment as enrichment
+
+    db = str(tmp_path / "research.db")
+    ensure_collectors(db_path=db)
+    now = soc_store.utc_now()
+    with soc_store.connect(db) as connection:
+        for seq, (package, scripts) in enumerate((("hooked-package", {"postinstall": "node x.js"}), ("plain-package", {}), ("plain-package-2", {}))):
+            connection.execute(
+                """INSERT INTO registry_feed_events
+                   (feed_event_id, collector_id, ecosystem, package, version, event_type, registry_timestamp, page_url,
+                    leaf_url, leaf_fetched, metadata_json, idempotency_key, collected_at, processing_state)
+                   VALUES (?, 'COL-NPM-CHANGES', 'npm', ?, '1.0.1', 'published', ?, 'u', 'u', 0, ?, ?, ?, 'pending')""",
+                (f"RFE-RANK-{seq}", package, now, json.dumps({"version_summary": {"lifecycle_scripts": scripts}, "previous_version": "1.0.0"}), f"rank-{seq}", now),
+            )
+        connection.commit()
+    analysed = []
+    monkeypatch.setattr(enrichment, "collect_package_intake", lambda **kw: analysed.append(kw["package"]) or (_ for _ in ()).throw(RuntimeError("offline")))
+    enrichment._run_static_triage(db_path=db, fetcher=SafeFetcher(fetch=lambda *_: (503, {}, b"")), limit=1)
+    assert analysed == ["hooked-package"]
