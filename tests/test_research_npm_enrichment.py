@@ -155,3 +155,41 @@ def test_npm_enrichment_keeps_registry_failures_visible_and_retryable(tmp_path):
     metadata = json.loads(row["metadata_json"])
     assert metadata["npm_enrichment_status"] == "failed"
     assert "registry returned HTTP 503" in metadata["npm_enrichment_error"]
+
+
+def _indicators(*ids):
+    return [{"indicator_id": item, "observation_fingerprint": item} for item in ids]
+
+
+def test_generic_capabilities_without_install_hook_stay_below_review_threshold():
+    from secopsai.research_npm_enrichment import _artifact_score
+
+    # Typical benign SDK bundle: URLs, eval, child_process, "token" strings.
+    score, signals = _artifact_score({
+        "indicators": _indicators("network-endpoint", "dynamic-eval", "credential-access", "process-execution"),
+        "lifecycle_scripts": {},
+        "expanded_bytes": 400 * 1024,
+    })
+    assert score < 50
+    assert not any(signal["id"].startswith("chain_") for signal in signals)
+
+
+def test_install_time_credential_egress_chain_scores_critical_range():
+    from secopsai.research_npm_enrichment import _artifact_score
+
+    score, signals = _artifact_score({
+        "indicators": _indicators("install-hook", "process-execution", "network-endpoint", "credential-access", "encoded-payload"),
+        "lifecycle_scripts": {"postinstall": "node setup.js"},
+        "expanded_bytes": 8 * 1024,
+    })
+    ids = {signal["id"] for signal in signals}
+    assert {"chain_install_time_execution", "chain_install_time_credential_egress"} <= ids
+    assert score >= 85
+
+
+def test_metadata_and_artifact_evidence_corroborate():
+    from secopsai.research_npm_enrichment import _combine_scores
+
+    assert _combine_scores(50, 20) == (50, [])
+    score, extra = _combine_scores(50, 40)
+    assert score == 65 and extra[0]["id"] == "metadata_and_artifact_corroborate"
