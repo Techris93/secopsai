@@ -568,7 +568,10 @@ def _store_analysis(
             })
             processing_state = "candidate" if score >= 40 else "analyzed"
             if not intake:
-                processing_state = "analysis_failed"
+                # Oversized artifacts (e.g. 50 MB+ platform binaries) will
+                # never fit the safety bound; retrying them every cycle only
+                # re-downloads them.  Record them as skipped instead.
+                processing_state = "analysis_skipped" if _oversized_error(error) else "analysis_failed"
             connection.execute(
                 "UPDATE registry_feed_events SET processing_state = ?, metadata_json = ? WHERE feed_event_id = ?",
                 (processing_state, _json(event_metadata), event.get("feed_event_id")),
@@ -772,6 +775,10 @@ def _enrich_package(
     return {"package": package, "versions_created": created, "versions": new_versions, "baseline_only": baseline_only}
 
 
+def _oversized_error(error: Any) -> bool:
+    return "exceeded the safety limit" in str(error or "") or "exceeds the safety limit" in str(error or "")
+
+
 def _static_retry_allowed(metadata: Dict[str, Any]) -> bool:
     last = _parse_time(metadata.get("npm_static_last_attempt"))
     if last is None:
@@ -790,6 +797,7 @@ def _run_static_triage(*, db_path: Optional[str], fetcher: SafeFetcher, limit: i
     analyses = 0
     candidates = 0
     failures = 0
+    skipped = 0
     for row in rows:
         event = dict(row)
         metadata = _event_metadata(event)
@@ -831,7 +839,10 @@ def _run_static_triage(*, db_path: Optional[str], fetcher: SafeFetcher, limit: i
             )
         except Exception as exc:
             error = str(exc)[:2000]
-            failures += 1
+            if _oversized_error(error):
+                skipped += 1
+            else:
+                failures += 1
         result = _store_analysis(
             db_path=db_path,
             event=event,
@@ -842,7 +853,7 @@ def _run_static_triage(*, db_path: Optional[str], fetcher: SafeFetcher, limit: i
         )
         alert_id = _promote_static_candidate(db_path=db_path, event=event, result=result)
         candidates += int(bool(alert_id))
-    return {"events_considered": len(rows), "analyses_started": analyses, "candidates_created": candidates, "failures": failures}
+    return {"events_considered": len(rows), "analyses_started": analyses, "candidates_created": candidates, "failures": failures, "skipped_oversized": skipped}
 
 
 def run_npm_enrichment_cycle(

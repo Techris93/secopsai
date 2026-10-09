@@ -42,6 +42,39 @@ def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
+MAX_SUMMARY_JSON_CHARS = 32000  # trg_daily_automation_json_bounds_* limit is 32768
+
+
+def _compact(value: Any, depth: int = 0) -> Any:
+    if isinstance(value, dict):
+        if depth >= 2:
+            return {key: item for key, item in value.items() if isinstance(item, (str, int, float, bool)) or item is None}
+        return {key: _compact(item, depth + 1) for key, item in value.items()}
+    if isinstance(value, list):
+        return {"count": len(value)} if len(value) > 5 or depth >= 2 else [_compact(item, depth + 1) for item in value]
+    if isinstance(value, str) and len(value) > 500:
+        return value[:500] + "..."
+    return value
+
+
+def _bounded_summary(summary: Dict[str, Any]) -> str:
+    """Serialize a run summary within the database's size bound.
+
+    A large cycle (e.g. 1,000 external-intel candidates) produced a summary
+    over the trigger limit, the final UPDATE aborted, and every run ended
+    'degraded'.  Step results keep full detail in daily_automation_steps.
+    """
+    encoded = _json(summary)
+    if len(encoded) <= MAX_SUMMARY_JSON_CHARS:
+        return encoded
+    compact = {**_compact(summary), "truncated": True}
+    encoded = _json(compact)
+    if len(encoded) <= MAX_SUMMARY_JSON_CHARS:
+        return encoded
+    minimal = {key: value for key, value in summary.items() if isinstance(value, (str, int, float, bool)) or value is None}
+    return _json({**minimal, "truncated": True})
+
+
 def _decode(value: Any, default: Any) -> Any:
     try:
         parsed = json.loads(str(value or ""))
@@ -455,7 +488,7 @@ def _finish_run(
                     status,
                     completed,
                     next_run_at,
-                    _json(summary),
+                    _bounded_summary(summary),
                     _clean(summary.get("error"), 2000) if summary.get("error") else None,
                     completed,
                     run_id,
