@@ -10,6 +10,7 @@ on:
       - ".github/workflows/deploy-docs.yml"
       - "docs/**"
       - "mkdocs.yml"
+      - "overrides/**"
       - "requirements-docs.txt"
       - "scripts/mkdocs_hooks/**"
   workflow_dispatch:

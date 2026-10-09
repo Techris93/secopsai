@@ -25,6 +25,9 @@ hooks:
 extra_css:
   - assets/stylesheets/extra.css
 
+extra_javascript:
+  - assets/javascripts/share.js
+
 nav:
   - Start:
       - Documentation Home: index.md

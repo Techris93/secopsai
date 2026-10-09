@@ -423,3 +423,18 @@ body {
 @media print {
   .md-header, .md-tabs, .md-sidebar, .md-footer { display: none; }
 }
+
+
+/* ── Share bar ─────────────────────────────────────────────── */
+.secops-share { margin-top: 2.4rem; padding-top: 1rem; border-top: 1px solid var(--md-default-fg-color--lightest); }
+.secops-share__label { margin: 0 0 .6rem; font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; color: var(--md-default-fg-color--light); }
+.secops-share__links { display: flex; flex-wrap: wrap; gap: .4rem; }
+.md-typeset .secops-share__link {
+  display: inline-block; padding: .35rem .6rem; font-size: .6rem; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--md-default-fg-color); background: transparent; border: 1px solid var(--md-default-fg-color--lighter);
+  border-radius: 0; text-decoration: none; cursor: pointer; line-height: 1.3; font-family: inherit;
+}
+.md-typeset .secops-share__link:hover, .md-typeset .secops-share__link:focus-visible { color: var(--md-accent-fg-color); border-color: var(--md-accent-fg-color); }
+.md-typeset .secops-share__native { color: var(--md-default-bg-color); background: var(--md-default-fg-color); border-color: var(--md-default-fg-color); }
+.secops-share__link.is-copied::after { content: " ✓"; }
+@media print { .secops-share { display: none; } }
