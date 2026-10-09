@@ -186,15 +186,33 @@ def _high_confidence(scan: dict[str, Any]) -> bool:
     return any(str(item.get("severity") or "").lower() in {"high", "critical"} for item in findings)
 
 
+def _package_service_labels(package: Any) -> set[str]:
+    """Name tokens of the package, e.g. @skyline-ts/telegram -> {skyline, telegram}."""
+    return {token for token in re.split(r"[^a-z0-9]+", str(package or "").lower()) if len(token) >= 4}
+
+
+def _expected_service_host(host: str, service_labels: set[str]) -> bool:
+    # A client library for a named service (``telegram`` -> api.telegram.org)
+    # is expected to contact that service; it is context, not an IOC.
+    labels = host.lower().rstrip(".").split(".")
+    return len(labels) >= 2 and labels[-2] in service_labels
+
+
 def _validated_iocs(scan: dict[str, Any]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     raw = scan.get("iocs") if isinstance(scan.get("iocs"), dict) else {}
     accepted: list[dict[str, str]] = []
     rejected: list[dict[str, str]] = []
+    service_labels = _package_service_labels(scan.get("package"))
 
     def add(kind: str, value: Any) -> None:
         value = str(value or "").strip().lower() if kind == "domain" else str(value or "").strip()
         if not value:
             return
+        if kind in {"url", "domain"}:
+            host = (urlsplit(value).hostname or "") if kind == "url" else value
+            if host and _expected_service_host(host, service_labels):
+                rejected.append({"value": value, "reason": "expected service endpoint for this package"})
+                return
         if kind == "url":
             parsed = urlsplit(value)
             host = (parsed.hostname or "").lower()

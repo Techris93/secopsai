@@ -1613,11 +1613,19 @@ def _javascript_semantic_findings(path: str, source: str) -> List[str]:
         re.IGNORECASE,
     ):
         findings.append(f"{path}: javascript environment credential harvesting via process.env")
-    if re.search(r"\b(zlib|gzip|deflate|JSON\.stringify|Buffer\.from)\b", source) and re.search(
-        r"\b(fetch|axios|https?\.request|dns\.|resolveTxt|request|post)\b",
+    # Exfiltration staging needs all three: an encoded/compressed payload, a
+    # sensitive local source, and a network send.  JSON.stringify + fetch alone
+    # describes every HTTP API client and produced high-confidence noise.
+    wraps_payload = re.search(
+        r"\b(zlib|gzip|deflate|brotli)\b|\.toString\(\s*['\"](?:base64|hex)['\"]|Buffer\.from\([^)]*['\"]base64['\"]|\bbtoa\s*\(",
         source,
-        re.IGNORECASE,
-    ):
+    )
+    sensitive_source = re.search(
+        r"\bos\.(?:homedir|hostname|userInfo|networkInterfaces)\s*\(|\.ssh|\.npmrc|\.aws|id_rsa|\bprocess\.env\.(?:[A-Z_]*(?:TOKEN|SECRET|PASSWORD|KEY))",
+        source,
+    )
+    sends_network = re.search(r"\b(fetch|axios|https?\.request|dns\.|resolveTxt|request|post)\b", source, re.IGNORECASE)
+    if wraps_payload and sensitive_source and sends_network:
         findings.append(f"{path}: javascript payload wrapping or exfiltration staging")
     if re.search(r"createDecipheriv\s*\(\s*['\"]aes-128-gcm|setAuthTag\s*\(|authTagLength\s*:\s*16", source):
         findings.append(f"{path}: javascript AES-GCM encrypted payload loader")
