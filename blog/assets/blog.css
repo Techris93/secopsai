@@ -608,6 +608,17 @@ button.button {
 .footer-bottom a:hover { text-decoration: underline; }
 .copyright { color: var(--muted); }
 
+/* ── Latest research strip (home) ─────────────────────────── */
+.latest-strip { margin-top: 28px; border-top: 1px solid var(--rule); }
+.latest-head { display: flex; justify-content: space-between; align-items: baseline; padding: 18px 0 6px; }
+.latest-head h2 { font-size: 15px; margin: 0; }
+.latest-head a { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; color: var(--note); text-decoration: none; }
+.latest-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding: 12px 0; border-bottom: 1px solid var(--rule); color: var(--ink); text-decoration: none; }
+.latest-row:hover .latest-title { color: var(--note); }
+.latest-title { font-weight: 600; font-size: 14.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.latest-date { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+@media (max-width: 560px) { .latest-row { grid-template-columns: auto minmax(0, 1fr); } .latest-date { grid-column: 2; } }
+
 /* ── Responsive ──────────────────────────────────────────── */
 @media (max-width: 920px) {
   .post-layout { grid-template-columns: minmax(0, 1fr); }

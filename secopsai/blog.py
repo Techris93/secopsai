@@ -3745,6 +3745,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
       <div class="content-section">
         <div class="shell">
           {featured_html}
+          {_render_latest_strip(posts, exclude=str((featured or {}).get("slug") or ""))}
         </div>
       </div>
       {_render_subscribe_panel(posts)}
@@ -3754,6 +3755,30 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
   </body>
 </html>
 """
+
+
+def _render_latest_strip(posts: List[Dict[str, Any]], *, exclude: str = "", limit: int = 5) -> str:
+    """Newest posts on the home page, so new research is visible without
+    replacing the featured post."""
+    items = sorted(
+        (_normalize_post(post) for post in posts if str(post.get("slug") or "") != exclude),
+        key=lambda post: str(post.get("published_at") or post.get("updated_at") or ""),
+        reverse=True,
+    )[:limit]
+    if not items:
+        return ""
+    rows = "\n".join(
+        f"""<a class="latest-row" href="/posts/{html.escape(str(post['slug']))}.html">
+            <span class="pill {_badge_class(post.get('severity'))}">{html.escape(str(post.get('severity', 'info')).title())}</span>
+            <span class="latest-title">{html.escape(redact(post.get('title', '')))}</span>
+            <span class="latest-date">{html.escape(_post_date(str(post.get('published_at') or post.get('updated_at') or '')))}</span>
+          </a>"""
+        for post in items
+    )
+    return f"""<section class="latest-strip" aria-labelledby="latest-heading">
+          <div class="latest-head"><h2 id="latest-heading">Latest research</h2><a href="/posts/">All posts</a></div>
+          {rows}
+        </section>"""
 
 
 def _render_latest_page(posts: List[Dict[str, Any]]) -> str:
