@@ -140,7 +140,10 @@ def _record_collector_degraded_alert(result: Dict[str, Any], *, db_path: Optiona
         if not consecutive_degraded:
             return None
 
-    dedupe_key = f"collector-degraded:{ecosystem}:{now[:10]}"
+    # One alert per ongoing degradation: a multi-day outage updates the open
+    # alert instead of filing a new one every day (24 duplicates for a single
+    # rubygems outage).  Recovery resolves it; a later failure reopens it.
+    dedupe_key = f"collector-degraded:{ecosystem}:active"
     reason = f"{ecosystem} registry coverage is degraded: status={status}, coverage={coverage}"
     evidence = {
         "ecosystem": ecosystem,
