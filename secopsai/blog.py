@@ -3306,8 +3306,8 @@ def _render_feed_card(*, kind: str, title: str, subtitle: str, heading: str, bod
               </a>
               <button class="copy-url" type="button" data-copy="{html.escape(url)}" title="Copy URL" aria-label="Copy {html.escape(title)} URL">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <rect x="3" y="3" width="7" height="7" rx="1" />
-                  <rect x="6" y="6" width="7" height="7" rx="1" />
+                  <rect x="3" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.4" />
+                  <rect x="6" y="6" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.4" />
                 </svg>
               </button>
             </div>
@@ -3324,11 +3324,11 @@ def _render_category_cards(posts: Optional[List[Dict[str, Any]]] = None) -> str:
     cards = []
     for topic in TOPIC_SECTIONS:
         count = counts.get(topic, 0)
-        body = (
-            f"{count} posts with SecOpsAI context, detections, or operator guidance."
-            if count
-            else "No posts yet. Coming soon."
-        )
+        if not count:
+            # Empty categories made a young blog look abandoned; show only
+            # categories that have published posts.
+            continue
+        body = f"{count} post{'s' if count != 1 else ''} with SecOpsAI context, detections, or operator guidance."
         cards.append(
             f"""<article class="topic-card">
               <div class="topic-card-top">
@@ -3631,13 +3631,15 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
     topic_buttons = "\n".join(
         f'<button class="topic-filter" type="button" data-topic-filter="{html.escape(topic.lower())}">{html.escape(topic)}</button>'
         for topic in TOPIC_SECTIONS
+        if any(topic in _post_categories(post) for post in posts)
     )
     section_cards = "\n".join(
         f"""<article class="topic-card">
           <p class="eyebrow">{html.escape(topic)}</p>
-          <p>{sum(1 for post in posts if topic in _post_categories(post))} posts with SecOpsAI context, detections, or operator guidance.</p>
+          <p>{(lambda n: f"{n} post{'s' if n != 1 else ''}")(sum(1 for post in posts if topic in _post_categories(post)))} with SecOpsAI context, detections, or operator guidance.</p>
         </article>"""
         for topic in TOPIC_SECTIONS
+        if any(topic in _post_categories(post) for post in posts)
     )
     if featured:
         featured_slug = html.escape(str(featured["slug"]))

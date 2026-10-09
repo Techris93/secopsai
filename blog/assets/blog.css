@@ -212,7 +212,9 @@ button.button {
   background: var(--panel);
   border-radius: var(--radius);
 }
-.featured-card { padding: 20px; }
+.featured-card { padding: 20px; display: block; color: inherit; text-decoration: none; }
+.featured-card h2 { color: var(--ink); }
+.featured-card:hover h2 { color: var(--note); }
 .featured-card:hover,
 .post-card:hover { border-color: var(--ink); }
 .featured-card h2 { font-size: 19px; margin: 6px 0 8px; line-height: 1.3; }
@@ -432,6 +434,10 @@ button.button {
   padding-top: 32px;
   padding-bottom: 32px;
 }
+/* Grid items with auto margins size to their content, so one wide code block
+   stretched the article past the viewport on phones. Pin them to the track. */
+.post-layout > * { min-width: 0; }
+.post-layout > .post-body { margin-left: 0; margin-right: 0; width: 100%; }
 .post-body { max-width: 68ch; min-width: 0; overflow-wrap: anywhere; }
 .article-hero h1, .article-hero .dek, .breadcrumb { overflow-wrap: anywhere; }
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 16px 0; }
@@ -590,9 +596,13 @@ button.button {
   font-size: 11px;
   letter-spacing: 0.06em;
 }
+.footer-top > div,
+.footer-bottom > div { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.footer-top > div span:first-child,
+.footer-bottom > div span:first-child { color: var(--ink); font-weight: 600; }
 .footer p { margin: 6px 0; font-size: 12.5px; }
 .footer-bottom { margin-top: 14px; }
-.footer-bottom nav { display: flex; gap: 16px; }
+.footer-bottom nav { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .footer-bottom a { color: var(--note); text-decoration: none; }
 .footer-bottom a:hover { text-decoration: underline; }
 .copyright { color: var(--muted); }
