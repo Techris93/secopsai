@@ -370,7 +370,7 @@ python -m pytest tests/ -v
 
 - **Documentation:** [secopsai.dev](https://secopsai.dev)
 - **GitHub Issues:** [Report a bug](https://github.com/Techris93/secopsai/issues)
-- **Discussions:** [Ask a question](https://github.com/Techris93/secopsai/discussions)
+- **Security reports:** see [security.txt](https://secopsai.dev/.well-known/security.txt)
 
 ---
 

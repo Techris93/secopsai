@@ -311,41 +311,35 @@ Feed rules:
 
 ## Comments
 
-Comments are handled by a Cloudflare Pages Function and Supabase. Required Cloudflare Pages values for project `secopsai-blog`:
+Comments are handled by the blog's Pages Worker (`blog/_worker.js`) and stored
+in the Cloudflare D1 database `secopsai-blog-comments` (binding `COMMENTS_DB`).
+Pages settings for project `secopsai-blog`:
 
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- Optional `BLOG_COMMENTS_TABLE`, default `blog_comments`
+- `COMMENTS_DB` D1 binding (required)
+- `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` (required: without them the
+  comment form fails closed)
 - Optional `BLOG_COMMENT_IP_SALT`
-- Optional `TURNSTILE_SITE_KEY`
-- Optional `TURNSTILE_SECRET_KEY`
 
-The comments API stores new comments as `pending`, returns only `approved` comments, hashes IP hints, and renders text safely in the browser. When `TURNSTILE_SECRET_KEY` is configured, comment POSTs must pass Cloudflare Turnstile verification before they are written to Supabase.
+The comments API accepts posts only from the blog's own origin, bounds the
+request size, rate-limits by hashed IP, stores new comments as `pending`, and
+returns only `approved` comments, which the browser renders as text.
 
 Health check:
 
 ```bash
-secopsai blog comments-status
 curl https://blog.secopsai.dev/api/comments?health=1
 ```
 
 ## Moderation
 
-Use Supabase SQL or table editor:
+```bash
+# List pending comments
+npx wrangler d1 execute secopsai-blog-comments --remote \
+  --command "SELECT id, slug, name, body, created_at FROM blog_comments WHERE status='pending' ORDER BY created_at DESC"
 
-```sql
-select id, slug, name, body, created_at
-from blog_comments
-where status = 'pending'
-order by created_at desc;
-
-update blog_comments
-set status = 'approved', updated_at = now()
-where id = 123;
-
-update blog_comments
-set status = 'rejected', updated_at = now()
-where id = 123;
+# Approve or reject one
+npx wrangler d1 execute secopsai-blog-comments --remote \
+  --command "UPDATE blog_comments SET status='approved', moderated_at=datetime('now'), moderated_by='<you>' WHERE id='<id>'"
 ```
 
 Reject spam, secrets, customer data, exploit payloads, and unsupported claims.

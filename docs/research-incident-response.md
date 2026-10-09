@@ -90,7 +90,7 @@ candidate remains open until the exact artifact is collected and reviewed.
 
 ## Deployment boundary
 
-The Render worker and Cloudflare Core Edge service use separate stores. The
+The research worker (GitHub Actions, ledger in R2) and the Cloudflare Core Edge service use separate stores. The
 worker must be configured with:
 
 ```text

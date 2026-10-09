@@ -86,8 +86,8 @@ pressure threshold. Historical research remains in the local canonical backup.
 ## Recovery
 
 If a hosted deployment fails, redeploy the previous Worker or Pages version and
-leave additive ontology tables in place. If the fresh Render worker cannot
-start, stop it, inspect logs, and restore the provider snapshot or verified
-SQLite backup. Do not delete the only copy of the ledger. If Core is unavailable,
+leave additive ontology tables in place. If a research worker run
+fails, inspect the GitHub Actions log; the previous ledger checkpoint in R2
+(`ledger/LATEST`) is unchanged until a run checkpoints successfully. Do not delete the only copy of the ledger. If Core is unavailable,
 use the local dashboard at `http://127.0.0.1:45680` and continue collection
 while the hosted status is degraded.

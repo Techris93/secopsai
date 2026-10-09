@@ -45,7 +45,7 @@ secopsai edge import --bundle edge-bundle.json --db-path /path/to/openclaw_soc.d
 ## Sync From Edge API
 
 ```bash
-SECOPSAI_EDGE_API_URL=https://secopsai-edge-api.onrender.com \
+SECOPSAI_EDGE_API_URL=https://<your-edge-api-host> \
 SECOPSAI_EDGE_ACCESS_TOKEN=<workspace-core-export-token> \
 secopsai edge sync
 ```
@@ -54,7 +54,7 @@ Or pass values directly:
 
 ```bash
 secopsai edge sync \
-  --edge-api-url https://secopsai-edge-api.onrender.com \
+  --edge-api-url https://<your-edge-api-host> \
   --access-token <workspace-core-export-token>
 ```
 
@@ -63,14 +63,19 @@ It grants only `core:export` for the selected workspace. The legacy admin-token
 environment variable and CLI alias remain temporarily supported for existing
 single-workspace installations, but new services should not use them.
 
-To push the normalized bundle into a hosted Core API, keep the two credentials
+> **Hosted push:** the hosted Core at `core.secopsai.dev` (Cloudflare Core
+> Edge) does not accept Edge bundles yet; the previous Render-hosted Core API
+> that did was retired in October 2026. Import locally (above), or push to a
+> self-hosted Core API that serves `POST /api/v1/edge/bundles`.
+
+To push the normalized bundle into a self-hosted Core API, keep the two credentials
 separate and prefer environment variables so they do not appear in process
 arguments:
 
 ```bash
-SECOPSAI_EDGE_API_URL=https://secopsai-edge-api.onrender.com \
+SECOPSAI_EDGE_API_URL=https://<your-edge-api-host> \
 SECOPSAI_EDGE_ACCESS_TOKEN=<workspace-core-export-token> \
-SECOPSAI_CORE_API_URL=https://secopsai-core-api.onrender.com \
+SECOPSAI_CORE_API_URL=https://<your-core-api-host> \
 SECOPSAI_CORE_INGEST_TOKEN=<core-ingest-token> \
 secopsai edge sync --remote-only
 ```

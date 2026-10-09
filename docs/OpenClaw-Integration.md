@@ -72,8 +72,9 @@ Under the hood this runs the same sequence as before:
 3. `openclaw_prepare.py` — builds replay bundles
 4. `evaluate_openclaw.py` — runs detectors in live mode
 5. `openclaw_findings.py` — writes findings (with mitigations) into the local SOC store
-   and, when Supabase credentials are available, automatically syncs the
-   persisted findings to the dashboard via `scripts/sync_findings_to_supabase.py`.
+   (the hosted dashboard reads findings from Cloudflare D1; the legacy Supabase
+   sync below is skipped when no Supabase project is configured, which is the
+   default since Supabase was retired in October 2026).
 
 Automatic dashboard sync is intentionally safe and optional:
 

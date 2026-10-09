@@ -17,7 +17,7 @@ active, or authorized.
 | Host and agent telemetry | Normalized and stored in the operator-controlled local data plane |
 | Findings and triage records | Stored in local SQLite unless the optional hosted PostgreSQL adapter is configured |
 | Package artifacts | Quarantined for bounded static inspection; not installed or executed |
-| Dashboard data | Local helper and/or authenticated Supabase records, depending on deployment |
+| Dashboard data | Hosted: Cloudflare D1 behind Cloudflare Access. Local: the loopback helper, gated by the local operator token |
 | Model requests | Minimized evidence sent only to the model/provider selected by the operator |
 | Credentials | Local environment or server-side secrets; never intentionally rendered into browser configuration |
 | Research and publication records | Local repository/data paths until an operator approves an external action |

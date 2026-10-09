@@ -599,6 +599,5 @@ The Supply Chain Security Module consists of:
 
 ## References
 
-- [Axios Supply Chain Attack (March 2026)](https://www.picussecurity.com/resource/blog/axios-npm-supply-chain-attack)
 - [CVE-2025-27423](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2025-27423) - Vim tar.vim exploit
 - [CVE-2025-1244](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2025-1244) - Emacs URI handler
