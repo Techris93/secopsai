@@ -1655,11 +1655,19 @@ def extract_news_security_fields(item: Dict[str, Any]) -> Dict[str, List[str]]:
     known_packages = KNOWN_PACKAGE_RE.findall(text)
     packages = _safe_list([*scoped_packages, *versioned_packages, *known_packages], limit=24)
     cves = _safe_list([match.upper() for match in CVE_RE.findall(text)], limit=16)
+    # CERT/CC vulnerability notes and GitHub advisories are first-class
+    # identifiers even when a note does not repeat its CVE IDs.
+    advisories = _safe_list(
+        [f"VU#{match}" for match in re.findall(r"\bVU#(\d{5,7})\b", text)]
+        + [match.upper() for match in re.findall(r"\bGHSA(?:-[23456789cfghjmpqrvwx]{4}){3}\b", text, re.IGNORECASE)],
+        limit=16,
+    )
     signals = _safe_list(_severity_signals(text), limit=16)
     products = _extract_products(text)
     ecosystems = _infer_ecosystems(text, packages, domains)
     return {
         "cves": cves,
+        "advisories": advisories,
         "urls": urls,
         "domains": domains,
         "ips": ips,
@@ -1919,6 +1927,9 @@ def _normalise_news_item(raw: Dict[str, Any], source: Dict[str, Any]) -> Dict[st
     }
 
 
+NAVIGATION_TITLE_RE = re.compile(r"(?i)(?:view|read|see|more|all)(?: all| more)? (?:blogs?|posts?|articles?|news)\s*[>»›]?|read more\s*[>»›]?|[>»›]|")
+
+
 def _parse_rss_items(text: str, source: Dict[str, Any], *, limit: int) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     try:
@@ -1933,10 +1944,18 @@ def _parse_rss_items(text: str, source: Dict[str, Any], *, limit: int) -> List[D
                 if found is not None and found.text:
                     return found.text
             return ""
-        atom_link = item.find("{http://www.w3.org/2005/Atom}link")
         link = first_text("link", "{http://www.w3.org/2005/Atom}id")
-        if atom_link is not None and atom_link.get("href"):
-            link = atom_link.get("href", "")
+        # Atom entries carry several links (replies, edit, self); the article
+        # is rel="alternate" (or a link without rel).  Taking the first one
+        # linked Blogger posts to their comments feed.
+        atom_links = item.findall("{http://www.w3.org/2005/Atom}link")
+        preferred = [node for node in atom_links if node.get("href") and node.get("rel", "alternate") == "alternate"]
+        if preferred:
+            html_links = [node for node in preferred if (node.get("type") or "text/html") == "text/html"]
+            link = (html_links or preferred)[0].get("href", "")
+        title_text = first_text("title", "{http://www.w3.org/2005/Atom}title")
+        if NAVIGATION_TITLE_RE.fullmatch(" ".join(title_text.split())):
+            continue
         media_candidates: List[Dict[str, Any]] = []
         for enclosure in item.findall("enclosure"):
             url = enclosure.get("url", "")
@@ -2111,7 +2130,12 @@ def news_fetch(*, limit: int = 20, paths: Optional[BlogPaths] = None) -> Dict[st
             continue
         try:
             text = _fetch_text(source_url)
-            parsed_items = _parse_news_items(text, source, limit=per_source_limit)
+            parsed_items = [
+                item for item in _parse_news_items(text, source, limit=per_source_limit)
+                # Every parser (RSS, Atom, JSON, HTML) can surface navigation
+                # links such as "View blogs >" as items.
+                if not NAVIGATION_TITLE_RE.fullmatch(" ".join(str(item.get("title") or "").split()))
+            ]
             for item in parsed_items:
                 if item["key"] in cached_by_key or item["key"] in candidates_by_key:
                     continue
@@ -2356,7 +2380,9 @@ def score_external_news_readiness(post: Dict[str, Any]) -> Dict[str, Any]:
     references = _safe_reference_list(post.get("references") or post.get("sources") or [], limit=12)
     extracted = post.get("extracted") if isinstance(post.get("extracted"), dict) else {}
     extracted_values = []
-    for key in ("cves", "packages", "products", "urls", "domains", "ips", "hashes", "ecosystems"):
+    # URLs and domains are references, not intelligence: nearly every item
+    # has them, so they let empty commentary pass the gate.
+    for key in ("cves", "advisories", "packages", "products", "ips", "hashes"):
         values = extracted.get(key, [])
         if isinstance(values, list):
             extracted_values.extend(values)
