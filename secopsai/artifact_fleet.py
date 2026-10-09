@@ -47,12 +47,17 @@ REGISTRY_SOURCES = (
 
 GENERIC_RULES: tuple[dict[str, Any], ...] = (
     {"rule_id": "OSS-BUILD-HOOK", "pattern": r"(?i)(build\.rs|postinstall|preinstall|setup\.py|composer\.json.*autoload\.files)", "severity": "medium", "description": "Build or install hook present."},
-    {"rule_id": "OSS-DOWNLOAD-EXECUTE", "pattern": r"(?i)(curl|wget|Invoke-WebRequest|DownloadString|fetch\s*\(|requests\.(get|post)|ureq|reqwest).{0,240}(exec|spawn|powershell|bash|sh\s+-c|Command::new)", "severity": "high", "description": "Network retrieval is combined with execution behavior."},
+    # Execution sinks are matched as calls/commands, not substrings: RegExp
+    # .exec(), "executor", and "bashful" are not process execution.
+    {"rule_id": "OSS-DOWNLOAD-EXECUTE", "pattern": r"(?i)(\bcurl\b|\bwget\b|Invoke-WebRequest|DownloadString|\bfetch\s*\(|requests\.(get|post)|\bureq\b|\breqwest\b).{0,240}(child_process|\bexec(?:Sync|File|FileSync)?\s*\(\s*['\"`]|\bspawn(?:Sync)?\s*\(|powershell|\bbash\s+-c|\bsh\s+-c|Command::new|subprocess\.|os\.system)|(?:Command::new|\bspawn(?:Sync)?|\bexec(?:Sync|File|FileSync)?|subprocess\.\w+|os\.system)\s*\(\s*\[?\s*['\"`](?:curl|wget|powershell|pwsh|bitsadmin|certutil)\b", "severity": "high", "description": "Network retrieval is combined with execution behavior."},
     {"rule_id": "OSS-CREDENTIAL-DISCOVERY", "pattern": r"(?i)(\.ssh|\.npmrc|\.pypirc|\.aws/credentials|\.config/gcloud|\.kube/config|GITHUB_TOKEN|AWS_SECRET|GOOGLE_APPLICATION_CREDENTIALS|/proc/.*/environ|/var/run/secrets)", "severity": "high", "description": "Credential or cloud-secret discovery indicator."},
     {"rule_id": "OSS-POWERSHELL-STAGING", "pattern": r"(?i)(powershell(?:\.exe)?|pwsh).{0,200}(enc|download|invoke|start-process|iex|frombase64string)", "severity": "high", "description": "PowerShell download, decoding, or execution indicator."},
-    {"rule_id": "OSS-WINDOWS-PERSISTENCE", "pattern": r"(?i)(CurrentVersion\\Run|RunOnce|HKCU|registry.*startup)", "severity": "high", "description": "Windows startup persistence indicator."},
-    {"rule_id": "OSS-BROWSER-DATA", "pattern": r"(?i)(Chrome|Chromium|Brave|Edge).{0,180}(login|credential|cookie|extension|history)", "severity": "high", "description": "Browser credential or extension enumeration indicator."},
-    {"rule_id": "OSS-C2-DGA", "pattern": r"(?i)(domain.?generation|DGA|fallback.{0,80}domain|dns.{0,80}random|five.?day)", "severity": "high", "description": "DGA or generated fallback C2 indicator."},
+    {"rule_id": "OSS-WINDOWS-PERSISTENCE", "pattern": r"(?i)(CurrentVersion\\\\Run(?:Once)?\b|\bHKCU\\\\|HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion|\\\\Start Menu\\\\Programs\\\\Startup)", "severity": "high", "description": "Windows startup persistence indicator."},
+    # Browser names need word boundaries ("knowledge" contains "edge") and the
+    # target must be a browser profile store, not any mention of "history".
+    {"rule_id": "OSS-BROWSER-DATA", "pattern": r"(?i)\b(Google[\\/ ]Chrome|Chromium|BraveSoftware|Microsoft[\\/ ]Edge)\b.{0,180}(Login Data|Cookies|Local State|Web Data|Local Extension Settings)", "severity": "high", "description": "Browser credential or extension enumeration indicator."},
+    # Case-sensitive acronym with word boundaries: "sendGame" contains "dGa".
+    {"rule_id": "OSS-C2-DGA", "pattern": r"(?i:domain[ _-]?generation(?:[ _-]?algorithm)?)|\bDGA\b", "severity": "high", "description": "DGA or generated fallback C2 indicator."},
     {"rule_id": "OSS-RUST-PROC-MACRO", "pattern": r"(?i)(proc_macro|proc-macro|build\.rs).{0,260}(std::process|Command::new|std::env|reqwest|ureq|curl|wget|std::fs)", "severity": "high", "description": "Rust proc-macro/build script has process, network, filesystem, or environment behavior."},
     {"rule_id": "OSS-C2-IP-PORT", "pattern": r"\b(?:\d{1,3}\.){3}\d{1,3}:\d{2,5}\b", "severity": "high", "description": "Hard-coded IP and port indicator."},
 )
@@ -448,7 +453,10 @@ def _rule_pack_findings(files: dict[str, str]) -> list[dict[str, Any]]:
                 source_start = max(0, match.start() - len(path))
                 start = max(0, source_start - CONTEXT_BYTES // 2)
                 end = min(len(source), source_start + CONTEXT_BYTES // 2)
-                findings.append({"rule_id": rule["rule_id"], "severity": rule["severity"], "confidence": "high" if rule["severity"] == "high" else "medium", "file_path": path, "matched_indicator": rule["description"], "safe_context": source[start:end][:CONTEXT_BYTES], "recommended_mitigation": "Quarantine and review the artifact before installation."})
+                if rule["rule_id"] == "OSS-C2-IP-PORT" and not _public_ip_port(match.group(0)):
+                    continue
+                # A single regex hit is a lead, not a high-confidence finding.
+                findings.append({"rule_id": rule["rule_id"], "severity": rule["severity"], "confidence": "medium", "file_path": path, "matched_indicator": rule["description"], "safe_context": source[start:end][:CONTEXT_BYTES], "recommended_mitigation": "Quarantine and review the artifact before installation."})
     return _dedupe_findings(findings)
 
 
@@ -486,12 +494,37 @@ def _dedupe_findings(findings: Iterable[dict[str, Any]]) -> list[dict[str, Any]]
     return list(result.values())
 
 
+def _public_ip_port(value: str) -> bool:
+    import ipaddress
+
+    host = value.split(":", 1)[0]
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return not (address.is_private or address.is_loopback or address.is_unspecified or address.is_reserved or address.is_link_local or address.is_multicast)
+
+
+QUOTED_RE = re.compile(r"""["'`]([^"'`\s]{4,253})["'`]""")
+# Domain-shaped tokens that are code (file extensions, member access).
+CODE_SUFFIXES = {"js", "ts", "mjs", "cjs", "jsx", "tsx", "json", "map", "md", "css", "html", "py", "rs", "go", "rb", "php", "java", "cs", "lock", "toml", "yml", "yaml", "txt", "log", "min", "d"}
+
+
 def _extract_iocs(files: dict[str, str]) -> dict[str, list[str]]:
     text = "\n".join(files.values())
     urls = sorted(set(URL_RE.findall(text)))[:100]
-    ips = sorted(set(IP_RE.findall(text)))[:100]
+    ips = sorted({ip for ip in IP_RE.findall(text) if _public_ip_port(ip)})[:100]
     hashes = sorted(set(HASH_RE.findall(text)))[:100]
-    domains = sorted(set(DOMAIN_RE.findall(text)) - {"example.com", "example.test"})[:100]
+    # Domains come from URL hosts and whole quoted strings only; bare
+    # identifier.property tokens (``channel.info``) are code, not network IOCs.
+    candidates = {re.sub(r"^https?://", "", url, flags=re.I).split("/", 1)[0].split(":", 1)[0].lower() for url in urls}
+    candidates |= {item.lower() for item in QUOTED_RE.findall(text) if DOMAIN_RE.fullmatch(item)}
+    domains = sorted(
+        domain for domain in candidates
+        if DOMAIN_RE.fullmatch(domain)
+        and domain.rsplit(".", 1)[-1] not in CODE_SUFFIXES
+        and domain not in {"example.com", "example.test", "example.org", "localhost"}
+    )[:100]
     return {"urls": urls, "ips": ips, "hashes": hashes, "domains": domains}
 
 
