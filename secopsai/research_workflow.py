@@ -748,6 +748,9 @@ def suggest_disclosure_draft(case_id: str, *, db_path: Optional[str] = None) -> 
     }
 
 
+DISCLOSURE_VERDICTS = {"likely", "credible"}
+
+
 def prepare_disclosure(case_id: str, *, recipient: str = "", subject: str = "", body: str = "", embargo_until: Optional[str] = None, actor: str = "analyst", db_path: Optional[str] = None) -> Dict[str, Any]:
     case = get_case(case_id, db_path=db_path)
     suggestion = suggest_disclosure_draft(case_id, db_path=db_path)
@@ -756,9 +759,31 @@ def prepare_disclosure(case_id: str, *, recipient: str = "", subject: str = "", 
         raise ValueError("a valid disclosure recipient is required")
     subject = (subject or suggestion.get("subject") or f"SecOpsAI responsible disclosure: {case['title']}").strip()[:240]
     body = (body or suggestion.get("body") or f"Hello,\n\nSecOpsAI is sharing a responsible disclosure regarding {case['title']}.\n\nWe have preserved evidence and can provide hashes and reproduction-safe details through the agreed channel.\n\nRegards,\nSecOpsAI Research").strip()[:30000]
-    disclosure_id = _id("DSC")
     now = soc_store.utc_now()
     with closing(soc_store.connect(db_path)) as connection:
+        latest = connection.execute(
+            "SELECT verdict FROM research_verdicts WHERE case_id = ? ORDER BY created_at DESC LIMIT 1", (case_id,)
+        ).fetchone()
+        # Contacting a maintainer or registry about a package the evidence did
+        # not substantiate (e.g. an official SDK) is a reputational and
+        # ethical failure.  Only a current likely/credible verdict qualifies.
+        if latest is None or str(latest["verdict"]) not in DISCLOSURE_VERDICTS:
+            raise ValueError("a disclosure requires the case's latest verdict to be likely or credible")
+        existing = connection.execute(
+            "SELECT disclosure_id FROM research_disclosures WHERE case_id = ? AND recipient = ? AND status = 'draft' ORDER BY created_at DESC LIMIT 1",
+            (case_id, recipient),
+        ).fetchone()
+        if existing is not None:
+            disclosure_id = str(existing["disclosure_id"])
+            connection.execute(
+                "UPDATE research_disclosures SET subject = ?, body = ?, embargo_until = ?, updated_at = ? WHERE disclosure_id = ?",
+                (subject, body, embargo_until, now, disclosure_id),
+            )
+            connection.commit()
+            result = get_disclosure(disclosure_id, db_path=db_path)
+            result["suggestion"] = suggestion
+            return result
+        disclosure_id = _id("DSC")
         connection.execute(
             "INSERT INTO research_disclosures (disclosure_id, case_id, status, recipient, subject, body, affected_scope_json, attachments_json, embargo_until, approved_by, sent_at, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?, ?, ?, '[]', ?, NULL, NULL, ?, ?)",
             (

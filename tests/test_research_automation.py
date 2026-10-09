@@ -727,7 +727,7 @@ def test_disclosure_prefills_from_case_metadata(tmp_path, monkeypatch):
     db = str(tmp_path / "research.db")
     monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(tmp_path / "quarantine"))
     case = create_case(title="Disclosure prefill test", db_path=db)
-    run_package_intake(
+    intake = run_package_intake(
         case_id=case["case_id"],
         ecosystem="npm",
         package="demo-pkg",
@@ -740,8 +740,18 @@ def test_disclosure_prefills_from_case_metadata(tmp_path, monkeypatch):
     assert "demo-pkg" in suggestion["subject"]
     assert "demo-pkg" in suggestion["body"]
     assert any(value == "maintainer@example.com" for value in suggestion["recipient_candidates"])
+    with pytest.raises(ValueError, match="likely or credible"):
+        prepare_disclosure(case["case_id"], db_path=db)
+    record_verdict(case["case_id"], verdict="not_substantiated", confidence=85, rationale="Benign SDK behaviour.", evidence_ids=intake["evidence_ids"], db_path=db)
+    with pytest.raises(ValueError, match="likely or credible"):
+        prepare_disclosure(case["case_id"], db_path=db)
+    record_verdict(case["case_id"], verdict="likely", confidence=75, rationale="Release delta adds credential egress.", evidence_ids=intake["evidence_ids"], db_path=db)
     disclosure = prepare_disclosure(case["case_id"], db_path=db)
     assert disclosure["status"] == "draft"
     assert disclosure["recipient"] == "maintainer@example.com"
+    # Re-preparing updates the open draft instead of filing a duplicate.
+    again = prepare_disclosure(case["case_id"], body="Updated body", db_path=db)
+    assert again["disclosure_id"] == disclosure["disclosure_id"]
+    assert again["body"] == "Updated body"
     assert "demo-pkg" in disclosure["subject"]
     assert disclosure["body"]
