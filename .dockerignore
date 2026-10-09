@@ -41,3 +41,5 @@ Dockerfile
 docker-compose*.yml
 mkdocs.yml
 *.md
+cloudflare/*/node_modules
+cloudflare/*/.wrangler

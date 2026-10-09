@@ -1,0 +1,14 @@
+{
+  "name": "@secopsai/research-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/index.js && node --check test/runner.test.js",
+    "test": "node --import ./test/register.mjs --test test/runner.test.js",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.149.0"
+  }
+}
