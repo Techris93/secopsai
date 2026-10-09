@@ -1,0 +1,5 @@
+Contact: mailto:security@secopsai.dev
+Expires: 2027-04-07T00:00:00Z
+Preferred-Languages: en
+Canonical: https://blog.secopsai.dev/.well-known/security.txt
+Policy: https://github.com/Techris93/secopsai/blob/main/SECURITY.md

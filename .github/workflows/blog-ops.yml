@@ -202,7 +202,7 @@ jobs:
         run: |
           python scripts/verify_blog.py
           node --check blog/_worker.js
-          node --check blog/functions/api/comments.js
+          node --test tests/js/blog_worker.test.mjs
           node --check blog/assets/blog.js
           node --check blog/assets/comments.js
           python -m pytest tests/test_blog.py -q

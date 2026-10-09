@@ -14,6 +14,27 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertEqual(blog._post_date("2026-07-03T10:20:30Z"), "2026-07-03")
         self.assertEqual(blog._post_date("Wed, 03 Jul 2026 10:20:30 GMT"), "2026-07-03")
 
+    def test_rss_date_preserves_rfc2822_and_iso_dates(self):
+        self.assertEqual(blog._rss_date("Wed, 15 Jul 2026 16:00:35 +0000"), "Wed, 15 Jul 2026 16:00:35 GMT")
+        self.assertEqual(blog._rss_date("Wed, 24 Jun 26 12:00:00 +0000"), "Wed, 24 Jun 2026 12:00:00 GMT")
+        self.assertEqual(blog._rss_date("2026-07-10"), "Fri, 10 Jul 2026 00:00:00 GMT")
+        # Unparseable values are omitted instead of being re-dated to "now".
+        self.assertEqual(blog._rss_date("not a date"), "")
+
+    def test_rebuild_writes_security_txt_robots_sitemap_and_404(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.root.mkdir(parents=True)
+            written = blog._write_site_metadata([{"slug": "unit-post", "published_at": "2026-07-10"}], paths)
+            self.assertEqual(len(written), 4)
+            security_txt = (paths.root / ".well-known" / "security.txt").read_text(encoding="utf-8")
+            self.assertIn("Contact: mailto:security@secopsai.dev", security_txt)
+            self.assertRegex(security_txt, r"Expires: \d{4}-\d{2}-\d{2}T00:00:00Z")
+            sitemap = ET.fromstring((paths.root / "sitemap.xml").read_text(encoding="utf-8"))
+            locs = [node.text for node in sitemap.iter("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")]
+            self.assertIn("https://blog.secopsai.dev/posts/unit-post.html", locs)
+            self.assertIn('content="noindex"', (paths.root / "404.html").read_text(encoding="utf-8"))
+
     def test_draft_advisory_publish_and_rebuild_feeds(self):
         advisory = {
             "advisory_id": "ADV-UNIT",

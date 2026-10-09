@@ -201,6 +201,9 @@ jobs:
           npm test
           npm audit --audit-level=moderate
 
+      - name: Test public site Workers
+        run: node --test tests/js/*.test.mjs
+
       - name: Rehearse D1 migrations locally
         working-directory: cloudflare/secopsai-core-edge
         run: |
