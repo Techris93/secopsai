@@ -20,7 +20,7 @@
 >    `github-actions-research-worker` on Core Edge, then set the repository
 >    variable `RESEARCH_WORKER_ENABLED=true`.
 
-Replaces the Render background worker (`render.yaml`). A Cron Trigger asks a
+Replaced the Render background worker (retired 9 October 2026). A Cron Trigger asks a
 single Durable Object to keep one Container running the unchanged Python
 research worker (`secopsai.cli research worker run`). Core API, alerts,
 heartbeats, and the ontology already run on Core Edge (Worker + D1).
@@ -69,7 +69,7 @@ storage for four compressed snapshots is cents.
 5. Set `RUNNER_ENABLED` to `"true"`, deploy, then `POST /start` with the
    admin token. Confirm a heartbeat for `cloudflare-secopsai-research-runner`
    on `https://core.secopsai.dev` and `GET /status`.
-6. After a week without incident, delete the Render service and `render.yaml`.
+6. Done: the Render service and `render.yaml` were deleted on 9 October 2026.
 
 Never run Render and this runner at the same time: both would write alerts
 and claim coordinator leases.
