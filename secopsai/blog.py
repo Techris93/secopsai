@@ -210,11 +210,16 @@ def _safe_reference_list(values: Any, *, limit: int = 24) -> List[str]:
             candidates.extend(url.rstrip(".,);") for url in urls)
         else:
             candidates.extend(part.strip() for part in re.split(r"[\n,;]+", text) if part.strip())
-    return [
-        item
-        for item in _safe_list(candidates, limit=limit)
-        if urllib.parse.urlparse(item).scheme in {"http", "https"}
-    ]
+    return [item for item in _safe_list(candidates, limit=limit) if _is_http_reference(item)]
+
+
+def _is_http_reference(value: str) -> bool:
+    # Redaction can yield "scheme://[HASH-REDACTED]", which urlparse treats as
+    # a malformed IPv6 literal and raises on; such values are not links.
+    try:
+        return urllib.parse.urlparse(value).scheme in {"http", "https"}
+    except ValueError:
+        return False
 
 
 def _safe_text(value: Any, *, fallback: str = "") -> str:
@@ -258,14 +263,40 @@ def markdown_to_html(markdown: str) -> str:
     in_code = False
     code_lines: List[str] = []
 
+    table_rows: List[str] = []
+
     def close_list() -> None:
         nonlocal in_list
         if in_list:
             html_lines.append("</ul>")
             in_list = False
 
+    def cells(row: str) -> List[str]:
+        return [cell.strip() for cell in row.strip().strip("|").split("|")]
+
+    def flush_table() -> None:
+        # GitHub-style pipe tables: header row, --- separator, body rows.
+        # Wrapped so wide tables scroll inside the article on mobile.
+        if not table_rows:
+            return
+        rows = list(table_rows)
+        table_rows.clear()
+        if len(rows) >= 2 and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells(rows[1])):
+            head, body = cells(rows[0]), [cells(row) for row in rows[2:]]
+            html_lines.append('<div class="table-scroll"><table>')
+            html_lines.append("<thead><tr>" + "".join(f"<th>{_markdown_inline(cell)}</th>" for cell in head) + "</tr></thead>")
+            html_lines.append("<tbody>" + "".join("<tr>" + "".join(f"<td>{_markdown_inline(cell)}</td>" for cell in row) + "</tr>" for row in body) + "</tbody>")
+            html_lines.append("</table></div>")
+        else:
+            html_lines.extend(f"<p>{_markdown_inline(row.strip())}</p>" for row in rows)
+
     for line in lines:
         stripped = line.strip()
+        if not in_code and stripped.startswith("|") and stripped.endswith("|") and len(stripped) > 1:
+            close_list()
+            table_rows.append(stripped)
+            continue
+        flush_table()
         if stripped.startswith("```"):
             if in_code:
                 html_lines.append("<pre><code>" + html.escape("\n".join(code_lines)) + "</code></pre>")
@@ -298,6 +329,7 @@ def markdown_to_html(markdown: str) -> str:
         else:
             close_list()
             html_lines.append(f"<p>{_markdown_inline(stripped)}</p>")
+    flush_table()
     close_list()
     return "\n".join(html_lines)
 

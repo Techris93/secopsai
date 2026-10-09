@@ -404,7 +404,9 @@ button.button {
 /* ── Article ─────────────────────────────────────────────── */
 .article-hero {
   border-bottom: 1px solid var(--rule-dark);
-  padding: 32px 0 24px;
+  /* Vertical only: the shorthand used to zero the .shell side gutter. */
+  padding-top: 32px;
+  padding-bottom: 24px;
 }
 .breadcrumb {
   font-family: var(--mono);
@@ -425,11 +427,16 @@ button.button {
 .article-hero .tags { margin-top: 14px; }
 .post-layout {
   display: grid;
-  grid-template-columns: 1fr 260px;
+  grid-template-columns: minmax(0, 1fr) 260px;
   gap: 40px;
-  padding: 32px 0;
+  padding-top: 32px;
+  padding-bottom: 32px;
 }
-.post-body { max-width: 68ch; }
+.post-body { max-width: 68ch; min-width: 0; overflow-wrap: anywhere; }
+.article-hero h1, .article-hero .dek, .breadcrumb { overflow-wrap: anywhere; }
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 16px 0; }
+.table-scroll table { margin: 0; min-width: 100%; }
+.post-body pre { max-width: 100%; overflow-x: auto; }
 .post-body h1 {
   font-size: 24px;
   border-bottom: 1px solid var(--rule-dark);
@@ -592,7 +599,7 @@ button.button {
 
 /* ── Responsive ──────────────────────────────────────────── */
 @media (max-width: 920px) {
-  .post-layout { grid-template-columns: 1fr; }
+  .post-layout { grid-template-columns: minmax(0, 1fr); }
   .side { order: -1; }
 }
 @media (max-width: 840px) {
