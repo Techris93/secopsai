@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "secopsai-ledger-store",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-08",
+  "workers_dev": true,
+  "routes": [{ "pattern": "ledger.secopsai.dev", "custom_domain": true }],
+  "observability": { "enabled": true },
+  // Secret: LEDGER_STORE_TOKEN (shared with the GitHub Actions runner).
+  "r2_buckets": [{ "binding": "LEDGER", "bucket_name": "secopsai-research-ledger" }]
+}

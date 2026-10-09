@@ -19,7 +19,7 @@ function memoryBucket() {
     resumeMultipartUpload(key, id) {
       const upload = uploads.get(id);
       return {
-        async uploadPart(number, body) { upload.parts[number - 1] = new Uint8Array(body); return { etag: `e${number}` }; },
+        async uploadPart(number, body) { upload.parts[number - 1] = new Uint8Array(await new Response(body).arrayBuffer()); return { etag: `e${number}` }; },
         async complete() { objects.set(key, Buffer.concat(upload.parts)); },
       };
     },
@@ -86,7 +86,7 @@ test("multipart checkpoint advances LATEST only on completion and prunes old sna
   const bucket = memoryBucket();
   for (let index = 0; index < 5; index += 1) bucket.objects.set(`ledger/snapshots/2026-01-0${index}.db.gz`, "old");
   const created = await (await handleLedgerRequest(new Request("http://ledger.internal/uploads", { method: "POST" }), bucket)).json();
-  const part = await handleLedgerRequest(new Request(`http://ledger.internal/uploads/${created.upload_id}/parts/1?key=${created.key}`, { method: "PUT", body: "gzip-bytes" }), bucket);
+  const part = await handleLedgerRequest(new Request(`http://ledger.internal/uploads/${created.upload_id}/parts/1?key=${created.key}`, { method: "PUT", body: "gzip-bytes", headers: { "content-length": "10" } }), bucket);
   const { etag } = await part.json();
   assert.equal(bucket.objects.has("ledger/LATEST"), false);
   const done = await handleLedgerRequest(new Request(`http://ledger.internal/uploads/${created.upload_id}/complete?key=${created.key}`, {
