@@ -4,6 +4,32 @@
   "home_page_url": "https://blog.secopsai.dev/",
   "items": [
     {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "SecOpsAI Research"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/anatomy-of-a-false-positive-npm-triage.svg",
+      "date_modified": "2026-10-09T15:22:52Z",
+      "date_published": "2026-10-09T15:22:52Z",
+      "id": "https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage.html",
+      "image": "https://blog.secopsai.dev/assets/social/anatomy-of-a-false-positive-npm-triage.svg",
+      "images": [],
+      "reading_time_minutes": 3,
+      "severity": "info",
+      "summary": "SecOpsAI scored a benign desktop-assistant release 100/100. A release diff, install-hook review and rule-by-rule explanation cleared it, and exposed two scoring flaws we have now fixed.",
+      "tags": [
+        "Original Research",
+        "Detection Engineering",
+        "Supply Chain",
+        "npm",
+        "Triage"
+      ],
+      "title": "Anatomy of a false positive: clearing a critical npm alert in twenty minutes",
+      "url": "https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage.html"
+    },
+    {
       "affected_packages": [
         "@opensearch-project/opensearch",
         "mistralai",

@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="SecOpsAI Security Blog">
-  <desc>SecOpsAI technical-publication social card for SecOpsAI Security Blog</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="Anatomy of a false positive: clearing a critical npm alert in twenty minutes">
+  <desc>SecOpsAI technical-publication social card for Anatomy of a false positive: clearing a critical npm alert in twenty minutes</desc>
   <rect width="1200" height="630" fill="#FBFAF6"/>
   <rect x="42" y="42" width="1116" height="546" fill="#FFFFFF" stroke="#8B939D" stroke-width="2"/>
   <rect x="42" y="42" width="10" height="546" fill="#176B4D"/>
@@ -9,8 +9,10 @@
   <text x="92" y="157" font-family="Courier New, monospace" font-size="16" font-weight="700" letter-spacing="3" fill="#56606B">SECURITY RESEARCH AND ADVISORIES</text>
   <rect x="92" y="178" width="168" height="42" fill="#E8F3EE" stroke="#176B4D" stroke-width="1"/>
   <text x="176" y="206" text-anchor="middle" font-family="Courier New, monospace" font-size="18" font-weight="700" letter-spacing="2" fill="#176B4D">INFO</text>
-  <text x="284" y="205" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#3E4650">Security Research, Advisories</text>
-  <text x="92" y="286" font-family="Arial, Helvetica, sans-serif" font-size="54" font-weight="800" fill="#16191D"><tspan x="92" dy="0">SecOpsAI Security Blog</tspan></text>
+  <text x="284" y="205" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#3E4650">Original Research, Detection Engineering</text>
+  <text x="92" y="286" font-family="Arial, Helvetica, sans-serif" font-size="54" font-weight="800" fill="#16191D"><tspan x="92" dy="0">Anatomy of a false positive:</tspan>
+<tspan x="92" dy="61">clearing a critical npm alert in</tspan>
+<tspan x="92" dy="61">twenty minutes</tspan></text>
   <line x1="92" y1="522" x2="1110" y2="522" stroke="#C9CDD2" stroke-width="2"/>
   <text x="92" y="558" font-family="Courier New, monospace" font-size="17" font-weight="700" letter-spacing="1" fill="#56606B">blog.secopsai.dev</text>
   <text x="1110" y="558" text-anchor="end" font-family="Courier New, monospace" font-size="17" font-weight="700" letter-spacing="1" fill="#56606B">ISSUE 2026-10-09</text>

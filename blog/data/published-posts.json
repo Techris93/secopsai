@@ -1,7 +1,72 @@
 {
   "description": "Canonical public-post archive used to rebuild generated blog output without losing older posts.",
-  "generated_at": "2026-10-09T14:28:34Z",
+  "generated_at": "2026-10-09T15:22:52Z",
   "posts": [
+    {
+      "affected_artifacts": [],
+      "affected_ecosystems": [
+        "npm"
+      ],
+      "affected_packages": [],
+      "affected_products": [],
+      "author": "SecOpsAI Research",
+      "body_markdown": "## Summary\n\nOn 9 October 2026 SecOpsAI's npm monitor scored a new release of a desktop\nAI-assistant package **100 out of 100** and raised a critical alert. Twenty\nminutes of static review showed the release was benign. The alert was wrong\nfor two specific, fixable reasons, and both are now corrected in the scorer.\nThis post walks through the triage so other teams can reuse the method, and\nexplains what changed in our detection logic.\n\nWe do not name the package: the developer did nothing wrong, and a false\nalert should not follow their project around.\n\n## What triggered the alert\n\nThe release carried four metadata signals:\n\n| Signal | Points | What it really was |\n| --- | --- | --- |\n| New `postinstall` hook | 45 | The hook already existed in the previous release |\n| Suspicious script name (`secret`) | 10 | The word appeared in the **test** script, which never runs on install |\n| Executable shipped with an install hook | 15 | The package's own command-line entry point |\n| Process execution in the artifact | 6 | The app launches itself after a global install |\n\nStatic analysis of the artifact added medium-confidence rule hits for build\nhooks, credential discovery and PowerShell staging, plus roughly eighty URLs\noffered as indicators of compromise: Gmail, Slack, Salesforce, OpenAI,\nAnthropic and similar services.\n\n## How the triage went\n\n**1. Diff the release, not the package.** We collected both the flagged\nversion and its predecessor into quarantine and compared them without\ninstalling or executing anything. Only four files changed: two source files,\n`package.json` and the changelog. The code change added one onboarding step\nfor phones paired with the desktop app, and the changelog described exactly\nthat change.\n\n**2. Read the install hook.** The `postinstall` script was short and\ncommented. On a global install it adds a desktop launcher and opens the app.\nIt reads no credential files and makes no network request. Auto-opening an\napp during `npm install -g` is aggressive behaviour, but it is disclosed in\nthe code and is not malicious.\n\n**3. Explain every rule hit.** The PowerShell staging hit was the app\noffering an official installer URL for a coding assistant. The credential\ndiscovery hits were the app's own settings screens for API keys of the AI\nproviders it integrates with. Accepting user-supplied keys is the product's\npurpose, and the keys stay in local configuration.\n\n**4. Check provenance.** Releases were published from a CI workflow linked\nto a public source repository, at a steady cadence, by the same maintainer.\n\n**5. Look for what malware needs.** Malicious install hooks typically read\n`~/.npmrc`, environment tokens or wallet files, encode them, and send them to\na host the package has no reason to contact. None of that was present.\n\nVerdict: **benign**, confidence 90, recorded against the case evidence.\n\n## Why the score was wrong\n\n**The scorer read every npm script, not only install hooks.** npm runs\nlifecycle scripts such as `preinstall`, `install` and `postinstall` on the\nuser's machine; `test` and `lint` never run on install. Our token check\nconcatenated all scripts, so `node test/secrets.mjs` counted as a suspicious\ninstall hook. The scorer now inspects install-time scripts only.\n\n**A first-observed release counted existing hooks as new.** When the monitor\nhas no earlier version to compare against, every hook in the release looked\n\"new\" and earned the heaviest weight. A hook is now only treated as new\nrelative to a known previous version.\n\nWith both fixes the same release scores below the review threshold, while a\ngenuinely new install hook that downloads and runs a script still scores in\nthe alert range. Both cases are covered by regression tests.\n\n## Two robustness fixes found on the way\n\n- **A malformed URL could abort an investigation.** A URL with an unbalanced\n  IPv6 bracket in package contents made indicator validation throw an error\n  and stop the whole scan. A crafted package could have used this to evade\n  analysis. Malformed URLs are now recorded as rejected indicators instead.\n- **Indicator lists need context.** Eighty well-known SaaS endpoints are not\n  indicators of compromise for an integration product. Reviewers should treat\n  bulk URL extraction as a map of the package's integrations, not as IOCs.\n\n## Lessons for triage teams\n\n- Diff against the previous release before reading anything else.\n- Separate install-time scripts from developer scripts.\n- Treat a missing baseline as \"unknown\", not \"new\".\n- Every rule hit needs an explanation in plain words before a verdict.\n- A benign verdict is a result. Record it with evidence, like any other.",
+      "canonical_url": "https://docs.npmjs.com/cli/v10/using-npm/scripts",
+      "categories": [
+        "Original Research",
+        "Detection Engineering",
+        "Supply Chain"
+      ],
+      "extracted": {},
+      "featured": false,
+      "iocs": [],
+      "operator_commands": [
+        "secopsai research package --ecosystem npm --package <name> --version <new> --comparison-ecosystem npm --comparison-package <name> --comparison-version <previous> --research-type package_compromise",
+        "secopsai research workflow verdict <case> --verdict benign --confidence 90 --rationale \"...\" --evidence-id EVD-..."
+      ],
+      "primary_references": [
+        "https://docs.npmjs.com/cli/v10/using-npm/scripts",
+        "https://docs.npmjs.com/trusted-publishers"
+      ],
+      "published_at": "2026-10-09T15:22:52Z",
+      "readiness_blockers": [],
+      "readiness_score": 0,
+      "readiness_status": "needs_edits",
+      "readiness_warnings": [],
+      "reading_time": 3,
+      "references": [
+        "https://docs.npmjs.com/cli/v10/using-npm/scripts",
+        "https://docs.npmjs.com/trusted-publishers"
+      ],
+      "related_posts": [],
+      "review_status": "pending",
+      "severity": "info",
+      "slug": "anatomy-of-a-false-positive-npm-triage",
+      "social_image": "/assets/social/anatomy-of-a-false-positive-npm-triage.svg",
+      "social_image_alt": "SecOpsAI social preview card for Anatomy of a false positive: clearing a critical npm alert in twenty minutes",
+      "social_image_height": 630,
+      "social_image_width": 1200,
+      "source_links": [
+        "https://docs.npmjs.com/cli/v10/using-npm/scripts",
+        "https://docs.npmjs.com/trusted-publishers"
+      ],
+      "source_name": "SecOpsAI Research",
+      "sources": [
+        "https://docs.npmjs.com/cli/v10/using-npm/scripts",
+        "https://docs.npmjs.com/trusted-publishers"
+      ],
+      "status": "published",
+      "summary": "SecOpsAI scored a benign desktop-assistant release 100/100. A release diff, install-hook review and rule-by-rule explanation cleared it, and exposed two scoring flaws we have now fixed.",
+      "tags": [
+        "Original Research",
+        "Detection Engineering",
+        "Supply Chain",
+        "npm",
+        "Triage"
+      ],
+      "title": "Anatomy of a false positive: clearing a critical npm alert in twenty minutes",
+      "updated_at": "2026-10-09T15:22:52Z"
+    },
     {
       "affected_artifacts": [
         {

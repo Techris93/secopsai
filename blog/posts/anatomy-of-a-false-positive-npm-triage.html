@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Anatomy of a false positive: clearing a critical npm alert in twenty minutes | SecOpsAI Security Blog</title>
+    <meta name="description" content="SecOpsAI scored a benign desktop-assistant release 100/100. A release diff, install-hook review and rule-by-rule explanation cleared it, and exposed two scoring flaws we have now fixed." />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="SecOpsAI Security Blog" />
+    <meta property="og:title" content="Anatomy of a false positive: clearing a critical npm alert in twenty minutes | SecOpsAI Security Blog" />
+    <meta property="og:description" content="SecOpsAI scored a benign desktop-assistant release 100/100. A release diff, install-hook review and rule-by-rule explanation cleared it, and exposed two scoring flaws we have now fixed." />
+    <meta property="og:url" content="https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage.html" />
+    <meta property="og:image" content="https://blog.secopsai.dev/assets/social/anatomy-of-a-false-positive-npm-triage.svg" />
+    <meta property="og:image:alt" content="SecOpsAI social preview card for Anatomy of a false positive: clearing a critical npm alert in twenty minutes" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Anatomy of a false positive: clearing a critical npm alert in twenty minutes | SecOpsAI Security Blog" />
+    <meta name="twitter:description" content="SecOpsAI scored a benign desktop-assistant release 100/100. A release diff, install-hook review and rule-by-rule explanation cleared it, and exposed two scoring flaws we have now fixed." />
+    <meta name="twitter:image" content="https://blog.secopsai.dev/assets/social/anatomy-of-a-false-positive-npm-triage.svg" />
+    <meta name="twitter:image:alt" content="SecOpsAI social preview card for Anatomy of a false positive: clearing a critical npm alert in twenty minutes" />
+    <meta property="article:published_time" content="2026-10-09T15:22:52Z" />
+    <meta property="article:modified_time" content="2026-10-09T15:22:52Z" />
+    <meta property="article:tag" content="Original Research" />
+    <meta property="article:tag" content="Detection Engineering" />
+    <meta property="article:tag" content="Supply Chain" />
+    <link rel="canonical" href="https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage.html" />
+    <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/blog.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <nav class="shell nav" data-site-nav>
+        <a class="brand" href="/">
+          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
+          <span class="brand-title"><span>SECOPSAI</span><span>SECURITY BLOG</span></span>
+        </a>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-menu" data-nav-toggle>
+          <span class="nav-toggle-lines" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span class="nav-toggle-label">Menu</span>
+        </button>
+        <div class="nav-links" id="site-menu" data-nav-menu>
+          <a href="/">Blog Home</a>
+          <a href="https://docs.secopsai.dev/">Docs</a>
+          <a href="/feed.xml">RSS</a>
+          <a href="/json-feed">JSON Feed</a>
+        </div>
+      </nav>
+    </header>
+    <main>
+      <header class="shell article-hero">
+        <div class="breadcrumb">
+          <a href="/">Blog Home</a><span>&gt;</span><span>Anatomy of a false positive: clearing a critical npm alert in twenty minutes</span>
+        </div>
+        <p class="eyebrow">INFO • SecOpsAI Intelligence</p>
+        <h1>Anatomy of a false positive: clearing a critical npm alert in twenty minutes</h1>
+        <p class="dek">SecOpsAI scored a benign desktop-assistant release 100/100. A release diff, install-hook review and rule-by-rule explanation cleared it, and exposed two scoring flaws we have now fixed.</p>
+        <div class="meta">
+          <span class="pill info">Info</span>
+          <span>By SecOpsAI Research</span>
+          <span>3 min read</span>
+          <span>Published: 2026-10-09</span>
+            <span>Updated: 2026-10-09</span>
+        </div>
+        <div class="tags"><span class="pill">Original Research</span> <span class="pill">Detection Engineering</span> <span class="pill">Supply Chain</span></div>
+
+      </header>
+      <div class="shell post-layout">
+        <article class="post-body">
+        <h2>Summary</h2>
+<p>On 9 October 2026 SecOpsAI&#x27;s npm monitor scored a new release of a desktop AI-assistant package <strong>100 out of 100</strong> and raised a critical alert. Twenty minutes of static review showed the release was benign. The alert was wrong for two specific, fixable reasons, and both are now corrected in the scorer. This post walks through the triage so other teams can reuse the method, and explains what changed in our detection logic.</p>
+<p>We do not name the package: the developer did nothing wrong, and a false alert should not follow their project around.</p>
+<h2>What triggered the alert</h2>
+<p>The release carried four metadata signals:</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Signal</th><th>Points</th><th>What it really was</th></tr></thead>
+<tbody><tr><td>New <code>postinstall</code> hook</td><td>45</td><td>The hook already existed in the previous release</td></tr><tr><td>Suspicious script name (<code>secret</code>)</td><td>10</td><td>The word appeared in the <strong>test</strong> script, which never runs on install</td></tr><tr><td>Executable shipped with an install hook</td><td>15</td><td>The package&#x27;s own command-line entry point</td></tr><tr><td>Process execution in the artifact</td><td>6</td><td>The app launches itself after a global install</td></tr></tbody>
+</table></div>
+<p>Static analysis of the artifact added medium-confidence rule hits for build hooks, credential discovery and PowerShell staging, plus roughly eighty URLs offered as indicators of compromise: Gmail, Slack, Salesforce, OpenAI, Anthropic and similar services.</p>
+<h2>How the triage went</h2>
+<p><strong>1. Diff the release, not the package.</strong> We collected both the flagged version and its predecessor into quarantine and compared them without installing or executing anything. Only four files changed: two source files, <code>package.json</code> and the changelog. The code change added one onboarding step for phones paired with the desktop app, and the changelog described exactly that change.</p>
+<p><strong>2. Read the install hook.</strong> The <code>postinstall</code> script was short and commented. On a global install it adds a desktop launcher and opens the app. It reads no credential files and makes no network request. Auto-opening an app during <code>npm install -g</code> is aggressive behaviour, but it is disclosed in the code and is not malicious.</p>
+<p><strong>3. Explain every rule hit.</strong> The PowerShell staging hit was the app offering an official installer URL for a coding assistant. The credential discovery hits were the app&#x27;s own settings screens for API keys of the AI providers it integrates with. Accepting user-supplied keys is the product&#x27;s purpose, and the keys stay in local configuration.</p>
+<p><strong>4. Check provenance.</strong> Releases were published from a CI workflow linked to a public source repository, at a steady cadence, by the same maintainer.</p>
+<p><strong>5. Look for what malware needs.</strong> Malicious install hooks typically read <code>~/.npmrc</code>, environment tokens or wallet files, encode them, and send them to a host the package has no reason to contact. None of that was present.</p>
+<p>Verdict: <strong>benign</strong>, confidence 90, recorded against the case evidence.</p>
+<h2>Why the score was wrong</h2>
+<p><strong>The scorer read every npm script, not only install hooks.</strong> npm runs lifecycle scripts such as <code>preinstall</code>, <code>install</code> and <code>postinstall</code> on the user&#x27;s machine; <code>test</code> and <code>lint</code> never run on install. Our token check concatenated all scripts, so <code>node test/secrets.mjs</code> counted as a suspicious install hook. The scorer now inspects install-time scripts only.</p>
+<p><strong>A first-observed release counted existing hooks as new.</strong> When the monitor has no earlier version to compare against, every hook in the release looked &quot;new&quot; and earned the heaviest weight. A hook is now only treated as new relative to a known previous version.</p>
+<p>With both fixes the same release scores below the review threshold, while a genuinely new install hook that downloads and runs a script still scores in the alert range. Both cases are covered by regression tests.</p>
+<h2>Two robustness fixes found on the way</h2>
+<ul>
+<li><strong>A malformed URL could abort an investigation.</strong> A URL with an unbalanced IPv6 bracket in package contents made indicator validation throw an error and stop the whole scan. A crafted package could have used this to evade analysis. Malformed URLs are now recorded as rejected indicators instead.</li>
+<li><strong>Indicator lists need context.</strong> Eighty well-known SaaS endpoints are not indicators of compromise for an integration product. Reviewers should treat bulk URL extraction as a map of the package&#x27;s integrations, not as IOCs.</li>
+</ul>
+<h2>Lessons for triage teams</h2>
+<ul>
+<li>Diff against the previous release before reading anything else.</li>
+<li>Separate install-time scripts from developer scripts.</li>
+<li>Treat a missing baseline as &quot;unknown&quot;, not &quot;new&quot;.</li>
+<li>Every rule hit needs an explanation in plain words before a verdict.</li>
+<li>A benign verdict is a result. Record it with evidence, like any other.</li>
+</ul>
+
+        <section class="comments" data-comments data-slug="anatomy-of-a-false-positive-npm-triage">
+          <h2>Comments</h2>
+          <p>Comments are moderated before publication. Do not post secrets, tokens, customer data, or exploit payloads.</p>
+          <div class="comment-list" data-comment-list></div>
+          <form data-comment-form>
+            <input name="name" maxlength="80" placeholder="Name or handle" required />
+            <input name="email" type="email" maxlength="160" placeholder="Email for moderation only" required />
+            <input name="website" tabindex="-1" autocomplete="off" style="display:none" />
+            <textarea name="body" maxlength="2000"
+              placeholder="Add source-backed context, a mitigation note, or a question..."
+              required></textarea>
+            <div class="turnstile-slot" data-turnstile></div>
+            <button type="submit">Submit for moderation</button>
+            <p data-comment-status></p>
+          </form>
+        </section>
+      </article>
+      <aside class="side">
+        <section class="card">
+          <p class="eyebrow">Operator note</p>
+          <p>Source-backed posts are generated as drafts first and require explicit publishing.</p>
+        </section>
+        <section class="card command-panel">
+          <p class="eyebrow">Operator commands</p>
+          <button class="command-chip" type="button" data-copy="secopsai research package --ecosystem npm --package &lt;name&gt; --version &lt;new&gt; --comparison-ecosystem npm --comparison-package &lt;name&gt; --comparison-version &lt;previous&gt; --research-type package_compromise"><code>secopsai research package --ecosystem npm --package &lt;name&gt; --version &lt;new&gt; --comparison-ecosystem npm --comparison-package &lt;name&gt; --comparison-version &lt;previous&gt; --research-type package_compromise</code></button>
+<button class="command-chip" type="button" data-copy="secopsai research workflow verdict &lt;case&gt; --verdict benign --confidence 90 --rationale &quot;...&quot; --evidence-id EVD-..."><code>secopsai research workflow verdict &lt;case&gt; --verdict benign --confidence 90 --rationale &quot;...&quot; --evidence-id EVD-...</code></button>
+        </section>
+        <section class="card">
+          <p class="eyebrow">References</p>
+          <ul><li><a href="https://docs.npmjs.com/cli/v10/using-npm/scripts" rel="noopener noreferrer" target="_blank">docs.npmjs.com</a></li><li><a href="https://docs.npmjs.com/trusted-publishers" rel="noopener noreferrer" target="_blank">docs.npmjs.com</a></li></ul>
+        </section>
+        <section class="card">
+          <p class="eyebrow">Related posts</p>
+          <p>No related posts yet.</p>
+        </section>
+      </aside>
+      </div>
+    </main>
+    <script src="/assets/blog.js" defer></script>
+    <script src="/assets/comments.js" defer></script>
+  </body>
+</html>
