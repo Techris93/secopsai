@@ -5,6 +5,8 @@ import io
 import tarfile
 from pathlib import Path
 
+import pytest
+
 from secopsai import artifact_fleet
 
 
@@ -226,3 +228,36 @@ def test_generic_rules_still_detect_malicious_patterns():
     assert {"OSS-DOWNLOAD-EXECUTE", "OSS-BROWSER-DATA", "OSS-C2-IP-PORT", "OSS-C2-DGA"} <= rules
     assert all(item["confidence"] == "medium" for item in _rule_pack_findings({"evil.js": malicious}))
     assert "cdn-update.top" in _extract_iocs({"evil.js": malicious})["domains"]
+
+
+def test_archive_directory_entries_are_allowed_but_links_are_not(tmp_path):
+    import io
+    import tarfile
+
+    from secopsai.artifact_fleet import _safe_archive_files
+
+    def build(name, members):
+        path = tmp_path / name
+        with tarfile.open(path, "w:gz") as archive:
+            for info, data in members:
+                archive.addfile(info, io.BytesIO(data) if data is not None else None)
+        return path
+
+    folder = tarfile.TarInfo("package")
+    folder.type = tarfile.DIRTYPE
+    body = b'{"name": "demo"}'
+    manifest = tarfile.TarInfo("package/package.json")
+    manifest.size = len(body)
+    files, _metadata, _digest = _safe_archive_files(build("dirs.tgz", [(folder, None), (manifest, body)]))
+    assert any(name.endswith("package.json") for name in files)
+
+    link = tarfile.TarInfo("package/link")
+    link.type = tarfile.SYMTYPE
+    link.linkname = "/etc/passwd"
+    with pytest.raises(ValueError, match="unsafe path or link"):
+        _safe_archive_files(build("link.tgz", [(folder, None), (link, None)]))
+
+    escape = tarfile.TarInfo("../escape")
+    escape.type = tarfile.DIRTYPE
+    with pytest.raises(ValueError, match="unsafe path or link"):
+        _safe_archive_files(build("escape.tgz", [(escape, None)]))

@@ -19,13 +19,17 @@ def test_release_version_is_consistent() -> None:
     assert "type=sha,prefix={{branch}}-" not in workflow
 
 
-def test_hosted_deployment_has_one_render_worker_and_cloudflare_core() -> None:
-    blueprint = (ROOT / "render.yaml").read_text(encoding="utf-8")
+def test_hosted_deployment_has_one_actions_worker_and_cloudflare_core() -> None:
+    # Render was retired on 9 October 2026; the research worker runs on
+    # GitHub Actions with the ledger checkpointed to R2.
+    assert not (ROOT / "render.yaml").exists()
+    research = (ROOT / ".github" / "workflows" / "research-worker.yml").read_text(encoding="utf-8")
     worker = (ROOT / "cloudflare" / "secopsai-core-edge" / "wrangler.jsonc").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "test-and-build.yml").read_text(encoding="utf-8")
-    assert blueprint.count("autoDeployTrigger: checksPass") == 1
-    assert "name: secopsai-core-api" not in blueprint
-    assert "https://core.secopsai.dev/api/v1/research/alerts/webhook" in blueprint
+    assert "group: secopsai-research-ledger" in research
+    assert "cancel-in-progress: false" in research
+    assert "https://core.secopsai.dev/api/v1/research/alerts/webhook" in research
+    assert "LEDGER_STORE_URL: https://ledger.secopsai.dev" in research
     assert '"name": "secopsai-core-edge"' in worker
     assert '"pattern": "core.secopsai.dev"' in worker
     assert "deploy-render:" not in workflow

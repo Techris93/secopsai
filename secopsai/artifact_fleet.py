@@ -391,6 +391,8 @@ def _safe_archive_files(path: Path) -> tuple[dict[str, str], list[dict[str, Any]
             total = 0
             for member in members:
                 name = member.filename.replace("\\", "/")
+                if member.is_dir() and not name.startswith("/") and ".." not in Path(name).parts:
+                    continue  # directory entries carry no content
                 if name.startswith("/") or ".." in Path(name).parts or member.is_dir() or member.external_attr >> 16 & 0o170000 == 0o120000:
                     raise ValueError("artifact contains an unsafe path or link")
                 total += member.file_size
@@ -411,6 +413,8 @@ def _safe_archive_files(path: Path) -> tuple[dict[str, str], list[dict[str, Any]
             total = 0
             for member in members:
                 name = member.name.replace("\\", "/")
+                if member.isdir() and not name.startswith("/") and ".." not in Path(name).parts:
+                    continue  # tar and npm-style archives may list directories
                 if name.startswith("/") or ".." in Path(name).parts or member.issym() or member.islnk() or not member.isfile():
                     raise ValueError("artifact contains an unsafe path or link")
                 total += member.size

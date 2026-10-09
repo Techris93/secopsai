@@ -1,0 +1,64 @@
+name: Research Self-Test
+
+# Daily canary for the research-to-publication pipeline.  Runs every gate
+# (intake, verdict, reliability chain, blinded review, visual QA, publication
+# check, disclosure, draft, publish) against an inert synthetic positive
+# control in a throwaway workspace.  No production ledger, blog, or network
+# service is touched.
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "secopsai/research_*.py"
+      - "secopsai/specialist_orchestrator.py"
+      - "secopsai/artifact_fleet.py"
+      - "secopsai/source_first_research.py"
+      - "secopsai/supply_chain.py"
+      - "secopsai/blog.py"
+      - "scripts/research_selftest.py"
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Check out
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run the end-to-end self-test
+        run: python scripts/research_selftest.py --json | tee selftest.json
+
+      - name: Summarise
+        if: always()
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          try:
+              report = json.load(open("selftest.json"))
+          except Exception:
+              print("Self-test produced no report."); raise SystemExit
+          print(f"### Research self-test: {report['status']}\n")
+          print("| Step | Result | Seconds | Detail |\n| --- | --- | --- | --- |")
+          for s in report["steps"]:
+              print(f"| {s['step']} | {'pass' if s['ok'] else 'FAIL'} | {s['seconds']} | {s['detail'][:160]} |")
+          PY

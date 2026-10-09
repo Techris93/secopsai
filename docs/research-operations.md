@@ -4,9 +4,12 @@ This is the operating guide for running SecOpsAI as a security research
 program: continuous registry surveillance, investigating leads, reaching a
 defensible verdict, and publishing research that holds up to scrutiny.
 
-Every command on this page was run end to end on 9 October 2026 against an
-isolated ledger (a live npm release and a synthetic positive control), and
-the results are recorded under [Verification record](#verification-record).
+Every command on this page was run end to end on 9 October 2026, first
+against an isolated ledger (a live npm release and a synthetic positive
+control) and again after the move to Cloudflare and GitHub Actions. The
+results are recorded under [Verification record](#verification-record).
+`scripts/research_selftest.py` repeats the whole chain on demand and runs
+daily in GitHub Actions.
 
 ## Platform map
 
@@ -19,6 +22,7 @@ the results are recorded under [Verification record](#verification-record).
 | Core Edge API | `https://core.secopsai.dev` | Worker + D1 | Alerts, heartbeats, ontology, coordinator |
 | Ledger store | `https://ledger.secopsai.dev` | Worker + R2 | Research ledger checkpoints |
 | Research worker | GitHub Actions **Research Worker** | Free scheduled runner | Registry collectors, triage, daily automation |
+| Pipeline canary | GitHub Actions **Research Self-Test** | Free scheduled runner | Daily end-to-end test of every publication gate |
 
 Every public domain publishes `/.well-known/security.txt` (RFC 9116).
 
@@ -43,6 +47,74 @@ gh run list --workflow research-worker.yml --limit 5
 curl -s https://core.secopsai.dev/healthz
 curl -s https://ledger.secopsai.dev/healthz
 ```
+
+## Daily workflow
+
+A typical day takes 15–30 minutes when nothing is happening and longer
+when a lead turns into a case.
+
+**Morning check (5 minutes)**
+
+```bash
+gh run list --workflow research-worker.yml --limit 6     # every run green?
+gh run list --workflow research-selftest.yml --limit 1   # pipeline canary green?
+curl -s https://core.secopsai.dev/healthz
+curl -s https://ledger.secopsai.dev/healthz
+```
+
+Then open **Mission Control → Research** (`https://dashboard.secopsai.dev`):
+the worker heartbeat (`github-actions-research-worker`) should be under
+45 minutes old, and new alerts and cases appear there. A heartbeat status of
+`degraded` caused only by *replay telemetry missing* is expected on the
+hosted worker, which has no local OpenClaw replay data.
+
+**Triage (10–20 minutes)**
+
+1. Sort alerts by severity. `critical`/`high` need a corroborated behaviour
+   chain, so read those first; `low` alerts can wait for the weekly sweep.
+2. For each lead worth a look, run the package investigation below. Most
+   end as *not substantiated*; record that and move on.
+3. Anything that opens a case goes into the case-to-publication flow.
+
+**When a case is real**
+
+Work the [Case to publication](#case-to-publication) steps in order. Expect
+the reliability chain, the two human reviews and the disclosure step to
+take the most time; the gates refuse to skip any of them.
+
+**Weekly**
+
+```bash
+secopsai blog quality-audit                       # published posts still pass?
+python scripts/research_selftest.py               # local run before releases
+gh workflow run research-worker.yml -f cycles=20  # extra run after a quiet spell
+```
+
+**If something is red**
+
+| Symptom | Likely cause | Action |
+| --- | --- | --- |
+| Research Worker run failed at *Restore ledger* | Ledger store unreachable or token rotated | `curl https://ledger.secopsai.dev/healthz`; check the `LEDGER_STORE_TOKEN` secret |
+| Run failed during cycles | Collector or code error | Open the run log; the last JSON line names the failing stage |
+| No run for over an hour | GitHub schedule delay or the variable was turned off | `gh variable list` (needs `RESEARCH_WORKER_ENABLED=true`); dispatch a run manually |
+| Self-test failed | A gate regressed | The run summary names the failing step; reproduce with `python scripts/research_selftest.py --keep` |
+| HTTP 403 with `error code: 1010` from a `*.secopsai.dev` API | Cloudflare browser check blocked a client without a User-Agent | Send a `User-Agent` header (the SecOpsAI clients already do) |
+
+## Pipeline self-test
+
+```bash
+python scripts/research_selftest.py                 # full chain incl. visual QA (needs Chrome/Chromium)
+python scripts/research_selftest.py --skip-visual-qa  # no browser: confirms publication stays blocked
+python scripts/research_selftest.py --keep --json     # keep the workspace, machine-readable report
+```
+
+The self-test builds an inert positive control (a synthetic npm package
+whose install hook reads `~/.npmrc` and `NPM_TOKEN` and posts them out; it
+is only inspected statically) and drives it through intake, verdict,
+reliability chain, primary and blinded review (including a refused
+same-person review), visual QA, publication check, disclosure deduplication,
+approval, draft and publication into a throwaway copy of the blog. It never
+touches the production ledger, the real blog, Core, or alert channels.
 
 ## Investigate a package
 
@@ -212,6 +284,10 @@ Run on 9 October 2026 with an isolated ledger; no production data changed.
 | Publication check, approval, disclosure gate, draft | Draft created with 100% claim evidence coverage |
 | Publish + rebuild | Post, JSON feed, RSS, sitemap updated; tables render |
 | Worker cycle (fresh ledger) | 8 collectors complete; 100 npm events, 10 static analyses, 1 calibrated candidate |
+| Ledger migration (Render → R2) | 4.22 GB ledger streamed in 16 parts in 155 s; Render idled, then deleted |
+| Hosted worker (GitHub Actions) | Ledger restored from R2, cycles ran, heartbeat in Core, checkpoint (526 MB compressed) uploaded |
+| Hosted case projection | 23 cases visible to Mission Control; sync cursor carried over with the ledger |
+| Self-test after migration | All 8 stages pass (visual QA included); `--skip-visual-qa` confirms publication stays blocked |
 | News intake (live feeds) | KEV and CERT/CC notes pass; marketing, newsletters, navigation junk blocked |
 
 Defects found during these runs and fixed: false-positive static rules (DGA,
@@ -224,3 +300,7 @@ QA with no way to render a draft, markdown tables rendered as raw text, a
 crash on redacted artifact locators, missing mobile gutters, daily automation
 summaries exceeding the database bound, oversized artifacts retried forever,
 Atom links pointing at comment feeds, and navigation links ingested as news.
+Found during the migration and fixed: the container gate failing on two
+CPython 3.13.14 CVEs (moved to 3.13.16), ledger clients blocked by
+Cloudflare's browser check for lacking a User-Agent, and the archive
+inspector rejecting any package archive that lists directory entries.

@@ -5,7 +5,15 @@ import os
 import sqlite3
 
 from secopsai import research_ledger_export as export
-from tests.test_research_runner_supervisor import FakeLedgerServer
+import importlib.util
+from pathlib import Path
+
+# Load the shared fake by path: a stray top-level ``tests`` module elsewhere on
+# sys.path must not shadow this package.
+_spec = importlib.util.spec_from_file_location("_runner_supervisor_tests", Path(__file__).with_name("test_research_runner_supervisor.py"))
+_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_module)
+FakeLedgerServer = _module.FakeLedgerServer
 
 
 def test_streamed_export_restores_to_an_identical_database(tmp_path, monkeypatch):
