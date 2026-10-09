@@ -3687,14 +3687,15 @@ def _render_latest_page(posts: List[Dict[str, Any]]) -> str:
 
 
 def _rss_date(value: str) -> str:
-    try:
-        raw = str(value or "").strip()
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
-            raw = f"{raw}T00:00:00"
-        parsed = time.strptime(raw[:19], "%Y-%m-%dT%H:%M:%S")
-        return email.utils.formatdate(calendar.timegm(parsed), usegmt=True)
-    except Exception:
-        return email.utils.formatdate(time.time(), usegmt=True)
+    """Format a stored ISO or RFC 2822 timestamp for RSS.
+
+    Returns "" for an unparseable value.  Falling back to the current time
+    made every rebuild re-date older posts, so readers saw them as new.
+    """
+    timestamp = _parse_timestamp(value)
+    if timestamp <= 0:
+        return ""
+    return email.utils.formatdate(timestamp, usegmt=True)
 
 
 def _post_summary(post: Dict[str, Any]) -> str:
@@ -3762,6 +3763,86 @@ def _render_json_feed_landing(posts: List[Dict[str, Any]]) -> str:
 """
 
 
+SECURITY_CONTACT = "mailto:security@secopsai.dev"
+SECURITY_POLICY_URL = "https://github.com/Techris93/secopsai/blob/main/SECURITY.md"
+
+
+def _render_not_found_page() -> str:
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Page not found · SecOpsAI Security Blog</title>
+    <meta name="robots" content="noindex" />
+    <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/blog.css" />
+  </head>
+  <body>
+    {_render_site_header()}
+    <main>
+      <section class="hero">
+        <div class="shell">
+          <p class="eyebrow">404</p>
+          <h1>Page not found</h1>
+          <p class="lede">This page does not exist or was retired. Browse the latest research or subscribe to the feed.</p>
+          <div class="feed-actions">
+            <a class="button" href="/posts/">Latest research</a>
+            <a class="button secondary" href="/feed.xml">RSS feed</a>
+          </div>
+        </div>
+      </section>
+    </main>
+    {_render_site_footer()}
+  </body>
+</html>
+"""
+
+
+def _render_sitemap(posts: List[Dict[str, Any]]) -> str:
+    entries = [(f"{BASE_URL}/", ""), (f"{BASE_URL}/posts/", "")]
+    for post in posts:
+        lastmod = _post_date(post.get("updated_at") or post.get("published_at"))
+        entries.append((_post_url(str(post["slug"])), lastmod))
+    rows = []
+    for loc, lastmod in entries:
+        row = f"  <url><loc>{html.escape(loc)}</loc>"
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", lastmod or ""):
+            row += f"<lastmod>{lastmod}</lastmod>"
+        rows.append(row + "</url>")
+    return '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "\n".join(rows) + "\n</urlset>\n"
+
+
+def _render_security_txt(now: Optional[_dt.datetime] = None) -> str:
+    """RFC 9116 security.txt; Expires is renewed on every rebuild."""
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    expires = (now + _dt.timedelta(days=180)).strftime("%Y-%m-%dT00:00:00Z")
+    return (
+        f"Contact: {SECURITY_CONTACT}\n"
+        f"Expires: {expires}\n"
+        "Preferred-Languages: en\n"
+        f"Canonical: {BASE_URL}/.well-known/security.txt\n"
+        f"Policy: {SECURITY_POLICY_URL}\n"
+    )
+
+
+def _write_site_metadata(posts: List[Dict[str, Any]], paths: BlogPaths) -> List[Path]:
+    well_known = paths.root / ".well-known"
+    well_known.mkdir(parents=True, exist_ok=True)
+    outputs = {
+        paths.root / "404.html": _render_not_found_page(),
+        paths.root / "robots.txt": f"User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: {BASE_URL}/sitemap.xml\n",
+        paths.root / "sitemap.xml": _render_sitemap(posts),
+        well_known / "security.txt": _render_security_txt(),
+    }
+    for path, content in outputs.items():
+        path.write_text(content, encoding="utf-8")
+    return list(outputs)
+
+
 def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
     paths = paths or BlogPaths()
     materialized_from_drafts = _materialize_published_drafts(paths)
@@ -3811,13 +3892,14 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
                 "images": post.get("images", []),
             }
         )
+        pub_date = _rss_date(str(post.get("published_at") or post.get("updated_at") or ""))
+        rss_pub_date = f"      <pubDate>{pub_date}</pubDate>\n" if pub_date else ""
         rss_items.append(
             f"""    <item>
       <title>{html.escape(redact(post.get('title', '')))}</title>
       <link>{url}</link>
       <guid>{url}</guid>
-      <pubDate>{_rss_date(str(post.get('published_at') or post.get('updated_at') or ''))}</pubDate>
-      <description>{html.escape(summary)}</description>
+{rss_pub_date}      <description>{html.escape(summary)}</description>
     </item>"""
         )
     (paths.root / "json-feed.html").write_text(_render_json_feed_landing(posts), encoding="utf-8")
@@ -3843,12 +3925,13 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
         '    <description>Real-time SecOpsAI advisories, detections, mitigation steps, '
         'and incident updates.</description>\n'
         '    <language>en-us</language>\n'
-        f'    <lastBuildDate>{_rss_date(latest_feed_date)}</lastBuildDate>\n'
+        f'    <lastBuildDate>{_rss_date(latest_feed_date) or email.utils.formatdate(time.time(), usegmt=True)}</lastBuildDate>\n'
         f'{rss_body}\n'
         '  </channel>\n'
         '</rss>\n'
     )
     (paths.root / "feed.xml").write_text(rss_xml, encoding="utf-8")
+    metadata_paths = _write_site_metadata(posts, paths)
     _write_published_archive(posts, paths)
     return {
         "posts": len(posts),
@@ -3861,6 +3944,7 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
             str(paths.root / "feed.json"),
             str(paths.root / "feed.xml"),
             str(paths.published_posts_archive),
+            *(str(path) for path in metadata_paths),
         ],
     }
 

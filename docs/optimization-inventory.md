@@ -24,7 +24,6 @@ Run the normal CI-equivalent checks after optimization changes:
 python3 scripts/verify_blog.py
 python3 scripts/verify_docs_examples.py
 node --check blog/_worker.js
-node --check blog/functions/api/comments.js
 node --check blog/assets/blog.js
 node --check blog/assets/comments.js
 git diff --check
