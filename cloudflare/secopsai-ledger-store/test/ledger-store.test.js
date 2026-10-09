@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import worker from "../src/index.js";
+import worker, { dispatchResearchWorker } from "../src/index.js";
 
 test("ledger store requires its bearer token", async () => {
   const env = { LEDGER_STORE_TOKEN: "secret", LEDGER: { get: async () => null } };
@@ -23,4 +23,19 @@ test("bridge tokens may upload only while the migration window is open", async (
   // Bridge tokens can never read the ledger back.
   const read = new Request("https://ls.example/snapshot", { headers: { authorization: "Bearer bridge" } });
   assert.equal((await worker.fetch(read, open)).status, 401);
+});
+
+test("cron dispatches the research worker only when a token is configured", async () => {
+  const calls = [];
+  const fetcher = async (url, init) => { calls.push({ url, init }); return new Response(null, { status: 204 }); };
+  assert.equal((await dispatchResearchWorker({}, fetcher)).status, "skipped");
+  assert.equal(calls.length, 0);
+  const result = await dispatchResearchWorker({ GITHUB_DISPATCH_TOKEN: "gh" }, fetcher);
+  assert.equal(result.status, "dispatched");
+  assert.equal(calls[0].url, "https://api.github.com/repos/Techris93/secopsai/actions/workflows/research-worker.yml/dispatches");
+  assert.equal(calls[0].init.headers.authorization, "Bearer gh");
+  assert.ok(calls[0].init.headers["user-agent"], "GitHub rejects requests without a User-Agent");
+  assert.deepEqual(JSON.parse(calls[0].init.body), { ref: "main", inputs: { trigger: "cloudflare-cron" } });
+  const failed = await dispatchResearchWorker({ GITHUB_DISPATCH_TOKEN: "gh" }, async () => new Response("{}", { status: 401 }));
+  assert.equal(failed.status, "failed");
 });

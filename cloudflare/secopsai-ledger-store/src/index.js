@@ -19,7 +19,35 @@ async function bridgeVerified(request, env) {
   return response.status === 200;
 }
 
+// GitHub's schedule trigger is best-effort and may never start a half-hourly
+// workflow, so this Worker's Cron Trigger dispatches the research worker
+// instead.  GITHUB_DISPATCH_TOKEN is a fine-grained token limited to Actions
+// read/write on the repository; without it the cron does nothing.
+export async function dispatchResearchWorker(env, fetcher = fetch) {
+  if (!env.GITHUB_DISPATCH_TOKEN) return { status: "skipped", reason: "GITHUB_DISPATCH_TOKEN is not set" };
+  const repo = env.RESEARCH_WORKER_REPO || "Techris93/secopsai";
+  const workflow = env.RESEARCH_WORKER_WORKFLOW || "research-worker.yml";
+  const response = await fetcher(`https://api.github.com/repos/${repo}/actions/workflows/${workflow}/dispatches`, {
+    method: "POST",
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`,
+      "user-agent": "secopsai-ledger-store",
+      "x-github-api-version": "2022-11-28",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ ref: "main", inputs: { trigger: "cloudflare-cron" } }),
+  });
+  const result = { status: response.status === 204 ? "dispatched" : "failed", http_status: response.status };
+  console.log(JSON.stringify({ component: "research-dispatch", ...result }));
+  return result;
+}
+
 export default {
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(dispatchResearchWorker(env));
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/healthz") return json({ status: "ok", service: "secopsai-ledger-store" });

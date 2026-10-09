@@ -28,7 +28,8 @@ Every public domain publishes `/.well-known/security.txt` (RFC 9116).
 
 ## Daily loop
 
-1. **The worker runs every 30 minutes** (`.github/workflows/research-worker.yml`).
+1. **The worker runs every 30 minutes** (`.github/workflows/research-worker.yml`),
+   started by the ledger-store Worker's Cron Trigger (`:07` and `:37`).
    Each run restores the ledger from R2, runs 20 worker cycles (eight
    registry collectors, npm enrichment and static triage, external advisory
    intake, scoring, daily automation, retention), checkpoints the ledger and
@@ -82,6 +83,9 @@ Work the [Case to publication](#case-to-publication) steps in order. Expect
 the reliability chain, the two human reviews and the disclosure step to
 take the most time; the gates refuse to skip any of them.
 
+**Pause or resume the worker:** `gh variable set RESEARCH_WORKER_ENABLED --body false` stops the
+half-hourly runs (manual dispatches still work); set it back to `true` to resume.
+
 **Weekly**
 
 ```bash
@@ -96,7 +100,7 @@ gh workflow run research-worker.yml -f cycles=20  # extra run after a quiet spel
 | --- | --- | --- |
 | Research Worker run failed at *Restore ledger* | Ledger store unreachable or token rotated | `curl https://ledger.secopsai.dev/healthz`; check the `LEDGER_STORE_TOKEN` secret |
 | Run failed during cycles | Collector or code error | Open the run log; the last JSON line names the failing stage |
-| No run for over an hour | GitHub schedule delay or the variable was turned off | `gh variable list` (needs `RESEARCH_WORKER_ENABLED=true`); dispatch a run manually |
+| No run for over an hour | Kill switch off, or the dispatch token expired | `gh variable list` (needs `RESEARCH_WORKER_ENABLED=true`); `npx wrangler tail secopsai-ledger-store` shows `research-dispatch` results (`http_status: 401` means renew `GITHUB_DISPATCH_TOKEN`); dispatch a run manually meanwhile |
 | Self-test failed | A gate regressed | The run summary names the failing step; reproduce with `python scripts/research_selftest.py --keep` |
 | HTTP 403 with `error code: 1010` from a `*.secopsai.dev` API | Cloudflare browser check blocked a client without a User-Agent | Send a `User-Agent` header (the SecOpsAI clients already do) |
 
