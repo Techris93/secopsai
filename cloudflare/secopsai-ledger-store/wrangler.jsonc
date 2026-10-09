@@ -7,5 +7,8 @@
   "routes": [{ "pattern": "ledger.secopsai.dev", "custom_domain": true }],
   "observability": { "enabled": true },
   // Secret: LEDGER_STORE_TOKEN (shared with the GitHub Actions runner).
-  "r2_buckets": [{ "binding": "LEDGER", "bucket_name": "secopsai-research-ledger" }]
+  "r2_buckets": [{ "binding": "LEDGER", "bucket_name": "secopsai-research-ledger" }],
+  // Validates runner bridge tokens during the one-time ledger migration.
+  "services": [{ "binding": "CORE", "service": "secopsai-core-edge" }],
+  "vars": { "LEDGER_MIGRATION_OPEN": "false" }
 }

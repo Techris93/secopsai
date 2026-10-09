@@ -679,3 +679,15 @@ test("research case projections sync newer-wins and serve hosted reads", { skip:
   assert.equal((await read("/api/v1/research/cases/RSC-000000000000")).status, 404);
   assert.equal((await read("/api/v1/research/cases", "wrong")).status, 401);
 });
+
+test("primary and secondary bridge credentials and webhook secrets are both accepted", async () => {
+  const env = { DB: new MockD1(), CORE_BRIDGE_TOKEN: "p".repeat(44), CORE_BRIDGE_TOKEN_SECONDARY: "s".repeat(44), RESEARCH_WEBHOOK_SECRET: "w".repeat(44), RESEARCH_WEBHOOK_SECRET_SECONDARY: "v".repeat(44) };
+  const whoami = (token) => handleRequest(new Request("https://core.example/api/v1/bridge/whoami", { headers: { authorization: `Bearer ${token}` } }), env);
+  assert.equal((await whoami(env.CORE_BRIDGE_TOKEN)).status, 200);
+  assert.equal((await whoami(env.CORE_BRIDGE_TOKEN_SECONDARY)).status, 200);
+  assert.equal((await whoami("x".repeat(44))).status, 401);
+  assert.equal((await handleRequest(new Request("https://core.example/api/v1/bridge/whoami"), { DB: new MockD1() })).status, 503);
+  const payload = { schema_version: "secopsai.research.alert.v1", alert_id: "RAL-2", alert_type: "collector_degraded", severity: "high", reason: "x", evidence: {}, occurred_at: new Date().toISOString() };
+  assert.equal((await handleRequest(await signedRequest(env.RESEARCH_WEBHOOK_SECRET_SECONDARY, payload), env)).status, 200);
+  assert.equal((await handleRequest(await signedRequest("z".repeat(44), payload), env)).status, 401);
+});

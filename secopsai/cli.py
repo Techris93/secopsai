@@ -3437,6 +3437,11 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
             elif args.once:
                 payload = run_worker_cycle(db_path=args.db_path)
             else:
+                from secopsai.research_ledger_export import idle_forever, maybe_export_before_worker
+
+                # One-time ledger hand-off to the R2 ledger store (migration).
+                if maybe_export_before_worker(args.db_path):
+                    idle_forever()
                 payload = run_worker_loop(db_path=args.db_path, interval_seconds=args.interval, max_cycles=args.max_cycles, on_cycle=lambda summary: print(json.dumps({"cycle": summary}, sort_keys=True), flush=True))
         elif args.research_cmd == "external-intel":
             if args.research_external_cmd != "refresh":

@@ -81,6 +81,12 @@ export async function handleRequest(request, env) {
       await env.DB.prepare("SELECT 1 AS ready").first();
       return response(200, { status: "ready", data_store: "d1" }, requestId);
     }
+    if (request.method === "GET" && url.pathname === "/api/v1/bridge/whoami") {
+      // Lets sibling Workers (ledger store) validate a runner credential
+      // without holding a copy of it.
+      requireBridge(request, env);
+      return response(200, { ok: true, role: "bridge" }, requestId);
+    }
     if (request.method === "POST" && url.pathname === "/api/v1/research/alerts/webhook") {
       return await ingestResearchAlert(request, env, requestId);
     }
@@ -147,11 +153,11 @@ export async function handleRequest(request, env) {
       return response(200, result, requestId);
     }
     if (request.method === "POST" && url.pathname === "/api/v1/ontology/sync") {
-      requireBearer(request, env.CORE_BRIDGE_TOKEN);
+      requireBridge(request, env);
       return response(200, await syncOntology(request, env, requestId), requestId);
     }
     if (request.method === "POST" && url.pathname === "/api/v1/research/cases/sync") {
-      requireBearer(request, env.CORE_BRIDGE_TOKEN);
+      requireBridge(request, env);
       return response(200, await syncResearchCases(request, env, requestId), requestId);
     }
     if (request.method === "GET" && url.pathname === "/api/v1/research/cases") {
@@ -200,7 +206,7 @@ export async function handleRequest(request, env) {
       return response(200, { job: await cancelIntelligenceJob(env.DB, decodeURIComponent(jobMatch[1]), requestId) }, requestId);
     }
     if (jobMatch && request.method === "POST" && jobMatch[2] === "heartbeat") {
-      requireBearer(request, env.CORE_BRIDGE_TOKEN);
+      requireBridge(request, env);
       const heartbeatPayload = await readJsonObject(request, MAX_INTELLIGENCE_BYTES, "Bridge heartbeat");
       return response(200, { job: await heartbeatIntelligenceJob(env.DB, decodeURIComponent(jobMatch[1]), requestId, heartbeatPayload) }, requestId);
     }
@@ -236,24 +242,24 @@ export async function handleRequest(request, env) {
       return response(200, { result: await queueCoordinatorCommand(request, env.DB, requestId, type, { [key]: decodeURIComponent(rollbackMatch[2]) }) }, requestId);
     }
     if (request.method === "POST" && url.pathname === "/api/v1/intelligence/bridge/claim") {
-      requireBearer(request, env.CORE_BRIDGE_TOKEN);
+      requireBridge(request, env);
       return response(200, await claimIntelligenceJob(request, env.DB, requestId), requestId);
     }
     if (request.method === "POST" && url.pathname === "/api/v1/intelligence/bridge/state") {
-      requireBearer(request, env.CORE_BRIDGE_TOKEN);
+      requireBridge(request, env);
       return response(200, await syncRunnerState(request, env.DB, requestId), requestId);
     }
     if (request.method === "GET" && url.pathname === "/api/v1/intelligence/bridge/state") {
-      requireBearer(request, env.CORE_BRIDGE_TOKEN);
+      requireBridge(request, env);
       return response(200, await hostedCoordinatorState(env.DB, boundedLimit(url.searchParams.get("limit"), 20, 100)), requestId);
     }
     if (request.method === "POST" && url.pathname === "/api/v1/intelligence/bridge/commands/claim") {
-      requireBearer(request, env.CORE_BRIDGE_TOKEN);
+      requireBridge(request, env);
       return response(200, await claimCoordinatorCommand(request, env.DB, requestId), requestId);
     }
     const bridgeJobMatch = url.pathname.match(/^\/api\/v1\/intelligence\/bridge\/jobs\/([^/]+)\/(complete|fail|heartbeat)$/);
     if (request.method === "POST" && bridgeJobMatch) {
-      requireBearer(request, env.CORE_BRIDGE_TOKEN);
+      requireBridge(request, env);
       const jobId = decodeURIComponent(bridgeJobMatch[1]);
       if (bridgeJobMatch[2] === "complete") return response(200, await completeIntelligenceJob(request, env.DB, jobId, requestId), requestId);
       if (bridgeJobMatch[2] === "heartbeat") {
@@ -264,7 +270,7 @@ export async function handleRequest(request, env) {
     }
     const bridgeCommandMatch = url.pathname.match(/^\/api\/v1\/intelligence\/bridge\/commands\/([^/]+)\/(complete|fail|heartbeat)$/);
     if (request.method === "POST" && bridgeCommandMatch) {
-      requireBearer(request, env.CORE_BRIDGE_TOKEN);
+      requireBridge(request, env);
       const commandId = decodeURIComponent(bridgeCommandMatch[1]);
       if (bridgeCommandMatch[2] === "heartbeat") {
         const heartbeatPayload = await readJsonObject(request, MAX_INTELLIGENCE_BYTES, "Coordinator heartbeat");
@@ -281,12 +287,24 @@ export async function handleRequest(request, env) {
 }
 
 async function ingestResearchAlert(request, env, requestId) {
-  if (!env.RESEARCH_WEBHOOK_SECRET) throw new HttpError(503, "not_configured", "Research alert webhook is not configured");
+  const webhookSecrets = [env.RESEARCH_WEBHOOK_SECRET, env.RESEARCH_WEBHOOK_SECRET_SECONDARY].filter(Boolean);
+  if (!webhookSecrets.length) throw new HttpError(503, "not_configured", "Research alert webhook is not configured");
   const declaredLength = Number(request.headers.get("content-length") || 0);
   if (declaredLength > MAX_ALERT_BYTES) throw new HttpError(413, "request_too_large", "Research alert exceeds the request size limit");
   const body = new Uint8Array(await request.arrayBuffer());
   if (body.byteLength > MAX_ALERT_BYTES) throw new HttpError(413, "request_too_large", "Research alert exceeds the request size limit");
-  await verifySignature(request.headers, body, env.RESEARCH_WEBHOOK_SECRET);
+  let verified = false;
+  let lastError = null;
+  for (const secret of webhookSecrets) {
+    try {
+      await verifySignature(request.headers, body, secret);
+      verified = true;
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (!verified) throw lastError;
   let payload;
   try {
     payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
@@ -2068,6 +2086,23 @@ async function writeAudit(db, entry) {
     INSERT INTO audit_logs (request_id, action, actor_role, result, source_instance, details_json, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).bind(entry.requestId, entry.action, entry.actorRole, entry.result, entry.sourceInstance, JSON.stringify(entry.details), entry.createdAt).run();
+}
+
+// Two bridge credentials let a new runner (e.g. the GitHub Actions research
+// worker) authenticate with its own token while an existing runner keeps
+// the primary one; either can be rotated independently.
+function bridgeTokens(env) {
+  return [env.CORE_BRIDGE_TOKEN, env.CORE_BRIDGE_TOKEN_SECONDARY].map((value) => String(value || "")).filter(Boolean);
+}
+
+function requireBridge(request, env) {
+  const tokens = bridgeTokens(env);
+  if (!tokens.length) throw new HttpError(503, "not_configured", "Core bridge access is not configured");
+  const supplied = request.headers.get("authorization") || "";
+  const presented = supplied.startsWith("Bearer ") ? supplied.slice(7) : "";
+  // Compare against every configured token so timing does not reveal which matched.
+  const matched = tokens.map((token) => timingSafeEqual(presented, token)).some(Boolean);
+  if (!matched) throw new HttpError(401, "unauthorized", "Valid bearer authentication is required");
 }
 
 function requireBearer(request, expected) {
