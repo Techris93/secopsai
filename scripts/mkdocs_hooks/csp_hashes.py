@@ -44,8 +44,29 @@ def pin_script_hashes(headers: str, hashes: set[str]) -> str:
     return re.sub(r"script-src [^;\n]*", rewrite, headers)
 
 
+SECURITY_TXT_TEMPLATE = (
+    "Contact: mailto:security@secopsai.dev\n"
+    "Expires: {expires}\n"
+    "Preferred-Languages: en\n"
+    "Canonical: https://docs.secopsai.dev/.well-known/security.txt\n"
+    "Policy: https://github.com/Techris93/secopsai/blob/main/SECURITY.md\n"
+)
+
+
+def write_security_txt(site_dir: Path) -> Path:
+    """RFC 9116 security.txt; MkDocs skips dot-directories in docs/."""
+    import datetime as dt
+
+    expires = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=180)).strftime("%Y-%m-%dT00:00:00Z")
+    target = site_dir / ".well-known" / "security.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(SECURITY_TXT_TEMPLATE.format(expires=expires), encoding="utf-8")
+    return target
+
+
 def on_post_build(config, **_kwargs) -> None:
     site_dir = Path(config["site_dir"])
+    write_security_txt(site_dir)
     headers_path = site_dir / "_headers"
     if not headers_path.exists():
         return

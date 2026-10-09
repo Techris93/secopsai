@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from scripts.mkdocs_hooks.csp_hashes import inline_script_hashes, pin_script_hashes
+from scripts.mkdocs_hooks.csp_hashes import inline_script_hashes, pin_script_hashes, write_security_txt
 
 HEADERS = "/*\n  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'\n"
 
@@ -23,3 +23,9 @@ def test_inline_scripts_are_pinned_and_json_blocks_ignored(tmp_path: Path) -> No
 
 def test_policy_is_unchanged_without_hashes() -> None:
     assert pin_script_hashes(HEADERS, set()) == HEADERS
+
+
+def test_security_txt_is_written_with_future_expiry(tmp_path: Path) -> None:
+    text = write_security_txt(tmp_path).read_text(encoding="utf-8")
+    assert "Contact: mailto:security@secopsai.dev" in text
+    assert "Expires: 20" in text and "Canonical: https://docs.secopsai.dev/" in text
