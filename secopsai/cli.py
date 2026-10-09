@@ -68,7 +68,9 @@ from secopsai.blog import (
     news_run as run_blog_news,
     news_sources_list as list_blog_news_sources,
     publish as publish_blog_post,
+    quality_audit as audit_blog_quality,
     rebuild as rebuild_blog,
+    retire_posts as retire_blog_posts,
 )
 from secopsai.edge_sync import import_bundle as import_edge_bundle
 from secopsai.edge_sync import load_bundle as load_edge_bundle
@@ -2892,6 +2894,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     blog_attach_source_media.add_argument("--source-url", default=None, help="Optional source article URL")
 
     blog_sub.add_parser("rebuild-feeds", help="Rebuild blog index, RSS feed, and JSON feed from published metadata")
+    blog_audit = blog_sub.add_parser("quality-audit", help="Re-check published posts against the current publication gate")
+    blog_audit.add_argument("--json", action="store_true")
+    blog_retire = blog_sub.add_parser("retire", help="Remove published posts from the public archive (history is kept)")
+    blog_retire.add_argument("slugs", nargs="+")
+    blog_retire.add_argument("--json", action="store_true")
     blog_sub.add_parser("comments-status", help="Report required comment env/secret names without printing values")
 
     intel = sub.add_parser("intel", help="Threat intelligence (IOC) pipeline")
@@ -4494,6 +4501,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
             elif args.blog_cmd == "rebuild-feeds":
                 payload = rebuild_blog()
+            elif args.blog_cmd == "quality-audit":
+                payload = audit_blog_quality()
+            elif args.blog_cmd == "retire":
+                payload = retire_blog_posts(args.slugs)
             else:
                 import os
 
@@ -4580,6 +4591,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"posts={payload['posts']}")
             for path in payload["paths"]:
                 print(f"- {path}")
+        elif args.blog_cmd == "quality-audit":
+            print(f"published={payload['published']} original={payload['original']} failing={len(payload['failing'])}")
+            for item in payload["failing"]:
+                print(f"- {item['slug']}: {'; '.join(item['blockers'])}")
+        elif args.blog_cmd == "retire":
+            print(f"retired={len(payload['retired'])} remaining={payload['remaining']}")
+            for slug in payload["retired"]:
+                print(f"- {slug}")
         else:
             print(f"configured={payload['configured']}")
             if payload["required_missing"]:

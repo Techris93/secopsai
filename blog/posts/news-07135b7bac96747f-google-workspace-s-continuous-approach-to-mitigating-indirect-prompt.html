@@ -84,23 +84,9 @@
 <ul>
 <li>Source type: Threat Intelligence</li>
 <li>Severity hint: medium (Security-relevant vulnerability/news signal.)</li>
-<li>Extracted signals: none detected deterministically</li>
 </ul>
 <h2>What SecOpsAI Can Detect</h2>
 <p>SecOpsAI can turn this source-backed item into a triage task, link it to local SOC findings, and track any source-backed detections or mitigations added during review.</p>
-<h2>Extracted Intelligence</h2>
-<h3>CVEs</h3>
-<ul>
-<li>None found deterministically; reviewer should confirm source details.</li>
-</ul>
-<h3>Affected Packages Or Products</h3>
-<ul>
-<li>None found deterministically; reviewer should add source-backed affected assets if present.</li>
-</ul>
-<h2>IOCs</h2>
-<ul>
-<li>None found deterministically; reviewer should add source-backed indicators if present.</li>
-</ul>
 <h2>Recommended Actions</h2>
 <ul>
 <li>Compare the source-backed claim against local assets and current SOC findings.</li>
@@ -110,8 +96,7 @@
 <h2>Operator Commands</h2>
 <pre><code>secopsai triage summary
 secopsai research preflight
-secopsai supply-chain advisory list
-secopsai blog news-review show news-07135b7bac96747f-google-workspace-s-continuous-approach-to-mitigating-indirect-prompt</code></pre>
+secopsai supply-chain advisory list</code></pre>
 <h2>References</h2>
 <ul>
 <li><a class="inline-ref" href="http://security.googleblog.com/feeds/7611943504123181983/comments/default" rel="noopener noreferrer" target="_blank">http://security.googleblog.com/feeds/7611943504123181983/comments/default</a></li>

@@ -485,6 +485,29 @@ def strip_review_checklist_section(markdown: Any) -> str:
     return cleaned.strip()
 
 
+# Reviewer-facing template lines that must never reach readers.
+PUBLIC_TEMPLATE_LINE_RE = re.compile(
+    r"^\s*[-*]\s*(?:none found deterministically|.*reviewer should (?:confirm|add)|"
+    r"extracted signals: none detected deterministically).*$\n?|^.*secopsai blog news-review .*$\n?",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_public_template_lines(markdown: Any) -> str:
+    """Drop template placeholders, then any heading left without content."""
+    text = PUBLIC_TEMPLATE_LINE_RE.sub("", str(markdown or ""))
+    text = re.sub(r"```(?:bash|sh)?\s*```", "", text)
+    lines = text.splitlines()
+    kept: List[str] = []
+    for index, line in enumerate(lines):
+        if re.match(r"^#{2,6}\s", line):
+            following = next((item for item in lines[index + 1:] if item.strip()), "")
+            if not following or re.match(r"^#{1,6}\s", following) and following.count("#") <= line.split(" ", 1)[0].count("#"):
+                continue
+        kept.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+
+
 def _strip_redundant_public_intro(markdown: Any, *, title: Any = "") -> str:
     """Avoid repeating the rendered page title and summary inside generated posts."""
     lines = str(markdown or "").splitlines()
@@ -533,7 +556,7 @@ def _strip_redundant_public_intro(markdown: Any, *, title: Any = "") -> str:
 def _public_post(post: Dict[str, Any]) -> Dict[str, Any]:
     public = _normalize_post(post)
     public["body_markdown"] = _strip_redundant_public_intro(
-        strip_review_checklist_section(public.get("body_markdown") or ""),
+        strip_public_template_lines(strip_review_checklist_section(public.get("body_markdown") or "")),
         title=public.get("title"),
     )
     public.pop("review_checklist", None)
@@ -2269,6 +2292,12 @@ def news_run(*, limit: int = 5, paths: Optional[BlogPaths] = None) -> Dict[str, 
     return {"fetched": fetched, "drafted": drafted}
 
 
+MARKETING_TITLE_RE = re.compile(
+    r"\b(?:a leader in|named a leader|recognized as a leader|forrester wave|magic quadrant|"
+    r"idc marketscape|customers'? choice|award(?:ed|s)?\b|announces? (?:general availability|partnership))",
+    re.IGNORECASE,
+)
+
 _EXTERNAL_NEWS_PLACEHOLDERS = (
     "requires human review before publishing",
     "confirm claims against the linked source",
@@ -2311,11 +2340,14 @@ def score_external_news_readiness(post: Dict[str, Any]) -> Dict[str, Any]:
         blockers.append("summary equals title")
     if extracted_values:
         score += 15
-    elif "none found deterministically" in body_lower:
-        score += 10
-        warnings.append("no CVEs, IOCs, packages, or products were extracted deterministically")
     else:
-        blockers.append("affected product/package/CVE/IOC is missing and not explicitly marked none found")
+        # A news item with no CVE, package, product, or IOC is commentary on
+        # someone else's article, not security intelligence.
+        blockers.append("no extracted intelligence (CVE, package, product, or IOC)")
+    if MARKETING_TITLE_RE.search(title):
+        blockers.append("vendor marketing or analyst-ranking announcement, not security intelligence")
+    if _secopsai_detection_context("general").lower() in body_lower:
+        blockers.append("SecOpsAI angle is the generic template; add specific analysis")
     if "## recommended actions" in body_lower and not GENERIC_RECOMMENDATION_RE.search(body):
         score += 15
     else:
@@ -2353,6 +2385,54 @@ def score_external_news_readiness(post: Dict[str, Any]) -> Dict[str, Any]:
         "readiness_blockers": unique_blockers,
         "readiness_warnings": _safe_list(warnings, limit=12),
     }
+
+
+def quality_audit(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+    """Re-check every published post against the current publication gate."""
+    paths = paths or BlogPaths()
+    archive = _read_published_archive(paths).get("posts") or []
+    failing: List[Dict[str, Any]] = []
+    for post in archive:
+        if not isinstance(post, dict) or not post.get("external_news"):
+            continue
+        readiness = score_external_news_readiness(post)
+        if readiness["readiness_blockers"]:
+            failing.append({
+                "slug": post.get("slug"),
+                "title": post.get("title"),
+                "source": post.get("author"),
+                "blockers": readiness["readiness_blockers"],
+            })
+    return {
+        "published": len(archive),
+        "original": sum(1 for post in archive if isinstance(post, dict) and not post.get("external_news")),
+        "failing": failing,
+    }
+
+
+def retire_posts(slugs: Iterable[str], *, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+    """Remove posts from the public archive and generated output.
+
+    The draft (if any) and git history keep the record; the next rebuild and
+    deploy stop serving the page, so its URL returns the 404 page.
+    """
+    paths = paths or BlogPaths()
+    wanted = {str(slug) for slug in slugs if str(slug).strip()}
+    archive = _read_published_archive(paths).get("posts") or []
+    kept = [post for post in archive if isinstance(post, dict) and str(post.get("slug")) not in wanted]
+    retired = sorted(wanted & {str(post.get("slug")) for post in archive if isinstance(post, dict)})
+    for slug in retired:
+        for path in (_post_json_path(slug, paths), _post_html_path(slug, paths), _social_card_path(slug, paths)):
+            path.unlink(missing_ok=True)
+        draft = _draft_path(slug, paths)
+        if draft.exists():
+            record = _load_json(draft)
+            record["status"] = "retired"
+            record["review_status"] = "rejected"
+            _write_json(draft, record)
+    _write_published_archive(kept, paths)
+    rebuild(paths=paths)
+    return {"retired": retired, "remaining": len(kept)}
 
 
 def external_news_publish_blockers(post: Dict[str, Any]) -> List[str]:
