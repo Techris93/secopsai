@@ -2,14 +2,5 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://blog.secopsai.dev/</loc></url>
   <url><loc>https://blog.secopsai.dev/posts/</loc></url>
-  <url><loc>https://blog.secopsai.dev/posts/news-3d2e7f8fefa18de1-vu-529388-privilege-escalation-vulnerability-via-unprotected-ioctl-i.html</loc><lastmod>2026-07-15</lastmod></url>
-  <url><loc>https://blog.secopsai.dev/posts/news-5b21d7ae67da2ae4-cisa-kev-balbooa-forms-cve-2026-56291.html</loc><lastmod>2026-07-11</lastmod></url>
-  <url><loc>https://blog.secopsai.dev/posts/news-94f5cd4204d5ac65-cisa-kev-joomshaper-sp-page-builder-cve-2026-48908.html</loc><lastmod>2026-07-09</lastmod></url>
-  <url><loc>https://blog.secopsai.dev/posts/news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o.html</loc><lastmod>2026-07-02</lastmod></url>
-  <url><loc>https://blog.secopsai.dev/posts/news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all.html</loc><lastmod>2026-06-25</lastmod></url>
-  <url><loc>https://blog.secopsai.dev/posts/news-351daec4f3181d58-preinstall-to-persistence-inside-the-red-hat-npm-miasma-credential-s.html</loc><lastmod>2026-06-04</lastmod></url>
-  <url><loc>https://blog.secopsai.dev/posts/news-59a28be6252f41c8-cisa-kev-mirasvit-full-page-cache-warmer-cve-2026-45247.html</loc><lastmod>2026-06-04</lastmod></url>
-  <url><loc>https://blog.secopsai.dev/posts/news-2e28681f9abdc9d2-cisa-kev-oracle-weblogic-server-cve-2024-21182.html</loc><lastmod>2026-06-01</lastmod></url>
-  <url><loc>https://blog.secopsai.dev/posts/news-023f9f16270b8b4d-cisa-kev-palo-alto-networks-pan-os-cve-2026-0257.html</loc><lastmod>2026-05-31</lastmod></url>
   <url><loc>https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html</loc><lastmod>2026-05-12</lastmod></url>
 </urlset>

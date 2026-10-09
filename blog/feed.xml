@@ -6,70 +6,7 @@
     <link>https://blog.secopsai.dev/</link>
     <description>Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.</description>
     <language>en-us</language>
-    <lastBuildDate>Wed, 15 Jul 2026 18:04:45 GMT</lastBuildDate>
-    <item>
-      <title>VU#529388: Privilege escalation vulnerability via unprotected IOCTL interface in Pegatron Tdelo64.sys</title>
-      <link>https://blog.secopsai.dev/posts/news-3d2e7f8fefa18de1-vu-529388-privilege-escalation-vulnerability-via-unprotected-ioctl-i.html</link>
-      <guid>https://blog.secopsai.dev/posts/news-3d2e7f8fefa18de1-vu-529388-privilege-escalation-vulnerability-via-unprotected-ioctl-i.html</guid>
-      <pubDate>Wed, 15 Jul 2026 17:08:59 GMT</pubDate>
-      <description>Overview A privilege escalation vulnerability exists in the tdeio64.sys driver due to an unprotected input/output control (IOCTL) dispatch routine that fails to validate the origin and permissions of user-supplied requests. An unprivileged local attacker can abuse exposed IOCTL dispatch routines [RM1.1][MB1.2]to perform arbitrary kernel memory read and write operations, ultimately obtaining NT AUTHORITY\SYSTEM privileges and compromising the security of the affected system. Description The tdeio</description>
-    </item>
-    <item>
-      <title>CISA KEV: Balbooa Forms CVE-2026-56291</title>
-      <link>https://blog.secopsai.dev/posts/news-5b21d7ae67da2ae4-cisa-kev-balbooa-forms-cve-2026-56291.html</link>
-      <guid>https://blog.secopsai.dev/posts/news-5b21d7ae67da2ae4-cisa-kev-balbooa-forms-cve-2026-56291.html</guid>
-      <pubDate>Fri, 10 Jul 2026 00:00:00 GMT</pubDate>
-      <description>Balbooa Forms contains an unrestricted upload of file with dangerous type vulnerability that allows an unauthenticated arbitrary file upload which could allow uploading of executable files leading to full RCE.</description>
-    </item>
-    <item>
-      <title>CISA KEV: JoomShaper SP Page Builder CVE-2026-48908</title>
-      <link>https://blog.secopsai.dev/posts/news-94f5cd4204d5ac65-cisa-kev-joomshaper-sp-page-builder-cve-2026-48908.html</link>
-      <guid>https://blog.secopsai.dev/posts/news-94f5cd4204d5ac65-cisa-kev-joomshaper-sp-page-builder-cve-2026-48908.html</guid>
-      <pubDate>Tue, 07 Jul 2026 00:00:00 GMT</pubDate>
-      <description>JoomShaper SP Page Builder contains an unrestricted upload of file with dangerous type vulnerability that allows unauthenticated users to upload arbitrary files, ultimately resulting in the upload and execution of PHP code.</description>
-    </item>
-    <item>
-      <title>PolinRider: North Korea-Linked Supply Chain Campaign Expands Across Open Source Ecosystems</title>
-      <link>https://blog.secopsai.dev/posts/news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o.html</link>
-      <guid>https://blog.secopsai.dev/posts/news-80d28381a6d4f840-polinrider-north-korea-linked-supply-chain-campaign-expands-across-o.html</guid>
-      <pubDate>Wed, 01 Jul 2026 17:53:56 GMT</pubDate>
-      <description>PolinRider expands across npm, Packagist, Go modules, and Chrome extensions, using hidden loaders to target developer environments.</description>
-    </item>
-    <item>
-      <title>Unlocking the Cloudflare app ecosystem with OAuth for all</title>
-      <link>https://blog.secopsai.dev/posts/news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all.html</link>
-      <guid>https://blog.secopsai.dev/posts/news-aadf012df0acd58a-unlocking-the-cloudflare-app-ecosystem-with-oauth-for-all.html</guid>
-      <pubDate>Wed, 24 Jun 2026 06:00:00 GMT</pubDate>
-      <description>Self-Managed OAuth is now available to all developers on Cloudflare. Here&#x27;s how we executed a zero-downtime migration of our core OAuth engine to make it happen.</description>
-    </item>
-    <item>
-      <title>Preinstall to persistence: Inside the Red Hat npm Miasma credential-stealing campaign</title>
-      <link>https://blog.secopsai.dev/posts/news-351daec4f3181d58-preinstall-to-persistence-inside-the-red-hat-npm-miasma-credential-s.html</link>
-      <guid>https://blog.secopsai.dev/posts/news-351daec4f3181d58-preinstall-to-persistence-inside-the-red-hat-npm-miasma-credential-s.html</guid>
-      <pubDate>Wed, 03 Jun 2026 04:45:06 GMT</pubDate>
-      <description>A large-scale npm supply chain attack compromised over 90 versions of @redhat-cloud-services packages, silently infecting CI/CD environments and developer systems. The malicious code steals credentials from GitHub, cloud platforms, and local machines, then spreads like a worm by republishing trusted packages. Discover how the attack works, what data is at risk, and the steps you can take to protect your organization. The post Preinstall to persistence: Inside the Red Hat npm Miasma credential-st</description>
-    </item>
-    <item>
-      <title>CISA KEV: Mirasvit Full Page Cache Warmer CVE-2026-45247</title>
-      <link>https://blog.secopsai.dev/posts/news-59a28be6252f41c8-cisa-kev-mirasvit-full-page-cache-warmer-cve-2026-45247.html</link>
-      <guid>https://blog.secopsai.dev/posts/news-59a28be6252f41c8-cisa-kev-mirasvit-full-page-cache-warmer-cve-2026-45247.html</guid>
-      <pubDate>Wed, 03 Jun 2026 00:00:00 GMT</pubDate>
-      <description>Mirasvit Full Page Cache Warmer contains a deserialization of untrusted data vulnerability that could allow unauthenticated attackers to achieve remote code execution by supplying a crafted serialized PHP object in the CacheWarmer cookie.</description>
-    </item>
-    <item>
-      <title>CISA KEV: Oracle WebLogic Server CVE-2024-21182</title>
-      <link>https://blog.secopsai.dev/posts/news-2e28681f9abdc9d2-cisa-kev-oracle-weblogic-server-cve-2024-21182.html</link>
-      <guid>https://blog.secopsai.dev/posts/news-2e28681f9abdc9d2-cisa-kev-oracle-weblogic-server-cve-2024-21182.html</guid>
-      <pubDate>Mon, 01 Jun 2026 00:00:00 GMT</pubDate>
-      <description>Oracle WebLogic contains an unspecified vulnerability that could allow an unauthenticated attacker with network access via T3, IIOP to compromise Oracle WebLogic Server. Successful attacks of this vulnerability can result in unauthorized access to critical data or complete access to all Oracle WebLogic Server accessible data.</description>
-    </item>
-    <item>
-      <title>CISA KEV: Palo Alto Networks PAN-OS CVE-2026-0257</title>
-      <link>https://blog.secopsai.dev/posts/news-023f9f16270b8b4d-cisa-kev-palo-alto-networks-pan-os-cve-2026-0257.html</link>
-      <guid>https://blog.secopsai.dev/posts/news-023f9f16270b8b4d-cisa-kev-palo-alto-networks-pan-os-cve-2026-0257.html</guid>
-      <pubDate>Fri, 29 May 2026 00:00:00 GMT</pubDate>
-      <description>Palo Alto Networks PAN-OS contains an authentication bypass vulnerability that allows attackers to bypass security restrictions and establish an unauthorized VPN connection.</description>
-    </item>
+    <lastBuildDate>Tue, 12 May 2026 00:00:00 GMT</lastBuildDate>
     <item>
       <title>Mini Shai-Hulud crosses npm and PyPI: advisory protection for removed artifacts</title>
       <link>https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html</link>
