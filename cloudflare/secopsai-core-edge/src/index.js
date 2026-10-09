@@ -135,7 +135,14 @@ export async function handleRequest(request, env) {
     }
     if (request.method === "GET" && ontologyPathname === "/api/v1/ontology/quality") {
       requireBearer(request, env.CORE_READ_TOKEN);
+      // Quality is ~20 aggregate queries; every dashboard load asks for it.
+      // Serve a 60-second edge-cached copy (only after authentication).
+      const cache = typeof caches !== "undefined" ? caches.default : null;
+      const cacheKey = new Request(`https://core-cache.invalid/ontology-quality/${encodeURIComponent(clean(env.CORE_WORKSPACE_ID, 160) || "all")}?${url.searchParams}`);
+      const cached = cache ? await cache.match(cacheKey) : null;
+      if (cached) return response(200, { ...(await cached.json()), cached: true }, requestId);
       const result = await ontologyQuality(env.DB, url.searchParams, clean(env.CORE_WORKSPACE_ID, 160));
+      if (cache) await cache.put(cacheKey, new Response(JSON.stringify(result), { headers: { "content-type": "application/json", "cache-control": "max-age=60" } }));
       await writeAudit(env.DB, { requestId, action: "ontology.quality.read", actorRole: "operator_read", result: "success", sourceInstance: "secopsai-core-edge", details: { entities: result.entities, relationships: result.relationships }, createdAt: nowIso() });
       return response(200, result, requestId);
     }
@@ -684,13 +691,31 @@ async function ontologyQuality(db, searchParams, expectedWorkspace = "") {
   const orphan = workspace
     ? await db.prepare("SELECT COUNT(*) AS count FROM ontology_relationships r WHERE r.workspace_id = ? AND (NOT EXISTS (SELECT 1 FROM ontology_entities e WHERE e.entity_id=r.from_entity_id AND e.workspace_id = ?) OR NOT EXISTS (SELECT 1 FROM ontology_entities e WHERE e.entity_id=r.to_entity_id AND e.workspace_id = ?))").bind(workspace, workspace, workspace).first()
     : await db.prepare("SELECT COUNT(*) AS count FROM ontology_relationships r WHERE NOT EXISTS (SELECT 1 FROM ontology_entities e WHERE e.entity_id=r.from_entity_id) OR NOT EXISTS (SELECT 1 FROM ontology_entities e WHERE e.entity_id=r.to_entity_id)").first();
-  const orphanEntities = workspace
-    ? await db.prepare("SELECT COUNT(*) AS count FROM ontology_entities e WHERE e.workspace_id = ? AND NOT EXISTS (SELECT 1 FROM ontology_relationships r JOIN ontology_entities other ON other.entity_id = CASE WHEN r.from_entity_id = e.entity_id THEN r.to_entity_id ELSE r.from_entity_id END WHERE (r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id) AND r.workspace_id = ? AND other.workspace_id = ?)").bind(workspace, workspace, workspace).first()
-    : await db.prepare("SELECT COUNT(*) AS count FROM ontology_entities e WHERE NOT EXISTS (SELECT 1 FROM ontology_relationships r WHERE r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id)").first();
+  // Linked entity IDs are collected in two indexed passes over the
+  // relationships.  The previous correlated EXISTS with an OR join scanned
+  // every relationship for every entity (3.7M rows per call at 500
+  // entities) and exhausted the D1 daily read quota from a few page loads.
+  const linkTypes = "'FINDING_ON_VERSION','FINDING_ON_ASSET','CASE_GROUPS_FINDING','ALERT_DERIVED_FROM_FINDING'";
+  const linkage = workspace
+    ? await db.prepare(`WITH linked AS (
+        SELECT r.from_entity_id AS entity_id, r.relationship_type FROM ontology_relationships r JOIN ontology_entities o ON o.entity_id = r.to_entity_id AND o.workspace_id = ? WHERE r.workspace_id = ?
+        UNION ALL
+        SELECT r.to_entity_id AS entity_id, r.relationship_type FROM ontology_relationships r JOIN ontology_entities o ON o.entity_id = r.from_entity_id AND o.workspace_id = ? WHERE r.workspace_id = ?
+      )
+      SELECT
+        (SELECT COUNT(*) FROM ontology_entities e WHERE e.workspace_id = ? AND e.entity_id IN (SELECT entity_id FROM linked)) AS connected,
+        (SELECT COUNT(*) FROM ontology_entities e WHERE e.workspace_id = ? AND e.entity_type = 'finding' AND e.entity_id IN (SELECT entity_id FROM linked WHERE relationship_type IN (${linkTypes}))) AS linked_findings`).bind(workspace, workspace, workspace, workspace, workspace, workspace).first()
+    : await db.prepare(`WITH linked AS (
+        SELECT from_entity_id AS entity_id, relationship_type FROM ontology_relationships
+        UNION ALL
+        SELECT to_entity_id AS entity_id, relationship_type FROM ontology_relationships
+      )
+      SELECT
+        (SELECT COUNT(*) FROM ontology_entities e WHERE e.entity_id IN (SELECT entity_id FROM linked)) AS connected,
+        (SELECT COUNT(*) FROM ontology_entities e WHERE e.entity_type = 'finding' AND e.entity_id IN (SELECT entity_id FROM linked WHERE relationship_type IN (${linkTypes}))) AS linked_findings`).first();
+  const orphanEntities = { count: Math.max(0, Number(entities?.count || 0) - Number(linkage?.connected || 0)) };
   const findings = await db.prepare(`SELECT COUNT(*) AS count FROM ontology_entities${clause}${workspace ? " AND" : " WHERE"} entity_type = 'finding'`).bind(...params).first();
-  const linkedFindings = workspace
-    ? await db.prepare("SELECT COUNT(*) AS count FROM ontology_entities e WHERE e.workspace_id = ? AND e.entity_type = 'finding' AND EXISTS (SELECT 1 FROM ontology_relationships r JOIN ontology_entities other ON other.entity_id = CASE WHEN r.from_entity_id=e.entity_id THEN r.to_entity_id ELSE r.from_entity_id END WHERE (r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id) AND r.workspace_id = ? AND other.workspace_id = ? AND r.relationship_type IN ('FINDING_ON_VERSION','FINDING_ON_ASSET','CASE_GROUPS_FINDING','ALERT_DERIVED_FROM_FINDING'))").bind(workspace, workspace, workspace).first()
-    : await db.prepare("SELECT COUNT(*) AS count FROM ontology_entities e WHERE e.entity_type = 'finding' AND EXISTS (SELECT 1 FROM ontology_relationships r WHERE (r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id) AND r.relationship_type IN ('FINDING_ON_VERSION','FINDING_ON_ASSET','CASE_GROUPS_FINDING','ALERT_DERIVED_FROM_FINDING'))").first();
+  const linkedFindings = { count: Number(linkage?.linked_findings || 0) };
   const conflicts = await db.prepare("SELECT COUNT(*) AS count FROM ontology_conflicts WHERE status = 'open'").first();
   const changes = await db.prepare("SELECT COUNT(*) AS count FROM ontology_change_log").first();
   const relationshipsWithEvidence = await db.prepare(`SELECT COUNT(*) AS count FROM ontology_relationships${clause}${workspace ? " AND" : " WHERE"} evidence_ref_id IS NOT NULL AND evidence_ref_id <> ''`).bind(...params).first();
@@ -701,9 +726,7 @@ async function ontologyQuality(db, searchParams, expectedWorkspace = "") {
   const staleRunnerHeartbeats = await db.prepare("SELECT COUNT(*) AS count FROM runner_heartbeats WHERE last_seen_at < ?").bind(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()).first();
   const heartbeatLatest = await db.prepare("SELECT MAX(last_seen_at) AS last_seen_at FROM runner_heartbeats").first();
   const canonicalEntities = await db.prepare(`SELECT COUNT(*) AS count FROM ontology_entities${clause}${workspace ? " AND" : " WHERE"} instr(entity_id, ':') > 0`).bind(...params).first();
-  const connectedEntities = workspace
-    ? await db.prepare("SELECT COUNT(*) AS count FROM ontology_entities e WHERE e.workspace_id = ? AND EXISTS (SELECT 1 FROM ontology_relationships r JOIN ontology_entities other ON other.entity_id = CASE WHEN r.from_entity_id=e.entity_id THEN r.to_entity_id ELSE r.from_entity_id END WHERE (r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id) AND r.workspace_id = ? AND other.workspace_id = ?)").bind(workspace, workspace, workspace).first()
-    : await db.prepare("SELECT COUNT(*) AS count FROM ontology_entities e WHERE EXISTS (SELECT 1 FROM ontology_relationships r WHERE r.from_entity_id=e.entity_id OR r.to_entity_id=e.entity_id)").first();
+  const connectedEntities = { count: Number(linkage?.connected || 0) };
   const staleSources = await db.prepare(`SELECT COUNT(DISTINCT source) AS count FROM ontology_entities${clause}${workspace ? " AND" : " WHERE"} source <> '' AND freshness_at < ?`).bind(...params, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()).first();
   const queueRow = await db.prepare("SELECT MIN(queued_at) AS queued_at FROM (SELECT queued_at FROM intelligence_jobs WHERE status IN ('queued','running') UNION ALL SELECT queued_at FROM coordinator_commands WHERE status IN ('queued','running'))").first();
   const byType = await db.prepare(`SELECT entity_type, COUNT(*) AS count FROM ontology_entities${clause} GROUP BY entity_type`).bind(...params).all();
