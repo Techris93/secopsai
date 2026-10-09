@@ -1080,3 +1080,22 @@ class BlogReferenceTests(unittest.TestCase):
     def test_redacted_artifact_locators_do_not_crash_reference_filtering(self):
         refs = blog._safe_reference_list(["local-artifact://" + "a" * 64, "https://example.com/report"])
         self.assertEqual(refs, ["https://example.com/report"])
+
+
+class NewsIntakeParsingTests(unittest.TestCase):
+    ATOM = """<feed xmlns="http://www.w3.org/2005/Atom">
+<entry><title>Real article</title>
+<link rel="replies" type="application/atom+xml" href="https://security.example/feeds/1/comments/default"/>
+<link rel="alternate" type="text/html" href="https://security.example/2026/10/real-article.html"/>
+<summary>CVE-2026-1111 fixed.</summary><published>2026-10-01T00:00:00Z</published></entry>
+<entry><title>View blogs &gt;</title><link rel="alternate" href="https://security.example/blogs"/></entry>
+</feed>"""
+
+    def test_atom_entries_use_the_alternate_link_and_skip_navigation_items(self):
+        items = blog._parse_rss_items(self.ATOM, {"name": "Example", "url": "https://security.example/"}, limit=10)
+        self.assertEqual([item["title"] for item in items], ["Real article"])
+        self.assertEqual(items[0]["url"], "https://security.example/2026/10/real-article.html")
+
+    def test_cert_vulnerability_notes_count_as_advisory_intelligence(self):
+        fields = blog.extract_news_security_fields({"title": "VU#553437: InsydeH2O SMM write", "summary": "An out-of-bounds write."})
+        self.assertEqual(fields["advisories"], ["VU#553437"])
