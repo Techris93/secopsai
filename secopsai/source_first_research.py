@@ -501,6 +501,14 @@ def investigate_package(
         if persist_findings and high_confidence:
             _persist_finding(finding, db_path=db_path)
             link_finding(resolved_case_id, finding["finding_id"], relationship="supports", db_path=db_path, actor=actor)
+        # Return the case's own evidence IDs (EVD-...) so they can be passed
+        # straight to ``research workflow verdict --evidence-id``.  The
+        # artifact digest is not an evidence record ID.
+        evidence_ids = [
+            str(item.get("evidence_id"))
+            for item in (get_case(resolved_case_id, db_path=db_path).get("evidence") or [])
+            if item.get("evidence_id") and item.get("status", "active") == "active"
+        ]
         evidence_matrix = build_evidence_matrix(resolved_case_id, persist=True, actor=actor, db_path=db_path)
         if high_confidence:
             model_job = enqueue_model_triage(scan["artifact_id"], model=model, db_path=artifact_db, job_db_path=db_path, requested_by=actor)
