@@ -1,0 +1,13 @@
+#!/bin/sh
+# Strip AI-assistant attribution trailers from every commit message.
+# Enable once per clone:  git config core.hooksPath .githooks
+msg="$1"
+pattern='Co-Authored-By:.*(Claude|noreply@anthropic\.com)|Generated with \[Claude Code\]|claude\.com/claude-code'
+if grep -qiE "$pattern" "$msg"; then
+  tmp="$(mktemp)"
+  grep -viE "$pattern" "$msg" > "$tmp"
+  # drop trailing blank lines left behind
+  awk 'NF{for(;n>0;n--)print "";print;next}{n++}' "$tmp" > "$msg"
+  rm -f "$tmp"
+  echo "commit-msg: removed AI attribution lines" >&2
+fi

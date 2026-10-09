@@ -1,0 +1,53 @@
+name: No AI Attribution
+
+# Fails when a pushed commit message or a pull request description contains
+# AI-assistant attribution (Co-Authored-By Claude / "Generated with Claude
+# Code"). Locally, .githooks/commit-msg strips these lines automatically.
+on:
+  push:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check commit messages and PR description
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          pattern='Co-Authored-By:.*(Claude|noreply@anthropic\.com)|Generated with \[Claude Code\]|claude\.com/claude-code'
+          if [ "$EVENT" = "pull_request" ]; then
+            range="$PR_BASE..$PR_HEAD"
+            if printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" | grep -qiE "$pattern"; then
+              echo "::error::Pull request title or description contains AI attribution"
+              exit 1
+            fi
+          elif [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            range="$AFTER"
+          else
+            range="$BEFORE..$AFTER"
+          fi
+          bad=$(git log --format='%h %s' -i -E --grep="$pattern" "$range" || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Commits contain AI attribution:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "No AI attribution found in $range"
