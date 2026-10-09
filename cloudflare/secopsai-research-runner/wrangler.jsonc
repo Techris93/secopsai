@@ -1,0 +1,65 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "secopsai-research-runner",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-08",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  // Every 5 minutes: start the runner if it is not running.  The Python
+  // worker schedules its own collectors inside the container.
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "vars": {
+    // Keep false until the Render worker is suspended, so two writers never
+    // run against the same Core coordinator lease.
+    "RUNNER_ENABLED": "false",
+    "SECOPSAI_CORE_ENVIRONMENT": "production",
+    "SECOPSAI_CORE_COORDINATOR_URL": "https://core.secopsai.dev",
+    "SECOPSAI_CORE_WORKER_ID": "cloudflare-secopsai-research-runner",
+    "SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL": "https://core.secopsai.dev/api/v1/research/alerts/webhook",
+    "SECOPSAI_RESEARCH_ALERT_EMAIL": "research@secopsai.dev",
+    "SECOPSAI_RESEARCH_FROM_EMAIL": "research@secopsai.dev",
+    "SECOPSAI_EMAIL_LOGO_URL": "https://secopsai.dev/assets/favicon-512.png",
+    "SECOPSAI_EMAIL_PRODUCT_URL": "https://secopsai.dev/",
+    "SECOPSAI_RESEARCH_ALERT_MAX_ATTEMPTS": "5",
+    "SECOPSAI_SMTP_HOST": "smtp.resend.com",
+    "SECOPSAI_SMTP_PORT": "465",
+    "SECOPSAI_SMTP_USERNAME": "resend",
+    "SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS": "email,webhook",
+    "SECOPSAI_RESEARCH_EXTERNAL_ALERT_CHANNELS": "webhook",
+    "SECOPSAI_NPM_ENRICHMENT_EVENT_LIMIT": "100",
+    "SECOPSAI_NPM_STATIC_ANALYSIS_LIMIT": "10",
+    "SECOPSAI_SENTRY_TRACES_SAMPLE_RATE": "0",
+    "SECOPSAI_STORAGE_RESERVE_BYTES": "16777216",
+    "SECOPSAI_STORAGE_MIN_FREE_BYTES": "134217728",
+    "SECOPSAI_STORAGE_WARNING_USED_PERCENT": "70",
+    "SECOPSAI_STORAGE_MAX_USED_PERCENT": "85",
+    "SECOPSAI_RESEARCH_EVENT_RETENTION_HOURS": "24",
+    "SECOPSAI_RESEARCH_CANDIDATE_EVENT_RETENTION_DAYS": "90",
+    "SECOPSAI_RESEARCH_RUN_RETENTION_DAYS": "30",
+    "SECOPSAI_RESEARCH_NPM_ANALYSIS_RETENTION_DAYS": "30",
+    "SECOPSAI_RESEARCH_GAP_RETENTION_DAYS": "180",
+    "SECOPSAI_RESEARCH_DELIVERY_RETENTION_DAYS": "90",
+    "SECOPSAI_RESEARCH_SNAPSHOTS_PER_COLLECTOR": "2",
+    "SECOPSAI_LEDGER_CHECKPOINT_SECONDS": "3600"
+  },
+  // Secrets (wrangler secret put): RUNNER_ADMIN_TOKEN,
+  // SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET, SECOPSAI_CORE_BRIDGE_TOKEN,
+  // SECOPSAI_SMTP_PASSWORD, and any model provider key the worker uses.
+  "r2_buckets": [{ "binding": "LEDGER", "bucket_name": "secopsai-research-ledger" }],
+  "containers": [
+    {
+      "class_name": "ResearchRunner",
+      "scheduling_policy": "durable_object",
+      "images": {
+        // The production image: CVE-patched CPython stdlib, non-root user.
+        "base": { "dockerfile": "../../Dockerfile", "build_context": "../.." }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "RESEARCH_RUNNER", "class_name": "ResearchRunner" }]
+  },
+  "exports": {
+    "ResearchRunner": { "type": "durable-object", "storage": "sqlite" }
+  }
+}
