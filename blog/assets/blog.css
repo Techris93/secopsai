@@ -608,6 +608,20 @@ button.button {
 .footer-bottom a:hover { text-decoration: underline; }
 .copyright { color: var(--muted); }
 
+/* ── Share bar ───────────────────────────────────────────── */
+.share-bar { margin: 32px 0 8px; padding-top: 18px; border-top: 1px solid var(--rule); }
+.share-bar-compact { margin: 14px 0 0; padding-top: 0; border-top: 0; }
+.share-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.share-link {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-2); background: var(--paper); border: 1px solid var(--rule);
+  padding: 7px 10px; text-decoration: none; cursor: pointer; line-height: 1.2;
+}
+.share-link:hover, .share-link:focus-visible { color: var(--note); border-color: var(--note); background: var(--note-bg); }
+.share-native { color: var(--paper); background: var(--ink); border-color: var(--ink); }
+.share-link.copied::after { content: " ✓"; color: var(--ok); }
+@media print { .share-bar { display: none; } }
+
 /* ── Latest research strip (home) ─────────────────────────── */
 .latest-strip { margin-top: 28px; border-top: 1px solid var(--rule); }
 .latest-head { display: flex; justify-content: space-between; align-items: baseline; padding: 18px 0 6px; }

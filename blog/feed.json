@@ -10,11 +10,11 @@
           "name": "SecOpsAI Research"
         }
       ],
-      "banner_image": "https://blog.secopsai.dev/assets/social/anatomy-of-a-false-positive-npm-triage.svg",
+      "banner_image": "https://blog.secopsai.dev/assets/social/anatomy-of-a-false-positive-npm-triage.png",
       "date_modified": "2026-10-09T15:22:52Z",
       "date_published": "2026-10-09T15:22:52Z",
       "id": "https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage.html",
-      "image": "https://blog.secopsai.dev/assets/social/anatomy-of-a-false-positive-npm-triage.svg",
+      "image": "https://blog.secopsai.dev/assets/social/anatomy-of-a-false-positive-npm-triage.png",
       "images": [],
       "reading_time_minutes": 3,
       "severity": "info",
@@ -42,11 +42,11 @@
           "name": "SecOpsAI Threat Research"
         }
       ],
-      "banner_image": "https://blog.secopsai.dev/assets/social/mini-shai-hulud-emergency-advisory.svg",
+      "banner_image": "https://blog.secopsai.dev/assets/social/mini-shai-hulud-emergency-advisory.png",
       "date_modified": "2026-05-12T00:00:00Z",
       "date_published": "2026-05-12T00:00:00Z",
       "id": "https://blog.secopsai.dev/posts/mini-shai-hulud-emergency-advisory.html",
-      "image": "https://blog.secopsai.dev/assets/social/mini-shai-hulud-emergency-advisory.svg",
+      "image": "https://blog.secopsai.dev/assets/social/mini-shai-hulud-emergency-advisory.png",
       "images": [],
       "reading_time_minutes": 4,
       "severity": "critical",

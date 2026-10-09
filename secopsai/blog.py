@@ -364,6 +364,42 @@ def markdown_to_html(markdown: str) -> str:
     return "\n".join(html_lines)
 
 
+SHARE_TARGETS = (
+    ("X", "https://x.com/intent/post?text={text}&url={url}"),
+    ("LinkedIn", "https://www.linkedin.com/sharing/share-offsite/?url={url}"),
+    ("Bluesky", "https://bsky.app/intent/compose?text={text}%20{url}"),
+    ("Reddit", "https://www.reddit.com/submit?url={url}&title={text}"),
+    ("Hacker News", "https://news.ycombinator.com/submitlink?u={url}&t={text}"),
+    ("Facebook", "https://www.facebook.com/sharer/sharer.php?u={url}"),
+)
+
+
+def _render_share_bar(post: Dict[str, Any], *, compact: bool = False) -> str:
+    """Plain share links: no third-party scripts, trackers, or iframes, so the
+    blog's strict CSP is unchanged.  The native share sheet (phones) and copy
+    link are progressive enhancements in blog.js."""
+    url = _post_url(str(post.get("slug") or ""))
+    title = _safe_text(post.get("title"), fallback="SecOpsAI Security Blog")
+    quoted_url = urllib.parse.quote(url, safe="")
+    quoted_text = urllib.parse.quote(title, safe="")
+    links = "".join(
+        f'<a class="share-link" href="{html.escape(template.format(url=quoted_url, text=quoted_text))}" '
+        f'target="_blank" rel="noopener noreferrer" aria-label="Share on {html.escape(name)}">{html.escape(name)}</a>'
+        for name, template in SHARE_TARGETS
+    )
+    mail = "mailto:?subject=" + urllib.parse.quote(title, safe="") + "&body=" + urllib.parse.quote(f"{title}\n\n{url}", safe="")
+    label = "" if compact else '<p class="eyebrow">Share this research</p>'
+    return f"""<div class="share-bar{' share-bar-compact' if compact else ''}" data-share-bar>
+          {label}
+          <div class="share-links">
+            <button class="share-link share-native" type="button" data-share-native data-share-url="{html.escape(url)}" data-share-title="{html.escape(title)}" hidden>Share…</button>
+            {links}
+            <a class="share-link" href="{html.escape(mail)}" aria-label="Share by email">Email</a>
+            <button class="share-link" type="button" data-copy="{html.escape(url)}" aria-label="Copy link to this post">Copy link</button>
+          </div>
+        </div>"""
+
+
 def _post_url(slug: str) -> str:
     return f"{BASE_URL}/posts/{slug}.html"
 
@@ -465,6 +501,12 @@ def _social_card_src(slug: str) -> str:
     return f"/assets/social/{slug}.svg"
 
 
+def _site_social_src(paths: Optional[BlogPaths] = None) -> str:
+    """PNG when it exists (social networks ignore SVG), SVG otherwise."""
+    root = (paths or BlogPaths()).social
+    return "/assets/social/secopsai-blog.png" if (root / "secopsai-blog.png").exists() else _social_card_src("secopsai-blog")
+
+
 def _wrap_card_text(value: Any, *, width: int = 34, lines: int = 4) -> List[str]:
     words = _safe_text(value, fallback="SecOpsAI Security Blog").split()
     output: List[str] = []
@@ -481,6 +523,53 @@ def _wrap_card_text(value: Any, *, width: int = 34, lines: int = 4) -> List[str]
     if current and len(output) < lines:
         output.append(" ".join(current))
     return output or ["SecOpsAI Security Blog"]
+
+
+def _write_social_card_png(post: Dict[str, Any], paths: BlogPaths) -> str:
+    """Raster copy of the social card.
+
+    X, LinkedIn and Facebook do not render SVG previews, so a shared post had
+    no image.  Pillow's bundled scalable font keeps the output identical on
+    every machine.  Returns "" when Pillow is unavailable (SVG stays in use).
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        font = lambda size: ImageFont.load_default(size=size)  # noqa: E731
+        font(12)
+    except Exception:
+        return ""
+    slug = slugify(str(post.get("slug") or post.get("title") or "secopsai-post"))
+    severity_key = _safe_text(str(post.get("severity") or "info").lower(), fallback="info")
+    background, foreground = {
+        "critical": ("#FDE8E7", "#B42318"),
+        "high": ("#FCEBDD", "#B54708"),
+        "medium": ("#FFF4CE", "#8A5A00"),
+        "low": ("#E7F0FA", "#175CD3"),
+        "info": ("#E8F3EE", "#176B4D"),
+    }.get(severity_key, ("#E7F0FA", "#175CD3"))
+    image = Image.new("RGB", (SOCIAL_CARD_WIDTH, SOCIAL_CARD_HEIGHT), "#FBFAF6")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([42, 42, 1158, 588], fill="#FFFFFF", outline="#8B939D", width=2)
+    draw.rectangle([42, 42, 52, 588], fill=foreground)
+    draw.text((92, 62), "SecOpsAI", font=font(34), fill="#16191D", stroke_width=1, stroke_fill="#16191D")
+    draw.text((1110, 70), "SECURITY RESEARCH", font=font(17), fill="#56606B", anchor="ra")
+    draw.line([92, 120, 1110, 120], fill="#8B939D", width=2)
+    draw.rectangle([92, 150, 260, 192], fill=background, outline=foreground, width=1)
+    draw.text((176, 171), severity_key.upper(), font=font(19), fill=foreground, anchor="mm", stroke_width=1, stroke_fill=foreground)
+    category = _safe_text(", ".join(_post_categories(post)[:2]), fallback="Security Research")[:56]
+    draw.text((284, 160), category, font=font(21), fill="#3E4650")
+    title_font = font(52)
+    y = 232
+    for line in _wrap_card_text(post.get("title"), width=36, lines=4):
+        draw.text((92, y), line, font=title_font, fill="#16191D", stroke_width=1, stroke_fill="#16191D")
+        y += 64
+    draw.line([92, 522, 1110, 522], fill="#C9CDD2", width=2)
+    date = _post_date(post.get("published_at") or post.get("updated_at") or _utc_now())
+    draw.text((92, 542), "blog.secopsai.dev", font=font(18), fill="#56606B")
+    draw.text((1110, 542), f"ISSUE {date}", font=font(18), fill="#56606B", anchor="ra")
+    paths.social.mkdir(parents=True, exist_ok=True)
+    image.save(paths.social / f"{slug}.png", "PNG", optimize=True)
+    return f"/assets/social/{slug}.png"
 
 
 def _write_social_card(post: Dict[str, Any], paths: BlogPaths) -> str:
@@ -533,7 +622,8 @@ def _ensure_social_image(post: Dict[str, Any], paths: BlogPaths) -> Dict[str, An
         post["social_image_width"] = primary.get("width", SOCIAL_CARD_WIDTH)
         post["social_image_height"] = primary.get("height", SOCIAL_CARD_HEIGHT)
     else:
-        post["social_image"] = _write_social_card(post, paths)
+        svg_src = _write_social_card(post, paths)
+        post["social_image"] = _write_social_card_png(post, paths) or svg_src
         post["social_image_alt"] = f"SecOpsAI social preview card for {post.get('title', 'blog post')}"
         post["social_image_width"] = SOCIAL_CARD_WIDTH
         post["social_image_height"] = SOCIAL_CARD_HEIGHT
@@ -2510,7 +2600,7 @@ def retire_posts(slugs: Iterable[str], *, paths: Optional[BlogPaths] = None) -> 
     kept = [post for post in archive if isinstance(post, dict) and str(post.get("slug")) not in wanted]
     retired = sorted(wanted & {str(post.get("slug")) for post in archive if isinstance(post, dict)})
     for slug in retired:
-        for path in (_post_json_path(slug, paths), _post_html_path(slug, paths), _social_card_path(slug, paths)):
+        for path in (_post_json_path(slug, paths), _post_html_path(slug, paths), _social_card_path(slug, paths), _social_card_path(slug, paths).with_suffix(".png")):
             path.unlink(missing_ok=True)
         # Copied source media belongs to the original publisher; do not keep
         # serving it once the post is retired.
@@ -3526,12 +3616,14 @@ def _render_post_html(post: Dict[str, Any]) -> str:
             <span>Updated: {html.escape(_post_date(post.get("updated_at")))}</span>
         </div>
         <div class="tags">{pills}</div>
+        {_render_share_bar(post, compact=True)}
 {hero_media}
       </header>
       <div class="shell post-layout">
         <article class="post-body">
         {body_html}
 {media_gallery}
+        {_render_share_bar(post)}
         <section class="comments" data-comments data-slug="{html.escape(slug)}">
           <h2>Comments</h2>
           <p>Comments are moderated before publication. Do not post secrets, tokens, customer data, or exploit payloads.</p>
@@ -3692,7 +3784,7 @@ def _render_index(posts: List[Dict[str, Any]]) -> str:
       </section>"""
     else:
         featured_html = ""
-    homepage_social = _absolute_url(_social_card_src("secopsai-blog"))
+    homepage_social = _absolute_url(_site_social_src())
     homepage_description = "Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates."
     return f"""<!doctype html>
 <html lang="en">
@@ -3822,7 +3914,7 @@ def _render_latest_page(posts: List[Dict[str, Any]]) -> str:
         for topic in TOPIC_SECTIONS
     )
     latest_description = "Research, advisories, detections, and mitigation notes"
-    homepage_social = _absolute_url(_social_card_src("secopsai-blog"))
+    homepage_social = _absolute_url(_site_social_src())
     return f"""<!doctype html>
 <html lang="en">
   <head>
@@ -4053,14 +4145,16 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
         if posts
         else "2026-05-12T00:00:00Z"
     )
-    _write_social_card({
+    site_card = {
         "slug": "secopsai-blog",
         "title": "SecOpsAI Security Blog",
         "summary": "Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.",
         "severity": "info",
         "categories": ["Security Research", "Advisories"],
         "published_at": latest_feed_date,
-    }, paths)
+    }
+    _write_social_card(site_card, paths)
+    _write_social_card_png(site_card, paths)
     (paths.root / "index.html").write_text(_render_index(posts), encoding="utf-8")
     (paths.posts / "index.html").write_text(_render_latest_page(posts), encoding="utf-8")
     feed_items = []

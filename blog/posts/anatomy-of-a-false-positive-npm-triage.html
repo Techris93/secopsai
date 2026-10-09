@@ -10,14 +10,14 @@
     <meta property="og:title" content="Anatomy of a false positive: clearing a critical npm alert in twenty minutes | SecOpsAI Security Blog" />
     <meta property="og:description" content="SecOpsAI scored a benign desktop-assistant release 100/100. A release diff, install-hook review and rule-by-rule explanation cleared it, and exposed two scoring flaws we have now fixed." />
     <meta property="og:url" content="https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage.html" />
-    <meta property="og:image" content="https://blog.secopsai.dev/assets/social/anatomy-of-a-false-positive-npm-triage.svg" />
+    <meta property="og:image" content="https://blog.secopsai.dev/assets/social/anatomy-of-a-false-positive-npm-triage.png" />
     <meta property="og:image:alt" content="SecOpsAI social preview card for Anatomy of a false positive: clearing a critical npm alert in twenty minutes" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Anatomy of a false positive: clearing a critical npm alert in twenty minutes | SecOpsAI Security Blog" />
     <meta name="twitter:description" content="SecOpsAI scored a benign desktop-assistant release 100/100. A release diff, install-hook review and rule-by-rule explanation cleared it, and exposed two scoring flaws we have now fixed." />
-    <meta name="twitter:image" content="https://blog.secopsai.dev/assets/social/anatomy-of-a-false-positive-npm-triage.svg" />
+    <meta name="twitter:image" content="https://blog.secopsai.dev/assets/social/anatomy-of-a-false-positive-npm-triage.png" />
     <meta name="twitter:image:alt" content="SecOpsAI social preview card for Anatomy of a false positive: clearing a critical npm alert in twenty minutes" />
     <meta property="article:published_time" content="2026-10-09T15:22:52Z" />
     <meta property="article:modified_time" content="2026-10-09T15:22:52Z" />
@@ -67,6 +67,15 @@
             <span>Updated: 2026-10-09</span>
         </div>
         <div class="tags"><span class="pill">Original Research</span> <span class="pill">Detection Engineering</span> <span class="pill">Supply Chain</span></div>
+        <div class="share-bar share-bar-compact" data-share-bar>
+          
+          <div class="share-links">
+            <button class="share-link share-native" type="button" data-share-native data-share-url="https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage.html" data-share-title="Anatomy of a false positive: clearing a critical npm alert in twenty minutes" hidden>Share…</button>
+            <a class="share-link" href="https://x.com/intent/post?text=Anatomy%20of%20a%20false%20positive%3A%20clearing%20a%20critical%20npm%20alert%20in%20twenty%20minutes&amp;url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fanatomy-of-a-false-positive-npm-triage.html" target="_blank" rel="noopener noreferrer" aria-label="Share on X">X</a><a class="share-link" href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fanatomy-of-a-false-positive-npm-triage.html" target="_blank" rel="noopener noreferrer" aria-label="Share on LinkedIn">LinkedIn</a><a class="share-link" href="https://bsky.app/intent/compose?text=Anatomy%20of%20a%20false%20positive%3A%20clearing%20a%20critical%20npm%20alert%20in%20twenty%20minutes%20https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fanatomy-of-a-false-positive-npm-triage.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Bluesky">Bluesky</a><a class="share-link" href="https://www.reddit.com/submit?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fanatomy-of-a-false-positive-npm-triage.html&amp;title=Anatomy%20of%20a%20false%20positive%3A%20clearing%20a%20critical%20npm%20alert%20in%20twenty%20minutes" target="_blank" rel="noopener noreferrer" aria-label="Share on Reddit">Reddit</a><a class="share-link" href="https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fanatomy-of-a-false-positive-npm-triage.html&amp;t=Anatomy%20of%20a%20false%20positive%3A%20clearing%20a%20critical%20npm%20alert%20in%20twenty%20minutes" target="_blank" rel="noopener noreferrer" aria-label="Share on Hacker News">Hacker News</a><a class="share-link" href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fanatomy-of-a-false-positive-npm-triage.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Facebook">Facebook</a>
+            <a class="share-link" href="mailto:?subject=Anatomy%20of%20a%20false%20positive%3A%20clearing%20a%20critical%20npm%20alert%20in%20twenty%20minutes&amp;body=Anatomy%20of%20a%20false%20positive%3A%20clearing%20a%20critical%20npm%20alert%20in%20twenty%20minutes%0A%0Ahttps%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fanatomy-of-a-false-positive-npm-triage.html" aria-label="Share by email">Email</a>
+            <button class="share-link" type="button" data-copy="https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage.html" aria-label="Copy link to this post">Copy link</button>
+          </div>
+        </div>
 
       </header>
       <div class="shell post-layout">
@@ -106,6 +115,15 @@
 <li>A benign verdict is a result. Record it with evidence, like any other.</li>
 </ul>
 
+        <div class="share-bar" data-share-bar>
+          <p class="eyebrow">Share this research</p>
+          <div class="share-links">
+            <button class="share-link share-native" type="button" data-share-native data-share-url="https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage.html" data-share-title="Anatomy of a false positive: clearing a critical npm alert in twenty minutes" hidden>Share…</button>
+            <a class="share-link" href="https://x.com/intent/post?text=Anatomy%20of%20a%20false%20positive%3A%20clearing%20a%20critical%20npm%20alert%20in%20twenty%20minutes&amp;url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fanatomy-of-a-false-positive-npm-triage.html" target="_blank" rel="noopener noreferrer" aria-label="Share on X">X</a><a class="share-link" href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fanatomy-of-a-false-positive-npm-triage.html" target="_blank" rel="noopener noreferrer" aria-label="Share on LinkedIn">LinkedIn</a><a class="share-link" href="https://bsky.app/intent/compose?text=Anatomy%20of%20a%20false%20positive%3A%20clearing%20a%20critical%20npm%20alert%20in%20twenty%20minutes%20https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fanatomy-of-a-false-positive-npm-triage.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Bluesky">Bluesky</a><a class="share-link" href="https://www.reddit.com/submit?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fanatomy-of-a-false-positive-npm-triage.html&amp;title=Anatomy%20of%20a%20false%20positive%3A%20clearing%20a%20critical%20npm%20alert%20in%20twenty%20minutes" target="_blank" rel="noopener noreferrer" aria-label="Share on Reddit">Reddit</a><a class="share-link" href="https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fanatomy-of-a-false-positive-npm-triage.html&amp;t=Anatomy%20of%20a%20false%20positive%3A%20clearing%20a%20critical%20npm%20alert%20in%20twenty%20minutes" target="_blank" rel="noopener noreferrer" aria-label="Share on Hacker News">Hacker News</a><a class="share-link" href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fanatomy-of-a-false-positive-npm-triage.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Facebook">Facebook</a>
+            <a class="share-link" href="mailto:?subject=Anatomy%20of%20a%20false%20positive%3A%20clearing%20a%20critical%20npm%20alert%20in%20twenty%20minutes&amp;body=Anatomy%20of%20a%20false%20positive%3A%20clearing%20a%20critical%20npm%20alert%20in%20twenty%20minutes%0A%0Ahttps%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fanatomy-of-a-false-positive-npm-triage.html" aria-label="Share by email">Email</a>
+            <button class="share-link" type="button" data-copy="https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage.html" aria-label="Copy link to this post">Copy link</button>
+          </div>
+        </div>
         <section class="comments" data-comments data-slug="anatomy-of-a-false-positive-npm-triage">
           <h2>Comments</h2>
           <p>Comments are moderated before publication. Do not post secrets, tokens, customer data, or exploit payloads.</p>

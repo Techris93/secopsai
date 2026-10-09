@@ -73,6 +73,19 @@
     }
   });
 
+  // Native share sheet where the browser offers one (mostly phones).
+  document.querySelectorAll("[data-share-native]").forEach((button) => {
+    if (typeof navigator.share !== "function") return;
+    button.hidden = false;
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.share({ title: button.dataset.shareTitle || document.title, url: button.dataset.shareUrl || location.href });
+      } catch {
+        /* dismissed by the reader */
+      }
+    });
+  });
+
   applySort();
   applyFilters();
 })();

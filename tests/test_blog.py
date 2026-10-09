@@ -1107,3 +1107,21 @@ def test_markdown_joins_wrapped_paragraphs_and_renders_bold():
     rendered = markdown_to_html("First line\nsecond line **bold** `**raw**`\n\n- item\n  continued\n- next\n")
     assert "<p>First line second line <strong>bold</strong> <code>**raw**</code></p>" in rendered
     assert "<li>item continued</li>" in rendered and "<li>next</li>" in rendered
+
+
+def test_posts_have_share_links_and_raster_social_cards(tmp_path):
+    import shutil
+    from pathlib import Path
+    from secopsai import blog
+
+    root = tmp_path / "blog"
+    shutil.copytree(Path(blog.BLOG_DIR), root, ignore=shutil.ignore_patterns("drafts"))
+    paths = blog.BlogPaths(root)
+    post = {"slug": "share-test", "title": "Share test post", "severity": "info", "categories": ["Original Research"], "published_at": "2026-10-09T00:00:00Z"}
+    src = blog._write_social_card_png(post, paths)
+    assert src == "/assets/social/share-test.png" and (paths.social / "share-test.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    bar = blog._render_share_bar(post)
+    for host in ("x.com/intent/post", "linkedin.com/sharing", "bsky.app/intent/compose", "reddit.com/submit", "news.ycombinator.com/submitlink", "facebook.com/sharer"):
+        assert host in bar
+    assert 'rel="noopener noreferrer"' in bar and "data-share-native" in bar and "data-copy=" in bar
+    assert "<script" not in bar and "<iframe" not in bar

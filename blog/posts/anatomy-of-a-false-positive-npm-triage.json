@@ -38,7 +38,7 @@
   "review_status": "pending",
   "severity": "info",
   "slug": "anatomy-of-a-false-positive-npm-triage",
-  "social_image": "/assets/social/anatomy-of-a-false-positive-npm-triage.svg",
+  "social_image": "/assets/social/anatomy-of-a-false-positive-npm-triage.png",
   "social_image_alt": "SecOpsAI social preview card for Anatomy of a false positive: clearing a critical npm alert in twenty minutes",
   "social_image_height": 630,
   "social_image_width": 1200,
