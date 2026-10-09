@@ -32,6 +32,7 @@ HYPOTHESIS_TYPES = (
 )
 RESEARCH_STAGES = ("scaffold", "transition", "full")
 CLAIM_STATUSES = {"supported", "qualified_inference", "unsupported", "contradicted"}
+NON_EXECUTION_RE = re.compile(r"\b(?:without (?:local )?execution|(?:was|were|is|are) not (?:installed or )?executed|no (?:package )?code was executed|not executed)\b", re.IGNORECASE)
 SHA256_RE = re.compile(r"\b[a-fA-F0-9]{64}\b")
 CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.I)
 GHSA_RE = re.compile(r"\bGHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}\b", re.I)
@@ -1165,6 +1166,14 @@ def _verify_statement(statement: str, records: dict[str, Any]) -> dict[str, Any]
     for evidence_id, evidence_text in records["corpus"].items():
         if _token_overlap(statement, evidence_text) >= 0.34 or any(value in evidence_text for value in identifiers["sha256"] + [value.lower() for value in identifiers["cves"] + identifiers["ghsas"]]):
             evidence_ids.append(evidence_id)
+    if NON_EXECUTION_RE.search(statement):
+        # "Inspected without execution" is a methodology fact recorded on the
+        # evidence and the run bundle; without this the pipeline's own case
+        # summary blocked every source-first case from publication.
+        for item in records["evidence"]:
+            metadata = item.get("metadata") or {}
+            if isinstance(metadata, dict) and metadata.get("execution_performed") is False and item.get("evidence_id"):
+                evidence_ids.append(str(item["evidence_id"]))
     if claim_type == "runtime_observation":
         if not records["sandbox_ids"]:
             missing.append("sandbox evidence for runtime behavior")
@@ -1734,7 +1743,9 @@ def _specialist_review_state(case_id: str, db_path: str | None) -> dict[str, Any
     disagreement_resolved = adjudication_status in {"resolved_primary", "resolved_reviewer"}
     completed = latest.get("status") in {"needs_review", "completed", "accepted"} and bool(review)
     return {
-        "status": "completed" if completed else str(latest.get("status") or "pending"),
+        # A recommend-tier run is "completed" as soon as it is routed; without
+        # a review it is still waiting for a model or human reviewer.
+        "status": "completed" if completed else ("routed_awaiting_review" if latest.get("status") == "completed" else str(latest.get("status") or "pending")),
         "material_disagreement": disagreement,
         "adjudication_status": adjudication_status,
         "adjudication_note": str(latest.get("adjudication_note") or ""),

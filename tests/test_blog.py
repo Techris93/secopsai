@@ -1074,3 +1074,9 @@ class BlogQualityGateTests(unittest.TestCase):
         self.assertNotIn("news-review", cleaned)
         self.assertNotIn("## IOCs", cleaned)
         self.assertIn("## References", cleaned)
+
+
+class BlogReferenceTests(unittest.TestCase):
+    def test_redacted_artifact_locators_do_not_crash_reference_filtering(self):
+        refs = blog._safe_reference_list(["local-artifact://" + "a" * 64, "https://example.com/report"])
+        self.assertEqual(refs, ["https://example.com/report"])

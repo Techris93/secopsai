@@ -2030,8 +2030,21 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     reliability_visual.add_argument("--missing-alt-text", type=int, default=0)
     reliability_visual.add_argument("--unlicensed-images", type=int, default=0)
     reliability_visual.add_argument("--screenshot", action="append", default=[])
+    reliability_visual.add_argument("--auto", action="store_true", help="Render the would-be post with headless Chromium and measure it automatically")
+    reliability_visual.add_argument("--preview-dir", default=None, help="With --auto: where to write the preview and screenshots")
     reliability_visual.add_argument("--actor", default="operator")
     reliability_visual.add_argument("--db-path", default=None)
+    reliability_human = reliability_sub.add_parser(
+        "human-review",
+        help="Record a named human analyst as the primary or blinded independent specialist review",
+    )
+    reliability_human.add_argument("case_id")
+    reliability_human.add_argument("--stage", required=True, choices=["primary", "reviewer"])
+    reliability_human.add_argument("--verdict", required=True, choices=["credible", "likely", "inconclusive", "not_substantiated", "benign"])
+    reliability_human.add_argument("--summary", required=True)
+    reliability_human.add_argument("--reviewer", required=True, help="Reviewer name; must differ between primary and reviewer stages")
+    reliability_human.add_argument("--evidence-id", action="append", default=[])
+    reliability_human.add_argument("--db-path", default=None)
     reliability_sub.add_parser("benchmark", help="Run the deterministic isolated reliability and ablation benchmark")
 
     research_watchlist = research_sub.add_parser("watchlist", help="Manage cross-ecosystem research watchlists")
@@ -4256,6 +4269,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                     payload = audit_research_completeness(args.case_id, actor=args.actor, db_path=args.db_path)
                 elif command == "audit-originality":
                     payload = audit_research_originality(args.case_id, text=reliability_text(), actor=args.actor, db_path=args.db_path)
+                elif command == "visual-qa" and args.auto:
+                    from secopsai.research_visual_qa import run_visual_qa
+
+                    payload = run_visual_qa(args.case_id, out_dir=args.preview_dir, actor=args.actor, db_path=args.db_path)
                 elif command == "visual-qa":
                     payload = record_research_visual_qa(
                         args.case_id,
@@ -4267,6 +4284,22 @@ def main(argv: Optional[List[str]] = None) -> int:
                         unlicensed_images=args.unlicensed_images,
                         screenshots=args.screenshot,
                         actor=args.actor,
+                        db_path=args.db_path,
+                    )
+                elif command == "human-review":
+                    from secopsai.specialist_orchestrator import list_runs as list_specialist_runs
+                    from secopsai.specialist_orchestrator import record_human_review
+
+                    runs = [item for item in list_specialist_runs(limit=100, db_path=args.db_path) if str(item.get("task_id") or "") == args.case_id]
+                    if not runs:
+                        raise ValueError("no specialist run exists for this case; run 'research reliability queue-specialist' first")
+                    payload = record_human_review(
+                        runs[0]["run_id"],
+                        stage=args.stage,
+                        verdict=args.verdict,
+                        summary=args.summary,
+                        reviewer=args.reviewer,
+                        evidence_refs=args.evidence_id,
                         db_path=args.db_path,
                     )
                 elif command == "queue-specialist":

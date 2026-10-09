@@ -952,6 +952,63 @@ def record_review_result(
     return get_run(run["run_id"], db_path=db_path)
 
 
+HUMAN_VERDICTS = {"credible", "likely", "inconclusive", "not_substantiated", "benign"}
+
+
+def record_human_review(
+    run_id: str,
+    *,
+    stage: str,
+    verdict: str,
+    summary: str,
+    reviewer: str,
+    evidence_refs: Sequence[str] = (),
+    db_path: str | None = None,
+) -> dict[str, Any]:
+    """Record a named human analyst as primary or blinded independent reviewer.
+
+    The default ``recommend`` tier only routes a case, so without a model
+    execution pipeline the publication gate could never be satisfied.  Human
+    review keeps the same contract: the independent reviewer must be a
+    different person than the primary analyst, and verdict disagreement still
+    requires adjudication.
+    """
+    verdict = str(verdict or "").strip().lower()
+    reviewer = str(reviewer or "").strip()
+    summary = str(summary or "").strip()
+    if verdict not in HUMAN_VERDICTS:
+        raise ValueError(f"verdict must be one of {sorted(HUMAN_VERDICTS)}")
+    if not reviewer or len(reviewer) > 160:
+        raise ValueError("a named reviewer is required")
+    if len(summary) < 40:
+        raise ValueError("summary must explain the review in at least 40 characters")
+    output = {
+        "verdict_recommendation": verdict,
+        "summary": summary[:4000],
+        "reviewer": reviewer,
+        "method": "human_review",
+        "verdict_evidence_refs": [str(item) for item in evidence_refs if str(item).strip()][:50],
+    }
+    run = get_run(run_id, db_path=db_path)
+    if stage == "primary":
+        # A routing note (recommend tier) has no ``output``; a real primary
+        # analysis does and is never overwritten.
+        if (run.get("result") or {}).get("output"):
+            raise ValueError("the primary result is already recorded")
+        if run.get("status") == "completed" and not run.get("review"):
+            # A routed-only (recommend tier) run has no result yet.
+            with closing(soc_store.connect(db_path)) as connection:
+                connection.execute("UPDATE specialist_runs SET status='ready', updated_at=? WHERE run_id=?", (soc_store.utc_now(), run_id))
+                connection.commit()
+        return record_primary_result(run_id, output, model=f"human:{reviewer}", actor=reviewer, db_path=db_path)
+    if stage == "reviewer":
+        primary = (run.get("result") or {}).get("output") or {}
+        if str(primary.get("reviewer") or "").strip().lower() == reviewer.lower():
+            raise ValueError("the independent review must be recorded by a different reviewer than the primary analyst")
+        return record_review_result(run_id, output, model=f"human:{reviewer}", actor=reviewer, db_path=db_path)
+    raise ValueError("stage must be primary or reviewer")
+
+
 def adjudicate_review_disagreement(
     run_id: str,
     *,

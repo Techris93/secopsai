@@ -493,3 +493,34 @@ def test_specialists_cli_routes_json_contract(tmp_path: Path) -> None:
     assert payload["routing"]["primary_profile_id"] == "engineering/devops-automator"
     assert payload["model_routing"]["primary_model"] == "xai/grok-4.6"
     assert payload["execution_policy"]["tier"] == "read_only"
+
+
+def test_human_review_completes_routed_only_runs_with_independent_reviewers(tmp_path: Path) -> None:
+    from secopsai.specialist_orchestrator import record_human_review
+
+    db = str(tmp_path / "core.db")
+    persist_model_routing("xai/grok-4.6", fallback_mode="disabled", db_path=db)
+    routed = auto_route_task(_task("Change production deployment workflow"), db_path=db)["run"]
+    assert routed["status"] == "completed" and not routed.get("review")
+
+    record_human_review(routed["run_id"], stage="primary", verdict="likely", summary="x" * 50, reviewer="alice", db_path=db)
+    with pytest.raises(ValueError, match="different reviewer"):
+        record_human_review(routed["run_id"], stage="reviewer", verdict="likely", summary="y" * 50, reviewer="Alice", db_path=db)
+    run = list_runs(db_path=db)[0]
+    assert run["status"] == "awaiting_review"
+    with pytest.raises(ValueError, match="already recorded"):
+        record_human_review(routed["run_id"], stage="primary", verdict="likely", summary="z" * 50, reviewer="carol", db_path=db)
+    reviewed = record_human_review(routed["run_id"], stage="reviewer", verdict="not_substantiated", summary="w" * 50, reviewer="bob", db_path=db)
+    # Opposite verdict families are a material disagreement needing adjudication.
+    assert reviewed["status"] == "needs_review"
+    assert reviewed["material_disagreement"] is True
+
+
+def test_human_review_requires_substantive_summary(tmp_path: Path) -> None:
+    from secopsai.specialist_orchestrator import record_human_review
+
+    db = str(tmp_path / "core.db")
+    persist_model_routing("xai/grok-4.6", fallback_mode="disabled", db_path=db)
+    routed = auto_route_task(_task("Change production deployment workflow"), db_path=db)["run"]
+    with pytest.raises(ValueError, match="40 characters"):
+        record_human_review(routed["run_id"], stage="primary", verdict="likely", summary="looks bad", reviewer="alice", db_path=db)
