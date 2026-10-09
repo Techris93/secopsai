@@ -5944,8 +5944,10 @@ def _domain_from_indicator(value: str) -> str:
     if not raw:
         return ""
     if raw.startswith(("http://", "https://")):
-        parsed = urllib.parse.urlparse(raw)
-        return (parsed.hostname or "").lower()
+        try:
+            return (urllib.parse.urlparse(raw).hostname or "").lower()
+        except ValueError:
+            return ""
     if "/" in raw:
         raw = raw.split("/", 1)[0]
     if ":" in raw and not re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}", raw):

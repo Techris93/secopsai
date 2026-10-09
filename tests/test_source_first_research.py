@@ -127,3 +127,11 @@ def test_local_lockfile_usage_is_reported_without_execution(tmp_path):
     assert result["local_usage"]["status"] == "confirmed"
     assert result["local_usage"]["matches"][0]["version_present"] is True
     assert result["safety"]["execution_performed"] is False
+
+
+def test_malformed_url_iocs_are_rejected_not_fatal():
+    from secopsai.source_first_research import _validated_iocs
+
+    accepted, rejected = _validated_iocs({"iocs": {"urls": ["https://[::1", "https://collector.example.org/x"]}, "package": {}})
+    assert {"value": "https://[::1", "reason": "malformed URL"} in rejected
+    assert all(item.get("value") != "https://[::1" for item in accepted)

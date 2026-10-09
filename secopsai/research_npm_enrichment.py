@@ -163,7 +163,9 @@ def _version_summary(version: str, item: Dict[str, Any], times: Dict[str, Any]) 
         for key, value in scripts.items()
         if str(key).lower() in LIFECYCLE_NAMES
     }
-    script_text = " ".join(str(value)[:1000].lower() for value in scripts.values())
+    # Only hooks npm runs on the user's machine matter; developer scripts such
+    # as "test" or "lint" (e.g. "node test/secrets.mjs") never run on install.
+    script_text = " ".join(str(value)[:1000].lower() for key, value in scripts.items() if str(key).lower() in LIFECYCLE_NAMES)
     script_risk_tokens = sorted(
         token for token in SUSPICIOUS_SCRIPT_TOKENS if token in script_text
     )[:20]
@@ -375,7 +377,9 @@ def _suspicion_score(summary: Dict[str, Any], *, previous: Optional[Dict[str, An
     if lifecycle_changed:
         score += 50
         signals.append({"id": "lifecycle_script_changed", "points": 50, "hooks": sorted(lifecycle)})
-    elif new_lifecycle:
+    elif new_lifecycle and previous:
+        # Without a previous version a hook cannot be "new"; that case falls
+        # through to the first-observed weight below.
         points = 45 if any(name in {"preinstall", "install", "postinstall"} for name in new_lifecycle) else 30
         score += points
         signals.append({"id": "new_lifecycle_hook", "points": points, "hooks": new_lifecycle})

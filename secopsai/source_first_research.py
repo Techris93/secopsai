@@ -208,6 +208,14 @@ def _validated_iocs(scan: dict[str, Any]) -> tuple[list[dict[str, str]], list[di
         value = str(value or "").strip().lower() if kind == "domain" else str(value or "").strip()
         if not value:
             return
+        if kind == "url":
+            # Package contents are attacker-controlled; a malformed URL (for
+            # example an unbalanced IPv6 bracket) must not abort the scan.
+            try:
+                urlsplit(value).hostname
+            except ValueError:
+                rejected.append({"value": value[:300], "reason": "malformed URL"})
+                return
         if kind in {"url", "domain"}:
             host = (urlsplit(value).hostname or "") if kind == "url" else value
             if host and _expected_service_host(host, service_labels):

