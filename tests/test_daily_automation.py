@@ -181,3 +181,17 @@ def test_daily_step_retries_only_transient_sqlite_lock(tmp_path, monkeypatch):
     assert result["status"] == "succeeded"
     assert result["result"]["sqlite_retries"] == 1
     assert attempts["count"] == 2
+
+
+def test_oversized_run_summary_is_compacted_within_the_database_bound():
+    from secopsai import daily_automation
+
+    summary = {
+        "status": "completed",
+        "steps": [{"step_name": f"s{index}", "result": {"candidates": ["x" * 80] * 400}} for index in range(12)],
+        "external_intel": {"candidate_ids": [f"CAN-{index:06d}" for index in range(1000)], "status": "completed"},
+    }
+    encoded = daily_automation._bounded_summary(summary)
+    assert len(encoded) <= daily_automation.MAX_SUMMARY_JSON_CHARS
+    assert '"truncated":true' in encoded
+    assert '"status":"completed"' in encoded
