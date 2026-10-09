@@ -53,7 +53,9 @@ jobs:
       SECOPSAI_SMTP_PORT: "465"
       SECOPSAI_SMTP_USERNAME: resend
       SECOPSAI_SMTP_PASSWORD: ${{ secrets.SECOPSAI_SMTP_PASSWORD }}
-      SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS: email,webhook
+      # Email alerts need the Resend SMTP password; without it, alerts still
+      # reach Core and Mission Control through the signed webhook.
+      SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS: ${{ secrets.SECOPSAI_SMTP_PASSWORD != '' && 'email,webhook' || 'webhook' }}
       SECOPSAI_RESEARCH_EXTERNAL_ALERT_CHANNELS: webhook
       SECOPSAI_NPM_ENRICHMENT_EVENT_LIMIT: "100"
       SECOPSAI_NPM_STATIC_ANALYSIS_LIMIT: "10"
