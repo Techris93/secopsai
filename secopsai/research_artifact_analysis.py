@@ -38,6 +38,10 @@ MAX_ARCHIVE_ENTRIES = 10_000
 MAX_MEMBER_BYTES = 50 * 1024 * 1024
 MAX_EXPANDED_BYTES = 250 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 200
+# Total decoded text retained for contextual analysis.  Matches the intake
+# budget; without it a package with thousands of sub-2 MiB files kept every
+# decoded member in memory and the 512 MB research worker was OOM-killed.
+MAX_TEXT_BUDGET_BYTES = 12 * 1024 * 1024
 BENIGN_IOC_HOSTS = (
     "nuget.org", "npmjs.com", "npmjs.org", "pypi.org", "rubygems.org",
     "packagist.org", "maven.org", "golang.org", "open-vsx.org", "crates.io",
@@ -86,9 +90,27 @@ def _process_member(name: str, data: bytes, result: Dict[str, Any]) -> None:
     if any(lower.endswith(script) or lower == script for script in SCRIPT_NAMES):
         result["lifecycle_scripts"].append({"path": name, "sha256": hashlib.sha256(data).hexdigest()})
     if lower.endswith((".dll", ".exe", ".json", ".xml", ".nuspec", ".cs", ".ps1", ".sh", ".py", ".js", ".ts", ".txt", ".md")):
-        result["strings"].extend(_strings(data))
+        _add_strings(result, _strings(data))
         if len(data) <= 2 * 1024 * 1024:
-            result["text_files"].append((name, data.decode("utf-8", "ignore")))
+            if result["_text_bytes"] + len(data) <= MAX_TEXT_BUDGET_BYTES:
+                result["_text_bytes"] += len(data)
+                result["text_files"].append((name, data.decode("utf-8", "ignore")))
+            elif not result["_text_budget_exhausted"]:
+                result["_text_budget_exhausted"] = True
+                result["limitations"].append(
+                    f"text content beyond {MAX_TEXT_BUDGET_BYTES} bytes was hashed and string-scanned but not contextually analyzed"
+                )
+
+
+def _add_strings(result: Dict[str, Any], values: list[str]) -> None:
+    """Keep the first MAX_STRINGS unique strings without buffering the rest."""
+    seen = result["_string_set"]
+    for value in values:
+        if len(seen) >= MAX_STRINGS:
+            return
+        if value not in seen:
+            seen.add(value)
+            result["strings"].append(value)
 
 
 def inspect_artifact(artifact_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
@@ -117,6 +139,9 @@ def inspect_artifact(artifact_id: str, *, db_path: Optional[str] = None) -> Dict
         "sha256_candidates": [],
         "indicators": [],
         "limitations": [],
+        "_string_set": set(),
+        "_text_bytes": 0,
+        "_text_budget_exhausted": False,
     }
     try:
         with zipfile.ZipFile(path) as archive:
@@ -199,7 +224,7 @@ def inspect_artifact(artifact_id: str, *, db_path: Optional[str] = None) -> Dict
                         if name.lower().endswith(".gz"):
                             decompressed = _capped_gunzip(data)
                             if decompressed:
-                                result["strings"].extend(_strings(decompressed))
+                                _add_strings(result, _strings(decompressed))
                 result["archive_members"] = members
                 result["archive_format"] = "tar"
         except tarfile.TarError:
@@ -291,7 +316,8 @@ def inspect_artifact(artifact_id: str, *, db_path: Optional[str] = None) -> Dict
             result["limitations"] = [item for item in result["limitations"] if "optional isolated Mono.Cecil" not in item]
             result["tool"] = result["dotnet"].get("tool", result["tool"])
     result["complete"] = not bool(result["limitations"])
-    result.pop("text_files", None)
+    for transient in ("text_files", "_string_set", "_text_bytes", "_text_budget_exhausted"):
+        result.pop(transient, None)
     with closing(soc_store.connect(db_path)) as connection:
         connection.execute("UPDATE research_artifacts SET analysis_json = ?, updated_at = ? WHERE artifact_id = ?", (json.dumps(result, sort_keys=True), soc_store.utc_now(), artifact_id))
         connection.commit()

@@ -193,3 +193,59 @@ def test_analyzer_accepts_digest_pinned_image(tmp_path, monkeypatch):
     result = research_analysis.inspect_nuget_archive(buffer.getvalue(), "demo.nupkg")
     assert result["dotnet"]["decompiler_available"] is True
     assert calls and digest_image in calls[0]
+
+
+def test_inspect_artifact_bounds_retained_text_and_strings(tmp_path, monkeypatch):
+    """A package with many text members must not retain unbounded text."""
+    import io
+    import tarfile
+    from contextlib import closing
+
+    import soc_store
+    from secopsai import research_artifact_analysis as analysis
+
+    monkeypatch.setattr(analysis, "MAX_TEXT_BUDGET_BYTES", 64 * 1024)
+    archive_path = tmp_path / "pkg.tgz"
+    with tarfile.open(archive_path, "w:gz") as archive:
+        for index in range(40):
+            body = ("// unique-string-%04d-%s\n" % (index, "x" * 16)).encode() * 200
+            info = tarfile.TarInfo(f"package/lib/file{index}.js")
+            info.size = len(body)
+            archive.addfile(info, io.BytesIO(body))
+    captured = {}
+
+    def fake_analyze(text_files, **_kwargs):
+        captured["bytes"] = sum(len(text) for _name, text in text_files)
+        return []
+
+    monkeypatch.setattr(analysis.research_artifacts, "get_artifact", lambda *_a, **_k: {"available": True, "sha256": "0" * 64, "provenance": {}})
+    monkeypatch.setattr(analysis, "analyze_text_files", fake_analyze)
+
+    class _Row(dict):
+        pass
+
+    class _Conn:
+        def execute(self, *_a, **_k):
+            return self
+
+        def fetchone(self):
+            return _Row(quarantine_path=str(archive_path))
+
+        def close(self):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def commit(self):
+            pass
+
+    monkeypatch.setattr(soc_store, "connect", lambda *_a, **_k: _Conn())
+    result = analysis.inspect_artifact("ART-unit")
+    assert captured["bytes"] <= 64 * 1024
+    assert "_string_set" not in result
+    assert len(result["strings"]) <= analysis.MAX_STRINGS
+    assert any("contextually analyzed" in item for item in result["limitations"])
