@@ -139,3 +139,32 @@ def test_unverified_external_advisory_versions_group_into_one_lead(tmp_path):
     evidence = alerts[0]["evidence"] if isinstance(alerts[0].get("evidence"), dict) else json.loads(alerts[0]["evidence_json"])
     assert evidence["affected_versions"] == ["0.0.18", "0.0.19", "0.0.20"]
     assert "3 versions" in alerts[0]["reason"]
+
+
+def test_legacy_per_version_advisory_leads_are_consolidated(tmp_path):
+    from contextlib import closing
+
+    from secopsai.research_discovery import consolidate_external_advisory_leads, normalize_identifier
+
+    db = str(tmp_path / "research.db")
+    soc_store.init_db(db)
+    package = "@onereach/content-builder"
+    key = normalize_identifier("npm", package)
+    with closing(soc_store.connect(db)) as connection:
+        for index, version in enumerate(("0.0.18", "0.0.19", "0.0.20")):
+            connection.execute(
+                """INSERT INTO research_alerts (alert_id, alert_type, severity, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at)
+                   VALUES (?, 'external_advisory_match', 'critical', ?, ?, ?, 'open', '', ?, ?)""",
+                (f"RAL-LEGACY{index}", f"package-lead:external_advisory_match:npm:{key}:{version}",
+                 f"External advisory reports {package}@{version} in the active campaign.",
+                 json.dumps({"ecosystem": "npm", "package": package, "advisory_id": "ADV-1"}), "2026-08-04T00:00:00Z", "2026-08-04T00:00:00Z"),
+            )
+        connection.commit()
+    first = consolidate_external_advisory_leads(db_path=db)
+    assert first == {"status": "completed", "merged_alerts": 3, "packages": 1}
+    open_alerts = [item for item in list_alerts(db_path=db) if item["alert_type"] == "external_advisory_match" and item["status"] == "open"]
+    assert len(open_alerts) == 1
+    evidence = open_alerts[0]["evidence"] if isinstance(open_alerts[0].get("evidence"), dict) else json.loads(open_alerts[0]["evidence_json"])
+    assert evidence["affected_versions"] == ["0.0.18", "0.0.19", "0.0.20"]
+    # Idempotent.
+    assert consolidate_external_advisory_leads(db_path=db)["merged_alerts"] == 0

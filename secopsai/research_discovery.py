@@ -896,6 +896,60 @@ def list_alerts(*, status: Optional[str] = None, limit: int = 100, db_path: Opti
     return [dict(row) for row in rows]
 
 
+def consolidate_external_advisory_leads(*, db_path: Optional[str] = None, limit: int = 2000) -> Dict[str, Any]:
+    """Merge legacy per-version external-advisory leads into package leads.
+
+    Before leads were grouped per package, one advisory listing many versions
+    of a package filed one open alert (and finding) per version.  For every
+    still-open, unverified per-version lead, re-file it through
+    ``create_candidate_alert`` (which now merges into the package-level lead)
+    and resolve the per-version alert.  Idempotent; leads with artifact
+    evidence are left alone.
+    """
+    soc_store.init_db(db_path)
+    with closing(soc_store.connect(db_path)) as connection:
+        rows = [dict(row) for row in connection.execute(
+            """SELECT * FROM research_alerts
+               WHERE alert_type = 'external_advisory_match' AND status = 'open'
+                 AND dedupe_key LIKE 'package-lead:external_advisory_match:%'
+               ORDER BY created_at LIMIT ?""",
+            (int(limit),),
+        ).fetchall()]
+    merged = 0
+    packages: set[str] = set()
+    for row in rows:
+        evidence = _decode(row.get("evidence_json"), {})
+        if not isinstance(evidence, dict) or _has_artifact_evidence(evidence):
+            continue
+        ecosystem = str(evidence.get("ecosystem") or "").strip().lower()
+        package = str(evidence.get("package") or "").strip()
+        package_key = normalize_identifier(ecosystem, package) if ecosystem and package else ""
+        if not package_key or row.get("dedupe_key") == f"package-lead:external_advisory_match:{ecosystem}:{package_key}":
+            continue  # already a package-level lead
+        version = str(evidence.get("version") or "").strip()
+        if not version:
+            match = re.search(r"@([^@\s]+) in the", str(row.get("reason") or ""))
+            version = match.group(1) if match else ""
+        create_candidate_alert(
+            {
+                "candidate_id": row.get("candidate_id"),
+                "campaign_id": row.get("campaign_id"),
+                "ecosystem": ecosystem,
+                "package": package,
+                "version": version,
+                "score": evidence.get("score") or 85,
+                "reason": row.get("reason"),
+                "evidence": evidence,
+            },
+            db_path=db_path,
+            alert_type="external_advisory_match",
+        )
+        resolve_alert(str(row["alert_id"]), db_path=db_path)
+        merged += 1
+        packages.add(f"{ecosystem}:{package}")
+    return {"status": "completed", "merged_alerts": merged, "packages": len(packages)}
+
+
 def resolve_alert(alert_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
     soc_store.init_db(db_path)
     now = _now()

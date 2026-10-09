@@ -372,6 +372,9 @@ def _run_worker_cycle_unlocked(
         # their short persistence transactions instead of holding the shared
         # lock while a feed request is in flight.
         external_intel = refresh_and_sync(db_path=db_path, fetcher=fetcher)
+        from secopsai.research_discovery import consolidate_external_advisory_leads
+
+        external_intel["consolidated_leads"] = consolidate_external_advisory_leads(db_path=db_path)
     except Exception as exc:  # advisory feeds must never stop registry collection
         capture_exception(exc, context={"component": "research_external_intel"})
         external_intel = {"status": "degraded", "error": str(exc)[:500]}
