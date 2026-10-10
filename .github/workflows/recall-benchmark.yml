@@ -28,6 +28,9 @@ on:
       seed:
         description: Sampling seed (keep fixed to compare rule changes)
         default: "20261010"
+      rule_packs:
+        description: Third-party rule packs (signature-base or yara-forge-extended)
+        default: "signature-base"
 
 permissions:
   contents: read
@@ -58,6 +61,8 @@ jobs:
           pip install -r requirements.txt
 
       - name: Fetch pinned YARA rule packs
+        env:
+          SECOPSAI_RULE_PACKS: ${{ inputs.rule_packs || 'signature-base' }}
         run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
 
       - name: Clone the dataset index (blobless, pinned)
