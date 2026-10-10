@@ -14,6 +14,10 @@ const NPM_PAGE = 1000;
 const MAX_TARGETS_PER_TICK = 20;
 const DISPATCH_MEMORY_MS = 6 * 3600 * 1000;
 const WATCHLIST_TTL_MS = 10 * 60 * 1000;
+// A tick that pages the npm feed can outlast the one-minute cadence; the
+// lease stops an overlapping tick from re-reading unsaved state and
+// dispatching the same releases again.  It expires if a tick dies.
+const LEASE_MS = 5 * 60 * 1000;
 
 let watchlistCache = { at: 0, npm: new Set(), pypi: new Set() };
 
@@ -55,7 +59,16 @@ async function npmLatest(name, fetcher) {
 
 export async function fastlaneTick(env, { fetcher = fetch, now = Date.now(), dispatch } = {}) {
   const bucket = env.LEDGER;
-  const state = await readJson(bucket, STATE_KEY, { npm_seq: null, pypi_seen: [], dispatched: {} });
+  const stored = await bucket.get(STATE_KEY);
+  let state = { npm_seq: null, pypi_seen: [], dispatched: {} };
+  if (stored) { try { state = JSON.parse(await stored.text()); } catch { /* start fresh */ } }
+  if (state.lease_until && now < state.lease_until) {
+    return { component: "fastlane", skipped: "previous tick still running" };
+  }
+  // Conditional put: only one of several concurrent ticks wins the lease.
+  const leased = await bucket.put(STATE_KEY, JSON.stringify({ ...state, lease_until: now + LEASE_MS }), stored ? { onlyIf: { etagMatches: stored.etag } } : undefined);
+  if (!leased) return { component: "fastlane", skipped: "another tick holds the lease" };
+  delete state.lease_until;
   const lists = await watchlists(bucket, now);
   const dispatched = Object.fromEntries(Object.entries(state.dispatched || {}).filter(([, at]) => now - at < DISPATCH_MEMORY_MS));
   const targets = [];

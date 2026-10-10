@@ -88,6 +88,15 @@ export default {
       const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);
       if (!isOwner) return json({ error: "unauthorized" }, 401);
       if (watchlistMatch && request.method === "PUT") return putWatchlist(request, env, watchlistMatch[1]);
+      if (url.pathname === "/fastlane/status" && request.method === "POST") {
+        // Run one tick now (operations / diagnosis); the error is returned.
+        try {
+          const result = await fastlaneTick(env, { dispatch: (workflow, inputs) => dispatchWorkflow(env, workflow, inputs) });
+          return json({ status: "ok", ...result });
+        } catch (error) {
+          return json({ status: "error", error: String(error && error.stack || error).slice(0, 1000) }, 500);
+        }
+      }
       if (url.pathname === "/fastlane/status") {
         const object = await env.LEDGER.get("fastlane/state.json");
         const state = object ? JSON.parse(await object.text()) : {};

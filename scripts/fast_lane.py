@@ -35,6 +35,7 @@ MAX_TARGETS = 20
 STALE_AFTER_SECONDS = 3 * 3600
 EXEC_OR_EGRESS = {"network-endpoint", "outbound-network", "process-execution", "dynamic-eval", "dynamic-function-constructor", "credential-access", "credential-discovery", "encoded-payload"}
 INSTALL_HOOKS = {"preinstall", "install", "postinstall", "prepare"}
+SIZE_GUARD_MARKERS = ("safety limit", "too many entries")
 
 
 def _now() -> datetime:
@@ -73,6 +74,13 @@ def resolve_release(fetcher: SafeFetcher, ecosystem: str, package: str, version:
         version = version or (doc.get("info") or {}).get("version", "")
     else:
         raise ValueError(f"unsupported ecosystem: {ecosystem}")
+    if version not in times and ecosystem == "pypi" and version:
+        # The project document is CDN-cached and can lag a fresh release by
+        # minutes; the per-version document is published with the release.
+        release_doc = _get_json(fetcher, f"https://pypi.org/pypi/{package}/{version}/json", ("pypi.org",))
+        stamps = [item.get("upload_time_iso_8601") for item in release_doc.get("urls") or [] if item.get("upload_time_iso_8601")]
+        if stamps:
+            times[version] = min(stamps)
     if version not in times:
         raise ValueError(f"{package}@{version} has no publish time")
     published = times[version]
@@ -185,7 +193,9 @@ def main() -> int:
             if decision["severity"] != "none":
                 row["delivery"] = deliver(target, release, decision, detected)
         except Exception as exc:
-            row.update(status="error", reasons=str(exc)[:300])
+            # Size guards (archive-bomb limits) are a scope decision, not a fault.
+            oversized = any(marker in str(exc) for marker in SIZE_GUARD_MARKERS)
+            row.update(status="skipped: exceeds scan limits" if oversized else "error", reasons=str(exc)[:300])
         rows.append(row)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     lines = ["### Fast lane", "", "| Package | Version (previous) | Severity | Publish to verdict | Notes |", "| --- | --- | --- | --- | --- |"]

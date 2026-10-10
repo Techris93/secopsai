@@ -332,7 +332,13 @@ class PyPiAdapter(RegistryAdapter):
         files = [item for item in release if isinstance(item, dict) and item.get("url")]
         if not files:
             raise IntakeError("PyPI metadata did not include an artifact for the selected version")
-        chosen = next((item for item in files if item.get("packagetype") in {"bdist_wheel", "sdist"}), files[0])
+        # Prefer a wheel, but take whichever distribution fits the download cap
+        # (large projects can ship a wheel above it alongside a smaller sdist).
+        fitting = [item for item in files if int(item.get("size") or 0) <= MAX_ARTIFACT_BYTES]
+        if not fitting:
+            raise IntakeError("every PyPI artifact for this version exceeds the safety limit")
+        rank = {"bdist_wheel": 0, "sdist": 1}
+        chosen = min(fitting, key=lambda item: rank.get(item.get("packagetype"), 2))
         return RegistryMetadata(self.ecosystem, package, version, url, str(chosen["url"]),
                                 str((payload.get("info") or {}).get("author") or ""),
                                 str(chosen.get("upload_time_iso_8601") or ""),

@@ -41,3 +41,31 @@ def test_yara_alert_alone_is_high_and_payload_records_latency():
     assert payload["alert_type"] == "registry_release_anomaly"
     assert payload["evidence"]["publish_to_verdict_seconds"] == 270
     assert payload["alert_id"] == "FASTLANE-npm:demo@1.0.1"
+
+
+class _Fetcher:
+    def __init__(self, documents):
+        self.documents = documents
+
+    def get(self, url, **_kwargs):
+        return url, {}, __import__("json").dumps(self.documents[url]).encode()
+
+
+def test_pypi_release_missing_from_cached_project_document_uses_version_document():
+    fetcher = _Fetcher({
+        "https://pypi.org/pypi/rjsmin/json": {"info": {"version": "1.2.5"}, "releases": {"1.2.5": [{"upload_time_iso_8601": "2025-01-01T00:00:00Z"}]}},
+        "https://pypi.org/pypi/rjsmin/1.3.0/json": {"urls": [{"upload_time_iso_8601": "2026-10-10T16:32:12Z"}]},
+    })
+    release = fast_lane.resolve_release(fetcher, "pypi", "rjsmin", "1.3.0")
+    assert release == {"version": "1.3.0", "published_at": "2026-10-10T16:32:12Z", "previous_version": "1.2.5"}
+
+
+def test_pypi_adapter_falls_back_to_sdist_when_wheel_exceeds_cap():
+    from secopsai.research_intake import MAX_ARTIFACT_BYTES, PyPiAdapter
+
+    url = "https://pypi.org/pypi/homeassistant/2026.10.1/json"
+    fetcher = _Fetcher({url: {"info": {}, "urls": [
+        {"url": "https://files.pythonhosted.org/ha.whl", "packagetype": "bdist_wheel", "size": MAX_ARTIFACT_BYTES + 1},
+        {"url": "https://files.pythonhosted.org/ha.tar.gz", "packagetype": "sdist", "size": 38_000_000},
+    ]}})
+    assert PyPiAdapter().resolve("homeassistant", "2026.10.1", fetcher).artifact_url.endswith("ha.tar.gz")

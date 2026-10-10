@@ -44,10 +44,18 @@ import { fastlaneTick, parsePypiRss } from "../src/fastlane.js";
 
 function memoryBucket(initial = {}) {
   const store = new Map(Object.entries(initial).map(([k, v]) => [k, JSON.stringify(v)]));
+  const etags = new Map([...store.keys()].map((k) => [k, "e0"]));
+  let version = 0;
   return {
     store,
-    get: async (key) => (store.has(key) ? { text: async () => store.get(key) } : null),
-    put: async (key, value) => { store.set(key, value); },
+    get: async (key) => (store.has(key) ? { etag: etags.get(key), text: async () => store.get(key) } : null),
+    put: async (key, value, options = {}) => {
+      if (options.onlyIf?.etagMatches && options.onlyIf.etagMatches !== etags.get(key)) return null;
+      version += 1;
+      store.set(key, value);
+      etags.set(key, `e${version}`);
+      return { etag: etags.get(key) };
+    },
   };
 }
 
@@ -90,4 +98,22 @@ test("fast lane retries targets when the dispatch fails", async () => {
   await fastlaneTick(env, { fetcher, now: 5_060_000, dispatch: async () => { calls += 1; return { status: "dispatched" }; } });
   assert.equal(calls, 2, "the failed PyPI release is retried on the next tick");
   assert.deepEqual(parsePypiRss("<item><title>a-b 1.0</title></item>"), [{ package: "a-b", version: "1.0" }]);
+});
+
+test("overlapping fast lane ticks dispatch a release once", async () => {
+  const bucket = memoryBucket({
+    "fastlane/watchlist/npm.json": { names: [] },
+    "fastlane/watchlist/pypi.json": { names: ["requests"] },
+    "fastlane/state.json": { npm_seq: 1, pypi_seen: [], dispatched: {} },
+  });
+  const fetcher = async () => new Response("<item><title>requests 4.0.0</title></item>");
+  let calls = 0;
+  const dispatch = async () => { calls += 1; return { status: "dispatched" }; };
+  const env = { LEDGER: bucket };
+  const results = await Promise.all([1, 2, 3].map(() => fastlaneTick(env, { fetcher, now: 9_000_000, dispatch })));
+  assert.equal(calls, 1, "only the lease holder dispatches");
+  assert.equal(results.filter((r) => r.skipped).length, 2);
+  assert.equal(JSON.parse(bucket.store.get("fastlane/state.json")).lease_until, undefined, "lease released");
+  await fastlaneTick(env, { fetcher, now: 9_060_000, dispatch });
+  assert.equal(calls, 1, "the next tick sees the release as dispatched");
 });
