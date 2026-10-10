@@ -146,7 +146,8 @@ class SafeFetcher:
         self._injected = fetch
 
     def get(self, url: str, *, allowed_hosts: Iterable[str], max_bytes: int,
-            headers: Optional[Dict[str, str]] = None) -> Tuple[str, Dict[str, str], bytes]:
+            headers: Optional[Dict[str, str]] = None, data: Optional[bytes] = None) -> Tuple[str, Dict[str, str], bytes]:
+        """GET (or POST when ``data`` is given, for query APIs) with the same safeguards."""
         current = url
         hosts = {str(host).lower() for host in allowed_hosts}
         request_headers = {"Accept": "application/json, application/octet-stream", "User-Agent": USER_AGENT}
@@ -164,6 +165,8 @@ class SafeFetcher:
                 request = urllib.request.Request(
                     current,
                     headers=request_headers,
+                    data=data if redirect_count == 0 else None,
+                    method="POST" if data is not None and redirect_count == 0 else "GET",
                 )
                 opener = urllib.request.build_opener(_NoRedirectHandler())
                 max_retries = 3

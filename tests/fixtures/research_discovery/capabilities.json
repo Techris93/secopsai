@@ -1,18 +1,80 @@
 {
   "schema_version": "secopsai.research.ecosystem-capabilities.v1",
   "ecosystems": [
-    {"ecosystem": "npm", "source_registry": "https://registry.npmjs.org/", "monitoring_mode": "changes_feed_or_watchlist"},
-    {"ecosystem": "crates", "source_registry": "https://crates.io/", "monitoring_mode": "metadata_watchlist"},
-    {"ecosystem": "pypi", "source_registry": "https://pypi.org/", "monitoring_mode": "index_reconcile_or_watchlist"},
-    {"ecosystem": "nuget", "source_registry": "https://api.nuget.org/", "monitoring_mode": "catalog_or_watchlist"},
-    {"ecosystem": "maven", "source_registry": "https://repo.maven.apache.org/", "monitoring_mode": "search_tail_or_watchlist"},
-    {"ecosystem": "rubygems", "source_registry": "https://rubygems.org/", "monitoring_mode": "timeframe_feed_or_watchlist"},
-    {"ecosystem": "packagist", "source_registry": "https://repo.packagist.org/", "monitoring_mode": "changes_feed_or_watchlist"},
-    {"ecosystem": "go", "source_registry": "https://proxy.golang.org/", "monitoring_mode": "module_index_or_watchlist"},
-    {"ecosystem": "open-vsx", "source_registry": "https://open-vsx.org/", "monitoring_mode": "search_reconcile_or_watchlist"},
-    {"ecosystem": "github", "source_registry": "https://docs.github.com/en/rest", "monitoring_mode": "repository_metadata_or_watchlist"},
-    {"ecosystem": "huggingface", "source_registry": "https://huggingface.co/docs/hub/api", "monitoring_mode": "model_metadata_or_watchlist"},
-    {"ecosystem": "container", "source_registry": "https://opencontainers.org/", "monitoring_mode": "digest_metadata_or_watchlist"},
-    {"ecosystem": "chrome-web-store", "source_registry": "https://developer.chrome.com/docs/webstore", "monitoring_mode": "extension_metadata_or_watchlist"}
+    {
+      "ecosystem": "npm",
+      "source_registry": "https://registry.npmjs.org/",
+      "monitoring_mode": "changes_feed_or_watchlist"
+    },
+    {
+      "ecosystem": "crates",
+      "source_registry": "https://crates.io/",
+      "monitoring_mode": "recent_updates_tail"
+    },
+    {
+      "ecosystem": "pypi",
+      "source_registry": "https://pypi.org/",
+      "monitoring_mode": "index_reconcile_or_watchlist"
+    },
+    {
+      "ecosystem": "nuget",
+      "source_registry": "https://api.nuget.org/",
+      "monitoring_mode": "catalog_or_watchlist"
+    },
+    {
+      "ecosystem": "maven",
+      "source_registry": "https://repo.maven.apache.org/",
+      "monitoring_mode": "search_tail_or_watchlist"
+    },
+    {
+      "ecosystem": "rubygems",
+      "source_registry": "https://rubygems.org/",
+      "monitoring_mode": "timeframe_feed_or_watchlist"
+    },
+    {
+      "ecosystem": "packagist",
+      "source_registry": "https://repo.packagist.org/",
+      "monitoring_mode": "changes_feed_or_watchlist"
+    },
+    {
+      "ecosystem": "go",
+      "source_registry": "https://proxy.golang.org/",
+      "monitoring_mode": "module_index_or_watchlist"
+    },
+    {
+      "ecosystem": "open-vsx",
+      "source_registry": "https://open-vsx.org/",
+      "monitoring_mode": "search_reconcile_or_watchlist"
+    },
+    {
+      "ecosystem": "github",
+      "source_registry": "https://docs.github.com/en/rest",
+      "monitoring_mode": "repository_metadata_or_watchlist"
+    },
+    {
+      "ecosystem": "huggingface",
+      "source_registry": "https://huggingface.co/docs/hub/api",
+      "monitoring_mode": "model_metadata_or_watchlist"
+    },
+    {
+      "ecosystem": "container",
+      "source_registry": "https://opencontainers.org/",
+      "monitoring_mode": "digest_metadata_or_watchlist"
+    },
+    {
+      "ecosystem": "chrome-web-store",
+      "source_registry": "https://developer.chrome.com/docs/webstore",
+      "monitoring_mode": "extension_metadata_or_watchlist"
+    },
+    {
+      "ecosystem": "mcp-registry",
+      "source_registry": "https://registry.modelcontextprotocol.io/",
+      "monitoring_mode": "updated_since_census"
+    },
+    {
+      "ecosystem": "vscode-marketplace",
+      "source_registry": "https://marketplace.visualstudio.com/",
+      "monitoring_mode": "recent_updates_tail"
+    }
   ]
 }

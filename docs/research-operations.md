@@ -125,14 +125,38 @@ touches the production ledger, the real blog, Core, or alert channels.
 
 Three layers, modelled on what works at Nextron and Socket:
 
-**1. Rules-first funnel (every worker cycle).** The npm pipeline fetches the
-published archives of up to `SECOPSAI_NPM_PRESCAN_LIMIT` (150) new releases
-per cycle and scans every file's bytes with YARA-X: SecOpsAI's rules plus
-Nextron's open `signature-base` (pinned commit, fetched by
-`scripts/fetch_rule_packs.sh`). Binaries are scanned too. Releases with no
-rule hit and an unremarkable metadata score are cleared; hits get a full
-static analysis and are queued for model triage. Scores add up per artifact:
-notice ≥ 40, warning ≥ 60, alert ≥ 80.
+**1. Rules-first funnel (every worker cycle).** New releases are downloaded
+and every file is scanned in memory (nothing is executed) with two rule sets
+whose scores add up per artifact (notice ≥ 40, warning ≥ 60, alert ≥ 80):
+
+- YARA-X: SecOpsAI's rules plus Nextron's open `signature-base` (pinned
+  commit, fetched by `scripts/fetch_rule_packs.sh`), binaries included;
+- behaviour rules (`secopsai/package_features.py`): combinations of
+  behaviours across the package, such as system recon plus an outbound
+  request in a throwaway-shaped package, exfiltration or capture services,
+  dependency-confusion versions, Discord webhooks, `setup.py` or `build.rs`
+  beacons, MCP tool poisoning and GitHub runner memory dumping. Each was
+  chosen from the recall benchmark's miss profile and held to the
+  false-positive budget below.
+
+Hits get a `registry_release_anomaly` (or npm) alert and are queued for model
+triage. Coverage:
+
+| Source | Collection | Content scan |
+| --- | --- | --- |
+| npm | changes feed | up to `SECOPSAI_NPM_PRESCAN_LIMIT` (150) per cycle, then full static analysis |
+| PyPI, Open VSX, crates.io | registry collectors | newest `SECOPSAI_CONTENT_PRESCAN_LIMIT` (60) per registry per cycle |
+| Official MCP Registry | servers updated since the cursor | each server's npm/PyPI package, with MCP rules |
+| Visual Studio Marketplace | **off by default**; enable after reviewing the Marketplace terms: `secopsai research collect resume --ecosystem vscode-marketplace` | as above |
+| GitHub Actions | tags of 94 popular actions (`rules/watchlists/github-actions.txt`), every 15 min | repointed tags alert; moved and new release commits are scanned |
+| NuGet, Go, Maven, Packagist, RubyGems | registry collectors | metadata scoring only |
+
+**Measuring it.** The **Recall Benchmark** workflow scans a fixed sample of
+Datadog's malicious-packages dataset (decrypted in memory on a disposable
+runner) and the top 1,000 npm / 500 PyPI packages, and reports recall by
+ecosystem and discovery year, false positives, per-rule contributions and a
+miss profile. Run it after any rule change; keep the seed fixed to compare.
+The false-positive budget is 0.5% of popular packages.
 
 **2. Popular-package fast lane (every minute).** A Cloudflare cron on the
 ledger-store Worker reads the npm changes feed and the PyPI updates feed,

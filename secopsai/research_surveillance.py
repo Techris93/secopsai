@@ -54,6 +54,12 @@ RUBYGEMS_TIMEFRAME_URL = "https://rubygems.org/api/v1/timeframe_versions.json"
 CRATES_RECENT_URL = "https://crates.io/api/v1/crates?sort=recent-updates&per_page=100"
 CRATES_ALLOWED_HOSTS: Tuple[str, ...] = ("crates.io",)
 CRATES_PAGE_DELAY_SECONDS = 1.0
+VSCODE_QUERY_URL = "https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery"
+VSCODE_ALLOWED_HOSTS: Tuple[str, ...] = ("marketplace.visualstudio.com",)
+VSCODE_PAGE_SIZE = 100
+VSCODE_PAGE_DELAY_SECONDS = 1.0
+MCP_REGISTRY_URL = "https://registry.modelcontextprotocol.io/v0/servers"
+MCP_ALLOWED_HOSTS: Tuple[str, ...] = ("registry.modelcontextprotocol.io",)
 RUBYGEMS_ALLOWED_HOSTS: Tuple[str, ...] = ("rubygems.org",)
 NPM_REPLICATE_URL = "https://replicate.npmjs.com/_changes"
 NPM_REPLICATE_ROOT_URL = "https://replicate.npmjs.com/"
@@ -232,6 +238,36 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "cursor_seed": "lookback",
         "interval_seconds": 900,
     },
+    "mcp-registry": {
+        "collector_id": "COL-MCP-REGISTRY-UPDATED",
+        "source_id": "REG-MCP_REGISTRY",
+        "name": "Official MCP Registry updated servers",
+        "feed_url": MCP_REGISTRY_URL,
+        "mode": "recent_poll",
+        "allowed_hosts": MCP_ALLOWED_HOSTS,
+        "coverage_mode": "updated_since_census",
+        # updated_since returns every server version changed after the
+        # cursor; all pages are walked and the cursor moves to the newest
+        # updatedAt only after the last page.
+        "cursor_seed": "lookback",
+        "interval_seconds": 1800,
+    },
+    "vscode-marketplace": {
+        "collector_id": "COL-VSCODE-MARKETPLACE-RECENT",
+        "source_id": "REG-VSCODE_MARKETPLACE",
+        "name": "Visual Studio Marketplace recently updated extensions",
+        "feed_url": VSCODE_QUERY_URL,
+        "mode": "recent_poll",
+        "allowed_hosts": VSCODE_ALLOWED_HOSTS,
+        "coverage_mode": "recent_updates_tail",
+        # The gallery query API sorted by last update (newest first) is walked
+        # back to the cursor. Off by default: enable it only after confirming
+        # the Marketplace terms allow this use
+        # (`secopsai research collect resume --ecosystem vscode-marketplace`).
+        "default_enabled": False,
+        "cursor_seed": "lookback",
+        "interval_seconds": 1800,
+    },
     "open-vsx": {
         "collector_id": "COL-OPENVSX-SEARCH",
         "source_id": "REG-OPEN_VSX",
@@ -364,7 +400,7 @@ def ensure_collectors(*, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
                 connection.execute(
                     """INSERT INTO registry_collectors
                     (collector_id, source_id, ecosystem, name, feed_url, mode, enabled, config_json, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(collector_id) DO UPDATE SET feed_url=excluded.feed_url,
                     mode=excluded.mode, config_json=excluded.config_json, updated_at=excluded.updated_at""",
                     (
@@ -374,6 +410,7 @@ def ensure_collectors(*, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
                         definition["name"],
                         definition["feed_url"],
                         definition["mode"],
+                        1 if definition.get("default_enabled", True) else 0,
                         _json(_collector_config(definition)),
                         now,
                         now,
@@ -1395,6 +1432,175 @@ def _ingest_crates_recent(
     return outcome
 
 
+def _ingest_vscode_recent(
+    *,
+    collector: Dict[str, Any],
+    cursor_before: str,
+    max_pages: int,
+    fetcher: SafeFetcher,
+    run_id: str,
+    db_path: Optional[str],
+) -> Dict[str, Any]:
+    """Walk the Marketplace gallery (VS Code extensions, newest update first) back to the cursor."""
+    config = _decode(collector["config_json"], {})
+    allowed_hosts = config.get("allowed_hosts", [])
+    outcome = _empty_outcome(cursor_before)
+    newest = ""
+    reached = False
+    headers = {"Accept": "application/json;api-version=7.2-preview.1", "Content-Type": "application/json"}
+    with closing(soc_store.connect(db_path)) as connection:
+        for page in range(1, max(1, min(int(max_pages), 50)) + 1):
+            query = {"filters": [{"criteria": [{"filterType": 8, "value": "Microsoft.VisualStudio.Code"}, {"filterType": 12, "value": "4096"}],
+                                  "pageNumber": page, "pageSize": VSCODE_PAGE_SIZE, "sortBy": 1, "sortOrder": 0}], "flags": 914}
+            page_url = f"{collector['feed_url']}#page={page}"
+            try:
+                _final, _headers, body = fetcher.get(collector["feed_url"], allowed_hosts=allowed_hosts, max_bytes=MAX_TIMEFRAME_PAGE_BYTES,
+                                                     headers=headers, data=json.dumps(query).encode())
+                payload = json.loads(body.decode("utf-8"))
+            except (IntakeError, CollectorError, ValueError) as exc:
+                outcome["error"] = f"Marketplace page fetch failed: {exc}"
+                with _write_transaction(connection, db_path):
+                    _record_dead_letter(connection, collector_id=collector["collector_id"], run_id=run_id, url=page_url,
+                                        item_kind="page", payload={"page": page, "cursor": cursor_before}, error=str(exc))
+                break
+            outcome["pages_processed"] += 1
+            extensions = [item for item in ((payload.get("results") or [{}])[0].get("extensions") or []) if isinstance(item, dict)]
+            now = _format_ts(_utcnow())
+            with _write_transaction(connection, db_path):
+                for ext in extensions:
+                    publisher = str((ext.get("publisher") or {}).get("publisherName") or "").strip()
+                    name = str(ext.get("extensionName") or "").strip()
+                    latest = (ext.get("versions") or [{}])[0]
+                    version = str(latest.get("version") or "").strip()
+                    updated = str(latest.get("lastUpdated") or ext.get("lastUpdated") or "").strip()
+                    if not publisher or not name or not version or not updated:
+                        continue
+                    registry_ts = _format_ts(_parse_ts(updated))
+                    newest = max(newest, registry_ts)
+                    if registry_ts <= cursor_before:
+                        reached = True
+                        break
+                    outcome["events_seen"] += 1
+                    package = f"{publisher}/{name}"
+                    key = _idempotency_key(collector["ecosystem"], package, version, registry_ts, "published")
+                    metadata = {"asset_uri": str(latest.get("assetUri") or "")[:500], "display_name": str(ext.get("displayName") or "")[:200],
+                                "published_date": str(ext.get("publishedDate") or ""), "algorithm_version": ALGORITHM_VERSION}
+                    cursor = connection.execute(
+                        """INSERT INTO registry_feed_events
+                        (feed_event_id, collector_id, ecosystem, package, version, event_type,
+                         registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
+                         idempotency_key, collected_at, processing_state)
+                        VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, 0, ?, ?, ?, 'pending')
+                        ON CONFLICT(idempotency_key) DO NOTHING""",
+                        (_id("RFE"), collector["collector_id"], collector["ecosystem"], package, version, registry_ts, page_url,
+                         f"https://marketplace.visualstudio.com/items?itemName={publisher}.{name}", _json(metadata), key, now),
+                    )
+                    outcome["events_stored" if cursor.rowcount else "events_duplicate"] += 1
+            if reached or len(extensions) < VSCODE_PAGE_SIZE:
+                reached = True
+                break
+            time.sleep(VSCODE_PAGE_DELAY_SECONDS)
+    outcome["pages_selected"] = outcome["pages_processed"] + (1 if outcome["error"] else 0)
+    if outcome["error"]:
+        return outcome
+    if reached and newest:
+        now = _format_ts(_utcnow())
+        with closing(soc_store.connect(db_path)) as connection:
+            with _write_transaction(connection, db_path):
+                connection.execute(
+                    "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                    (max(newest, cursor_before), now, run_id, now, collector["collector_id"]),
+                )
+        outcome["cursor_after"] = max(newest, cursor_before)
+    else:
+        outcome["window_incomplete"] = True
+        outcome["cursor_after"] = cursor_before
+    return outcome
+
+
+def _ingest_mcp_registry(
+    *,
+    collector: Dict[str, Any],
+    cursor_before: str,
+    max_pages: int,
+    fetcher: SafeFetcher,
+    run_id: str,
+    db_path: Optional[str],
+) -> Dict[str, Any]:
+    """Record every MCP server version updated since the cursor, with its package references."""
+    config = _decode(collector["config_json"], {})
+    allowed_hosts = config.get("allowed_hosts", [])
+    outcome = _empty_outcome(cursor_before)
+    newest = cursor_before
+    page_cursor = ""
+    finished = False
+    with closing(soc_store.connect(db_path)) as connection:
+        for _page in range(max(1, min(int(max_pages), 100))):
+            page_url = f"{collector['feed_url']}?limit=100&updated_since={urllib.parse.quote(cursor_before)}" + (f"&cursor={urllib.parse.quote(page_cursor)}" if page_cursor else "")
+            try:
+                payload = _fetch_json(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_TIMEFRAME_PAGE_BYTES)
+            except (IntakeError, CollectorError, ValueError) as exc:
+                outcome["error"] = f"MCP registry page fetch failed: {exc}"
+                with _write_transaction(connection, db_path):
+                    _record_dead_letter(connection, collector_id=collector["collector_id"], run_id=run_id, url=page_url,
+                                        item_kind="page", payload={"cursor": cursor_before}, error=str(exc))
+                break
+            outcome["pages_processed"] += 1
+            now = _format_ts(_utcnow())
+            with _write_transaction(connection, db_path):
+                for entry in payload.get("servers") or []:
+                    server = entry.get("server") if isinstance(entry, dict) else None
+                    if not isinstance(server, dict):
+                        continue
+                    official = ((entry.get("_meta") or {}).get("io.modelcontextprotocol.registry/official") or {})
+                    name = str(server.get("name") or "").strip()
+                    version = str(server.get("version") or "").strip()
+                    updated = str(official.get("updatedAt") or official.get("publishedAt") or "").strip()
+                    if not name or not version or not updated:
+                        continue
+                    registry_ts = _format_ts(_parse_ts(updated))
+                    newest = max(newest, registry_ts)
+                    outcome["events_seen"] += 1
+                    packages = [{"registry": str(item.get("registryType") or ""), "identifier": str(item.get("identifier") or "")[:300],
+                                 "version": str(item.get("version") or "")[:100]} for item in server.get("packages") or [] if isinstance(item, dict)][:10]
+                    metadata = {"title": str(server.get("title") or "")[:200], "description": str(server.get("description") or "")[:500],
+                                "status": official.get("status"), "packages": packages,
+                                "remotes": [str((item or {}).get("url") or "")[:300] for item in server.get("remotes") or []][:10],
+                                "repository": str((server.get("repository") or {}).get("url") or "")[:300], "algorithm_version": ALGORITHM_VERSION}
+                    key = _idempotency_key(collector["ecosystem"], name, version, registry_ts, "published")
+                    cursor = connection.execute(
+                        """INSERT INTO registry_feed_events
+                        (feed_event_id, collector_id, ecosystem, package, version, event_type,
+                         registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
+                         idempotency_key, collected_at, processing_state)
+                        VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, 0, ?, ?, ?, 'pending')
+                        ON CONFLICT(idempotency_key) DO NOTHING""",
+                        (_id("RFE"), collector["collector_id"], collector["ecosystem"], name, version, registry_ts, page_url,
+                         f"{collector['feed_url']}/{urllib.parse.quote(name, safe='')}/versions/{urllib.parse.quote(version, safe='')}", _json(metadata), key, now),
+                    )
+                    outcome["events_stored" if cursor.rowcount else "events_duplicate"] += 1
+            page_cursor = str((payload.get("metadata") or {}).get("nextCursor") or "")
+            if not page_cursor:
+                finished = True
+                break
+    outcome["pages_selected"] = outcome["pages_processed"] + (1 if outcome["error"] else 0)
+    if outcome["error"]:
+        return outcome
+    if finished:
+        now = _format_ts(_utcnow())
+        with closing(soc_store.connect(db_path)) as connection:
+            with _write_transaction(connection, db_path):
+                connection.execute(
+                    "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                    (newest, now, run_id, now, collector["collector_id"]),
+                )
+        outcome["cursor_after"] = newest
+    else:
+        outcome["window_incomplete"] = True
+        outcome["cursor_after"] = cursor_before
+    return outcome
+
+
 def _ingest_npm_changes(
     *,
     collector: Dict[str, Any],
@@ -2314,6 +2520,24 @@ def _run_registry_collector_unlocked(
         )
     elif collector["ecosystem"] == "rubygems":
         outcome = _ingest_rubygems_timeframe(
+            collector=collector,
+            cursor_before=cursor_before,
+            max_pages=max_pages,
+            fetcher=fetcher,
+            run_id=run_id,
+            db_path=db_path,
+        )
+    elif collector["ecosystem"] == "mcp-registry":
+        outcome = _ingest_mcp_registry(
+            collector=collector,
+            cursor_before=cursor_before,
+            max_pages=max_pages,
+            fetcher=fetcher,
+            run_id=run_id,
+            db_path=db_path,
+        )
+    elif collector["ecosystem"] == "vscode-marketplace":
+        outcome = _ingest_vscode_recent(
             collector=collector,
             cursor_before=cursor_before,
             max_pages=max_pages,

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import zlib
 import secrets
 import tempfile
 import urllib.parse
@@ -29,12 +31,16 @@ import soc_store
 from secopsai import package_features, yara_engine
 from secopsai.research_intake import SafeFetcher
 
-ECOSYSTEMS: Tuple[str, ...] = ("pypi", "open-vsx", "crates")
+ECOSYSTEMS: Tuple[str, ...] = ("pypi", "open-vsx", "crates", "vscode-marketplace", "mcp-registry")
+MCP_PACKAGE_REGISTRIES = {"npm": "npm", "pypi": "pypi"}
 MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
 OPENVSX_HOSTS = ("open-vsx.org", "openvsx.eclipsecontent.org")
 PYPI_HOSTS = ("pypi.org",)
 PYPI_FILE_HOSTS = ("files.pythonhosted.org",)
 CRATES_FILE_HOSTS = ("static.crates.io",)
+VSCODE_HOSTS = ("marketplace.visualstudio.com",)
+MAX_DECOMPRESSED_BYTES = 100 * 1024 * 1024
+SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 HIT_LEVELS = {"notice", "warning", "alert"}
 SEVERITY = {"alert": "high", "warning": "medium", "notice": "low"}
 
@@ -66,6 +72,12 @@ def resolve_artifact(fetcher: SafeFetcher, ecosystem: str, package: str, version
         if not url.startswith("https://open-vsx.org/"):
             raise LookupError("no Open VSX download link")
         return url, OPENVSX_HOSTS, f"{namespace}.{name}-{version}.vsix"
+    if ecosystem == "vscode-marketplace":
+        publisher, _, name = package.partition("/")
+        if not SAFE_NAME.match(publisher) or not SAFE_NAME.match(name) or not SAFE_NAME.match(version):
+            raise LookupError("Marketplace package must be publisher/name")
+        return (f"https://marketplace.visualstudio.com/_apis/public/gallery/publishers/{publisher}/vsextensions/{name}/{version}/vspackage",
+                VSCODE_HOSTS, f"{publisher}.{name}-{version}.vsix")
     if ecosystem == "crates":
         quoted = urllib.parse.quote(package, safe="")
         return (f"https://static.crates.io/crates/{quoted}/{quoted}-{urllib.parse.quote(version, safe='')}.crate",
@@ -73,24 +85,42 @@ def resolve_artifact(fetcher: SafeFetcher, ecosystem: str, package: str, version
     raise LookupError(f"unsupported ecosystem {ecosystem}")
 
 
-def scan_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: str) -> Dict[str, Any]:
+def _gunzip(raw: bytes) -> bytes:
+    decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    data = decompressor.decompress(raw, MAX_DECOMPRESSED_BYTES + 1)
+    if len(data) > MAX_DECOMPRESSED_BYTES or decompressor.unconsumed_tail:
+        raise ValueError("decompressed artifact exceeds the safety limit")
+    return data
+
+
+def _resolve_npm(fetcher: SafeFetcher, package: str, version: str) -> Tuple[str, Tuple[str, ...], str]:
+    _u, _h, body = fetcher.get(f"https://registry.npmjs.org/{package.replace('/', '%2F')}/{version}", allowed_hosts=("registry.npmjs.org",), max_bytes=4 * 1024 * 1024)
+    tarball = str((json.loads(body).get("dist") or {}).get("tarball") or "")
+    if not tarball.startswith("https://registry.npmjs.org/"):
+        raise LookupError("no npm tarball")
+    return tarball, ("registry.npmjs.org",), "package.tgz"
+
+
+def scan_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: str, *, rules_ecosystem: str = "") -> Dict[str, Any]:
     from secopsai.artifact_fleet import _safe_archive_files
 
     try:
-        url, hosts, filename = resolve_artifact(fetcher, ecosystem, package, version)
+        url, hosts, filename = _resolve_npm(fetcher, package, version) if ecosystem == "npm" else resolve_artifact(fetcher, ecosystem, package, version)
     except LookupError as exc:
         return {"status": "skipped", "reason": str(exc)[:200]}
     except Exception as exc:
         return {"status": "error", "reason": str(exc)[:200]}
     try:
-        _u, _h, raw = fetcher.get(url, allowed_hosts=hosts, max_bytes=MAX_ARTIFACT_BYTES)
+        _u, headers, raw = fetcher.get(url, allowed_hosts=hosts, max_bytes=MAX_ARTIFACT_BYTES)
+        if "gzip" in str(headers.get("content-encoding") or "").lower() and raw[:2] == b"\x1f\x8b":
+            raw = _gunzip(raw)  # the Marketplace serves .vsix gzip-encoded
         members: List[Tuple[str, bytes]] = []
         with tempfile.TemporaryDirectory(prefix="secopsai-content-") as tmp:
             path = Path(tmp) / Path(filename).name
             path.write_bytes(raw)
             _safe_archive_files(path, members)
         flags = package_features.profile(members, version=version)
-        scanned = package_features.combine(yara_engine.scan_files(members), flags, ecosystem)
+        scanned = package_features.combine(yara_engine.scan_files(members), flags, rules_ecosystem or ecosystem)
     except Exception as exc:  # one bad archive must not stop the batch
         reason = str(exc)[:200]
         return {"status": "skipped" if "safety limit" in reason or "maximum size" in reason or "too many" in reason else "error", "reason": reason}
@@ -100,10 +130,20 @@ def scan_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: st
             "rules_matched": scanned.get("rules_matched") or [], "findings": findings[:20], "features": flags, "files": len(members), "bytes": len(raw)}
 
 
+def _scan_mcp(fetcher: SafeFetcher, metadata: Dict[str, Any], scan: Callable[..., Dict[str, Any]]) -> Dict[str, Any]:
+    """Scan the npm/PyPI package an MCP server ships, with MCP rules applied."""
+    for item in metadata.get("packages") or []:
+        registry = MCP_PACKAGE_REGISTRIES.get(str(item.get("registry") or "").lower())
+        if registry and item.get("identifier") and item.get("version"):
+            result = scan(fetcher, registry, str(item["identifier"]), str(item["version"]), rules_ecosystem="mcp-registry")
+            return {**result, "scanned_package": f"{registry}:{item['identifier']}@{item['version']}"}
+    return {"status": "skipped", "reason": "remote-only server or no npm/PyPI package"}
+
+
 def _pending(db_path: Optional[str], ecosystem: str, limit: int) -> List[Dict[str, Any]]:
     with closing(soc_store.connect(db_path)) as connection:
         rows = connection.execute(
-            """SELECT feed_event_id, ecosystem, package, version, registry_timestamp FROM registry_feed_events
+            """SELECT feed_event_id, ecosystem, package, version, registry_timestamp, metadata_json FROM registry_feed_events
                WHERE ecosystem = ? AND version <> '' AND event_type NOT LIKE '%removed%'
                  AND json_extract(metadata_json, '$.content_prescan') IS NULL
                ORDER BY registry_timestamp DESC LIMIT ?""",
@@ -148,13 +188,16 @@ def run(*, db_path: Optional[str] = None, fetcher: Optional[SafeFetcher] = None,
     for ecosystem in ECOSYSTEMS:
         events = _pending(db_path, ecosystem, per_ecosystem)
         with ThreadPoolExecutor(max_workers=max(1, min(workers, 16))) as pool:
-            results = list(pool.map(lambda event: scan(fetcher, ecosystem, event["package"], event["version"]), events))
+            if ecosystem == "mcp-registry":
+                results = list(pool.map(lambda event: _scan_mcp(fetcher, json.loads(event.get("metadata_json") or "{}"), scan), events))
+            else:
+                results = list(pool.map(lambda event: scan(fetcher, ecosystem, event["package"], event["version"]), events))
         counts = {"scanned": len(events), "hits": 0, "clean": 0, "errors": 0, "skipped": 0, "rules_matched": {}}
         now = _now()
         for event, result in zip(events, results):
             status = result.get("status", "error")
             counts["hits" if status == "hit" else "clean" if status == "clean" else "skipped" if status == "skipped" else "errors"] += 1
-            record = {"status": status, "at": now, **{key: result[key] for key in ("score", "level", "rules_matched", "files") if key in result}}
+            record = {"status": status, "at": now, **{key: result[key] for key in ("score", "level", "rules_matched", "files", "scanned_package") if key in result}}
             if result.get("reason"):
                 record["reason"] = result["reason"]
             with closing(soc_store.connect(db_path)) as connection:

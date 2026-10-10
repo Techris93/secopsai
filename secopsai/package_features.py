@@ -31,7 +31,8 @@ PATTERNS: Dict[str, str] = {
     # Joined URL, or host and path built separately (common in stealers).
     "discord_webhook": r"discord(app)?\.com/api/webhooks|discord(app)?\.com['\"`].{0,200}/api/webhooks",
     "telegram_bot": r"api\.telegram\.org",
-    "exfil_service": r"pastebin\.com|transfer\.sh|webhook\.site|requestbin|pipedream\.net|ngrok|interactsh|oast\.(fun|pro|site|me|live|online)|burpcollaborator|canarytokens",
+    # Word-bounded so identifiers such as `transfer.shutdown` do not match.
+    "exfil_service": r"\b(pastebin\.com|transfer\.sh|webhook\.site|requestbin|pipedream\.net|ngrok|interactsh|oast\.(fun|pro|site|me|live|online)|burpcollaborator|canarytokens)\b",
     "raw_ip_url": r"https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}",
     "dns_lookup": r"dns\.(lookup|resolve\w*)\s*\(|gethostbyname|\bnslookup\b|dns\.resolver",
     "http_send": r"https?\.request\s*\(|axios\.post|requests\.post|urlopen\s*\(|method\s*:\s*['\"]POST|XMLHttpRequest",
@@ -48,8 +49,13 @@ PATTERNS: Dict[str, str] = {
     # Process memory reads, not mentions of the runner (security tools such as
     # harden-runner legitimately name Runner.Worker).
     "runner_memory": r"/proc/[^\s'\"]{0,40}/mem\b|memdump\.py|isSecret\\\":true",
+    # MCP tool poisoning: instructions to the model hidden in tool descriptions.
+    # Concealment is the tell: "ignore previous instructions" is mostly found in
+    # injection *defences* (scanners, their demos and tests), so it is not used.
+    "prompt_injection": r"<IMPORTANT>|do not (tell|mention|reveal|inform) the user|without (telling|informing|notifying) the user|the user (must|should) not (know|see)|do not mention (that|this) (you|to)",
     "anti_analysis": r"\bisVM\b|virtualbox|vmware|sandbox|debugger|process\.exit\(\)\s*;?\s*}\s*else",
 }
+TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec|fixtures?)/|(^|/)test_[^/]*\.py$|_test\.py$|\.(test|spec)\.[cm]?[jt]s$")
 COMPILED = {name: re.compile(pattern, re.IGNORECASE | re.DOTALL) for name, pattern in PATTERNS.items()}
 
 
@@ -98,7 +104,11 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
         if lowered.endswith(".json"):
             continue
         code_files += 1
+        in_tests = bool(TEST_PATH.search(lowered))
         for flag, pattern in COMPILED.items():
+            # Injection strings in tests are defences being tested, not tool descriptions.
+            if flag == "prompt_injection" and in_tests:
+                continue
             if flag not in flags and pattern.search(text):
                 flags.add(flag)
     if code_files <= 2:
@@ -124,14 +134,15 @@ BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], 
     # the npm recon rules also need the shape of a throwaway package.
     ("BEH_RECON_AND_SEND", ("npm",), (("system_info",), ("http_send",), SMALL_PACKAGE), 60),
     ("BEH_HOME_DIR_RECON", ("npm",), (("home_dir",), ("system_info",), SMALL_PACKAGE), 50),
-    ("BEH_EXFIL_SERVICE", ("npm", "pypi", "open-vsx", "crates", "github-actions"), (("exfil_service",), ("http_send", "system_info", "dns_lookup")), 70),
+    ("BEH_EXFIL_SERVICE", ("npm", "pypi", "open-vsx", "vscode-marketplace", "crates", "github-actions", "mcp-registry"), (("exfil_service",), ("http_send", "system_info", "dns_lookup")), 70),
     ("BEH_DEPENDENCY_CONFUSION", ("npm", "pypi"), (("inflated_version",), ("system_info", "http_send", "dns_lookup", "exfil_service")), 70),
     ("BEH_SHELL_DOWNLOAD", ("npm",), (("child_process",), ("download_tool",), SMALL_PACKAGE), 60),
-    ("BEH_DISCORD_WEBHOOK", ("npm", "pypi", "open-vsx", "crates", "github-actions"),
+    ("BEH_DISCORD_WEBHOOK", ("npm", "pypi", "open-vsx", "vscode-marketplace", "crates", "github-actions", "mcp-registry"),
      (("discord_webhook",), ("system_info", "home_dir", "credential_files", "browser_data", "crypto_wallet", "http_send")), 60),
     # build.rs runs on every `cargo build`; legitimate ones compile C code,
     # so only network/exfil behaviour in it counts.
     ("BEH_BUILD_RS_BEACON", ("crates",), (("build_rs_side_effects",), ("exfil_service", "discord_webhook", "telegram_bot", "raw_ip_url", "download_tool")), 60),
+    ("BEH_MCP_TOOL_POISONING", ("mcp-registry", "npm", "pypi"), (("prompt_injection",), ("credential_files", "home_dir", "exfil_service", "http_send", "env_read")), 70),
     ("BEH_ACTIONS_RUNNER_MEMORY", ("github-actions",), (("runner_memory",),), 80),
     # setup.py commonly checks the platform; only exfil endpoints count.
     ("BEH_SETUP_PY_BEACON", ("pypi",), (("setup_py_side_effects",), ("exfil_service", "discord_webhook", "telegram_bot")), 60),

@@ -52,6 +52,8 @@ COLLECTOR_MAX_PAGES_PER_CYCLE = {
     "rubygems": 250,
     "open-vsx": 400,
     "crates": 50,
+    "vscode-marketplace": 50,
+    "mcp-registry": 30,
 }
 
 
