@@ -21,6 +21,7 @@ import io
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 import tempfile
@@ -35,9 +36,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from secopsai import yara_engine  # noqa: E402
+from secopsai import package_features, yara_engine  # noqa: E402
 from secopsai.artifact_fleet import MAX_FILE_BYTES, _safe_archive_files  # noqa: E402
-from secopsai.research_funnel import MAX_ARCHIVE_BYTES, _scan_one  # noqa: E402
+from secopsai.research_funnel import MAX_ARCHIVE_BYTES, NPM_ARTIFACT_HOSTS  # noqa: E402
 from secopsai.research_intake import SafeFetcher  # noqa: E402
 
 PASSWORD = b"infected"
@@ -109,13 +110,20 @@ def sample_members(raw: bytes) -> List[Tuple[str, bytes]]:
 
 def scan_sample(dataset: Path, path: str) -> Dict[str, Any]:
     parts = path.split("/")
-    row: Dict[str, Any] = {"set": "malicious", "ecosystem": parts[1], "category": parts[2], "package": "/".join(parts[3:-2]) or parts[3], "version": parts[-2]}
+    discovered = re.match(r"(\d{4}-\d{2}-\d{2})-", parts[-1])
+    row: Dict[str, Any] = {"set": "malicious", "ecosystem": parts[1], "category": parts[2], "package": "/".join(parts[3:-2]) or parts[3],
+                           "version": parts[-2], "discovered": discovered.group(1) if discovered else ""}
     try:
         members = sample_members((dataset / path).read_bytes())
-        result = yara_engine.scan_files(members)
     except Exception as exc:
         return {**row, "status": "error", "reason": str(exc)[:200]}
-    return {**row, **_summarize(result), "files": len(members)}
+    return {**row, **_scan_members(members, row["version"])}
+
+
+def _scan_members(members: List[Tuple[str, bytes]], version: str = "") -> Dict[str, Any]:
+    """Funnel verdict plus behaviour flags (never content) for one package."""
+    summary = _summarize(yara_engine.scan_files(members))
+    return {**summary, "files": len(members), "features": package_features.profile(members, version=version)}
 
 
 # ------------------------------------------------------------------- clean set
@@ -133,11 +141,16 @@ def scan_clean(target: Dict[str, Any], fetcher: SafeFetcher) -> Dict[str, Any]:
             _u, _h, body = fetcher.get(f"https://registry.npmjs.org/{target['package'].replace('/', '%2F')}/latest", allowed_hosts=("registry.npmjs.org",), max_bytes=4 * 1024 * 1024)
             doc = json.loads(body)
             row["version"] = doc.get("version")
-            scanned = _scan_one({"key": target["package"], "package": target["package"], "version": doc.get("version"), "tarball": (doc.get("dist") or {}).get("tarball", "")}, fetcher)
-            if scanned.get("status") in {"error", "skipped"}:
-                return {**row, "status": "error", "reason": scanned.get("reason")}
-            return {**row, "status": "scanned", "level": scanned.get("level") or "none", "score": scanned.get("score", 0),
-                    "rules": scanned.get("rules_matched") or [], "rule_files": _rule_files(scanned.get("findings") or []), "files": scanned.get("files")}
+            tarball = str((doc.get("dist") or {}).get("tarball") or "")
+            if not tarball.startswith("https://registry.npmjs.org/"):
+                return {**row, "status": "error", "reason": "no registry tarball"}
+            _u, _h, raw = fetcher.get(tarball, allowed_hosts=NPM_ARTIFACT_HOSTS, max_bytes=MAX_ARCHIVE_BYTES)
+            members = []
+            with tempfile.TemporaryDirectory(prefix="bench-") as tmp:
+                path = Path(tmp) / "artifact.tgz"
+                path.write_bytes(raw)
+                _safe_archive_files(path, members)
+            return {**row, **_scan_members(members, str(row["version"] or ""))}
         _u, _h, body = fetcher.get(f"https://pypi.org/pypi/{target['package']}/json", allowed_hosts=("pypi.org",), max_bytes=16 * 1024 * 1024)
         doc = json.loads(body)
         row["version"] = (doc.get("info") or {}).get("version")
@@ -152,7 +165,7 @@ def scan_clean(target: Dict[str, Any], fetcher: SafeFetcher) -> Dict[str, Any]:
             path = Path(tmp) / files[0]["filename"]
             path.write_bytes(raw)
             _safe_archive_files(path, members)
-        return {**row, "status": "scanned", **_summarize(yara_engine.scan_files(members)), "files": len(members)}
+        return {**row, **_scan_members(members, str(row["version"] or ""))}
     except Exception as exc:
         return {**row, "status": "error", "reason": str(exc)[:200]}
 
@@ -178,6 +191,52 @@ def _rate(rows: List[Dict[str, Any]], level: str) -> str:
         return "-"
     hit = sum(1 for row in scanned if LEVEL_RANK.get(row.get("level"), 0) >= LEVEL_RANK[level])
     return f"{hit}/{len(scanned)} ({100 * hit / len(scanned):.1f}%)"
+
+
+def _share(rows: List[Dict[str, Any]], flag: str) -> float:
+    return 100 * sum(1 for row in rows if flag in (row.get("features") or [])) / len(rows) if rows else 0.0
+
+
+def _miss_profile(malicious: List[Dict[str, Any]], clean: List[Dict[str, Any]]) -> List[str]:
+    """Which behaviours missed malware shows, against clean packages of the same ecosystem."""
+    lines: List[str] = []
+    for eco in ("npm", "pypi"):
+        misses = [row for row in malicious if row["ecosystem"] == eco and row.get("status") == "scanned" and LEVEL_RANK.get(row.get("level"), 0) == 0]
+        baseline = [row for row in clean if row["ecosystem"] == eco and row.get("status") == "scanned"]
+        if not misses:
+            continue
+        flags = sorted({flag for row in misses for flag in row.get("features") or []})
+        ranked = sorted(flags, key=lambda flag: _share(misses, flag) - _share(baseline, flag), reverse=True)
+        lines += ["", f"### Miss profile: {eco} ({len(misses)} missed samples vs {len(baseline)} clean)", "",
+                  "Share of packages showing each behaviour. High in misses and low in clean packages is where a rule pays off.", "",
+                  "| Behaviour | Missed malware | Clean | Lift |", "| --- | --- | --- | --- |"]
+        for flag in ranked[:20]:
+            miss_share, clean_share = _share(misses, flag), _share(baseline, flag)
+            lift = f"{miss_share / clean_share:.1f}×" if clean_share else "only in malware"
+            lines.append(f"| {flag} | {miss_share:.1f}% | {clean_share:.1f}% | {lift} |")
+        pairs: Counter = Counter()
+        for row in misses:
+            features = [flag for flag in row.get("features") or [] if _share(baseline, flag) < 10]
+            pairs.update(f"{a} + {b}" for i, a in enumerate(features) for b in features[i + 1:])
+        if pairs:
+            lines += ["", f"Most common combinations among {eco} misses (behaviours seen in under 10% of clean packages):", "",
+                      "| Combination | Missed samples | Clean packages |", "| --- | --- | --- |"]
+            for combo, count in pairs.most_common(12):
+                a, b = combo.split(" + ")
+                in_clean = sum(1 for row in baseline if a in (row.get("features") or []) and b in (row.get("features") or []))
+                lines.append(f"| {combo} | {count} ({100 * count / len(misses):.0f}%) | {in_clean} |")
+    return lines
+
+
+def _recall_by_year(malicious: List[Dict[str, Any]]) -> List[str]:
+    years: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for row in malicious:
+        years[str(row.get("discovered") or "")[:4] or "unknown"].append(row)
+    lines = ["", "### Recall by discovery year", "", "Rules written after a sample was found can flatter older years; the latest year is the honest one.", "",
+             "| Year | Samples | Hit (≥40) |", "| --- | --- | --- |"]
+    for year, group in sorted(years.items()):
+        lines.append(f"| {year} | {len(group)} | {_rate(group, 'notice')} |")
+    return lines
 
 
 def report(rows: List[Dict[str, Any]], meta: Dict[str, Any]) -> str:
@@ -206,6 +265,7 @@ def report(rows: List[Dict[str, Any]], meta: Dict[str, Any]) -> str:
     fps = [row for row in clean if LEVEL_RANK.get(row.get("level"), 0) >= 1]
     if fps:
         lines += ["", "### False-positive packages", ""] + [f"- {row['ecosystem']}:{row['package']}@{row.get('version')} — {', '.join(row.get('rules') or [])} (score {row.get('score')})" for row in fps[:40]]
+    lines += _miss_profile(malicious, clean) + _recall_by_year(malicious)
     lines += ["", f"Elapsed {meta['elapsed_seconds']} s. Full rows in the `recall-benchmark` artifact."]
     return "\n".join(lines)
 
