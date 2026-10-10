@@ -28,3 +28,11 @@ def test_docs_and_binaries():
         ("package/a.js", b"module.exports=1"), ("package/b.js", b"1"), ("package/c.js", b"2"),
     ]))
     assert flags == {"native_binary"}, "documentation is not profiled; three code files is not tiny"
+
+
+def test_behaviour_rules_raise_the_funnel_score():
+    scan = {"score": 0, "level": "none", "findings": [], "rules_matched": []}
+    combined = package_features.combine(scan, ["system_info", "http_send", "inflated_version"], "npm")
+    assert combined["level"] == "alert" and {"BEH_RECON_AND_SEND", "BEH_DEPENDENCY_CONFUSION"} <= set(combined["rules_matched"])
+    assert package_features.combine(scan, ["system_info"], "npm") is scan
+    assert package_features.combine(scan, ["system_info", "http_send"], "pypi") is scan, "npm-only rule"

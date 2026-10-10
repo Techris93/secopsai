@@ -97,3 +97,41 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
     if major and int(major.group(1)) >= 50:
         flags.add("inflated_version")  # dependency-confusion packages publish 99.x to win resolution
     return sorted(flags)
+
+
+# Behaviour rules: combinations of flags that are common in missed malware and
+# rare in popular clean packages (recall benchmark, 2026-10-10).  Each entry:
+# (rule id, ecosystems, groups — every group needs at least one flag, score).
+BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], int], ...] = (
+    ("BEH_RECON_AND_SEND", ("npm",), (("system_info",), ("http_send",)), 60),
+    ("BEH_HOME_DIR_RECON", ("npm",), (("home_dir",), ("system_info",)), 50),
+    ("BEH_EXFIL_SERVICE", ("npm", "pypi"), (("exfil_service",), ("http_send", "system_info", "dns_lookup", "env_read")), 70),
+    ("BEH_DEPENDENCY_CONFUSION", ("npm", "pypi"), (("inflated_version",), ("system_info", "http_send", "dns_lookup", "exfil_service")), 70),
+    ("BEH_SHELL_DOWNLOAD", ("npm",), (("child_process",), ("download_tool",)), 60),
+    ("BEH_DISCORD_WEBHOOK", ("npm", "pypi"), (("discord_webhook",),), 60),
+    ("BEH_SETUP_PY_BEACON", ("pypi",), (("setup_py_side_effects",), ("exfil_service", "discord_webhook", "telegram_bot", "system_info")), 60),
+)
+
+
+def behaviour_findings(flags: Iterable[str], ecosystem: str) -> List[Dict[str, object]]:
+    present = set(flags)
+    findings: List[Dict[str, object]] = []
+    for rule_id, ecosystems, groups, score in BEHAVIOUR_RULES:
+        if ecosystem.lower() in ecosystems and all(present & set(group) for group in groups):
+            matched = sorted(flag for group in groups for flag in group if flag in present)
+            findings.append({"rule_id": f"BEHAVIOUR:{rule_id}", "severity": "high" if score >= 60 else "medium", "score": score,
+                             "matched_indicator": "behaviour: " + " + ".join(matched), "safe_context": "", "file_path": "(package)"})
+    return findings
+
+
+def combine(scan: Dict[str, object], flags: Iterable[str], ecosystem: str) -> Dict[str, object]:
+    """Add behaviour-rule scores to a YARA scan result (sum of distinct rules, capped at 100)."""
+    from secopsai.yara_engine import ALERT, NOTICE, WARNING
+
+    extra = behaviour_findings(flags, ecosystem)
+    if not extra:
+        return scan
+    score = min(100, int(scan.get("score") or 0) + sum(int(item["score"]) for item in extra))
+    level = "alert" if score >= ALERT else "warning" if score >= WARNING else "notice" if score >= NOTICE else "none"
+    return {**scan, "score": score, "level": level, "findings": list(scan.get("findings") or []) + extra,
+            "rules_matched": sorted(set(scan.get("rules_matched") or []) | {str(item["rule_id"]).split(":", 1)[1] for item in extra})}

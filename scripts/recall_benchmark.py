@@ -117,13 +117,14 @@ def scan_sample(dataset: Path, path: str) -> Dict[str, Any]:
         members = sample_members((dataset / path).read_bytes())
     except Exception as exc:
         return {**row, "status": "error", "reason": str(exc)[:200]}
-    return {**row, **_scan_members(members, row["version"])}
+    return {**row, **_scan_members(members, row["version"], row["ecosystem"])}
 
 
-def _scan_members(members: List[Tuple[str, bytes]], version: str = "") -> Dict[str, Any]:
-    """Funnel verdict plus behaviour flags (never content) for one package."""
-    summary = _summarize(yara_engine.scan_files(members))
-    return {**summary, "files": len(members), "features": package_features.profile(members, version=version)}
+def _scan_members(members: List[Tuple[str, bytes]], version: str = "", ecosystem: str = "npm") -> Dict[str, Any]:
+    """Funnel verdict (YARA + behaviour rules, as in production) plus flags, never content."""
+    flags = package_features.profile(members, version=version)
+    summary = _summarize(package_features.combine(yara_engine.scan_files(members), flags, ecosystem))
+    return {**summary, "files": len(members), "features": flags}
 
 
 # ------------------------------------------------------------------- clean set
@@ -150,7 +151,7 @@ def scan_clean(target: Dict[str, Any], fetcher: SafeFetcher) -> Dict[str, Any]:
                 path = Path(tmp) / "artifact.tgz"
                 path.write_bytes(raw)
                 _safe_archive_files(path, members)
-            return {**row, **_scan_members(members, str(row["version"] or ""))}
+            return {**row, **_scan_members(members, str(row["version"] or ""), "npm")}
         _u, _h, body = fetcher.get(f"https://pypi.org/pypi/{target['package']}/json", allowed_hosts=("pypi.org",), max_bytes=16 * 1024 * 1024)
         doc = json.loads(body)
         row["version"] = (doc.get("info") or {}).get("version")
@@ -165,7 +166,7 @@ def scan_clean(target: Dict[str, Any], fetcher: SafeFetcher) -> Dict[str, Any]:
             path = Path(tmp) / files[0]["filename"]
             path.write_bytes(raw)
             _safe_archive_files(path, members)
-        return {**row, **_scan_members(members, str(row["version"] or ""))}
+        return {**row, **_scan_members(members, str(row["version"] or ""), "pypi")}
     except Exception as exc:
         return {**row, "status": "error", "reason": str(exc)[:200]}
 
