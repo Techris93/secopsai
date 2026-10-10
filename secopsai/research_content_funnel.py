@@ -120,7 +120,7 @@ def scan_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: st
             path.write_bytes(raw)
             _safe_archive_files(path, members)
         flags = package_features.profile(members, version=version)
-        scanned = package_features.combine(yara_engine.scan_files(members), flags, rules_ecosystem or ecosystem)
+        scanned = package_features.combine(yara_engine.scan_files(members), flags, rules_ecosystem or ecosystem, members)
     except Exception as exc:  # one bad archive must not stop the batch
         reason = str(exc)[:200]
         return {"status": "skipped" if "safety limit" in reason or "maximum size" in reason or "too many" in reason else "error", "reason": reason}

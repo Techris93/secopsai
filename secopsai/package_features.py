@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import PurePosixPath
-from typing import Dict, Iterable, List, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 MAX_TEXT_BYTES = 1024 * 1024
 TEXT_SUFFIXES = {".rs", ".js", ".cjs", ".mjs", ".ts", ".py", ".pyw", ".json", ".sh", ".bat", ".cmd", ".ps1", ".cfg", ".toml", ".txt", ".yml", ".yaml", ""}
@@ -31,8 +31,9 @@ PATTERNS: Dict[str, str] = {
     # Joined URL, or host and path built separately (common in stealers).
     "discord_webhook": r"discord(app)?\.com/api/webhooks|discord(app)?\.com['\"`].{0,200}/api/webhooks",
     "telegram_bot": r"api\.telegram\.org",
-    # Word-bounded so identifiers such as `transfer.shutdown` do not match.
-    "exfil_service": r"\b(pastebin\.com|transfer\.sh|webhook\.site|requestbin|pipedream\.net|ngrok|interactsh|oast\.(fun|pro|site|me|live|online)|burpcollaborator|canarytokens)\b",
+    # Service domains, word-bounded: identifiers such as `transfer.shutdown`
+    # and bare tool names (`ngrok` in a CLI list) do not count.
+    "exfil_service": r"\b(pastebin\.com|transfer\.sh|webhook\.site|requestbin\.(com|net)|pipedream\.net|ngrok(-free)?\.(io|app|dev)|interactsh\.com|oast\.(fun|pro|site|me|live|online)|burpcollaborator\.net|canarytokens\.(com|org))\b",
     "raw_ip_url": r"https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}",
     "dns_lookup": r"dns\.(lookup|resolve\w*)\s*\(|gethostbyname|\bnslookup\b|dns\.resolver",
     "http_send": r"https?\.request\s*\(|axios\.post|requests\.post|urlopen\s*\(|method\s*:\s*['\"]POST|XMLHttpRequest",
@@ -142,7 +143,9 @@ BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], 
     # build.rs runs on every `cargo build`; legitimate ones compile C code,
     # so only network/exfil behaviour in it counts.
     ("BEH_BUILD_RS_BEACON", ("crates",), (("build_rs_side_effects",), ("exfil_service", "discord_webhook", "telegram_bot", "raw_ip_url", "download_tool")), 60),
-    ("BEH_MCP_TOOL_POISONING", ("mcp-registry", "npm", "pypi"), (("prompt_injection",), ("credential_files", "home_dir", "exfil_service", "http_send", "env_read")), 70),
+    # Agent tooling (hooks, skills) legitimately tells models what not to say;
+    # poisoning pairs concealment with credential files or an exfil endpoint.
+    ("BEH_MCP_TOOL_POISONING", ("mcp-registry", "npm", "pypi"), (("prompt_injection",), ("credential_files", "exfil_service")), 70),
     ("BEH_ACTIONS_RUNNER_MEMORY", ("github-actions",), (("runner_memory",),), 80),
     # setup.py commonly checks the platform; only exfil endpoints count.
     ("BEH_SETUP_PY_BEACON", ("pypi",), (("setup_py_side_effects",), ("exfil_service", "discord_webhook", "telegram_bot")), 60),
@@ -160,13 +163,42 @@ def behaviour_findings(flags: Iterable[str], ecosystem: str) -> List[Dict[str, o
     return findings
 
 
-def combine(scan: Dict[str, object], flags: Iterable[str], ecosystem: str) -> Dict[str, object]:
-    """Add behaviour-rule scores to a YARA scan result (sum of distinct rules, capped at 100)."""
+def flag_evidence(members: Iterable[Tuple[str, bytes]], flag: str, *, window: int = 360) -> Dict[str, str]:
+    """Where a flag matched: file path and an inert text window around the first match."""
+    pattern = COMPILED.get(flag)
+    if pattern is None:
+        return {}
+    for path, data in members:
+        lowered = path.lower()
+        if lowered.endswith(".d.ts") or not _is_text_path(path) or (flag == "prompt_injection" and TEST_PATH.search(lowered)):
+            continue
+        text = data[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore")
+        match = pattern.search(text)
+        if match:
+            start = max(0, match.start() - window // 2)
+            snippet = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", ".", text[start:match.end() + window // 2])
+            return {"flag": flag, "file_path": path[:300], "context": snippet[:window + 120]}
+    return {}
+
+
+def combine(scan: Dict[str, object], flags: Iterable[str], ecosystem: str, members: Optional[List[Tuple[str, bytes]]] = None) -> Dict[str, object]:
+    """Add behaviour-rule scores to a YARA scan result (sum of distinct rules, capped at 100).
+
+    With ``members``, each behaviour finding carries the code that matched
+    each of its flags, so model triage can judge it.
+    """
     from secopsai.yara_engine import ALERT, NOTICE, WARNING
 
     extra = behaviour_findings(flags, ecosystem)
     if not extra:
         return scan
+    if members:
+        for item in extra:
+            evidence = [found for found in (flag_evidence(members, flag) for flag in str(item["matched_indicator"]).removeprefix("behaviour: ").split(" + ")) if found]
+            item["evidence"] = evidence
+            item["safe_context"] = "\n[...]\n".join(f"{found['flag']} in {found['file_path']}:\n{found['context']}" for found in evidence)[:2400]
+            if evidence:
+                item["file_path"] = evidence[0]["file_path"]
     score = min(100, int(scan.get("score") or 0) + sum(int(item["score"]) for item in extra))
     level = "alert" if score >= ALERT else "warning" if score >= WARNING else "notice" if score >= NOTICE else "none"
     return {**scan, "score": score, "level": level, "findings": list(scan.get("findings") or []) + extra,

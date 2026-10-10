@@ -123,7 +123,7 @@ def scan_sample(dataset: Path, path: str) -> Dict[str, Any]:
 def _scan_members(members: List[Tuple[str, bytes]], version: str = "", ecosystem: str = "npm") -> Dict[str, Any]:
     """Funnel verdict (YARA + behaviour rules, as in production) plus flags, never content."""
     flags = package_features.profile(members, version=version)
-    summary = _summarize(package_features.combine(yara_engine.scan_files(members), flags, ecosystem))
+    summary = _summarize(package_features.combine(yara_engine.scan_files(members), flags, ecosystem, members))
     return {**summary, "files": len(members), "features": flags}
 
 

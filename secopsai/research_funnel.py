@@ -92,7 +92,7 @@ def _scan_one(target: Dict[str, Any], fetcher: SafeFetcher) -> Dict[str, Any]:
             path.write_bytes(body)
             _safe_archive_files(path, members)
         scanned = yara_engine.scan_files(members)
-        scanned = package_features.combine(scanned, package_features.profile(members, version=str(target.get("version") or "")), "npm")
+        scanned = package_features.combine(scanned, package_features.profile(members, version=str(target.get("version") or "")), "npm", members)
     except Exception as exc:  # one bad archive must not stop the batch
         return {**result, "status": "error", "reason": str(exc)[:300]}
     findings = [item for item in scanned.get("findings", []) if item.get("rule_id") != "YARA-SCAN-ERROR"]

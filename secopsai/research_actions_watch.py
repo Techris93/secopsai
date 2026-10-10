@@ -161,7 +161,7 @@ def scan_commit(fetcher: SafeFetcher, repo: str, commit: str) -> Dict[str, Any]:
         _u, _h, raw = fetcher.get(f"https://codeload.github.com/{repo}/tar.gz/{commit}", allowed_hosts=CODELOAD_HOSTS, max_bytes=MAX_ARCHIVE_BYTES)
         members = repository_files(raw)
         flags = package_features.profile(members)
-        scanned = package_features.combine(yara_engine.scan_files(members), flags, "github-actions")
+        scanned = package_features.combine(yara_engine.scan_files(members), flags, "github-actions", members)
     except Exception as exc:
         return {"status": "error", "reason": str(exc)[:200]}
     level = str(scanned.get("level") or "none")
