@@ -68,6 +68,8 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
         if data[:2] == b"MZ" or data[:4] == b"\x7fELF" or data[:4] in {b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe"} or lowered.endswith((".exe", ".dll", ".so", ".dylib")):
             flags.add("native_binary")
             continue
+        if lowered.endswith(".d.ts"):
+            continue  # type declarations describe APIs; they do not run
         if not _is_text_path(path) or lowered.endswith((".md", ".txt")) and name not in {"requirements.txt"}:
             continue
         text = data[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore")
@@ -102,10 +104,14 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
     if code_files <= 2:
         flags.add("tiny_package")
     major = re.match(r"(\d+)", version or "")
-    if major and int(major.group(1)) >= 50:
-        flags.add("inflated_version")  # dependency-confusion packages publish 99.x to win resolution
+    # Dependency-confusion packages publish 99.x / 100.x to win resolution.
+    # Calendar versions (2026.9.0) and long-lived majors (setuptools 84) are not.
+    if major and 90 <= int(major.group(1)) < 1990:
+        flags.add("inflated_version")
     return sorted(flags)
 
+
+SMALL_PACKAGE = ("tiny_package", "install_hook_inline_command")
 
 # Behaviour rules: combinations of flags that are common in missed malware and
 # rare in popular clean packages (recall benchmark, 2026-10-10).  Each entry:
@@ -114,17 +120,21 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
 # servers, so only the exfiltration rules apply to Open VSX until it has its
 # own false-positive baseline.
 BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], int], ...] = (
-    ("BEH_RECON_AND_SEND", ("npm",), (("system_info",), ("http_send",)), 60),
-    ("BEH_HOME_DIR_RECON", ("npm",), (("home_dir",), ("system_info",)), 50),
-    ("BEH_EXFIL_SERVICE", ("npm", "pypi", "open-vsx", "crates", "github-actions"), (("exfil_service",), ("http_send", "system_info", "dns_lookup", "env_read")), 70),
+    # Package managers and test runners legitimately do recon + network, so
+    # the npm recon rules also need the shape of a throwaway package.
+    ("BEH_RECON_AND_SEND", ("npm",), (("system_info",), ("http_send",), SMALL_PACKAGE), 60),
+    ("BEH_HOME_DIR_RECON", ("npm",), (("home_dir",), ("system_info",), SMALL_PACKAGE), 50),
+    ("BEH_EXFIL_SERVICE", ("npm", "pypi", "open-vsx", "crates", "github-actions"), (("exfil_service",), ("http_send", "system_info", "dns_lookup")), 70),
     ("BEH_DEPENDENCY_CONFUSION", ("npm", "pypi"), (("inflated_version",), ("system_info", "http_send", "dns_lookup", "exfil_service")), 70),
-    ("BEH_SHELL_DOWNLOAD", ("npm",), (("child_process",), ("download_tool",)), 60),
-    ("BEH_DISCORD_WEBHOOK", ("npm", "pypi", "open-vsx", "crates", "github-actions"), (("discord_webhook",),), 60),
+    ("BEH_SHELL_DOWNLOAD", ("npm",), (("child_process",), ("download_tool",), SMALL_PACKAGE), 60),
+    ("BEH_DISCORD_WEBHOOK", ("npm", "pypi", "open-vsx", "crates", "github-actions"),
+     (("discord_webhook",), ("system_info", "home_dir", "credential_files", "browser_data", "crypto_wallet", "http_send")), 60),
     # build.rs runs on every `cargo build`; legitimate ones compile C code,
     # so only network/exfil behaviour in it counts.
     ("BEH_BUILD_RS_BEACON", ("crates",), (("build_rs_side_effects",), ("exfil_service", "discord_webhook", "telegram_bot", "raw_ip_url", "download_tool")), 60),
     ("BEH_ACTIONS_RUNNER_MEMORY", ("github-actions",), (("runner_memory",),), 80),
-    ("BEH_SETUP_PY_BEACON", ("pypi",), (("setup_py_side_effects",), ("exfil_service", "discord_webhook", "telegram_bot", "system_info")), 60),
+    # setup.py commonly checks the platform; only exfil endpoints count.
+    ("BEH_SETUP_PY_BEACON", ("pypi",), (("setup_py_side_effects",), ("exfil_service", "discord_webhook", "telegram_bot")), 60),
 )
 
 

