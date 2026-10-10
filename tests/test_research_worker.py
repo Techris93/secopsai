@@ -431,3 +431,10 @@ def test_collector_degradation_reuses_one_open_alert_across_days(tmp_path, monke
     with closing(soc_store.connect(db)) as connection:
         rows = connection.execute("SELECT status FROM research_alerts WHERE alert_type='collector_degraded'").fetchall()
     assert [row["status"] for row in rows] == ["open"]
+
+
+def test_operator_can_enable_paused_collectors_by_environment(tmp_path, monkeypatch):
+    db_path = _db(tmp_path)
+    monkeypatch.setenv("SECOPSAI_ENABLE_COLLECTORS", "vscode-marketplace")
+    due = due_collectors(db_path=db_path)
+    assert all(item["due"] for item in due)

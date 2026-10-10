@@ -263,7 +263,7 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         # The gallery query API sorted by last update (newest first) is walked
         # back to the cursor. Off by default: enable it only after confirming
         # the Marketplace terms allow this use
-        # (`secopsai research collect resume --ecosystem vscode-marketplace`).
+        # (production: SECOPSAI_ENABLE_COLLECTORS in research-worker.yml).
         "default_enabled": False,
         "cursor_seed": "lookback",
         "interval_seconds": 1800,

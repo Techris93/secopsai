@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import signal
 import json
+import os
 import secrets
 import time
 from contextlib import closing
@@ -306,6 +307,22 @@ def collector_schedules() -> Dict[str, int]:
     }
 
 
+def _apply_operator_enables(collectors: List[Dict[str, Any]], *, db_path: Optional[str]) -> List[Dict[str, Any]]:
+    """Enable collectors named in SECOPSAI_ENABLE_COLLECTORS (hosted workers have no shell).
+
+    Used for collectors that ship paused, such as the VS Code Marketplace.
+    """
+    from secopsai.research_surveillance import set_collector_enabled
+
+    wanted = {item.strip() for item in os.environ.get("SECOPSAI_ENABLE_COLLECTORS", "").split(",") if item.strip()}
+    changed = False
+    for collector in collectors:
+        if collector["ecosystem"] in wanted and not int(collector["enabled"]):
+            set_collector_enabled(ecosystem=collector["ecosystem"], enabled=True, db_path=db_path)
+            changed = True
+    return ensure_collectors(db_path=db_path) if changed else collectors
+
+
 def due_collectors(*, db_path: Optional[str] = None, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """Enabled collectors whose interval has elapsed since their last run.
 
@@ -314,6 +331,7 @@ def due_collectors(*, db_path: Optional[str] = None, now: Optional[datetime] = N
     read-only and survives restarts because it derives from run history.
     """
     collectors = ensure_collectors(db_path=db_path)
+    collectors = _apply_operator_enables(collectors, db_path=db_path)
     now = now or _utcnow()
     schedules = collector_schedules()
     due: List[Dict[str, Any]] = []
