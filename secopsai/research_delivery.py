@@ -265,6 +265,7 @@ def send_research_alert(alert_id: str, *, channel: str = "email", db_path: str |
                 "external_advisory_feed_degraded",
                 "npm_proactive_anomaly",
                 "npm_enrichment_degraded",
+                "registry_release_anomaly",
             }
             endpoint = os.environ.get(
                 "SECOPSAI_RESEARCH_EXTERNAL_ALERT_WEBHOOK_URL" if is_external else "SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL",
@@ -344,6 +345,7 @@ def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datet
         "external_advisory_feed_degraded",
         "npm_proactive_anomaly",
         "npm_enrichment_degraded",
+        "registry_release_anomaly",
     }
     max_attempts = max(1, min(int(os.environ.get("SECOPSAI_RESEARCH_ALERT_MAX_ATTEMPTS", "5")), 10))
     current = now or datetime.now(timezone.utc)

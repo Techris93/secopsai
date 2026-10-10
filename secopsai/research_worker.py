@@ -651,6 +651,17 @@ def run_worker_loop(
                     "storage": failed_storage,
                     "completed_at": _utcnow().isoformat().replace("+00:00", "Z"),
                 }
+            # Content scanning for PyPI and Open VSX (npm has its own funnel in
+            # enrichment); a failure is retried from the same events next cycle.
+            try:
+                from secopsai.research_content_funnel import run as run_content_funnel
+
+                last_summary = dict(last_summary)
+                last_summary["content_funnel"] = run_content_funnel(db_path=db_path)
+            except Exception as exc:
+                capture_exception(exc, context={"component": "content_funnel"})
+                last_summary = dict(last_summary)
+                last_summary["content_funnel"] = {"status": "degraded", "error": str(exc)[:500]}
             cycles += 1
             if core_edge.enabled:
                 # Publish the final heartbeat only after ontology sync and

@@ -102,13 +102,16 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
 # Behaviour rules: combinations of flags that are common in missed malware and
 # rare in popular clean packages (recall benchmark, 2026-10-10).  Each entry:
 # (rule id, ecosystems, groups — every group needs at least one flag, score).
+# Editor extensions legitimately spawn processes and download language
+# servers, so only the exfiltration rules apply to Open VSX until it has its
+# own false-positive baseline.
 BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], int], ...] = (
     ("BEH_RECON_AND_SEND", ("npm",), (("system_info",), ("http_send",)), 60),
     ("BEH_HOME_DIR_RECON", ("npm",), (("home_dir",), ("system_info",)), 50),
-    ("BEH_EXFIL_SERVICE", ("npm", "pypi"), (("exfil_service",), ("http_send", "system_info", "dns_lookup", "env_read")), 70),
+    ("BEH_EXFIL_SERVICE", ("npm", "pypi", "open-vsx"), (("exfil_service",), ("http_send", "system_info", "dns_lookup", "env_read")), 70),
     ("BEH_DEPENDENCY_CONFUSION", ("npm", "pypi"), (("inflated_version",), ("system_info", "http_send", "dns_lookup", "exfil_service")), 70),
     ("BEH_SHELL_DOWNLOAD", ("npm",), (("child_process",), ("download_tool",)), 60),
-    ("BEH_DISCORD_WEBHOOK", ("npm", "pypi"), (("discord_webhook",),), 60),
+    ("BEH_DISCORD_WEBHOOK", ("npm", "pypi", "open-vsx"), (("discord_webhook",),), 60),
     ("BEH_SETUP_PY_BEACON", ("pypi",), (("setup_py_side_effects",), ("exfil_service", "discord_webhook", "telegram_bot", "system_info")), 60),
 )
 
