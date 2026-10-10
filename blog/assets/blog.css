@@ -678,3 +678,31 @@ button.button {
 .ioc-card a { font-family: var(--mono); font-size: 12px; border: 1px solid var(--rule); padding: 4px 10px; border-radius: var(--radius); text-decoration: none; }
 .ioc-card a:hover { border-color: var(--note); color: var(--note); }
 .post-body li code { overflow-wrap: anywhere; word-break: break-all; }
+
+/* Comment form: visible labels, full-width fields, stacks on phones. */
+.comment-form { display: grid; gap: 16px; margin-top: 20px; }
+.comment-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.comment-form .field { display: grid; gap: 6px; min-width: 0; align-content: start; }
+.comment-form label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+.comment-form input,
+.comment-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--rule-dark);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+.comment-form textarea { min-height: 128px; resize: vertical; line-height: 1.5; }
+.comment-form input:focus,
+.comment-form textarea:focus { outline: 2px solid var(--note); outline-offset: 1px; border-color: var(--note); }
+.field-hint { margin: 0; font-size: 12.5px; color: var(--muted); }
+.comment-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.comment-status { margin: 0; font-size: 13.5px; color: var(--ink-2); }
+@media (max-width: 640px) {
+  .comment-form-row { grid-template-columns: 1fr; }
+  .comment-form-actions .button { width: 100%; text-align: center; }
+}

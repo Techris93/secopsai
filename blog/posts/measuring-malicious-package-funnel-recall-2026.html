@@ -133,16 +133,29 @@
           <h2>Comments</h2>
           <p>Comments are moderated before publication. Do not post secrets, tokens, customer data, or exploit payloads.</p>
           <div class="comment-list" data-comment-list></div>
-          <form data-comment-form>
-            <input name="name" maxlength="80" placeholder="Name or handle" required />
-            <input name="email" type="email" maxlength="160" placeholder="Email for moderation only" required />
-            <input name="website" tabindex="-1" autocomplete="off" style="display:none" />
-            <textarea name="body" maxlength="2000"
-              placeholder="Add source-backed context, a mitigation note, or a question..."
-              required></textarea>
+          <form class="comment-form" data-comment-form>
+            <div class="comment-form-row">
+              <div class="field">
+                <label for="comment-name">Name or handle</label>
+                <input id="comment-name" name="name" maxlength="80" autocomplete="nickname" required />
+              </div>
+              <div class="field">
+                <label for="comment-email">Email</label>
+                <input id="comment-email" name="email" type="email" maxlength="160" autocomplete="email" aria-describedby="comment-email-hint" required />
+                <p class="field-hint" id="comment-email-hint">Only used for moderation. Never published.</p>
+              </div>
+            </div>
+            <input name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="display:none" />
+            <div class="field">
+              <label for="comment-body">Comment</label>
+              <textarea id="comment-body" name="body" maxlength="2000" rows="5" aria-describedby="comment-body-hint" required></textarea>
+              <p class="field-hint" id="comment-body-hint">Source-backed context, a mitigation note or a question. Up to 2,000 characters.</p>
+            </div>
             <div class="turnstile-slot" data-turnstile></div>
-            <button type="submit">Submit for moderation</button>
-            <p data-comment-status></p>
+            <div class="comment-form-actions">
+              <button class="button" type="submit">Submit for moderation</button>
+              <p class="comment-status" data-comment-status role="status"></p>
+            </div>
           </form>
         </section>
       </article>
