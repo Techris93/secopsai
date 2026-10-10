@@ -119,3 +119,18 @@ def test_manifest_summary_and_file_roles():
     assert role("package/dist/app.js.map") == "source_map"
     assert role("package/lib/util.js") == "code"
     assert research_funnel.manifest_summary([("package/package.json", b"{bad")]) == {"parse_error": True}
+
+
+def test_rule_health_flags_rules_that_keep_firing_on_benign_code(tmp_path):
+    db_path = str(tmp_path / "soc.db")
+    soc_store.init_db(db_path)
+    for index in range(6):
+        key = research_ai_triage.record_hit(ecosystem="npm", package=f"p{index}", version="1.0.0",
+                                            prescan={"score": 60, "findings": [{"rule_id": "BEHAVIOUR:BEH_NOISY"}]}, db_path=db_path)
+        with soc_store.connect(db_path) as connection:
+            connection.execute("UPDATE research_ai_triage SET status='triaged', verdict=? WHERE artifact_key=?", ("benign" if index else "suspicious", key))
+    health = research_ai_triage.rule_health(db_path=db_path)
+    assert health["noisy"] == ["BEHAVIOUR:BEH_NOISY"]
+    with soc_store.connect(db_path) as connection:
+        alert = connection.execute("SELECT alert_type, reason FROM research_alerts").fetchone()
+    assert alert["alert_type"] == "rule_noisy" and "5 of 6" in alert["reason"]

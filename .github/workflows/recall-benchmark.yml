@@ -7,6 +7,10 @@ name: Recall Benchmark
 # only rule ids, scores and file paths leave the job.
 
 on:
+  # Weekly regression check; fails (and notifies) when the false-positive
+  # budget is exceeded.
+  schedule:
+    - cron: "17 4 * * 1"
   workflow_dispatch:
     inputs:
       npm_samples:
@@ -66,11 +70,12 @@ jobs:
         run: |
           python -I scripts/recall_benchmark.py \
             --dataset "$RUNNER_TEMP/malware-dataset" \
-            --npm-samples "${{ inputs.npm_samples }}" --pypi-samples "${{ inputs.pypi_samples }}" \
-            --clean-npm "${{ inputs.clean_npm }}" --clean-pypi "${{ inputs.clean_pypi }}" \
-            --seed "${{ inputs.seed }}" --out "$RUNNER_TEMP/recall-benchmark.json"
+            --npm-samples "${{ inputs.npm_samples || '2000' }}" --pypi-samples "${{ inputs.pypi_samples || '1000' }}" \
+            --clean-npm "${{ inputs.clean_npm || '1000' }}" --clean-pypi "${{ inputs.clean_pypi || '500' }}" \
+            --seed "${{ inputs.seed || '20261010' }}" --fp-budget 0.5 --out "$RUNNER_TEMP/recall-benchmark.json"
 
       - name: Upload results
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: recall-benchmark

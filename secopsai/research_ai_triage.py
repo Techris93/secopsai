@@ -15,6 +15,7 @@ analyst.
 from __future__ import annotations
 
 import json
+import secrets
 from contextlib import closing
 from typing import Any, Dict, List, Optional
 
@@ -141,6 +142,48 @@ def _apply_result(connection: Any, item: Dict[str, Any], now: str) -> Optional[s
     return "escalated"
 
 
+NOISY_MIN_TRIAGED = 5
+NOISY_BENIGN_SHARE = 0.8
+
+
+def rule_health(*, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Per-rule model verdicts; raise a 'rule_noisy' alert for rules that mostly fire on benign code.
+
+    Rules are never disabled automatically: a package author can influence
+    the model's verdict, so turning a rule off stays an operator decision.
+    """
+    stats: Dict[str, Dict[str, Any]] = {}
+    with closing(soc_store.connect(db_path)) as connection:
+        _ensure(connection)
+        rows = connection.execute("SELECT artifact_key, verdict, context_json FROM research_ai_triage WHERE status = 'triaged'").fetchall()
+    for row in rows:
+        context = json.loads(row["context_json"] or "{}")
+        for rule in {str(item.get("rule_id") or "") for item in context.get("findings") or [] if item.get("rule_id")}:
+            entry = stats.setdefault(rule, {"triaged": 0, "benign": 0, "examples": []})
+            entry["triaged"] += 1
+            if row["verdict"] in {"benign", "likely_benign"}:
+                entry["benign"] += 1
+                if len(entry["examples"]) < 5:
+                    entry["examples"].append(row["artifact_key"])
+    noisy = {rule: entry for rule, entry in stats.items()
+             if entry["triaged"] >= NOISY_MIN_TRIAGED and entry["benign"] / entry["triaged"] >= NOISY_BENIGN_SHARE}
+    now = soc_store.utc_now()
+    with closing(soc_store.connect(db_path)) as connection:
+        for rule, entry in noisy.items():
+            evidence = {"rule": rule, **entry, "benign_share": round(entry["benign"] / entry["triaged"], 2),
+                        "action": "Review the rule; tighten it or list it in rules/yara/disabled-rules.txt (YARA) or package_features.py (behaviour)."}
+            connection.execute(
+                """INSERT INTO research_alerts (alert_id, alert_type, severity, candidate_id, campaign_id, case_id, dedupe_key,
+                       reason, evidence_json, status, owner, created_at, updated_at)
+                   VALUES (?, 'rule_noisy', 'low', NULL, NULL, NULL, ?, ?, ?, 'open', '', ?, ?)
+                   ON CONFLICT(dedupe_key) DO UPDATE SET evidence_json = excluded.evidence_json, reason = excluded.reason, updated_at = excluded.updated_at""",
+                (f"RAL-{secrets.token_hex(8).upper()}", f"rule-noisy:{rule}",
+                 f"Rule {rule}: {entry['benign']} of {entry['triaged']} triaged hits judged benign", json.dumps(evidence, sort_keys=True), now, now),
+            )
+        connection.commit()
+    return {"rules": len(stats), "noisy": sorted(noisy)}
+
+
 def sync(client: Any, *, db_path: Optional[str] = None) -> Dict[str, Any]:
     """Queue pending hits and apply finished verdicts.  Safe to call every cycle."""
     if not getattr(client, "enabled", False):
@@ -167,4 +210,5 @@ def sync(client: Any, *, db_path: Optional[str] = None) -> Dict[str, Any]:
                 (CURSOR_KEY, last, now),
             )
         connection.commit()
-    return {"status": "ok", **queued, "results": len(results), "pending_at_bridge": response.get("pending"), **outcomes}
+    health = rule_health(db_path=db_path)
+    return {"status": "ok", **queued, "results": len(results), "pending_at_bridge": response.get("pending"), **outcomes, "rule_health": health}

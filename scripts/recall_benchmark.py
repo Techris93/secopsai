@@ -281,6 +281,7 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=20261010)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--out", type=Path, default=Path("recall-benchmark.json"))
+    parser.add_argument("--fp-budget", type=float, default=None, help="Fail when more than this %% of a clean ecosystem is flagged")
     args = parser.parse_args()
 
     started = time.time()
@@ -303,9 +304,26 @@ def main() -> int:
     text = report(rows, meta)
     print(text)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    breaches = fp_breaches(rows, args.fp_budget) if args.fp_budget is not None else []
+    if breaches:
+        text += "\n\n### False-positive budget exceeded\n\n" + "\n".join(f"- {line}" for line in breaches)
+        print("\n".join(breaches))
     if summary:
         Path(summary).write_text(text + "\n", encoding="utf-8")
-    return 0
+    return 1 if breaches else 0
+
+
+def fp_breaches(rows: List[Dict[str, Any]], budget: float) -> List[str]:
+    """Ecosystems whose clean false-positive rate exceeds the budget, with the rules responsible."""
+    out = []
+    for eco in sorted({row["ecosystem"] for row in rows if row["set"] == "clean"}):
+        clean = [row for row in rows if row["set"] == "clean" and row["ecosystem"] == eco and row.get("status") == "scanned"]
+        flagged = [row for row in clean if LEVEL_RANK.get(row.get("level"), 0) >= 1]
+        if clean and 100 * len(flagged) / len(clean) > budget:
+            rules = Counter(rule for row in flagged for rule in row.get("rules") or [])
+            out.append(f"{eco}: {len(flagged)}/{len(clean)} popular packages flagged ({100 * len(flagged) / len(clean):.1f}% > {budget}%); "
+                       + ", ".join(f"{rule} ({count})" for rule, count in rules.most_common(5)))
+    return out
 
 
 if __name__ == "__main__":

@@ -35,7 +35,7 @@ MAX_TARGETS = 20
 STALE_AFTER_SECONDS = 3 * 3600
 EXEC_OR_EGRESS = {"network-endpoint", "outbound-network", "process-execution", "dynamic-eval", "dynamic-function-constructor", "credential-access", "credential-discovery", "encoded-payload"}
 INSTALL_HOOKS = {"preinstall", "install", "postinstall", "prepare"}
-SIZE_GUARD_MARKERS = ("safety limit", "too many entries")
+SIZE_GUARD_MARKERS = ("safety limit", "too many", "maximum size")
 
 
 def _now() -> datetime:

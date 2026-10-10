@@ -69,3 +69,8 @@ def test_pypi_adapter_falls_back_to_sdist_when_wheel_exceeds_cap():
         {"url": "https://files.pythonhosted.org/ha.tar.gz", "packagetype": "sdist", "size": 38_000_000},
     ]}})
     assert PyPiAdapter().resolve("homeassistant", "2026.10.1", fetcher).artifact_url.endswith("ha.tar.gz")
+
+
+def test_every_size_guard_message_is_a_skip():
+    for message in ("artifact contains too many files", "archive contains too many entries", "artifact exceeds the maximum size", "registry response exceeded the safety limit"):
+        assert any(marker in message for marker in fast_lane.SIZE_GUARD_MARKERS), message

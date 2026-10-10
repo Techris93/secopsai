@@ -339,7 +339,7 @@ def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datet
     if not channels:
         return {"enabled": False, "channels": [], "attempted": 0, "sent": 0, "failed": 0, "deferred": 0}
 
-    operational_types = {"collector_degraded", "collector_retention_risk", "storage_capacity_warning"}
+    operational_types = {"collector_degraded", "collector_retention_risk", "storage_capacity_warning", "rule_noisy"}
     external_types = {
         "external_advisory_match",
         "external_advisory_feed_degraded",
