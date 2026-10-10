@@ -83,3 +83,11 @@ def test_behaviour_findings_carry_the_matching_code():
 def test_exfil_service_needs_a_service_domain():
     assert "exfil_service" not in package_features.profile([("p/a.js", b'const tools=["vercel","ngrok","wrangler"]')])
     assert "exfil_service" in package_features.profile([("p/a.js", b"fetch('https://abc.ngrok-free.app/x')")])
+
+
+
+def test_no_rule_fires_on_known_benign_shapes():
+    scan = {"score": 0, "level": "none", "findings": [], "rules_matched": []}
+    for shape in package_features.KNOWN_BENIGN_SHAPES:
+        for ecosystem in ("npm", "pypi"):
+            assert package_features.combine(scan, list(shape), ecosystem) is scan, (shape, ecosystem)

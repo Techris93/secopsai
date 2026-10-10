@@ -124,6 +124,16 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
 
 SMALL_PACKAGE = ("tiny_package", "install_hook_inline_command")
 
+# Flag sets of legitimate packages that rules must not fire on: each one was
+# a real false positive (pnpm/vitest-style tooling, platform-checking
+# setup.py, injection-defence libraries). The regression tests and the rule
+# lab both enforce them.
+KNOWN_BENIGN_SHAPES: Tuple[Tuple[str, ...], ...] = (
+    ("system_info", "http_send", "home_dir", "install_hook", "child_process", "env_read"),  # pnpm, vitest
+    ("child_process", "env_read", "home_dir", "system_info"),  # node-gyp
+    ("setup_py_side_effects", "system_info", "http_send", "home_dir", "env_read", "download_tool"),  # psutil, coverage
+)
+
 # Behaviour rules: combinations of flags that are common in missed malware and
 # rare in popular clean packages (recall benchmark, 2026-10-10).  Each entry:
 # (rule id, ecosystems, groups — every group needs at least one flag, score).

@@ -1,0 +1,86 @@
+name: Rule Lab
+
+# After each Recall Benchmark, mines the misses for behaviour rules that
+# catch more malware within the false-positive budget, chosen on samples
+# discovered before the cutoff and reported on held-out samples. Proposals
+# are pushed to a review branch and announced in an issue; nothing reaches
+# main without a human merging it.
+
+on:
+  workflow_run:
+    workflows: ["Recall Benchmark"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      benchmark_run_id:
+        description: Recall Benchmark run to mine
+        required: true
+
+permissions:
+  contents: write
+  issues: write
+  actions: read
+
+concurrency:
+  group: rule-lab
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    # Mine only the scheduled (production-configuration) benchmark, or a run
+    # chosen by hand; experimental runs use other rule packs.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ inputs.benchmark_run_id || github.event.workflow_run.id }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Download benchmark rows
+        run: gh run download "$RUN_ID" -n recall-benchmark -D "$RUNNER_TEMP/bench"
+
+      - name: Mine proposals
+        id: lab
+        run: |
+          python scripts/rule_lab.py "$RUNNER_TEMP/bench/recall-benchmark.json" --apply --out "$RUNNER_TEMP/rule-lab.json"
+          echo "count=$(python -c "import json,sys;print(len(json.load(open(sys.argv[1]))['proposals']))" "$RUNNER_TEMP/rule-lab.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Check proposals compile and pass the feature tests
+        if: steps.lab.outputs.count != '0'
+        run: python -m pytest -q tests/test_package_features.py
+
+      - name: Push review branch and open an issue
+        if: steps.lab.outputs.count != '0'
+        run: |
+          branch="rule-lab/$(date -u +%Y-%m-%d)-run-$RUN_ID"
+          git config user.name "secopsai-rule-lab"
+          git config user.email "rule-lab@secopsai.dev"
+          git checkout -b "$branch"
+          git add secopsai/package_features.py
+          git commit -m "rules: rule lab proposals from Recall Benchmark run $RUN_ID"
+          git push origin "$branch"
+          python - "$RUNNER_TEMP/rule-lab.json" "$branch" "$RUN_ID" > "$RUNNER_TEMP/issue.md" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1])); branch = sys.argv[2]; run = sys.argv[3]
+          print(f"The rule lab mined Recall Benchmark run {run} and proposes {len(data['proposals'])} behaviour rule(s).\n")
+          print(f"Chosen on samples discovered before {data['cutoff']}; held-out counts are samples from {data['cutoff']} on, which the search never saw.\n")
+          print("| Ecosystem | Behaviours | Throwaway shape | Train | Held-out | Popular flagged |\n| --- | --- | --- | --- | --- | --- |")
+          for p in data["proposals"]:
+              print(f"| {p['ecosystem']} | {' + '.join(p['flags'])} | {'yes' if p['small_package'] else 'no'} | +{p['train_gain']} | +{p['test_gain']} of {p['test_samples']} | {p['clean_hits']} |")
+          print(f"\n**Review and open the pull request:** https://github.com/${{ github.repository }}/compare/main...{branch}?expand=1\n")
+          print("Before merging: check each rule's held-out gain is real, and remember the clean set is 1,475 popular packages, not the whole registry.")
+          PY
+          gh issue create --title "Rule lab: $(python -c "import json,sys;print(len(json.load(open(sys.argv[1]))['proposals']))" "$RUNNER_TEMP/rule-lab.json") proposed rule(s) from benchmark run $RUN_ID" --body-file "$RUNNER_TEMP/issue.md"
