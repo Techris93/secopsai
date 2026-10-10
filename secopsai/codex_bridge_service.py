@@ -16,6 +16,9 @@ from secopsai.intelligence_jobs import recover_running_jobs
 
 
 LABEL = "ai.secopsai.codex-bridge"
+# Remote (hosted Core) mode: the bridge token stays in the login Keychain and
+# is read when the service starts, so it is never written to the plist.
+KEYCHAIN_SERVICE = "secopsai-codex-bridge-token"
 SYSTEMD_UNIT = "secopsai-codex-bridge.service"
 RunCommand = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
@@ -99,6 +102,16 @@ def _install_launchd(home: Path, db_path: str | None, run: RunCommand, start: bo
     }
     if os.environ.get("CODEX_HOME"):
         environment["CODEX_HOME"] = os.environ["CODEX_HOME"]
+    core_url = os.environ.get("SECOPSAI_CODEX_CORE_API_URL", "").strip().rstrip("/")
+    if core_url:
+        environment["SECOPSAI_CODEX_CORE_API_URL"] = core_url
+        if os.environ.get("SECOPSAI_CODEX_WORKER_ID"):
+            environment["SECOPSAI_CODEX_WORKER_ID"] = os.environ["SECOPSAI_CODEX_WORKER_ID"]
+        args = [
+            "/bin/sh", "-c",
+            f'SECOPSAI_CODEX_BRIDGE_TOKEN="$(/usr/bin/security find-generic-password -s {KEYCHAIN_SERVICE} -w)" || exit 78; '
+            f"export SECOPSAI_CODEX_BRIDGE_TOKEN; exec {shlex.join(args)}",
+        ]
     payload = {
         "Label": LABEL,
         "ProgramArguments": args,

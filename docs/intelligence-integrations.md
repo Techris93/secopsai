@@ -332,6 +332,24 @@ Install the bridge as a user-level background service:
 
 The installer creates `~/Library/LaunchAgents/ai.secopsai.codex-bridge.plist` on macOS or `~/.config/systemd/user/secopsai-codex-bridge.service` on Linux. It does not copy or persist a ChatGPT credential. Codex continues to own its local authentication state.
 
+### Remote mode (hosted Core queue)
+
+In remote mode the bridge claims jobs from Core (`core.secopsai.dev`) instead of the local SQLite queue. This is how the research worker's rule hits reach your models: the worker queues `triage_artifact` jobs in Core, and the bridge runs them through opencodex on your subscription accounts.
+
+1. Store the bridge token (the value of Core's `CORE_BRIDGE_TOKEN`, also the `SECOPSAI_CORE_BRIDGE_TOKEN` GitHub secret) in the login Keychain. `security` prompts for it twice:
+
+   ```bash
+   security add-generic-password -s secopsai-codex-bridge-token -a "$USER" -U -w
+   ```
+
+2. Reinstall the service with the Core URL set:
+
+   ```bash
+   SECOPSAI_CODEX_CORE_API_URL=https://core.secopsai.dev .venv/bin/python -m secopsai.cli intelligence bridge service install
+   ```
+
+The plist records only the URL; the token is read from the Keychain each time the service starts and is never written to disk. `bridge doctor` reports `queue_mode: hosted_core` once both are in place. To return to local mode, reinstall without `SECOPSAI_CODEX_CORE_API_URL`.
+
 ### Automated research investigations
 
 Mission Control's **Run Investigation Pipeline** action uses the same durable bridge queue. Core first performs bounded package collection and deterministic static analysis, then creates three read-only jobs: case analysis, analyst brief, and publication-safety review. The bridge receives normalized case context, hashes, manifests, static indicators, and comparison results. It never receives the quarantined artifact, raw registry responses, local quarantine paths, secrets, or customer telemetry.

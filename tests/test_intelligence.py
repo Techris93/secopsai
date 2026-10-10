@@ -831,6 +831,22 @@ def test_launchd_service_contains_no_credentials(tmp_path: Path):
     assert any(command[1] == "bootstrap" for command in calls)
 
 
+def test_launchd_remote_mode_reads_bridge_token_from_keychain(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("SECOPSAI_CODEX_CORE_API_URL", "https://core.secopsai.dev/")
+    monkeypatch.setenv("SECOPSAI_CODEX_BRIDGE_TOKEN", "t" * 40)
+    result = install_service(
+        db_path=str(tmp_path / "core.db"), start=False, home=tmp_path, platform_name="darwin",
+        runner=lambda command: subprocess.CompletedProcess(command, 0, "", ""), autonomy_mode="agent_review",
+    )
+    with Path(result["path"]).open("rb") as handle:
+        payload = plistlib.load(handle)
+    assert payload["EnvironmentVariables"]["SECOPSAI_CODEX_CORE_API_URL"] == "https://core.secopsai.dev"
+    assert "t" * 40 not in json.dumps(payload), "the token must never be written to the plist"
+    assert payload["ProgramArguments"][:2] == ["/bin/sh", "-c"]
+    assert "find-generic-password -s secopsai-codex-bridge-token -w" in payload["ProgramArguments"][2]
+    assert "exec " in payload["ProgramArguments"][2] and "intelligence bridge run" in payload["ProgramArguments"][2]
+
+
 def test_bridge_service_rejects_unknown_autonomy_mode(tmp_path: Path):
     with pytest.raises(ValueError, match="supervised or agent_review"):
         install_service(
