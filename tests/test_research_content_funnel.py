@@ -47,3 +47,24 @@ def test_open_vsx_release_is_downloaded_scanned_and_alerted(tmp_path):
     assert alert["alert_type"] == "registry_release_anomaly" and "BEH_DISCORD_WEBHOOK" in json.loads(alert["evidence_json"])["rules"]
     assert states == {"evil/theme": "hit", "good/theme": "clean"}
     assert research_content_funnel.run(db_path=db_path, fetcher=fetcher, limit=10)["open-vsx"]["scanned"] == 0, "scanned releases are not rescanned"
+
+
+def test_crates_collector_walks_to_the_cursor(tmp_path, monkeypatch):
+    from secopsai import research_surveillance as rs
+
+    monkeypatch.setattr(rs, "CRATES_PAGE_DELAY_SECONDS", 0)
+    db_path = str(tmp_path / "soc.db")
+    soc_store.init_db(db_path)
+    rs.ensure_collectors(db_path=db_path)
+    pages = {
+        rs.CRATES_RECENT_URL: {"crates": [{"name": "a", "newest_version": "1.0.0", "updated_at": "2099-01-02T00:00:00Z"}],
+                               "meta": {"next_page": "?sort=recent-updates&seek=x"}},
+        "https://crates.io/api/v1/crates?sort=recent-updates&seek=x": {"crates": [{"name": "b", "newest_version": "2.0.0", "updated_at": "2099-01-01T00:00:00Z"},
+                                                                                  {"name": "old", "newest_version": "0.1.0", "updated_at": "2000-01-01T00:00:00Z"}],
+                                                                       "meta": {"next_page": "?sort=recent-updates&seek=y"}},
+    }
+    fetcher = SafeFetcher(fetch=lambda url, _max: (200, {"content-type": "application/json"}, json.dumps(pages[url]).encode()))
+    result = rs.run_registry_collector(ecosystem="crates", db_path=db_path, fetcher=fetcher, max_pages=10)
+    assert result["events_stored"] == 2 and result["cursor_after"] == "2099-01-02T00:00:00.000Z"
+    with soc_store.connect(db_path) as connection:
+        assert {row[0] for row in connection.execute("SELECT package FROM registry_feed_events")} == {"a", "b"}

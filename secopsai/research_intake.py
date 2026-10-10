@@ -44,7 +44,8 @@ MAX_INSPECTED_FILE_BYTES = 2 * 1024 * 1024
 MAX_INSPECTED_TEXT_BYTES = 12 * 1024 * 1024
 MAX_REDIRECTS = 3
 DEFAULT_TIMEOUT = 20
-USER_AGENT = "SecOpsAI-Research/1.0 (defensive static analysis)"
+# crates.io's crawler policy asks for a contact in the user agent.
+USER_AGENT = "SecOpsAI-Research/1.0 (defensive static analysis; +https://secopsai.dev; research@secopsai.dev)"
 
 TEXT_SUFFIXES = {
     ".c", ".cc", ".cpp", ".cs", ".go", ".html", ".java", ".js", ".json",

@@ -16,7 +16,7 @@ from pathlib import PurePosixPath
 from typing import Dict, Iterable, List, Set, Tuple
 
 MAX_TEXT_BYTES = 1024 * 1024
-TEXT_SUFFIXES = {".js", ".cjs", ".mjs", ".ts", ".py", ".pyw", ".json", ".sh", ".bat", ".cmd", ".ps1", ".cfg", ".toml", ".txt", ".yml", ".yaml", ""}
+TEXT_SUFFIXES = {".rs", ".js", ".cjs", ".mjs", ".ts", ".py", ".pyw", ".json", ".sh", ".bat", ".cmd", ".ps1", ".cfg", ".toml", ".txt", ".yml", ".yaml", ""}
 INSTALL_HOOKS = ("preinstall", "install", "postinstall", "prepare")
 
 # flag -> pattern over the text of code files (case-insensitive).
@@ -41,7 +41,7 @@ PATTERNS: Dict[str, str] = {
     "hex_blob": r"(\\x[0-9a-fA-F]{2}){60,}",
     "js_obfuscator": r"_0x[0-9a-f]{4,6}\b.{0,200}_0x[0-9a-f]{4,6}\b",
     "system_info": r"os\.hostname\s*\(|os\.userInfo\s*\(|os\.networkInterfaces|platform\.node\s*\(|getpass\.getuser|socket\.gethostname|\bwhoami\b",
-    "download_tool": r"\bcurl\s+-|\bwget\s+|Invoke-WebRequest|urlretrieve\s*\(|DownloadFile",
+    "download_tool": r"\bcurl\s+-|\bwget\s+|Invoke-WebRequest|urlretrieve\s*\(|DownloadFile|Command::new\(\s*\"(curl|wget)\"",
     "chmod_exec": r"chmod\s+\+?[0-7x]+|os\.chmod\s*\(|fs\.chmodSync",
     "persistence": r"crontab|LaunchAgents|CurrentVersion\\\\Run|\.bashrc|\.zshrc|systemctl\s+enable|schtasks",
     "anti_analysis": r"\bisVM\b|virtualbox|vmware|sandbox|debugger|process\.exit\(\)\s*;?\s*}\s*else",
@@ -85,6 +85,10 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
                 flags.add("setup_py_cmdclass")
             if re.search(r"subprocess|os\.system|urlopen|requests\.|socket\.|exec\s*\(|eval\s*\(|b64decode", text):
                 flags.add("setup_py_side_effects")
+        if name == "build.rs" and lowered.count("/") <= 1:
+            flags.add("build_rs")
+            if re.search(r"Command::new|std::net|TcpStream|reqwest|ureq|curl|std::env::var|include_bytes!", text):
+                flags.add("build_rs_side_effects")
         if lowered.endswith(".json"):
             continue
         code_files += 1
@@ -108,10 +112,13 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
 BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], int], ...] = (
     ("BEH_RECON_AND_SEND", ("npm",), (("system_info",), ("http_send",)), 60),
     ("BEH_HOME_DIR_RECON", ("npm",), (("home_dir",), ("system_info",)), 50),
-    ("BEH_EXFIL_SERVICE", ("npm", "pypi", "open-vsx"), (("exfil_service",), ("http_send", "system_info", "dns_lookup", "env_read")), 70),
+    ("BEH_EXFIL_SERVICE", ("npm", "pypi", "open-vsx", "crates"), (("exfil_service",), ("http_send", "system_info", "dns_lookup", "env_read")), 70),
     ("BEH_DEPENDENCY_CONFUSION", ("npm", "pypi"), (("inflated_version",), ("system_info", "http_send", "dns_lookup", "exfil_service")), 70),
     ("BEH_SHELL_DOWNLOAD", ("npm",), (("child_process",), ("download_tool",)), 60),
-    ("BEH_DISCORD_WEBHOOK", ("npm", "pypi", "open-vsx"), (("discord_webhook",),), 60),
+    ("BEH_DISCORD_WEBHOOK", ("npm", "pypi", "open-vsx", "crates"), (("discord_webhook",),), 60),
+    # build.rs runs on every `cargo build`; legitimate ones compile C code,
+    # so only network/exfil behaviour in it counts.
+    ("BEH_BUILD_RS_BEACON", ("crates",), (("build_rs_side_effects",), ("exfil_service", "discord_webhook", "telegram_bot", "raw_ip_url", "download_tool")), 60),
     ("BEH_SETUP_PY_BEACON", ("pypi",), (("setup_py_side_effects",), ("exfil_service", "discord_webhook", "telegram_bot", "system_info")), 60),
 )
 

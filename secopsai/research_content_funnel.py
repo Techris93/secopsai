@@ -1,4 +1,4 @@
-"""Content scanning for registries beyond npm (PyPI and Open VSX).
+"""Content scanning for registries beyond npm (PyPI, Open VSX, crates.io).
 
 The collectors already record every new PyPI release and Open VSX extension
 version, but only npm releases had their contents inspected.  Each cycle this
@@ -18,6 +18,7 @@ import json
 import os
 import secrets
 import tempfile
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import datetime, timezone
@@ -28,11 +29,12 @@ import soc_store
 from secopsai import package_features, yara_engine
 from secopsai.research_intake import SafeFetcher
 
-ECOSYSTEMS: Tuple[str, ...] = ("pypi", "open-vsx")
+ECOSYSTEMS: Tuple[str, ...] = ("pypi", "open-vsx", "crates")
 MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
 OPENVSX_HOSTS = ("open-vsx.org", "openvsx.eclipsecontent.org")
 PYPI_HOSTS = ("pypi.org",)
 PYPI_FILE_HOSTS = ("files.pythonhosted.org",)
+CRATES_FILE_HOSTS = ("static.crates.io",)
 HIT_LEVELS = {"notice", "warning", "alert"}
 SEVERITY = {"alert": "high", "warning": "medium", "notice": "low"}
 
@@ -64,6 +66,10 @@ def resolve_artifact(fetcher: SafeFetcher, ecosystem: str, package: str, version
         if not url.startswith("https://open-vsx.org/"):
             raise LookupError("no Open VSX download link")
         return url, OPENVSX_HOSTS, f"{namespace}.{name}-{version}.vsix"
+    if ecosystem == "crates":
+        quoted = urllib.parse.quote(package, safe="")
+        return (f"https://static.crates.io/crates/{quoted}/{quoted}-{urllib.parse.quote(version, safe='')}.crate",
+                CRATES_FILE_HOSTS, f"{package}-{version}.crate")
     raise LookupError(f"unsupported ecosystem {ecosystem}")
 
 

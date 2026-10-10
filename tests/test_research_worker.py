@@ -50,7 +50,7 @@ def test_dense_collectors_receive_complete_bounded_page_budgets():
 def test_due_collectors_all_due_when_never_run(tmp_path):
     db_path = _db(tmp_path)
     due = due_collectors(db_path=db_path)
-    assert len(due) == 8
+    assert len(due) == 9
     assert all(item["due"] for item in due)
     assert all(item["last_started_at"] is None for item in due)
 
@@ -99,9 +99,9 @@ def test_worker_cycle_isolates_collector_failures(tmp_path, monkeypatch):
     # Every registry fetch fails; the cycle must complete and record
     # per-collector failures instead of raising.
     result = run_worker_cycle(db_path=db_path, fetcher=_fail_fetcher())
-    assert result["collectors_run"] == 8
+    assert result["collectors_run"] == 9
     statuses = {item["ecosystem"]: item["status"] for item in result["collector_results"]}
-    assert set(statuses) == {"nuget", "packagist", "pypi", "rubygems", "npm", "go", "maven", "open-vsx"}
+    assert set(statuses) == {"nuget", "packagist", "pypi", "rubygems", "npm", "go", "maven", "open-vsx", "crates"}
     assert all(status == "failed" for status in statuses.values())
     assert result["status"] == "degraded"
     assert "scoring" in result
@@ -109,13 +109,13 @@ def test_worker_cycle_isolates_collector_failures(tmp_path, monkeypatch):
     assert "recovery" in result
     assert "investigations" in result
     assert "storage" in result
-    assert len(result["operational_alert_ids"]) == 8
+    assert len(result["operational_alert_ids"]) == 9
     assert result["alert_delivery"]["enabled"] is False
     with soc_store.connect(db_path) as connection:
         count = connection.execute(
             "SELECT COUNT(*) AS count FROM research_alerts WHERE alert_type = 'collector_degraded'"
         ).fetchone()["count"]
-    assert count == 8
+    assert count == 9
 
 
 def test_storage_capacity_warning_is_deduplicated_and_resolved(tmp_path, monkeypatch):

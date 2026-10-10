@@ -51,6 +51,9 @@ PYPI_SIMPLE_INDEX_URL = "https://pypi.org/simple/"
 PYPI_ALLOWED_HOSTS: Tuple[str, ...] = ("pypi.org",)
 PYPI_SIMPLE_JSON_ACCEPT = "application/vnd.pypi.simple.v1+json"
 RUBYGEMS_TIMEFRAME_URL = "https://rubygems.org/api/v1/timeframe_versions.json"
+CRATES_RECENT_URL = "https://crates.io/api/v1/crates?sort=recent-updates&per_page=100"
+CRATES_ALLOWED_HOSTS: Tuple[str, ...] = ("crates.io",)
+CRATES_PAGE_DELAY_SECONDS = 1.0
 RUBYGEMS_ALLOWED_HOSTS: Tuple[str, ...] = ("rubygems.org",)
 NPM_REPLICATE_URL = "https://replicate.npmjs.com/_changes"
 NPM_REPLICATE_ROOT_URL = "https://replicate.npmjs.com/"
@@ -212,6 +215,22 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         # committed timestamp boundary has been replayed successfully.
         "zero_progress_completion_supersedes_gap": True,
         "interval_seconds": 3600,
+    },
+    "crates": {
+        "collector_id": "COL-CRATES-RECENT",
+        "source_id": "REG-CRATES",
+        "name": "crates.io recently updated crates",
+        "feed_url": CRATES_RECENT_URL,
+        "mode": "recent_poll",
+        "allowed_hosts": CRATES_ALLOWED_HOSTS,
+        "coverage_mode": "recent_updates_tail",
+        # crates.io has no changes feed; the recent-updates listing is walked
+        # newest-first (seek pagination) until it reaches the cursor. The
+        # cursor advances only when that happens, so a burst larger than the
+        # page budget is re-walked rather than skipped. An update can be a
+        # publish, yank or metadata change; each event is the newest version.
+        "cursor_seed": "lookback",
+        "interval_seconds": 900,
     },
     "open-vsx": {
         "collector_id": "COL-OPENVSX-SEARCH",
@@ -1290,6 +1309,92 @@ def _ingest_rubygems_timeframe(
     return outcome
 
 
+def _ingest_crates_recent(
+    *,
+    collector: Dict[str, Any],
+    cursor_before: str,
+    max_pages: int,
+    fetcher: SafeFetcher,
+    run_id: str,
+    db_path: Optional[str],
+) -> Dict[str, Any]:
+    """Walk crates.io's recent-updates listing back to the cursor."""
+    config = _decode(collector["config_json"], {})
+    allowed_hosts = config.get("allowed_hosts", [])
+    outcome = _empty_outcome(cursor_before)
+    newest = ""
+    reached = False
+    page_url = collector["feed_url"]
+    with closing(soc_store.connect(db_path)) as connection:
+        for _page in range(max(1, min(int(max_pages), 50))):
+            try:
+                payload = _fetch_json(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_TIMEFRAME_PAGE_BYTES)
+            except (IntakeError, CollectorError, ValueError) as exc:
+                outcome["error"] = f"crates.io page fetch failed: {exc}"
+                with _write_transaction(connection, db_path):
+                    _record_dead_letter(connection, collector_id=collector["collector_id"], run_id=run_id, url=page_url,
+                                        item_kind="page", payload={"cursor": cursor_before}, error=str(exc))
+                break
+            outcome["pages_processed"] += 1
+            crates = [item for item in payload.get("crates") or [] if isinstance(item, dict)]
+            now = _format_ts(_utcnow())
+            with _write_transaction(connection, db_path):
+                for item in crates:
+                    name = str(item.get("name") or "").strip()
+                    version = str(item.get("newest_version") or item.get("max_version") or "").strip()
+                    updated = str(item.get("updated_at") or "").strip()
+                    if not name or not version or not updated:
+                        continue
+                    registry_ts = _format_ts(_parse_ts(updated))
+                    newest = max(newest, registry_ts)
+                    if registry_ts <= cursor_before:
+                        reached = True
+                        break
+                    outcome["events_seen"] += 1
+                    key = _idempotency_key(collector["ecosystem"], name, version, registry_ts, "published")
+                    metadata = {
+                        "description": str(item.get("description") or "")[:300],
+                        "repository": str(item.get("repository") or "")[:300],
+                        "downloads": int(item.get("downloads") or 0),
+                        "created_at": str(item.get("created_at") or ""),
+                        "algorithm_version": ALGORITHM_VERSION,
+                    }
+                    cursor = connection.execute(
+                        """INSERT INTO registry_feed_events
+                        (feed_event_id, collector_id, ecosystem, package, version, event_type,
+                         registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
+                         idempotency_key, collected_at, processing_state)
+                        VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, 0, ?, ?, ?, 'pending')
+                        ON CONFLICT(idempotency_key) DO NOTHING""",
+                        (_id("RFE"), collector["collector_id"], collector["ecosystem"], name, version, registry_ts, page_url,
+                         f"https://crates.io/crates/{name}/{version}", _json(metadata), key, now),
+                    )
+                    outcome["events_stored" if cursor.rowcount else "events_duplicate"] += 1
+            next_page = str((payload.get("meta") or {}).get("next_page") or "")
+            if reached or not crates or not next_page.startswith("?"):
+                reached = True
+                break
+            page_url = "https://crates.io/api/v1/crates" + next_page
+            time.sleep(CRATES_PAGE_DELAY_SECONDS)  # crates.io crawler policy: at most one request per second
+    outcome["pages_selected"] = outcome["pages_processed"] + (1 if outcome["error"] else 0)
+    if outcome["error"]:
+        return outcome
+    if reached and newest:
+        now = _format_ts(_utcnow())
+        with closing(soc_store.connect(db_path)) as connection:
+            with _write_transaction(connection, db_path):
+                connection.execute(
+                    "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                    (max(newest, cursor_before), now, run_id, now, collector["collector_id"]),
+                )
+        outcome["cursor_after"] = max(newest, cursor_before)
+    else:
+        # Budget ran out before reaching the cursor: keep it, re-walk next run.
+        outcome["window_incomplete"] = True
+        outcome["cursor_after"] = cursor_before
+    return outcome
+
+
 def _ingest_npm_changes(
     *,
     collector: Dict[str, Any],
@@ -2209,6 +2314,15 @@ def _run_registry_collector_unlocked(
         )
     elif collector["ecosystem"] == "rubygems":
         outcome = _ingest_rubygems_timeframe(
+            collector=collector,
+            cursor_before=cursor_before,
+            max_pages=max_pages,
+            fetcher=fetcher,
+            run_id=run_id,
+            db_path=db_path,
+        )
+    elif collector["ecosystem"] == "crates":
+        outcome = _ingest_crates_recent(
             collector=collector,
             cursor_before=cursor_before,
             max_pages=max_pages,

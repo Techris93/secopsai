@@ -51,6 +51,7 @@ MAX_PAGES_PER_CYCLE = 25
 COLLECTOR_MAX_PAGES_PER_CYCLE = {
     "rubygems": 250,
     "open-vsx": 400,
+    "crates": 50,
 }
 
 

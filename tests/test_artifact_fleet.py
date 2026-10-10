@@ -184,6 +184,8 @@ def test_live_index_bridge_uses_existing_cursor_collectors(monkeypatch, tmp_path
     import secopsai.research_surveillance as surveillance
 
     monkeypatch.setitem(surveillance.COLLECTOR_DEFINITIONS, "npm", {"collector_id": "COL-NPM-CHANGES"})
+    # Keep one source without a collector to exercise the not-configured path.
+    monkeypatch.delitem(surveillance.COLLECTOR_DEFINITIONS, "crates")
     monkeypatch.setattr(surveillance, "run_registry_collector", lambda **kwargs: {"cursor_after": "42"})
     monkeypatch.setattr(surveillance, "list_feed_events", lambda **kwargs: [{"package": "fixture", "version": "1.0.0", "registry_timestamp": "2026-08-20T00:00:00Z", "idempotency_key": "event-1"}])
     result = artifact_fleet.index_live_sources(sources=["npm", "crates"], limit=10, db_path=tmp_path / "fleet.db")
