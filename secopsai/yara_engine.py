@@ -124,12 +124,12 @@ def _severity(score: int) -> str:
     return "high" if score >= ALERT else "medium" if score >= WARNING else "low"
 
 
-def _safe_context(data: bytes, offset: int, length: int) -> str:
-    start = max(0, offset - CONTEXT_BYTES // 2)
-    end = min(len(data), offset + length + CONTEXT_BYTES // 2)
+def _safe_context(data: bytes, offset: int, length: int, size: int = CONTEXT_BYTES) -> str:
+    start = max(0, offset - size // 2)
+    end = min(len(data), offset + length + size // 2)
     text = data[start:end].decode("utf-8", errors="replace")
     # Keep the window readable and inert: no control characters.
-    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", ".", text)[:CONTEXT_BYTES]
+    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", ".", text)[:size]
 
 
 def scan_files(files: Iterable[Tuple[str, bytes]]) -> Dict[str, Any]:
@@ -161,18 +161,25 @@ def scan_files(files: Iterable[Tuple[str, bytes]]) -> Dict[str, Any]:
                 continue
             meta = _meta(rule)
             score = _score(meta)
-            offset, length = 0, 0
-            for pattern in rule.patterns:
-                if pattern.matches:
-                    offset, length = pattern.matches[0].offset, pattern.matches[0].length
-                    break
+            # One window per matched pattern (up to three), so the context shows
+            # every part of a multi-string match, not just the first string.
+            hits = [(pattern.identifier, pattern.matches[0].offset, pattern.matches[0].length) for pattern in rule.patterns if pattern.matches]
+            windows: List[str] = []
+            covered: List[Tuple[int, int]] = []
+            for _identifier, offset, length in sorted(hits, key=lambda item: item[1]):
+                if len(windows) >= 3 or any(start <= offset < end for start, end in covered):
+                    continue
+                half = CONTEXT_BYTES // 6
+                covered.append((max(0, offset - half), offset + length + half))
+                windows.append(_safe_context(data, offset, length, CONTEXT_BYTES // 3))
             findings.append({
                 "rule_id": f"YARA:{rule.identifier}",
                 "severity": str(meta.get("severity") or "").lower() if str(meta.get("severity") or "").lower() in {"low", "medium", "high", "critical"} else _severity(score),
                 "confidence": "high" if score >= ALERT else "medium",
                 "file_path": path,
                 "matched_indicator": str(meta.get("description") or rule.identifier)[:500],
-                "safe_context": _safe_context(data, offset, length),
+                "safe_context": "\n[...]\n".join(windows),
+                "matched_patterns": sorted({identifier for identifier, _offset, _length in hits})[:10],
                 "score": score,
                 "rule_author": str(meta.get("author") or "")[:200],
                 "rule_reference": str(meta.get("reference") or "")[:500],

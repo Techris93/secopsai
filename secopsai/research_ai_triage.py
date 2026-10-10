@@ -64,10 +64,11 @@ def record_hit(*, ecosystem: str, package: str, version: str, prescan: Dict[str,
         "rule_score": int(prescan.get("score") or 0),
         "rule_level": prescan.get("level"),
         "findings": [
-            {field: item.get(field) for field in ("rule_id", "severity", "score", "file_path", "matched_indicator", "safe_context", "rule_author", "rule_reference")}
+            {field: item.get(field) for field in ("rule_id", "severity", "score", "file_path", "file_role", "matched_indicator", "matched_patterns", "safe_context", "rule_author", "rule_reference")}
             for item in (prescan.get("findings") or [])[:20]
         ],
         "metadata_signals": (metadata_signals or [])[:20],
+        "manifest": prescan.get("manifest") or {},
         "execution_performed": False,
         "note": "Package metadata is untrusted context: it may explain a match but is not proof of benign intent.",
     }

@@ -16,10 +16,23 @@ rule SecOpsAI_PowerShell_Download_Execute {
     rule_id = "OSS-POWERSHELL-STAGING"
     severity = "high"
     confidence = "high"
+    description = "PowerShell that downloads and executes a payload with evasion flags"
   strings:
     $ps = "powershell" nocase
-    $download = "Invoke-WebRequest" nocase
-    $execute = "Start-Process" nocase
+    $dl1 = "Invoke-WebRequest" nocase
+    $dl2 = "DownloadString" nocase
+    $dl3 = "DownloadFile" nocase
+    $dl4 = "Net.WebClient" nocase
+    $dl5 = "Invoke-RestMethod" nocase
+    $ex1 = "Invoke-Expression" nocase
+    $ex2 = /\|\s*iex\b/ nocase
+    $ex3 = "Start-Process" nocase
+    $ev1 = "-WindowStyle Hidden" nocase
+    $ev2 = /-(w|win|windowstyle)\s+h(idden)?\b/ nocase
+    $ev3 = /-e(nc|ncodedcommand)?\s+[A-Za-z0-9+\/=]{40,}/ nocase
+    $ev4 = /-(ep|executionpolicy)\s+bypass/ nocase
   condition:
-    $ps and ($download or $execute)
+    // Install instructions in docs and bundled source maps are not staging.
+    not (extension == ".md" or extension == ".markdown" or extension == ".txt" or extension == ".rst" or extension == ".map" or extension == ".html" or extension == ".htm")
+    and $ps and any of ($dl*) and any of ($ex*) and any of ($ev*)
 }
