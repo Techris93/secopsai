@@ -132,6 +132,8 @@ KNOWN_BENIGN_SHAPES: Tuple[Tuple[str, ...], ...] = (
     ("system_info", "http_send", "home_dir", "install_hook", "child_process", "env_read"),  # pnpm, vitest
     ("child_process", "env_read", "home_dir", "system_info"),  # node-gyp
     ("setup_py_side_effects", "system_info", "http_send", "home_dir", "env_read", "download_tool"),  # psutil, coverage
+    ("inflated_version", "child_process", "chmod_exec", "download_tool", "env_read", "install_hook"),  # npm chromedriver 155.0.0
+    ("inflated_version", "chmod_exec", "env_read", "http_send", "py_subprocess", "setup_py", "setup_py_cmdclass", "setup_py_side_effects"),  # PyPI chromedriver-binary 157.x
 )
 
 # Behaviour rules: combinations of flags that are common in missed malware and
@@ -146,7 +148,13 @@ BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], 
     ("BEH_RECON_AND_SEND", ("npm",), (("system_info",), ("http_send",), SMALL_PACKAGE), 60),
     ("BEH_HOME_DIR_RECON", ("npm",), (("home_dir",), ("system_info",), SMALL_PACKAGE), 50),
     ("BEH_EXFIL_SERVICE", ("npm", "pypi", "open-vsx", "vscode-marketplace", "crates", "github-actions", "mcp-registry"), (("exfil_service",), ("http_send", "system_info", "dns_lookup")), 70),
-    ("BEH_DEPENDENCY_CONFUSION", ("npm", "pypi"), (("inflated_version",), ("system_info", "http_send", "dns_lookup", "exfil_service")), 70),
+    # npm needs the throwaway shape: chromedriver-style packages track browser
+    # versions (155.x) and download binaries. PyPI dependency confusion is
+    # rarely "tiny", and calendar versions are already excluded there.
+    # PyPI: a plain download is not enough (chromedriver-binary 157.x fetches
+    # its driver); dependency-confusion payloads beacon recon or use DNS/exfil.
+    ("BEH_DEPENDENCY_CONFUSION", ("pypi",), (("inflated_version",), ("system_info", "dns_lookup", "exfil_service")), 70),
+    ("BEH_DEPENDENCY_CONFUSION_NPM", ("npm",), (("inflated_version",), ("system_info", "http_send", "dns_lookup", "exfil_service"), SMALL_PACKAGE), 70),
     ("BEH_SHELL_DOWNLOAD", ("npm",), (("child_process",), ("download_tool",), SMALL_PACKAGE), 60),
     ("BEH_DISCORD_WEBHOOK", ("npm", "pypi", "open-vsx", "vscode-marketplace", "crates", "github-actions", "mcp-registry"),
      (("discord_webhook",), ("system_info", "home_dir", "credential_files", "browser_data", "crypto_wallet", "http_send")), 60),
@@ -159,6 +167,12 @@ BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], 
     ("BEH_ACTIONS_RUNNER_MEMORY", ("github-actions",), (("runner_memory",),), 80),
     # setup.py commonly checks the platform; only exfil endpoints count.
     ("BEH_SETUP_PY_BEACON", ("pypi",), (("setup_py_side_effects",), ("exfil_service", "discord_webhook", "telegram_bot")), 60),
+    # From rule lab issue #110 (benchmark run 38089864099), chosen on pre-2026
+    # samples; held-out 2026 gains in brackets.
+    ("BEH_JS_OBFUSCATOR", ("npm",), (("js_obfuscator",),), 60),  # +35 (+43 held-out), 0 popular flagged
+    # Throwaway shape required: chromedriver and friends track browser versions (155.x).
+    ("BEH_VERSION_CONFUSION", ("npm",), (("inflated_version",), SMALL_PACKAGE), 60),  # 84 of 88 such misses are throwaway-shaped
+    ("BEH_SHELL_WALLET_SEND", ("npm",), (("child_process",), ("crypto_wallet",), ("http_send",)), 60),  # +37 (+15), 1 popular flagged
 )
 
 

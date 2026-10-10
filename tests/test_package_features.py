@@ -33,7 +33,7 @@ def test_docs_and_binaries():
 def test_behaviour_rules_raise_the_funnel_score():
     scan = {"score": 0, "level": "none", "findings": [], "rules_matched": []}
     combined = package_features.combine(scan, ["system_info", "http_send", "inflated_version", "tiny_package"], "npm")
-    assert combined["level"] == "alert" and {"BEH_RECON_AND_SEND", "BEH_DEPENDENCY_CONFUSION"} <= set(combined["rules_matched"])
+    assert combined["level"] == "alert" and {"BEH_RECON_AND_SEND", "BEH_DEPENDENCY_CONFUSION_NPM"} <= set(combined["rules_matched"])
     assert package_features.combine(scan, ["system_info"], "npm") is scan
     assert package_features.combine(scan, ["system_info", "http_send"], "pypi") is scan, "npm-only rule"
 
@@ -91,3 +91,11 @@ def test_no_rule_fires_on_known_benign_shapes():
     for shape in package_features.KNOWN_BENIGN_SHAPES:
         for ecosystem in ("npm", "pypi"):
             assert package_features.combine(scan, list(shape), ecosystem) is scan, (shape, ecosystem)
+
+
+
+def test_browser_version_tracking_packages_are_not_dependency_confusion():
+    scan = {"score": 0, "level": "none", "findings": [], "rules_matched": []}
+    # chromedriver 155.x: high version, ordinary multi-file package
+    assert package_features.combine(scan, ["inflated_version", "http_send", "child_process"], "npm") is scan
+    assert "BEH_VERSION_CONFUSION" in package_features.combine(scan, ["inflated_version", "tiny_package"], "npm")["rules_matched"]
