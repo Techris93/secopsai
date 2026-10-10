@@ -1138,7 +1138,7 @@ def draft_advisory(campaign: str, *, paths: Optional[BlogPaths] = None) -> Dict[
             "body_markdown": redact(body),
         }
     )
-    post["reading_time"] = _post_reading_time(post)
+    post["reading_time"] = _post_reading_time({**post, "reading_time": None})
     _write_json(_draft_path(post["slug"], paths), post)
     return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
 
@@ -1215,7 +1215,7 @@ def draft_finding(finding_id: str, *, db_path: Optional[str] = None, paths: Opti
             "body_markdown": redact(body),
         }
     )
-    post["reading_time"] = _post_reading_time(post)
+    post["reading_time"] = _post_reading_time({**post, "reading_time": None})
     _write_json(_draft_path(post["slug"], paths), post)
     return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
 
@@ -1385,7 +1385,7 @@ secopsai blog draft-campaign --campaign {campaign_id}
             "body_markdown": redact(body),
         }
     )
-    post["reading_time"] = _post_reading_time(post)
+    post["reading_time"] = _post_reading_time({**post, "reading_time": None})
     _write_json(_draft_path(post["slug"], paths), post)
     return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
 
@@ -1529,7 +1529,7 @@ This draft reflects disclosure state `{case.get('disclosure_status', 'not_starte
             ),
         }
     )
-    post["reading_time"] = _post_reading_time(post)
+    post["reading_time"] = _post_reading_time({**post, "reading_time": None})
     if write:
         _write_json(_draft_path(post["slug"], paths), post)
     return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
@@ -2448,7 +2448,7 @@ secopsai blog news-review show {slug_value}
         ],
     })
     post["references"] = references
-    post["reading_time"] = _post_reading_time(post)
+    post["reading_time"] = _post_reading_time({**post, "reading_time": None})
     post.update(score_external_news_readiness(post))
     _write_json(_draft_path(post["slug"], paths), post)
     return {"draft_path": str(_draft_path(post["slug"], paths)), "post": post}
@@ -2990,7 +2990,7 @@ def news_review_edit(
         post["affected_products"] = _safe_list(extracted.get("products", []), limit=16)
         post.update(score_external_news_readiness(post))
 
-    post["reading_time"] = _post_reading_time(post)
+    post["reading_time"] = _post_reading_time({**post, "reading_time": None})
     _write_json(path, post)
     return news_review_show(str(path), paths=paths)
 
@@ -3049,7 +3049,7 @@ def attach_media(
         post["review_status"] = "needs_review"
         _set_review_checklist_status(post, "needs_review")
         post.update(score_external_news_readiness(post))
-    post["reading_time"] = _post_reading_time(post)
+    post["reading_time"] = _post_reading_time({**post, "reading_time": None})
     _write_json(draft_path, post)
     return {"draft_path": str(draft_path), "media": normalised, "hero_image": normalised}
 

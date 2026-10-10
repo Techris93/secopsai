@@ -1,0 +1,62 @@
+{
+  "affected_artifacts": [],
+  "affected_ecosystems": [],
+  "affected_packages": [],
+  "affected_products": [],
+  "author": "SecOpsAI Threat Research",
+  "body_markdown": "## TL;DR\n\n- We measured SecOpsAI's package-scanning funnel against 3,055 human-confirmed malicious npm and PyPI packages and the 1,475 most-downloaded clean packages.\n- Public signatures alone (Nextron Systems' open signature-base plus two of our YARA rules) caught **13.3%**. Adding SecOpsAI's behaviour rules, built from what those signatures missed, raised recall to **39.0%** while flagging **0%** of popular npm packages and **0.4%** of popular PyPI packages.\n- On samples first discovered in 2026, recall rose from **7.1%** to **27.6%**. That is the number we trust least and want to move most.\n- Method, caveats and the remaining false positives are below. We publish the misses as well as the hits.\n\n## Why measure\n\nA scanner that reports what it finds says nothing about what it misses. Before publishing research on individual packages, we wanted a number for how often the first stage of our pipeline, the funnel that decides which new releases get full analysis, catches known malware, and how often it wrongly flags legitimate software.\n\n## Method\n\n- **Malware set:** a fixed, seeded sample of 2,038 npm and 1,017 PyPI packages from Datadog Security Labs' open malicious-software-packages dataset (Apache-2.0), in which every sample was triaged by a human. Samples are split into compromised releases of legitimate packages and packages published with malicious intent.\n- **Clean set:** the latest release of the top 1,000 npm packages (npm-high-impact) and top 500 PyPI projects (hugovk/top-pypi-packages).\n- **Safety:** samples are decrypted and scanned in memory on a disposable CI runner. Nothing is executed or extracted to disk, and only rule names, scores and file paths leave the job.\n- **Hit threshold:** a package counts as caught when its combined score reaches 40, the level at which our pipeline queues it for analysis and model triage.\n- **Rules:** a baseline of YARA-X signatures (Nextron Systems' open signature-base under the Detection Rule License 1.1, plus SecOpsAI's YARA rules), and SecOpsAI's behaviour rules, which combine signals across a whole package rather than matching strings in one file.\n\n## Results\n\n| | Signatures only | + SecOpsAI behaviour rules |\n| --- | --- | --- |\n| Overall recall (3,055 samples) | 13.3% | 39.0% |\n| Hijacked npm releases (150) | 63.3% | 67.3% |\n| npm packages built to be malicious (1,888) | 5.3% | 34.3% |\n| PyPI packages built to be malicious (989) | 20.8% | 44.1% |\n| Samples discovered in 2026 (662) | 7.1% | 27.6% |\n| Popular npm packages flagged (999) | 0% | 0% |\n| Popular PyPI packages flagged (476) | 0% | 0.4% |\n\n## What changed\n\nThe first run showed that signature rules are strong on hijacked releases of real packages, where recent supply-chain rules match well-documented campaigns, and weak on throwaway packages built to steal data. To see what the misses had in common without exporting any malware, the benchmark records behaviour flags for every package (for example: collects system information, sends an HTTP request, reads the home directory, contacts a request-capture service, uses a version number of 99 or higher) and compares how common each flag is in missed malware against clean packages.\n\nSeven behaviour combinations stood out, and we turned them into SecOpsAI behaviour rules. Shipped naively they lifted recall to 44.5% but flagged 0.6% of popular npm and 2.1% of popular PyPI packages, including package managers, test runners and well-known libraries. Tightening them using the benchmark's own rows (requiring a throwaway-package shape for reconnaissance rules, real service domains for exfiltration rules, and excluding calendar-style version numbers) brought false positives inside a 0.5% budget at 39% recall.\n\n## Caveats\n\n- **Selection bias:** the malware dataset was largely found by one rule set (GuardDog), so it under-represents malware those rules miss.\n- **Optimism on 2026:** the behaviour rules were chosen from a profile that included 2026 samples, so 27.6% overstates recall on attacks we have never seen. We will re-measure on samples discovered after this post.\n- **Funnel only:** this measures the first stage. Later stages (full static analysis, comparison with the previous version, model triage, human review) change what is ultimately reported.\n- **Remaining false positives:** two popular PyPI packages are flagged because they legitimately reference a webhook or tunnelling service. We accept these within the budget rather than weaken the rules.\n\n## What runs now\n\nThe benchmark re-runs weekly and fails if false positives exceed 0.5% of popular packages. In production, rules whose hits are mostly judged benign raise an alert for review; rules are never disabled automatically.\n\n## References\n\n- https://github.com/DataDog/malicious-software-packages-dataset\n- https://github.com/Neo23x0/signature-base\n- https://github.com/hugovk/top-pypi-packages",
+  "canonical_url": "https://github.com/DataDog/malicious-software-packages-dataset",
+  "categories": [
+    "Original Research",
+    "Detection Engineering",
+    "Supply Chain"
+  ],
+  "external_news": false,
+  "extracted": {},
+  "featured": false,
+  "iocs": [],
+  "primary_references": [
+    "https://github.com/DataDog/malicious-software-packages-dataset",
+    "https://github.com/Neo23x0/signature-base",
+    "https://github.com/hugovk/top-pypi-packages"
+  ],
+  "published_at": "2026-10-10T23:18:50Z",
+  "readiness_blockers": [],
+  "readiness_score": 0,
+  "readiness_status": "needs_edits",
+  "readiness_warnings": [],
+  "reading_time": 3,
+  "references": [
+    "https://github.com/DataDog/malicious-software-packages-dataset",
+    "https://github.com/Neo23x0/signature-base",
+    "https://github.com/hugovk/top-pypi-packages"
+  ],
+  "related_posts": [],
+  "review_status": "needs_review",
+  "severity": "info",
+  "slug": "measuring-malicious-package-funnel-recall-2026",
+  "social_image": "/assets/social/measuring-malicious-package-funnel-recall-2026.png",
+  "social_image_alt": "SecOpsAI social preview card for Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives",
+  "social_image_height": 630,
+  "social_image_width": 1200,
+  "source_links": [
+    "https://github.com/DataDog/malicious-software-packages-dataset",
+    "https://github.com/Neo23x0/signature-base",
+    "https://github.com/hugovk/top-pypi-packages"
+  ],
+  "source_name": "SecOpsAI Original Research",
+  "sources": [
+    "https://github.com/DataDog/malicious-software-packages-dataset",
+    "https://github.com/Neo23x0/signature-base",
+    "https://github.com/hugovk/top-pypi-packages"
+  ],
+  "status": "published",
+  "summary": "Public signatures caught 13% of 3,055 confirmed malicious packages. SecOpsAI behaviour rules, built from what they missed, raised that to 39% while flagging under 0.5% of popular packages.",
+  "tags": [
+    "Original Research",
+    "Detection Engineering",
+    "Supply Chain"
+  ],
+  "title": "Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives",
+  "updated_at": "2026-10-10T23:22:15Z"
+}

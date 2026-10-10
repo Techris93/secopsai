@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives | SecOpsAI Security Blog</title>
+    <meta name="description" content="Public signatures caught 13% of 3,055 confirmed malicious packages. SecOpsAI behaviour rules, built from what they missed, raised that to 39% while flagging under 0.5% of popular packages." />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="SecOpsAI Security Blog" />
+    <meta property="og:title" content="Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives | SecOpsAI Security Blog" />
+    <meta property="og:description" content="Public signatures caught 13% of 3,055 confirmed malicious packages. SecOpsAI behaviour rules, built from what they missed, raised that to 39% while flagging under 0.5% of popular packages." />
+    <meta property="og:url" content="https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026.html" />
+    <meta property="og:image" content="https://blog.secopsai.dev/assets/social/measuring-malicious-package-funnel-recall-2026.png" />
+    <meta property="og:image:alt" content="SecOpsAI social preview card for Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives | SecOpsAI Security Blog" />
+    <meta name="twitter:description" content="Public signatures caught 13% of 3,055 confirmed malicious packages. SecOpsAI behaviour rules, built from what they missed, raised that to 39% while flagging under 0.5% of popular packages." />
+    <meta name="twitter:image" content="https://blog.secopsai.dev/assets/social/measuring-malicious-package-funnel-recall-2026.png" />
+    <meta name="twitter:image:alt" content="SecOpsAI social preview card for Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives" />
+    <meta property="article:published_time" content="2026-10-10T23:18:50Z" />
+    <meta property="article:modified_time" content="2026-10-10T23:22:15Z" />
+    <meta property="article:tag" content="Original Research" />
+    <meta property="article:tag" content="Detection Engineering" />
+    <meta property="article:tag" content="Supply Chain" />
+    <link rel="canonical" href="https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026.html" />
+    <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/blog.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <nav class="shell nav" data-site-nav>
+        <a class="brand" href="/">
+          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
+          <span class="brand-title"><span>SECOPSAI</span><span>SECURITY BLOG</span></span>
+        </a>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-menu" data-nav-toggle>
+          <span class="nav-toggle-lines" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span class="nav-toggle-label">Menu</span>
+        </button>
+        <div class="nav-links" id="site-menu" data-nav-menu>
+          <a href="/">Blog Home</a>
+          <a href="https://docs.secopsai.dev/">Docs</a>
+          <a href="/feed.xml">RSS</a>
+          <a href="/json-feed">JSON Feed</a>
+        </div>
+      </nav>
+    </header>
+    <main>
+      <header class="shell article-hero">
+        <div class="breadcrumb">
+          <a href="/">Blog Home</a><span>&gt;</span><span>Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives</span>
+        </div>
+        <p class="eyebrow">INFO • SecOpsAI Intelligence</p>
+        <h1>Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives</h1>
+        <p class="dek">Public signatures caught 13% of 3,055 confirmed malicious packages. SecOpsAI behaviour rules, built from what they missed, raised that to 39% while flagging under 0.5% of popular packages.</p>
+        <div class="meta">
+          <span class="pill info">Info</span>
+          <span>By SecOpsAI Threat Research</span>
+          <span>3 min read</span>
+          <span>Published: 2026-10-10</span>
+            <span>Updated: 2026-10-10</span>
+        </div>
+        <div class="tags"><span class="pill">Original Research</span> <span class="pill">Detection Engineering</span> <span class="pill">Supply Chain</span></div>
+        <div class="share-bar share-bar-compact" data-share-bar>
+          
+          <div class="share-links">
+            <button class="share-link share-native" type="button" data-share-native data-share-url="https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026.html" data-share-title="Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives" hidden>Share…</button>
+            <a class="share-link" href="https://x.com/intent/post?text=Measuring%20a%20malicious-package%20funnel%3A%20from%2013%25%20to%2039%25%20recall%20at%20under%200.5%25%20false%20positives&amp;url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fmeasuring-malicious-package-funnel-recall-2026.html" target="_blank" rel="noopener noreferrer" aria-label="Share on X">X</a><a class="share-link" href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fmeasuring-malicious-package-funnel-recall-2026.html" target="_blank" rel="noopener noreferrer" aria-label="Share on LinkedIn">LinkedIn</a><a class="share-link" href="https://bsky.app/intent/compose?text=Measuring%20a%20malicious-package%20funnel%3A%20from%2013%25%20to%2039%25%20recall%20at%20under%200.5%25%20false%20positives%20https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fmeasuring-malicious-package-funnel-recall-2026.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Bluesky">Bluesky</a><a class="share-link" href="https://www.reddit.com/submit?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fmeasuring-malicious-package-funnel-recall-2026.html&amp;title=Measuring%20a%20malicious-package%20funnel%3A%20from%2013%25%20to%2039%25%20recall%20at%20under%200.5%25%20false%20positives" target="_blank" rel="noopener noreferrer" aria-label="Share on Reddit">Reddit</a><a class="share-link" href="https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fmeasuring-malicious-package-funnel-recall-2026.html&amp;t=Measuring%20a%20malicious-package%20funnel%3A%20from%2013%25%20to%2039%25%20recall%20at%20under%200.5%25%20false%20positives" target="_blank" rel="noopener noreferrer" aria-label="Share on Hacker News">Hacker News</a><a class="share-link" href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fmeasuring-malicious-package-funnel-recall-2026.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Facebook">Facebook</a>
+            <a class="share-link" href="mailto:?subject=Measuring%20a%20malicious-package%20funnel%3A%20from%2013%25%20to%2039%25%20recall%20at%20under%200.5%25%20false%20positives&amp;body=Measuring%20a%20malicious-package%20funnel%3A%20from%2013%25%20to%2039%25%20recall%20at%20under%200.5%25%20false%20positives%0A%0Ahttps%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fmeasuring-malicious-package-funnel-recall-2026.html" aria-label="Share by email">Email</a>
+            <button class="share-link" type="button" data-copy="https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026.html" aria-label="Copy link to this post">Copy link</button>
+          </div>
+        </div>
+
+      </header>
+      <div class="shell post-layout">
+        <article class="post-body">
+        <section class="tldr" aria-label="TL;DR"><h2>TL;DR</h2><ul>
+<li>We measured SecOpsAI&#x27;s package-scanning funnel against 3,055 human-confirmed malicious npm and PyPI packages and the 1,475 most-downloaded clean packages.</li>
+<li>Public signatures alone (Nextron Systems&#x27; open signature-base plus two of our YARA rules) caught <strong>13.3%</strong>. Adding SecOpsAI&#x27;s behaviour rules, built from what those signatures missed, raised recall to <strong>39.0%</strong> while flagging <strong>0%</strong> of popular npm packages and <strong>0.4%</strong> of popular PyPI packages.</li>
+<li>On samples first discovered in 2026, recall rose from <strong>7.1%</strong> to <strong>27.6%</strong>. That is the number we trust least and want to move most.</li>
+<li>Method, caveats and the remaining false positives are below. We publish the misses as well as the hits.</li>
+</ul></section>
+<h2>Why measure</h2>
+<p>A scanner that reports what it finds says nothing about what it misses. Before publishing research on individual packages, we wanted a number for how often the first stage of our pipeline, the funnel that decides which new releases get full analysis, catches known malware, and how often it wrongly flags legitimate software.</p>
+<h2>Method</h2>
+<ul>
+<li><strong>Malware set:</strong> a fixed, seeded sample of 2,038 npm and 1,017 PyPI packages from Datadog Security Labs&#x27; open malicious-software-packages dataset (Apache-2.0), in which every sample was triaged by a human. Samples are split into compromised releases of legitimate packages and packages published with malicious intent.</li>
+<li><strong>Clean set:</strong> the latest release of the top 1,000 npm packages (npm-high-impact) and top 500 PyPI projects (hugovk/top-pypi-packages).</li>
+<li><strong>Safety:</strong> samples are decrypted and scanned in memory on a disposable CI runner. Nothing is executed or extracted to disk, and only rule names, scores and file paths leave the job.</li>
+<li><strong>Hit threshold:</strong> a package counts as caught when its combined score reaches 40, the level at which our pipeline queues it for analysis and model triage.</li>
+<li><strong>Rules:</strong> a baseline of YARA-X signatures (Nextron Systems&#x27; open signature-base under the Detection Rule License 1.1, plus SecOpsAI&#x27;s YARA rules), and SecOpsAI&#x27;s behaviour rules, which combine signals across a whole package rather than matching strings in one file.</li>
+</ul>
+<h2>Results</h2>
+<div class="table-scroll"><table>
+<thead><tr><th></th><th>Signatures only</th><th>+ SecOpsAI behaviour rules</th></tr></thead>
+<tbody><tr><td>Overall recall (3,055 samples)</td><td>13.3%</td><td>39.0%</td></tr><tr><td>Hijacked npm releases (150)</td><td>63.3%</td><td>67.3%</td></tr><tr><td>npm packages built to be malicious (1,888)</td><td>5.3%</td><td>34.3%</td></tr><tr><td>PyPI packages built to be malicious (989)</td><td>20.8%</td><td>44.1%</td></tr><tr><td>Samples discovered in 2026 (662)</td><td>7.1%</td><td>27.6%</td></tr><tr><td>Popular npm packages flagged (999)</td><td>0%</td><td>0%</td></tr><tr><td>Popular PyPI packages flagged (476)</td><td>0%</td><td>0.4%</td></tr></tbody>
+</table></div>
+<h2>What changed</h2>
+<p>The first run showed that signature rules are strong on hijacked releases of real packages, where recent supply-chain rules match well-documented campaigns, and weak on throwaway packages built to steal data. To see what the misses had in common without exporting any malware, the benchmark records behaviour flags for every package (for example: collects system information, sends an HTTP request, reads the home directory, contacts a request-capture service, uses a version number of 99 or higher) and compares how common each flag is in missed malware against clean packages.</p>
+<p>Seven behaviour combinations stood out, and we turned them into SecOpsAI behaviour rules. Shipped naively they lifted recall to 44.5% but flagged 0.6% of popular npm and 2.1% of popular PyPI packages, including package managers, test runners and well-known libraries. Tightening them using the benchmark&#x27;s own rows (requiring a throwaway-package shape for reconnaissance rules, real service domains for exfiltration rules, and excluding calendar-style version numbers) brought false positives inside a 0.5% budget at 39% recall.</p>
+<h2>Caveats</h2>
+<ul>
+<li><strong>Selection bias:</strong> the malware dataset was largely found by one rule set (GuardDog), so it under-represents malware those rules miss.</li>
+<li><strong>Optimism on 2026:</strong> the behaviour rules were chosen from a profile that included 2026 samples, so 27.6% overstates recall on attacks we have never seen. We will re-measure on samples discovered after this post.</li>
+<li><strong>Funnel only:</strong> this measures the first stage. Later stages (full static analysis, comparison with the previous version, model triage, human review) change what is ultimately reported.</li>
+<li><strong>Remaining false positives:</strong> two popular PyPI packages are flagged because they legitimately reference a webhook or tunnelling service. We accept these within the budget rather than weaken the rules.</li>
+</ul>
+<h2>What runs now</h2>
+<p>The benchmark re-runs weekly and fails if false positives exceed 0.5% of popular packages. In production, rules whose hits are mostly judged benign raise an alert for review; rules are never disabled automatically.</p>
+<h2>References</h2>
+<ul>
+<li><a class="inline-ref" href="https://github.com/DataDog/malicious-software-packages-dataset" rel="noopener noreferrer" target="_blank">https://github.com/DataDog/malicious-software-packages-dataset</a></li>
+<li><a class="inline-ref" href="https://github.com/Neo23x0/signature-base" rel="noopener noreferrer" target="_blank">https://github.com/Neo23x0/signature-base</a></li>
+<li><a class="inline-ref" href="https://github.com/hugovk/top-pypi-packages" rel="noopener noreferrer" target="_blank">https://github.com/hugovk/top-pypi-packages</a></li>
+</ul>
+
+        <div class="share-bar" data-share-bar>
+          <p class="eyebrow">Share this research</p>
+          <div class="share-links">
+            <button class="share-link share-native" type="button" data-share-native data-share-url="https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026.html" data-share-title="Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives" hidden>Share…</button>
+            <a class="share-link" href="https://x.com/intent/post?text=Measuring%20a%20malicious-package%20funnel%3A%20from%2013%25%20to%2039%25%20recall%20at%20under%200.5%25%20false%20positives&amp;url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fmeasuring-malicious-package-funnel-recall-2026.html" target="_blank" rel="noopener noreferrer" aria-label="Share on X">X</a><a class="share-link" href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fmeasuring-malicious-package-funnel-recall-2026.html" target="_blank" rel="noopener noreferrer" aria-label="Share on LinkedIn">LinkedIn</a><a class="share-link" href="https://bsky.app/intent/compose?text=Measuring%20a%20malicious-package%20funnel%3A%20from%2013%25%20to%2039%25%20recall%20at%20under%200.5%25%20false%20positives%20https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fmeasuring-malicious-package-funnel-recall-2026.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Bluesky">Bluesky</a><a class="share-link" href="https://www.reddit.com/submit?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fmeasuring-malicious-package-funnel-recall-2026.html&amp;title=Measuring%20a%20malicious-package%20funnel%3A%20from%2013%25%20to%2039%25%20recall%20at%20under%200.5%25%20false%20positives" target="_blank" rel="noopener noreferrer" aria-label="Share on Reddit">Reddit</a><a class="share-link" href="https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fmeasuring-malicious-package-funnel-recall-2026.html&amp;t=Measuring%20a%20malicious-package%20funnel%3A%20from%2013%25%20to%2039%25%20recall%20at%20under%200.5%25%20false%20positives" target="_blank" rel="noopener noreferrer" aria-label="Share on Hacker News">Hacker News</a><a class="share-link" href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fmeasuring-malicious-package-funnel-recall-2026.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Facebook">Facebook</a>
+            <a class="share-link" href="mailto:?subject=Measuring%20a%20malicious-package%20funnel%3A%20from%2013%25%20to%2039%25%20recall%20at%20under%200.5%25%20false%20positives&amp;body=Measuring%20a%20malicious-package%20funnel%3A%20from%2013%25%20to%2039%25%20recall%20at%20under%200.5%25%20false%20positives%0A%0Ahttps%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fmeasuring-malicious-package-funnel-recall-2026.html" aria-label="Share by email">Email</a>
+            <button class="share-link" type="button" data-copy="https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026.html" aria-label="Copy link to this post">Copy link</button>
+          </div>
+        </div>
+        <section class="comments" data-comments data-slug="measuring-malicious-package-funnel-recall-2026">
+          <h2>Comments</h2>
+          <p>Comments are moderated before publication. Do not post secrets, tokens, customer data, or exploit payloads.</p>
+          <div class="comment-list" data-comment-list></div>
+          <form data-comment-form>
+            <input name="name" maxlength="80" placeholder="Name or handle" required />
+            <input name="email" type="email" maxlength="160" placeholder="Email for moderation only" required />
+            <input name="website" tabindex="-1" autocomplete="off" style="display:none" />
+            <textarea name="body" maxlength="2000"
+              placeholder="Add source-backed context, a mitigation note, or a question..."
+              required></textarea>
+            <div class="turnstile-slot" data-turnstile></div>
+            <button type="submit">Submit for moderation</button>
+            <p data-comment-status></p>
+          </form>
+        </section>
+      </article>
+      <aside class="side">
+        <section class="card">
+          <p class="eyebrow">Operator note</p>
+          <p>Source-backed posts are generated as drafts first and require explicit publishing.</p>
+        </section>
+        <section class="card command-panel">
+          <p class="eyebrow">Operator commands</p>
+          <button class="command-chip" type="button" data-copy="secopsai blog rebuild-feeds"><code>secopsai blog rebuild-feeds</code></button>
+<button class="command-chip" type="button" data-copy="secopsai supply-chain reconcile-history --include-advisories"><code>secopsai supply-chain reconcile-history --include-advisories</code></button>
+        </section>
+
+        <section class="card">
+          <p class="eyebrow">References</p>
+          <ul><li><a href="https://github.com/DataDog/malicious-software-packages-dataset" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/Neo23x0/signature-base" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/hugovk/top-pypi-packages" rel="noopener noreferrer" target="_blank">github.com</a></li></ul>
+        </section>
+        <section class="card">
+          <p class="eyebrow">Related posts</p>
+          <p>No related posts yet.</p>
+        </section>
+      </aside>
+      </div>
+    </main>
+    <script src="/assets/blog.js" defer></script>
+    <script src="/assets/comments.js" defer></script>
+  </body>
+</html>

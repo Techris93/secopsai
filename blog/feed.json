@@ -7,6 +7,30 @@
       "affected_packages": [],
       "authors": [
         {
+          "name": "SecOpsAI Threat Research"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/measuring-malicious-package-funnel-recall-2026.png",
+      "date_modified": "2026-10-10T23:22:15Z",
+      "date_published": "2026-10-10T23:18:50Z",
+      "id": "https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026.html",
+      "image": "https://blog.secopsai.dev/assets/social/measuring-malicious-package-funnel-recall-2026.png",
+      "images": [],
+      "reading_time_minutes": 3,
+      "severity": "info",
+      "summary": "Public signatures caught 13% of 3,055 confirmed malicious packages. SecOpsAI behaviour rules, built from what they missed, raised that to 39% while flagging under 0.5% of popular packages.",
+      "tags": [
+        "Original Research",
+        "Detection Engineering",
+        "Supply Chain"
+      ],
+      "title": "Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives",
+      "url": "https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
           "name": "SecOpsAI Research"
         }
       ],

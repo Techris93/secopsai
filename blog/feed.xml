@@ -6,7 +6,14 @@
     <link>https://blog.secopsai.dev/</link>
     <description>Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.</description>
     <language>en-us</language>
-    <lastBuildDate>Fri, 09 Oct 2026 15:22:52 GMT</lastBuildDate>
+    <lastBuildDate>Sat, 10 Oct 2026 23:22:15 GMT</lastBuildDate>
+    <item>
+      <title>Measuring a malicious-package funnel: from 13% to 39% recall at under 0.5% false positives</title>
+      <link>https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026.html</link>
+      <guid>https://blog.secopsai.dev/posts/measuring-malicious-package-funnel-recall-2026.html</guid>
+      <pubDate>Sat, 10 Oct 2026 23:18:50 GMT</pubDate>
+      <description>Public signatures caught 13% of 3,055 confirmed malicious packages. SecOpsAI behaviour rules, built from what they missed, raised that to 39% while flagging under 0.5% of popular packages.</description>
+    </item>
     <item>
       <title>Anatomy of a false positive: clearing a critical npm alert in twenty minutes</title>
       <link>https://blog.secopsai.dev/posts/anatomy-of-a-false-positive-npm-triage.html</link>
