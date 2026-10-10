@@ -1,0 +1,57 @@
+name: Backscan
+
+# Re-scans recent npm and PyPI releases recorded in the ledger with the
+# current rules. Read-only: the ledger copy is discarded and no alerts are
+# raised; the ranked hit list is uploaded for analyst review.
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: How many days back
+        default: "30"
+      limit:
+        description: Maximum releases to re-scan
+        default: "20000"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backscan
+  cancel-in-progress: false
+
+jobs:
+  backscan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      LEDGER_STORE_URL: https://ledger.secopsai.dev
+      LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Fetch pinned YARA rule packs
+        run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
+
+      - name: Re-scan recent releases
+        run: python -u scripts/backscan.py --days "${{ inputs.days }}" --limit "${{ inputs.limit }}" --max-seconds 18000 --out "$RUNNER_TEMP/backscan.json"
+
+      - name: Upload hit list
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backscan
+          path: ${{ runner.temp }}/backscan.json
+          retention-days: 30
