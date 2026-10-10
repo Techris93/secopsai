@@ -47,6 +47,8 @@ jobs:
       SECOPSAI_CORE_COORDINATOR_URL: https://core.secopsai.dev
       SECOPSAI_CORE_WORKER_ID: github-actions-research-worker
       SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
+      # Read-only public API calls for the GitHub Actions tag watch.
+      SECOPSAI_GITHUB_TOKEN: ${{ github.token }}
       SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL: https://core.secopsai.dev/api/v1/research/alerts/webhook
       SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET: ${{ secrets.SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET }}
       SECOPSAI_RESEARCH_ALERT_EMAIL: research@secopsai.dev

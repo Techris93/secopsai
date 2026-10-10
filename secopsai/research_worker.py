@@ -663,6 +663,16 @@ def run_worker_loop(
                 capture_exception(exc, context={"component": "content_funnel"})
                 last_summary = dict(last_summary)
                 last_summary["content_funnel"] = {"status": "degraded", "error": str(exc)[:500]}
+            # Popular GitHub Actions: repointed tags and malicious new releases.
+            try:
+                from secopsai.research_actions_watch import run as run_actions_watch
+
+                last_summary = dict(last_summary)
+                last_summary["actions_watch"] = run_actions_watch(db_path=db_path)
+            except Exception as exc:
+                capture_exception(exc, context={"component": "actions_watch"})
+                last_summary = dict(last_summary)
+                last_summary["actions_watch"] = {"status": "degraded", "error": str(exc)[:500]}
             cycles += 1
             if core_edge.enabled:
                 # Publish the final heartbeat only after ontology sync and
