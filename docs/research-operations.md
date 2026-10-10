@@ -251,6 +251,24 @@ Rules the pipeline enforces:
 - Every factual sentence in the draft is checked against the claim ledger;
   unsupported claims block the draft.
 
+### What the draft contains
+
+`research case draft-blog` builds the post from the case record, so every
+section is backed by data the gates above have checked:
+
+| Section | Built from |
+| --- | --- |
+| TL;DR | Affected packages, graded assessment, registry status, the first recommended action |
+| Affected packages | Case subjects with their recorded registry state |
+| Status and takedown tracker | Case creation, disclosures (recipient, sent date), each version's registry state, OSV id when recorded |
+| Our assessment | Calibrated confidence graded as Confirmed (90+ **and** a recorded malicious verdict), High (75+), Moderate (50+) or Low |
+| MITRE ATT&CK mapping | Techniques matched in the case's own evidence, IOCs and rules; each row cites the evidence and the term that triggered it |
+| Indicators of compromise | Case IOCs, with JSON, CSV and STIX 2.1 downloads written to `blog/iocs/<slug>.*` at publish time |
+| Recommended actions | Ecosystem-specific checks (`npm ls`, `pip show`), plus credential rotation when credential access is mapped |
+
+Keep the case accurate rather than editing the post: update registry state
+(`research subject registry-check` re-checks the registry; `research subject state <id> --registry-state removed` records it by hand), disclosures and verdicts, then redraft.
+
 The model-backed specialist path (`research reliability queue-specialist`
 with an execute tier) can replace step 4 when the intelligence bridge is
 healthy; see [Model bridge](#model-bridge).
@@ -314,13 +332,18 @@ npx wrangler d1 execute secopsai-blog-comments --remote \
 
 ```bash
 secopsai intelligence bridge doctor
-secopsai intelligence bridge configure-models --primary gpt-6.1-sol \
-  --fallback xai/grok-4.6 --fallback google-antigravity/gemini-3.5-flash-low \
-  --fallback-mode quota_auth
+secopsai intelligence bridge configure-models --primary gpt-6-luna \
+  --fallback gpt-5.6-luna --fallback anthropic/claude-haiku-5-5 \
+  --fallback-mode any_provider
 ```
 
 `quota_auth` falls back only when the primary model is out of quota or
-fails authentication. Choosing fallbacks decides which providers receive
+fails authentication; `any_provider` also crosses providers (here, from the
+ChatGPT subscription to the Claude subscription). Rule hits from the
+research worker reach the bridge only in remote mode; see
+[Remote mode](intelligence-integrations.md#remote-mode-hosted-core-queue).
+If a subscription limit was reset but models still return 429, refresh
+opencodex's cached quota with `ocx account refresh openai`. Choosing fallbacks decides which providers receive
 minimized research context; pick providers you are comfortable with.
 
 ## Verification record

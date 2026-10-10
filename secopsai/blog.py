@@ -5,6 +5,7 @@ import copy
 import datetime as _dt
 import email.utils
 import hashlib
+import contextvars
 import html
 import ipaddress
 import json
@@ -18,7 +19,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import soc_store
 
@@ -175,7 +176,7 @@ def _redact_preserving_structured_hashes(text: Any, hashes: Iterable[Any]) -> st
         if not re.fullmatch(r"(?:[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64})", normalized):
             continue
         marker = f"SECOPSAI_PUBLIC_HASH_{index}"
-        value = value.replace(str(candidate), marker)
+        value = re.sub(re.escape(str(candidate).strip()), marker, value, flags=re.IGNORECASE)
         protected[marker] = normalized
     value = redact(value)
     for marker, normalized in protected.items():
@@ -241,10 +242,25 @@ def _collapse_adjacent_duplicate_words(value: Any) -> str:
     return re.sub(r"\b([A-Z][\w.-]+)\s+\1\b", r"\1", text)
 
 
+# Hashes a post publishes as IOCs; set while rendering that post so the
+# secret-scrubbing redaction does not blank them.
+_PUBLIC_HASHES: contextvars.ContextVar[Tuple[str, ...]] = contextvars.ContextVar("public_hashes", default=())
+MARKDOWN_LINK_RE = re.compile(r"\[([^\]\n]{1,80})\]\((https?://[^\s)<>\"']+)\)")
+
+
 def _markdown_inline(text: str) -> str:
-    escaped = html.escape(redact(text))
+    hashes = _PUBLIC_HASHES.get()
+    escaped = html.escape(_redact_preserving_structured_hashes(text, hashes) if hashes else redact(text))
+    # [label](https://...) links; parked so the bare-URL pass skips them.
+    links: List[str] = []
+
+    def park(match: "re.Match[str]") -> str:
+        links.append(f'<a class="inline-ref" href="{match.group(2)}" rel="noopener noreferrer" target="_blank">{match.group(1)}</a>')
+        return f"\x00{len(links) - 1}\x00"
+
+    escaped = MARKDOWN_LINK_RE.sub(park, escaped)
     escaped = re.sub(
-        r"(https?://[^\s<]+)",
+        r"(https?://[^\s<\x00]+)",
         lambda match: (
             f'<a class="inline-ref" href="{match.group(1).rstrip(".,);")}" '
             f'rel="noopener noreferrer" target="_blank">{match.group(1).rstrip(".,);")}</a>'
@@ -252,6 +268,7 @@ def _markdown_inline(text: str) -> str:
         ),
         escaped,
     )
+    escaped = re.sub("\x00(\\d+)\x00", lambda match: links[int(match.group(1))], escaped)
     escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
     # Bold only outside inline code.
     parts = re.split(r"(<code>.*?</code>)", escaped)
@@ -712,6 +729,7 @@ def _public_post(post: Dict[str, Any]) -> Dict[str, Any]:
         title=public.get("title"),
     )
     public.pop("review_checklist", None)
+    public.pop("ioc_exports", None)  # written as files at publish time
     return public
 
 
@@ -1389,20 +1407,6 @@ def draft_research_case(
     findings = [item for item in case.get("findings", []) if isinstance(item, dict)]
     references = _safe_list([item.get("locator") for item in evidence if item.get("locator")], limit=20)
     packages = [item for item in subjects if item.get("subject_type") in {"package", "extension"}]
-    subject_lines = [
-        "| Type | Ecosystem | Subject | Version | Publisher |",
-        "| --- | --- | --- | --- | --- |",
-    ]
-    for item in subjects:
-        subject_lines.append(
-            "| {kind} | {ecosystem} | `{name}` | `{version}` | {publisher} |".format(
-                kind=redact(str(item.get("subject_type") or "other")),
-                ecosystem=redact(str(item.get("ecosystem") or "—")),
-                name=redact(str(item.get("name") or "")),
-                version=redact(str(item.get("version") or "—")),
-                publisher=redact(str(item.get("publisher") or "—")),
-            )
-        )
     evidence_lines = []
     for item in evidence:
         locator = f" - {item['locator']}" if item.get("locator") else ""
@@ -1423,31 +1427,44 @@ def draft_research_case(
         for item in findings
         if item.get("finding_id")
     ]
+    from secopsai import research_post
+
+    slug = slugify(f"{case_id}-{title}")
+    ioc_links = {label: f"{BASE_URL}/iocs/{slug}.{extension}" for label, extension in (("JSON", "json"), ("CSV", "csv"), ("STIX 2.1", "stix.json"))}
+    sections = research_post.render_sections(case, ioc_links=ioc_links)
     body = f"""# {title}
 
-## Executive Summary
+## TL;DR
 
-{summary}
+{sections['tldr']}
 
-## Research Scope
+## Affected Packages
 
-- Research case: `{case_id}`
-- Case type: `{case.get('case_type', 'other')}`
-- Severity: `{case.get('severity', 'medium')}`
-- Confidence: `{case.get('confidence', 0)}`
-- Disclosure status: `{case.get('disclosure_status', 'not_started')}`
+{sections['affected']}
 
-## Affected Subjects
+## Status and Takedown Tracker
 
-{chr(10).join(subject_lines) if subjects else '- No affected subjects recorded.'}
+{sections['tracker']}
 
 ## Technical Evidence
 
 {chr(10).join(evidence_lines) or '- Evidence summary pending final editorial review.'}
 
+## Our Assessment
+
+{sections['assessment']}
+
+## MITRE ATT&CK Mapping
+
+{sections['attack']}
+
 ## Indicators of Compromise
 
-{chr(10).join(ioc_lines) or '- No structured IOCs were identified in this investigation.'}
+{sections['iocs']}
+
+## Detection
+
+{sections['detection']}
 
 ## SecOpsAI Detection Context
 
@@ -1455,10 +1472,7 @@ def draft_research_case(
 
 ## Recommended Actions
 
-- Block confirmed malicious packages, domains, URLs, or hashes in applicable controls.
-- Review manifests, lockfiles, build logs, endpoint telemetry, and credential exposure for affected subjects.
-- Rotate credentials when installation, execution, or exfiltration is confirmed.
-- Preserve artifacts and timestamps needed for incident response and coordinated disclosure.
+{sections['actions']}
 
 ## Disclosure
 
@@ -1477,7 +1491,7 @@ This draft reflects disclosure state `{case.get('disclosure_status', 'not_starte
         severity=str(case.get("severity") or "medium"),
         categories=categories,
         sources=references,
-        slug=slugify(f"{case_id}-{title}"),
+        slug=slug,
     )
     post.update(
         {
@@ -1505,6 +1519,10 @@ This draft reflects disclosure state `{case.get('disclosure_status', 'not_starte
             "references": references,
             "research_case_id": case_id,
             "disclosure_status": case.get("disclosure_status"),
+            "confidence_grade": research_post.confidence_grade(case)["label"],
+            "attack_techniques": [item["technique"] for item in research_post.attack_mapping(case)],
+            "ioc_links": ioc_links,
+            "ioc_exports": research_post.ioc_exports(case, generated_at=_utc_now(), post_url=_post_url(slug)),
             "body_markdown": _redact_preserving_structured_hashes(
                 verified_body or body,
                 [item.get("value", "") for item in iocs if item.get("ioc_type") in {"md5", "sha1", "sha256"}],
@@ -3550,6 +3568,27 @@ def _render_card_thumbnail(post: Dict[str, Any]) -> str:
     return f'<div class="post-thumb"><img src="{html.escape(src)}" alt="{html.escape(alt)}" loading="lazy" decoding="async" /></div>'
 
 
+def _wrap_tldr(body_html: str) -> str:
+    """Box the TL;DR list so readers can act from the first screen."""
+    return re.sub(r"<h2>TL;DR</h2>\s*(<ul>.*?</ul>)", r'<section class="tldr" aria-label="TL;DR"><h2>TL;DR</h2>\1</section>', body_html, count=1, flags=re.S)
+
+
+def _render_ioc_card(post: Dict[str, Any]) -> str:
+    links = post.get("ioc_links") if isinstance(post.get("ioc_links"), dict) else {}
+    safe = [(str(label), str(url)) for label, url in links.items() if str(url).startswith(BASE_URL + "/iocs/")]
+    if not safe:
+        return ""
+    items = "".join(f'<li><a href="{html.escape(url)}" download>{html.escape(label)}</a></li>' for label, url in safe)
+    grade = html.escape(str(post.get("confidence_grade") or ""))
+    techniques = " ".join(f'<span class="pill">{html.escape(str(item))}</span>' for item in (post.get("attack_techniques") or [])[:8])
+    return f"""        <section class="card ioc-card">
+          <p class="eyebrow">Indicators</p>
+          {f'<p>Assessment: <strong>{grade}</strong></p>' if grade else ''}
+          <ul>{items}</ul>
+          {f'<div class="tags">{techniques}</div>' if techniques else ''}
+        </section>"""
+
+
 def _render_post_html(post: Dict[str, Any]) -> str:
     post = _public_post(post)
     slug = str(post["slug"])
@@ -3563,7 +3602,12 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     severity_class = _badge_class(post.get("severity"))
     author = html.escape(_post_author(post))
     reading_time = _post_reading_time(post)
-    body_html = markdown_to_html(str(post.get("body_markdown") or ""))
+    public_hashes = tuple(str(value) for value in post.get("iocs") or [] if re.fullmatch(r"[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64}", str(value)))
+    token = _PUBLIC_HASHES.set(public_hashes)
+    try:
+        body_html = _wrap_tldr(markdown_to_html(str(post.get("body_markdown") or "")))
+    finally:
+        _PUBLIC_HASHES.reset(token)
     social_image = str(post.get("social_image") or _social_card_src(slug))
     social_alt = str(post.get("social_image_alt") or f"SecOpsAI social preview card for {raw_title}")
     hero_media = _render_hero_media(post)
@@ -3650,6 +3694,7 @@ def _render_post_html(post: Dict[str, Any]) -> str:
           <p class="eyebrow">Operator commands</p>
           {_render_command_blocks(post)}
         </section>
+{_render_ioc_card(post)}
         <section class="card">
           <p class="eyebrow">References</p>
           {_render_reference_links(post)}
@@ -3690,8 +3735,16 @@ def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPa
     post["published_at"] = post.get("published_at") or _utc_now()
     post["updated_at"] = _utc_now()
     draft_record = dict(post)
+    exports = post.get("ioc_exports") if isinstance(post.get("ioc_exports"), dict) else {}
     post = _ensure_social_image(_drop_missing_local_media(_public_post(post), paths), paths)
     paths.posts.mkdir(parents=True, exist_ok=True)
+    if exports:
+        from secopsai.research_post import iter_ioc_files
+
+        ioc_dir = paths.root / "iocs"
+        ioc_dir.mkdir(parents=True, exist_ok=True)
+        for filename, content in iter_ioc_files(str(post["slug"]), exports):
+            (ioc_dir / filename).write_text(content, encoding="utf-8")
     _write_json(_post_json_path(str(post["slug"]), paths), post)
     _post_html_path(str(post["slug"]), paths).write_text(
         _render_post_html(post),

@@ -668,3 +668,12 @@ button.button {
   .topbar, .side, .footer-bottom nav, .feed-actions { display: none; }
   body { background: #fff; }
 }
+
+/* Research posts: TL;DR box and indicator downloads */
+.tldr { background: var(--note-bg); border-left: 3px solid var(--note); padding: 4px 20px 8px; margin: 0 0 28px; border-radius: var(--radius); }
+.tldr h2 { margin-top: 14px; font-family: var(--mono); font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--note); }
+.tldr ul { margin: 8px 0; padding-left: 18px; }
+.tldr li { margin: 6px 0; }
+.ioc-card ul { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.ioc-card a { font-family: var(--mono); font-size: 12px; border: 1px solid var(--rule); padding: 4px 10px; border-radius: var(--radius); text-decoration: none; }
+.ioc-card a:hover { border-color: var(--note); color: var(--note); }
