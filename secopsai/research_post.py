@@ -37,7 +37,9 @@ GRADES: Tuple[Tuple[int, str, str], ...] = (
     (50, "Moderate confidence", "The evidence is consistent with malicious intent, but a benign explanation has not been ruled out."),
     (0, "Low confidence", "Early signals only; published to warn, and subject to revision."),
 )
-MALICIOUS_VERDICTS = {"malicious", "confirmed_malicious", "true_positive", "compromised"}
+# Research verdicts are credible / likely / inconclusive / not_substantiated /
+# benign / retracted; only "credible" is a confirmation.
+MALICIOUS_VERDICTS = {"credible"}
 
 # (technique id, name, tactic, trigger pattern).  Patterns are matched against
 # the case's evidence, IOC tags and summary; the first matching term is cited.

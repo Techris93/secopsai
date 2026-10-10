@@ -236,7 +236,25 @@ secopsai research case update $C --status ready_to_publish --actor "<editor>"
 secopsai research case draft-blog $C
 secopsai blog publish blog/drafts/<draft>.json --publish
 gh workflow run blog-ops.yml -f action=deploy
+
+# 9. Advisory and OSV (credible verdicts only)
+secopsai research osv check $C          # lists anything still blocking
+secopsai research osv publish $C        # blog /advisories/SECOPSAI-YYYY-NNNN.html + OSV JSON
+secopsai research osv submit $C     # dry run: shows the files and the PR it would open
+secopsai research osv submit $C --confirm   # opens the public PR to ossf/malicious-packages
+# after OpenSSF merges and assigns ids:
+secopsai research osv record-ids $C MAL-2026-1234
+secopsai research osv publish $C        # republish so the advisory lists the MAL- alias
 ```
+
+Advisories and OSV reports claim a package is malicious, so they need a
+`credible` verdict, an approved publication review and no running embargo.
+Each case gets one stable id; OSV reports follow the
+[malicious-packages contribution rules](https://github.com/ossf/malicious-packages/blob/main/CONTRIBUTING.md)
+(one package per report, no `id` or `summary`, IOCs under
+`database_specific.iocs`) and are validated before anything is pushed. The
+recorded `MAL-` ids appear as advisory aliases and in the post's takedown
+tracker.
 
 Rules the pipeline enforces:
 

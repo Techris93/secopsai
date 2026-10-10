@@ -677,3 +677,4 @@ button.button {
 .ioc-card ul { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .ioc-card a { font-family: var(--mono); font-size: 12px; border: 1px solid var(--rule); padding: 4px 10px; border-radius: var(--radius); text-decoration: none; }
 .ioc-card a:hover { border-color: var(--note); color: var(--note); }
+.post-body li code { overflow-wrap: anywhere; word-break: break-all; }

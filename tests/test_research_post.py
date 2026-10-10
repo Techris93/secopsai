@@ -30,7 +30,7 @@ def _case(**overrides):
             {"ioc_type": "sha256", "value": "A" * 64, "confidence": 100, "tags": [], "status": "active"},
             {"ioc_type": "domain", "value": "it's-evil.example", "confidence": 80, "tags": [], "status": "active"},
         ],
-        "verdicts": [{"verdict": "malicious", "confidence": 95, "rationale": "Reviewer confirmed the exfiltration code.", "created_at": "2026-10-09T12:00:00Z"}],
+        "verdicts": [{"verdict": "credible", "confidence": 95, "rationale": "Reviewer confirmed the exfiltration code.", "created_at": "2026-10-09T12:00:00Z"}],
         "disclosures": [{"recipient": "npm security", "status": "sent", "sent_at": "2026-10-09T13:00:00Z", "created_at": "2026-10-09T12:30:00Z"}],
         "rules": [{"rule_type": "yara", "name": "SecOpsAI_Npmrc_Exfil"}],
         "findings": [],

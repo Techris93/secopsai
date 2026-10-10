@@ -4148,8 +4148,8 @@ def _render_not_found_page() -> str:
 """
 
 
-def _render_sitemap(posts: List[Dict[str, Any]]) -> str:
-    entries = [(f"{BASE_URL}/", ""), (f"{BASE_URL}/posts/", "")]
+def _render_sitemap(posts: List[Dict[str, Any]], extra: Iterable[tuple] = ()) -> str:
+    entries = [(f"{BASE_URL}/", ""), (f"{BASE_URL}/posts/", ""), *extra]
     for post in posts:
         lastmod = _post_date(post.get("updated_at") or post.get("published_at"))
         entries.append((_post_url(str(post["slug"])), lastmod))
@@ -4175,13 +4175,157 @@ def _render_security_txt(now: Optional[_dt.datetime] = None) -> str:
     )
 
 
+ADVISORY_ID_RE = re.compile(r"SECOPSAI-\d{4}-\d{4,}")
+
+
+def _load_advisories(paths: BlogPaths) -> List[Dict[str, Any]]:
+    folder = paths.root / "advisories"
+    docs = []
+    for path in sorted(folder.glob("SECOPSAI-*.json")) if folder.is_dir() else []:
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if ADVISORY_ID_RE.fullmatch(str(doc.get("id") or "")) and path.stem == doc["id"]:
+            docs.append(doc)
+    return sorted(docs, key=lambda doc: str(doc.get("published") or ""), reverse=True)
+
+
+def _advisory_sitemap_entries(paths: BlogPaths) -> List[tuple]:
+    docs = _load_advisories(paths)
+    entries = [(f"{BASE_URL}/advisories/", "")] if docs else []
+    return entries + [(f"{BASE_URL}/advisories/{doc['id']}.html", _post_date(doc.get("modified"))) for doc in docs]
+
+
+def _advisory_page(*, title: str, description: str, canonical: str, body: str) -> str:
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{html.escape(title)} · SecOpsAI Advisories</title>
+    <meta name="description" content="{html.escape(description)}" />
+    <link rel="canonical" href="{html.escape(canonical)}" />
+    <meta property="og:title" content="{html.escape(title)}" />
+    <meta property="og:description" content="{html.escape(description)}" />
+    <meta property="og:url" content="{html.escape(canonical)}" />
+    <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/blog.css" />
+  </head>
+  <body>
+    {_render_site_header(subtitle="Advisories", links=[("/", "Blog Home"), ("/advisories/", "Advisories"), ("/advisories/index.json", "Advisory feed"), ("https://docs.secopsai.dev/", "Docs")])}
+    <main>
+{body}
+    </main>
+    {_render_site_footer()}
+    <script src="/assets/blog.js" defer></script>
+  </body>
+</html>
+"""
+
+
+def _render_advisory_html(doc: Dict[str, Any]) -> str:
+    advisory_id = str(doc["id"])
+    secopsai_meta = (doc.get("database_specific") or {}).get("secopsai") or {}
+    registry = secopsai_meta.get("registry_status") or {}
+    row_items = []
+    for entry in doc.get("affected") or []:
+        package = entry.get("package") or {}
+        name = str(package.get("name") or "")
+        for version in [str(item) for item in entry.get("versions") or []] or ["all versions"]:
+            state = registry.get(f"{name}@{version}") or "unknown"
+            row_items.append(f"<tr><td>{html.escape(str(package.get('ecosystem') or ''))}</td><td><code>{html.escape(name)}</code></td>"
+                             f"<td>{html.escape(version)}</td><td>{html.escape(str(state))}</td></tr>")
+    rows = "".join(row_items[:200])
+    details = "".join(f"<p>{html.escape(part.strip())}</p>" for part in str(doc.get("details") or "").split("\n\n") if part.strip())
+    iocs = (doc.get("database_specific") or {}).get("iocs") or {}
+    ioc_items = [f"<li><code>{html.escape(str(value))}</code> <span class=\"muted\">{kind[:-1] if kind.endswith('s') else kind}</span></li>"
+                 for kind in ("domains", "urls", "ips") for value in iocs.get(kind) or []]
+    ioc_items += [f"<li><code>{html.escape(str(digest))}</code> <span class=\"muted\">{html.escape(algorithm)}</span></li>"
+                  for item in iocs.get("files") or [] for algorithm, digest in (item.get("digests") or {}).items()]
+    references = "".join(f'<li><a href="{html.escape(str(ref.get("url")))}" rel="noopener">{html.escape(str(ref.get("type", "WEB")).title())}: {html.escape(str(ref.get("url")))}</a></li>'
+                         for ref in doc.get("references") or [] if str(ref.get("url") or "").startswith("https://"))
+    aliases = ", ".join(html.escape(str(alias)) for alias in doc.get("aliases") or [])
+    techniques = " ".join(f'<span class="pill">{html.escape(str(item))}</span>' for item in secopsai_meta.get("attack_techniques") or [])
+    canonical = f"{BASE_URL}/advisories/{advisory_id}.html"
+    body = f"""      <header class="shell article-hero">
+        <div class="breadcrumb"><a href="/advisories/">Advisories</a><span>&gt;</span><span>{html.escape(advisory_id)}</span></div>
+        <p class="eyebrow">{html.escape(advisory_id)} • Malicious package</p>
+        <h1>{html.escape(str(doc.get("summary") or advisory_id))}</h1>
+        <div class="meta">
+          <span>Published: {html.escape(_post_date(doc.get("published")))}</span>
+          <span>Updated: {html.escape(_post_date(doc.get("modified")))}</span>
+          {f'<span>Assessment: {html.escape(str(secopsai_meta.get("confidence")))}</span>' if secopsai_meta.get("confidence") else ''}
+          {f'<span>Also known as: {aliases}</span>' if aliases else ''}
+        </div>
+      </header>
+      <div class="shell post-layout">
+        <article class="post-body">
+          <h2>Affected packages</h2>
+          <div class="table-scroll"><table><thead><tr><th>Ecosystem</th><th>Package</th><th>Version</th><th>Registry status</th></tr></thead><tbody>{rows}</tbody></table></div>
+          <h2>Details</h2>
+          {details}
+          {f'<h2>Indicators of compromise</h2><ul>{"".join(ioc_items)}</ul>' if ioc_items else ''}
+          {f'<h2>References</h2><ul>{references}</ul>' if references else ''}
+        </article>
+        <aside class="side">
+          <section class="card ioc-card">
+            <p class="eyebrow">Machine-readable</p>
+            <ul><li><a href="/advisories/{html.escape(advisory_id)}.json" download>OSV JSON</a></li><li><a href="/advisories/index.json">All advisories</a></li></ul>
+            {f'<div class="tags">{techniques}</div>' if techniques else ''}
+          </section>
+        </aside>
+      </div>"""
+    return _advisory_page(title=f"{advisory_id}: {doc.get('summary') or ''}", description=str(doc.get("summary") or advisory_id), canonical=canonical, body=body)
+
+
+def _render_advisories_index(docs: List[Dict[str, Any]]) -> str:
+    rows = "".join(
+        "<tr>"
+        f'<td><a href="/advisories/{html.escape(str(doc["id"]))}.html">{html.escape(str(doc["id"]))}</a></td>'
+        f"<td>{html.escape(str(doc.get('summary') or ''))}</td>"
+        f"<td>{html.escape(_post_date(doc.get('published')))}</td>"
+        f"<td>{html.escape(', '.join(str(alias) for alias in doc.get('aliases') or []) or '—')}</td>"
+        "</tr>"
+        for doc in docs
+    )
+    table = (f'<div class="table-scroll"><table><thead><tr><th>Advisory</th><th>Summary</th><th>Published</th><th>OSV</th></tr></thead><tbody>{rows}</tbody></table></div>'
+             if docs else "<p>No advisories published yet.</p>")
+    body = f"""      <section class="hero">
+        <div class="shell">
+          <p class="eyebrow">SecOpsAI Research</p>
+          <h1>Malicious package advisories</h1>
+          <p class="lede">Packages SecOpsAI has confirmed as malicious. Each advisory is also available as OSV JSON, and reports are submitted to the OpenSSF malicious-packages database that feeds OSV.dev.</p>
+        </div>
+      </section>
+      <div class="shell"><div class="post-body">{table}</div></div>"""
+    return _advisory_page(title="Malicious package advisories", description="Malicious packages confirmed by SecOpsAI Research, with OSV data.", canonical=f"{BASE_URL}/advisories/", body=body)
+
+
+def _write_advisories(paths: BlogPaths) -> List[Path]:
+    docs = _load_advisories(paths)
+    folder = paths.root / "advisories"
+    if not docs and not folder.is_dir():
+        return []
+    folder.mkdir(parents=True, exist_ok=True)
+    outputs = {folder / "index.html": _render_advisories_index(docs),
+               folder / "index.json": json.dumps([{key: doc.get(key) for key in ("id", "summary", "published", "modified", "aliases")} for doc in docs], indent=2) + "\n"}
+    outputs.update({folder / f"{doc['id']}.html": _render_advisory_html(doc) for doc in docs})
+    for path, content in outputs.items():
+        path.write_text(content, encoding="utf-8")
+    return list(outputs)
+
+
 def _write_site_metadata(posts: List[Dict[str, Any]], paths: BlogPaths) -> List[Path]:
     well_known = paths.root / ".well-known"
     well_known.mkdir(parents=True, exist_ok=True)
     outputs = {
         paths.root / "404.html": _render_not_found_page(),
         paths.root / "robots.txt": f"User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: {BASE_URL}/sitemap.xml\n",
-        paths.root / "sitemap.xml": _render_sitemap(posts),
+        paths.root / "sitemap.xml": _render_sitemap(posts, _advisory_sitemap_entries(paths)),
         well_known / "security.txt": _render_security_txt(),
     }
     for path, content in outputs.items():
@@ -4279,7 +4423,7 @@ def rebuild(*, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
         '</rss>\n'
     )
     (paths.root / "feed.xml").write_text(rss_xml, encoding="utf-8")
-    metadata_paths = _write_site_metadata(posts, paths)
+    metadata_paths = [*_write_advisories(paths), *_write_site_metadata(posts, paths)]
     _write_published_archive(posts, paths)
     return {
         "posts": len(posts),

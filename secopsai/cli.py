@@ -2271,6 +2271,25 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     ioc_review.add_argument("--actor", default="analyst")
     ioc_review.add_argument("--db-path", default=None)
 
+    research_osv_parser = research_sub.add_parser("osv", help="Publish SecOpsAI advisories and OSV reports for confirmed malicious packages")
+    research_advisory_sub = research_osv_parser.add_subparsers(dest="research_osv_cmd", required=True)
+    for name, help_text in (
+        ("check", "Show whether a case can become an advisory"),
+        ("publish", "Write the advisory page and OSV JSON to the blog"),
+        ("prepare", "Write validated MAL-0000 reports for ossf/malicious-packages locally"),
+        ("submit", "Open the pull request to ossf/malicious-packages (dry run without --confirm)"),
+        ("record-ids", "Store the MAL- ids OpenSSF assigned"),
+    ):
+        advisory_cmd = research_advisory_sub.add_parser(name, help=help_text)
+        advisory_cmd.add_argument("case_id")
+        advisory_cmd.add_argument("--db-path", default=None)
+        advisory_cmd.add_argument("--actor", default="analyst")
+        if name == "prepare":
+            advisory_cmd.add_argument("--out-dir", default=None)
+        if name == "submit":
+            advisory_cmd.add_argument("--confirm", action="store_true", help="Actually fork, push and open the public pull request")
+        if name == "record-ids":
+            advisory_cmd.add_argument("osv_ids", nargs="+", help="Ids such as MAL-2026-1234")
     research_subject = research_sub.add_parser("subject", help="Record separate registry, artifact, and validation state")
     research_subject_sub = research_subject.add_subparsers(dest="research_subject_cmd", required=True)
     subject_state = research_subject_sub.add_parser("state")
@@ -3513,6 +3532,21 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = extract_ioc_candidates(args.case_id, artifact_id=args.artifact_id, db_path=args.db_path)
             else:
                 payload = review_ioc_candidate(args.candidate_id, decision=args.decision, actor=args.actor, db_path=args.db_path)
+        elif args.research_cmd == "osv":
+            from secopsai import research_osv
+
+            if args.research_osv_cmd == "check":
+                case = get_research_case(args.case_id, db_path=args.db_path)
+                blockers = research_osv.eligibility(case)
+                payload = {"case_id": case["case_id"], "eligible": not blockers, "blockers": blockers}
+            elif args.research_osv_cmd == "publish":
+                payload = research_osv.publish_advisory(args.case_id, db_path=args.db_path, actor=args.actor)
+            elif args.research_osv_cmd == "prepare":
+                payload = research_osv.prepare_osv_submission(args.case_id, db_path=args.db_path, out_dir=Path(args.out_dir) if args.out_dir else None)
+            elif args.research_osv_cmd == "submit":
+                payload = research_osv.submit_osv(args.case_id, confirm=args.confirm, db_path=args.db_path, actor=args.actor)
+            else:
+                payload = research_osv.record_osv_ids(args.case_id, args.osv_ids, db_path=args.db_path, actor=args.actor)
         elif args.research_cmd == "subject":
             if args.research_subject_cmd == "registry-check":
                 payload = check_registry_state(args.subject_id, db_path=args.db_path)
