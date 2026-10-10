@@ -276,9 +276,15 @@ def _bridge_context(action: Action, inputs: dict[str, Any], db_path: str | None)
             context["investigation_pipeline"] = pipeline_intelligence_context(pipeline_id, db_path=db_path)
         return _attach_ontology_context(context, _optional(inputs, "case_id") or _optional(inputs, "target_id"), "research_case", db_path, workspace_id=_optional(inputs, "workspace_id") or None)
     if action.name == "triage_artifact":
+        artifact_id = _target(inputs, "artifact_id")
+        inline = inputs.get("artifact_triage")
+        if isinstance(inline, dict) and inline.get("findings"):
+            # Queued by the hosted research worker: the minimized evidence
+            # windows travel with the job, because this bridge (on the
+            # operator's machine) has no copy of the cloud worker's ledger.
+            return {"artifact_triage": inline, "artifact_id": artifact_id}
         from secopsai.artifact_fleet import triage_show
 
-        artifact_id = _target(inputs, "artifact_id")
         artifact_db_path = inputs.get("artifact_db_path") or db_path
         triage = triage_show(artifact_id, db_path=artifact_db_path)
         return _attach_ontology_context({"artifact_triage": triage.get("context") or {}, "artifact_id": artifact_id}, artifact_id, "artifact", db_path, workspace_id=_optional(inputs, "workspace_id") or None)

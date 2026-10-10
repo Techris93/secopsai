@@ -672,6 +672,17 @@ def run_worker_loop(
                     capture_exception(exc, context={"component": "research_case_sync"})
                     last_summary = dict(last_summary)
                     last_summary["research_case_sync"] = {"status": "degraded", "error": str(exc)[:500]}
+                # Rule hits go to the operator's model bridge (opencodex) via
+                # Core; verdicts come back here and annotate/resolve alerts.
+                try:
+                    from secopsai.research_ai_triage import sync as sync_ai_triage
+
+                    last_summary = dict(last_summary)
+                    last_summary["ai_triage"] = sync_ai_triage(core_edge, db_path=db_path)
+                except Exception as exc:
+                    capture_exception(exc, context={"component": "ai_triage"})
+                    last_summary = dict(last_summary)
+                    last_summary["ai_triage"] = {"status": "degraded", "error": str(exc)[:500]}
                 try:
                     ontology_result = materialize_recent(db_path=db_path, limit=100)
                     ontology_sync = core_edge.sync_ontology(ontology_result.get("snapshot") or {})

@@ -1,0 +1,60 @@
+name: Fast Lane
+
+# Started by the ledger-store Worker's per-minute cron when a high-impact
+# npm or PyPI package publishes a release. Diffs the release against the
+# previous one (static only, nothing installed or executed), and on a risky
+# delta sends a signed alert to Core and queues model triage for the
+# operator's bridge. Runs in parallel; each run handles one batch.
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: 'JSON list, e.g. [{"ecosystem":"npm","package":"axios","version":"1.2.3"}]'
+        required: true
+      trigger:
+        description: "Who started the run"
+        required: false
+        default: "manual"
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      FAST_LANE_TARGETS: ${{ inputs.targets }}
+      SECOPSAI_CORE_COORDINATOR_URL: https://core.secopsai.dev
+      SECOPSAI_CORE_WORKER_ID: github-actions-fast-lane
+      SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
+      SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL: https://core.secopsai.dev/api/v1/research/alerts/webhook
+      SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET: ${{ secrets.SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET }}
+      SECOPSAI_RESEARCH_ALERT_EMAIL: research@secopsai.dev
+      SECOPSAI_SMTP_HOST: smtp.resend.com
+      SECOPSAI_SMTP_PORT: "465"
+      SECOPSAI_SMTP_USERNAME: resend
+      SECOPSAI_SMTP_PASSWORD: ${{ secrets.SECOPSAI_SMTP_PASSWORD }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Fetch pinned YARA rule packs
+        run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
+
+      - name: Diff and scan the new releases
+        run: python -u scripts/fast_lane.py

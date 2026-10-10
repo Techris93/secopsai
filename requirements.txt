@@ -13,3 +13,5 @@ sentry-sdk[fastapi]>=2.49,<3
 # Test runner used by setup validation and CI smoke checks.
 httpx>=0.28,<0.29
 pytest>=9.0.3,<10
+# Rules-first artifact funnel (byte-level YARA scanning)
+yara-x>=1.0,<2

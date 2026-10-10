@@ -691,3 +691,31 @@ test("primary and secondary bridge credentials and webhook secrets are both acce
   assert.equal((await handleRequest(await signedRequest(env.RESEARCH_WEBHOOK_SECRET_SECONDARY, payload), env)).status, 200);
   assert.equal((await handleRequest(await signedRequest("z".repeat(44), payload), env)).status, 401);
 });
+
+test("research worker queues triage jobs for the operator bridge and reads outcomes", { skip: !DatabaseSync }, async () => {
+  const migrated = migratedSqliteD1();
+  const env = { DB: migrated.d1, CORE_BRIDGE_TOKEN: "b".repeat(44) };
+  const call = (method, path, body, token = env.CORE_BRIDGE_TOKEN) => handleRequest(new Request(`https://core.example${path}`, {
+    method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined,
+  }), env);
+  const evidence = { artifact_triage: { package: "demo", version: "1.0.1", findings: [{ rule_id: "YARA:SUSP_X", safe_context: "eval(atob(...))" }] } };
+  assert.equal((await call("POST", "/api/v1/research/triage/jobs", { jobs: [{ artifact_id: "ART-1", inputs: evidence }] }, "wrong")).status, 401);
+  const first = await (await call("POST", "/api/v1/research/triage/jobs", { jobs: [{ artifact_id: "ART-1", inputs: evidence }, { artifact_id: "" }] })).json();
+  assert.equal(first.count, 1);
+  assert.equal(first.queued[0].created, true);
+  const again = await (await call("POST", "/api/v1/research/triage/jobs", { jobs: [{ artifact_id: "ART-1", inputs: evidence }] })).json();
+  assert.equal(again.queued[0].created, false, "same artifact is queued once");
+  const row = migrated.db.prepare("SELECT action, requested_by, input_json FROM intelligence_jobs WHERE target_id='ART-1'").get();
+  assert.equal(row.action, "triage_artifact");
+  assert.equal(row.requested_by, "research-worker");
+  assert.equal(JSON.parse(row.input_json).artifact_triage.findings[0].rule_id, "YARA:SUSP_X");
+
+  let results = await (await call("GET", "/api/v1/research/triage/results")).json();
+  assert.equal(results.results.length, 0);
+  assert.equal(results.pending, 1);
+  migrated.db.prepare("UPDATE intelligence_jobs SET status='succeeded', result_json=?, updated_at='2026-10-10T01:00:00Z' WHERE target_id='ART-1'").run(JSON.stringify({ finding_verdict: "false_positive", finding_confidence: 90 }));
+  results = await (await call("GET", "/api/v1/research/triage/results?since=2026-10-10T00:00:00Z")).json();
+  assert.equal(results.results[0].artifact_id, "ART-1");
+  assert.equal(results.results[0].result.finding_verdict, "false_positive");
+  assert.equal(results.pending, 0);
+});

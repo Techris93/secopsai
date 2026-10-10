@@ -11,7 +11,8 @@
   // Validates runner bridge tokens during the one-time ledger migration.
   "services": [{ "binding": "CORE", "service": "secopsai-core-edge" }],
   "vars": { "LEDGER_MIGRATION_OPEN": "false" },
-  // Starts the GitHub Actions research worker every 30 minutes (secret:
-  // GITHUB_DISPATCH_TOKEN, Actions read/write on Techris93/secopsai only).
-  "triggers": { "crons": ["7,37 * * * *"] }
+  // Crons (secret GITHUB_DISPATCH_TOKEN, Actions read/write on
+  // Techris93/secopsai only): research worker every 30 minutes, the
+  // popular-package fast lane every minute, watchlist refresh daily.
+  "triggers": { "crons": ["7,37 * * * *", "* * * * *", "17 3 * * *"] }
 }

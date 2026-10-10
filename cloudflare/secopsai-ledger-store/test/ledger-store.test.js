@@ -39,3 +39,55 @@ test("cron dispatches the research worker only when a token is configured", asyn
   const failed = await dispatchResearchWorker({ GITHUB_DISPATCH_TOKEN: "gh" }, async () => new Response("{}", { status: 401 }));
   assert.equal(failed.status, "failed");
 });
+
+import { fastlaneTick, parsePypiRss } from "../src/fastlane.js";
+
+function memoryBucket(initial = {}) {
+  const store = new Map(Object.entries(initial).map(([k, v]) => [k, JSON.stringify(v)]));
+  return {
+    store,
+    get: async (key) => (store.has(key) ? { text: async () => store.get(key) } : null),
+    put: async (key, value) => { store.set(key, value); },
+  };
+}
+
+test("fast lane dispatches only new releases of watchlisted packages, once", async () => {
+  const bucket = memoryBucket({
+    "fastlane/watchlist/npm.json": { names: ["axios", "lodash"] },
+    "fastlane/watchlist/pypi.json": { names: ["requests"] },
+    "fastlane/state.json": { npm_seq: 100, pypi_seen: [], dispatched: {} },
+  });
+  const rss = "<rss><channel><item><title>Requests 2.40.0</title></item><item><title>random-pkg 0.1</title></item></channel></rss>";
+  const fetcher = async (url) => {
+    if (url.startsWith("https://replicate.npmjs.com/_changes")) {
+      return new Response(JSON.stringify({ results: [{ seq: 101, id: "axios" }, { seq: 102, id: "not-watched" }, { seq: 103, id: "lodash", deleted: true }], last_seq: 103 }));
+    }
+    if (url === "https://registry.npmjs.org/axios/latest") return new Response(JSON.stringify({ version: "9.9.9" }));
+    if (url === "https://pypi.org/rss/updates.xml") return new Response(rss);
+    throw new Error(`unexpected ${url}`);
+  };
+  const dispatches = [];
+  const dispatch = async (workflow, inputs) => { dispatches.push({ workflow, targets: JSON.parse(inputs.targets) }); return { status: "dispatched" }; };
+  const env = { LEDGER: bucket };
+  const first = await fastlaneTick(env, { fetcher, now: 1_000_000, dispatch });
+  assert.equal(first.targets, 2);
+  assert.equal(dispatches[0].workflow, "fast-lane.yml");
+  assert.deepEqual(dispatches[0].targets.map((t) => `${t.ecosystem}:${t.package}@${t.version}`).sort(), ["npm:axios@9.9.9", "pypi:Requests@2.40.0"]);
+  assert.equal(JSON.parse(bucket.store.get("fastlane/state.json")).npm_seq, 103);
+  const second = await fastlaneTick(env, { fetcher, now: 1_060_000, dispatch });
+  assert.equal(second.targets, 0, "same releases are not dispatched twice");
+});
+
+test("fast lane retries targets when the dispatch fails", async () => {
+  const bucket = memoryBucket({ "fastlane/watchlist/npm.json": { names: [] }, "fastlane/watchlist/pypi.json": { names: ["requests"] } });
+  const fetcher = async () => new Response("<item><title>requests 3.0.0</title></item>");
+  let calls = 0;
+  const env = { LEDGER: bucket };
+  await fastlaneTick(env, { fetcher, now: 5_000_000, dispatch: async () => { calls += 1; return { status: "failed" }; } });
+  const state = JSON.parse(bucket.store.get("fastlane/state.json"));
+  assert.equal(Object.keys(state.dispatched).length, 0, "failed dispatch is forgotten for retry");
+  assert.equal(calls, 1);
+  await fastlaneTick(env, { fetcher, now: 5_060_000, dispatch: async () => { calls += 1; return { status: "dispatched" }; } });
+  assert.equal(calls, 2, "the failed PyPI release is retried on the next tick");
+  assert.deepEqual(parsePypiRss("<item><title>a-b 1.0</title></item>"), [{ package: "a-b", version: "1.0" }]);
+});

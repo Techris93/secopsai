@@ -23,6 +23,7 @@ daily in GitHub Actions.
 | Ledger store | `https://ledger.secopsai.dev` | Worker + R2 | Research ledger checkpoints |
 | Research worker | GitHub Actions **Research Worker** | Free scheduled runner | Registry collectors, triage, daily automation |
 | Pipeline canary | GitHub Actions **Research Self-Test** | Free scheduled runner | Daily end-to-end test of every publication gate |
+| Fast lane | Cloudflare cron + GitHub Actions **Fast Lane** | Every minute | Diff-and-scan of new releases of high-impact npm/PyPI packages |
 
 Every public domain publishes `/.well-known/security.txt` (RFC 9116).
 
@@ -119,6 +120,49 @@ reliability chain, primary and blinded review (including a refused
 same-person review), visual QA, publication check, disclosure deduplication,
 approval, draft and publication into a throwaway copy of the blog. It never
 touches the production ledger, the real blog, Core, or alert channels.
+
+## Detection architecture
+
+Three layers, modelled on what works at Nextron and Socket:
+
+**1. Rules-first funnel (every worker cycle).** The npm pipeline fetches the
+published archives of up to `SECOPSAI_NPM_PRESCAN_LIMIT` (150) new releases
+per cycle and scans every file's bytes with YARA-X: SecOpsAI's rules plus
+Nextron's open `signature-base` (pinned commit, fetched by
+`scripts/fetch_rule_packs.sh`). Binaries are scanned too. Releases with no
+rule hit and an unremarkable metadata score are cleared; hits get a full
+static analysis and are queued for model triage. Scores add up per artifact:
+notice ≥ 40, warning ≥ 60, alert ≥ 80.
+
+**2. Popular-package fast lane (every minute).** A Cloudflare cron on the
+ledger-store Worker reads the npm changes feed and the PyPI updates feed,
+matches releases against watchlists of the 10,000 highest-impact npm
+packages (`npm-high-impact`) and 5,000 top PyPI projects
+(`hugovk/top-pypi-packages`), and dispatches the **Fast Lane** workflow. It
+diffs each release against the previous one and alerts on a risky delta: a
+new or changed install script, new execution/egress/credential behaviour, a
+YARA warning or alert, or a publisher change. The job summary reports the
+time from publish to verdict.
+
+**3. Model triage through your bridge.** Rule hits are queued in Core as
+`triage_artifact` jobs carrying only the matched strings and bounded context
+windows. The bridge on your machine claims them and asks your selected model
+through opencodex (your ChatGPT or Claude subscription), then posts the
+verdict back. Benign verdicts at confidence ≥ 85 resolve the alert;
+suspicious or inconclusive ones stay open for you. The bridge must be
+running in remote mode for triage to progress; jobs wait in Core otherwise.
+
+```bash
+gh run list --workflow fast-lane.yml --limit 10        # fast-lane verdicts and latency
+gh workflow run fast-lane.yml -f targets='[{"ecosystem":"npm","package":"axios"}]'   # manual check
+gh workflow run fast-lane-watchlist.yml                # rebuild watchlists now
+curl -s -H "Authorization: Bearer $LEDGER_STORE_TOKEN" https://ledger.secopsai.dev/fastlane/status
+```
+
+Rule attribution: `signature-base` rules are under the Detection Rule
+License 1.1. Every YARA finding keeps the rule's `author` and `reference`;
+keep them when quoting a match in a post. False-positive rules can be
+silenced in `rules/yara/disabled-rules.txt` (one rule name per line).
 
 ## Investigate a package
 

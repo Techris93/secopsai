@@ -63,6 +63,8 @@ jobs:
       SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS: ${{ secrets.SECOPSAI_SMTP_PASSWORD != '' && 'email,webhook' || 'webhook' }}
       SECOPSAI_RESEARCH_EXTERNAL_ALERT_CHANNELS: webhook
       SECOPSAI_NPM_ENRICHMENT_EVENT_LIMIT: "100"
+      # Rules-first funnel: YARA-scan this many new releases per cycle.
+      SECOPSAI_NPM_PRESCAN_LIMIT: "150"
       SECOPSAI_NPM_STATIC_ANALYSIS_LIMIT: "10"
       SECOPSAI_SENTRY_TRACES_SAMPLE_RATE: "0"
       SECOPSAI_STORAGE_WARNING_USED_PERCENT: "70"
@@ -91,6 +93,9 @@ jobs:
 
       - name: Require the ledger token
         run: test -n "$LEDGER_STORE_TOKEN" || { echo "LEDGER_STORE_TOKEN secret is required" >&2; exit 1; }
+
+      - name: Fetch pinned YARA rule packs
+        run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
 
       - name: Restore ledger, run worker cycles, checkpoint
         # Cycles take ~3-10 minutes; restore + checkpoint add ~5. A 20-minute

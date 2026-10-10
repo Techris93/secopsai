@@ -1,0 +1,2 @@
+# YARA rule names to ignore (one per line), e.g. noisy generic rules.
+# Lines starting with # are comments.

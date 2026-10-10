@@ -8,6 +8,7 @@ const ACCEPTED_ALERT_TYPES = new Set([
   "external_advisory_feed_degraded",
   "npm_proactive_anomaly",
   "npm_enrichment_degraded",
+  "registry_release_anomaly",
 ]);
 const SEVERITIES = new Set(["info", "low", "medium", "high", "critical"]);
 const WORKSPACE_TYPES = ["assets", "findings", "sites", "sensors", "services", "wifi_networks", "sync_state"];
@@ -155,6 +156,14 @@ export async function handleRequest(request, env) {
     if (request.method === "POST" && url.pathname === "/api/v1/ontology/sync") {
       requireBridge(request, env);
       return response(200, await syncOntology(request, env, requestId), requestId);
+    }
+    if (request.method === "POST" && url.pathname === "/api/v1/research/triage/jobs") {
+      requireBridge(request, env);
+      return response(200, await queueRunnerTriageJobs(request, env, requestId), requestId);
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/research/triage/results") {
+      requireBridge(request, env);
+      return response(200, await runnerTriageResults(env.DB, url.searchParams), requestId);
     }
     if (request.method === "POST" && url.pathname === "/api/v1/research/cases/sync") {
       requireBridge(request, env);
@@ -1459,6 +1468,48 @@ async function getIntelligenceJob(db, jobId, includeResult = false) {
 
 async function createIntelligenceJob(request, env, requestId) {
   const payload = await readJsonObject(request, MAX_INTELLIGENCE_BYTES, "Intelligence job");
+  return insertIntelligenceJob(env, requestId, payload);
+}
+
+const RUNNER_TRIAGE_REQUESTER = "research-worker";
+const MAX_RUNNER_TRIAGE_JOBS = 25;
+
+// The hosted research worker holds only the bridge token.  It may queue
+// triage_artifact jobs (minimized evidence windows travel in the inputs) for
+// the operator's model bridge, and read back their outcomes; nothing else.
+async function queueRunnerTriageJobs(request, env, requestId) {
+  const payload = await readJsonObject(request, MAX_INTELLIGENCE_BYTES * MAX_RUNNER_TRIAGE_JOBS, "Triage jobs");
+  const jobs = Array.isArray(payload.jobs) ? payload.jobs.slice(0, MAX_RUNNER_TRIAGE_JOBS) : [];
+  const queued = [];
+  for (const item of jobs) {
+    if (!item || typeof item !== "object") continue;
+    const artifactId = clean(item.artifact_id, 240);
+    if (!artifactId) continue;
+    const inputs = item.inputs && typeof item.inputs === "object" && !Array.isArray(item.inputs) ? item.inputs : {};
+    const result = await insertIntelligenceJob(env, requestId, {
+      action: "triage_artifact",
+      target_id: artifactId,
+      inputs: { ...inputs, artifact_id: artifactId },
+      requested_by: RUNNER_TRIAGE_REQUESTER,
+      idempotency_key: clean(item.idempotency_key, 256) || `runner-triage:${artifactId}`,
+    });
+    queued.push({ artifact_id: artifactId, job_id: result.job?.job_id, created: result.created });
+  }
+  return { queued, count: queued.length };
+}
+
+async function runnerTriageResults(db, searchParams) {
+  const since = clean(searchParams.get("since"), 40) || "1970-01-01T00:00:00Z";
+  const limit = boundedLimit(searchParams.get("limit"), 100, 200);
+  const rows = await db.prepare(`SELECT job_id, target_id, status, result_json, error_code, updated_at
+    FROM intelligence_jobs WHERE action='triage_artifact' AND requested_by=? AND status IN ('succeeded','failed','canceled') AND updated_at > ?
+    ORDER BY updated_at, job_id LIMIT ?`).bind(RUNNER_TRIAGE_REQUESTER, since, limit).all();
+  const results = (rows.results || []).map((row) => ({ job_id: row.job_id, artifact_id: row.target_id, status: row.status, error_code: row.error_code || "", updated_at: row.updated_at, result: parseJson(row.result_json, {}) }));
+  const pending = await db.prepare("SELECT COUNT(*) AS n FROM intelligence_jobs WHERE action='triage_artifact' AND requested_by=? AND status IN ('queued','running','awaiting_provider')").bind(RUNNER_TRIAGE_REQUESTER).first();
+  return { results, pending: Number(pending?.n || 0) };
+}
+
+async function insertIntelligenceJob(env, requestId, payload) {
   const action = clean(payload.action, 100);
   if (!INTELLIGENCE_ACTIONS.has(action)) throw new HttpError(422, "invalid_action", "Only approved bridge-backed intelligence actions may be queued");
   const targetId = clean(payload.target_id, 240);

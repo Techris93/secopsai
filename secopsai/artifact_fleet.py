@@ -376,7 +376,14 @@ def list_artifacts(*, status: str = "", limit: int = 100, db_path: str | Path | 
     return [dict(row) for row in rows]
 
 
-def _safe_archive_files(path: Path) -> tuple[dict[str, str], list[dict[str, Any]], str]:
+def _safe_archive_files(path: Path, raw_members: list[tuple[str, bytes]] | None = None) -> tuple[dict[str, str], list[dict[str, Any]], str]:
+    """Read a package archive safely.
+
+    Returns decoded text files, per-member metadata and the archive digest.
+    When ``raw_members`` is given, every member's bytes (binaries included)
+    are appended to it for byte-level scanning; text decoding alone used to
+    drop compiled payloads such as bundled implants.
+    """
     raw = path.read_bytes()
     digest = hashlib.sha256(raw).hexdigest()
     if len(raw) > MAX_ARCHIVE_BYTES:
@@ -400,6 +407,8 @@ def _safe_archive_files(path: Path) -> tuple[dict[str, str], list[dict[str, Any]
                     raise ValueError("expanded artifact exceeds the safety limit")
                 data = archive.read(member)
                 metadata.append({"path": name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+                if raw_members is not None:
+                    raw_members.append((name, data[:MAX_FILE_BYTES]))
                 if len(data) <= MAX_FILE_BYTES:
                     try:
                         files[name] = data.decode("utf-8")
@@ -425,12 +434,16 @@ def _safe_archive_files(path: Path) -> tuple[dict[str, str], list[dict[str, Any]
                 if len(data) > MAX_FILE_BYTES:
                     data = data[:MAX_FILE_BYTES]
                 metadata.append({"path": name, "size": member.size, "sha256": hashlib.sha256(data).hexdigest()})
+                if raw_members is not None:
+                    raw_members.append((name, data))
                 try:
                     files[name] = data.decode("utf-8")
                 except UnicodeDecodeError:
                     pass
     else:
         data = raw[:MAX_FILE_BYTES]
+        if raw_members is not None:
+            raw_members.append((path.name, data))
         try:
             files[path.name] = data.decode("utf-8")
         except UnicodeDecodeError:
@@ -532,22 +545,34 @@ def _extract_iocs(files: dict[str, str]) -> dict[str, list[str]]:
     return {"urls": urls, "ips": ips, "hashes": hashes, "domains": domains}
 
 
+def _yara_rule_id(item: dict[str, Any]) -> str:
+    """The OSS-* id a SecOpsAI YARA rule mirrors (from its matched description)."""
+    return str(item.get("rule_meta_id") or "")
+
+
 def scan_artifact(*, ecosystem: str, package: str, version: str, artifact: str | Path, source_reference: str = "", db_path: str | Path | None = None) -> dict[str, Any]:
     started = time.perf_counter()
     target = init_db(db_path)
     path = Path(artifact).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(str(path))
-    files, file_metadata, digest = _safe_archive_files(path)
+    raw_members: list[tuple[str, bytes]] = []
+    files, file_metadata, digest = _safe_archive_files(path, raw_members)
     deterministic = analyze_ecosystem_files(ecosystem, files)
     findings = _rule_pack_findings(files)
+    from secopsai import yara_engine
+
+    yara_result = yara_engine.scan_files(raw_members)
+    # Our generic rules also exist as regex rules above; keep one copy.
+    regex_ids = {item["rule_id"] for item in findings}
+    findings.extend(item for item in yara_result.get("findings", []) if item.get("rule_id") != "YARA-SCAN-ERROR" and not (item.get("rule_namespace", "").startswith("secopsai") and _yara_rule_id(item) in regex_ids))
     for detail in deterministic.get("findings", []) if isinstance(deterministic, dict) else []:
         findings.append({"rule_id": "SECOPSAI-ECOSYSTEM", "severity": "high" if "credential" in str(detail).lower() or "network" in str(detail).lower() else "medium", "confidence": "high", "file_path": str(detail).split(":", 1)[0], "matched_indicator": str(detail)[:1000], "safe_context": str(detail)[:CONTEXT_BYTES], "recommended_mitigation": "Quarantine and review the artifact before installation."})
     findings = _dedupe_findings(findings)
     artifact_id = _artifact_id(ecosystem, package, version, digest)
     for item in findings:
         item.update({"artifact_id": artifact_id, "ecosystem": ecosystem, "package": package, "version": version, "sha256": digest, "source_reference": source_reference})
-    result = {"artifact_id": artifact_id, "ecosystem": ecosystem, "package": package, "version": version, "sha256": digest, "status": "flagged" if findings else "clean", "findings": findings, "iocs": _extract_iocs(files), "files": file_metadata[:MAX_ARCHIVE_FILES], "source_reference": source_reference, "execution_performed": False, "duration_ms": round((time.perf_counter() - started) * 1000, 2)}
+    result = {"artifact_id": artifact_id, "ecosystem": ecosystem, "package": package, "version": version, "sha256": digest, "status": "flagged" if findings else "clean", "findings": findings, "iocs": _extract_iocs(files), "files": file_metadata[:MAX_ARCHIVE_FILES], "source_reference": source_reference, "execution_performed": False, "yara": {key: yara_result.get(key) for key in ("available", "score", "level", "rules_matched", "reason")}, "duration_ms": round((time.perf_counter() - started) * 1000, 2)}
     now = _now()
     with _connect(target) as conn:
         conn.execute("INSERT OR IGNORE INTO artifact_metadata(artifact_id, ecosystem, package, version, publisher, published_at, dist_url, source_url, source_ref, source_revision, advisory_ids_json, size_bytes, sha256, trust, status, indexed_at) VALUES (?, ?, ?, ?, '', '', '', '', ?, ?, '[]', ?, ?, 'local-artifact', ?, ?)", (artifact_id, ecosystem, package, version, source_reference, "", path.stat().st_size, digest, result["status"], now))

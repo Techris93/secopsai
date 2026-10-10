@@ -8,6 +8,7 @@ surveillance depend on a network request succeeding.
 from __future__ import annotations
 
 import json
+import urllib.parse
 import hashlib
 import os
 import socket
@@ -544,7 +545,7 @@ class CoreEdgeClient:
             else _bounded_bridge_command(payload or {})
             if path.startswith("/api/v1/intelligence/bridge/commands/")
             else _bounded_json(payload or {}, limit=4 * 1024 * 1024, preserve_lists=True)
-            if path == "/api/v1/research/cases/sync"
+            if path in {"/api/v1/research/cases/sync", "/api/v1/research/triage/jobs"}
             else _bounded_json(payload or {}, preserve_lists=path == "/api/v1/ontology/sync")
         )
         if path == "/api/v1/ontology/sync" and isinstance(body, dict) and body.get("status") == "truncated":
@@ -573,6 +574,19 @@ class CoreEdgeClient:
             detail = _clean(result.get("detail") or result.get("error") or "request failed", 500)
             raise RuntimeError(f"hosted Core rejected {path} ({response.status_code}): {detail}")
         return result
+
+    def queue_triage_jobs(self, jobs: list[dict[str, Any]]) -> dict[str, Any]:
+        """Queue triage_artifact jobs for the operator's model bridge."""
+        if not self.enabled:
+            return {"status": "disabled"}
+        return self._request("POST", "/api/v1/research/triage/jobs", {"jobs": jobs[:25]})
+
+    def triage_results(self, *, since: str = "", limit: int = 100) -> dict[str, Any]:
+        """Outcomes of triage jobs this worker queued, after ``since``."""
+        if not self.enabled:
+            return {"status": "disabled"}
+        query = urllib.parse.urlencode({"since": since or "1970-01-01T00:00:00Z", "limit": max(1, min(int(limit), 200))})
+        return self._request("GET", f"/api/v1/research/triage/results?{query}")
 
     def sync_research_cases(self, cases: list[dict[str, Any]]) -> dict[str, Any]:
         """Upsert bounded research-case projections into the hosted Core."""

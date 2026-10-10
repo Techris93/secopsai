@@ -828,6 +828,55 @@ def _static_retry_allowed(metadata: Dict[str, Any]) -> bool:
     return datetime.now(timezone.utc) - last >= timedelta(seconds=MAX_RETRY_SECONDS)
 
 
+# Releases the rules-first funnel clears are retired unless their metadata
+# alone is suspicious enough to deserve a full analysis anyway.
+FUNNEL_METADATA_KEEP_SCORE = 30
+
+
+def _apply_funnel(ranked: List[Tuple[int, int, Dict[str, Any], Dict[str, Any], List[Any]]], *, db_path: Optional[str], fetcher: SafeFetcher) -> Tuple[List[Tuple[int, int, Dict[str, Any], Dict[str, Any], List[Any]]], Dict[str, Any]]:
+    """YARA-scan a wide window of new releases; promote hits, retire clean ones."""
+    from secopsai import research_ai_triage, research_funnel
+
+    window = ranked[: research_funnel.prescan_limit()]
+    targets = []
+    for _score, _position, event, metadata, _signals in window:
+        summary = metadata.get("version_summary") if isinstance(metadata.get("version_summary"), dict) else {}
+        targets.append({"key": event.get("feed_event_id"), "package": event.get("package"), "version": event.get("version"), "tarball": summary.get("tarball") or ""})
+    results = research_funnel.prescan(targets, fetcher=fetcher)
+    if not results:
+        return ranked, {"enabled": False, "prescanned": 0}
+    stats = {"enabled": True, "prescanned": len(results), "hits": 0, "retired_clean": 0, "errors": 0, "rules_matched": {}}
+    kept: List[Tuple[int, int, Dict[str, Any], Dict[str, Any], List[Any]]] = []
+    for score, position, event, metadata, signals in ranked:
+        result = results.get(str(event.get("feed_event_id")))
+        if not result:
+            kept.append((score, position, event, metadata, signals))
+            continue
+        if result["status"] == "hit":
+            stats["hits"] += 1
+            for rule in result.get("rules_matched") or []:
+                stats["rules_matched"][rule] = stats["rules_matched"].get(rule, 0) + 1
+            points = min(40, int(result.get("score") or 0) // 2)
+            signals = list(signals) + [{"id": f"yara_{result.get('level')}", "points": points, "rules": (result.get("rules_matched") or [])[:10]}]
+            research_ai_triage.record_hit(
+                ecosystem="npm", package=str(event.get("package") or ""), version=str(event.get("version") or ""),
+                prescan=result, metadata_signals=signals, previous_version=str(metadata.get("previous_version") or ""), db_path=db_path,
+            )
+            kept.append((min(100, score + points), position, event, metadata, signals))
+        elif result["status"] == "clean" and score < FUNNEL_METADATA_KEEP_SCORE:
+            stats["retired_clean"] += 1
+            metadata.update({"npm_prescan": "clean", "npm_prescan_files": result.get("files"), "npm_prescan_at": _now()})
+            with closing(soc_store.connect(db_path)) as connection:
+                with _write_transaction(connection, db_path):
+                    connection.execute("UPDATE registry_feed_events SET processing_state='scored', metadata_json=? WHERE feed_event_id=?", (_json(metadata), event["feed_event_id"]))
+        else:
+            stats["errors"] += int(result["status"] == "error")
+            kept.append((score, position, event, metadata, signals))
+    kept.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    stats["rules_matched"] = dict(sorted(stats["rules_matched"].items(), key=lambda kv: -kv[1])[:20])
+    return kept, stats
+
+
 def _run_static_triage(*, db_path: Optional[str], fetcher: SafeFetcher, limit: int) -> Dict[str, Any]:
     with closing(soc_store.connect(db_path)) as connection:
         rows = connection.execute(
@@ -870,6 +919,7 @@ def _run_static_triage(*, db_path: Optional[str], fetcher: SafeFetcher, limit: i
         )
         ranked.append((int(score), -position, event, metadata, signals))
     ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    ranked, funnel = _apply_funnel(ranked, db_path=db_path, fetcher=fetcher)
     for score, _position, event, metadata, signals in ranked[: max(1, min(int(limit), MAX_STATIC_ANALYSES_PER_CYCLE))]:
         analyses += 1
         intake: Optional[Dict[str, Any]] = None
@@ -897,7 +947,7 @@ def _run_static_triage(*, db_path: Optional[str], fetcher: SafeFetcher, limit: i
         )
         alert_id = _promote_static_candidate(db_path=db_path, event=event, result=result)
         candidates += int(bool(alert_id))
-    return {"events_considered": len(rows), "analyses_started": analyses, "candidates_created": candidates, "failures": failures, "skipped_oversized": skipped}
+    return {"events_considered": len(rows), "analyses_started": analyses, "candidates_created": candidates, "failures": failures, "skipped_oversized": skipped, "funnel": funnel}
 
 
 def run_npm_enrichment_cycle(
