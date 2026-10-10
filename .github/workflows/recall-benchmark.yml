@@ -1,0 +1,82 @@
+name: Recall Benchmark
+
+# Measures the rule funnel against known malware (Datadog Security Labs'
+# malicious-software-packages-dataset, Apache-2.0) and against popular clean
+# packages.  Samples are live malware: they are fetched only onto this
+# disposable runner, decrypted and scanned in memory, never executed, and
+# only rule ids, scores and file paths leave the job.
+
+on:
+  workflow_dispatch:
+    inputs:
+      npm_samples:
+        description: Malicious npm samples to draw
+        default: "2000"
+      pypi_samples:
+        description: Malicious PyPI samples to draw
+        default: "1000"
+      clean_npm:
+        description: Top npm packages for the false-positive set
+        default: "1000"
+      clean_pypi:
+        description: Top PyPI packages for the false-positive set
+        default: "500"
+      seed:
+        description: Sampling seed (keep fixed to compare rule changes)
+        default: "20261010"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recall-benchmark
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # Pinned so results are comparable across rule changes; bump deliberately.
+      DATASET_COMMIT: 805fcd72db525244cae8dd32056efbd50b8b0e19
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Fetch pinned YARA rule packs
+        run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
+
+      - name: Clone the dataset index (blobless, pinned)
+        run: |
+          git clone --quiet --filter=blob:none --no-checkout --sparse \
+            https://github.com/DataDog/malicious-software-packages-dataset.git "$RUNNER_TEMP/malware-dataset"
+          git -C "$RUNNER_TEMP/malware-dataset" checkout --quiet --detach "$DATASET_COMMIT"
+
+      - name: Run benchmark
+        run: |
+          python -I scripts/recall_benchmark.py \
+            --dataset "$RUNNER_TEMP/malware-dataset" \
+            --npm-samples "${{ inputs.npm_samples }}" --pypi-samples "${{ inputs.pypi_samples }}" \
+            --clean-npm "${{ inputs.clean_npm }}" --clean-pypi "${{ inputs.clean_pypi }}" \
+            --seed "${{ inputs.seed }}" --out "$RUNNER_TEMP/recall-benchmark.json"
+
+      - name: Upload results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: recall-benchmark
+          path: ${{ runner.temp }}/recall-benchmark.json
+          retention-days: 90
+
+      - name: Remove samples
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/malware-dataset"
