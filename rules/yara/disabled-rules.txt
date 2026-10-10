@@ -1,2 +1,9 @@
 # YARA rule names to ignore (one per line), e.g. noisy generic rules.
 # Lines starting with # are comments.
+
+# Recall benchmark 2026-10-10 (seed 20261010): the only false positives on the
+# top 1,000 npm / 500 PyPI packages. Both rules find exposures, not package
+# malware: test SSH keys shipped by paramiko and joserfc, and a Log4j exploit
+# string in pygithub. Neither contributed a malicious-sample hit.
+VULN_Unencrypted_SSH_Private_Key
+EXPL_Log4j_CVE_2021_44228_Dec21_Soft
