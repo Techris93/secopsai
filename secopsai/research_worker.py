@@ -693,15 +693,17 @@ def run_worker_loop(
                 capture_exception(exc, context={"component": "actions_watch"})
                 last_summary = dict(last_summary)
                 last_summary["actions_watch"] = {"status": "degraded", "error": str(exc)[:500]}
-            # One-off re-triage after rule changes (SECOPSAI_RETRIAGE=1 on a run):
-            # rescans inconclusive hits on the worker, requeues strong ones for
-            # the operator's model bridge. Continues across runs until done.
-            if os.environ.get("SECOPSAI_RETRIAGE") == "1":
+            # Re-triage after rule changes: hits created before
+            # SECOPSAI_RETRIAGE_BEFORE that ended inconclusive are rescanned
+            # on the worker; strong ones go back to the operator's model bridge.
+            # Each item is done once, so this simply runs until none are left.
+            if os.environ.get("SECOPSAI_RETRIAGE_BEFORE"):
                 try:
                     from secopsai.research_ai_triage import retriage
 
                     last_summary = dict(last_summary)
-                    last_summary["retriage"] = retriage(db_path=db_path, min_score=int(os.environ.get("SECOPSAI_RETRIAGE_MIN_SCORE", "80")))
+                    last_summary["retriage"] = retriage(db_path=db_path, min_score=int(os.environ.get("SECOPSAI_RETRIAGE_MIN_SCORE", "80")),
+                                                        before=os.environ["SECOPSAI_RETRIAGE_BEFORE"])
                 except Exception as exc:
                     capture_exception(exc, context={"component": "retriage"})
                     last_summary = dict(last_summary)

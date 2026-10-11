@@ -286,7 +286,7 @@ def _ensure_training(connection: Any) -> None:
     )
 
 
-def retriage(*, db_path: Optional[str] = None, min_score: int = 80, limit: int = 300,
+def retriage(*, db_path: Optional[str] = None, min_score: int = 80, limit: int = 300, before: str = "",
              scanner: Optional[Any] = None, workers: int = 8) -> Dict[str, Any]:
     """Re-scan inconclusive hits with the current rules and requeue the strong ones.
 
@@ -310,8 +310,9 @@ def retriage(*, db_path: Optional[str] = None, min_score: int = 80, limit: int =
             """SELECT artifact_key, ecosystem, package, version, context_json, verdict FROM research_ai_triage
                WHERE status IN ('triaged', 'failed') AND verdict IN ('inconclusive', '')
                  AND json_extract(context_json, '$.rescanned_at') IS NULL
+                 AND (? = '' OR created_at < ?)
                ORDER BY score DESC, created_at LIMIT ?""",
-            (limit,),
+            (before, before, limit),
         ).fetchall()]
         connection.commit()
     rows = [row for row in rows if row["ecosystem"] in RETRIAGE_ECOSYSTEMS]
