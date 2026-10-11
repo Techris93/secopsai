@@ -672,6 +672,22 @@ def run_worker_loop(
                     "storage": failed_storage,
                     "completed_at": _utcnow().isoformat().replace("+00:00", "Z"),
                 }
+            # AI triage first: it is cheap (queue pending hits, collect verdicts)
+            # and the operator's bridge depends on it, so long scanning steps
+            # must never push it past the run's time budget.
+            if core_edge.enabled:
+                # Rule hits go to the operator's model bridge (opencodex) via
+                # Core; verdicts come back here and annotate/resolve alerts.
+                try:
+                    from secopsai.research_ai_triage import sync as sync_ai_triage
+
+                    last_summary = dict(last_summary)
+                    last_summary["ai_triage"] = sync_ai_triage(core_edge, db_path=db_path)
+                    print(json.dumps({"component": "research-worker", "event": "ai_triage", **last_summary["ai_triage"]}, default=str)[:2000], flush=True)
+                except Exception as exc:
+                    capture_exception(exc, context={"component": "ai_triage"})
+                    last_summary = dict(last_summary)
+                    last_summary["ai_triage"] = {"status": "degraded", "error": str(exc)[:500]}
             # Content scanning for PyPI and Open VSX (npm has its own funnel in
             # enrichment); a failure is retried from the same events next cycle.
             try:
@@ -751,18 +767,6 @@ def run_worker_loop(
                     capture_exception(exc, context={"component": "research_case_sync"})
                     last_summary = dict(last_summary)
                     last_summary["research_case_sync"] = {"status": "degraded", "error": str(exc)[:500]}
-                # Rule hits go to the operator's model bridge (opencodex) via
-                # Core; verdicts come back here and annotate/resolve alerts.
-                try:
-                    from secopsai.research_ai_triage import sync as sync_ai_triage
-
-                    last_summary = dict(last_summary)
-                    last_summary["ai_triage"] = sync_ai_triage(core_edge, db_path=db_path)
-                    print(json.dumps({"component": "research-worker", "event": "ai_triage", **last_summary["ai_triage"]}, default=str)[:2000], flush=True)
-                except Exception as exc:
-                    capture_exception(exc, context={"component": "ai_triage"})
-                    last_summary = dict(last_summary)
-                    last_summary["ai_triage"] = {"status": "degraded", "error": str(exc)[:500]}
                 try:
                     ontology_result = materialize_recent(db_path=db_path, limit=100)
                     ontology_sync = core_edge.sync_ontology(ontology_result.get("snapshot") or {})

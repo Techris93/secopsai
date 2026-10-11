@@ -50,7 +50,7 @@ def _now() -> str:
 
 
 def limit_per_ecosystem() -> int:
-    return max(0, min(int(os.environ.get("SECOPSAI_CONTENT_PRESCAN_LIMIT", "60") or 0), 500))
+    return max(0, min(int(os.environ.get("SECOPSAI_CONTENT_PRESCAN_LIMIT", "40") or 0), 500))
 
 
 def resolve_artifact(fetcher: SafeFetcher, ecosystem: str, package: str, version: str) -> Tuple[str, Tuple[str, ...], str]:

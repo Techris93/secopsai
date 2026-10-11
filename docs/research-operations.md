@@ -145,7 +145,7 @@ triage. Coverage:
 | Source | Collection | Content scan |
 | --- | --- | --- |
 | npm | changes feed | up to `SECOPSAI_NPM_PRESCAN_LIMIT` (150) per cycle, then full static analysis |
-| PyPI, Open VSX, crates.io | registry collectors | newest `SECOPSAI_CONTENT_PRESCAN_LIMIT` (60) per registry per cycle |
+| PyPI, Open VSX, crates.io | registry collectors | newest `SECOPSAI_CONTENT_PRESCAN_LIMIT` (40) per registry per cycle |
 | Official MCP Registry | servers updated since the cursor | each server's npm/PyPI package, with MCP rules |
 | Visual Studio Marketplace | ships paused; enabled in production through `SECOPSAI_ENABLE_COLLECTORS` in `research-worker.yml` (remove it there to turn it off) | as above |
 | GitHub Actions | tags of 94 popular actions (`rules/watchlists/github-actions.txt`), every 15 min | repointed tags alert; moved and new release commits are scanned |
