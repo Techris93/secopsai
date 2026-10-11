@@ -1,0 +1,86 @@
+name: Clef Calibration
+
+# Scores the Recall Benchmark's known-malware sample and popular clean
+# packages with Cloudflare Clef (Workers AI) and reports how well its
+# probability separates them. Samples are decrypted and scanned in memory on
+# this disposable runner, never executed; only code excerpts go to Clef.
+# Billed per input token to the Cloudflare account.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: clef or clef-flash
+        default: "clef"
+      npm_samples:
+        default: "2000"
+      pypi_samples:
+        default: "1000"
+      clean_npm:
+        default: "1000"
+      clean_pypi:
+        default: "500"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clef-calibration
+  cancel-in-progress: false
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      DATASET_COMMIT: 805fcd72db525244cae8dd32056efbd50b8b0e19
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check Workers AI access with one small call
+        run: |
+          python - <<'PY'
+          from secopsai import clef_triage
+          result = clef_triage.classify({"ecosystem": "npm", "package": "probe", "version": "1.0.0", "findings": []}, model="${{ inputs.model }}")
+          print("Clef reachable:", result["model"], "probability", result["probability"], "tokens", result["input_tokens"])
+          PY
+
+      - name: Fetch pinned YARA rule packs
+        run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
+
+      - name: Clone the dataset index (blobless, pinned)
+        run: |
+          git clone --quiet --filter=blob:none --no-checkout --sparse \
+            https://github.com/DataDog/malicious-software-packages-dataset.git "$RUNNER_TEMP/malware-dataset"
+          git -C "$RUNNER_TEMP/malware-dataset" checkout --quiet --detach "$DATASET_COMMIT"
+
+      - name: Build contexts and score with Clef
+        run: |
+          python -I scripts/clef_calibration.py --dataset "$RUNNER_TEMP/malware-dataset" --model "${{ inputs.model }}" \
+            --npm-samples "${{ inputs.npm_samples }}" --pypi-samples "${{ inputs.pypi_samples }}" \
+            --clean-npm "${{ inputs.clean_npm }}" --clean-pypi "${{ inputs.clean_pypi }}" --out "$RUNNER_TEMP/clef-calibration.json"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clef-calibration
+          path: ${{ runner.temp }}/clef-calibration.json
+          retention-days: 90
+
+      - name: Remove samples
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/malware-dataset"
