@@ -16,6 +16,7 @@ from pathlib import PurePosixPath
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 MAX_TEXT_BYTES = 1024 * 1024
+TINY_CODE_BYTES = 50_000
 TEXT_SUFFIXES = {".rs", ".js", ".cjs", ".mjs", ".ts", ".py", ".pyw", ".json", ".sh", ".bat", ".cmd", ".ps1", ".cfg", ".toml", ".txt", ".yml", ".yaml", ""}
 INSTALL_HOOKS = ("preinstall", "install", "postinstall", "prepare")
 
@@ -85,6 +86,7 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
     flags: Set[str] = set()
     files = list(members)
     code_files = 0
+    code_bytes = 0
     for path, data in files:
         lowered = path.lower()
         name = PurePosixPath(lowered).name
@@ -121,6 +123,7 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
         if lowered.endswith(".json"):
             continue
         code_files += 1
+        code_bytes += len(data)
         in_tests = bool(TEST_PATH.search(lowered))
         for flag, pattern in COMPILED.items():
             # Injection strings in tests are defences being tested, not tool descriptions.
@@ -128,7 +131,10 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
                 continue
             if flag not in flags and pattern.search(text):
                 flags.add(flag)
-    if code_files <= 2:
+    # Few files AND little code: bundlers pack whole CLIs into one large
+    # dist/index.js (backscan: 69 of 79 recon false positives), while
+    # throwaway malicious packages are a few kilobytes.
+    if code_files <= 2 and code_bytes < TINY_CODE_BYTES:
         flags.add("tiny_package")
     major = re.match(r"(\d+)", version or "")
     # Dependency-confusion packages publish 99.x / 100.x to win resolution.
@@ -148,6 +154,7 @@ KNOWN_BENIGN_SHAPES: Tuple[Tuple[str, ...], ...] = (
     ("system_info", "http_send", "home_dir", "install_hook", "child_process", "env_read"),  # pnpm, vitest
     ("child_process", "env_read", "home_dir", "system_info"),  # node-gyp
     ("setup_py_side_effects", "system_info", "http_send", "home_dir", "env_read", "download_tool"),  # psutil, coverage
+    ("system_info", "http_send", "home_dir", "child_process", "download_tool", "env_read"),  # bundled CLIs (backscan: @lotics/cli, @pollinations/cli)
     ("inflated_version", "child_process", "chmod_exec", "download_tool", "env_read", "install_hook"),  # npm chromedriver 155.0.0
     ("inflated_version", "chmod_exec", "env_read", "http_send", "py_subprocess", "setup_py", "setup_py_cmdclass", "setup_py_side_effects"),  # PyPI chromedriver-binary 157.x
 )

@@ -108,3 +108,9 @@ def test_known_actor_infrastructure_is_an_alert():
     result = package_features.combine({"score": 0, "findings": [], "rules_matched": []}, flags, "npm")
     assert result["level"] == "alert" and "BEH_KNOWN_ACTOR_INFRA" in result["rules_matched"]
     assert "known_actor_infra" not in package_features.profile([("package/a.js", b'"notoob.s4yhii.community"')])
+
+
+def test_a_bundled_cli_is_not_a_tiny_package():
+    bundle = b"const os=require('os');" + b"function f(){return 1}\n" * 4000 + b"fetch('https://api.example.com',{method:'POST'});os.hostname();"
+    assert "tiny_package" not in package_features.profile([("package/dist/index.js", bundle)])
+    assert "tiny_package" in package_features.profile([("package/index.js", b"require('os').hostname()")])
