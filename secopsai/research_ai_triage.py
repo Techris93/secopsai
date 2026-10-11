@@ -30,6 +30,10 @@ AUTO_RESOLVE_CONFIDENCE = 85
 # ESCALATE_PROBABILITY the hit is marked suspicious for an analyst.
 AUTO_RESOLVE_MAX_PROBABILITY = 10
 ESCALATE_PROBABILITY = 70
+# Between the two: the alert stays open but drops to low severity, out of
+# the main queue. Reversible, unlike closing, until model calibration is
+# measured (scripts/model_calibration.py).
+DEPRIORITIZE_MAX_PROBABILITY = 30
 VERDICTS = {"true_positive": "suspicious", "needs_more_evidence": "inconclusive", "benign_expected": "benign", "false_positive": "likely_benign"}
 
 
@@ -203,6 +207,13 @@ def _apply_result(connection: Any, item: Dict[str, Any], now: str) -> Optional[s
             (now, note, row["package"], row["version"]),
         )
         return "resolved"
+    if AUTO_RESOLVE_MAX_PROBABILITY < probability <= DEPRIORITIZE_MAX_PROBABILITY and verdict != "suspicious":
+        connection.execute(
+            """UPDATE research_alerts SET severity='low', updated_at=?, evidence_json=json_set(evidence_json, '$.ai_triage', json(?))
+               WHERE status='open' AND json_extract(evidence_json, '$.package')=? AND json_extract(evidence_json, '$.version')=?""",
+            (now, note, row["package"], row["version"]),
+        )
+        return "deprioritized"
     connection.execute(
         """UPDATE research_alerts SET updated_at=?, evidence_json=json_set(evidence_json, '$.ai_triage', json(?))
            WHERE json_extract(evidence_json, '$.package')=? AND json_extract(evidence_json, '$.version')=?""",
@@ -265,7 +276,7 @@ def sync(client: Any, *, db_path: Optional[str] = None) -> Dict[str, Any]:
     since = str(row["value"]) if row else ""
     response = client.triage_results(since=since)
     results = response.get("results") or []
-    outcomes = {"resolved": 0, "escalated": 0}
+    outcomes = {"resolved": 0, "deprioritized": 0, "escalated": 0}
     now = soc_store.utc_now()
     with closing(soc_store.connect(db_path)) as connection:
         for item in results:

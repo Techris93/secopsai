@@ -1,0 +1,67 @@
+name: Model Calibration
+
+# Sends a seeded sample of known malware that our rules flag to the
+# operator's model bridge (as ordinary triage jobs with opaque ids) and
+# reports how the model's malicious_probability falls, to check the
+# auto-close (<= 10) and deprioritise (<= 30) thresholds. Samples are
+# decrypted and scanned in memory on this disposable runner, never executed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: Flagged malware samples to send to the model
+        default: "40"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: model-calibration
+  cancel-in-progress: false
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    env:
+      DATASET_COMMIT: 805fcd72db525244cae8dd32056efbd50b8b0e19
+      SECOPSAI_CORE_COORDINATOR_URL: https://core.secopsai.dev
+      SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Fetch pinned YARA rule packs
+        run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
+
+      - name: Clone the dataset index (blobless, pinned)
+        run: |
+          git clone --quiet --filter=blob:none --no-checkout --sparse \
+            https://github.com/DataDog/malicious-software-packages-dataset.git "$RUNNER_TEMP/malware-dataset"
+          git -C "$RUNNER_TEMP/malware-dataset" checkout --quiet --detach "$DATASET_COMMIT"
+
+      - name: Queue, wait for verdicts, report
+        run: python -I scripts/model_calibration.py --dataset "$RUNNER_TEMP/malware-dataset" --samples "${{ inputs.samples }}" --out "$RUNNER_TEMP/model-calibration.json"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: model-calibration
+          path: ${{ runner.temp }}/model-calibration.json
+          retention-days: 90
+
+      - name: Remove samples
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/malware-dataset"

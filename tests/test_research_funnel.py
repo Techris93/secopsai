@@ -188,20 +188,20 @@ def test_triage_contexts_fit_cores_input_limit():
 def test_malicious_probability_resolves_or_escalates(tmp_path):
     db_path = str(tmp_path / "soc.db")
     soc_store.init_db(db_path)
-    for name in ("low", "high", "missing"):
+    for name in ("low", "mid", "high", "missing"):
         research_ai_triage.record_hit(ecosystem="npm", package=name, version="1", prescan={"score": 60, "findings": []}, db_path=db_path)
         with soc_store.connect(db_path) as connection:
             connection.execute("INSERT INTO research_alerts (alert_id, alert_type, severity, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at) VALUES (?, 'registry_release_anomaly', 'high', ?, 'r', ?, 'open', '', 't', 't')",
                                (f"RAL-{name}", f"d-{name}", json.dumps({"package": name, "version": "1"})))
     now = "2026-10-11T00:00:00Z"
     with soc_store.connect(db_path) as connection:
-        for name, probability in (("low", 4), ("high", 85), ("missing", None)):
+        for name, probability in (("low", 4), ("mid", 22), ("high", 85), ("missing", None)):
             result = {"finding_verdict": "needs_more_evidence", "finding_confidence": 60}
             if probability is not None:
                 result["malicious_probability"] = probability
             research_ai_triage._apply_result(connection, {"artifact_id": f"npm:{name}@1", "status": "succeeded", "result": result}, now)
         connection.commit()
-        alerts = {r["alert_id"]: r["status"] for r in connection.execute("SELECT alert_id, status FROM research_alerts")}
+        alerts = {r["alert_id"]: (r["status"], r["severity"]) for r in connection.execute("SELECT alert_id, status, severity FROM research_alerts")}
         verdicts = {r["package"]: r["verdict"] for r in connection.execute("SELECT package, verdict FROM research_ai_triage")}
-    assert alerts == {"RAL-low": "resolved", "RAL-high": "open", "RAL-missing": "open"}
-    assert verdicts == {"low": "likely_benign", "high": "suspicious", "missing": "inconclusive"}
+    assert alerts == {"RAL-low": ("resolved", "high"), "RAL-mid": ("open", "low"), "RAL-high": ("open", "high"), "RAL-missing": ("open", "high")}
+    assert verdicts == {"low": "likely_benign", "mid": "inconclusive", "high": "suspicious", "missing": "inconclusive"}
