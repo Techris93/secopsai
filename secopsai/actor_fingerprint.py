@@ -43,6 +43,7 @@ GENERIC_HOST = re.compile(
 )
 MAX_SHARED_HOST = 15
 FOCUSED_HOSTS = 3
+MAX_DOMAINS_PER_FILE = 25
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 COMMON = re.compile(
     r"(^|\.)(npmjs\.(org|com)|github\.com|githubusercontent\.com|pypi\.org|pythonhosted\.org|nodejs\.org|python\.org|"
@@ -77,8 +78,10 @@ def infrastructure(texts: Iterable[str]) -> Set[str]:
         for ip in IPV4.findall(text):
             if not PRIVATE_IP.match(ip) and all(int(part) < 256 for part in ip.split(".")):
                 found.add("ip:" + ip)
-        for match in DOMAIN.finditer(text):
-            domain = match.group(1).lower()
+        domains = [match.group(1).lower() for match in DOMAIN.finditer(text)]
+        if len(set(domains)) > MAX_DOMAINS_PER_FILE:
+            continue  # a domain list (TLDs, disposable mail) is data, not infrastructure
+        for domain in domains:
             if not COMMON.search(domain) and not PLATFORM.search(domain) and not GENERIC_HOST.search(domain):
                 found.add("host:" + domain)
     return found

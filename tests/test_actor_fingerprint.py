@@ -56,3 +56,9 @@ def test_a_widely_shared_code_template_does_not_chain_packages():
     template = {"infra": [], "code": "0f0f0f0f0f0f0f0f", "publisher": []}
     crowd = {f"npm:stub{i}@1": dict(template) for i in range(af.MAX_SHARED + 5)}
     assert af.cluster(crowd) == [], "public boilerplate shared by many packages is not one actor"
+
+
+def test_files_listing_many_domains_are_data():
+    listing = ", ".join(f'"d{i}.xyz"' for i in range(af.MAX_DOMAINS_PER_FILE + 5)).encode()
+    assert af.infrastructure([listing.decode()]) == set()
+    assert af.infrastructure(['fetch("https://collector.evil-cdn.xyz/c")']) == {"host:collector.evil-cdn.xyz"}
