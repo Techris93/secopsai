@@ -36,6 +36,8 @@ STALE_AFTER_SECONDS = 3 * 3600
 EXEC_OR_EGRESS = {"network-endpoint", "outbound-network", "process-execution", "dynamic-eval", "dynamic-function-constructor", "credential-access", "credential-discovery", "encoded-payload"}
 INSTALL_HOOKS = {"preinstall", "install", "postinstall", "prepare"}
 SIZE_GUARD_MARKERS = ("safety limit", "too many", "maximum size")
+NOT_FOUND_RETRIES = 3
+NOT_FOUND_DELAY_SECONDS = 20
 
 
 def _now() -> datetime:
@@ -184,8 +186,18 @@ def main() -> int:
                 row["status"] = "skipped: not a fresh release"
                 rows.append(row)
                 continue
-            with tempfile.TemporaryDirectory(prefix="fast-lane-") as tmp:
-                result = investigate(target, release, Path(tmp))
+            result = None
+            # Registries can answer 404 for a tarball for a short while after
+            # publish (the CDN has not caught up); retry before giving up.
+            for attempt in range(NOT_FOUND_RETRIES + 1):
+                try:
+                    with tempfile.TemporaryDirectory(prefix="fast-lane-") as tmp:
+                        result = investigate(target, release, Path(tmp))
+                    break
+                except Exception as exc:
+                    if "HTTP 404" not in str(exc) or attempt == NOT_FOUND_RETRIES:
+                        raise
+                    time.sleep(NOT_FOUND_DELAY_SECONDS)
             decision = assess(result)
             detected = _now()
             row.update(status="analyzed", severity=decision["severity"], reasons="; ".join(decision["reasons"]) or "no risky delta",
@@ -193,9 +205,11 @@ def main() -> int:
             if decision["severity"] != "none":
                 row["delivery"] = deliver(target, release, decision, detected)
         except Exception as exc:
-            # Size guards (archive-bomb limits) are a scope decision, not a fault.
+            # Size guards (archive-bomb limits) are a scope decision, and a
+            # release still missing after retries is not a fault either.
             oversized = any(marker in str(exc) for marker in SIZE_GUARD_MARKERS)
-            row.update(status="skipped: exceeds scan limits" if oversized else "error", reasons=str(exc)[:300])
+            missing = "HTTP 404" in str(exc)
+            row.update(status="skipped: exceeds scan limits" if oversized else "skipped: not available yet" if missing else "error", reasons=str(exc)[:300])
         rows.append(row)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     lines = ["### Fast lane", "", "| Package | Version (previous) | Severity | Publish to verdict | Notes |", "| --- | --- | --- | --- | --- |"]

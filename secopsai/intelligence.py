@@ -386,6 +386,10 @@ def _bridge_instructions(
             "or false_positive with a confidence that reflects how completely the code explains every flagged signal; when it shows data collected "
             "and sent off the machine, credential access, or a downloaded payload being run at install, return true_positive. Use "
             "needs_more_evidence only when the supplied code genuinely cannot decide it, and name the specific missing file. "
+            "Always also return malicious_probability: your calibrated probability, 0-100, that this release is malicious, judged from the "
+            "code supplied, even when the verdict is needs_more_evidence. Calibrate it: most flagged packages are ordinary software that uses "
+            "networking, shells or the home directory for legitimate reasons, so reserve high values for code that collects data and sends it "
+            "off the machine, reads credentials, runs downloaded payloads at install, or hides what it does. "
         ),
         "execute_specialist_work": specialist_guidance,
         "review_specialist_work": specialist_guidance,
@@ -422,6 +426,7 @@ def bridge_output_schema() -> dict[str, Any]:
         "verdict_evidence_refs",
         "finding_verdict",
         "finding_confidence",
+        "malicious_probability",
         "disposition_recommendation",
         "decision_evidence_refs",
         "exposure_assessment",
@@ -464,6 +469,9 @@ def bridge_output_schema() -> dict[str, Any]:
                 "enum": ["true_positive", "false_positive", "benign_expected", "policy_noise", "needs_more_evidence"],
             },
             "finding_confidence": {"type": "integer", "minimum": 0, "maximum": 100},
+            # Calibrated 0-100 probability that the artifact is malicious, given
+            # even when the verdict is needs_more_evidence.
+            "malicious_probability": {"type": "integer", "minimum": 0, "maximum": 100},
             "disposition_recommendation": {
                 "type": "string",
                 "enum": ["true_positive", "false_positive", "expected_behavior", "tune_policy", "needs_review"],

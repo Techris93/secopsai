@@ -2107,6 +2107,11 @@ def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
         result["finding_confidence"] = max(0, min(int(result.get("finding_confidence") or 0), 100))
     except (TypeError, ValueError):
         result["finding_confidence"] = 0
+    try:
+        # -1 means "not provided" (older models or runs); never treated as low risk.
+        result["malicious_probability"] = max(0, min(int(result["malicious_probability"]), 100)) if result.get("malicious_probability") is not None else -1
+    except (TypeError, ValueError):
+        result["malicious_probability"] = -1
     disposition = str(result.get("disposition_recommendation") or "").strip().lower()
     if disposition not in {"true_positive", "false_positive", "expected_behavior", "tune_policy", "needs_review"}:
         result["disposition_recommendation"] = "needs_review"

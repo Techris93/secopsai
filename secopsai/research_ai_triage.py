@@ -24,6 +24,11 @@ import soc_store
 CURSOR_KEY = "core_ai_triage_results"
 MAX_QUEUE_PER_CYCLE = 25
 AUTO_RESOLVE_CONFIDENCE = 85
+# A model-assigned probability of malice at or below this resolves the alert
+# even when the verdict hedges (needs_more_evidence); at or above
+# ESCALATE_PROBABILITY the hit is marked suspicious for an analyst.
+AUTO_RESOLVE_MAX_PROBABILITY = 10
+ESCALATE_PROBABILITY = 70
 VERDICTS = {"true_positive": "suspicious", "needs_more_evidence": "inconclusive", "benign_expected": "benign", "false_positive": "likely_benign"}
 
 
@@ -178,8 +183,18 @@ def _apply_result(connection: Any, item: Dict[str, Any], now: str) -> Optional[s
     row = connection.execute("SELECT package, version FROM research_ai_triage WHERE artifact_key=?", (key,)).fetchone()
     if not row:
         return None
-    note = json.dumps({"verdict": verdict, "confidence": confidence, "summary": str(result.get("summary") or "")[:500], "job_id": item.get("job_id")})
-    if verdict in {"benign", "likely_benign"} and confidence >= AUTO_RESOLVE_CONFIDENCE:
+    try:
+        probability = int(result.get("malicious_probability", -1))
+    except (TypeError, ValueError):
+        probability = -1
+    if 0 <= probability <= AUTO_RESOLVE_MAX_PROBABILITY and verdict != "suspicious":
+        verdict = "likely_benign"
+    elif probability >= ESCALATE_PROBABILITY:
+        verdict = "suspicious"
+    connection.execute("UPDATE research_ai_triage SET verdict = ? WHERE artifact_key = ?", (verdict, key))
+    note = json.dumps({"verdict": verdict, "confidence": confidence, "malicious_probability": probability,
+                       "summary": str(result.get("summary") or "")[:500], "job_id": item.get("job_id")})
+    if (verdict in {"benign", "likely_benign"} and confidence >= AUTO_RESOLVE_CONFIDENCE) or 0 <= probability <= AUTO_RESOLVE_MAX_PROBABILITY and verdict != "suspicious":
         connection.execute(
             """UPDATE research_alerts SET status='resolved', owner='ai-triage', updated_at=?,
                   evidence_json=json_set(evidence_json, '$.ai_triage', json(?))
