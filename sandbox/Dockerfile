@@ -7,12 +7,12 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 python3-pip python3-setuptools strace ca-certificates coreutils \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --uid 10001 analyst
-# Bait: realistic-looking but fake credentials. Any read of these is recorded;
-# none of them is valid anywhere.
-COPY --chown=analyst:analyst bait/ /home/analyst/
+# Bait credentials are written into a tmpfs home by detonate.sh at start, so
+# no credential-shaped string is ever stored in the repository or the image.
 COPY detonate.sh /usr/local/bin/detonate
 COPY dnslog.py /usr/local/bin/dnslog.py
-RUN chmod 0755 /usr/local/bin/detonate && chmod 0600 /home/analyst/.ssh/id_rsa
+RUN chmod 0755 /usr/local/bin/detonate
+ENV HOME=/home/analyst
 USER analyst
 WORKDIR /home/analyst
 ENTRYPOINT ["/usr/local/bin/detonate"]

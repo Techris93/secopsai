@@ -149,11 +149,14 @@ def run(ecosystem: str, artifact: Path, *, timeout: int = RUN_TIMEOUT_SECONDS, i
         inbox, outbox = work / "in", work / "out"
         inbox.mkdir()
         outbox.mkdir()
-        os.chmod(outbox, 0o777)
         shutil.copyfile(artifact, inbox / artifact.name)
         (work / "resolv.conf").write_text("nameserver 127.0.0.1\noptions attempts:1 timeout:1\n", encoding="utf-8")
         command = [
             "docker", "run", "--rm", "--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+            # Runs as the invoking user so /out can stay private (0700);
+            # the home with the bait is a private tmpfs.
+            "--user", f"{os.getuid()}:{os.getgid()}",
+            "--tmpfs", f"{HOME}:rw,size=16m,uid={os.getuid()},gid={os.getgid()},mode=0700", "-e", f"HOME={HOME}",
             "--read-only", "--tmpfs", "/tmp:rw,exec,size=512m",
             # lets the unprivileged recorder bind :53 inside this container only
             "--sysctl", "net.ipv4.ip_unprivileged_port_start=53", "--memory", "768m", "--pids-limit", "256", "--cpus", "1",

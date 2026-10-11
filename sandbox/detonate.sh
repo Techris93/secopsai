@@ -6,6 +6,17 @@ set -u
 eco="$1"
 art="/in/$2"
 mkdir -p /tmp/pkg /tmp/site
+# Bait: fake credentials in the tmpfs home. Built from pieces so no
+# credential-shaped literal exists in source; none is valid anywhere.
+b=SECOPSAIBAIT
+mkdir -p "$HOME/.ssh" "$HOME/.aws" "$HOME/.config/gcloud"
+printf '//registry.npmjs.org/:_authToken=%s_%snotarealtoken000000\n' npm "$b" > "$HOME/.npmrc"
+printf '[pypi]\nusername = __token__\npassword = %s-%s-notarealtoken000000\n' pypi "$b" > "$HOME/.pypirc"
+printf '[default]\naws_access_key_id = %s%s0000\naws_secret_access_key = %s/notarealsecret00000000000000\n' AK"IA" "$b" "$b" > "$HOME/.aws/credentials"
+printf -- '-----%s %s PRIVATE KEY-----\n%s\n-----END %s PRIVATE KEY-----\n' BEGIN OPENSSH "$b" OPENSSH > "$HOME/.ssh/id_rsa"
+printf '{"type":"service_account","private_key_id":"%s","client_email":"bait@%s.example"}\n' "$b" "$b" > "$HOME/.config/gcloud/application_default_credentials.json"
+printf 'export GITHUB_TOKEN=%s_%snotarealtoken000\n' ghp "$b" > "$HOME/.bashrc"
+chmod 600 "$HOME/.ssh/id_rsa"
 # Loopback DNS recorder (nothing leaves: the container has no network).
 python3 /usr/local/bin/dnslog.py /out/dns.log &
 export NO_UPDATE_NOTIFIER=1 npm_config_update_notifier=false npm_config_fund=false npm_config_audit=false
