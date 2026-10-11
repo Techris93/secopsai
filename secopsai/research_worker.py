@@ -693,6 +693,16 @@ def run_worker_loop(
                 capture_exception(exc, context={"component": "actions_watch"})
                 last_summary = dict(last_summary)
                 last_summary["actions_watch"] = {"status": "degraded", "error": str(exc)[:500]}
+            # Link flagged packages into campaigns; alerts when one grows.
+            try:
+                from secopsai.actor_fingerprint import link_campaigns
+
+                last_summary = dict(last_summary)
+                last_summary["campaigns"] = link_campaigns(db_path=db_path)
+            except Exception as exc:
+                capture_exception(exc, context={"component": "campaigns"})
+                last_summary = dict(last_summary)
+                last_summary["campaigns"] = {"status": "degraded", "error": str(exc)[:500]}
             cycles += 1
             if core_edge.enabled:
                 # Publish the final heartbeat only after ontology sync and

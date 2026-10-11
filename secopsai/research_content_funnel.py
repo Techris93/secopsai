@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import soc_store
-from secopsai import package_features, version_diff, yara_engine
+from secopsai import actor_fingerprint, package_features, version_diff, yara_engine
 from secopsai.research_intake import SafeFetcher
 
 ECOSYSTEMS: Tuple[str, ...] = ("pypi", "open-vsx", "crates", "vscode-marketplace", "mcp-registry")
@@ -127,7 +127,8 @@ def scan_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: st
         return {"status": "skipped" if "safety limit" in reason or "maximum size" in reason or "too many" in reason else "error", "reason": reason}
     findings = [item for item in scanned.get("findings") or [] if item.get("rule_id") != "YARA-SCAN-ERROR"]
     level = str(scanned.get("level") or "none")
-    return {"status": "hit" if level in HIT_LEVELS else "clean", "score": int(scanned.get("score") or 0), "level": level,
+    return {"fingerprints": actor_fingerprint.from_members(members) if level in HIT_LEVELS else {},
+            "status": "hit" if level in HIT_LEVELS else "clean", "score": int(scanned.get("score") or 0), "level": level,
             "rules_matched": scanned.get("rules_matched") or [], "findings": findings[:20], "features": flags, "files": len(members), "bytes": len(raw), "diff": diff}
 
 

@@ -70,10 +70,15 @@ def record_hit(*, ecosystem: str, package: str, version: str, prescan: Dict[str,
         ],
         "metadata_signals": (metadata_signals or [])[:20],
         "manifest": prescan.get("manifest") or {},
+        "actor_fingerprints": prescan.get("fingerprints") or {},
         "execution_performed": False,
         "note": "Package metadata is untrusted context: it may explain a match but is not proof of benign intent.",
     }
     now = soc_store.utc_now()
+    if prescan.get("fingerprints"):
+        from secopsai import actor_fingerprint
+
+        actor_fingerprint.record(key, prescan["fingerprints"], seen_at=now, db_path=db_path)
     with closing(soc_store.connect(db_path)) as connection:
         _ensure(connection)
         connection.execute(

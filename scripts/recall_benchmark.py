@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from secopsai import package_features, version_diff, yara_engine  # noqa: E402
+from secopsai import actor_fingerprint, package_features, version_diff, yara_engine  # noqa: E402
 from secopsai.artifact_fleet import MAX_FILE_BYTES, _safe_archive_files  # noqa: E402
 from secopsai.research_funnel import MAX_ARCHIVE_BYTES, NPM_ARTIFACT_HOSTS  # noqa: E402
 from secopsai.research_intake import SafeFetcher  # noqa: E402
@@ -120,7 +120,9 @@ def scan_sample(dataset: Path, path: str) -> Dict[str, Any]:
     # Hijacked releases are diffed against the version before them; packages
     # published to be malicious have no trusted predecessor.
     package = row["package"] if row["category"] == "compromised_lib" else ""
-    return {**row, **_scan_members(members, row["version"], row["ecosystem"], package, row.get("discovered", ""))}
+    # Indicators and code hashes only (no code): used to measure campaign linking.
+    return {**row, **_scan_members(members, row["version"], row["ecosystem"], package, row.get("discovered", "")),
+            "fingerprints": actor_fingerprint.from_members(members)}
 
 
 DIFF_FETCHER = SafeFetcher(timeout=30)
@@ -248,6 +250,21 @@ def _recall_by_year(malicious: List[Dict[str, Any]]) -> List[str]:
     return lines
 
 
+def _campaigns(malicious: List[Dict[str, Any]]) -> List[str]:
+    """How the actor fingerprints group known malware into campaigns."""
+    items = {f"{row['ecosystem']}:{row['package']}@{row['version']}": row["fingerprints"] for row in malicious if row.get("fingerprints")}
+    groups = actor_fingerprint.cluster(items)
+    linked = sum(len(group["members"]) for group in groups)
+    lines = ["", "### Campaign linking", "",
+             f"{len(groups)} campaigns link {linked} of {len(items)} samples ({100 * linked / max(1, len(items)):.0f}%); largest: "
+             + ", ".join(str(len(group["members"])) for group in groups[:8]) + ".", "",
+             "| Campaign | Samples | Linked by | Examples |", "| --- | --- | --- | --- |"]
+    for group in groups[:15]:
+        examples = ", ".join(sorted({member.split("@", 1)[0] for member in group["members"]})[:4])
+        lines.append(f"| {group['campaign_id']} | {len(group['members'])} | {', '.join(group['indicators'][:3])} | {examples} |")
+    return lines
+
+
 def report(rows: List[Dict[str, Any]], meta: Dict[str, Any]) -> str:
     malicious = [row for row in rows if row["set"] == "malicious"]
     clean = [row for row in rows if row["set"] == "clean"]
@@ -274,7 +291,7 @@ def report(rows: List[Dict[str, Any]], meta: Dict[str, Any]) -> str:
     fps = [row for row in clean if LEVEL_RANK.get(row.get("level"), 0) >= 1]
     if fps:
         lines += ["", "### False-positive packages", ""] + [f"- {row['ecosystem']}:{row['package']}@{row.get('version')} — {', '.join(row.get('rules') or [])} (score {row.get('score')})" for row in fps[:40]]
-    lines += _miss_profile(malicious, clean) + _recall_by_year(malicious)
+    lines += _miss_profile(malicious, clean) + _recall_by_year(malicious) + _campaigns(malicious)
     lines += ["", f"Elapsed {meta['elapsed_seconds']} s. Full rows in the `recall-benchmark` artifact."]
     return "\n".join(lines)
 

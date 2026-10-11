@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from secopsai import package_features, version_diff, yara_engine
+from secopsai import actor_fingerprint, package_features, version_diff, yara_engine
 from secopsai.research_intake import SafeFetcher
 
 NPM_ARTIFACT_HOSTS = ("registry.npmjs.org",)
@@ -101,9 +101,11 @@ def _scan_one(target: Dict[str, Any], fetcher: SafeFetcher) -> Dict[str, Any]:
     manifest = manifest_summary(members)
     for item in findings:
         item["file_role"] = file_role(str(item.get("file_path") or ""), manifest)
+    hit = scanned.get("level") in HIT_LEVELS
     return {
         **result,
-        "status": "hit" if scanned.get("level") in HIT_LEVELS else "clean",
+        "fingerprints": actor_fingerprint.from_members(members) if hit else {},
+        "status": "hit" if hit else "clean",
         "score": int(scanned.get("score") or 0),
         "level": scanned.get("level"),
         "rules_matched": scanned.get("rules_matched") or [],
