@@ -24,6 +24,7 @@ import soc_store
 
 CURSOR_KEY = "core_ai_triage_results"
 MAX_QUEUE_PER_CYCLE = 25
+QUEUE_CHUNK = 5
 AUTO_RESOLVE_CONFIDENCE = 85
 # A model-assigned probability of malice at or below this resolves the alert
 # even when the verdict hedges (needs_more_evidence); at or above
@@ -156,9 +157,18 @@ def _queue_pending(client: Any, db_path: Optional[str]) -> Dict[str, Any]:
         # A re-triage is a new job: Core deduplicates on the idempotency key.
         suffix = f":r{revision}" if revision else ""
         jobs.append({"artifact_id": row["artifact_key"], "idempotency_key": f"runner-triage:{row['artifact_key']}{suffix}", "inputs": {"artifact_triage": context}})
-    response = client.queue_triage_jobs(jobs)
-    queued = {item.get("artifact_id"): item.get("job_id") for item in response.get("queued") or [] if item.get("job_id")}
-    rejected = {item.get("artifact_id"): item.get("error") for item in response.get("queued") or [] if item.get("error")}
+    # Five per request: contexts can approach the 56 KB cap, and storing 25 of
+    # them can outlast the client's timeout. A failed chunk is retried next
+    # cycle; stable idempotency keys prevent duplicates.
+    queued: Dict[str, Any] = {}
+    rejected: Dict[str, Any] = {}
+    for start in range(0, len(jobs), QUEUE_CHUNK):
+        try:
+            response = client.queue_triage_jobs(jobs[start:start + QUEUE_CHUNK])
+        except Exception:
+            break
+        queued.update({item.get("artifact_id"): item.get("job_id") for item in response.get("queued") or [] if item.get("job_id")})
+        rejected.update({item.get("artifact_id"): item.get("error") for item in response.get("queued") or [] if item.get("error")})
     now = soc_store.utc_now()
     with closing(soc_store.connect(db_path)) as connection:
         for key, job_id in queued.items():
