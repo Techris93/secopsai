@@ -1486,14 +1486,21 @@ async function queueRunnerTriageJobs(request, env, requestId) {
     const artifactId = clean(item.artifact_id, 240);
     if (!artifactId) continue;
     const inputs = item.inputs && typeof item.inputs === "object" && !Array.isArray(item.inputs) ? item.inputs : {};
-    const result = await insertIntelligenceJob(env, requestId, {
-      action: "triage_artifact",
-      target_id: artifactId,
-      inputs: { ...inputs, artifact_id: artifactId },
-      requested_by: RUNNER_TRIAGE_REQUESTER,
-      idempotency_key: clean(item.idempotency_key, 256) || `runner-triage:${artifactId}`,
-    });
-    queued.push({ artifact_id: artifactId, job_id: result.job?.job_id, created: result.created });
+    // One invalid job (e.g. an oversized input) must not fail the whole batch:
+    // the runner would resend the same batch forever and the queue would stall.
+    try {
+      const result = await insertIntelligenceJob(env, requestId, {
+        action: "triage_artifact",
+        target_id: artifactId,
+        inputs: { ...inputs, artifact_id: artifactId },
+        requested_by: RUNNER_TRIAGE_REQUESTER,
+        idempotency_key: clean(item.idempotency_key, 256) || `runner-triage:${artifactId}`,
+      });
+      queued.push({ artifact_id: artifactId, job_id: result.job?.job_id, created: result.created });
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      queued.push({ artifact_id: artifactId, error: error.code || "rejected" });
+    }
   }
   return { queued, count: queued.length };
 }

@@ -175,3 +175,11 @@ def test_retriage_retires_clean_requeues_strong_and_keeps_labels(tmp_path):
     core = Core()
     research_ai_triage._queue_pending(core, db_path)
     assert core.jobs[0]["idempotency_key"] == "runner-triage:npm:strong@1.0.0:r1", "a re-triage is a new job for Core"
+
+
+def test_triage_contexts_fit_cores_input_limit():
+    big = {"findings": [{"rule_id": f"R{i}", "safe_context": "x" * 5000} for i in range(20)],
+           "install_time_files": [{"path": f"f{i}.js", "content": "y" * 6000} for i in range(6)], "metadata_signals": [{"id": "s"}] * 20}
+    fitted = research_ai_triage.fit_context(big)
+    assert fitted["context_bytes"] <= research_ai_triage.MAX_CONTEXT_BYTES
+    assert fitted["findings"] and fitted["install_time_files"], "shrinks, does not discard everything"

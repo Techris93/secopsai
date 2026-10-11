@@ -62,3 +62,18 @@ def test_files_listing_many_domains_are_data():
     listing = ", ".join(f'"d{i}.xyz"' for i in range(af.MAX_DOMAINS_PER_FILE + 5)).encode()
     assert af.infrastructure([listing.decode()]) == set()
     assert af.infrastructure(['fetch("https://collector.evil-cdn.xyz/c")']) == {"host:collector.evil-cdn.xyz"}
+
+
+def test_relinking_retires_campaigns_that_no_longer_hold(tmp_path):
+    db_path = str(tmp_path / "soc.db")
+    soc_store.init_db(db_path)
+    shared = {"infra": ["host:api.ipify.org"], "code": "", "publisher": []}  # generic: no longer links
+    with soc_store.connect(db_path) as connection:
+        af._ensure(connection)
+        connection.execute("INSERT INTO actor_campaigns VALUES ('CMP-OLD', ?, '[]', 't', 't', 't')", (json.dumps(["a", "b"]),))
+        connection.execute("INSERT INTO research_alerts (alert_id, alert_type, severity, campaign_id, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at) VALUES ('RAL-1', 'campaign_activity', 'medium', 'CMP-OLD', 'campaign:CMP-OLD', 'r', '{}', 'open', '', 't', 't')")
+    for key in ("a", "b"):
+        af.record(key, shared, seen_at="t", db_path=db_path)
+    assert af.link_campaigns(db_path=db_path)["retired"] == 1
+    with soc_store.connect(db_path) as connection:
+        assert connection.execute("SELECT status FROM research_alerts WHERE alert_id='RAL-1'").fetchone()[0] == "resolved"

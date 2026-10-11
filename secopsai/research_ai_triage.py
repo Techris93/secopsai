@@ -64,8 +64,11 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
         "rule_score": int(prescan.get("score") or 0),
         "rule_level": prescan.get("level"),
         "findings": [
-            {field: item.get(field) for field in ("rule_id", "severity", "score", "file_path", "file_role", "matched_indicator", "matched_patterns", "safe_context", "evidence", "rule_author", "rule_reference")}
-            for item in (prescan.get("findings") or [])[:20]
+            {**{field: item.get(field) for field in ("rule_id", "severity", "score", "file_path", "file_role", "matched_indicator", "matched_patterns", "rule_author", "rule_reference")},
+             "safe_context": str(item.get("safe_context") or "")[:1800],
+             # The code is already in safe_context; keep only where each flag matched.
+             "evidence_locations": [{key: found.get(key) for key in ("flag", "file_path", "line")} for found in (item.get("evidence") or [])][:8]}
+            for item in (prescan.get("findings") or [])[:12]
         ],
         "metadata_signals": (metadata_signals or [])[:20],
         "manifest": prescan.get("manifest") or {},
@@ -78,11 +81,32 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
     }
 
 
+# Core rejects a triage job whose input exceeds 64 KB; stay well below it.
+MAX_CONTEXT_BYTES = 56 * 1024
+
+
+def fit_context(context: Dict[str, Any], limit: int = MAX_CONTEXT_BYTES) -> Dict[str, Any]:
+    """Shrink a triage context until it serialises under ``limit`` bytes."""
+    context = json.loads(json.dumps(context))
+    steps = (
+        lambda c: c.update(install_time_files=[{**f, "content": str(f.get("content", ""))[:3000], "truncated": True} for f in c.get("install_time_files") or []]),
+        lambda c: c.update(findings=[{**f, "safe_context": str(f.get("safe_context", ""))[:700]} for f in c.get("findings") or []][:8]),
+        lambda c: c.update(install_time_files=(c.get("install_time_files") or [])[:2], metadata_signals=(c.get("metadata_signals") or [])[:5]),
+        lambda c: c.update(findings=(c.get("findings") or [])[:4], manifest={}, actor_fingerprints={}),
+    )
+    for step in steps:
+        if len(json.dumps(context).encode()) <= limit:
+            break
+        step(context)
+    context["context_bytes"] = len(json.dumps(context).encode())
+    return context
+
+
 def record_hit(*, ecosystem: str, package: str, version: str, prescan: Dict[str, Any], metadata_signals: Optional[List[Dict[str, Any]]] = None, previous_version: str = "", db_path: Optional[str] = None) -> str:
     """Store a rule hit with its minimized evidence for later model triage."""
     key = artifact_key(ecosystem, package, version)
-    context = build_context(ecosystem=ecosystem, package=package, version=version, prescan=prescan,
-                            metadata_signals=metadata_signals, previous_version=previous_version)
+    context = fit_context(build_context(ecosystem=ecosystem, package=package, version=version, prescan=prescan,
+                                        metadata_signals=metadata_signals, previous_version=previous_version))
     now = soc_store.utc_now()
     if prescan.get("fingerprints"):
         from secopsai import actor_fingerprint
@@ -111,19 +135,28 @@ def _queue_pending(client: Any, db_path: Optional[str]) -> Dict[str, Any]:
         return {"queued": 0}
     jobs = []
     for row in rows:
-        context = json.loads(row["context_json"])
+        context = fit_context(json.loads(row["context_json"]))
+        if context["context_bytes"] > MAX_CONTEXT_BYTES:
+            with closing(soc_store.connect(db_path)) as connection:
+                connection.execute("UPDATE research_ai_triage SET status='failed', result_json=?, updated_at=? WHERE artifact_key=?",
+                                   (json.dumps({"error": "context_too_large"}), soc_store.utc_now(), row["artifact_key"]))
+                connection.commit()
+            continue
         revision = int(context.get("revision") or 0)
         # A re-triage is a new job: Core deduplicates on the idempotency key.
         suffix = f":r{revision}" if revision else ""
         jobs.append({"artifact_id": row["artifact_key"], "idempotency_key": f"runner-triage:{row['artifact_key']}{suffix}", "inputs": {"artifact_triage": context}})
     response = client.queue_triage_jobs(jobs)
     queued = {item.get("artifact_id"): item.get("job_id") for item in response.get("queued") or [] if item.get("job_id")}
+    rejected = {item.get("artifact_id"): item.get("error") for item in response.get("queued") or [] if item.get("error")}
     now = soc_store.utc_now()
     with closing(soc_store.connect(db_path)) as connection:
         for key, job_id in queued.items():
             connection.execute("UPDATE research_ai_triage SET status='queued', job_id=?, updated_at=? WHERE artifact_key=?", (str(job_id), now, key))
+        for key, error in rejected.items():
+            connection.execute("UPDATE research_ai_triage SET status='failed', result_json=?, updated_at=? WHERE artifact_key=?", (json.dumps({"error": error}), now, key))
         connection.commit()
-    return {"queued": len(queued)}
+    return {"queued": len(queued), "rejected": len(rejected)}
 
 
 def _apply_result(connection: Any, item: Dict[str, Any], now: str) -> Optional[str]:
@@ -317,8 +350,8 @@ def retriage(*, db_path: Optional[str] = None, min_score: int = 80, limit: int =
                     (now, note, row["package"], row["version"]),
                 )
                 continue
-            context = build_context(ecosystem=row["ecosystem"], package=row["package"], version=row["version"], prescan=result,
-                                    metadata_signals=old.get("metadata_signals") or [], previous_version=old.get("previous_version") or "")
+            context = fit_context(build_context(ecosystem=row["ecosystem"], package=row["package"], version=row["version"], prescan=result,
+                                                metadata_signals=old.get("metadata_signals") or [], previous_version=old.get("previous_version") or ""))
             context.update({"rescanned_at": now, "rescan": "hit", "revision": int(old.get("revision") or 0) + 1})
             requeue = int(result.get("score") or 0) >= min_score
             stats["requeued" if requeue else "refreshed"] += 1

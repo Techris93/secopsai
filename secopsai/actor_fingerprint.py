@@ -166,8 +166,23 @@ def record(artifact_key: str, prints: Dict[str, Any], *, seen_at: str, db_path: 
 
 
 # --------------------------------------------------------------- clustering
+def _clean_prints(prints: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply the current indicator filters (fingerprints may predate them)."""
+    infra = []
+    for value in prints.get("infra") or []:
+        if value.startswith("host:"):
+            host = value[5:]
+            if COMMON.search(host) or PLATFORM.search(host) or GENERIC_HOST.search(host) or host.endswith(".sh") or host.startswith(("-", ".")) or host in {"system.io", "system.net"}:
+                continue
+        infra.append(value)
+    if sum(value.startswith("host:") for value in infra) > MAX_DOMAINS_PER_FILE:
+        infra = [value for value in infra if not value.startswith("host:")]  # a domain list, not infrastructure
+    return {**prints, "infra": infra}
+
+
 def cluster(items: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Connected groups of artifacts sharing a fingerprint; each with the indicators that link it."""
+    items = {key: _clean_prints(prints) for key, prints in items.items()}
     parent = {key: key for key in items}
 
     def find(key: str) -> str:
@@ -285,8 +300,17 @@ def link_campaigns(*, db_path: Optional[str] = None) -> Dict[str, Any]:
                      f"Campaign {campaign['campaign_id']}: {len(campaign['members'])} packages ({len(added)} new) linked by "
                      + ", ".join(campaign["indicators"][:3]), json.dumps(evidence, sort_keys=True), now, now),
                 )
+        # Campaigns that no longer exist under the current linking rules (for
+        # example over-merged by indicators since filtered) are removed and
+        # their alerts resolved.
+        current = {campaign["campaign_id"] for campaign in campaigns}
+        stale = [row["campaign_id"] for row in connection.execute("SELECT campaign_id FROM actor_campaigns").fetchall() if row["campaign_id"] not in current]
+        for campaign_id in stale:
+            connection.execute("DELETE FROM actor_campaigns WHERE campaign_id = ?", (campaign_id,))
+            connection.execute("UPDATE research_alerts SET status = 'resolved', owner = 'campaign-relink', updated_at = ? WHERE alert_type = 'campaign_activity' AND campaign_id = ? AND status = 'open'",
+                               (now, campaign_id))
         connection.commit()
-    return {"campaigns": len(campaigns), "grown": grown, "largest": [len(c["members"]) for c in campaigns[:5]]}
+    return {"campaigns": len(campaigns), "grown": grown, "retired": len(stale), "largest": [len(c["members"]) for c in campaigns[:5]]}
 
 
 def campaign_of(artifact_key: str, *, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:

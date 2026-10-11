@@ -716,6 +716,10 @@ def run_worker_loop(
                 capture_exception(exc, context={"component": "campaigns"})
                 last_summary = dict(last_summary)
                 last_summary["campaigns"] = {"status": "degraded", "error": str(exc)[:500]}
+            # One line per cycle so outcomes are visible in the run log.
+            print(json.dumps({"component": "research-worker", "event": "cycle_summary",
+                              **{key: last_summary.get(key) for key in ("status", "content_funnel", "actions_watch", "retriage", "campaigns") if key in last_summary}},
+                             default=str)[:4000], flush=True)
             cycles += 1
             if core_edge.enabled:
                 # Publish the final heartbeat only after ontology sync and
@@ -744,6 +748,7 @@ def run_worker_loop(
 
                     last_summary = dict(last_summary)
                     last_summary["ai_triage"] = sync_ai_triage(core_edge, db_path=db_path)
+                    print(json.dumps({"component": "research-worker", "event": "ai_triage", **last_summary["ai_triage"]}, default=str)[:2000], flush=True)
                 except Exception as exc:
                     capture_exception(exc, context={"component": "ai_triage"})
                     last_summary = dict(last_summary)
