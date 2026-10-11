@@ -188,6 +188,29 @@ License 1.1. Every YARA finding keeps the rule's `author` and `reference`;
 keep them when quoting a match in a post. False-positive rules can be
 silenced in `rules/yara/disabled-rules.txt` (one rule name per line).
 
+## Sandbox detonation
+
+`secopsai/sandbox.py` runs a package's install steps (npm lifecycle scripts,
+or `pip install` for an sdist) and an import, in a container built from
+`sandbox/Dockerfile`, and records behaviour with `strace`:
+
+- **Containment:** `--network none`, all capabilities dropped,
+  `no-new-privileges`, read-only root with `/tmp` as tmpfs, memory, pid and
+  CPU limits, per-step and per-run timeouts, an unprivileged user.
+- **Observation:** processes started, files opened, connection attempts, and
+  DNS names (answered NXDOMAIN by a loopback recorder; nothing leaves).
+- **Bait:** fake `.npmrc`, `.pypirc`, AWS, SSH and gcloud credentials and a
+  `GITHUB_TOKEN`. Reading bait and attempting network access is
+  `malicious`; network access, home-directory writes or a downloader alone is
+  `suspicious`. Reads by the package manager itself are ignored.
+
+**Where it may run.** Detonating real malware is refused unless
+`SECOPSAI_SANDBOX_ALLOWED=1` is set, and that belongs only on a disposable
+host chosen for the purpose and whose terms permit it (for example a cloud VM
+reserved for analysis), never on a workstation. GitHub's hosted runners are
+not that host. Test packages that only simulate malware live in
+`tests/test_sandbox.py`.
+
 ## Investigate a package
 
 ```bash
