@@ -29,7 +29,20 @@ CODE_DISTANCE = 3
 MAX_SHARED = 40
 URL = re.compile(r"https?://[A-Za-z0-9.-]+(?::\d+)?(?:/[^\s'\"`<>)]*)?")
 IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-DOMAIN = re.compile(r"\b(?:[a-z0-9-]{1,63}\.)+(?:com|net|org|io|xyz|top|ru|cn|tk|ml|ga|cf|gq|pw|cc|su|info|biz|app|dev|site|online|live|fun|pro|me|sh|in|co|us|to)\b", re.IGNORECASE)
+# Domains only as whole string literals: bare code (System.IO) is not a domain,
+# and .sh is left out because script names ("run.sh") are far more common.
+DOMAIN = re.compile(r"['\"`]((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|io|xyz|top|ru|cn|tk|ml|ga|cf|gq|pw|cc|su|info|biz|app|dev|site|online|live|fun|pro|me|in|co|us|to))['\"`]", re.IGNORECASE)
+# Shared by many unrelated actors or tools: never an actor fingerprint.
+GENERIC_HOST = re.compile(
+    r"^(localhost|.*\.local|.*\.internal|metadata\.google\.internal|169\.254\.\d+\.\d+|127\.\d+\.\d+\.\d+|0\.0\.0\.0|"
+    r"(api\d*\.)?ipify\.org|ifconfig\.(me|co)|ipinfo\.io|icanhazip\.com|ip-api\.com|checkip\.amazonaws\.com|wtfismyip\.com|myexternalip\.com|"
+    r"(.*\.)?(gmail|outlook|hotmail|yahoo|proton|protonmail|icloud)\.(com|me)|"
+    r"(.*\.)?(amazon\.com|amazonaws\.com\.cn|amazonwebservices\.com\.cn|kubernetes\.io|golang\.org|grpc\.io|gstatic\.com|ietf\.org|"
+    r"roblox\.com|wikipedia\.org|stackoverflow\.com|docker\.com|docker\.io|gitlab\.com|bitbucket\.org|npms\.io))$",
+    re.IGNORECASE,
+)
+MAX_SHARED_HOST = 15
+FOCUSED_HOSTS = 3
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 COMMON = re.compile(
     r"(^|\.)(npmjs\.(org|com)|github\.com|githubusercontent\.com|pypi\.org|pythonhosted\.org|nodejs\.org|python\.org|"
@@ -39,7 +52,7 @@ COMMON = re.compile(
 )
 # Shared platforms: only the specific webhook / bot / bin identifies an actor.
 PLATFORM = re.compile(r"(^|\.)(discord(app)?\.com|telegram\.org|pastebin\.com|webhook\.site|pipedream\.net|ngrok(-free)?\.(io|app|dev)|"
-                      r"requestbin\.(com|net)|transfer\.sh|oast\.(fun|pro|site|me|live|online)|interactsh\.com|burpcollaborator\.net|"
+                      r"requestbin\.(com|net)|canarytokens\.(com|org)|transfer\.sh|oast\.(fun|pro|site|me|live|online)|interactsh\.com|burpcollaborator\.net|"
                       r"glitch\.me|herokuapp\.com|vercel\.app|netlify\.app|workers\.dev|pages\.dev|github\.io)$", re.IGNORECASE)
 PRIVATE_IP = re.compile(r"^(0\.|10\.|127\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|255\.)")
 
@@ -59,14 +72,14 @@ def infrastructure(texts: Iterable[str]) -> Set[str]:
             # Webhook / bot URLs identify an actor down to the path.
             if re.search(r"discord(app)?\.com/api/webhooks/\d+|api\.telegram\.org/bot\d+|webhook\.site/[0-9a-f-]{8,}|pipedream\.net|oast\.", url, re.I):
                 found.add("url:" + re.sub(r"(/api/webhooks/\d+)/[\w-]+", r"\1", url.split("?", 1)[0]).lower()[:200])
-            if not PLATFORM.search(host):
+            if not PLATFORM.search(host) and not GENERIC_HOST.search(host) and "." in host.strip("."):
                 found.add("host:" + host)
         for ip in IPV4.findall(text):
             if not PRIVATE_IP.match(ip) and all(int(part) < 256 for part in ip.split(".")):
                 found.add("ip:" + ip)
         for match in DOMAIN.finditer(text):
-            domain = match.group(0).lower()
-            if not COMMON.search(domain) and not PLATFORM.search(domain) and not re.match(r"^[\d.]+$", domain):
+            domain = match.group(1).lower()
+            if not COMMON.search(domain) and not PLATFORM.search(domain) and not GENERIC_HOST.search(domain):
                 found.add("host:" + domain)
     return found
 
@@ -169,25 +182,58 @@ def cluster(items: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
     for key, prints in items.items():
         for value in list(prints.get("infra") or []) + [f"publisher:{p}" for p in prints.get("publisher") or []]:
             index.setdefault(value, []).append(key)
-    links: Dict[Tuple[str, str], Set[str]] = {}
+    # Evidence per pair. A pair links on one strong indicator (exact webhook/bot
+    # URL, IP, publisher email), two shared hosts, or a host plus similar code:
+    # single weak links would otherwise chain unrelated actors together.
+    shared: Dict[Tuple[str, str], Set[str]] = {}
     for value, keys in index.items():
-        if 2 <= len(keys) <= MAX_SHARED:
-            for other in keys[1:]:
-                union(keys[0], other)
-                links.setdefault((keys[0], other), set()).add(value)
+        if 2 <= len(keys) <= (MAX_SHARED_HOST if value.startswith("host:") else MAX_SHARED):
+            ordered = sorted(keys)
+            for i, key_a in enumerate(ordered):
+                for key_b in ordered[i + 1:]:
+                    shared.setdefault((key_a, key_b), set()).add(value)
+    # Similar code links only within small groups: code shared by more than
+    # MAX_SHARED packages is a public template, not one actor.
+    code_parent: Dict[str, str] = {}
+
+    def code_find(key: str) -> str:
+        while code_parent.setdefault(key, key) != key:
+            key = code_parent[key]
+        return key
+
     codes = [(key, int(prints["code"], 16)) for key, prints in items.items() if prints.get("code")]
     buckets: Dict[int, List[Tuple[str, int]]] = {}
     for key, code in codes:
         for band in range(4):  # 4 bands of 16 bits: near-duplicates share at least one band
             buckets.setdefault(band << 16 | (code >> (band * 16)) & 0xFFFF, []).append((key, code))
+    similar: Set[Tuple[str, str]] = set()
     for bucket in buckets.values():
         if len(bucket) > MAX_SHARED:
             continue
         for i, (key_a, code_a) in enumerate(bucket):
             for key_b, code_b in bucket[i + 1:]:
-                if bin(code_a ^ code_b).count("1") <= CODE_DISTANCE:
-                    union(key_a, key_b)
-                    links.setdefault((key_a, key_b), set()).add("code:similar")
+                if key_a != key_b and bin(code_a ^ code_b).count("1") <= CODE_DISTANCE:
+                    similar.add(tuple(sorted((key_a, key_b))))
+                    root_a, root_b = code_find(key_a), code_find(key_b)
+                    if root_a != root_b:
+                        code_parent[max(root_a, root_b)] = min(root_a, root_b)
+    code_groups: Dict[str, List[str]] = {}
+    for key in list(code_parent):
+        code_groups.setdefault(code_find(key), []).append(key)
+    template = {key for members in code_groups.values() if len(members) > MAX_SHARED for key in members}
+    host_count = {key: sum(value.startswith("host:") for value in prints.get("infra") or []) for key, prints in items.items()}
+    links: Dict[Tuple[str, str], Set[str]] = {}
+    for pair in set(shared) | similar:
+        values = set(shared.get(pair, set()))
+        code_link = pair in similar and not (set(pair) & template)
+        strong = any(not value.startswith("host:") for value in values)
+        hosts = sum(value.startswith("host:") for value in values)
+        # A rare host shared by two focused packages (few suspicious hosts each)
+        # is strong; in packages full of URLs it needs corroboration.
+        focused = all(host_count.get(key, 0) <= FOCUSED_HOSTS for key in pair)
+        if strong or hosts >= 2 or (hosts >= 1 and (code_link or focused)) or (code_link and not values):
+            union(*pair)
+            links[pair] = values | ({"code:similar"} if code_link else set())
     groups: Dict[str, List[str]] = {}
     for key in items:
         groups.setdefault(find(key), []).append(key)

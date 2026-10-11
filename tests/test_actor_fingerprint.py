@@ -50,3 +50,9 @@ def test_publisher_email_links_and_campaign_growth_alerts(tmp_path):
     evidence = json.loads(alert["evidence_json"])
     assert alert["alert_type"] == "campaign_activity" and evidence["added"] == ["npm:c@1"] and evidence["first_seen"] == "2026-10-01T00:00:00Z"
     assert af.campaign_of("npm:b@1", db_path=db_path)["members"] == 3
+
+
+def test_a_widely_shared_code_template_does_not_chain_packages():
+    template = {"infra": [], "code": "0f0f0f0f0f0f0f0f", "publisher": []}
+    crowd = {f"npm:stub{i}@1": dict(template) for i in range(af.MAX_SHARED + 5)}
+    assert af.cluster(crowd) == [], "public boilerplate shared by many packages is not one actor"

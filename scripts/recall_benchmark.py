@@ -260,7 +260,7 @@ def _campaigns(malicious: List[Dict[str, Any]]) -> List[str]:
              + ", ".join(str(len(group["members"])) for group in groups[:8]) + ".", "",
              "| Campaign | Samples | Linked by | Examples |", "| --- | --- | --- | --- |"]
     for group in groups[:15]:
-        examples = ", ".join(sorted({member.split("@", 1)[0] for member in group["members"]})[:4])
+        examples = ", ".join(sorted({member.rsplit("@", 1)[0] for member in group["members"]})[:4])
         lines.append(f"| {group['campaign_id']} | {len(group['members'])} | {', '.join(group['indicators'][:3])} | {examples} |")
     return lines
 

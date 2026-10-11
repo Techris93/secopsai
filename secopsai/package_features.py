@@ -27,7 +27,8 @@ PATTERNS: Dict[str, str] = {
     "home_dir": r"os\.homedir\s*\(|expanduser\s*\(|Path\.home\s*\(|\$HOME\b|%USERPROFILE%",
     "credential_files": r"\.npmrc|\.pypirc|\.ssh/|id_rsa|\.aws/credentials|\.git-credentials|\.bash_history|\.docker/config\.json|\.kube/config",
     "browser_data": r"Login Data|Local State|\bCookies\b|Local Storage/leveldb",
-    "crypto_wallet": r"metamask|exodus|electrum|\bmnemonic\b|seed phrase|solana|wallet\.dat|privateKey",
+    # Not `privateKey`: auth libraries (google-auth-library) use it for service accounts.
+    "crypto_wallet": r"metamask|exodus|electrum|\bmnemonic\b|seed phrase|solana|wallet\.dat",
     # Joined URL, or host and path built separately (common in stealers).
     "discord_webhook": r"discord(app)?\.com/api/webhooks|discord(app)?\.com['\"`].{0,200}/api/webhooks",
     "telegram_bot": r"api\.telegram\.org",
@@ -175,8 +176,11 @@ BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], 
     ("BEH_SHELL_WALLET_SEND", ("npm",), (("child_process",), ("crypto_wallet",), ("http_send",)), 60),  # +37 (+15), 1 popular flagged
     # Version diff (secopsai/version_diff.py): behaviour the previous release lacked.
     ("BEH_DIFF_NEW_INSTALL_HOOK_NETWORK", ("npm", "pypi"),
+     # Both the hook and the network behaviour must be new: packages change
+     # build systems (multidict 7.1.0 gained a setup.py cmdclass) without
+     # starting to phone home.
      (("new:install_hook", "new:install_hook_inline_command", "new:setup_py_cmdclass", "new:setup_py_side_effects"),
-      ("http_send", "download_tool", "exfil_service", "discord_webhook", "raw_ip_url", "dns_lookup")), 80),
+      ("new:http_send", "new:exfil_service", "new:discord_webhook", "new:raw_ip_url", "new:telegram_bot", "new:dns_lookup")), 80),
     ("BEH_DIFF_NEW_EXFIL", ("npm", "pypi"), (("new:exfil_service", "new:discord_webhook", "new:telegram_bot"),), 70),
     ("BEH_DIFF_NEW_SECRETS_AND_SEND", ("npm", "pypi"),
      (("new:credential_files", "new:browser_data", "new:crypto_wallet"), ("http_send", "exfil_service", "discord_webhook", "dns_lookup")), 70),
