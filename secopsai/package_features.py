@@ -58,6 +58,21 @@ PATTERNS: Dict[str, str] = {
     "anti_analysis": r"\bisVM\b|virtualbox|vmware|sandbox|debugger|process\.exit\(\)\s*;?\s*}\s*else",
 }
 TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec|fixtures?)/|(^|/)test_[^/]*\.py$|_test\.py$|\.(test|spec)\.[cm]?[jt]s$")
+def _actor_infrastructure_pattern() -> str:
+    """Known actor domains/IPs from rules/watchlists/actor-infrastructure.txt (subdomains included)."""
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "rules" / "watchlists" / "actor-infrastructure.txt"
+    entries = []
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            value = line.split("#", 1)[0].strip().lower()
+            if re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}|\d{1,3}(\.\d{1,3}){3}", value):
+                entries.append(re.escape(value))
+    return r"(?<![a-z0-9-])(?:[a-z0-9-]+\.)*(?:" + "|".join(entries) + r")\b" if entries else r"(?!x)x"
+
+
+PATTERNS["known_actor_infra"] = _actor_infrastructure_pattern()
 COMPILED = {name: re.compile(pattern, re.IGNORECASE | re.DOTALL) for name, pattern in PATTERNS.items()}
 
 
@@ -185,6 +200,8 @@ BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], 
     ("BEH_DIFF_NEW_SECRETS_AND_SEND", ("npm", "pypi"),
      (("new:credential_files", "new:browser_data", "new:crypto_wallet"), ("http_send", "exfil_service", "discord_webhook", "dns_lookup")), 70),
     ("BEH_DIFF_NEW_OBFUSCATION", ("npm", "pypi"), (("new:js_obfuscator", "new:runner_memory"),), 60),
+    # Infrastructure from investigated cases (rules/watchlists/actor-infrastructure.txt).
+    ("BEH_KNOWN_ACTOR_INFRA", ("npm", "pypi", "open-vsx", "vscode-marketplace", "crates", "github-actions", "mcp-registry"), (("known_actor_infra",),), 80),
 )
 
 
