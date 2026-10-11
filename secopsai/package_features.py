@@ -17,6 +17,7 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 MAX_TEXT_BYTES = 1024 * 1024
 TINY_CODE_BYTES = 50_000
+INSTALL_NETWORK_FLAGS = ("exfil_service", "discord_webhook", "telegram_bot", "raw_ip_url", "download_tool", "http_send")
 TEXT_SUFFIXES = {".rs", ".js", ".cjs", ".mjs", ".ts", ".py", ".pyw", ".json", ".sh", ".bat", ".cmd", ".ps1", ".cfg", ".toml", ".txt", ".yml", ".yaml", ""}
 INSTALL_HOOKS = ("preinstall", "install", "postinstall", "prepare")
 
@@ -36,7 +37,8 @@ PATTERNS: Dict[str, str] = {
     # Service domains, word-bounded: identifiers such as `transfer.shutdown`
     # and bare tool names (`ngrok` in a CLI list) do not count.
     "exfil_service": r"\b(pastebin\.com|transfer\.sh|webhook\.site|requestbin\.(com|net)|pipedream\.net|ngrok(-free)?\.(io|app|dev)|interactsh\.com|oast\.(fun|pro|site|me|live|online)|burpcollaborator\.net|canarytokens\.(com|org))\b",
-    "raw_ip_url": r"https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}",
+    # Public addresses only: loopback and private ranges (benchmarks, local dev servers) are not C2.
+    "raw_ip_url": r"https?://(?!(?:127|10|0)\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}",
     "dns_lookup": r"dns\.(lookup|resolve\w*)\s*\(|gethostbyname|\bnslookup\b|dns\.resolver",
     "http_send": r"https?\.request\s*\(|axios\.post|requests\.post|urlopen\s*\(|method\s*:\s*['\"]POST|XMLHttpRequest",
     "dynamic_eval": r"\beval\s*\(|new Function\s*\(|\bexec\s*\(\s*(base64|codecs|zlib|bytes|compile|__import__|.{0,40}decode)",
@@ -116,10 +118,15 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
                 flags.add("setup_py_cmdclass")
             if re.search(r"subprocess|os\.system|urlopen|requests\.|socket\.|exec\s*\(|eval\s*\(|b64decode", text):
                 flags.add("setup_py_side_effects")
+            if any(COMPILED[flag].search(text) for flag in ("exfil_service", "discord_webhook", "telegram_bot", "raw_ip_url")):
+                flags.add("setup_py_exfil")
         if name == "build.rs" and lowered.count("/") <= 1:
             flags.add("build_rs")
             if re.search(r"Command::new|std::net|TcpStream|reqwest|ureq|curl|std::env::var|include_bytes!", text):
                 flags.add("build_rs_side_effects")
+            # Network behaviour inside build.rs itself (not elsewhere in the crate).
+            if any(COMPILED[flag].search(text) for flag in INSTALL_NETWORK_FLAGS):
+                flags.add("build_rs_network")
         if lowered.endswith(".json"):
             continue
         code_files += 1
@@ -183,13 +190,14 @@ BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], 
      (("discord_webhook",), ("system_info", "home_dir", "credential_files", "browser_data", "crypto_wallet", "http_send")), 60),
     # build.rs runs on every `cargo build`; legitimate ones compile C code,
     # so only network/exfil behaviour in it counts.
-    ("BEH_BUILD_RS_BEACON", ("crates",), (("build_rs_side_effects",), ("exfil_service", "discord_webhook", "telegram_bot", "raw_ip_url", "download_tool")), 60),
+    ("BEH_BUILD_RS_BEACON", ("crates",), (("build_rs_side_effects",), ("build_rs_network",)), 60),
     # Agent tooling (hooks, skills) legitimately tells models what not to say;
     # poisoning pairs concealment with credential files or an exfil endpoint.
     ("BEH_MCP_TOOL_POISONING", ("mcp-registry", "npm", "pypi"), (("prompt_injection",), ("credential_files", "exfil_service")), 70),
     ("BEH_ACTIONS_RUNNER_MEMORY", ("github-actions",), (("runner_memory",),), 80),
     # setup.py commonly checks the platform; only exfil endpoints count.
-    ("BEH_SETUP_PY_BEACON", ("pypi",), (("setup_py_side_effects",), ("exfil_service", "discord_webhook", "telegram_bot")), 60),
+    # The exfil endpoint must be in setup.py itself (it runs at install).
+    ("BEH_SETUP_PY_BEACON", ("pypi",), (("setup_py_side_effects",), ("setup_py_exfil",)), 60),
     # From rule lab issue #110 (benchmark run 38089864099), chosen on pre-2026
     # samples; held-out 2026 gains in brackets.
     ("BEH_JS_OBFUSCATOR", ("npm",), (("js_obfuscator",),), 60),  # +35 (+43 held-out), 0 popular flagged
@@ -223,9 +231,28 @@ def behaviour_findings(flags: Iterable[str], ecosystem: str) -> List[Dict[str, o
     return findings
 
 
-def flag_evidence(members: Iterable[Tuple[str, bytes]], flag: str, *, window: int = 360) -> Dict[str, str]:
-    """Where a flag matched: file path and an inert text window around the first match."""
+# Flags computed from a specific file rather than a pattern: point at that file.
+FILE_FLAGS = {
+    "build_rs": "build.rs", "build_rs_side_effects": "build.rs", "build_rs_network": "build.rs",
+    "setup_py": "setup.py", "setup_py_cmdclass": "setup.py", "setup_py_side_effects": "setup.py", "setup_py_exfil": "setup.py",
+    "install_hook": "package.json", "install_hook_inline_command": "package.json",
+}
+
+
+def _clean_window(text: str) -> str:
+    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", ".", text)
+
+
+def flag_evidence(members: Iterable[Tuple[str, bytes]], flag: str, *, window: int = 360) -> Dict[str, object]:
+    """Where a flag matched: file path, line number and an inert text window around the first match."""
     flag = flag.removeprefix("new:")
+    members = list(members)
+    if flag in FILE_FLAGS:
+        target = FILE_FLAGS[flag]
+        for path, data in members:
+            if PurePosixPath(path.lower()).name == target and path.count("/") <= 1:
+                return {"flag": flag, "file_path": path[:300], "line": 1, "context": _clean_window(data[:1200].decode("utf-8", errors="ignore"))}
+        return {}
     pattern = COMPILED.get(flag)
     if pattern is None:
         return {}
@@ -237,9 +264,52 @@ def flag_evidence(members: Iterable[Tuple[str, bytes]], flag: str, *, window: in
         match = pattern.search(text)
         if match:
             start = max(0, match.start() - window // 2)
-            snippet = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", ".", text[start:match.end() + window // 2])
-            return {"flag": flag, "file_path": path[:300], "context": snippet[:window + 120]}
+            snippet = _clean_window(text[start:match.end() + window // 2])
+            return {"flag": flag, "file_path": path[:300], "line": text.count("\n", 0, match.start()) + 1, "context": snippet[:window + 120]}
     return {}
+
+
+def install_time_files(members: Iterable[Tuple[str, bytes]], *, per_file: int = 6000, total: int = 18000) -> List[Dict[str, object]]:
+    """Full text of what runs at install or build time, for triage: package.json
+    scripts and the files they call, setup.py, build.rs. Bounded in size."""
+    members = list(members)
+    by_path = {path: data for path, data in members}
+    wanted: List[str] = []
+    for path, data in members:
+        name = PurePosixPath(path.lower()).name
+        if path.count("/") > 1:
+            continue
+        if name in {"setup.py", "build.rs"}:
+            wanted.append(path)
+        elif name == "package.json":
+            try:
+                scripts = (json.loads(data.decode("utf-8", errors="ignore")).get("scripts") or {})
+            except ValueError:
+                scripts = {}
+            hooks = {hook: str(scripts[hook]) for hook in INSTALL_HOOKS if hook in scripts}
+            if hooks:
+                wanted.append(path)
+                root = path.rsplit("/", 1)[0] + "/" if "/" in path else ""
+                for command in hooks.values():
+                    for token in re.findall(r"[\w./-]+\.(?:js|cjs|mjs|sh|py)", command):
+                        candidate = root + token.lstrip("./")
+                        if candidate in by_path:
+                            wanted.append(candidate)
+    out: List[Dict[str, object]] = []
+    budget = total
+    for path in dict.fromkeys(wanted):
+        if budget <= 0:
+            break
+        text = by_path[path].decode("utf-8", errors="ignore")
+        if PurePosixPath(path.lower()).name == "package.json":
+            try:
+                text = json.dumps({"scripts": json.loads(text).get("scripts")}, indent=1)
+            except ValueError:
+                pass
+        clipped = _clean_window(text[:min(per_file, budget)])
+        budget -= len(clipped)
+        out.append({"path": path[:300], "truncated": len(text) > len(clipped), "content": clipped})
+    return out
 
 
 def combine(scan: Dict[str, object], flags: Iterable[str], ecosystem: str, members: Optional[List[Tuple[str, bytes]]] = None) -> Dict[str, object]:
@@ -257,7 +327,7 @@ def combine(scan: Dict[str, object], flags: Iterable[str], ecosystem: str, membe
         for item in extra:
             evidence = [found for found in (flag_evidence(members, flag) for flag in str(item["matched_indicator"]).removeprefix("behaviour: ").split(" + ")) if found]
             item["evidence"] = evidence
-            item["safe_context"] = "\n[...]\n".join(f"{found['flag']} in {found['file_path']}:\n{found['context']}" for found in evidence)[:2400]
+            item["safe_context"] = "\n[...]\n".join(f"{found['flag']} in {found['file_path']} line {found.get('line', '?')}:\n{found['context']}" for found in evidence)[:2400]
             if evidence:
                 item["file_path"] = evidence[0]["file_path"]
     score = min(100, int(scan.get("score") or 0) + sum(int(item["score"]) for item in extra))

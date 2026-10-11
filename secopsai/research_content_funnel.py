@@ -128,6 +128,7 @@ def scan_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: st
     findings = [item for item in scanned.get("findings") or [] if item.get("rule_id") != "YARA-SCAN-ERROR"]
     level = str(scanned.get("level") or "none")
     return {"fingerprints": actor_fingerprint.from_members(members) if level in HIT_LEVELS else {},
+            "install_files": package_features.install_time_files(members) if level in HIT_LEVELS else [],
             "status": "hit" if level in HIT_LEVELS else "clean", "score": int(scanned.get("score") or 0), "level": level,
             "rules_matched": scanned.get("rules_matched") or [], "findings": findings[:20], "features": flags, "files": len(members), "bytes": len(raw), "diff": diff}
 

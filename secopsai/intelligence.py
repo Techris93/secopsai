@@ -380,6 +380,12 @@ def _bridge_instructions(
             "finding_confidence as 0-100; disposition_recommendation as true_positive, false_positive, expected_behavior, tune_policy, or needs_review; "
             "and decision_evidence_refs using only supplied artifact rule IDs, file paths, hashes, and IOC identifiers. "
             "Suspicious or inconclusive evidence must escalate to an analyst. Never treat a source URL or missing local usage as proof of benignness. "
+            "Each behaviour finding lists, per flag, the file, line and code that matched; install_time_files holds the full text of what runs at "
+            "install or build time (package.json scripts and the files they call, setup.py, build.rs). Judge the finding from that code: when it "
+            "shows the matched behaviour is ordinary (a build step, documentation, tests, a detection rule, a loopback address) return benign_expected "
+            "or false_positive with a confidence that reflects how completely the code explains every flagged signal; when it shows data collected "
+            "and sent off the machine, credential access, or a downloaded payload being run at install, return true_positive. Use "
+            "needs_more_evidence only when the supplied code genuinely cannot decide it, and name the specific missing file. "
         ),
         "execute_specialist_work": specialist_guidance,
         "review_specialist_work": specialist_guidance,
