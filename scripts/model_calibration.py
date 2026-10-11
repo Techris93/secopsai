@@ -95,10 +95,21 @@ def main() -> int:
     rows = flagged_contexts(args.dataset, paths, run_tag)[: args.samples]
     client = CoreEdgeClient.from_environment() if hasattr(CoreEdgeClient, "from_environment") else CoreEdgeClient()
     started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 60))
-    for start in range(0, len(rows), 25):
-        batch = rows[start:start + 25]
-        client.queue_triage_jobs([{"artifact_id": row["artifact_id"], "idempotency_key": f"calibration:{row['artifact_id']}",
-                                   "inputs": {"artifact_triage": row["context"]}} for row in batch])
+    # Small batches with retries: contexts are near the 56 KB cap, and Core can
+    # take longer than a request timeout to store 25 of them. Stable
+    # idempotency keys make a resend after a timeout safe (no duplicates).
+    for start in range(0, len(rows), 5):
+        batch = [{"artifact_id": row["artifact_id"], "idempotency_key": f"calibration:{row['artifact_id']}",
+                  "inputs": {"artifact_triage": row["context"]}} for row in rows[start:start + 5]]
+        for attempt in range(4):
+            try:
+                client.queue_triage_jobs(batch)
+                break
+            except Exception as exc:
+                if attempt == 3:
+                    raise
+                print(f"queue batch {start // 5}: {type(exc).__name__}, retrying", flush=True)
+                time.sleep(10 * (attempt + 1))
     print(f"queued {len(rows)} flagged malware samples for model triage", flush=True)
     wanted = {row["artifact_id"]: row for row in rows}
     deadline = time.time() + args.wait_minutes * 60

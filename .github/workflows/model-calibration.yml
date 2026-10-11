@@ -28,6 +28,7 @@ jobs:
       DATASET_COMMIT: 805fcd72db525244cae8dd32056efbd50b8b0e19
       SECOPSAI_CORE_COORDINATOR_URL: https://core.secopsai.dev
       SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
+      SECOPSAI_CORE_COORDINATOR_TIMEOUT_SECONDS: "60"
     steps:
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
