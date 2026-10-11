@@ -693,6 +693,19 @@ def run_worker_loop(
                 capture_exception(exc, context={"component": "actions_watch"})
                 last_summary = dict(last_summary)
                 last_summary["actions_watch"] = {"status": "degraded", "error": str(exc)[:500]}
+            # One-off re-triage after rule changes (SECOPSAI_RETRIAGE=1 on a run):
+            # rescans inconclusive hits on the worker, requeues strong ones for
+            # the operator's model bridge. Continues across runs until done.
+            if os.environ.get("SECOPSAI_RETRIAGE") == "1":
+                try:
+                    from secopsai.research_ai_triage import retriage
+
+                    last_summary = dict(last_summary)
+                    last_summary["retriage"] = retriage(db_path=db_path, min_score=int(os.environ.get("SECOPSAI_RETRIAGE_MIN_SCORE", "80")))
+                except Exception as exc:
+                    capture_exception(exc, context={"component": "retriage"})
+                    last_summary = dict(last_summary)
+                    last_summary["retriage"] = {"status": "degraded", "error": str(exc)[:500]}
             # Link flagged packages into campaigns; alerts when one grows.
             try:
                 from secopsai.actor_fingerprint import link_campaigns

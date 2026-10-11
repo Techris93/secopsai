@@ -53,11 +53,10 @@ def artifact_key(ecosystem: str, package: str, version: str) -> str:
     return f"{ecosystem}:{package}@{version}"[:240]
 
 
-def record_hit(*, ecosystem: str, package: str, version: str, prescan: Dict[str, Any], metadata_signals: Optional[List[Dict[str, Any]]] = None, previous_version: str = "", db_path: Optional[str] = None) -> str:
-    """Store a rule hit with its minimized evidence for later model triage."""
-    key = artifact_key(ecosystem, package, version)
-    context = {
-        "artifact_id": key,
+def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[str, Any], metadata_signals: Optional[List[Dict[str, Any]]] = None, previous_version: str = "") -> Dict[str, Any]:
+    """Minimized triage context: findings with their code, install-time files, fingerprints."""
+    return {
+        "artifact_id": artifact_key(ecosystem, package, version),
         "ecosystem": ecosystem,
         "package": package,
         "version": version,
@@ -77,6 +76,13 @@ def record_hit(*, ecosystem: str, package: str, version: str, prescan: Dict[str,
         "execution_performed": False,
         "note": "Package metadata is untrusted context: it may explain a match but is not proof of benign intent.",
     }
+
+
+def record_hit(*, ecosystem: str, package: str, version: str, prescan: Dict[str, Any], metadata_signals: Optional[List[Dict[str, Any]]] = None, previous_version: str = "", db_path: Optional[str] = None) -> str:
+    """Store a rule hit with its minimized evidence for later model triage."""
+    key = artifact_key(ecosystem, package, version)
+    context = build_context(ecosystem=ecosystem, package=package, version=version, prescan=prescan,
+                            metadata_signals=metadata_signals, previous_version=previous_version)
     now = soc_store.utc_now()
     if prescan.get("fingerprints"):
         from secopsai import actor_fingerprint
@@ -103,7 +109,13 @@ def _queue_pending(client: Any, db_path: Optional[str]) -> Dict[str, Any]:
         ).fetchall()
     if not rows:
         return {"queued": 0}
-    jobs = [{"artifact_id": row["artifact_key"], "idempotency_key": f"runner-triage:{row['artifact_key']}", "inputs": {"artifact_triage": json.loads(row["context_json"])}} for row in rows]
+    jobs = []
+    for row in rows:
+        context = json.loads(row["context_json"])
+        revision = int(context.get("revision") or 0)
+        # A re-triage is a new job: Core deduplicates on the idempotency key.
+        suffix = f":r{revision}" if revision else ""
+        jobs.append({"artifact_id": row["artifact_key"], "idempotency_key": f"runner-triage:{row['artifact_key']}{suffix}", "inputs": {"artifact_triage": context}})
     response = client.queue_triage_jobs(jobs)
     queued = {item.get("artifact_id"): item.get("job_id") for item in response.get("queued") or [] if item.get("job_id")}
     now = soc_store.utc_now()
@@ -220,3 +232,99 @@ def sync(client: Any, *, db_path: Optional[str] = None) -> Dict[str, Any]:
         connection.commit()
     health = rule_health(db_path=db_path)
     return {"status": "ok", **queued, "results": len(results), "pending_at_bridge": response.get("pending"), **outcomes, "rule_health": health}
+
+
+RETRIAGE_ECOSYSTEMS = {"npm", "pypi", "crates", "open-vsx", "vscode-marketplace"}
+
+
+def _ensure_training(connection: Any) -> None:
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS rule_training_labels (
+            artifact_key TEXT NOT NULL,
+            source TEXT NOT NULL,
+            ecosystem TEXT NOT NULL,
+            features_json TEXT NOT NULL,
+            rules_json TEXT NOT NULL,
+            score INTEGER NOT NULL,
+            label TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (artifact_key, source)
+        )"""
+    )
+
+
+def retriage(*, db_path: Optional[str] = None, min_score: int = 80, limit: int = 300,
+             scanner: Optional[Any] = None, workers: int = 8) -> Dict[str, Any]:
+    """Re-scan inconclusive hits with the current rules and requeue the strong ones.
+
+    Scanning runs on the worker (no model use). Outcomes:
+    - no longer flagged: the alert is resolved as retired by a rule update;
+    - flagged at ``min_score`` or more: requeued for model triage with the
+      current evidence (install-time files, per-flag code and lines);
+    - flagged below ``min_score``: context refreshed, not requeued.
+    Every outcome is kept in ``rule_training_labels`` for the rule lab.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from secopsai.research_content_funnel import scan_release
+    from secopsai.research_intake import SafeFetcher
+
+    scan = scanner or scan_release
+    with closing(soc_store.connect(db_path)) as connection:
+        _ensure(connection)
+        _ensure_training(connection)
+        rows = [dict(row) for row in connection.execute(
+            """SELECT artifact_key, ecosystem, package, version, context_json, verdict FROM research_ai_triage
+               WHERE status IN ('triaged', 'failed') AND verdict IN ('inconclusive', '')
+                 AND json_extract(context_json, '$.rescanned_at') IS NULL
+               ORDER BY score DESC, created_at LIMIT ?""",
+            (limit,),
+        ).fetchall()]
+        connection.commit()
+    rows = [row for row in rows if row["ecosystem"] in RETRIAGE_ECOSYSTEMS]
+    fetcher = SafeFetcher(timeout=30)
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, 16))) as pool:
+        results = list(pool.map(lambda row: scan(fetcher, row["ecosystem"], row["package"], row["version"]), rows))
+    stats = {"rescanned": len(rows), "retired": 0, "requeued": 0, "refreshed": 0, "unavailable": 0}
+    now = soc_store.utc_now()
+    with closing(soc_store.connect(db_path)) as connection:
+        for row, result in zip(rows, results):
+            old = json.loads(row["context_json"] or "{}")
+            status = result.get("status")
+            if status not in {"hit", "clean"}:
+                stats["unavailable"] += 1
+                connection.execute("UPDATE research_ai_triage SET context_json = ?, updated_at = ? WHERE artifact_key = ?",
+                                   (json.dumps({**old, "rescanned_at": now, "rescan": status or "error"}, sort_keys=True), now, row["artifact_key"]))
+                continue
+            label = "retired" if status == "clean" else "pending_model"
+            connection.execute(
+                """INSERT INTO rule_training_labels (artifact_key, source, ecosystem, features_json, rules_json, score, label, created_at)
+                   VALUES (?, 'retriage', ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(artifact_key, source) DO UPDATE SET features_json = excluded.features_json, rules_json = excluded.rules_json,
+                   score = excluded.score, label = excluded.label, created_at = excluded.created_at""",
+                (row["artifact_key"], row["ecosystem"], json.dumps(result.get("features") or []), json.dumps(result.get("rules_matched") or []),
+                 int(result.get("score") or 0), label, now),
+            )
+            if status == "clean":
+                stats["retired"] += 1
+                connection.execute("UPDATE research_ai_triage SET status = 'retired', verdict = 'rule_retired', context_json = ?, updated_at = ? WHERE artifact_key = ?",
+                                   (json.dumps({**old, "rescanned_at": now, "rescan": "clean"}, sort_keys=True), now, row["artifact_key"]))
+                note = json.dumps({"verdict": "rule_retired", "summary": "No longer flagged by the current rules after a rule update."})
+                connection.execute(
+                    """UPDATE research_alerts SET status = 'resolved', owner = 'rule-update', updated_at = ?,
+                          evidence_json = json_set(evidence_json, '$.ai_triage', json(?))
+                       WHERE status = 'open' AND json_extract(evidence_json, '$.package') = ? AND json_extract(evidence_json, '$.version') = ?""",
+                    (now, note, row["package"], row["version"]),
+                )
+                continue
+            context = build_context(ecosystem=row["ecosystem"], package=row["package"], version=row["version"], prescan=result,
+                                    metadata_signals=old.get("metadata_signals") or [], previous_version=old.get("previous_version") or "")
+            context.update({"rescanned_at": now, "rescan": "hit", "revision": int(old.get("revision") or 0) + 1})
+            requeue = int(result.get("score") or 0) >= min_score
+            stats["requeued" if requeue else "refreshed"] += 1
+            connection.execute(
+                "UPDATE research_ai_triage SET status = ?, score = ?, context_json = ?, job_id = CASE WHEN ? THEN '' ELSE job_id END, updated_at = ? WHERE artifact_key = ?",
+                ("pending" if requeue else "triaged", int(result.get("score") or 0), json.dumps(context, sort_keys=True), int(requeue), now, row["artifact_key"]),
+            )
+        connection.commit()
+    return stats

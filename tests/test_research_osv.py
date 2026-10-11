@@ -86,6 +86,7 @@ def test_submit_is_a_dry_run_without_confirm_and_records_the_pr(real_case, tmp_p
     assert result["pull_request"] == "https://github.com/ossf/malicious-packages/pull/1"
     assert ["gh", "repo", "fork", "ossf/malicious-packages", "--clone=false"] in calls
     assert any(args[:3] == ["gh", "pr", "create"] for args in calls)
+    assert any(args[-4:-2] == ["commit", "-s"] for args in calls), "DCO sign-off"
 
 
 def test_recorded_osv_ids_feed_the_tracker(real_case):

@@ -16,6 +16,11 @@ on:
         description: "Worker cycles to run"
         required: false
         default: "6"
+      retriage:
+        description: Re-scan inconclusive hits with current rules; requeue strong ones for model triage
+        type: boolean
+        required: false
+        default: false
       allow_empty_ledger:
         description: "Start a new empty ledger if none exists in R2 (first run only)"
         type: boolean
@@ -51,6 +56,8 @@ jobs:
       SECOPSAI_GITHUB_TOKEN: ${{ github.token }}
       # Collectors that ship paused; enabled by the operator on 2026-10-11.
       SECOPSAI_ENABLE_COLLECTORS: vscode-marketplace
+      SECOPSAI_RETRIAGE: ${{ inputs.retriage && '1' || '' }}
+      SECOPSAI_RETRIAGE_MIN_SCORE: "80"
       SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL: https://core.secopsai.dev/api/v1/research/alerts/webhook
       SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET: ${{ secrets.SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET }}
       SECOPSAI_RESEARCH_ALERT_EMAIL: research@secopsai.dev

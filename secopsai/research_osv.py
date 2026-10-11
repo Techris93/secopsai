@@ -352,7 +352,8 @@ def submit_osv(case_id: str, *, confirm: bool = False, db_path: Optional[str] = 
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(Path(prepared["out_dir"]) / relative, target)
             run(["git", "-C", str(clone), "add", relative])
-        run(["git", "-C", str(clone), "commit", "-m", title])
+        # ossf/malicious-packages requires a DCO sign-off on every commit.
+        run(["git", "-C", str(clone), "commit", "-s", "-m", title])
         run(["git", "-C", str(clone), "push", "origin", branch])
         url = run(["gh", "pr", "create", "--repo", UPSTREAM_REPO, "--head", f"{login}:{branch}", "--title", title, "--body", body]).stdout.strip()
     finally:

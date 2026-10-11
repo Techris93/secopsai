@@ -134,3 +134,44 @@ def test_rule_health_flags_rules_that_keep_firing_on_benign_code(tmp_path):
     with soc_store.connect(db_path) as connection:
         alert = connection.execute("SELECT alert_type, reason FROM research_alerts").fetchone()
     assert alert["alert_type"] == "rule_noisy" and "5 of 6" in alert["reason"]
+
+
+def test_retriage_retires_clean_requeues_strong_and_keeps_labels(tmp_path):
+    db_path = str(tmp_path / "soc.db")
+    soc_store.init_db(db_path)
+    for name, score in (("gone", 60), ("strong", 90), ("weak", 50)):
+        key = research_ai_triage.record_hit(ecosystem="npm", package=name, version="1.0.0", prescan={"score": score, "findings": [{"rule_id": "BEHAVIOUR:X"}]}, db_path=db_path)
+        with soc_store.connect(db_path) as connection:
+            connection.execute("UPDATE research_ai_triage SET status='triaged', verdict='inconclusive', job_id='AIJ-1' WHERE artifact_key=?", (key,))
+            connection.execute("INSERT INTO research_alerts (alert_id, alert_type, severity, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at) VALUES (?, 'registry_release_anomaly', 'high', ?, 'r', ?, 'open', '', 't', 't')",
+                               (f"RAL-{name}", f"d-{name}", json.dumps({"package": name, "version": "1.0.0"})))
+
+    def scanner(_fetcher, _eco, package, _version):
+        return {"gone": {"status": "clean", "features": ["tiny_package"]},
+                "strong": {"status": "hit", "score": 95, "level": "alert", "rules_matched": ["BEH_X"], "findings": [{"rule_id": "BEHAVIOUR:BEH_X"}], "install_files": [{"path": "package/i.js", "content": "x"}]},
+                "weak": {"status": "hit", "score": 60, "level": "warning", "rules_matched": ["BEH_Y"], "findings": []}}[package]
+
+    stats = research_ai_triage.retriage(db_path=db_path, scanner=scanner)
+    assert stats == {"rescanned": 3, "retired": 1, "requeued": 1, "refreshed": 1, "unavailable": 0}
+    with soc_store.connect(db_path) as connection:
+        rows = {r["package"]: dict(r) for r in connection.execute("SELECT * FROM research_ai_triage")}
+        alerts = {r["alert_id"]: r["status"] for r in connection.execute("SELECT alert_id, status FROM research_alerts")}
+        labels = {r["artifact_key"]: r["label"] for r in connection.execute("SELECT artifact_key, label FROM rule_training_labels")}
+    assert rows["gone"]["status"] == "retired" and alerts["RAL-gone"] == "resolved"
+    assert rows["strong"]["status"] == "pending" and json.loads(rows["strong"]["context_json"])["revision"] == 1
+    assert json.loads(rows["strong"]["context_json"])["install_time_files"][0]["path"] == "package/i.js"
+    assert rows["weak"]["status"] == "triaged" and alerts["RAL-weak"] == "open"
+    assert len(labels) == 3
+    assert research_ai_triage.retriage(db_path=db_path, scanner=scanner)["rescanned"] == 0, "already rescanned items are not redone"
+
+    class Core:
+        enabled = True
+        jobs = []
+
+        def queue_triage_jobs(self, jobs):
+            self.jobs.extend(jobs)
+            return {"queued": [{"artifact_id": job["artifact_id"], "job_id": "AIJ-2"} for job in jobs]}
+
+    core = Core()
+    research_ai_triage._queue_pending(core, db_path)
+    assert core.jobs[0]["idempotency_key"] == "runner-triage:npm:strong@1.0.0:r1", "a re-triage is a new job for Core"
