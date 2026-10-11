@@ -114,3 +114,16 @@ def test_a_bundled_cli_is_not_a_tiny_package():
     bundle = b"const os=require('os');" + b"function f(){return 1}\n" * 4000 + b"fetch('https://api.example.com',{method:'POST'});os.hostname();"
     assert "tiny_package" not in package_features.profile([("package/dist/index.js", bundle)])
     assert "tiny_package" in package_features.profile([("package/index.js", b"require('os').hostname()")])
+
+
+def test_install_time_files_found_at_any_nesting_depth():
+    members = [("sample-v1/package/package.json", b'{"scripts":{"preinstall":"node setup.js"}}'),
+               ("sample-v1/package/setup.js", b"/* install */ require('child_process')"),
+               ("sample-v1/package/lib/x.js", b"1")]
+    paths = [item["path"] for item in package_features.install_time_files(members)]
+    assert paths == ["sample-v1/package/package.json", "sample-v1/package/setup.js"]
+
+
+def test_install_hooks_detected_in_nested_packages():
+    flags = package_features.profile([("sample-v1/package/package.json", b'{"scripts":{"postinstall":"node i.js"}}'), ("sample-v1/package/i.js", b"1")])
+    assert "install_hook" in flags

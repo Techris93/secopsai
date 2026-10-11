@@ -31,10 +31,11 @@ AUTO_RESOLVE_CONFIDENCE = 85
 # ESCALATE_PROBABILITY the hit is marked suspicious for an analyst.
 AUTO_RESOLVE_MAX_PROBABILITY = 10
 ESCALATE_PROBABILITY = 70
-# Between the two: the alert stays open but drops to low severity, out of
-# the main queue. Reversible, unlike closing, until model calibration is
-# measured (scripts/model_calibration.py).
-DEPRIORITIZE_MAX_PROBABILITY = 30
+# Between the two the alert could drop to low severity. Disabled (equal to
+# the auto-close bound): Model Calibration on 40 flagged known-malware
+# samples put 45% of them at 11-30%, so deprioritising that band would hide
+# real malware. 0% scored 10 or less, so auto-close stays.
+DEPRIORITIZE_MAX_PROBABILITY = 10
 VERDICTS = {"true_positive": "suspicious", "needs_more_evidence": "inconclusive", "benign_expected": "benign", "false_positive": "likely_benign"}
 
 

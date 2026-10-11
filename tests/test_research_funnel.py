@@ -203,5 +203,5 @@ def test_malicious_probability_resolves_or_escalates(tmp_path):
         connection.commit()
         alerts = {r["alert_id"]: (r["status"], r["severity"]) for r in connection.execute("SELECT alert_id, status, severity FROM research_alerts")}
         verdicts = {r["package"]: r["verdict"] for r in connection.execute("SELECT package, verdict FROM research_ai_triage")}
-    assert alerts == {"RAL-low": ("resolved", "high"), "RAL-mid": ("open", "low"), "RAL-high": ("open", "high"), "RAL-missing": ("open", "high")}
+    assert alerts == {"RAL-low": ("resolved", "high"), "RAL-mid": ("open", "high"), "RAL-high": ("open", "high"), "RAL-missing": ("open", "high")}
     assert verdicts == {"low": "likely_benign", "mid": "inconclusive", "high": "suspicious", "missing": "inconclusive"}

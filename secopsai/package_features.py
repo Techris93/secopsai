@@ -87,6 +87,8 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
     """Sorted behaviour flags for one package's (path, bytes) members."""
     flags: Set[str] = set()
     files = list(members)
+    manifest_paths = [path for path, _ in files if PurePosixPath(path.lower()).name in {"package.json", "setup.py", "build.rs", "pyproject.toml"}]
+    root_depth = min((path.count("/") for path in manifest_paths), default=1)
     code_files = 0
     code_bytes = 0
     for path, data in files:
@@ -100,7 +102,7 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
         if not _is_text_path(path) or lowered.endswith((".md", ".txt")) and name not in {"requirements.txt"}:
             continue
         text = data[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore")
-        if name == "package.json" and lowered.count("/") <= 1:
+        if name == "package.json" and lowered.count("/") == root_depth:
             try:
                 manifest = json.loads(text)
             except ValueError:
@@ -120,7 +122,7 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
                 flags.add("setup_py_side_effects")
             if any(COMPILED[flag].search(text) for flag in ("exfil_service", "discord_webhook", "telegram_bot", "raw_ip_url")):
                 flags.add("setup_py_exfil")
-        if name == "build.rs" and lowered.count("/") <= 1:
+        if name == "build.rs" and lowered.count("/") == root_depth:
             flags.add("build_rs")
             if re.search(r"Command::new|std::net|TcpStream|reqwest|ureq|curl|std::env::var|include_bytes!", text):
                 flags.add("build_rs_side_effects")
@@ -249,8 +251,9 @@ def flag_evidence(members: Iterable[Tuple[str, bytes]], flag: str, *, window: in
     members = list(members)
     if flag in FILE_FLAGS:
         target = FILE_FLAGS[flag]
+        depth = min((path.count("/") for path, _ in members if PurePosixPath(path.lower()).name == target), default=-1)
         for path, data in members:
-            if PurePosixPath(path.lower()).name == target and path.count("/") <= 1:
+            if PurePosixPath(path.lower()).name == target and path.count("/") == depth:
                 return {"flag": flag, "file_path": path[:300], "line": 1, "context": _clean_window(data[:1200].decode("utf-8", errors="ignore"))}
         return {}
     pattern = COMPILED.get(flag)
@@ -275,9 +278,14 @@ def install_time_files(members: Iterable[Tuple[str, bytes]], *, per_file: int = 
     members = list(members)
     by_path = {path: data for path, data in members}
     wanted: List[str] = []
+    # The package root is the shallowest folder holding a manifest; archives
+    # nest it at different depths (npm: package/, sdists: name-1.0/, sample
+    # archives one level deeper still).
+    manifests = [path for path, _ in members if PurePosixPath(path.lower()).name in {"package.json", "setup.py", "build.rs", "pyproject.toml"}]
+    root_depth = min((path.count("/") for path in manifests), default=1)
     for path, data in members:
         name = PurePosixPath(path.lower()).name
-        if path.count("/") > 1:
+        if path.count("/") != root_depth:
             continue
         if name in {"setup.py", "build.rs"}:
             wanted.append(path)
