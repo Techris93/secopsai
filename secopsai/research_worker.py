@@ -678,7 +678,9 @@ def run_worker_loop(
                 from secopsai.research_content_funnel import run as run_content_funnel
 
                 last_summary = dict(last_summary)
+                _step_started = time.monotonic()
                 last_summary["content_funnel"] = run_content_funnel(db_path=db_path)
+                print(json.dumps({"component": "research-worker", "event": "step_done", "step": "content_funnel", "seconds": round(time.monotonic() - _step_started)}), flush=True)
             except Exception as exc:
                 capture_exception(exc, context={"component": "content_funnel"})
                 last_summary = dict(last_summary)
@@ -688,7 +690,9 @@ def run_worker_loop(
                 from secopsai.research_actions_watch import run as run_actions_watch
 
                 last_summary = dict(last_summary)
+                _step_started = time.monotonic()
                 last_summary["actions_watch"] = run_actions_watch(db_path=db_path)
+                print(json.dumps({"component": "research-worker", "event": "step_done", "step": "actions_watch", "seconds": round(time.monotonic() - _step_started)}), flush=True)
             except Exception as exc:
                 capture_exception(exc, context={"component": "actions_watch"})
                 last_summary = dict(last_summary)
@@ -702,8 +706,10 @@ def run_worker_loop(
                     from secopsai.research_ai_triage import retriage
 
                     last_summary = dict(last_summary)
+                    _step_started = time.monotonic()
                     last_summary["retriage"] = retriage(db_path=db_path, min_score=int(os.environ.get("SECOPSAI_RETRIAGE_MIN_SCORE", "80")),
                                                         before=os.environ["SECOPSAI_RETRIAGE_BEFORE"])
+                    print(json.dumps({"component": "research-worker", "event": "step_done", "step": "retriage", "seconds": round(time.monotonic() - _step_started), **last_summary["retriage"]}), flush=True)
                 except Exception as exc:
                     capture_exception(exc, context={"component": "retriage"})
                     last_summary = dict(last_summary)
@@ -713,7 +719,9 @@ def run_worker_loop(
                 from secopsai.actor_fingerprint import link_campaigns
 
                 last_summary = dict(last_summary)
+                _step_started = time.monotonic()
                 last_summary["campaigns"] = link_campaigns(db_path=db_path)
+                print(json.dumps({"component": "research-worker", "event": "step_done", "step": "campaigns", "seconds": round(time.monotonic() - _step_started)}), flush=True)
             except Exception as exc:
                 capture_exception(exc, context={"component": "campaigns"})
                 last_summary = dict(last_summary)

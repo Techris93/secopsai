@@ -32,6 +32,9 @@ RISKY = {
 # Only these trigger fetching the previous version (cheap pre-check).
 TRIGGERS = RISKY - {"child_process", "py_subprocess", "http_send", "system_info", "dns_lookup", "dynamic_eval"}
 MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
+# Packages with huge version histories (tens of MB of metadata) are skipped:
+# fetching that for every flagged release would dominate a worker cycle.
+METADATA_LIMIT = 8 * 1024 * 1024
 PRERELEASE = re.compile(r"[-+]|(a|b|rc|dev|alpha|beta)\d*$", re.IGNORECASE)
 
 
@@ -42,10 +45,10 @@ def previous_version(fetcher: SafeFetcher, ecosystem: str, package: str, version
     version itself, as for removed malicious releases.
     """
     if ecosystem == "npm":
-        _u, _h, body = fetcher.get("https://registry.npmjs.org/" + package.replace("/", "%2F"), allowed_hosts=("registry.npmjs.org",), max_bytes=32 * 1024 * 1024)
+        _u, _h, body = fetcher.get("https://registry.npmjs.org/" + package.replace("/", "%2F"), allowed_hosts=("registry.npmjs.org",), max_bytes=METADATA_LIMIT)
         times = {key: value for key, value in (json.loads(body).get("time") or {}).items() if key not in {"created", "modified"}}
     elif ecosystem == "pypi":
-        _u, _h, body = fetcher.get(f"https://pypi.org/pypi/{package}/json", allowed_hosts=("pypi.org",), max_bytes=32 * 1024 * 1024)
+        _u, _h, body = fetcher.get(f"https://pypi.org/pypi/{package}/json", allowed_hosts=("pypi.org",), max_bytes=METADATA_LIMIT)
         times = {}
         for name, files in (json.loads(body).get("releases") or {}).items():
             stamps = [item.get("upload_time_iso_8601") for item in files or [] if item.get("upload_time_iso_8601")]

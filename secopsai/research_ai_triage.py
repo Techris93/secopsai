@@ -15,6 +15,7 @@ analyst.
 from __future__ import annotations
 
 import json
+import time
 import secrets
 from contextlib import closing
 from typing import Any, Dict, List, Optional
@@ -301,8 +302,8 @@ def _ensure_training(connection: Any) -> None:
     )
 
 
-def retriage(*, db_path: Optional[str] = None, min_score: int = 80, limit: int = 300, before: str = "",
-             scanner: Optional[Any] = None, workers: int = 8) -> Dict[str, Any]:
+def retriage(*, db_path: Optional[str] = None, min_score: int = 80, limit: int = 60, before: str = "",
+             scanner: Optional[Any] = None, workers: int = 8, budget_seconds: int = 300) -> Dict[str, Any]:
     """Re-scan inconclusive hits with the current rules and requeue the strong ones.
 
     Scanning runs on the worker (no model use). Outcomes:
@@ -312,7 +313,7 @@ def retriage(*, db_path: Optional[str] = None, min_score: int = 80, limit: int =
     - flagged below ``min_score``: context refreshed, not requeued.
     Every outcome is kept in ``rule_training_labels`` for the rule lab.
     """
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     from secopsai.research_content_funnel import scan_release
     from secopsai.research_intake import SafeFetcher
@@ -332,18 +333,28 @@ def retriage(*, db_path: Optional[str] = None, min_score: int = 80, limit: int =
         connection.commit()
     rows = [row for row in rows if row["ecosystem"] in RETRIAGE_ECOSYSTEMS]
     fetcher = SafeFetcher(timeout=30)
-    with ThreadPoolExecutor(max_workers=max(1, min(workers, 16))) as pool:
-        results = list(pool.map(lambda row: scan(fetcher, row["ecosystem"], row["package"], row["version"]), rows))
-    stats = {"rescanned": len(rows), "retired": 0, "requeued": 0, "refreshed": 0, "unavailable": 0}
-    now = soc_store.utc_now()
+    stats = {"rescanned": 0, "retired": 0, "requeued": 0, "refreshed": 0, "unavailable": 0}
+    started = time.monotonic()
+    # Each result is written as soon as its scan finishes, so a run stopped by
+    # its time budget keeps the progress it made instead of redoing it.
+    pool = ThreadPoolExecutor(max_workers=max(1, min(workers, 16)))
+    futures = {pool.submit(scan, fetcher, row["ecosystem"], row["package"], row["version"]): row for row in rows}
     with closing(soc_store.connect(db_path)) as connection:
-        for row, result in zip(rows, results):
+        for future in as_completed(futures):
+            row = futures[future]
+            try:
+                result = future.result()
+            except Exception as exc:  # one bad artifact must not stop the pass
+                result = {"status": "error", "reason": str(exc)[:200]}
+            now = soc_store.utc_now()
+            stats["rescanned"] += 1
             old = json.loads(row["context_json"] or "{}")
             status = result.get("status")
             if status not in {"hit", "clean"}:
                 stats["unavailable"] += 1
                 connection.execute("UPDATE research_ai_triage SET context_json = ?, updated_at = ? WHERE artifact_key = ?",
                                    (json.dumps({**old, "rescanned_at": now, "rescan": status or "error"}, sort_keys=True), now, row["artifact_key"]))
+                connection.commit()
                 continue
             label = "retired" if status == "clean" else "pending_model"
             connection.execute(
@@ -365,6 +376,7 @@ def retriage(*, db_path: Optional[str] = None, min_score: int = 80, limit: int =
                        WHERE status = 'open' AND json_extract(evidence_json, '$.package') = ? AND json_extract(evidence_json, '$.version') = ?""",
                     (now, note, row["package"], row["version"]),
                 )
+                connection.commit()
                 continue
             context = fit_context(build_context(ecosystem=row["ecosystem"], package=row["package"], version=row["version"], prescan=result,
                                                 metadata_signals=old.get("metadata_signals") or [], previous_version=old.get("previous_version") or ""))
@@ -375,5 +387,11 @@ def retriage(*, db_path: Optional[str] = None, min_score: int = 80, limit: int =
                 "UPDATE research_ai_triage SET status = ?, score = ?, context_json = ?, job_id = CASE WHEN ? THEN '' ELSE job_id END, updated_at = ? WHERE artifact_key = ?",
                 ("pending" if requeue else "triaged", int(result.get("score") or 0), json.dumps(context, sort_keys=True), int(requeue), now, row["artifact_key"]),
             )
-        connection.commit()
+            connection.commit()
+            if time.monotonic() - started > budget_seconds:
+                for pending in futures:
+                    pending.cancel()
+                stats["stopped_on_budget"] = True
+                break
+    pool.shutdown(wait=False, cancel_futures=True)
     return stats
