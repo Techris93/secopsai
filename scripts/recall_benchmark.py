@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from secopsai import package_features, yara_engine  # noqa: E402
+from secopsai import package_features, version_diff, yara_engine  # noqa: E402
 from secopsai.artifact_fleet import MAX_FILE_BYTES, _safe_archive_files  # noqa: E402
 from secopsai.research_funnel import MAX_ARCHIVE_BYTES, NPM_ARTIFACT_HOSTS  # noqa: E402
 from secopsai.research_intake import SafeFetcher  # noqa: E402
@@ -117,12 +117,20 @@ def scan_sample(dataset: Path, path: str) -> Dict[str, Any]:
         members = sample_members((dataset / path).read_bytes())
     except Exception as exc:
         return {**row, "status": "error", "reason": str(exc)[:200]}
-    return {**row, **_scan_members(members, row["version"], row["ecosystem"])}
+    # Hijacked releases are diffed against the version before them; packages
+    # published to be malicious have no trusted predecessor.
+    package = row["package"] if row["category"] == "compromised_lib" else ""
+    return {**row, **_scan_members(members, row["version"], row["ecosystem"], package, row.get("discovered", ""))}
 
 
-def _scan_members(members: List[Tuple[str, bytes]], version: str = "", ecosystem: str = "npm") -> Dict[str, Any]:
-    """Funnel verdict (YARA + behaviour rules, as in production) plus flags, never content."""
+DIFF_FETCHER = SafeFetcher(timeout=30)
+
+
+def _scan_members(members: List[Tuple[str, bytes]], version: str = "", ecosystem: str = "npm", package: str = "", before: str = "") -> Dict[str, Any]:
+    """Funnel verdict (YARA + behaviour + version-diff rules, as in production) plus flags, never content."""
     flags = package_features.profile(members, version=version)
+    if package:
+        flags, _diff = version_diff.with_diff(DIFF_FETCHER, ecosystem, package, version, flags, before=before)
     summary = _summarize(package_features.combine(yara_engine.scan_files(members), flags, ecosystem, members))
     return {**summary, "files": len(members), "features": flags}
 
@@ -151,7 +159,7 @@ def scan_clean(target: Dict[str, Any], fetcher: SafeFetcher) -> Dict[str, Any]:
                 path = Path(tmp) / "artifact.tgz"
                 path.write_bytes(raw)
                 _safe_archive_files(path, members)
-            return {**row, **_scan_members(members, str(row["version"] or ""), "npm")}
+            return {**row, **_scan_members(members, str(row["version"] or ""), "npm", target["package"])}
         _u, _h, body = fetcher.get(f"https://pypi.org/pypi/{target['package']}/json", allowed_hosts=("pypi.org",), max_bytes=16 * 1024 * 1024)
         doc = json.loads(body)
         row["version"] = (doc.get("info") or {}).get("version")
@@ -166,7 +174,7 @@ def scan_clean(target: Dict[str, Any], fetcher: SafeFetcher) -> Dict[str, Any]:
             path = Path(tmp) / files[0]["filename"]
             path.write_bytes(raw)
             _safe_archive_files(path, members)
-        return {**row, **_scan_members(members, str(row["version"] or ""), "pypi")}
+        return {**row, **_scan_members(members, str(row["version"] or ""), "pypi", target["package"])}
     except Exception as exc:
         return {**row, "status": "error", "reason": str(exc)[:200]}
 

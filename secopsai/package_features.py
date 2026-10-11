@@ -173,6 +173,14 @@ BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], 
     # Throwaway shape required: chromedriver and friends track browser versions (155.x).
     ("BEH_VERSION_CONFUSION", ("npm",), (("inflated_version",), SMALL_PACKAGE), 60),  # 84 of 88 such misses are throwaway-shaped
     ("BEH_SHELL_WALLET_SEND", ("npm",), (("child_process",), ("crypto_wallet",), ("http_send",)), 60),  # +37 (+15), 1 popular flagged
+    # Version diff (secopsai/version_diff.py): behaviour the previous release lacked.
+    ("BEH_DIFF_NEW_INSTALL_HOOK_NETWORK", ("npm", "pypi"),
+     (("new:install_hook", "new:install_hook_inline_command", "new:setup_py_cmdclass", "new:setup_py_side_effects"),
+      ("http_send", "download_tool", "exfil_service", "discord_webhook", "raw_ip_url", "dns_lookup")), 80),
+    ("BEH_DIFF_NEW_EXFIL", ("npm", "pypi"), (("new:exfil_service", "new:discord_webhook", "new:telegram_bot"),), 70),
+    ("BEH_DIFF_NEW_SECRETS_AND_SEND", ("npm", "pypi"),
+     (("new:credential_files", "new:browser_data", "new:crypto_wallet"), ("http_send", "exfil_service", "discord_webhook", "dns_lookup")), 70),
+    ("BEH_DIFF_NEW_OBFUSCATION", ("npm", "pypi"), (("new:js_obfuscator", "new:runner_memory"),), 60),
 )
 
 
@@ -189,6 +197,7 @@ def behaviour_findings(flags: Iterable[str], ecosystem: str) -> List[Dict[str, o
 
 def flag_evidence(members: Iterable[Tuple[str, bytes]], flag: str, *, window: int = 360) -> Dict[str, str]:
     """Where a flag matched: file path and an inert text window around the first match."""
+    flag = flag.removeprefix("new:")
     pattern = COMPILED.get(flag)
     if pattern is None:
         return {}

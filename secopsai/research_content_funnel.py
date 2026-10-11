@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import soc_store
-from secopsai import package_features, yara_engine
+from secopsai import package_features, version_diff, yara_engine
 from secopsai.research_intake import SafeFetcher
 
 ECOSYSTEMS: Tuple[str, ...] = ("pypi", "open-vsx", "crates", "vscode-marketplace", "mcp-registry")
@@ -120,6 +120,7 @@ def scan_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: st
             path.write_bytes(raw)
             _safe_archive_files(path, members)
         flags = package_features.profile(members, version=version)
+        flags, diff = version_diff.with_diff(fetcher, ecosystem, package, version, flags)
         scanned = package_features.combine(yara_engine.scan_files(members), flags, rules_ecosystem or ecosystem, members)
     except Exception as exc:  # one bad archive must not stop the batch
         reason = str(exc)[:200]
@@ -127,7 +128,7 @@ def scan_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: st
     findings = [item for item in scanned.get("findings") or [] if item.get("rule_id") != "YARA-SCAN-ERROR"]
     level = str(scanned.get("level") or "none")
     return {"status": "hit" if level in HIT_LEVELS else "clean", "score": int(scanned.get("score") or 0), "level": level,
-            "rules_matched": scanned.get("rules_matched") or [], "findings": findings[:20], "features": flags, "files": len(members), "bytes": len(raw)}
+            "rules_matched": scanned.get("rules_matched") or [], "findings": findings[:20], "features": flags, "files": len(members), "bytes": len(raw), "diff": diff}
 
 
 def _scan_mcp(fetcher: SafeFetcher, metadata: Dict[str, Any], scan: Callable[..., Dict[str, Any]]) -> Dict[str, Any]:
