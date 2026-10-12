@@ -219,6 +219,16 @@ BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], 
     ("BEH_DIFF_NEW_OBFUSCATION", ("npm", "pypi"), (("new:js_obfuscator", "new:runner_memory"),), 60),
     # Infrastructure from investigated cases (rules/watchlists/actor-infrastructure.txt).
     ("BEH_KNOWN_ACTOR_INFRA", ("npm", "pypi", "open-vsx", "vscode-marketplace", "crates", "github-actions", "mcp-registry"), (("known_actor_infra",),), 80),
+    # Rule lab: +32 pre-cutoff misses, +63 held-out, 1 clean hit(s).
+    ("BEH_LAB_NPM_01", ("npm",), (("child_process",), ("install_hook",), SMALL_PACKAGE,), 60),
+    # Rule lab: +28 pre-cutoff misses, +4 held-out, 1 clean hit(s).
+    ("BEH_LAB_NPM_02", ("npm",), (("base64_decode",), ("http_send",), ("system_info",),), 60),
+    # Rule lab: +24 pre-cutoff misses, +6 held-out, 0 clean hit(s).
+    ("BEH_LAB_NPM_03", ("npm",), (("raw_ip_url",),), 60),
+    # Rule lab: +16 pre-cutoff misses, +19 held-out, 0 clean hit(s).
+    ("BEH_LAB_NPM_04", ("npm",), (("http_send",), SMALL_PACKAGE,), 60),
+    # Rule lab: +16 pre-cutoff misses, +10 held-out, 1 clean hit(s).
+    ("BEH_LAB_NPM_05", ("npm",), (("dns_lookup",),), 60),
 )
 
 
