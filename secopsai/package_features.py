@@ -276,7 +276,7 @@ def flag_evidence(members: Iterable[Tuple[str, bytes]], flag: str, *, window: in
     return {}
 
 
-def install_time_files(members: Iterable[Tuple[str, bytes]], *, per_file: int = 6000, total: int = 18000) -> List[Dict[str, object]]:
+def install_time_files(members: Iterable[Tuple[str, bytes]], *, per_file: int = 12000, total: int = 24000) -> List[Dict[str, object]]:
     """Full text of what runs at install or build time, for triage: package.json
     scripts and the files they call, setup.py, build.rs. Bounded in size."""
     members = list(members)
@@ -370,17 +370,17 @@ def _binary_kind(data: bytes) -> str:
     return next((kind for magic, kind in BINARY_MAGIC if data.startswith(magic)), "")
 
 
-def _excerpt(text: str, anchors: List[str], limit: int) -> Tuple[str, bool]:
-    """Whole text when it fits; otherwise the head plus windows around each anchor."""
+def _excerpt(text: str, positions: List[int], limit: int) -> Tuple[str, bool]:
+    """Whole text when it fits; otherwise the head plus a window around each matched position."""
     if len(text) <= limit:
         return text, False
-    positions = sorted({pos for pos in (text.find(anchor) for anchor in anchors if anchor) if pos >= 0})[:4]
-    head = limit // 4 if positions else limit
+    positions = sorted({pos for pos in positions if 0 <= pos < len(text)})[:6]
+    head = limit // 5 if positions else limit
     parts, cursor = [text[:head]], head
     share = (limit - head) // max(1, len(positions))
     for pos in positions:
-        start = max(cursor, pos - share // 2)
-        end = min(len(text), start + share)
+        start = max(cursor, pos - share // 3)
+        end = min(len(text), max(start, pos - share // 3) + share)
         if end <= cursor:
             continue
         parts.append(f"\n[... {start - cursor} characters omitted ...]\n" + text[start:end])
@@ -390,10 +390,26 @@ def _excerpt(text: str, anchors: List[str], limit: int) -> Tuple[str, bool]:
     return "".join(parts), True
 
 
-def _anchors(finding: Dict[str, object]) -> List[str]:
-    """Distinctive lines of a finding's excerpt, to find the match in the full file."""
-    lines = [line.strip() for line in str(finding.get("safe_context") or "").splitlines()]
-    return [line[:80] for line in lines if len(line) >= 24 and not line.startswith("[...")][:6]
+def _positions(data: bytes, text: str, finding: Dict[str, object], path: str) -> List[int]:
+    """Character positions of a finding's matches in ``text`` (the file decoded with errors ignored)."""
+    out = [len(data[:int(offset)].decode("utf-8", errors="ignore")) for offset in finding.get("match_offsets") or [] if isinstance(offset, int)]
+    for found in finding.get("evidence") or []:
+        if isinstance(found, dict) and found.get("file_path") == path and isinstance(found.get("line"), int):
+            line = int(found["line"])
+            pos = 0
+            for _ in range(line - 1):
+                pos = text.find("\n", pos) + 1
+                if pos <= 0:
+                    break
+            out.append(max(0, pos))
+    if not out:  # fall back to locating the excerpt's distinctive lines
+        for line in str(finding.get("safe_context") or "").replace("\ufffd", "").splitlines():
+            line = line.strip()
+            if len(line) >= 24 and not line.startswith("[..."):
+                pos = text.find(line[len(line) // 3:len(line) // 3 + 40])
+                if pos >= 0:
+                    out.append(pos)
+    return out
 
 
 def decode_payload(blob: str) -> Optional[Dict[str, object]]:
@@ -429,24 +445,26 @@ def triage_evidence(members: Iterable[Tuple[str, bytes]], findings: Iterable[Dic
     members = list(members)
     by_path = {path: data for path, data in members}
     findings = list(findings)
-    flagged: Dict[str, List[str]] = {}
+    flagged: Dict[str, List[Dict[str, object]]] = {}
     for item in findings:
         path = str(item.get("file_path") or "")
         if path in by_path:
-            flagged.setdefault(path, []).extend(_anchors(item))
+            flagged.setdefault(path, []).append(item)
         for found in item.get("evidence") or []:
             if isinstance(found, dict) and found.get("file_path") in by_path:
-                flagged.setdefault(str(found["file_path"]), [])
+                flagged.setdefault(str(found["file_path"]), []).append(item)
     files: List[Dict[str, object]] = []
-    for path, anchors in list(flagged.items())[:6]:
+    for path, related in list(flagged.items())[:6]:
         data = by_path[path]
         kind = _binary_kind(data)
         if kind or b"\x00" in data[:4096]:
             files.append({"path": path[:300], "bytes": len(data), "binary": kind or "binary data"})
             continue
         text = _clean_window(data[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore"))
-        content, truncated = _excerpt(text, anchors, FLAGGED_FILE_BYTES)
-        files.append({"path": path[:300], "bytes": len(data), "truncated": truncated, "content": content})
+        positions = [pos for item in related for pos in _positions(data, text, item, path)]
+        content, truncated = _excerpt(text, positions, FLAGGED_FILE_BYTES)
+        files.append({"path": path[:300], "bytes": len(data), "complete": not truncated, "truncated": truncated,
+                      "matched_regions_shown": bool(positions) or not truncated, "content": content})
     flag_set = {flag.removeprefix("new:") for flag in flags}
     locations = [found for found in (flag_evidence(members, flag, window=240) for flag in RISKY_FLAGS if flag in flag_set) if found][:14]
     payloads: List[Dict[str, object]] = []

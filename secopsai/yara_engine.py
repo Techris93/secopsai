@@ -180,6 +180,8 @@ def scan_files(files: Iterable[Tuple[str, bytes]]) -> Dict[str, Any]:
                 "matched_indicator": str(meta.get("description") or rule.identifier)[:500],
                 "safe_context": "\n[...]\n".join(windows),
                 "matched_patterns": sorted({identifier for identifier, _offset, _length in hits})[:10],
+                # Byte offsets of the matches, so triage can show the matched regions of a large file.
+                "match_offsets": sorted({offset for _identifier, offset, _length in hits})[:8],
                 "score": score,
                 "rule_author": str(meta.get("author") or "")[:200],
                 "rule_reference": str(meta.get("reference") or "")[:500],
