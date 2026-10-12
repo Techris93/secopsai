@@ -59,7 +59,7 @@ jobs:
       # Hybrid triage: Cloudflare Clef pre-screens hits (<= 10% closes them).
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_WORKERS_AI_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_AI_TOKEN }}
-      SECOPSAI_CLEF_PRESCREEN: "0"  # paused to save cost; set to "1" to resume
+      SECOPSAI_CLEF_PRESCREEN: "1"  # set to "0" to pause
       SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL: https://core.secopsai.dev/api/v1/research/alerts/webhook
       SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET: ${{ secrets.SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET }}
       SECOPSAI_RESEARCH_ALERT_EMAIL: research@secopsai.dev
