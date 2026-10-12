@@ -15,6 +15,7 @@ analyst.
 from __future__ import annotations
 
 import json
+import os
 import time
 import secrets
 from contextlib import closing
@@ -147,7 +148,7 @@ def _queue_pending(client: Any, db_path: Optional[str]) -> Dict[str, Any]:
         return {"queued": 0}
     jobs = []
     for row in rows:
-        context = fit_context(json.loads(row["context_json"]))
+        context = fit_context({key: value for key, value in json.loads(row["context_json"]).items() if key != "clef"})
         if context["context_bytes"] > MAX_CONTEXT_BYTES:
             with closing(soc_store.connect(db_path)) as connection:
                 connection.execute("UPDATE research_ai_triage SET status='failed', result_json=?, updated_at=? WHERE artifact_key=?",
@@ -208,8 +209,11 @@ def _apply_result(connection: Any, item: Dict[str, Any], now: str) -> Optional[s
     elif probability >= ESCALATE_PROBABILITY:
         verdict = "suspicious"
     connection.execute("UPDATE research_ai_triage SET verdict = ? WHERE artifact_key = ?", (verdict, key))
-    note = json.dumps({"verdict": verdict, "confidence": confidence, "malicious_probability": probability,
-                       "summary": str(result.get("summary") or "")[:500], "job_id": item.get("job_id")})
+    stored = connection.execute("SELECT json_extract(context_json, '$.clef.probability') AS clef FROM research_ai_triage WHERE artifact_key=?", (key,)).fetchone()
+    clef_probability = stored["clef"] if stored else None
+    disagreement = clef_probability is not None and probability >= 0 and abs(int(clef_probability) - probability) >= DISAGREEMENT_GAP
+    note = json.dumps({"verdict": verdict, "confidence": confidence, "malicious_probability": probability, "clef_probability": clef_probability,
+                       "models_disagree": disagreement, "summary": str(result.get("summary") or "")[:500], "job_id": item.get("job_id")})
     if (verdict in {"benign", "likely_benign"} and confidence >= AUTO_RESOLVE_CONFIDENCE) or 0 <= probability <= AUTO_RESOLVE_MAX_PROBABILITY and verdict != "suspicious":
         connection.execute(
             """UPDATE research_alerts SET status='resolved', owner='ai-triage', updated_at=?,
@@ -275,10 +279,86 @@ def rule_health(*, db_path: Optional[str] = None) -> Dict[str, Any]:
     return {"rules": len(stats), "noisy": sorted(noisy)}
 
 
+# Hybrid triage: Cloudflare Clef pre-screens pending hits. Calibration on
+# 1,344 flagged known-malware samples put 0.3% at or below 10%, so that band
+# closes without the chat model; Clef's high scores are not trusted (it rated
+# benign agent tools 96-98% on the production backlog), so everything above
+# goes to the chat model, which is not shown Clef's score.
+CLEF_CLOSE_MAX = 10
+CLEF_PER_CYCLE = 50
+DISAGREEMENT_GAP = 80
+
+
+def clef_enabled() -> bool:
+    return (os.environ.get("SECOPSAI_CLEF_PRESCREEN", "1") != "0" and bool(os.environ.get("CLOUDFLARE_ACCOUNT_ID"))
+            and bool(os.environ.get("CLOUDFLARE_WORKERS_AI_TOKEN") or os.environ.get("CLOUDFLARE_AI_TOKEN")))
+
+
+def clef_prescreen(*, db_path: Optional[str] = None, classify: Optional[Any] = None, limit: int = CLEF_PER_CYCLE) -> Dict[str, Any]:
+    """Score pending hits with Clef; close those at or below CLEF_CLOSE_MAX."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from secopsai import clef_triage
+
+    token = os.environ.get("CLOUDFLARE_WORKERS_AI_TOKEN") or os.environ.get("CLOUDFLARE_AI_TOKEN")
+    run = classify or (lambda context: clef_triage.classify(context, api_token=token))
+    with closing(soc_store.connect(db_path)) as connection:
+        _ensure(connection)
+        rows = [dict(row) for row in connection.execute(
+            """SELECT artifact_key, package, version, context_json FROM research_ai_triage
+               WHERE status = 'pending' AND json_extract(context_json, '$.clef') IS NULL ORDER BY score DESC, created_at LIMIT ?""",
+            (limit,),
+        ).fetchall()]
+        connection.commit()
+
+    def one(row: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            return run(json.loads(row["context_json"] or "{}"))
+        except Exception as exc:  # Clef unavailable: the hit simply goes to the chat model
+            return {"error": type(exc).__name__}
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(one, rows))
+    stats = {"scored": 0, "closed": 0, "to_chat": 0, "errors": 0, "tokens": 0}
+    now = soc_store.utc_now()
+    with closing(soc_store.connect(db_path)) as connection:
+        for row, result in zip(rows, results):
+            if "probability" not in result:
+                stats["errors"] += 1
+                continue
+            stats["scored"] += 1
+            stats["tokens"] += int(result.get("input_tokens") or 0)
+            clef = {"probability": int(result["probability"]), "choice": result.get("choice"), "at": now}
+            context = {**json.loads(row["context_json"] or "{}"), "clef": clef}
+            alert_note = json.dumps({"probability": clef["probability"], "choice": clef["choice"]})
+            if clef["probability"] <= CLEF_CLOSE_MAX:
+                stats["closed"] += 1
+                connection.execute("UPDATE research_ai_triage SET status = 'triaged', verdict = 'likely_benign', confidence = ?, context_json = ?, updated_at = ? WHERE artifact_key = ?",
+                                   (100 - clef["probability"], json.dumps(context, sort_keys=True), now, row["artifact_key"]))
+                connection.execute(
+                    """UPDATE research_alerts SET status = 'resolved', owner = 'clef', updated_at = ?,
+                          evidence_json = json_set(evidence_json, '$.clef', json(?))
+                       WHERE status = 'open' AND json_extract(evidence_json, '$.package') = ? AND json_extract(evidence_json, '$.version') = ?""",
+                    (now, alert_note, row["package"], row["version"]),
+                )
+            else:
+                stats["to_chat"] += 1
+                connection.execute("UPDATE research_ai_triage SET context_json = ?, updated_at = ? WHERE artifact_key = ?",
+                                   (json.dumps(context, sort_keys=True), now, row["artifact_key"]))
+                connection.execute(
+                    """UPDATE research_alerts SET updated_at = ?, evidence_json = json_set(evidence_json, '$.clef', json(?))
+                       WHERE json_extract(evidence_json, '$.package') = ? AND json_extract(evidence_json, '$.version') = ?""",
+                    (now, alert_note, row["package"], row["version"]),
+                )
+        connection.commit()
+    return stats
+
+
 def sync(client: Any, *, db_path: Optional[str] = None) -> Dict[str, Any]:
-    """Queue pending hits and apply finished verdicts.  Safe to call every cycle."""
+    """Pre-screen with Clef, queue the rest, apply finished verdicts.  Safe to call every cycle."""
     if not getattr(client, "enabled", False):
         return {"status": "disabled"}
+    prescreen = clef_prescreen(db_path=db_path) if clef_enabled() else {"status": "disabled"}
     queued = _queue_pending(client, db_path)
     with closing(soc_store.connect(db_path)) as connection:
         _ensure(connection)
@@ -302,7 +382,7 @@ def sync(client: Any, *, db_path: Optional[str] = None) -> Dict[str, Any]:
             )
         connection.commit()
     health = rule_health(db_path=db_path)
-    return {"status": "ok", **queued, "results": len(results), "pending_at_bridge": response.get("pending"), **outcomes, "rule_health": health}
+    return {"status": "ok", "clef": prescreen, **queued, "results": len(results), "pending_at_bridge": response.get("pending"), **outcomes, "rule_health": health}
 
 
 RETRIAGE_ECOSYSTEMS = {"npm", "pypi", "crates", "open-vsx", "vscode-marketplace"}

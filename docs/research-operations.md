@@ -168,7 +168,17 @@ new or changed install script, new execution/egress/credential behaviour, a
 YARA warning or alert, or a publisher change. The job summary reports the
 time from publish to verdict.
 
-**3. Model triage through your bridge.** Rule hits are queued in Core as
+**3. Hybrid triage: Cloudflare Clef, then your bridge.** Each flagged hit is
+first scored by Cloudflare Clef (a decision model on Workers AI, billed per
+input token). At 10% or below the hit is closed and its alert resolved
+(owner `clef`): calibration put 0.3% of 1,344 flagged known-malware samples
+there. Clef's high scores are not used to decide: on the production backlog it
+rated several benign agent tools 96-98%. Everything above 10% goes to the
+chat model through your bridge, which is not shown Clef's score; alerts carry
+both scores and flag `models_disagree` when they differ by 80 points or more.
+Set `SECOPSAI_CLEF_PRESCREEN=0` to turn the pre-screen off.
+
+**Chat-model triage through your bridge.** Rule hits are queued in Core as
 `triage_artifact` jobs carrying only the matched strings and bounded context
 windows. The bridge on your machine claims them and asks your selected model
 through opencodex (your ChatGPT or Claude subscription), then posts the
