@@ -135,8 +135,9 @@ def clean_rows(fetcher: SafeFetcher, count: int) -> List[Dict[str, Any]]:
             return None
         return {"set": "clean", "label": 0, "artifact": f"{ecosystem}:{package}@{version}", **built} if built else None
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        return [row for row in pool.map(one, clean_targets(600, 300)) if row][:count]
+    # Popular packages are rarely flagged: scan a wide pool to collect enough.
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        return [row for row in pool.map(one, clean_targets(3000, 1500)) if row][:count]
 
 
 def queue_and_wait(rows: List[Dict[str, Any]], run_tag: str, wait_minutes: int) -> None:
