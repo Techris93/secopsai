@@ -130,6 +130,7 @@ def scan_members(fetcher: Optional[SafeFetcher], ecosystem: str, package: str, v
     level = str(scanned.get("level") or "none")
     return {"fingerprints": actor_fingerprint.from_members(members) if level in HIT_LEVELS else {},
             "install_files": package_features.install_time_files(members) if level in HIT_LEVELS else [],
+            **(package_features.triage_evidence(members, findings, flags) if level in HIT_LEVELS else {}),
             "status": "hit" if level in HIT_LEVELS else "clean", "score": int(scanned.get("score") or 0), "level": level,
             "rules_matched": scanned.get("rules_matched") or [], "findings": findings[:20], "features": flags, "files": len(members), "bytes": archive_bytes, "diff": diff}
 

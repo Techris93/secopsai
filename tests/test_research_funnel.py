@@ -254,3 +254,19 @@ def test_clef_errors_never_block_the_chat_queue(tmp_path):
     assert research_ai_triage.clef_prescreen(db_path=db_path, classify=broken)["errors"] == 1
     with soc_store.connect(db_path) as connection:
         assert connection.execute("SELECT status FROM research_ai_triage").fetchone()[0] == "pending"
+
+
+def test_fit_context_trims_flagged_files_last():
+    from secopsai import research_ai_triage
+
+    context = research_ai_triage.build_context(ecosystem="npm", package="p", version="1.0.0", prescan={
+        "score": 60, "level": "warning",
+        "findings": [{"rule_id": f"YARA:r{i}", "file_path": "package/a.js", "safe_context": "x" * 1800} for i in range(12)],
+        "install_files": [{"path": f"package/i{i}.js", "content": "y" * 6000} for i in range(6)],
+        "flagged_files": [{"path": "package/a.js", "content": "z" * 16000, "truncated": False}],
+        "decoded_payloads": [{"kind": "text", "text": "d" * 3000}],
+    })
+    fitted = research_ai_triage.fit_context(context)
+    assert fitted["context_bytes"] <= research_ai_triage.MAX_CONTEXT_BYTES
+    assert len(fitted["flagged_files"][0]["content"]) == 16000  # untouched: cheaper evidence went first
+    assert all(len(f["safe_context"]) <= 700 for f in fitted["findings"])

