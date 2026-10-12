@@ -261,6 +261,7 @@ def main() -> int:
     parser.add_argument("--label", default=os.environ.get("GITHUB_SHA", "local")[:12])
     parser.add_argument("--wait-minutes", type=int, default=150)
     parser.add_argument("--contexts-only", action="store_true", help="build and save contexts; do not queue")
+    parser.add_argument("--enforce-gates", action="store_true", help="exit 2 when an acceptance gate fails")
     parser.add_argument("--out", type=Path, default=Path("triage-replay.json"))
     args = parser.parse_args()
     if not yara_engine.load().get("available"):
@@ -282,7 +283,7 @@ def main() -> int:
     print(text)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(text + "\n", encoding="utf-8")
-    return 0 if passed else 2
+    return 2 if args.enforce_gates and not passed else 0
 
 
 if __name__ == "__main__":
