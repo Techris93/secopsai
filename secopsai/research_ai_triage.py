@@ -115,11 +115,17 @@ def fit_context(context: Dict[str, Any], limit: int = MAX_CONTEXT_BYTES) -> Dict
     return context
 
 
+def triage_context(*, ecosystem: str, package: str, version: str, prescan: Dict[str, Any], metadata_signals: Optional[List[Dict[str, Any]]] = None, previous_version: str = "") -> Dict[str, Any]:
+    """The exact context a hit is triaged with (production and the replay harness share it)."""
+    return fit_context(build_context(ecosystem=ecosystem, package=package, version=version, prescan=prescan,
+                                     metadata_signals=metadata_signals, previous_version=previous_version))
+
+
 def record_hit(*, ecosystem: str, package: str, version: str, prescan: Dict[str, Any], metadata_signals: Optional[List[Dict[str, Any]]] = None, previous_version: str = "", db_path: Optional[str] = None) -> str:
     """Store a rule hit with its minimized evidence for later model triage."""
     key = artifact_key(ecosystem, package, version)
-    context = fit_context(build_context(ecosystem=ecosystem, package=package, version=version, prescan=prescan,
-                                        metadata_signals=metadata_signals, previous_version=previous_version))
+    context = triage_context(ecosystem=ecosystem, package=package, version=version, prescan=prescan,
+                             metadata_signals=metadata_signals, previous_version=previous_version)
     now = soc_store.utc_now()
     if prescan.get("fingerprints"):
         from secopsai import actor_fingerprint

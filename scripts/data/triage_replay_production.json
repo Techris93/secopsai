@@ -1,0 +1,2710 @@
+{
+ "snapshot": "2026-10-11T12:00Z..2026-10-12",
+ "artifacts": [
+  {
+   "artifact_id": "FASTLANE-npm:protobufjs@8.8.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:a2acli-transport-slimrpc@0.1.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "crates:agntcy-slim-control-plane@3.2.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:backbone-bucket@0.4.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "crates:backbone-sapiens@0.7.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:backbone-sapiens@0.7.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:backbone-sapiens@0.7.5",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:blvm-node@0.1.67",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:blvm-node@0.1.68",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:candor-classify@0.40.6",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:candor-scan@0.40.6",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:clustervision@0.15.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:devplane@0.12.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:discipline@0.20.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "crates:fab-core@0.2.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "crates:fab-core@0.2.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 32
+  },
+  {
+   "artifact_id": "crates:gmsh_ffi@0.2.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "crates:gmsh_ffi@0.2.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 8
+  },
+  {
+   "artifact_id": "crates:gnostr-grammar@970857.1845.452560",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "crates:gnostr-grammar@970861.1845.448495",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "crates:gtm@0.2.89",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:harn-vm@0.10.165",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "crates:img-fp@0.40.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:img-fp@0.41.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "crates:inspequte@1.2.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "crates:isb-apps@2.3.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:isb-apps@2.4.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:isb-server@2.3.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:isb-server@2.4.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:kanade-backend@0.74.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "crates:lindex@0.1.0",
+   "production_verdict": "true_positive",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "crates:llmman@0.1.536",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "crates:llmman@0.1.537",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "crates:maolan@0.3.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "crates:nimi-shell-protected-local@0.10.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "crates:nimi-shell-tauri@0.10.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 8
+  },
+  {
+   "artifact_id": "crates:no-mistakes@0.86.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "crates:onepipeline-ui@0.27.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:openlatch-client@0.6.14",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "crates:overtls@0.3.16",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:parry-guard-exfil@0.1.8",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "crates:rch-common@2.1.17",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:renox-cli@1.1.0-rc.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:rspandoc@0.1.8",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:rsslide@0.1.11",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:rsslide@0.1.13",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "crates:rsslide@0.1.14",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "crates:rsslide@0.1.17",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "crates:rsslide@0.1.18",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:rsslide@0.1.20",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:rsslide@0.1.22",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:saturnus@0.2.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:sdforge@0.5.0-rc.8",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "crates:seiza-cli@0.26.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:snyvi@1.33.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "crates:snyvi@1.33.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "crates:stackql-deploy@2.3.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "crates:subc-daemon@0.33.11",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:subc-daemon@0.33.7",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "crates:uqa-pg-query@0.5.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:valhalla@0.7.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "crates:vetto@0.6.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "crates:vtcode-core@0.175.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:vtcode@0.175.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "crates:vtcode@0.175.5",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "crates:zedis-gui@0.13.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "mcp-registry:ai.skilltotal/skilltotal@0.63.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "mcp-registry:com.spryloom/spryloom@0.1.20",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.Aureliolo/gdharness@1.1.61",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.Aureliolo/gdharness@1.2.10",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 23
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.Aureliolo/gdharness@1.2.11",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.Aureliolo/gdharness@1.2.9",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.OpenOSINT/openosint@2.34.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.Sahil170595/chimeraforge@0.52.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.Sahil170595/chimeraforge@0.53.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.Sahil170595/chimeraforge@0.54.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.Sahil170595/chimeraforge@0.55.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 29
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.Sahil170595/chimeraforge@0.56.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.alexar76/warden@0.14.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.gautamvarmadatla/mcpsafetywarden@1.4.24",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.gautamvarmadatla/mcpsafetywarden@1.4.25",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.gautamvarmadatla/mcpsafetywarden@1.4.26",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.getmcpm/cli@0.47.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.gzchenhao/openhire@0.8.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.gzchenhao/openhire@0.8.5",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.homeofe/supply-chain-guard@6.5.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.saagpatel/mcp-audit@2.10.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.saagpatel/mcp-audit@2.10.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.vaaraio/vaara-server@2.10.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "mcp-registry:io.github.vaaraio/vaara@2.10.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:100xprism@3.5.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "npm:@adhdev/daemon-standalone@1.0.82-rc.8",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@aeosome/cli@0.1.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@agentdeck/setup@1.9.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@ahpd/sdk@0.11.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@ai-dossier/core@1.17.0-next.678.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@ai-matrx/coding-sessions@0.3.120",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@aimarket/warden@0.14.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@ainyc/canonry@7.32.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@amxts/core@0.3.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 8
+  },
+  {
+   "artifact_id": "npm:@arkstack/common@0.19.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@assistant-ai/chill@0.0.5",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "npm:@astrale-os/adapter-cloudflare@0.5.0-beta.184",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@await-widget/runtime@0.0.49",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:@bctrl/sdk@1.1.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:@biffo/cli@0.406.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@biffo/cli@0.408.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@biffo/cli@0.413.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:@biffo/cli@0.414.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:@biffo/cli@0.415.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@biffo/cli@0.416.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@biffo/cli@0.417.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@biffo/cli@0.418.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:@biffo/cli@0.430.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@browserbox/browserbox@20.1.7",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@bskts/create-agent@0.3.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@buyong/pi-codex@0.3.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@buyong/pi-codex@0.3.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@camerontaylor/paseo-server@0.11.2-fork.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@camerontaylor/paseo-server@0.11.2-fork.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@capxul/sandbox@4.20.0-beta.35",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "npm:@chaindaddy/cli@0.6.25",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:@chaindaddy/mcp@0.6.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:@chaindaddy/mcp@0.6.8",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@chdlabs/my-shield@0.3.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@cleocode/adapters@2026.10.8",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:@cleocode/adapters@2026.10.8-rc.ci.675",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:@cleocode/cleo@2026.10.8",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@corebill/cli@0.3.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@cosmicdrift/kumiko-bundled-features@0.359.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:@cosmicdrift/kumiko-samples@0.357.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@crossly/cli@0.1.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@databricks-solutions/consort@0.3.117",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@datalayer/agent-runtimes@1.3.111",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@decodo/mcp-server@1.3.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:@devnrich/bridge-agent-mcp@0.2.54",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:@dfm-fi/agent@0.2.1875",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:@dharma-ai-labs/agent-fabric@0.2.183",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@dotrino/terminal-agent@0.41.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:@dotrino/terminal-agent@0.41.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:@dotrino/terminal-agent@0.41.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@dreamlake/dreamlake-cli@0.54.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@ethernity-cloud/sdk-js@1.7.9",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@eudiplo/cli@9.1.0-main.197e266",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@eudiplo/cli@9.1.0-main.73942b8",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@eudiplo/cli@9.1.0-main.96e66fb",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:@eudiplo/cli@9.1.0-main.b91e24e",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@expo/explore@0.12.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:@farm.js/cli@0.1.6",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@farmslot/adapter-web@0.6.10",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@followrabbit/cli@0.6.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:@geekbeer/minion@5.21.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@ghackk/multi-claude@1.0.35",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "npm:@glassly/cli@2.0.5",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 10
+  },
+  {
+   "artifact_id": "npm:@gotcos/glasses-server@6.70.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@hekana/sneferu@0.3.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:@hyperdrive.bot/fleet-cli@0.3.238",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@ifc-lite/server-bin@2.0.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@indigoai-us/hq-cli@5.345.88",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@indigoai-us/hq-cli@5.345.89",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 32
+  },
+  {
+   "artifact_id": "npm:@inerrata-corporation/errata@2.0.21-dev.4019",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "npm:@inferencesh/belt@1.21.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@integrity-labs/agt-cli@0.28.1116",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@invarn/cibuild@3.0.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@invarn/cli@0.9.237",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:@invarn/cli@0.9.239",
+   "production_verdict": "true_positive",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@invarn/cli@0.9.240",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@invarn/cli@0.9.241",
+   "production_verdict": "true_positive",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@krelborn/markdown-review@0.2.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "npm:@lendkzn/baileys@0.0.8",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@leverege/build-tools@2.126.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@llblab/pi-kit@0.33.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:@lvce-editor/static-server@0.121.25",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:@magpie-community/opencode-grok-auth@0.1.12",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "npm:@mastra/core@0.0.0-om-lifecycle-20261010194955",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:@mengine/medeo-client@2.1.1-dsl.27",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@mnemonik/local-setup@0.1.125",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 8
+  },
+  {
+   "artifact_id": "npm:@mnemonik/local-setup@0.1.126",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@monimesl/dot-cli@0.1.0-alpha.16",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@mrciphersmith/keryx@0.3.108",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@mrciphersmith/keryx@0.3.109",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@mrgoonie/multix@0.10.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@mrgoonie/multix@0.11.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:@mrgoonie/multix@0.12.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:@mrgoonie/multix@0.13.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@mrgoonie/multix@0.7.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@mrgoonie/multix@0.8.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@mrgoonie/multix@0.9.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@mutagent/cli@0.2.108",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@mutagent/cli@0.2.109",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@mutagent/cli@0.2.110",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@mutagent/cli@0.2.113",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@mutagent/cli@0.2.114",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@mutagent/cli@0.2.118",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@mutagent/cli@0.2.119",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@mutagent/cli@0.2.120",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:@mutagent/cli@0.2.123",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@mutagent/cli@0.2.124",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@mutmutco/claude-plugin@4.5.122",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:@mutmutco/claude-plugin@4.5.126",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "npm:@my-architect/mcp@1.9.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@neuralnomads/codenomad-dev@0.20.1-dev-20261011-16706ade",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@nocobase/plugin-mcp-server@2.2.23",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@nocobase/plugin-notifications@2.2.23",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@norskvideo/norsk-studio@1.30.0-2026-10-11-3deeff4c",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@open-mercato/cezar@0.15.0-pr1384.2917",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@open-wa/core@5.5.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "npm:@oracle-agent/oracle@0.35.58",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@otto-code/server@0.9.32",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:@oxygen-agent/cli@1.1014.86",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:@paperclipai/adapter-codex-local@2026.1011.0-nightly.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@paperclipai/adapter-utils@2026.1011.0-nightly.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@paperclipai/db@0.0.0-preview.g05f3725af838b5a074707df1d6ed1e193bdfe49e",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@paperclipai/db@0.0.0-preview.g70fb0988c0aa760f9c84818aaf3fabbc339854b7",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@paperclipai/db@2026.1011.0-canary.6",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@paperclipai/db@2026.1011.0-canary.7",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@paperclipai/plugin-exe-dev@2026.1011.0-canary.5",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@paperclipai/shared@0.0.0-preview.gc2861407ff2e2171df0f7c79ad2a92f8c2c21c6b",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@paperclipai/shared@2026.1011.0-canary.8",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@pmate/cli@0.35.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@profullstack/qryptchat@0.7.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@proofoftech/flowsafe@0.27.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@qwen-code/sdk@0.1.19",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@rabbi696/ezrouter@0.6.18",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "npm:@raditia/craftkit@1.59.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "npm:@relkit/observability@0.7.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@ricsam/r5d-worker@0.0.194-prod.1791708317172.gb85ed8bc62db462e9d310736156fd8c9127729bb",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:@rigour-labs/core@7.0.0-rc.10",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@rigour-labs/core@7.0.0-rc.11",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@rigour-labs/core@7.0.0-rc.12",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@rigour-labs/core@7.0.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@rizom/brain@0.2.0-alpha.522",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@rizom/ops@0.2.0-alpha.522",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@rizom/ops@0.2.0-alpha.523",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@rizom/ops@0.2.0-alpha.524",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "npm:@rizom/ops@0.2.0-alpha.525",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:@routinecrew/routinecode@2.31.39",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "npm:@routinecrew/routinecode@2.31.40",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 38
+  },
+  {
+   "artifact_id": "npm:@selat-ai/selat-cli@0.17.15",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@selat-ai/selat-pay@0.12.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@sellable/install@0.1.834-wip.zeroshot.20261011.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 27
+  },
+  {
+   "artifact_id": "npm:@shield-agent/kya@0.24.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@shield-agent/kya@0.24.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@sleep2agi/agent-network@2.3.0-preview.168",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 40
+  },
+  {
+   "artifact_id": "npm:@sleep2agi/agent-network@2.3.0-preview.169",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 45
+  },
+  {
+   "artifact_id": "npm:@sleep2agi/agent-network@2.3.0-preview.170",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "npm:@smartledger/bsv@9.28.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:@smartledger/bsv@9.29.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@stackable-labs/embeddables@3.14.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@stacksjs/actions@0.75.135",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@stacksjs/buddy@0.75.135",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@stacksjs/stx@0.2.444",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@stacksjs/stx@0.2.445",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@stacksjs/stx@0.2.446",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@stalfh233/omc-cli@0.4.16",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@stalfh233/omc-cli@0.4.18",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:@stalfh233/omc-cli@0.4.19",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@stalfh233/omc-cli@0.4.20",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@stalfh233/omc-cli@0.4.21",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@starci/hfs@4.2.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@tangle-network/agent-app@0.60.84",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@tangle-network/agent-app@0.60.85",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@tangle-network/agent-app@0.60.86",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@tangle-network/agent-app@0.60.87",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@tangle-network/agent-app@0.60.88",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@tangle-network/agent-app@0.60.89",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.37",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.37-develop.20261011090736.b2753f3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.37-develop.20261011092027.92f53fb",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.37-develop.20261011092854.7f4b6c9",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.37-develop.20261011094217.5ea644c",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.37-develop.20261011094646.b5b48a5",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.37-develop.20261011105705.90bf6c7",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.38-develop.20261011113314.54b1bf2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.38-develop.20261011115723.ac50e5e",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.39-develop.20261011064456.0b510f6",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 14
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.39-develop.20261011072856.b99cbc6",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.39-develop.20261011073700.51ff5f9",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.39-develop.20261011133905.668c843",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.39-develop.20261011134917.74a19ed",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.39-develop.20261011135938.70748bf",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.39-develop.20261011141917.2011af8",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:@tangle-network/sandbox@0.60.39-develop.20261011151833.fcad2e6",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@task-handoff/control-plane@0.0.41-alpha.7",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@tickernelz/paperclip-pro-adapter-utils@2026.1011.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@trops/dash-core@0.1.729",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:@tryglen/cli@0.39.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "npm:@twinsearth/w2m-dsh-plugin@0.5.9",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@univer-cli/api-reference-command@1.0.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:@univer-cli/generic-keyed-instance-pool@1.0.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:@univer-cli/headless-univer@1.0.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@univer-cli/univer-collaboration-runtime-pool@1.0.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@univerjs-pro/collaboration-comment-service@1.0.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@univerjs-pro/collaboration-endpoint@1.0.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@univerjs-pro/collaboration-history-database-sqlite@1.0.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "npm:@univerjs-pro/collaboration-transport-node@1.0.4",
+   "production_verdict": "true_positive",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@unotest/protocol@0.49.1",
+   "production_verdict": "true_positive",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "npm:@unotest/web@0.49.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:@vernikr/gemini-mcp@0.20.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@vernikr/gemini-mcp@0.20.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@vernikr/gemini-mcp@0.20.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@vernikr/gemini-mcp@0.20.5",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@vernikr/gemini-mcp@0.21.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:@veryfront/ext-content-mdx@0.1.1272-rc.23470",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@veryfront/ext-content-mdx@0.1.1272-rc.23472",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@veryfront/ext-content-mdx@0.1.1272-rc.23475",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@volter/supercode-teams@0.3.267",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:@volter/supercode-teams@0.3.268",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "npm:@vustudio/mcp-remote@0.2.52-vu.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:@waifucave/discord-waifus@1.5.204",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:@wendongfly/myhi@1.3.169",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:@winstonsayno/mcp-gateway@10.9.12",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@winstonsayno/mcp-gateway@10.9.14",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 16
+  },
+  {
+   "artifact_id": "npm:@winstonsayno/mcp-gateway@12.0.11",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@winstonsayno/mcp-gateway@12.0.13",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@winstonsayno/mcp-gateway@13.9.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@winstonsayno/mcp-gateway@13.9.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@winstonsayno/mcp-gateway@14.2.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@winstonsayno/mcp-gateway@14.4.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:@winstonsayno/mcp-gateway@14.5.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:@wjarka/cezarion@0.16.0-pr957.1568",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@wjarka/cezarion@0.16.0-pr957.1569.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@wjarka/cezarion@0.16.0-pr964.1577.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@wjarka/cezarion@0.16.0-pr966.1578.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:@xopcai/xopc@0.0.374",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:@xshieldai/aegis@2.19.0",
+   "production_verdict": "benign_expected",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:@ycodium-ai/agent-claude@0.2.2956",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:@yukino.js/yukino@0.0.15",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:a2a-exposed@0.7.11",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:agent-afk@5.308.12",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:agent-afk@5.308.13",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:agent-afk@5.309.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:agent-afk@5.309.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 29
+  },
+  {
+   "artifact_id": "npm:ai-model-verifier@3.6.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:autopilot-ai@1.20.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:awb-agent-manager@1.6.286",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:beltsh@1.21.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:blitzstrike@2.4.167",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:blitzstrike@2.4.168",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:browserwork@0.0.5",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:centralu@0.1.0-beta.15",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:chainlesschain@0.166.97",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:chati-dev@4.6.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:circle-ir-ai@4.25.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:circle-ir-ai@4.26.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:codebee@0.1.103",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:costkey@0.6.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:costkey@0.7.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 32
+  },
+  {
+   "artifact_id": "npm:create-kevstack@0.0.5",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:create-pmos@0.157.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 38
+  },
+  {
+   "artifact_id": "npm:create-pmos@0.158.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 36
+  },
+  {
+   "artifact_id": "npm:create-pmos@0.159.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "npm:create-pmos@0.160.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 32
+  },
+  {
+   "artifact_id": "npm:diodejs@0.5.11",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:dns-worker@1.1.3-canary.204c5c6",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:docker-client-mx@1.116.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:dsh-auth-gate@0.17.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "npm:dsh-edge@0.26.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:dsh-film@0.5.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:dsh-film@0.5.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:dsh-film@0.5.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:geekin-devtoys@0.3.7",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "npm:gemi@0.130.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:great-cto@3.62.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:haruyuki@0.1.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:haruyuki@0.2.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:helper-agent@1.0.1",
+   "production_verdict": "true_positive",
+   "production_probability": 72
+  },
+  {
+   "artifact_id": "npm:helper-agent@1.0.4",
+   "production_verdict": "true_positive",
+   "production_probability": 74
+  },
+  {
+   "artifact_id": "npm:howtofixcli@0.4.85",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "npm:howtofixcli@0.4.86",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:infsh@1.22.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "npm:iobroker.admin@8.1.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:ironheights@0.1.5",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:ironheights@0.3.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:keryx-mcp@0.4.16",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:lensmcp@1.24.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:local-review@0.2.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:luckytri@1.1.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:luckytri@1.1.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:ludion-ai@0.1.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:mbkbucket@4.2.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:midnight-wallet-cli@0.5.6",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:mindwire@0.1.52",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:mslxdff@0.1.170",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:muse-spark-code-acp@0.18.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:mycomesh-consumer@0.9.5",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "npm:mycomesh-consumer@0.9.7",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:nativekeel@0.1.68",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:omc-core@0.4.20",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:omnirush@2.4.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:omnius@1.0.835",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:omnius@1.0.836",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:opencode-collaboration@1.1.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:opencode-v2-security@1.6.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 16
+  },
+  {
+   "artifact_id": "npm:openfactor@0.4.0-1791700510.g21e9db6e316e",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:openfactor@0.4.0-1791728262.g35d0ef48297e",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:openfactor@0.4.0-1791731875.g1dfe440281cb",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:openfactor@0.4.0-1791735662.gc4d4e95dfb6e",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:openfactor@0.4.0-1791779429.ga0d54cac2d9c",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:openmates@0.27.0-alpha.60",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:openmates@0.27.0-alpha.61",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:openmates@0.27.0-alpha.62",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:openmeld@0.3.254",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:orquesta-cli@0.2.157",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:palmagent@0.1.0-alpha.176",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:palmagent@0.1.0-alpha.177",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:palmagent@0.1.0-alpha.178",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:palmagent@0.1.0-alpha.180",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:palmagent@0.1.0-alpha.181",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:palmagent@0.1.0-alpha.182",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:patchwork-os@1.2.0-beta.3.canary.891",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:pcloud@2.1.82",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:pi-fabric@0.110.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:pi-fabric@0.110.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:pipework@0.103.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:pipework@0.104.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:pipework@0.105.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:pipework@0.106.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:pipework@0.107.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:pipework@0.108.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "npm:pipework@0.109.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:pipework@0.110.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:pipework@0.111.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:pipework@0.96.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:pipework@0.97.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:prism-mcp-server@20.21.24",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "npm:privateer-agent@0.14.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:pushary@1.9.48",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:razzou-harness@0.1.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:release-skill@0.9.24",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:replicas-engine@0.1.1046",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:replicas-engine@0.1.1047",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:replicas-engine@0.1.1048",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:rowrow@0.3.79",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:rowrow@0.3.80",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:ruflo@3.56.6",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:secretloop@0.7.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:senaev-utils@1.0.0-ci.38154368560.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:senaev-utils@1.0.0-ci.38157331957.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:sentinelayer-cli@0.46.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "npm:shieldcortex@5.7.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 8
+  },
+  {
+   "artifact_id": "npm:showrunner-agent-staging@0.5.34-staging.1653",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "npm:showrunner-agent-staging@0.5.37-staging.1658",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "npm:showrunner-agent-staging@0.5.38-staging.1659",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:showrunner-agent-staging@0.5.38-staging.1660",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:stitchkit@0.109.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:strands-darwin@0.0.49",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:tellsh@0.3.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 23
+  },
+  {
+   "artifact_id": "npm:termdock@1.4.314",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:tokenhop@1.0.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "npm:trackpad-toggle@1.6.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:trackpad-toggle@1.6.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 32
+  },
+  {
+   "artifact_id": "npm:uptide@0.7.3-next.20261011200613",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "npm:uptide@0.7.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "npm:uptide@0.7.4-next.20261011233936",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "npm:w-web-sso@1.1.8",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 22
+  },
+  {
+   "artifact_id": "npm:wazap-mcp@1.3.8",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "npm:zebflow@0.11.11",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 38
+  },
+  {
+   "artifact_id": "npm:zebflow@0.11.12",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 27
+  },
+  {
+   "artifact_id": "npm:zz-meridian@0.14.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "open-vsx:AlayaNeW/aladdin@3.1.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 40
+  },
+  {
+   "artifact_id": "open-vsx:Danil/fixline-tool@1.4.6",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "open-vsx:DevInsights/vscode-DevInsights@27.2.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "open-vsx:EggR0/integrated-power@0.9.18",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "open-vsx:EggR0/integrated-power@0.9.20",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 38
+  },
+  {
+   "artifact_id": "open-vsx:PAECHE/md-present@0.1.12",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "open-vsx:PrateekMahendrakar/prettyxml@7.1.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "open-vsx:PrateekMahendrakar/prettyxml@7.2.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "open-vsx:RandyNorthrup/muse-spark-code@0.17.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 38
+  },
+  {
+   "artifact_id": "open-vsx:RandyNorthrup/muse-spark-code@0.17.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 40
+  },
+  {
+   "artifact_id": "open-vsx:RandyNorthrup/muse-spark-code@0.18.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 38
+  },
+  {
+   "artifact_id": "open-vsx:RocketRide/rocketride@1.4.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "open-vsx:SoubhikDevTools/dot-liquid-template-debugger@2.5.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "open-vsx:abacusai/abacusai-agent@1.52.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "open-vsx:atom8n/home-claw@1.0.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "open-vsx:borodatych/vscodesyncfiles@1.6.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 32
+  },
+  {
+   "artifact_id": "open-vsx:bruno-api-client/bruno@6.0.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "open-vsx:cortex-labs/cortex-agent@1.0.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "open-vsx:davinwang/qiuer-coder@4.1.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "open-vsx:epidev/epidev@0.3.14",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 40
+  },
+  {
+   "artifact_id": "open-vsx:epidev/epidev@0.3.18",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "open-vsx:epidev/epidev@0.3.19",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 38
+  },
+  {
+   "artifact_id": "open-vsx:epidev/epidev@0.3.8",
+   "production_verdict": "true_positive",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "open-vsx:fengshihao/molan-markdown@0.1.32",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "open-vsx:fengshihao/molan-markdown@0.1.35",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "open-vsx:freerave/codetune@1.3.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "open-vsx:fusoft/rtl-cursor@1.0.12",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "open-vsx:gpyanalytics/secretloop@0.6.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "open-vsx:gpyanalytics/secretloop@0.7.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "open-vsx:gpyanalytics/secretloop@0.7.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 38
+  },
+  {
+   "artifact_id": "open-vsx:grymmjack/qb64pe@0.20.41",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "open-vsx:grymmjack/qb64pe@0.20.64",
+   "production_verdict": "benign_expected",
+   "production_probability": 8
+  },
+  {
+   "artifact_id": "open-vsx:hamza-shewa/flutter-config-manager@1.2.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "open-vsx:harcochen/dsh-vsc-integration@0.10.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "open-vsx:harcochen/dsh-vsc-integration@0.10.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "open-vsx:i-and-me-IT-Training-and-Solutions-GmbH/morgana@0.2.18",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "open-vsx:josegrabelha/remoteedit@1.11.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "open-vsx:josegrabelha/remoteedit@1.9.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "open-vsx:julialang/language-julia@1.243.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "open-vsx:kevinyuan/vscode-tikzjax@0.4.52",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "open-vsx:liepin/the-one-vscode-plugin@1.2.13",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 38
+  },
+  {
+   "artifact_id": "open-vsx:moy-panel/moyu-panel@0.20.120",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 38
+  },
+  {
+   "artifact_id": "open-vsx:moy-panel/moyu-panel@0.20.121",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "open-vsx:moy-panel/moyu-panel@0.20.122",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "open-vsx:ms-dotnettools/vscode-dotnet-runtime@3.2.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 12
+  },
+  {
+   "artifact_id": "open-vsx:ntluong95/positron-stata@0.1.3",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "open-vsx:rangav/vscode-thunder-client@2.41.5",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "open-vsx:smalum/smalum@0.2.29",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "open-vsx:smalum/smalum@0.2.33",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "open-vsx:smalum/smalum@0.2.37",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 20
+  },
+  {
+   "artifact_id": "open-vsx:smalum/smalum@0.2.38",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "open-vsx:stack-stark-code/gold-price-radar@2.0.7",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "open-vsx:virustotal/yara-x-ls@1.21.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 15
+  },
+  {
+   "artifact_id": "open-vsx:vnstock/obsidian-markdown-live-editor@0.3.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "vscode-marketplace:FintechStory/codo-agent@0.79.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 32
+  },
+  {
+   "artifact_id": "vscode-marketplace:JFDavignonSolutions/frank-vsc@0.4.6",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "vscode-marketplace:JerryCrozet-ElectronicEngineer/jc-lib@0.8.54",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "vscode-marketplace:KuCai/leidong-sanqian-vscode-tools@3.5.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 18
+  },
+  {
+   "artifact_id": "vscode-marketplace:Lekot/1c-metadata-tree-vscode@0.56.4",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "vscode-marketplace:Lekot/1c-metadata-tree-vscode@0.56.5",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "vscode-marketplace:Lekot/1c-metadata-tree-vscode@0.56.6",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "vscode-marketplace:Lekot/1c-metadata-tree-vscode@0.56.9",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  },
+  {
+   "artifact_id": "vscode-marketplace:Lekot/1c-metadata-tree-vscode@0.57.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "vscode-marketplace:RandyNorthrup/muse-spark-code@0.17.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "vscode-marketplace:RandyNorthrup/muse-spark-code@0.17.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 38
+  },
+  {
+   "artifact_id": "vscode-marketplace:RandyNorthrup/muse-spark-code@0.18.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "vscode-marketplace:RenanFerrari/rfcode@1.10.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "vscode-marketplace:RenanFerrari/rfcode@1.14.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "vscode-marketplace:RenanFerrari/rfcode@1.15.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 30
+  },
+  {
+   "artifact_id": "vscode-marketplace:RenanFerrari/rfcode@1.15.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 23
+  },
+  {
+   "artifact_id": "vscode-marketplace:RenanFerrari/rfcode@1.9.1",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "vscode-marketplace:SAPOS/yeoman-ui@1.27.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": null
+  },
+  {
+   "artifact_id": "vscode-marketplace:Smalum/smalum@0.2.39",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "vscode-marketplace:XiaoXinCodes/antigravity-account-manager@0.1.13",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "vscode-marketplace:barisozgenn/meshgraph@0.1.28",
+   "production_verdict": "true_positive",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "vscode-marketplace:barisozgenn/meshinfra@0.1.8",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "vscode-marketplace:gpyanalytics/secretloop@0.7.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 42
+  },
+  {
+   "artifact_id": "vscode-marketplace:low-poly-ai-workspace/low-poly-ai-workspace@0.1.21",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 28
+  },
+  {
+   "artifact_id": "vscode-marketplace:mirage-interactive-fr/perfchecker-vscode@1.0.2",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 25
+  },
+  {
+   "artifact_id": "vscode-marketplace:nicrandomlee/tracesprout@0.1.0",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 35
+  },
+  {
+   "artifact_id": "vscode-marketplace:rscd/cpp-code-doctor-core@0.9.17",
+   "production_verdict": "needs_more_evidence",
+   "production_probability": 24
+  }
+ ]
+}

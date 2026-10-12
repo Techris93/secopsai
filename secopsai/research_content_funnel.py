@@ -101,36 +101,56 @@ def _resolve_npm(fetcher: SafeFetcher, package: str, version: str) -> Tuple[str,
     return tarball, ("registry.npmjs.org",), "package.tgz"
 
 
-def scan_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: str, *, rules_ecosystem: str = "") -> Dict[str, Any]:
+def fetch_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: str) -> Tuple[List[Tuple[str, bytes]], int]:
+    """Download a release and unpack it in memory; returns (members, archive bytes)."""
     from secopsai.artifact_fleet import _safe_archive_files
 
-    try:
-        url, hosts, filename = _resolve_npm(fetcher, package, version) if ecosystem == "npm" else resolve_artifact(fetcher, ecosystem, package, version)
-    except LookupError as exc:
-        return {"status": "skipped", "reason": str(exc)[:200]}
-    except Exception as exc:
-        return {"status": "error", "reason": str(exc)[:200]}
-    try:
-        _u, headers, raw = fetcher.get(url, allowed_hosts=hosts, max_bytes=MAX_ARTIFACT_BYTES)
-        if "gzip" in str(headers.get("content-encoding") or "").lower() and raw[:2] == b"\x1f\x8b":
-            raw = _gunzip(raw)  # the Marketplace serves .vsix gzip-encoded
-        members: List[Tuple[str, bytes]] = []
-        with tempfile.TemporaryDirectory(prefix="secopsai-content-") as tmp:
-            path = Path(tmp) / Path(filename).name
-            path.write_bytes(raw)
-            _safe_archive_files(path, members)
-        flags = package_features.profile(members, version=version)
+    url, hosts, filename = _resolve_npm(fetcher, package, version) if ecosystem == "npm" else resolve_artifact(fetcher, ecosystem, package, version)
+    _u, headers, raw = fetcher.get(url, allowed_hosts=hosts, max_bytes=MAX_ARTIFACT_BYTES)
+    if "gzip" in str(headers.get("content-encoding") or "").lower() and raw[:2] == b"\x1f\x8b":
+        raw = _gunzip(raw)  # the Marketplace serves .vsix gzip-encoded
+    members: List[Tuple[str, bytes]] = []
+    with tempfile.TemporaryDirectory(prefix="secopsai-content-") as tmp:
+        path = Path(tmp) / Path(filename).name
+        path.write_bytes(raw)
+        _safe_archive_files(path, members)
+    return members, len(raw)
+
+
+def scan_members(fetcher: Optional[SafeFetcher], ecosystem: str, package: str, version: str, members: List[Tuple[str, bytes]], *,
+                 rules_ecosystem: str = "", archive_bytes: int = 0) -> Dict[str, Any]:
+    """Rules, behaviour profile and the triage evidence for unpacked release files.
+    ``fetcher`` is used only to diff against the previous version (None skips it)."""
+    flags = package_features.profile(members, version=version)
+    diff: Dict[str, Any] = {}
+    if fetcher is not None:
         flags, diff = version_diff.with_diff(fetcher, ecosystem, package, version, flags)
-        scanned = package_features.combine(yara_engine.scan_files(members), flags, rules_ecosystem or ecosystem, members)
-    except Exception as exc:  # one bad archive must not stop the batch
-        reason = str(exc)[:200]
-        return {"status": "skipped" if "safety limit" in reason or "maximum size" in reason or "too many" in reason else "error", "reason": reason}
+    scanned = package_features.combine(yara_engine.scan_files(members), flags, rules_ecosystem or ecosystem, members)
     findings = [item for item in scanned.get("findings") or [] if item.get("rule_id") != "YARA-SCAN-ERROR"]
     level = str(scanned.get("level") or "none")
     return {"fingerprints": actor_fingerprint.from_members(members) if level in HIT_LEVELS else {},
             "install_files": package_features.install_time_files(members) if level in HIT_LEVELS else [],
             "status": "hit" if level in HIT_LEVELS else "clean", "score": int(scanned.get("score") or 0), "level": level,
-            "rules_matched": scanned.get("rules_matched") or [], "findings": findings[:20], "features": flags, "files": len(members), "bytes": len(raw), "diff": diff}
+            "rules_matched": scanned.get("rules_matched") or [], "findings": findings[:20], "features": flags, "files": len(members), "bytes": archive_bytes, "diff": diff}
+
+
+def scan_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: str, *, rules_ecosystem: str = "") -> Dict[str, Any]:
+    try:
+        members, archive_bytes = fetch_release(fetcher, ecosystem, package, version)
+    except LookupError as exc:
+        return {"status": "skipped", "reason": str(exc)[:200]}
+    except Exception as exc:
+        reason = str(exc)[:200]
+        return {"status": "skipped" if "safety limit" in reason or "maximum size" in reason or "too many" in reason else "error", "reason": reason}
+    try:
+        return scan_members(fetcher, ecosystem, package, version, members, rules_ecosystem=rules_ecosystem, archive_bytes=archive_bytes)
+    except Exception as exc:  # one bad archive must not stop the batch
+        reason = str(exc)[:200]
+        return {"status": "skipped" if "safety limit" in reason or "maximum size" in reason or "too many" in reason else "error", "reason": reason}
+
+
+def behaviour_signals(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [{"id": "behaviours", "flags": result.get("features", [])[:30]}]
 
 
 def _scan_mcp(fetcher: SafeFetcher, metadata: Dict[str, Any], scan: Callable[..., Dict[str, Any]]) -> Dict[str, Any]:
@@ -212,6 +232,6 @@ def run(*, db_path: Optional[str] = None, fetcher: Optional[SafeFetcher] = None,
                     counts["rules_matched"][rule] = counts["rules_matched"].get(rule, 0) + 1
                 _raise_alert(event, result, db_path)
                 research_ai_triage.record_hit(ecosystem=ecosystem, package=event["package"], version=event["version"], prescan=result,
-                                              metadata_signals=[{"id": "behaviours", "flags": result.get("features", [])[:30]}], db_path=db_path)
+                                              metadata_signals=behaviour_signals(result), db_path=db_path)
         stats[ecosystem] = counts
     return stats

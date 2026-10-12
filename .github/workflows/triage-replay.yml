@@ -1,0 +1,78 @@
+name: Triage Replay
+
+# Replays a fixed triage set (recent production hits, flagged known malware,
+# flagged popular clean packages) through the production context builder and
+# the operator's model bridge, and checks the triage acceptance gates. Run it
+# before and after any change to triage evidence or the triage prompt.
+# Samples are decrypted and scanned in memory on this disposable runner,
+# never executed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      production:
+        description: Recent production hits to replay
+        default: "100"
+      malware:
+        description: Flagged known-malware samples
+        default: "40"
+      clean:
+        description: Flagged popular clean packages
+        default: "40"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: triage-replay
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    env:
+      DATASET_COMMIT: 805fcd72db525244cae8dd32056efbd50b8b0e19
+      SECOPSAI_CORE_COORDINATOR_URL: https://core.secopsai.dev
+      SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
+      SECOPSAI_CORE_COORDINATOR_TIMEOUT_SECONDS: "60"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Fetch pinned YARA rule packs
+        run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
+
+      - name: Clone the dataset index (blobless, pinned)
+        run: |
+          git clone --quiet --filter=blob:none --no-checkout --sparse \
+            https://github.com/DataDog/malicious-software-packages-dataset.git "$RUNNER_TEMP/malware-dataset"
+          git -C "$RUNNER_TEMP/malware-dataset" checkout --quiet --detach "$DATASET_COMMIT"
+
+      - name: Replay, wait for verdicts, check gates
+        run: >
+          python -I scripts/triage_replay.py --dataset "$RUNNER_TEMP/malware-dataset"
+          --production "${{ inputs.production }}" --malware "${{ inputs.malware }}" --clean "${{ inputs.clean }}"
+          --out "$RUNNER_TEMP/triage-replay.json"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: triage-replay
+          path: ${{ runner.temp }}/triage-replay.json
+          retention-days: 30
+
+      - name: Remove samples
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/malware-dataset"
