@@ -10,7 +10,11 @@ funnel's score.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import gzip
 import json
+import zlib
 import re
 from pathlib import PurePosixPath
 from typing import Dict, Iterable, List, Optional, Set, Tuple
@@ -342,3 +346,137 @@ def combine(scan: Dict[str, object], flags: Iterable[str], ecosystem: str, membe
     level = "alert" if score >= ALERT else "warning" if score >= WARNING else "notice" if score >= NOTICE else "none"
     return {**scan, "score": score, "level": level, "findings": list(scan.get("findings") or []) + extra,
             "rules_matched": sorted(set(scan.get("rules_matched") or []) | {str(item["rule_id"]).split(":", 1)[1] for item in extra})}
+
+
+# ---------------------------------------------------------------- triage evidence
+# What the triage model needs to decide a hit instead of asking for "the full
+# file": the flagged files themselves, where every risky flag matched, any
+# encoded payloads decoded statically (never executed), and the native binaries
+# with what launches them.  All bounded; research_ai_triage.fit_context trims
+# further to fit the job size limit.
+FLAGGED_FILE_BYTES = 16_000
+ENCODED = re.compile(r"(?<![A-Za-z0-9+/=])([A-Za-z0-9+/]{120,}={0,2})(?![A-Za-z0-9+/=])|(?<![0-9a-fA-F])((?:[0-9a-fA-F]{2}){60,})(?![0-9a-fA-F])")
+BINARY_MAGIC = ((b"MZ", "Windows PE"), (b"\x7fELF", "ELF"), (b"\xcf\xfa\xed\xfe", "Mach-O"), (b"\xca\xfe\xba\xbe", "Mach-O universal"),
+                (b"\x1f\x8b", "gzip"), (b"PK\x03\x04", "zip"), (b"\x00asm", "WebAssembly"))
+RISKY_FLAGS = (
+    "install_hook", "install_hook_inline_command", "setup_py_cmdclass", "setup_py_side_effects", "build_rs_side_effects",
+    "exfil_service", "discord_webhook", "telegram_bot", "credential_files", "browser_data", "crypto_wallet",
+    "js_obfuscator", "runner_memory", "raw_ip_url", "download_tool", "dynamic_eval", "long_base64",
+    "prompt_injection", "persistence", "child_process", "py_subprocess", "http_send", "system_info", "dns_lookup", "anti_analysis",
+)
+
+
+def _binary_kind(data: bytes) -> str:
+    return next((kind for magic, kind in BINARY_MAGIC if data.startswith(magic)), "")
+
+
+def _excerpt(text: str, anchors: List[str], limit: int) -> Tuple[str, bool]:
+    """Whole text when it fits; otherwise the head plus windows around each anchor."""
+    if len(text) <= limit:
+        return text, False
+    positions = sorted({pos for pos in (text.find(anchor) for anchor in anchors if anchor) if pos >= 0})[:4]
+    head = limit // 4 if positions else limit
+    parts, cursor = [text[:head]], head
+    share = (limit - head) // max(1, len(positions))
+    for pos in positions:
+        start = max(cursor, pos - share // 2)
+        end = min(len(text), start + share)
+        if end <= cursor:
+            continue
+        parts.append(f"\n[... {start - cursor} characters omitted ...]\n" + text[start:end])
+        cursor = end
+    if cursor < len(text):
+        parts.append(f"\n[... {len(text) - cursor} characters omitted ...]")
+    return "".join(parts), True
+
+
+def _anchors(finding: Dict[str, object]) -> List[str]:
+    """Distinctive lines of a finding's excerpt, to find the match in the full file."""
+    lines = [line.strip() for line in str(finding.get("safe_context") or "").splitlines()]
+    return [line[:80] for line in lines if len(line) >= 24 and not line.startswith("[...")][:6]
+
+
+def decode_payload(blob: str) -> Optional[Dict[str, object]]:
+    """Decode a base64 or hex blob statically and describe what it holds."""
+    try:
+        raw = bytes.fromhex(blob) if re.fullmatch(r"[0-9a-fA-F]+", blob) and len(blob) % 2 == 0 else base64.b64decode(blob + "=" * (-len(blob) % 4), validate=False)
+    except (ValueError, binascii.Error):
+        return None
+    layers = []
+    for _ in range(2):
+        try:
+            if raw[:2] == b"\x1f\x8b":
+                raw, _l = gzip.decompress(raw)[:200_000], layers.append("gzip")
+            elif raw[:1] == b"\x78":
+                raw, _l = zlib.decompress(raw)[:200_000], layers.append("zlib")
+        except (OSError, zlib.error, EOFError):
+            break
+    kind = _binary_kind(raw)
+    if kind and kind not in {"gzip"}:
+        return {"kind": kind, "bytes": len(raw), "layers": layers}
+    for encoding in ("utf-8", "utf-16-le"):  # PowerShell -EncodedCommand is UTF-16LE
+        try:
+            text = raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        printable = sum(ch.isprintable() or ch in "\r\n\t" for ch in text) / max(1, len(text))
+        if printable >= 0.9 and len(text.strip()) >= 16:
+            return {"kind": "text", "encoding": encoding, "bytes": len(raw), "layers": layers, "text": _clean_window(text[:3000]), "truncated": len(text) > 3000}
+    return {"kind": "binary data", "bytes": len(raw), "layers": layers}
+
+
+def triage_evidence(members: Iterable[Tuple[str, bytes]], findings: Iterable[Dict[str, object]], flags: Iterable[str]) -> Dict[str, object]:
+    members = list(members)
+    by_path = {path: data for path, data in members}
+    findings = list(findings)
+    flagged: Dict[str, List[str]] = {}
+    for item in findings:
+        path = str(item.get("file_path") or "")
+        if path in by_path:
+            flagged.setdefault(path, []).extend(_anchors(item))
+        for found in item.get("evidence") or []:
+            if isinstance(found, dict) and found.get("file_path") in by_path:
+                flagged.setdefault(str(found["file_path"]), [])
+    files: List[Dict[str, object]] = []
+    for path, anchors in list(flagged.items())[:6]:
+        data = by_path[path]
+        kind = _binary_kind(data)
+        if kind or b"\x00" in data[:4096]:
+            files.append({"path": path[:300], "bytes": len(data), "binary": kind or "binary data"})
+            continue
+        text = _clean_window(data[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore"))
+        content, truncated = _excerpt(text, anchors, FLAGGED_FILE_BYTES)
+        files.append({"path": path[:300], "bytes": len(data), "truncated": truncated, "content": content})
+    flag_set = {flag.removeprefix("new:") for flag in flags}
+    locations = [found for found in (flag_evidence(members, flag, window=240) for flag in RISKY_FLAGS if flag in flag_set) if found][:14]
+    payloads: List[Dict[str, object]] = []
+    seen: Set[str] = set()
+    sources = [(item["path"], str(item.get("content") or "")) for item in files] + [(path, by_path[path].decode("utf-8", errors="ignore"))
+                                                                                   for path in flagged if path in by_path][:6]
+    for path, text in sources:
+        for match in ENCODED.finditer(text[:MAX_TEXT_BYTES]):
+            blob = match.group(1) or match.group(2)
+            if blob[:64] in seen or len(payloads) >= 12:
+                continue
+            seen.add(blob[:64])
+            decoded = decode_payload(blob)
+            if decoded and decoded["kind"] != "binary data":  # random-looking bytes say nothing
+                payloads.append({"found_in": str(path)[:300], "line": text.count("\n", 0, match.start()) + 1, "encoded_chars": len(blob), **decoded})
+    # Readable payloads first: embedded images and fonts are common and say little.
+    payloads = sorted(payloads, key=lambda item: item["kind"] != "text")[:4]
+    binaries = []
+    for path, data in members:
+        kind = _binary_kind(data)
+        if kind in {"Windows PE", "ELF", "Mach-O", "Mach-O universal", "WebAssembly"} or path.lower().endswith((".exe", ".dll", ".so", ".dylib", ".node")):
+            binaries.append({"path": path[:300], "bytes": len(data), "kind": kind or "native library", "referenced_by": []})
+    if binaries:
+        for path, data in members:
+            if not _is_text_path(path) or len(data) > MAX_TEXT_BYTES:
+                continue
+            text = data.decode("utf-8", errors="ignore")
+            for item in binaries[:10]:
+                name = PurePosixPath(str(item["path"])).name
+                if len(item["referenced_by"]) < 3 and path != item["path"] and name in text:
+                    item["referenced_by"].append(path[:300])
+    return {"flagged_files": files, "flag_locations": locations, "decoded_payloads": payloads, "binaries": binaries[:10],
+            "binaries_total": len(binaries)}

@@ -53,6 +53,11 @@ def build_state(context: Dict[str, Any], limit: int = MAX_STATE_CHARS) -> str:
         parts.append("Behaviour flags: " + ", ".join(flags[0][:40]))
     for item in context.get("install_time_files") or []:
         parts.append(f"--- install-time file {item.get('path')}{' (truncated)' if item.get('truncated') else ''} ---\n{item.get('content', '')}")
+    for payload in context.get("decoded_payloads") or []:
+        parts.append(f"--- decoded payload from {payload.get('found_in')} line {payload.get('line')} ({payload.get('kind')}, {payload.get('bytes')} bytes) ---\n"
+                     f"{payload.get('text', '')}")
+    for item in context.get("flagged_files") or []:
+        parts.append(f"--- flagged file {item.get('path')}{' (excerpt)' if item.get('truncated') else ''} ---\n{item.get('content') or item.get('binary', '')}")
     for finding in context.get("findings") or []:
         parts.append(f"--- finding {finding.get('rule_id')} in {finding.get('file_path')} ({finding.get('matched_indicator')}) ---\n"
                      f"{finding.get('safe_context', '')}")
