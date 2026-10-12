@@ -182,6 +182,9 @@ def scan_files(files: Iterable[Tuple[str, bytes]]) -> Dict[str, Any]:
                 "matched_patterns": sorted({identifier for identifier, _offset, _length in hits})[:10],
                 # Byte offsets of the matches, so triage can show the matched regions of a large file.
                 "match_offsets": sorted({offset for _identifier, offset, _length in hits})[:8],
+                # The exact text each pattern matched, so triage knows what fired.
+                "matched_strings": [{"pattern": identifier, "text": re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", ".", data[offset:offset + min(length, 200)].decode("utf-8", errors="replace"))}
+                                    for identifier, offset, length in sorted(hits, key=lambda item: item[1])[:8]],
                 "score": score,
                 "rule_author": str(meta.get("author") or "")[:200],
                 "rule_reference": str(meta.get("reference") or "")[:500],

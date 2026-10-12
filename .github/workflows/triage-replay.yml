@@ -12,13 +12,13 @@ on:
     inputs:
       production:
         description: Recent production hits to replay
-        default: "100"
+        default: "80"
       malware:
         description: Flagged known-malware samples
-        default: "40"
+        default: "30"
       clean:
         description: Flagged popular clean packages
-        default: "40"
+        default: "30"
 
 permissions:
   contents: read
@@ -30,7 +30,7 @@ concurrency:
 jobs:
   replay:
     runs-on: ubuntu-latest
-    timeout-minutes: 200
+    timeout-minutes: 240
     env:
       DATASET_COMMIT: 805fcd72db525244cae8dd32056efbd50b8b0e19
       SECOPSAI_CORE_COORDINATOR_URL: https://core.secopsai.dev

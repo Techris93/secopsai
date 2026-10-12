@@ -170,9 +170,13 @@ def queue_and_wait(rows: List[Dict[str, Any]], run_tag: str, wait_minutes: int) 
         time.sleep(60)
         while True:
             try:
-                page = client.triage_results(since=cursor, limit=25).get("results") or []
-            except RuntimeError:  # response over the client's size limit
-                page = client.triage_results(since=cursor, limit=5).get("results") or []
+                try:
+                    page = client.triage_results(since=cursor, limit=25).get("results") or []
+                except RuntimeError:  # response over the client's size limit
+                    page = client.triage_results(since=cursor, limit=5).get("results") or []
+            except Exception as exc:  # transient network error: retry next minute, keep what we have
+                print(f"poll: {type(exc).__name__}, retrying", flush=True)
+                break
             for item in page:
                 row = wanted.get(item.get("artifact_id"))
                 if row is not None and item.get("status") in {"succeeded", "failed"}:
@@ -259,7 +263,7 @@ def main() -> int:
     parser.add_argument("--clean", type=int, default=40)
     parser.add_argument("--seed", type=int, default=20261012)
     parser.add_argument("--label", default=os.environ.get("GITHUB_SHA", "local")[:12])
-    parser.add_argument("--wait-minutes", type=int, default=150)
+    parser.add_argument("--wait-minutes", type=int, default=170)
     parser.add_argument("--contexts-only", action="store_true", help="build and save contexts; do not queue")
     parser.add_argument("--enforce-gates", action="store_true", help="exit 2 when an acceptance gate fails")
     parser.add_argument("--out", type=Path, default=Path("triage-replay.json"))

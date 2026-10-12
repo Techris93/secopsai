@@ -77,7 +77,7 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
         "rule_score": int(prescan.get("score") or 0),
         "rule_level": prescan.get("level"),
         "findings": [
-            {**{field: item.get(field) for field in ("rule_id", "severity", "score", "file_path", "file_role", "matched_indicator", "matched_patterns", "rule_author", "rule_reference")},
+            {**{field: item.get(field) for field in ("rule_id", "severity", "score", "file_path", "file_role", "matched_indicator", "matched_patterns", "matched_strings", "rule_author", "rule_reference")},
              "safe_context": str(item.get("safe_context") or "")[:1800],
              # The code is already in safe_context; keep only where each flag matched.
              "evidence_locations": [{key: found.get(key) for key in ("flag", "file_path", "line")} for found in (item.get("evidence") or [])][:8]}
