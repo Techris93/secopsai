@@ -183,7 +183,7 @@ def test_changed_intel_reviewer_invalidates_brief_and_revoked_roster(db):
     value, _ = event(db)
     verify(value, db)
     roster(db)
-    edition = create_daily_brief(date="2026-10-13", db_path=db)
+    edition = create_daily_brief(db_path=db)
     assert edition["draft"]["items"]
     register_person({"person_id": "bob", "display_name": "Bob", "roles": ["technical_reviewer", "editor", "researcher"],
                      "qualification": "Changed qualification assertion"}, actor="operator.owner", db_path=db)
