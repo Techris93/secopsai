@@ -7,6 +7,7 @@ function memoryBucket() {
   const uploads = new Map();
   return {
     objects,
+    async head(key) { return objects.has(key) ? { key } : null; },
     async get(key) {
       if (!objects.has(key)) return null;
       const value = objects.get(key);
@@ -20,7 +21,11 @@ function memoryBucket() {
       const upload = uploads.get(id);
       return {
         async uploadPart(number, body) { upload.parts[number - 1] = new Uint8Array(await new Response(body).arrayBuffer()); return { etag: `e${number}` }; },
-        async complete() { objects.set(key, Buffer.concat(upload.parts)); },
+        async complete() {
+          if (!uploads.has(id)) throw new Error("NoSuchUpload");
+          objects.set(key, Buffer.concat(upload.parts));
+          uploads.delete(id);
+        },
       };
     },
   };
@@ -86,6 +91,7 @@ test("multipart checkpoint advances LATEST only on completion and prunes old sna
   const bucket = memoryBucket();
   for (let index = 0; index < 5; index += 1) bucket.objects.set(`ledger/snapshots/2026-01-0${index}.db.gz`, "old");
   const created = await (await handleLedgerRequest(new Request("http://ledger.internal/uploads", { method: "POST" }), bucket)).json();
+  assert.equal(created.completion_retry_safe, true);
   const part = await handleLedgerRequest(new Request(`http://ledger.internal/uploads/${created.upload_id}/parts/1?key=${created.key}`, { method: "PUT", body: "gzip-bytes", headers: { "content-length": "10" } }), bucket);
   const { etag } = await part.json();
   assert.equal(bucket.objects.has("ledger/LATEST"), false);
@@ -97,6 +103,38 @@ test("multipart checkpoint advances LATEST only on completion and prunes old sna
   const snapshots = [...bucket.objects.keys()].filter((key) => key.startsWith("ledger/snapshots/"));
   assert.equal(snapshots.length, 4);
   assert.ok(snapshots.includes(created.key));
+  const repeated = await handleLedgerRequest(new Request(`http://ledger.internal/uploads/${created.upload_id}/complete?key=${created.key}`, {
+    method: "POST", body: JSON.stringify({ parts: [{ partNumber: 1, etag }] }),
+  }), bucket);
+  assert.equal(repeated.status, 200, "lost completion responses may be retried after R2 consumed the upload");
+  assert.equal(bucket.objects.get(created.key).toString(), "gzip-bytes");
+  const newerKey = "ledger/snapshots/9999-01-01.db.gz";
+  bucket.objects.set(newerKey, "newer");
+  bucket.objects.set("ledger/LATEST", newerKey);
+  const delayed = await handleLedgerRequest(new Request(`http://ledger.internal/uploads/${created.upload_id}/complete?key=${created.key}`, {
+    method: "POST", body: JSON.stringify({ parts: [{ partNumber: 1, etag }] }),
+  }), bucket);
+  assert.equal((await delayed.json()).superseded, true);
+  assert.equal(bucket.objects.get("ledger/LATEST"), newerKey, "delayed old completion must not roll back LATEST");
+});
+
+test("completion retry repairs a pointer-write failure after the object completed", async () => {
+  const bucket = memoryBucket();
+  bucket.objects.set("ledger/LATEST", "ledger/snapshots/2026-01-01.db.gz");
+  const created = await (await handleLedgerRequest(new Request("http://ledger.internal/uploads", { method: "POST" }), bucket)).json();
+  await handleLedgerRequest(new Request(`http://ledger.internal/uploads/${created.upload_id}/parts/1?key=${created.key}`, {
+    method: "PUT", body: "new", headers: { "content-length": "3" },
+  }), bucket);
+  const originalPut = bucket.put;
+  bucket.put = async () => { throw new Error("R2 temporarily unavailable"); };
+  const complete = () => handleLedgerRequest(new Request(`http://ledger.internal/uploads/${created.upload_id}/complete?key=${created.key}`, {
+    method: "POST", body: JSON.stringify({ parts: [{ partNumber: 1, etag: "e1" }] }),
+  }), bucket);
+  await assert.rejects(complete(), /temporarily unavailable/);
+  assert.equal(bucket.objects.get("ledger/LATEST"), "ledger/snapshots/2026-01-01.db.gz");
+  bucket.put = originalPut;
+  assert.equal((await complete()).status, 200);
+  assert.equal(bucket.objects.get("ledger/LATEST"), created.key);
 });
 
 test("ledger keys outside the snapshot prefix are refused", async () => {

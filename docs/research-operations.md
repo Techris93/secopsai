@@ -31,7 +31,7 @@ Every public domain publishes `/.well-known/security.txt` (RFC 9116).
 
 1. **The worker runs every 30 minutes** (`.github/workflows/research-worker.yml`),
    started by the ledger-store Worker's Cron Trigger (`:07` and `:37`).
-   Each run restores the ledger from R2, runs up to 6 worker cycles within a 20-minute budget (eight
+   Each run restores the ledger from R2, runs up to 6 worker cycles within a 15-minute budget (eight
    registry collectors, npm enrichment and static triage, external advisory
    intake, scoring, daily automation, retention), checkpoints the ledger and
    exits. One run at a time is enforced.
@@ -100,6 +100,7 @@ gh workflow run research-worker.yml -f cycles=20  # extra run after a quiet spel
 | Symptom | Likely cause | Action |
 | --- | --- | --- |
 | Research Worker run failed at *Restore ledger* | Ledger store unreachable or token rotated | `curl https://ledger.secopsai.dev/healthz`; check the `LEDGER_STORE_TOKEN` secret |
+| `checkpoint_failed` during shutdown | Upload connection reset or ledger store unavailable | Upload requests retry transient failures up to three times within a shared ten-minute upload budget. Exhaustion still fails the run and leaves the last completed snapshot available. Deploy the ledger-store Worker before relying on completion retries; older stores do not advertise safe repeat completion. Inspect the failed run and the next scheduled run before rerunning production work. |
 | Run failed during cycles | Collector or code error | Open the run log; the last JSON line names the failing stage |
 | No run for over an hour | Kill switch off, or the dispatch token expired | `gh variable list` (needs `RESEARCH_WORKER_ENABLED=true`); `npx wrangler tail secopsai-ledger-store` shows `research-dispatch` results (`http_status: 401` means renew `GITHUB_DISPATCH_TOKEN`); dispatch a run manually meanwhile |
 | Self-test failed | A gate regressed | The run summary names the failing step; reproduce with `python scripts/research_selftest.py --keep` |

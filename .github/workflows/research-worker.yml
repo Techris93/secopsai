@@ -112,6 +112,7 @@ jobs:
         run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
 
       - name: Restore ledger, run worker cycles, checkpoint
-        # Cycles take ~3-10 minutes; restore + checkpoint add ~5. A 20-minute
-        # budget keeps each run (~25 min) inside the 30-minute cadence.
-        run: python -u cloudflare/secopsai-research-runner/container/supervisor.py --cycles "${{ inputs.cycles || '6' }}" --max-seconds 1200
+        # Reserve time for the multi-GB ledger restore, worker shutdown,
+        # compression, and a bounded 10-minute upload including retries.
+        # Exhausted retries still fail the run so an unsaved checkpoint is visible.
+        run: python -u cloudflare/secopsai-research-runner/container/supervisor.py --cycles "${{ inputs.cycles || '6' }}" --max-seconds 900

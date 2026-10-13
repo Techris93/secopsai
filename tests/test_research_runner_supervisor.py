@@ -5,6 +5,8 @@ import sqlite3
 import urllib.error
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
     "research_runner_supervisor", ROOT / "cloudflare" / "secopsai-research-runner" / "container" / "supervisor.py"
@@ -20,6 +22,7 @@ class FakeLedgerServer:
         self.objects = {}
         self.uploads = {}
         self.latest = None
+        self.completion_retry_safe = True
 
     def __call__(self, request, timeout=None):
         assert request.get_header("Authorization") == "Bearer tok"
@@ -34,7 +37,8 @@ class FakeLedgerServer:
         if method == "POST" and path == "/uploads":
             upload_id = f"u{len(self.uploads) + 1}"
             self.uploads[upload_id] = {"key": f"ledger/snapshots/{upload_id}.db.gz", "parts": {}}
-            return _Response(json.dumps({"upload_id": upload_id, "key": self.uploads[upload_id]["key"]}).encode())
+            return _Response(json.dumps({"upload_id": upload_id, "key": self.uploads[upload_id]["key"],
+                                         "completion_retry_safe": self.completion_retry_safe}).encode())
         parts = path.strip("/").split("/")
         upload = self.uploads[parts[1]]
         assert key == upload["key"]
@@ -42,7 +46,8 @@ class FakeLedgerServer:
             upload["parts"][int(parts[3])] = request.data
             return _Response(json.dumps({"etag": f"e{parts[3]}"}).encode())
         body = json.loads(request.data)
-        self.objects[key] = b"".join(upload["parts"][item["partNumber"]] for item in body["parts"])
+        if key not in self.objects:
+            self.objects[key] = b"".join(upload["parts"][item["partNumber"]] for item in body["parts"])
         self.latest = key
         return _Response(json.dumps({"key": key}).encode())
 
@@ -127,3 +132,174 @@ def test_time_budget_stops_the_worker_and_still_checkpoints(tmp_path, monkeypatc
     assert supervisor.main(["--cycles", "5", "--max-seconds", "1"]) == 0
     assert time.monotonic() - started < 60
     assert server.latest is not None, "budget stop must still checkpoint the ledger"
+
+
+@pytest.mark.parametrize("stage", ["create", "part", "complete"])
+@pytest.mark.parametrize("lost_response", [False, True])
+def test_checkpoint_recovers_a_dropped_connection_without_losing_parts(tmp_path, monkeypatch, stage, lost_response):
+    server = FakeLedgerServer()
+    calls = []
+    failed = False
+
+    def flaky(request, timeout):
+        nonlocal failed
+        operation = "part" if request.get_method() == "PUT" else "complete" if "/complete?" in request.full_url else "create"
+        calls.append((operation, request.full_url, request.data))
+        if operation == stage and not failed:
+            failed = True
+            if lost_response:
+                server(request, timeout)  # R2 accepted it; the acknowledgement was lost.
+            raise urllib.error.URLError(ConnectionResetError(104, "Connection reset by peer"))
+        return server(request, timeout)
+
+    monkeypatch.setattr(supervisor.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(supervisor, "PART_BYTES", 16)
+    db = tmp_path / "ledger.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE t (value)")
+        conn.execute("INSERT INTO t VALUES ('committed finding')")
+    store = supervisor.LedgerStore("http://ledger.internal", "tok", opener=flaky)
+    key = supervisor.checkpoint(db, store, tmp_path)
+    assert key == server.latest
+    restored = tmp_path / "restored.db"
+    assert supervisor.LedgerStore("http://ledger.internal", "tok", opener=server).download(restored)
+    with sqlite3.connect(restored) as conn:
+        assert conn.execute("SELECT value FROM t").fetchone()[0] == "committed finding"
+    retried = [call for call in calls if call[0] == stage]
+    assert retried[0] == retried[1], "retries retain the part number and exact bytes"
+    if stage != "create":
+        assert len(server.uploads) == 1, "retry only the failed operation, not the entire large upload"
+
+
+@pytest.mark.parametrize("status,attempts", [(401, 1), (403, 1), (400, 1), (413, 1), (429, 3), (503, 3)])
+def test_upload_retries_only_transient_http_errors(tmp_path, monkeypatch, status, attempts):
+    calls = []
+    sleeps = []
+    def unavailable(request, timeout):
+        calls.append(request)
+        raise urllib.error.HTTPError(request.full_url, status, "failure", {"Retry-After": "2"}, io.BytesIO(b""))
+    monkeypatch.setattr(supervisor.time, "sleep", sleeps.append)
+    compressed = tmp_path / "snapshot.gz"
+    compressed.write_bytes(b"snapshot")
+    with pytest.raises((urllib.error.HTTPError, ConnectionError)):
+        supervisor.LedgerStore("http://ledger.internal", "tok", opener=unavailable).upload(compressed)
+    assert len(calls) == attempts
+    assert sleeps == ([2, 2] if attempts == 3 else [])
+
+
+def test_upload_deadline_is_shared_by_all_parts(tmp_path, monkeypatch):
+    server = FakeLedgerServer()
+    clock = [0]
+    timeouts = []
+    def slow(request, timeout):
+        timeouts.append(timeout)
+        clock[0] += 4
+        return server(request, timeout)
+    monkeypatch.setattr(supervisor.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(supervisor, "UPLOAD_TIMEOUT_SECONDS", 10)
+    monkeypatch.setattr(supervisor, "PART_BYTES", 3)
+    compressed = tmp_path / "snapshot.gz"
+    compressed.write_bytes(b"abcdef")
+    with pytest.raises(TimeoutError):
+        supervisor.LedgerStore("http://ledger.internal", "tok", opener=slow).upload(compressed)
+    assert timeouts == [10, 6, 2]
+    assert server.latest is None, "exceeding the budget must not publish an incomplete object"
+
+
+def test_retry_after_cannot_exceed_upload_deadline(tmp_path, monkeypatch):
+    sleeps = []
+    def limited(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 429, "limited", {"Retry-After": "1000"}, io.BytesIO(b""))
+    monkeypatch.setattr(supervisor.time, "sleep", sleeps.append)
+    compressed = tmp_path / "snapshot.gz"
+    compressed.write_bytes(b"snapshot")
+    with pytest.raises(TimeoutError):
+        supervisor.LedgerStore("http://ledger.internal", "tok", opener=limited).upload(compressed)
+    assert sleeps == []
+
+
+def test_old_ledger_store_completion_is_not_blindly_repeated(tmp_path, monkeypatch):
+    server = FakeLedgerServer()
+    server.completion_retry_safe = False
+    calls = []
+    def flaky(request, timeout):
+        if "/complete?" in request.full_url:
+            calls.append(request)
+            raise ConnectionResetError("lost response")
+        return server(request, timeout)
+    monkeypatch.setattr(supervisor.time, "sleep", lambda _seconds: None)
+    compressed = tmp_path / "snapshot.gz"
+    compressed.write_bytes(b"snapshot")
+    with pytest.raises(ConnectionError):
+        supervisor.LedgerStore("http://ledger.internal", "tok", opener=flaky).upload(compressed)
+    assert len(calls) == 1
+    assert server.latest is None
+
+
+def test_exhausted_part_retries_preserve_previous_snapshot(tmp_path, monkeypatch):
+    server = FakeLedgerServer()
+    server.latest = "previous"
+    server.objects["previous"] = b"previous snapshot"
+    attempts = []
+    def unavailable(request, timeout):
+        if request.get_method() == "PUT":
+            attempts.append(request)
+            raise ConnectionResetError("lost connection")
+        return server(request, timeout)
+    monkeypatch.setattr(supervisor.time, "sleep", lambda _seconds: None)
+    compressed = tmp_path / "snapshot.gz"
+    compressed.write_bytes(b"new snapshot")
+    with pytest.raises(ConnectionError):
+        supervisor.LedgerStore("http://ledger.internal", "tok", opener=unavailable).upload(compressed)
+    assert len(attempts) == 3
+    assert server.latest == "previous"
+    assert server.objects == {"previous": b"previous snapshot"}
+
+
+def test_part_response_read_failure_retries_exact_bytes(tmp_path, monkeypatch):
+    server = FakeLedgerServer()
+    parts = []
+    class BrokenResponse(_Response):
+        def read(self, *_args):
+            raise supervisor.http.client.IncompleteRead(b'{"etag":')
+    def flaky(request, timeout):
+        response = server(request, timeout)
+        if request.get_method() == "PUT":
+            parts.append(request.data)
+            if len(parts) == 1:
+                return BrokenResponse()
+        return response
+    monkeypatch.setattr(supervisor.time, "sleep", lambda _seconds: None)
+    compressed = tmp_path / "snapshot.gz"
+    compressed.write_bytes(b"snapshot")
+    key = supervisor.LedgerStore("http://ledger.internal", "tok", opener=flaky).upload(compressed)
+    assert parts == [b"snapshot", b"snapshot"]
+    assert server.objects[key] == b"snapshot"
+
+
+def test_shutdown_still_fails_when_checkpoint_retries_exhaust(tmp_path, monkeypatch):
+    server = FakeLedgerServer()
+    server.latest = "previous"
+    server.objects["previous"] = b"previous snapshot"
+    calls = []
+    def unavailable(request, timeout):
+        if request.get_method() == "PUT":
+            calls.append(request)
+            raise ConnectionResetError("lost connection")
+        return server(request, timeout)
+    class FinishedWorker:
+        def wait(self): return 0
+    data = tmp_path / "research"
+    data.mkdir()
+    with sqlite3.connect(data / "openclaw_soc.db") as conn:
+        conn.execute("CREATE TABLE t (x)")
+    monkeypatch.setenv("SECOPS_FINDINGS_DIR", str(data))
+    monkeypatch.setenv("LEDGER_STORE_URL", "http://ledger.internal")
+    monkeypatch.setenv("LEDGER_STORE_TOKEN", "tok")
+    original_init = supervisor.LedgerStore.__init__
+    monkeypatch.setattr(supervisor.LedgerStore, "__init__", lambda self, url, token: original_init(self, url, token, opener=unavailable))
+    monkeypatch.setattr(supervisor.subprocess, "Popen", lambda *_args, **_kwargs: FinishedWorker())
+    monkeypatch.setattr(supervisor.time, "sleep", lambda _seconds: None)
+    assert supervisor.main(["--cycles", "1"]) == 1
+    assert len(calls) == 3
+    assert server.latest == "previous"
