@@ -223,6 +223,7 @@ def _clean_task(task: dict[str, Any]) -> dict[str, Any]:
         "repo_alias": 40,
         "research_team_id": 80,
         "research_team_stage": 40,
+        "research_team_transport": 40,
     }
     for key, limit in limits.items():
         value = str(task.get(key) or "").strip()

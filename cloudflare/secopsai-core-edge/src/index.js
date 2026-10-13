@@ -167,6 +167,10 @@ export async function handleRequest(request, env) {
       requireBridge(request, env);
       return response(200, await runnerTriageResults(env.DB, url.searchParams), requestId);
     }
+    if (request.method === "POST" && url.pathname.startsWith("/api/v1/research/assistant/")) {
+      requireBridge(request, env);
+      return response(200, await runnerAssistantCommand(request, env, requestId, url.pathname.split("/").pop()), requestId);
+    }
     if (url.pathname === "/api/v1/research/operation/sync" && request.method === "POST") {
       requireBridge(request, env);
       const projection = await readJsonObject(request, 131072, "Research operation projection");
@@ -1537,6 +1541,57 @@ async function runnerTriageResults(db, searchParams) {
   return { results, pending: Number(pending?.n || 0) };
 }
 
+const ASSISTANT_REQUESTER = "research-assistant-worker";
+function assistantCanonical(value) {
+  const ordered = item => Array.isArray(item) ? item.map(ordered) : item && typeof item === "object" ? Object.fromEntries(Object.keys(item).sort().map(key => [key, ordered(item[key])])) : item;
+  return JSON.stringify(ordered(value));
+}
+function assistantInputJson(input, action, targetId) {
+  const prepared = input.assistant_request;
+  if (!["execute_specialist_work", "review_specialist_work"].includes(action) || !/^SOR-[A-F0-9]{16}$/.test(targetId)
+      || typeof input.selected_model !== "string" || !input.selected_model.trim()
+      || !Array.isArray(input.fallback_models) || input.fallback_models.length > 8
+      || input.fallback_models.some(model => typeof model !== "string" || !model.trim())
+      || !["disabled", "quota_auth", "any_provider"].includes(input.fallback_mode)
+      || !prepared || prepared.action?.name !== action || prepared.context?.specialist_run_id !== targetId
+      || prepared.safety?.read_only !== true || prepared.safety?.human_review_required !== true
+      || typeof prepared.instructions !== "string" || !prepared.instructions.trim()) {
+    throw new HttpError(422, "invalid_assistant_contract", "A bounded read-only specialist request is required");
+  }
+  const safe = sanitize(input, 0, true);
+  if (JSON.stringify(safe) !== JSON.stringify(input)) throw new HttpError(422, "unsafe_assistant_context", "Assistant context would be modified by privacy or size limits");
+  const encoded = assistantCanonical(safe);
+  if (new TextEncoder().encode(encoded).byteLength > MAX_INTELLIGENCE_BYTES) throw new HttpError(413, "payload_too_large", "Assistant context exceeds its transport budget");
+  return encoded;
+}
+async function runnerAssistantCommand(request, env, requestId, command) {
+  const payload = await readJsonObject(request, MAX_INTELLIGENCE_BYTES, "Assistant transport");
+  if (command === "jobs") {
+    assistantInputJson(payload.inputs || {}, payload.action, payload.target_id);
+    for (const model of [payload.inputs.selected_model, ...(payload.inputs.fallback_models || [])]) {
+      try { requireModelAction(clean(model, 200), payload.action); }
+      catch { throw new HttpError(422, "unsupported_action", "Assistant model does not support this action"); }
+    }
+    const key = clean(payload.idempotency_key, 256);
+    if (!key.startsWith("assistant:")) throw new HttpError(422, "invalid_idempotency_key", "Stable assistant job identity is required");
+    const prior = await env.DB.prepare("SELECT * FROM intelligence_jobs WHERE idempotency_key=?").bind(key).first();
+    if (prior && (prior.action !== payload.action || prior.target_id !== payload.target_id || prior.input_json !== assistantInputJson(payload.inputs, payload.action, payload.target_id))) throw new HttpError(409, "idempotency_conflict", "Assistant job identity belongs to different evidence");
+    return insertIntelligenceJob(env, requestId, { ...payload, requested_by: ASSISTANT_REQUESTER });
+  }
+  if (!["results", "cancel"].includes(command)) throw new HttpError(404, "not_found", "Unknown assistant transport action");
+  if (!Array.isArray(payload.job_ids) || payload.job_ids.length > 10 || payload.job_ids.some(id => typeof id !== "string" || !/^AIJ-[A-F0-9]{16}$/.test(id))) throw new HttpError(422, "invalid_job_ids", "At most ten explicit job identities are required");
+  if (!payload.job_ids.length) return { results: [] };
+  const marks = payload.job_ids.map(() => "?").join(",");
+  const rows = await env.DB.prepare(`SELECT j.*, (SELECT e.data_json FROM intelligence_job_events e WHERE e.job_id=j.job_id AND e.event_type='completed' ORDER BY e.event_id DESC LIMIT 1) AS model_json
+    FROM intelligence_jobs j WHERE j.requested_by=? AND j.job_id IN (${marks})`).bind(ASSISTANT_REQUESTER, ...payload.job_ids).all();
+  if (command === "cancel") {
+    for (const row of rows.results || []) await cancelIntelligenceJob(env.DB, row.job_id, requestId);
+    return { canceled: (rows.results || []).map(row => row.job_id) };
+  }
+  return { results: (rows.results || []).map(row => ({ job_id: row.job_id, target_id: row.target_id, action: row.action, status: row.status, provider: row.provider,
+    model: clean(parseJson(row.model_json, {}).model, 200), result: parseJson(row.result_json, {}), error_code: row.error_code || "" })) };
+}
+
 async function insertIntelligenceJob(env, requestId, payload) {
   const action = clean(payload.action, 100);
   if (!INTELLIGENCE_ACTIONS.has(action)) throw new HttpError(422, "invalid_action", "Only approved bridge-backed intelligence actions may be queued");
@@ -1546,7 +1601,7 @@ async function insertIntelligenceJob(env, requestId, payload) {
   if (payload.model && !inputs.selected_model) inputs.selected_model = clean(payload.model, 200);
   try { requireModelAction(clean(inputs.selected_model || payload.model, 200), action); }
   catch { throw new HttpError(422, "unsupported_action", "Selected model does not support this action"); }
-  const inputJson = boundedJson(inputs, MAX_INTELLIGENCE_BYTES, "Intelligence job input", action === "triage_artifact");
+  const inputJson = inputs.assistant_request ? assistantInputJson(inputs, action, targetId) : boundedJson(inputs, MAX_INTELLIGENCE_BYTES, "Intelligence job input", action === "triage_artifact");
   const requestedBy = clean(payload.requested_by, 160) || "mission-control";
   const idempotencyKey = clean(payload.idempotency_key, 256) || await sha256Hex(`${action}|${targetId}|${inputJson}|${requestedBy}`);
   const existing = await env.DB.prepare("SELECT * FROM intelligence_jobs WHERE idempotency_key = ?").bind(idempotencyKey).first();
@@ -1621,11 +1676,11 @@ async function claimIntelligenceJob(request, db, requestId) {
   await writeAudit(db, { requestId, action: "intelligence.bridge.claimed", actorRole: "intelligence_bridge", result: "success", sourceInstance: workerId, details: { job_id: row.job_id, intelligence_action: row.action }, createdAt: now });
   const input = parseJson(row.input_json, {});
   if (row.target_id && input.target_id === undefined) input.target_id = row.target_id;
-  const safeInput = row.action === "triage_artifact" ? sanitizeTriageInput(input) : sanitize(input);
+  const safeInput = input.assistant_request ? JSON.parse(assistantInputJson(input, row.action, row.target_id)) : row.action === "triage_artifact" ? sanitizeTriageInput(input) : sanitize(input);
   return {
     status: "claimed",
     job: { job_id: row.job_id, action: row.action, target_id: row.target_id, status: row.status, attempt: row.attempt, selected_model: clean(input.selected_model, 200), input: safeInput, worker_id: row.worker_id, lease_generation: Number(row.lease_generation || 0), lease_token: clean(row.lease_token, 160) },
-    bridge_request: {
+    bridge_request: safeInput.assistant_request || {
       schema_version: INTELLIGENCE_SCHEMA_VERSION,
       action: { name: row.action, read_only: true, requires_bridge: true },
       requested_at: now,
@@ -1655,6 +1710,7 @@ async function completeIntelligenceJob(request, db, jobId, requestId) {
     validateDecisionResult(row.action, result);
   } catch (error) { throw new HttpError(422, "invalid_result", error.message); }
   const resultJson = boundedJson(result, MAX_INTELLIGENCE_RESULT_BYTES, "Bridge result");
+  if (parseJson(row.input_json, {}).assistant_request && new TextEncoder().encode(resultJson).byteLength > 48000) throw new HttpError(422, "invalid_result", "Assistant result exceeds its explicit 48 KB budget");
   const now = nowIso();
   const provider = clean(payload.provider, 120) || "hosted_core_bridge";
   const updated = await db.prepare("UPDATE intelligence_jobs SET status='succeeded', provider=?, result_json=?, completed_at=?, updated_at=?, lease_until=NULL, lease_token='', error_code=NULL, error_message=NULL WHERE job_id=? AND status='running' AND worker_id=? AND lease_generation=? AND lease_token=? AND lease_until > ?").bind(provider, resultJson, now, now, normalized, clean(payload.worker_id, 160), Number(payload.lease_generation), clean(payload.lease_token, 160), now).run();

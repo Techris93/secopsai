@@ -545,7 +545,7 @@ class CoreEdgeClient:
             else _bounded_bridge_command(payload or {})
             if path.startswith("/api/v1/intelligence/bridge/commands/")
             else _bounded_json(payload or {}, limit=4 * 1024 * 1024, preserve_lists=True)
-            if path in {"/api/v1/research/cases/sync", "/api/v1/research/triage/jobs"}
+            if path in {"/api/v1/research/cases/sync", "/api/v1/research/triage/jobs", "/api/v1/research/assistant/jobs"}
             else _bounded_json(payload or {}, preserve_lists=path == "/api/v1/ontology/sync")
         )
         if path == "/api/v1/ontology/sync" and isinstance(body, dict) and body.get("status") == "truncated":
@@ -587,6 +587,15 @@ class CoreEdgeClient:
             return {"status": "disabled"}
         query = urllib.parse.urlencode({"since": since or "1970-01-01T00:00:00Z", "limit": max(1, min(int(limit), 200))})
         return self._request("GET", f"/api/v1/research/triage/results?{query}")
+
+    def queue_assistant_job(self, payload: dict) -> dict:
+        return self._request("POST", "/api/v1/research/assistant/jobs", payload)
+
+    def assistant_results(self, job_ids: list[str]) -> dict:
+        return self._request("POST", "/api/v1/research/assistant/results", {"job_ids": job_ids[:10]})
+
+    def cancel_assistant_jobs(self, job_ids: list[str]) -> dict:
+        return self._request("POST", "/api/v1/research/assistant/cancel", {"job_ids": job_ids[:10]})
 
     def sync_research_cases(self, cases: list[dict[str, Any]]) -> dict[str, Any]:
         """Upsert bounded research-case projections into the hosted Core."""

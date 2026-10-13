@@ -690,6 +690,7 @@ def enqueue_run(run_id: str, *, actor: str = "operator", db_path: str | None = N
         },
         requested_by=actor,
         idempotency_key=f"specialist-primary:{run['run_id']}:{selected_model}",
+        initial_status="awaiting_provider" if run["contract"]["task"].get("research_team_transport") == "hosted" else "queued",
         db_path=db_path,
     )
     now = soc_store.utc_now()
@@ -898,6 +899,7 @@ def _queue_review(run: dict[str, Any], *, actor: str, db_path: str | None) -> st
         },
         requested_by=actor,
         idempotency_key=f"specialist-review:{run['run_id']}:{selected_model}",
+        initial_status="awaiting_provider" if run["contract"]["task"].get("research_team_transport") == "hosted" else "queued",
         db_path=db_path,
     )
     with closing(soc_store.connect(db_path)) as connection:

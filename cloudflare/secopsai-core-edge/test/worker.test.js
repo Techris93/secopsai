@@ -798,3 +798,36 @@ test("distinct human research commands are retained and conflicting retries fail
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM coordinator_commands").get().count, 2);
   db.close();
 });
+
+test('hosted assistant transport preserves captured evidence, scopes jobs and fences completion', {skip: !DatabaseSync}, async () => {
+  const {db, d1} = migratedSqliteD1();
+  const env = {DB:d1, CORE_BRIDGE_TOKEN:'b'.repeat(44), CORE_INTELLIGENCE_TOKEN:'i'.repeat(44)};
+  const call = (path, body, token=env.CORE_BRIDGE_TOKEN) => handleRequest(new Request('https://core.example'+path, {method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)}),env);
+  const target = 'SOR-0123456789ABCDEF';
+  const request = {action:{name:'execute_specialist_work'},context:{specialist_run_id:target,original_evidence:'line 1\nline 2'},instructions:'Bounded supplied evidence only',safety:{read_only:true,human_review_required:true}};
+  const payload = {action:'execute_specialist_work',target_id:target,idempotency_key:'assistant:fixture',inputs:{target_id:target,selected_model:'opencodex/test-research',fallback_models:[],fallback_mode:'disabled',assistant_request:request}};
+  assert.equal((await call('/api/v1/research/assistant/jobs',payload,'wrong')).status,401);
+  const first = await (await call('/api/v1/research/assistant/jobs',payload)).json();
+  assert.equal(first.created,true);
+  const again = await (await call('/api/v1/research/assistant/jobs',{...payload,inputs:Object.fromEntries(Object.entries(payload.inputs).reverse())})).json();
+  assert.equal(again.created,false);
+  const conflict = structuredClone(payload);conflict.inputs.assistant_request.context.original_evidence='different evidence';
+  assert.equal((await call('/api/v1/research/assistant/jobs',conflict)).status,409);
+  const unsafe = structuredClone(payload);unsafe.idempotency_key='assistant:unsafe';unsafe.inputs.assistant_request.context.api_key='synthetic secret';
+  assert.equal((await call('/api/v1/research/assistant/jobs',unsafe)).status,422);
+  const incompatible = structuredClone(payload);incompatible.idempotency_key='assistant:typed';incompatible.inputs.selected_model='typesafe/jev-latest';
+  assert.equal((await call('/api/v1/research/assistant/jobs',incompatible)).status,422);
+  const claim = await (await call('/api/v1/intelligence/bridge/claim',{worker_id:'bridge-fixture'})).json();
+  assert.deepEqual(claim.bridge_request,request);
+  const result = {summary:'Recorded model proposal',risk_assessment:'Human review required',evidence:['E1'],recommended_actions:['Verify observations'],limitations:['Synthetic fixture']};
+  assert.equal((await call(`/api/v1/intelligence/bridge/jobs/${first.job.job_id}/complete`,{result,model:'opencodex/test-research',worker_id:'bridge-fixture',lease_generation:claim.job.lease_generation,lease_token:'wrong'})).status,409);
+  assert.equal((await call(`/api/v1/intelligence/bridge/jobs/${first.job.job_id}/complete`,{result,model:'opencodex/test-research',worker_id:'bridge-fixture',lease_generation:claim.job.lease_generation,lease_token:claim.job.lease_token})).status,200);
+  const results = await (await call('/api/v1/research/assistant/results',{job_ids:[first.job.job_id]})).json();
+  assert.equal(results.results[0].model,'opencodex/test-research');
+  assert.equal(results.results[0].status,'succeeded');
+  assert.equal(results.results[0].result.summary,'Recorded model proposal');
+  const unrelated = 'AIJ-FFFFFFFFFFFFFFFF';
+  db.prepare("INSERT INTO intelligence_jobs (job_id,action,target_id,status,requested_by,idempotency_key,queued_at,updated_at,input_json,result_json) VALUES (?,?,?,?,?,?,?,?,?,?)").run(unrelated,'triage_artifact','ART-other','queued','other-worker','other-key','2026-01-01','2026-01-01','{}','{}');
+  assert.deepEqual((await (await call('/api/v1/research/assistant/results',{job_ids:[unrelated]})).json()).results,[]);
+  assert.deepEqual((await (await call('/api/v1/research/assistant/cancel',{job_ids:[unrelated]})).json()).canceled,[]);
+});
