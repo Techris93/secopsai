@@ -49,6 +49,10 @@ from secopsai.intelligence_jobs import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _valid_result(**extra):
+    return {"summary": "Assessment", "risk_assessment": "Risk requires review", "evidence": [], "recommended_actions": [], "limitations": [], **extra}
+
+
 def _finding() -> dict:
     return {
         "finding_id": "FND-INTEL-1",
@@ -113,7 +117,7 @@ def test_job_lifecycle_is_idempotent_and_audited(tmp_path: Path):
 
     claimed = claim_next_job(provider="fake", worker_id="worker-1", db_path=db)
     assert claimed and claimed["status"] == "running"
-    completed = complete_job(claimed["job_id"], result={"ok": True}, actor="worker-1", db_path=db)
+    completed = complete_job(claimed["job_id"], result=_valid_result(ok=True), actor="worker-1", db_path=db)
     assert completed["status"] == "succeeded"
     assert [event["event_type"] for event in completed["events"]] == ["queued", "claimed", "succeeded"]
 
@@ -148,7 +152,7 @@ def test_job_lease_fencing_rejects_stale_worker_results(tmp_path: Path):
     with pytest.raises(ValueError, match="lease fenced or expired"):
         complete_job(
             queued["job_id"],
-            result={"worker": "old"},
+            result=_valid_result(worker="old"),
             actor="worker-old",
             worker_id="worker-old",
             lease_generation=first["lease_generation"],
@@ -166,7 +170,7 @@ def test_job_lease_fencing_rejects_stale_worker_results(tmp_path: Path):
         )
     finished = complete_job(
         queued["job_id"],
-        result={"worker": "new"},
+        result=_valid_result(worker="new"),
         actor="worker-new",
         worker_id="worker-new",
         lease_generation=second["lease_generation"],
@@ -192,7 +196,7 @@ def test_fenced_job_updates_require_the_random_lease_token(tmp_path: Path):
     with pytest.raises(ValueError, match="lease_token"):
         complete_job(
             queued["job_id"],
-            result={"ok": True},
+            result=_valid_result(ok=True),
             actor="worker-1",
             worker_id="worker-1",
             lease_generation=claimed["lease_generation"],
@@ -205,7 +209,7 @@ def test_intelligence_status_job_list_is_compact_but_show_keeps_full_result(tmp_
     queued = enqueue_job(action="prioritize_findings", requested_by="tester", db_path=db)
     claimed = claim_next_job(provider="fake", worker_id="worker-1", db_path=db)
     assert claimed and claimed["job_id"] == queued["job_id"]
-    complete_job(claimed["job_id"], result={"summary": "x" * 1000}, actor="worker-1", db_path=db)
+    complete_job(claimed["job_id"], result=_valid_result(summary="x" * 1000), actor="worker-1", db_path=db)
 
     compact = list_jobs(db_path=db, include_result=False)
     assert compact[0]["result"] == {}
@@ -1475,27 +1479,11 @@ def test_rebind_queued_jobs_and_persist_routing(tmp_path):
     )
     assert get_job(job1["job_id"], db_path=db)["input"]["selected_model"] == "gpt-5.6-luna"
 
-    # Rebind queued jobs to new model
-    res = rebind_queued_jobs(
-        selected_model="google-antigravity/gemini-3.8-flash-high",
-        fallback_models=["xai/grok-4.5"],
-        fallback_mode="any_provider",
-        db_path=db,
-    )
-    assert res["status"] == "rebound"
-    assert res["count"] == 1
-    updated = get_job(job1["job_id"], db_path=db)
-    assert updated["input"]["selected_model"] == "google-antigravity/gemini-3.8-flash-high"
-    assert updated["input"]["fallback_models"] == ["xai/grok-4.5"]
-    assert updated["input"]["fallback_mode"] == "any_provider"
-
-    # Now test persist_model_routing automatically calls rebind_queued_jobs
-    persist_model_routing(
-        "google-antigravity/claude-sonnet-4-6",
-        fallback_models=["gpt-5.4"],
-        fallback_mode="any_provider",
-        db_path=db,
-    )
-    re_updated = get_job(job1["job_id"], db_path=db)
-    assert re_updated["input"]["selected_model"] == "google-antigravity/claude-sonnet-4-6"
-    assert re_updated["input"]["fallback_models"] == ["gpt-5.4"]
+    res = rebind_queued_jobs(selected_model="google-antigravity/gemini-3.8-flash-high", fallback_models=["xai/grok-4.5"], fallback_mode="any_provider", db_path=db)
+    assert res["status"] == "rebound" and res["count"] == 0
+    persist_model_routing("google-antigravity/claude-sonnet-4-6", fallback_models=["gpt-5.4"], fallback_mode="any_provider", db_path=db)
+    preserved = get_job(job1["job_id"], db_path=db)["input"]
+    assert preserved == {"selected_model": "gpt-5.6-luna", "fallback_models": [], "fallback_mode": "disabled"}
+    new_job = enqueue_job(action="prioritize_findings", inputs={"unique": True}, db_path=db)
+    assert new_job["input"]["selected_model"] == "google-antigravity/claude-sonnet-4-6"
+    assert new_job["input"]["fallback_models"] == ["gpt-5.4"]

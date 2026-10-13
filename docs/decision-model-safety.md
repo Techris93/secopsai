@@ -1,0 +1,39 @@
+# Decision model integration and release gates
+
+Policy version: `decision-v2`. The replay remains stopped. Clef pre-screening defaults to disabled (`SECOPSAI_CLEF_PRESCREEN=0`) and remains disabled in the Research Worker workflow. A configured credential does not enable it.
+
+## Capabilities and contracts
+
+Jev and Clef bridge models support only `triage_finding` and `triage_artifact`. Research analysis, analyst briefs, publication review, prioritization, and specialist work require a compatible provider. Unsupported actions fail before contacting a provider and cannot silently switch models. Supplementary typed publication checks are never publication approval.
+
+Provider answers must contain the resolved model identity and every submitted answer, including valid type, choice, complete probability distribution, confidence where applicable, and finite values in range. Scores must agree with their distribution. Missing values do not receive favorable defaults. Both local and hosted job completion validate the action contract before accepting success. Captured model and fallback settings survive subsequent selection changes.
+
+Artifact triage uses a separate malicious-probability question. Classification confidence measures confidence in the selected verdict, not the probability of malice. Evidence identifiers are selected only from submitted identifiers. Named missing files are selected only from the supplied `missing_files` candidates, excluding supplied files. Without a candidate, `needs_more_evidence` is not offered; uncertainty is expressed through probability and confidence, with incomplete evidence blocking closure.
+
+## Evidence and alert handling
+
+Evidence budgeting reserves space across rule matches and locations, install files, decoded payloads, flagged files, binaries, metadata, and manifest. The serialized state includes coverage metadata identifying omitted categories and truncated records. Upstream context trimming also marks coverage incomplete. Incomplete evidence cannot close an alert.
+
+`SECOPSAI_DECISION_MODE=observe` is the default. Valid decisions are recorded; alerts stay open. Both the artifact ledger and research alerts use the same closure policy. Invalid decisions fail without resolving alerts. Clef errors route to the normal bridge queue. Its score remains hidden from the second model. A score difference of at least 80 points blocks closure and marks disagreement for review. A low malicious probability alone cannot override `needs_review`, an adverse disposition, or missing classification confidence. Repeated delivery of the same result has no additional effect; stale job revisions cannot overwrite a newer result.
+
+## Transport and health
+
+Provider calls share a total evaluation deadline, with at most three attempts per provider. Authentication and invalid requests are not retried. Connection errors, rate limits, and selected temporary server failures use bounded exponential backoff with jitter and `Retry-After`. Fallback uses structured error categories for decision providers, honoring the captured fallback policy. Invalid answers, capability errors, and safety failures never trigger availability fallback. A health probe is ready only after validating a typed answer. Error reports exclude provider response bodies and credentials.
+
+## Evaluation acceptance criteria
+
+Software tests do not establish model accuracy. Any live evaluation remains a separate, explicitly authorized operation. No replay or calibration workflow is dispatched by this change.
+
+For each provider/model revision, evaluate an independently reviewed held-out corpus with at least 600 malware samples and 200 benign samples. Include legitimate build/admin tools, obfuscated installers, incomplete evidence, adversarial package text, and ambiguous packages. Do not mix training/tuning examples into the held-out partition. Compare Clef, Jev, and the combined policy independently using the same evidence revision.
+
+Acceptance requires zero malware closures, a one-sided 95% upper bound on malware closure of at most 0.5%, benign escalation at most 15%, zero invalid-result closures, and zero incomplete-evidence closures. These are initial release requirements, not claims that the model currently meets them. Review stricter targets against operational risk before enabling enforcement. Report abstentions, disagreements, coverage, latency, retries, and token usage. With zero observed malware closures, the upper bound is `1 - 0.05 ** (1 / malware_count)`.
+
+Run the offline evaluator with `python scripts/evaluate_decisions.py captured-records.json --held-out --out evaluation.json`. Each record includes `artifact_id`, `provider`, resolved `model_version`, independent `label` (`malware`, `benign`, `ambiguous`), `label_source: independent_review`, `partition: held_out`, captured policy `decision` (`close`, `review`, `escalate`), `valid`, `evidence_complete`, and optional operational metrics. Evaluate each model and the combined policy in separate files; mixed identities are rejected. Input records and labels must be reviewed; the tool cannot certify their provenance. Duplicate artifacts and invalid labels are rejected.
+
+Enforcement additionally requires `SECOPSAI_DECISION_MODE=enforce` and a trusted local `SECOPSAI_DECISION_POLICY_FILE`. The reviewed manifest contains `policy_version: decision-v2`, `approved: true`, and `evaluations`, keyed by `provider:resolved_model`. Each entry is the accepted evaluation report, with its corpus fingerprint. Model/prompt/evidence changes require a new evaluation and policy version. Mutable provider aliases require revision verification during approval and observation after changes; do not reuse calibration across an unverified model update. Credentials never belong in this file.
+
+## Historical audit and rollout
+
+`python scripts/audit_decision_history.py --db /absolute/path/database.sqlite --out audit.json` opens SQLite in read-only mode. It flags unsupported typed actions, historical generic credible/85 verdicts, incomplete artifact decisions, and Clef closures without validated coverage. Audit candidates are not proven misclassifications. Original records remain unchanged; review them individually before any requeue or correction.
+
+Release in stages: contracts and regression tests; capabilities and action formatting; Clef budgeting and policy; transport and health; dashboard and documentation. Require Python regressions, hosted-worker tests, dashboard tests, syntax/security checks, and installer parity before deployment. Deploy observation mode first. Enabling enforcement requires an accepted evaluation plus operator approval of the manifest. Rollback disables enforcement and Clef pre-screening, preserving original results and audit records. Do not rerun the stopped replay as part of deployment.

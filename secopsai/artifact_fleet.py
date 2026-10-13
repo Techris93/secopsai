@@ -589,7 +589,7 @@ def scan_artifact(*, ecosystem: str, package: str, version: str, artifact: str |
 def build_triage_context(result: dict[str, Any]) -> dict[str, Any]:
     if not result.get("findings"):
         raise ValueError("clean artifacts must not enter model triage")
-    return {"artifact_id": result.get("artifact_id"), "ecosystem": result.get("ecosystem"), "package": result.get("package"), "version": result.get("version"), "sha256": result.get("sha256"), "source_reference": result.get("source_reference"), "findings": [{key: item.get(key) for key in ("rule_id", "severity", "confidence", "file_path", "matched_indicator", "safe_context", "recommended_mitigation")} for item in result.get("findings", [])[:100]], "iocs": result.get("iocs") or {}, "execution_performed": False}
+    return {"artifact_id": result.get("artifact_id"), "ecosystem": result.get("ecosystem"), "package": result.get("package"), "version": result.get("version"), "sha256": result.get("sha256"), "source_reference": result.get("source_reference"), "findings": [{key: item.get(key) for key in ("rule_id", "severity", "confidence", "file_path", "matched_indicator", "matched_patterns", "matched_strings", "safe_context", "recommended_mitigation")} for item in result.get("findings", [])[:100]], "iocs": result.get("iocs") or {}, "execution_performed": False, "evidence_truncated": True, "evidence_omissions": ["full_artifact_files_not_supplied"]}
 
 
 def triage_artifact(artifact_id: str, *, model: str = "", model_call: Callable[[dict[str, Any]], dict[str, Any]] | None = None, db_path: str | Path | None = None) -> dict[str, Any]:
@@ -606,8 +606,8 @@ def triage_artifact(artifact_id: str, *, model: str = "", model_call: Callable[[
     if verdict not in {"benign", "likely_benign", "suspicious", "inconclusive"}:
         raise ValueError("model verdict is invalid")
     confidence = max(0, min(int(response.get("confidence") or 0), 100))
-    analyst_required = verdict in {"suspicious", "inconclusive"}
-    status = "analyst_review" if analyst_required else "resolved"
+    analyst_required = True
+    status = "analyst_review"
     now = _now()
     with _connect(target) as conn:
         conn.execute("UPDATE artifact_triage SET status=?, model=?, verdict=?, confidence=?, result_json=?, analyst_required=?, updated_at=? WHERE artifact_id=?", (status, _text(model, 200), verdict, confidence, _json(response), int(analyst_required), now, artifact_id))
@@ -644,14 +644,22 @@ def enqueue_model_triage(
 
 
 def record_model_result(artifact_id: str, response: dict[str, Any], *, model: str = "", db_path: str | Path | None = None) -> dict[str, Any]:
-    raw_verdict = _text(response.get("artifact_verdict") or response.get("finding_verdict") or response.get("verdict_recommendation"), 60).lower()
-    verdict_map = {"true_positive": "suspicious", "needs_more_evidence": "inconclusive", "benign_expected": "benign", "false_positive": "likely_benign"}
-    verdict = verdict_map.get(raw_verdict, raw_verdict)
-    if verdict not in {"benign", "likely_benign", "suspicious", "inconclusive"}:
-        verdict = "inconclusive"
-    confidence = max(0, min(int(response.get("artifact_confidence") or response.get("finding_confidence") or response.get("verdict_confidence") or 0), 100))
-    analyst_required = verdict in {"suspicious", "inconclusive"}
-    status = "analyst_review" if analyst_required else "resolved"
+    from secopsai.decision_contracts import validate_action_result
+    from secopsai.decision_policy import closure_decision
+    validate_action_result("triage_artifact", response)
+    verdict = {"true_positive": "suspicious", "needs_more_evidence": "inconclusive", "benign_expected": "benign", "false_positive": "likely_benign"}[response["finding_verdict"]]
+    confidence = response["finding_confidence"]
+    if response["malicious_probability"] >= 70:
+        verdict = "suspicious"
+    allowed, reason = closure_decision(response)
+    from secopsai.decision_evidence import build_evidence, evidence_identifiers
+    context = triage_show(artifact_id, db_path=db_path)["context"]
+    _, coverage = build_evidence(context)
+    if not coverage["complete"] or not response["decision_evidence_refs"] or any(ref not in evidence_identifiers(context) for ref in response["decision_evidence_refs"]):
+        allowed, reason = False, "incomplete_evidence"
+    response = {**response, "closure_eligible": allowed, "policy_reason": reason}
+    analyst_required = not allowed
+    status = "resolved" if allowed else "analyst_review"
     target = init_db(db_path)
     now = _now()
     with _connect(target) as conn:
