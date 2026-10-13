@@ -114,5 +114,5 @@ jobs:
       - name: Restore ledger, run worker cycles, checkpoint
         # Reserve time for the multi-GB ledger restore, worker shutdown,
         # compression, and a bounded 10-minute upload including retries.
-        # Exhausted retries still fail the run; never discard the checkpoint.
+        # Exhausted retries still fail the run so an unsaved checkpoint is visible.
         run: python -u cloudflare/secopsai-research-runner/container/supervisor.py --cycles "${{ inputs.cycles || '6' }}" --max-seconds 900

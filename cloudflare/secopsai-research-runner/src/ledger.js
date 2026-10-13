@@ -74,6 +74,10 @@ export async function handleLedgerRequest(request, bucket) {
         }
       }
       // Advance the pointer only after the snapshot object is complete.
+      // A delayed retry of an older completed upload must not roll back LATEST.
+      // The workflow concurrency group still enforces a single ledger writer.
+      const pointer = await bucket.get(LATEST_POINTER);
+      if (pointer && await pointer.text() > key) return json({ key, superseded: true });
       await bucket.put(LATEST_POINTER, key);
       await pruneSnapshots(bucket, key);
       return json({ key });

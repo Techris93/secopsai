@@ -108,11 +108,19 @@ test("multipart checkpoint advances LATEST only on completion and prunes old sna
   }), bucket);
   assert.equal(repeated.status, 200, "lost completion responses may be retried after R2 consumed the upload");
   assert.equal(bucket.objects.get(created.key).toString(), "gzip-bytes");
+  const newerKey = "ledger/snapshots/9999-01-01.db.gz";
+  bucket.objects.set(newerKey, "newer");
+  bucket.objects.set("ledger/LATEST", newerKey);
+  const delayed = await handleLedgerRequest(new Request(`http://ledger.internal/uploads/${created.upload_id}/complete?key=${created.key}`, {
+    method: "POST", body: JSON.stringify({ parts: [{ partNumber: 1, etag }] }),
+  }), bucket);
+  assert.equal((await delayed.json()).superseded, true);
+  assert.equal(bucket.objects.get("ledger/LATEST"), newerKey, "delayed old completion must not roll back LATEST");
 });
 
 test("completion retry repairs a pointer-write failure after the object completed", async () => {
   const bucket = memoryBucket();
-  bucket.objects.set("ledger/LATEST", "ledger/snapshots/previous.db.gz");
+  bucket.objects.set("ledger/LATEST", "ledger/snapshots/2026-01-01.db.gz");
   const created = await (await handleLedgerRequest(new Request("http://ledger.internal/uploads", { method: "POST" }), bucket)).json();
   await handleLedgerRequest(new Request(`http://ledger.internal/uploads/${created.upload_id}/parts/1?key=${created.key}`, {
     method: "PUT", body: "new", headers: { "content-length": "3" },
@@ -123,7 +131,7 @@ test("completion retry repairs a pointer-write failure after the object complete
     method: "POST", body: JSON.stringify({ parts: [{ partNumber: 1, etag: "e1" }] }),
   }), bucket);
   await assert.rejects(complete(), /temporarily unavailable/);
-  assert.equal(bucket.objects.get("ledger/LATEST"), "ledger/snapshots/previous.db.gz");
+  assert.equal(bucket.objects.get("ledger/LATEST"), "ledger/snapshots/2026-01-01.db.gz");
   bucket.put = originalPut;
   assert.equal((await complete()).status, 200);
   assert.equal(bucket.objects.get("ledger/LATEST"), created.key);
