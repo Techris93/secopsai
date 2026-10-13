@@ -84,3 +84,10 @@ def test_invalid_origin_and_credentials_do_not_make_network_calls():
     for url in ["http://example.com", "https://token@example.com", "https://example.com/path", "https://example.com?x=1"]:
         with pytest.raises(ValueError):
             VaultClient(url=url, token="synthetic")
+
+
+def test_malformed_successful_upload_receipt_is_rejected(monkeypatch):
+    client = VaultClient(url="https://vault.example", token="synthetic")
+    monkeypatch.setattr(client, "request", lambda *args: b"[]")
+    with pytest.raises(ValueError, match="receipt mismatch"):
+        client.put(b"synthetic")

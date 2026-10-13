@@ -2052,6 +2052,8 @@ def init_db(db_path: str | None = None) -> None:
                 ON registry_ingestion_runs (status, started_at);
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_cursor
                 ON registry_feed_events (collector_id, registry_timestamp);
+            CREATE INDEX IF NOT EXISTS idx_registry_feed_events_collection_window
+                ON registry_feed_events (collector_id, collected_at);
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_processing_state_time
                 ON registry_feed_events (processing_state, registry_timestamp);
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_ecosystem_state_time

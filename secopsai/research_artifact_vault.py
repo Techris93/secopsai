@@ -67,7 +67,7 @@ class VaultClient:
     def put(self, body):
         digest = hashlib.sha256(body).hexdigest()
         response = json.loads(self.request("PUT", digest, body))
-        if response.get("sha256") != digest or response.get("size_bytes") != len(body):
+        if not isinstance(response, dict) or response.get("sha256") != digest or type(response.get("size_bytes")) is not int or response.get("size_bytes") != len(body):
             raise ValueError("artifact vault receipt mismatch")
         return digest
 
@@ -144,6 +144,8 @@ def restore_artifact(artifact_id, *, actor, db_path=None, client=None):
         raise ValueError("oversized artifact manifest")
     manifest = json.loads(encoded)
     chunks = manifest.get("chunks")
+    if not isinstance(manifest, dict):
+        raise ValueError("invalid artifact manifest")
     if manifest.get("version") != 1 or manifest.get("sha256") != row["sha256"] or manifest.get("size_bytes") != row["size_bytes"] or not 0 < row["size_bytes"] <= MAX_BYTES or not isinstance(chunks, list) or not 1 <= len(chunks) <= 8:
         raise ValueError("artifact manifest mismatch")
     if any(not isinstance(c, dict) or not HASH.fullmatch(str(c.get("sha256", ""))) or type(c.get("size_bytes")) is not int or not 0 < c["size_bytes"] <= CHUNK_BYTES for c in chunks) or sum(c["size_bytes"] for c in chunks) != row["size_bytes"]:
