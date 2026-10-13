@@ -45,6 +45,10 @@ def test_mal_reports_follow_the_upstream_contribution_rules():
     assert "Trigger: runs automatically when the package is installed." in report["details"]
     assert research_osv.mal_report_path(report, "SECOPSAI-2026-0001") == "osv/malicious/npm/left-padder/MAL-0000-secopsai-secopsai-2026-0001.json"
     assert research_osv.validate_mal_report({**report, "id": "MAL-1"}) == ["id and summary must not be set"]
+    assert iocs["files"][0]["source"] == "PACKAGE_ARCHIVE"
+    bad = json.loads(json.dumps(report))
+    bad["database_specific"]["iocs"]["files"][0]["source"] = "package"
+    assert research_osv.validate_mal_report(bad) == ["iocs.files[].source must be one of ['DROPPED', 'IN_MEMORY', 'PACKAGE_ARCHIVE'], not 'package'"]
 
 
 def test_advisory_ids_are_stable_and_sequential(real_case, tmp_path):

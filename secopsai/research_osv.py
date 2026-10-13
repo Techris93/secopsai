@@ -155,7 +155,7 @@ def _iocs(case: Dict[str, Any]) -> Dict[str, Any]:
             ips.append(value)
         elif kind in {"sha256", "sha1", "md5"}:
             note = ", ".join(str(tag) for tag in item.get("tags") or [])[:512]
-            files.append({"digests": {kind: value.lower()}, "source": "package", **({"note": note} if note else {})})
+            files.append({"digests": {kind: value.lower()}, "source": "PACKAGE_ARCHIVE", **({"note": note} if note else {})})
     iocs: Dict[str, Any] = {}
     for key, values in (("domains", domains), ("urls", urls), ("ips", ips)):
         if values:
@@ -224,6 +224,10 @@ def build_mal_reports(case: Dict[str, Any], advisory_id: str, *, advisory_url: s
     return reports
 
 
+# iocs.files[].source is an enum in the repository's schema (docs/schema_additions.md).
+FILE_SOURCES = {"PACKAGE_ARCHIVE", "DROPPED", "IN_MEMORY"}
+
+
 def validate_mal_report(report: Dict[str, Any]) -> List[str]:
     """The repository's contribution rules, checked before anything is submitted."""
     problems = []
@@ -240,6 +244,9 @@ def validate_mal_report(report: Dict[str, Any]) -> List[str]:
         problems.append("credits or references are required")
     if len(str(report.get("details") or "")) < 40:
         problems.append("details should explain why the package is malicious")
+    for item in ((report.get("database_specific") or {}).get("iocs") or {}).get("files") or []:
+        if "source" in item and item["source"] not in FILE_SOURCES:
+            problems.append(f"iocs.files[].source must be one of {sorted(FILE_SOURCES)}, not {item['source']!r}")
     return problems
 
 
