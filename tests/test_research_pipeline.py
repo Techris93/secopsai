@@ -99,8 +99,8 @@ def _bridge_result(action: str) -> dict:
         "recommended_actions": ["Verify publisher ownership."],
         "limitations": ["No runtime behavior was observed."],
         "verdict_recommendation": "inconclusive",
-        "verdict_confidence": 50,
-        "verdict_rationale": "Evidence remains incomplete.",
+        "verdict_confidence": 0,
+        "verdict_rationale": "Research credibility was not assessed by this action.",
         "verdict_evidence_refs": [],
     }
     if action == "analyze_research_case":

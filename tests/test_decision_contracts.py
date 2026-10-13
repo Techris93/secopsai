@@ -39,6 +39,7 @@ def test_research_credibility_requires_evidence():
     assert validate_action_result('analyze_research_case', {**base, 'verdict_rationale': 'Supported by supplied evidence', 'verdict_evidence_refs': ['step-1']})
 
 
-def test_other_actions_cannot_establish_research_credibility():
-    base = {'summary': 'Finding', 'risk_assessment': 'Risk', 'evidence': [], 'recommended_actions': [], 'limitations': [], 'verdict_recommendation': 'credible', 'verdict_confidence': 85}
+@pytest.mark.parametrize('verdict,confidence', [('credible', 85), ('inconclusive', 50)])
+def test_other_actions_cannot_establish_research_credibility(verdict, confidence):
+    base = {'summary': 'Finding', 'risk_assessment': 'Risk', 'evidence': [], 'recommended_actions': [], 'limitations': [], 'verdict_recommendation': verdict, 'verdict_confidence': confidence}
     with pytest.raises(DecisionError): validate_action_result('explain_finding', base)
