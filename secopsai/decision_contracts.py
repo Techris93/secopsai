@@ -21,6 +21,8 @@ def number(value: Any, low: float, high: float, name: str, *, integer: bool = Fa
 
 def validate_answers(data: Any, questions: Mapping[str, Mapping[str, Any]], *, provider: str) -> dict[str, Any]:
     try:
+        if isinstance(data, dict) and "success" in data and data["success"] is not True:
+            raise DecisionError("provider evaluation was unsuccessful")
         if not isinstance(data, dict) or not isinstance(data.get("answers"), dict):
             raise DecisionError("response must contain an answers object")
         if not isinstance(data.get("model"), str) or not data["model"].strip():

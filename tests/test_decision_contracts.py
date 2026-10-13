@@ -30,6 +30,7 @@ def test_invalid_answers_rejected(mutation):
 def test_valid_distribution_and_missing_model():
     assert validate_answers(GOOD, QUESTIONS, provider='test') is GOOD
     with pytest.raises(DecisionError): validate_answers({'answers': GOOD['answers']}, QUESTIONS, provider='test')
+    with pytest.raises(DecisionError): validate_answers({**GOOD, 'success': False}, QUESTIONS, provider='test')
 
 
 def test_research_credibility_requires_evidence():

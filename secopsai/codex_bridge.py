@@ -1358,7 +1358,9 @@ def run_once(
                     lease_token=job.get("lease_token"),
                     db_path=db_path,
                 )
-        if job.get("action") == "triage_artifact":
+        if job.get("action") == "triage_artifact" and not isinstance(job_inputs.get("artifact_triage"), dict):
+            # Inline research-worker jobs belong to the hosted/research ledger.
+            # They need no second write to an unrelated local artifact ledger.
             from secopsai.artifact_fleet import record_model_result
 
             record_model_result(

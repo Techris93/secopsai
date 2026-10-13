@@ -65,3 +65,29 @@ def test_requeue_preserves_captured_routing(tmp_path, bulk):
 
 def test_credential_diagnostics_redact_bearer_headers():
     assert 'synthetic-secret' not in _safe_error_text('Authorization: Bearer synthetic-secret; token=another')
+
+
+@pytest.mark.parametrize('remote', [False, True])
+def test_bridge_inline_artifact_completion_needs_no_local_artifact_record(tmp_path, monkeypatch, remote):
+    from secopsai import codex_bridge, artifact_fleet
+    db = str(tmp_path / 'core.db')
+    context = {'findings': [{'rule_id': 'R1', 'safe_context': 'exfiltrate()'}]}
+    model = 'typesafe/jev-latest'
+    job = enqueue_job(action='triage_artifact', target_id='npm:inline@1', inputs={'selected_model': model, 'artifact_triage': context}, db_path=db)
+    monkeypatch.setattr(codex_bridge, 'doctor', lambda *a, **kw: {'live_ready': True, 'models': {}, 'opencodex': {}})
+    raw = {'summary': 'Suspicious installer', 'risk_assessment': 'Review payload', 'evidence': ['R1'], 'recommended_actions': ['Review'], 'limitations': [],
+           'finding_verdict': 'true_positive', 'finding_confidence': 99, 'malicious_probability': 90, 'disposition_recommendation': 'true_positive', 'decision_evidence_refs': ['R1']}
+    monkeypatch.setattr(codex_bridge, '_invoke_codex', lambda *a, **kw: raw)
+    monkeypatch.setattr(artifact_fleet, 'record_model_result', lambda *a, **kw: pytest.fail('Inline research job attempted an unrelated local artifact write'))
+    settings = BridgeSettings(model=model)
+    if remote:
+        settings = BridgeSettings(model=model, core_api_url='https://synthetic.invalid', bridge_token='synthetic')
+        claimed = {**job, 'status': 'running'}
+        request = prepare_bridge_request('triage_artifact', {'artifact_id': job['target_id'], 'artifact_triage': context}, db_path=db)
+        monkeypatch.setattr(codex_bridge, '_remote_claim', lambda _: {'job': claimed, 'bridge_request': request})
+        def finish(settings, job_id, outcome, payload):
+            assert outcome == 'complete' and payload['result']['finding_confidence'] == 99
+            return {'job': {**claimed, 'status': 'succeeded'}}
+        monkeypatch.setattr(codex_bridge, '_remote_finish', finish)
+    result = codex_bridge.run_once(settings=settings, db_path=db, require_ready_provider=False)
+    assert result['status'] == 'succeeded' and result['job']['status'] == 'succeeded'
