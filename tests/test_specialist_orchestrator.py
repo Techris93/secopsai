@@ -63,7 +63,7 @@ def test_reviewed_catalog_is_pinned_attributed_and_valid() -> None:
     catalog = load_catalog()
     validation = validate_catalog(catalog)
     assert validation["ok"] is True
-    assert validation["profile_count"] == 17
+    assert validation["profile_count"] == 20
     assert len(catalog["upstream"]["commit"]) == 40
     assert catalog["upstream"]["license"] == "MIT"
     assert catalog["upstream"]["repository"] == "https://github.com/msitarzewski/agency-agents"

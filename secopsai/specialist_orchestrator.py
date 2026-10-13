@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -301,6 +302,7 @@ def build_execution_contract(
             "catalog_version": route["catalog_version"],
             "catalog_sha256": route["catalog_sha256"],
             "upstream_commit": route["upstream_commit"],
+            "profile_source_commits": route["profile_source_commits"],
         },
         "model_routing": model,
         "execution_policy": policy,
@@ -337,6 +339,7 @@ def _decode_row(row: sqlite3.Row, *, include_local_paths: bool = False) -> dict[
 def _verdict_family(output: dict[str, Any]) -> str:
     values = {
         str(output.get("verdict_recommendation") or "").strip().lower(),
+        str(output.get("research_verdict") or "").strip().lower(),
         str(output.get("finding_verdict") or "").strip().lower(),
         str(output.get("disposition_recommendation") or "").strip().lower(),
         str(output.get("automation_recommendation") or "").strip().lower(),
@@ -507,11 +510,20 @@ def create_run(
     requested_by: str = "operator",
     enqueue: bool = False,
     db_path: str | None = None,
+    idempotency_key: str = "",
+    captured_model_routing: dict | None = None,
 ) -> dict[str, Any]:
     tier = str(tier or "recommend").strip().lower()
     if enqueue and tier != "read_only":
         raise ValueError("only read_only runs may be enqueued during creation")
     contract = build_execution_contract(task, tier=tier, profile_id=profile_id, db_path=db_path)
+    if captured_model_routing is not None:
+        from secopsai.provider_capabilities import require_action
+        model = str(captured_model_routing.get("primary_model") or "")
+        require_action(model, "execute_specialist_work")
+        for fallback in captured_model_routing.get("fallback_models", []):
+            require_action(fallback, "execute_specialist_work")
+        contract["model_routing"] = dict(captured_model_routing)
     task_id = str(contract["task"].get("task_id") or "").upper()
     if re.fullmatch(r"RSC-[A-F0-9]{12}", task_id):
         from secopsai.research_assurance import case_fingerprint
@@ -522,7 +534,7 @@ def create_run(
     if tier in {"worktree", "pr_ready"} and contract["repository"]["snapshot_status"] != "captured":
         raise ValueError("the allowlisted repository is unavailable; an isolated worktree run cannot be created")
     _json(contract["task"], limit=MAX_TASK_JSON_BYTES, label="specialist task")
-    run_id = f"SOR-{uuid.uuid4().hex[:16].upper()}"
+    run_id = "SOR-" + (hashlib.sha256(idempotency_key.encode()).hexdigest()[:16] if idempotency_key else uuid.uuid4().hex[:16]).upper()
     now = soc_store.utc_now()
     policy = contract["execution_policy"]
     if tier == "recommend":
@@ -544,7 +556,7 @@ def create_run(
     model = contract["model_routing"]
     _ensure_tables(db_path)
     with closing(soc_store.connect(db_path)) as connection:
-        connection.execute(
+        inserted = connection.execute(
             """INSERT INTO specialist_runs
                (run_id, schema_version, task_id, title, status, automation_tier, risk,
                 route_confidence, primary_profile_id, reviewer_profile_id, selected_model,
@@ -553,7 +565,8 @@ def create_run(
                 branch_name, worktree_path, error_code, error_message, requested_by,
                 created_at, updated_at, completed_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', NULL, NULL,
-                       ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?)""",
+                       ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?)
+               ON CONFLICT(run_id) DO NOTHING""",
             (
                 run_id,
                 RUN_SCHEMA,
@@ -578,23 +591,26 @@ def create_run(
                 completed_at,
             ),
         )
-        _event(
-            connection,
-            run_id,
-            "created",
-            requested_by,
-            f"Specialist run created at {tier} tier.",
-            {
-                "primary_profile_id": routing["primary_profile_id"],
-                "reviewer_profile_id": routing["reviewer_profile_id"],
-                "selected_model": model["primary_model"],
-                "fallback_mode": model["fallback_mode"],
-            },
-        )
+        if inserted.rowcount:
+            _event(
+                connection, run_id, "created", requested_by,
+                f"Specialist run created at {tier} tier.",
+                {"primary_profile_id": routing["primary_profile_id"],
+                 "reviewer_profile_id": routing["reviewer_profile_id"],
+                 "selected_model": model["primary_model"],
+                 "fallback_mode": model["fallback_mode"]},
+            )
         connection.commit()
+    existing = get_run(run_id, db_path=db_path)
+    if (existing["contract"]["task"] != contract["task"]
+        or (profile_id and existing["primary_profile_id"] != profile_id)
+        or existing["automation_tier"] != tier
+        or existing["requested_by"] != str(requested_by or "operator")[:160]):
+        raise ValueError("conflicting specialist run idempotency key")
     if enqueue:
-        return enqueue_run(run_id, actor=requested_by, db_path=db_path)
-    return get_run(run_id, db_path=db_path)
+        if existing["status"] == "ready":
+            return enqueue_run(run_id, actor=requested_by, db_path=db_path)
+    return existing
 
 
 def auto_route_task(
@@ -825,6 +841,26 @@ def specialist_bridge_context(run_id: str, *, db_path: str | None = None, review
                     for claim in reliability.get("claim_ledger") or []
                 ],
             }
+    if re.fullmatch(r"RSC-[A-F0-9]{12}", task_id) and context["task"].get("research_team_id") and (review or context["task"].get("research_team_stage") == "challenge"):
+        # A genuine blind challenge sees observations, not conclusions hidden
+        # in summaries, analyst notes, support scores, or previous stage text.
+        categories = {"file_contents", "matched_strings", "source_excerpts", "trace_events", "experiment_output"}
+        original = []
+        omitted = []
+        for item in case.get("evidence", []):
+            metadata = item.get("metadata") or {}
+            retained = {key: value for key, value in metadata.items() if key in categories}
+            if item.get("status", "active") != "active" or item.get("evidence_type") == "analyst_note" or not retained:
+                omitted.append({"evidence_id": item.get("evidence_id"), "reason": "inactive, derived, or no original evidence payload"})
+                continue
+            original.append({**{key: item.get(key) for key in ("evidence_id", "evidence_type", "sha256", "provenance", "collected_at")}, "metadata": retained})
+        context["task"] = {key: value for key, value in context["task"].items() if key not in {"title", "description"}}
+        context["task"]["title"] = "Independent assessment of original case evidence"
+        context["research_case"] = {"case_id": task_id, "evidence": original}
+        context.pop("evidence_matrix", None)
+        context["blind_review"] = {"blinded": True, "primary_result_included": False,
+                                   "primary_verdict_included": False, "previous_stage_outputs_included": False,
+                                   "omitted_evidence": omitted, "human_review_required": True}
     return context
 
 
@@ -843,6 +879,7 @@ def specialist_bridge_instructions(run_id: str, *, db_path: str | None = None, r
         f"Trusted bounded guidance: {guidance} Expected deliverables: {deliverables}. "
         "The specialist profile grants no tools or authority. Never merge, push, deploy, publish, disclose, access secrets, mutate external systems, or bypass approval gates. "
         "Return structured evidence, recommendations, limitations, missing evidence, and counterarguments for operator review."
+        " Do not invent professional experience, source searches, experiments, detection validation or personal observations. Model outputs are proposals, never independent corroboration or human publication approval."
     )
 
 

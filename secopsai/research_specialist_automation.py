@@ -173,6 +173,7 @@ def sync_completed_reviews(*, limit: int = 10, db_path: Optional[str] = None) ->
         rows = connection.execute(
             """SELECT run_id, task_id FROM specialist_runs
                WHERE automation_tier='read_only' AND status=? AND task_id GLOB 'RSC-*'
+               AND json_extract(contract_json, '$.task.research_team_id') IS NULL
                ORDER BY completed_at, run_id LIMIT ?""",
             (FINAL_REVIEW_STATUS, bounded),
         ).fetchall()
@@ -287,11 +288,13 @@ def run_cycle(*, limit: int = 5, db_path: Optional[str] = None) -> dict[str, Any
     """Synchronize reviews, advance safe gates, and prepare approved drafts."""
     review_sync = sync_completed_reviews(limit=max(limit * 2, 10), db_path=db_path)
     reliability_progress = run_guarded_reliability_batch(limit=limit, db_path=db_path)
+    from secopsai.research_assistant_team import advance_due
     return {
         "schema_version": SCHEMA_VERSION,
         "status": "completed",
         "review_sync": review_sync,
         "reliability_progress": reliability_progress,
+        "assistant_teams": advance_due(limit=limit, db_path=db_path),
         "case_routing": {
             "status": "integrated",
             "reason": "Specialist routing now occurs only after the guarded full-bundle and claim-ledger gates.",

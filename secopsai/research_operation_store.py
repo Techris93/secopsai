@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS research_operation_records (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS research_operation_records_case ON research_operation_records(case_id,kind,created_at);
+CREATE INDEX IF NOT EXISTS research_operation_records_kind ON research_operation_records(kind,created_at);
 CREATE TABLE IF NOT EXISTS research_people (
   person_id TEXT PRIMARY KEY, display_name TEXT NOT NULL, roles_json TEXT NOT NULL,
   qualification TEXT NOT NULL, active INTEGER NOT NULL, registered_by TEXT NOT NULL,

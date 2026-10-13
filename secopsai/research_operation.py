@@ -9,11 +9,14 @@ from secopsai.research_operation_store import read_connection
 from secopsai.research_operation_store import records
 
 READ_ACTIONS = {"status", "coverage", "people", "events", "editions", "queue", "audit", "metrics", "storage-assessment"}
+READ_ACTIONS.add("assistant-teams")
 WRITE_ACTIONS = {"person-register", "claim-assess", "prior-art", "experiment", "behavior", "case-review", "source-configure", "source-collect", "event-verify", "roster", "board", "brief-create", "brief-edit", "brief-approve", "brief-publish", "brief-correct", "submission", "disclosure-milestone", "requirement", "queue-claim", "queue-heartbeat", "queue-complete", "queue-fail", "outcome"}
 # Remote operator commands never accept local file paths or publish files from
 # an ephemeral worker. Publication uses the reviewed export and release path.
 WRITE_ACTIONS.add("recovery-drill")
 WRITE_ACTIONS.add("compare-releases")
+WRITE_ACTIONS.add("assistant-team-start")
+WRITE_ACTIONS.add("assistant-team-cancel")
 WRITE_ACTIONS.update({"artifact-backup", "artifact-restore"})
 HOSTED_WRITE_ACTIONS = WRITE_ACTIONS - {"submission", "brief-publish", "source-collect", "queue-claim", "queue-heartbeat", "queue-complete", "queue-fail", "recovery-drill", "artifact-backup", "artifact-restore"}
 
@@ -40,6 +43,13 @@ def execute(action: str, payload: dict | None = None, *, actor: str = "", case_i
         from secopsai.research_recovery import storage_assessment
 
         return storage_assessment(db_path=db_path)
+    if action in {"assistant-teams", "assistant-team-start", "assistant-team-cancel"}:
+        from secopsai.research_assistant_team import list_teams, start_team, cancel_team
+        if action == "assistant-teams":
+            return list_teams(case_id, db_path=db_path)
+        if action == "assistant-team-cancel":
+            return cancel_team(identity, actor=actor, db_path=db_path)
+        return start_team(case_id, payload, actor=actor, db_path=db_path)
     if action in {"people", "events", "editions", "queue"}:
         query = {"people": "SELECT person_id,display_name,roles_json,qualification,active FROM research_people",
                  "events": "SELECT event_id,source_id,payload_json,published_at,collected_at,first_observed_at FROM research_intel_events ORDER BY collected_at DESC LIMIT 100",
@@ -122,6 +132,9 @@ def hosted_projection(*, db_path=None) -> dict:
     from secopsai.intelligence import minimize
 
     status = execute("status", db_path=db_path)
+    from secopsai.research_assistant_team import list_teams
+    teams = [{key: team.get(key) for key in ("team_id", "case_id", "status", "completed_stages", "runs", "reason", "human_review_required", "publication_approved")}
+             for team in list_teams(db_path=db_path, limit=20)["teams"]]
     editions = []
     for index, item in enumerate(execute("editions", db_path=db_path)["editions"]):
         value = {key: item.get(key) for key in ("edition_id", "edition_date", "product", "author_id", "state", "published_url", "updated_at", "fingerprint")}
@@ -132,7 +145,7 @@ def hosted_projection(*, db_path=None) -> dict:
         editions.append(value)
     # Raw samples, private submissions, legal agreements, source excerpts and
     # confidential review notes are never sent to the hosted read surface.
-    projection = minimize({"schema_version": "secopsai.research.operation.v1", "coverage": status["coverage"], "editions": editions,
+    projection = minimize({"schema_version": "secopsai.research.operation.v1", "coverage": status["coverage"], "editions": editions, "assistant_teams": teams,
                      "requirements": status["requirements"], "missing_requirements": status["missing_requirements"],
                      "reviewed_daily_brief_streak": status["reviewed_daily_brief_streak"], "fourteen_day_gate_met": status["fourteen_day_gate_met"],
                      "rpo_target_seconds": status["rpo_target_seconds"], "rto_target_seconds": status["rto_target_seconds"],
