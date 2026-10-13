@@ -91,3 +91,15 @@ def test_malformed_successful_upload_receipt_is_rejected(monkeypatch):
     monkeypatch.setattr(client, "request", lambda *args: b"[]")
     with pytest.raises(ValueError, match="receipt mismatch"):
         client.put(b"synthetic")
+
+
+def test_invalid_manifest_shape_preserves_catalog_and_bytes(artifact):
+    from secopsai.research_operation_store import append
+    db, identity, stored, original = artifact
+    client = MemoryVault()
+    saved = backup_artifact(identity, actor="operator.owner", db_path=db, client=client, cloud_storage_authorized=True)
+    saved = {**saved, "manifest_sha256": client.put(b"[]")}
+    append("artifact_backup", saved, actor="operator.owner", db_path=db)
+    with pytest.raises(ValueError, match="invalid artifact manifest"):
+        restore_artifact(identity, actor="operator.owner", db_path=db, client=client)
+    assert open(stored, "rb").read() == original
