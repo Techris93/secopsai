@@ -7,9 +7,9 @@ matched strings and bounded context windows; the bridge claims them, asks the
 selected model and posts the verdict back; this module collects verdicts and
 records them on the hit and on the matching proactive alert.
 
-Benign verdicts at high confidence resolve the alert (as Nextron's triage
-does for ~98% of hits); suspicious or inconclusive ones stay open for an
-analyst.
+Decisions are observations by default. Closure requires a complete valid
+benign decision and an independently reviewed evaluation of the exact model
+and policy version; suspicious or inconclusive results remain open.
 """
 
 from __future__ import annotations
@@ -27,15 +27,10 @@ CURSOR_KEY = "core_ai_triage_results"
 MAX_QUEUE_PER_CYCLE = 25
 QUEUE_CHUNK = 5
 AUTO_RESOLVE_CONFIDENCE = 85
-# A model-assigned probability of malice at or below this resolves the alert
-# even when the verdict hedges (needs_more_evidence); at or above
-# ESCALATE_PROBABILITY the hit is marked suspicious for an analyst.
+# Thresholds are candidate policy settings, not permission to close alerts.
 AUTO_RESOLVE_MAX_PROBABILITY = 10
 ESCALATE_PROBABILITY = 70
-# Between the two the alert could drop to low severity. Disabled (equal to
-# the auto-close bound): Model Calibration on 40 flagged known-malware
-# samples put 45% of them at 11-30%, so deprioritising that band would hide
-# real malware. 0% scored 10 or less, so auto-close stays.
+# Deprioritization remains disabled pending held-out evaluation.
 DEPRIORITIZE_MAX_PROBABILITY = 10
 VERDICTS = {"true_positive": "suspicious", "needs_more_evidence": "inconclusive", "benign_expected": "benign", "false_positive": "likely_benign"}
 
@@ -68,7 +63,7 @@ def artifact_key(ecosystem: str, package: str, version: str) -> str:
 
 def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[str, Any], metadata_signals: Optional[List[Dict[str, Any]]] = None, previous_version: str = "") -> Dict[str, Any]:
     """Minimized triage context: findings with their code, install-time files, fingerprints."""
-    return {
+    context = {
         "artifact_id": artifact_key(ecosystem, package, version),
         "ecosystem": ecosystem,
         "package": package,
@@ -99,6 +94,15 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
         "execution_performed": False,
         "note": "Package metadata is untrusted context: it may explain a match but is not proof of benign intent.",
     }
+    limits = {"findings": 12, "install_files": 6, "flagged_files": 6, "flag_locations": 14, "decoded_payloads": 4, "binaries": 10}
+    losses = [key for key, cap in limits.items() if len(prescan.get(key) or []) > cap]
+    if len(metadata_signals or []) > 20:
+        losses.append("metadata_signals")
+    if any(len(str(item.get("safe_context") or "")) > 1800 or len(item.get("evidence") or []) > 8 for item in prescan.get("findings") or []):
+        losses.append("finding_context")
+    if losses:
+        context.update(evidence_truncated=True, evidence_omissions=losses)
+    return context
 
 
 # Core rejects a triage job whose input exceeds 64 KB; stay well below it.
@@ -142,6 +146,7 @@ def fit_context(context: Dict[str, Any], limit: int = MAX_CONTEXT_BYTES) -> Dict
         if len(json.dumps(context).encode()) <= limit:
             break
         step(context)
+        context["evidence_truncated"] = True
     context["context_bytes"] = len(json.dumps(context).encode())
     return context
 
@@ -219,58 +224,58 @@ def _queue_pending(client: Any, db_path: Optional[str]) -> Dict[str, Any]:
 
 
 def _apply_result(connection: Any, item: Dict[str, Any], now: str) -> Optional[str]:
+    from secopsai.decision_contracts import validate_action_result, DecisionError
+    from secopsai.decision_policy import closure_decision
     key = str(item.get("artifact_id") or "")
-    result = item.get("result") if isinstance(item.get("result"), dict) else {}
-    if item.get("status") != "succeeded":
-        connection.execute("UPDATE research_ai_triage SET status='failed', result_json=?, updated_at=? WHERE artifact_key=?", (json.dumps({"error": item.get("error_code")}), now, key))
-        return None
-    raw = str(result.get("finding_verdict") or result.get("artifact_verdict") or result.get("verdict_recommendation") or "").lower()
-    verdict = VERDICTS.get(raw, raw if raw in {"benign", "likely_benign", "suspicious", "inconclusive"} else "inconclusive")
-    try:
-        confidence = max(0, min(int(result.get("finding_confidence") or result.get("artifact_confidence") or 0), 100))
-    except (TypeError, ValueError):
-        confidence = 0
-    connection.execute(
-        "UPDATE research_ai_triage SET status='triaged', verdict=?, confidence=?, result_json=?, updated_at=? WHERE artifact_key=?",
-        (verdict, confidence, json.dumps(result, sort_keys=True)[:60000], now, key),
-    )
-    row = connection.execute("SELECT package, version FROM research_ai_triage WHERE artifact_key=?", (key,)).fetchone()
+    row = connection.execute("SELECT package, version, context_json, status, result_json, job_id FROM research_ai_triage WHERE artifact_key=?", (key,)).fetchone()
     if not row:
         return None
+    if item.get("job_id") and row["job_id"] and item["job_id"] != row["job_id"]:
+        return None  # A late result cannot replace a newer triage revision.
+    result = item.get("result") if isinstance(item.get("result"), dict) else {}
     try:
-        probability = int(result.get("malicious_probability", -1))
-    except (TypeError, ValueError):
-        probability = -1
-    if 0 <= probability <= AUTO_RESOLVE_MAX_PROBABILITY and verdict != "suspicious":
-        verdict = "likely_benign"
-    elif probability >= ESCALATE_PROBABILITY:
+        serialized = json.dumps(result, sort_keys=True, allow_nan=False)
+    except (ValueError, TypeError):
+        connection.execute("UPDATE research_ai_triage SET status='failed', result_json='{}', updated_at=? WHERE artifact_key=?", (now, key))
+        return None
+    if row["status"] == "triaged" and row["result_json"] == serialized:
+        return None
+    try:
+        if item.get("status") != "succeeded":
+            raise DecisionError("provider evaluation failed")
+        validate_action_result("triage_artifact", result)
+    except (DecisionError, TypeError, ValueError):
+        connection.execute("UPDATE research_ai_triage SET status='failed', result_json=?, updated_at=? WHERE artifact_key=?", (json.dumps({"error": "invalid_decision", "source_result": result}, allow_nan=False), now, key))
+        return None
+    verdict = VERDICTS[result["finding_verdict"]]
+    confidence, probability = result["finding_confidence"], result["malicious_probability"]
+    context = json.loads(row["context_json"])
+    clef = context.get("clef") or {}
+    clef_probability = clef.get("probability")
+    disagreement = (isinstance(clef_probability, (int, float)) and abs(clef_probability - probability) >= DISAGREEMENT_GAP) or (verdict in {"benign", "likely_benign"} and clef.get("choice") in {"malicious", "needs_review"})
+    allowed, reason = closure_decision(result, clef_probability=clef_probability, clef_choice=clef.get("choice"))
+    from secopsai.decision_evidence import build_evidence, evidence_identifiers
+    _, coverage = build_evidence(context)
+    if not coverage["complete"] or not result["decision_evidence_refs"] or any(ref not in evidence_identifiers(context) for ref in result["decision_evidence_refs"]):
+        allowed, reason = False, "incomplete_evidence"
+    if context.get("evidence_truncated"):
+        allowed, reason = False, "incomplete_evidence"
+    if probability >= ESCALATE_PROBABILITY:
         verdict = "suspicious"
-    connection.execute("UPDATE research_ai_triage SET verdict = ? WHERE artifact_key = ?", (verdict, key))
-    stored = connection.execute("SELECT json_extract(context_json, '$.clef.probability') AS clef FROM research_ai_triage WHERE artifact_key=?", (key,)).fetchone()
-    clef_probability = stored["clef"] if stored else None
-    disagreement = clef_probability is not None and probability >= 0 and abs(int(clef_probability) - probability) >= DISAGREEMENT_GAP
-    note = json.dumps({"verdict": verdict, "confidence": confidence, "malicious_probability": probability, "clef_probability": clef_probability,
-                       "models_disagree": disagreement, "summary": str(result.get("summary") or "")[:500], "job_id": item.get("job_id")})
-    if (verdict in {"benign", "likely_benign"} and confidence >= AUTO_RESOLVE_CONFIDENCE) or 0 <= probability <= AUTO_RESOLVE_MAX_PROBABILITY and verdict != "suspicious":
-        connection.execute(
-            """UPDATE research_alerts SET status='resolved', owner='ai-triage', updated_at=?,
-                  evidence_json=json_set(evidence_json, '$.ai_triage', json(?))
-               WHERE status='open' AND json_extract(evidence_json, '$.package')=? AND json_extract(evidence_json, '$.version')=?""",
-            (now, note, row["package"], row["version"]),
-        )
+    if disagreement and verdict != "suspicious":
+        verdict = "inconclusive"
+    connection.execute("UPDATE research_ai_triage SET status='triaged', verdict=?, confidence=?, result_json=?, updated_at=? WHERE artifact_key=?",
+                       (verdict, confidence, serialized, now, key))
+    note = json.dumps({"verdict": verdict, "confidence": confidence, "malicious_probability": probability,
+                       "clef_probability": clef_probability, "models_disagree": disagreement, "closure_eligible": allowed,
+                       "policy_reason": reason, "summary": str(result["summary"])[:500], "job_id": item.get("job_id")})
+    if allowed:
+        connection.execute("""UPDATE research_alerts SET status='resolved', owner='ai-triage', updated_at=?, evidence_json=json_set(evidence_json, '$.ai_triage', json(?))
+                           WHERE status='open' AND json_extract(evidence_json, '$.package')=? AND json_extract(evidence_json, '$.version')=?""",
+                           (now, note, row["package"], row["version"]))
         return "resolved"
-    if AUTO_RESOLVE_MAX_PROBABILITY < probability <= DEPRIORITIZE_MAX_PROBABILITY and verdict != "suspicious":
-        connection.execute(
-            """UPDATE research_alerts SET severity='low', updated_at=?, evidence_json=json_set(evidence_json, '$.ai_triage', json(?))
-               WHERE status='open' AND json_extract(evidence_json, '$.package')=? AND json_extract(evidence_json, '$.version')=?""",
-            (now, note, row["package"], row["version"]),
-        )
-        return "deprioritized"
-    connection.execute(
-        """UPDATE research_alerts SET updated_at=?, evidence_json=json_set(evidence_json, '$.ai_triage', json(?))
-           WHERE json_extract(evidence_json, '$.package')=? AND json_extract(evidence_json, '$.version')=?""",
-        (now, note, row["package"], row["version"]),
-    )
+    connection.execute("""UPDATE research_alerts SET updated_at=?, evidence_json=json_set(evidence_json, '$.ai_triage', json(?))
+                       WHERE json_extract(evidence_json, '$.package')=? AND json_extract(evidence_json, '$.version')=?""", (now, note, row["package"], row["version"]))
     return "escalated"
 
 
@@ -316,23 +321,20 @@ def rule_health(*, db_path: Optional[str] = None) -> Dict[str, Any]:
     return {"rules": len(stats), "noisy": sorted(noisy)}
 
 
-# Hybrid triage: Cloudflare Clef pre-screens pending hits. Calibration on
-# 1,344 flagged known-malware samples put 0.3% at or below 10%, so that band
-# closes without the chat model; Clef's high scores are not trusted (it rated
-# benign agent tools 96-98% on the production backlog), so everything above
-# goes to the chat model, which is not shown Clef's score.
+# Clef remains opt-in. Scores are observations until a reviewed evaluation
+# approves the current evidence builder, model identity, and closure policy.
 CLEF_CLOSE_MAX = 10
 CLEF_PER_CYCLE = 50
 DISAGREEMENT_GAP = 80
 
 
 def clef_enabled() -> bool:
-    return (os.environ.get("SECOPSAI_CLEF_PRESCREEN", "1") != "0" and bool(os.environ.get("CLOUDFLARE_ACCOUNT_ID"))
+    return (os.environ.get("SECOPSAI_CLEF_PRESCREEN", "0").strip().lower() in {"1", "true", "yes", "on"} and bool(os.environ.get("CLOUDFLARE_ACCOUNT_ID"))
             and bool(os.environ.get("CLOUDFLARE_WORKERS_AI_TOKEN") or os.environ.get("CLOUDFLARE_AI_TOKEN")))
 
 
 def clef_prescreen(*, db_path: Optional[str] = None, classify: Optional[Any] = None, limit: int = CLEF_PER_CYCLE) -> Dict[str, Any]:
-    """Score pending hits with Clef; close those at or below CLEF_CLOSE_MAX."""
+    """Record Clef judgments; closure requires the shared calibrated policy."""
     from concurrent.futures import ThreadPoolExecutor
 
     from secopsai import clef_triage
@@ -360,33 +362,39 @@ def clef_prescreen(*, db_path: Optional[str] = None, classify: Optional[Any] = N
     now = soc_store.utc_now()
     with closing(soc_store.connect(db_path)) as connection:
         for row, result in zip(rows, results):
-            if "probability" not in result:
+            from secopsai.decision_contracts import DecisionError
+            from secopsai.decision_policy import closure_decision
+            try:
+                clef_triage.validate_clef_result(result)
+            except DecisionError:
                 stats["errors"] += 1
                 continue
             stats["scored"] += 1
             stats["tokens"] += int(result.get("input_tokens") or 0)
-            clef = {"probability": int(result["probability"]), "choice": result.get("choice"), "at": now}
-            context = {**json.loads(row["context_json"] or "{}"), "clef": clef}
-            alert_note = json.dumps({"probability": clef["probability"], "choice": clef["choice"]})
-            if clef["probability"] <= CLEF_CLOSE_MAX:
+            from secopsai.decision_evidence import build_evidence
+            original = json.loads(row["context_json"] or "{}")
+            _, coverage = build_evidence(original)
+            result = {**result, "evidence_coverage": coverage, "automatic_closure_eligible": coverage["complete"]}
+            allowed, reason = closure_decision(result)
+            clef = {**result, "at": now, "closure_eligible": allowed, "policy_reason": reason}
+            context = {**original, "clef": clef}
+            if context.get("evidence_truncated"):
+                allowed = False
+                clef.update(closure_eligible=False, policy_reason="incomplete_evidence")
+            alert_note = json.dumps(clef)
+            if allowed:
                 stats["closed"] += 1
-                connection.execute("UPDATE research_ai_triage SET status = 'triaged', verdict = 'likely_benign', confidence = ?, context_json = ?, updated_at = ? WHERE artifact_key = ?",
-                                   (100 - clef["probability"], json.dumps(context, sort_keys=True), now, row["artifact_key"]))
-                connection.execute(
-                    """UPDATE research_alerts SET status = 'resolved', owner = 'clef', updated_at = ?,
-                          evidence_json = json_set(evidence_json, '$.clef', json(?))
-                       WHERE status = 'open' AND json_extract(evidence_json, '$.package') = ? AND json_extract(evidence_json, '$.version') = ?""",
-                    (now, alert_note, row["package"], row["version"]),
-                )
+                connection.execute("UPDATE research_ai_triage SET status='triaged', verdict='likely_benign', confidence=?, context_json=?, updated_at=? WHERE artifact_key=?",
+                                   (result["confidence"], json.dumps(context, sort_keys=True), now, row["artifact_key"]))
+                connection.execute("""UPDATE research_alerts SET status='resolved', owner='clef', updated_at=?, evidence_json=json_set(evidence_json, '$.clef', json(?))
+                                   WHERE status='open' AND json_extract(evidence_json, '$.package')=? AND json_extract(evidence_json, '$.version')=?""",
+                                   (now, alert_note, row["package"], row["version"]))
             else:
                 stats["to_chat"] += 1
-                connection.execute("UPDATE research_ai_triage SET context_json = ?, updated_at = ? WHERE artifact_key = ?",
-                                   (json.dumps(context, sort_keys=True), now, row["artifact_key"]))
-                connection.execute(
-                    """UPDATE research_alerts SET updated_at = ?, evidence_json = json_set(evidence_json, '$.clef', json(?))
-                       WHERE json_extract(evidence_json, '$.package') = ? AND json_extract(evidence_json, '$.version') = ?""",
-                    (now, alert_note, row["package"], row["version"]),
-                )
+                connection.execute("UPDATE research_ai_triage SET context_json=?, updated_at=? WHERE artifact_key=?", (json.dumps(context, sort_keys=True), now, row["artifact_key"]))
+                connection.execute("""UPDATE research_alerts SET updated_at=?, evidence_json=json_set(evidence_json, '$.clef', json(?))
+                                   WHERE json_extract(evidence_json, '$.package')=? AND json_extract(evidence_json, '$.version')=?""",
+                                   (now, alert_note, row["package"], row["version"]))
         connection.commit()
     return stats
 

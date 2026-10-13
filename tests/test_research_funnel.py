@@ -11,6 +11,13 @@ from secopsai.research_intake import SafeFetcher
 yara_x = pytest.importorskip("yara_x")
 
 
+def _decision(verdict="needs_more_evidence", confidence=60, probability=50):
+    disposition = {"true_positive": "true_positive", "false_positive": "false_positive", "needs_more_evidence": "needs_review"}[verdict]
+    return {"summary": "Evidence assessment", "risk_assessment": "Review risk", "evidence": [], "recommended_actions": [], "limitations": [],
+            "finding_verdict": verdict, "finding_confidence": confidence, "malicious_probability": probability,
+            "disposition_recommendation": disposition, "decision_evidence_refs": [], "missing_evidence": ["payload.js"] if verdict == "needs_more_evidence" else []}
+
+
 def _tgz(files):
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
@@ -63,8 +70,8 @@ class _FakeCore:
 
     def triage_results(self, *, since="", limit=100):
         return {"results": [
-            {"artifact_id": "npm:quiet@1.0.0", "status": "succeeded", "updated_at": "2026-10-10T01:00:00Z", "job_id": "AIJ-0", "result": {"finding_verdict": "false_positive", "finding_confidence": 92, "summary": "Source map data URI"}},
-            {"artifact_id": "npm:loud@2.0.0", "status": "succeeded", "updated_at": "2026-10-10T01:01:00Z", "job_id": "AIJ-1", "result": {"finding_verdict": "true_positive", "finding_confidence": 80}},
+            {"artifact_id": "npm:quiet@1.0.0", "status": "succeeded", "updated_at": "2026-10-10T01:00:00Z", "job_id": "AIJ-0", "result": _decision("false_positive", 92, 4)},
+            {"artifact_id": "npm:loud@2.0.0", "status": "succeeded", "updated_at": "2026-10-10T01:01:00Z", "job_id": "AIJ-1", "result": _decision("true_positive", 80, 90)},
         ] if not since else [], "pending": 0}
 
 
@@ -82,12 +89,12 @@ def test_ai_triage_round_trip_resolves_benign_and_escalates_suspicious(tmp_path)
         research_ai_triage.record_hit(ecosystem="npm", package=package, version=version, prescan={"score": 60, "level": "warning", "findings": [{"rule_id": "YARA:X", "safe_context": "..."}]}, db_path=db)
     core = _FakeCore()
     summary = research_ai_triage.sync(core, db_path=db)
-    assert summary["queued"] == 2 and summary["resolved"] == 1 and summary["escalated"] == 1
+    assert summary["queued"] == 2 and summary["resolved"] == 0 and summary["escalated"] == 2
     assert core.queued[0]["inputs"]["artifact_triage"]["findings"][0]["rule_id"] == "YARA:X"
     with soc_store.connect(db) as connection:
         status = dict(connection.execute("SELECT alert_id, status FROM research_alerts").fetchall())
         note = json.loads(connection.execute("SELECT json_extract(evidence_json, '$.ai_triage') FROM research_alerts WHERE alert_id='RAL-2'").fetchone()[0])
-    assert status == {"RAL-1": "resolved", "RAL-2": "open"}
+    assert status == {"RAL-1": "open", "RAL-2": "open"}
     assert note["verdict"] == "suspicious"
     assert research_ai_triage.sync(core, db_path=db)["results"] == 0, "cursor prevents re-applying results"
 
@@ -196,15 +203,17 @@ def test_malicious_probability_resolves_or_escalates(tmp_path):
     now = "2026-10-11T00:00:00Z"
     with soc_store.connect(db_path) as connection:
         for name, probability in (("low", 4), ("mid", 22), ("high", 85), ("missing", None)):
-            result = {"finding_verdict": "needs_more_evidence", "finding_confidence": 60}
+            result = _decision(probability=probability)
+            if probability is None:
+                del result["malicious_probability"]
             if probability is not None:
                 result["malicious_probability"] = probability
             research_ai_triage._apply_result(connection, {"artifact_id": f"npm:{name}@1", "status": "succeeded", "result": result}, now)
         connection.commit()
         alerts = {r["alert_id"]: (r["status"], r["severity"]) for r in connection.execute("SELECT alert_id, status, severity FROM research_alerts")}
         verdicts = {r["package"]: r["verdict"] for r in connection.execute("SELECT package, verdict FROM research_ai_triage")}
-    assert alerts == {"RAL-low": ("resolved", "high"), "RAL-mid": ("open", "high"), "RAL-high": ("open", "high"), "RAL-missing": ("open", "high")}
-    assert verdicts == {"low": "likely_benign", "mid": "inconclusive", "high": "suspicious", "missing": "inconclusive"}
+    assert alerts == {"RAL-low": ("open", "high"), "RAL-mid": ("open", "high"), "RAL-high": ("open", "high"), "RAL-missing": ("open", "high")}
+    assert verdicts == {"low": "inconclusive", "mid": "inconclusive", "high": "suspicious", "missing": ""}
 
 
 def test_clef_prescreen_closes_low_scores_and_hides_its_score_from_chat(tmp_path):
@@ -216,13 +225,17 @@ def test_clef_prescreen_closes_low_scores_and_hides_its_score_from_chat(tmp_path
             connection.execute("INSERT INTO research_alerts (alert_id, alert_type, severity, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at) VALUES (?, 'registry_release_anomaly', 'high', ?, 'r', ?, 'open', '', 't', 't')",
                                (f"RAL-{name}", f"d-{name}", json.dumps({"package": name, "version": "1"})))
     scores = {"quiet": 4, "loud": 93}
-    stats = research_ai_triage.clef_prescreen(db_path=db_path, classify=lambda context: {"probability": scores[context["package"]], "choice": "x", "input_tokens": 10})
-    assert stats == {"scored": 2, "closed": 1, "to_chat": 1, "errors": 0, "tokens": 20}
+    def classify(context):
+        choice = "benign" if context["package"] == "quiet" else "malicious"
+        return {"probability": scores[context["package"]], "choice": choice, "confidence": 90, "input_tokens": 10,
+                "model": "clef", "choice_probabilities": {key: float(key == choice) for key in ("benign", "malicious", "needs_review")}}
+    stats = research_ai_triage.clef_prescreen(db_path=db_path, classify=classify)
+    assert stats == {"scored": 2, "closed": 0, "to_chat": 2, "errors": 0, "tokens": 20}
     with soc_store.connect(db_path) as connection:
         alerts = {r["alert_id"]: (r["status"], r["owner"]) for r in connection.execute("SELECT alert_id, status, owner FROM research_alerts")}
         rows = {r["package"]: r["status"] for r in connection.execute("SELECT package, status FROM research_ai_triage")}
-    assert alerts["RAL-quiet"] == ("resolved", "clef") and alerts["RAL-loud"][0] == "open"
-    assert rows == {"quiet": "triaged", "loud": "pending"}
+    assert alerts["RAL-quiet"] == ("open", "") and alerts["RAL-loud"][0] == "open"
+    assert rows == {"quiet": "pending", "loud": "pending"}
 
     class Core:
         enabled = True
@@ -234,10 +247,10 @@ def test_clef_prescreen_closes_low_scores_and_hides_its_score_from_chat(tmp_path
 
     core = Core()
     research_ai_triage._queue_pending(core, db_path)
-    assert [job["artifact_id"] for job in core.jobs] == ["npm:loud@1"]
+    assert [job["artifact_id"] for job in core.jobs] == ["npm:quiet@1", "npm:loud@1"]
     assert "clef" not in core.jobs[0]["inputs"]["artifact_triage"], "the chat model must not see Clef's score"
     with soc_store.connect(db_path) as connection:
-        research_ai_triage._apply_result(connection, {"artifact_id": "npm:loud@1", "status": "succeeded", "result": {"finding_verdict": "needs_more_evidence", "malicious_probability": 5}}, "t")
+        research_ai_triage._apply_result(connection, {"artifact_id": "npm:loud@1", "job_id": "J", "status": "succeeded", "result": _decision("false_positive", 99, 5)}, "t")
         connection.commit()
         note = json.loads(connection.execute("SELECT json_extract(evidence_json, '$.ai_triage') FROM research_alerts WHERE alert_id='RAL-loud'").fetchone()[0])
     assert note["models_disagree"] is True and note["clef_probability"] == 93

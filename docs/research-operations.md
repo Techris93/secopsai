@@ -168,21 +168,23 @@ new or changed install script, new execution/egress/credential behaviour, a
 YARA warning or alert, or a publisher change. The job summary reports the
 time from publish to verdict.
 
-**3. Hybrid triage: Cloudflare Clef, then your bridge.** Each flagged hit is
-first scored by Cloudflare Clef (a decision model on Workers AI, billed per
-input token). At 10% or below the hit is closed and its alert resolved
-(owner `clef`): calibration put 0.3% of 1,344 flagged known-malware samples
-there. Clef's high scores are not used to decide: on the production backlog it
-rated several benign agent tools 96-98%. Everything above 10% goes to the
-chat model through your bridge, which is not shown Clef's score; alerts carry
-both scores and flag `models_disagree` when they differ by 80 points or more.
-Set `SECOPSAI_CLEF_PRESCREEN=0` to turn the pre-screen off.
+**3. Hybrid triage: Cloudflare Clef, then your bridge.** Clef pre-screening is
+paused and defaults to disabled. Setting `SECOPSAI_CLEF_PRESCREEN=1` explicitly
+enables scoring, but scoring does not enable alert closure. The current
+`decision-v2` policy defaults to observation mode: valid model decisions are
+recorded and alerts stay open for review. Provider failures and incomplete
+answers cannot become low-risk scores. Coverage omissions, adverse
+dispositions, and model disagreement block closure. The second model is not
+shown Clef's score. See [Decision model safety](decision-model-safety.md) for
+calibration, enforcement, and rollout requirements. Historical calibration
+predates the revised evidence builder and cannot authorize closure under this
+policy.
 
 **Chat-model triage through your bridge.** Rule hits are queued in Core as
 `triage_artifact` jobs carrying only the matched strings and bounded context
 windows. The bridge on your machine claims them and asks your selected model
 through opencodex (your ChatGPT or Claude subscription), then posts the
-verdict back. Benign verdicts at confidence ≥ 85 resolve the alert;
+verdict back. Automatic closure requires reviewed calibration and the decision-v2 policy;
 suspicious or inconclusive ones stay open for you. The bridge must be
 running in remote mode for triage to progress; jobs wait in Core otherwise.
 

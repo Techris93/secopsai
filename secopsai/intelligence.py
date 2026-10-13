@@ -113,16 +113,21 @@ def prepare_bridge_request(name: str, inputs: dict[str, Any] | None = None, *, d
         raise ValueError(f"intelligence action does not require the local Codex bridge: {name}")
     normalized = _normalize_inputs(inputs)
     context = _bridge_context(action, normalized, db_path)
+    minimized_context = minimize(context, string_limit=16000 if action.name == "triage_artifact" else MAX_STRING_LENGTH, allow_artifact_code=action.name == "triage_artifact")
+    if action.name == "triage_artifact" and minimized_context != context:
+        artifact = minimized_context.get("artifact_triage", minimized_context)
+        artifact["evidence_truncated"] = True
     return {
         "schema_version": SCHEMA_VERSION,
         "action": action.public(),
         "requested_at": soc_store.utc_now(),
-        "context": minimize(context),
+        "context": minimized_context,
         "instructions": _bridge_instructions(action, normalized, db_path=db_path),
         "safety": {
             "read_only": True,
             "raw_telemetry_included": False,
             "artifact_content_included": False,
+            "bounded_artifact_code_included": action.name == "triage_artifact",
             "human_review_required": True,
         },
     }
@@ -143,33 +148,39 @@ def validate_bridge_result(
     missing = [key for key in required if key not in value]
     if missing:
         raise ValueError("bridge result is missing: " + ", ".join(missing))
+    from secopsai.decision_contracts import validate_action_result
+    validate_action_result(action_name, value)
     cleaned = minimize(value)
     if not isinstance(cleaned, dict):
         raise ValueError("bridge result is invalid after minimization")
+    validate_action_result(action_name, cleaned)
     provider_name = str(provider or "opencodex_proxy").strip()[:120] or "opencodex_proxy"
     return _envelope(action, cleaned, provider=provider_name)
 
 
-def minimize(value: Any, *, depth: int = 0) -> Any:
+def minimize(value: Any, *, depth: int = 0, string_limit: int = MAX_STRING_LENGTH, allow_artifact_code: bool = False) -> Any:
     if depth > 8:
         return "[depth limit]"
     if isinstance(value, dict):
         output: dict[str, Any] = {}
         for key, item in list(value.items())[:MAX_LIST_ITEMS]:
             normalized_key = str(key).strip().lower()
+            if allow_artifact_code and normalized_key in {"content", "safe_context", "code", "text"} and isinstance(item, str):
+                output[str(key)[:120]] = item[:string_limit]
+                continue
             if normalized_key in FORBIDDEN_KEYS or any(part in normalized_key for part in ("password", "secret", "token", "private_key", "raw_", "quarantine")):
                 continue
-            output[str(key)[:120]] = minimize(item, depth=depth + 1)
+            output[str(key)[:120]] = minimize(item, depth=depth + 1, string_limit=string_limit, allow_artifact_code=allow_artifact_code)
         return output
     if isinstance(value, (list, tuple, set)):
-        return [minimize(item, depth=depth + 1) for item in list(value)[:MAX_LIST_ITEMS]]
+        return [minimize(item, depth=depth + 1, string_limit=string_limit, allow_artifact_code=allow_artifact_code) for item in list(value)[:MAX_LIST_ITEMS]]
     if isinstance(value, str):
         if os.path.isabs(value):
             return "[local path redacted]"
-        return value[:MAX_STRING_LENGTH]
+        return value[:string_limit]
     if value is None or isinstance(value, (bool, int, float)):
         return value
-    return str(value)[:MAX_STRING_LENGTH]
+    return str(value)[:string_limit]
 
 
 def _workspace_summary(inputs: dict[str, Any], db_path: str | None) -> dict[str, Any]:
@@ -391,7 +402,7 @@ def _bridge_instructions(
             "return benign_expected or false_positive. When it shows data collected and sent off the machine, credential or wallet access, a "
             "downloaded payload being run, or code that hides what it does, return true_positive. You do not need certainty to decide: decide "
             "when the supplied code explains every flagged signal, and express the remaining doubt through finding_confidence and "
-            "malicious_probability. Escalation to an analyst is driven by malicious_probability, not by the verdict. "
+            "malicious_probability. A suspicious verdict or high malicious probability requires analyst review. Low probability does not override needs_more_evidence. "
             "Use needs_more_evidence only when a specific file that the supplied code refers to, and that is not supplied, would change the "
             "verdict; name that file in missing_evidence. Do not ask for files or regions that are already supplied, for the omitted parts of a "
             "large file whose matched regions are shown, for execution, or for telemetry. A YARA rule's pattern names (such as $s5) are not "

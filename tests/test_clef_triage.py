@@ -5,6 +5,9 @@ class _Response:
     def __init__(self, payload):
         self.payload = payload
 
+    status_code = 200
+    headers = {}
+
     def raise_for_status(self):
         pass
 
@@ -29,9 +32,15 @@ CONTEXT = {"ecosystem": "npm", "package": "x", "version": "1.0.0", "rule_score":
 
 def test_state_puts_install_files_first_and_is_capped():
     state = clef_triage.build_state(CONTEXT)
-    assert state.index("install-time file package/i.js") < state.index("finding BEHAVIOUR:BEH_X")
-    assert "Behaviour flags: install_hook, http_send" in state
-    assert len(clef_triage.build_state({**CONTEXT, "install_time_files": [{"path": "a", "content": "z" * 100000}]})) == clef_triage.MAX_STATE_CHARS
+    import json
+    body = json.loads(state)
+    assert body['evidence']['install_time_files'][0]['path'] == 'package/i.js'
+    assert body['evidence']['metadata_signals'][0]['flags'] == ['install_hook', 'http_send']
+    state = clef_triage.build_state({**CONTEXT, "install_time_files": [{"path": "a", "content": "z" * 100000}]})
+    assert len(state) <= clef_triage.MAX_STATE_CHARS
+    assert json.loads(state)['coverage']['complete'] is False
+    assert 'fetch(...)' in state
+
 
 
 def test_classify_reads_workers_ai_answers():
@@ -40,7 +49,24 @@ def test_classify_reads_workers_ai_answers():
         "disposition": {"type": "choice", "choice": "malicious", "probabilities": {"malicious": 0.8, "benign": 0.05, "needs_review": 0.15}, "confidence": 0.7}}}}
     session = _Session(payload)
     result = clef_triage.classify(CONTEXT, account_id="acct", api_token="tok", session=session)
-    assert result == {"probability": 87, "choice": "malicious", "choice_probabilities": {"malicious": 0.8, "benign": 0.05, "needs_review": 0.15},
+    assert {key: result[key] for key in ("probability", "choice", "choice_probabilities", "input_tokens", "model")} == {"probability": 87, "choice": "malicious", "choice_probabilities": {"malicious": 0.8, "benign": 0.05, "needs_review": 0.15},
                       "input_tokens": 812, "model": "clef"}
     assert session.sent["url"].endswith("/accounts/acct/ai/run/@cf/cloudflare/clef")
     assert set(session.sent["json"]["questions"]) == {"malicious", "disposition"}
+
+
+def test_failed_response_cannot_become_zero_probability():
+    import pytest
+    from secopsai.decision_contracts import DecisionError
+    for payload in ({'success': False, 'errors': []}, {'success': True, 'result': {'answers': {}}}):
+        with pytest.raises(DecisionError):
+            clef_triage.classify(CONTEXT, account_id='acct', api_token='tok', session=_Session(payload))
+
+
+def test_budget_preserves_matches_after_large_install_file():
+    import json
+    state = clef_triage.build_state({**CONTEXT, 'install_time_files': [{'path': 'large', 'content': 'x' * 100000}],
+        'findings': [{'rule_id': 'R', 'file_path': 'payload.js', 'matched_strings': ['DECISIVE_TEXT']}],
+        'flagged_files': [{'path': 'payload.js', 'content': 'DECISIVE_TEXT'}]})
+    assert 'DECISIVE_TEXT' in state
+    assert not json.loads(state)['coverage']['complete']

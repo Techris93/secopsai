@@ -719,3 +719,37 @@ test("research worker queues triage jobs for the operator bridge and reads outco
   assert.equal(results.results[0].result.finding_verdict, "false_positive");
   assert.equal(results.pending, 0);
 });
+
+test("typed capability and artifact contracts hold through hosted completion and retries", { skip: !DatabaseSync }, async () => {
+  const { db, d1 } = migratedSqliteD1();
+  const env = { DB: d1, CORE_BRIDGE_TOKEN: 'b'.repeat(44), CORE_INTELLIGENCE_TOKEN: 'i'.repeat(44) };
+  const call = (path, body, token = env.CORE_BRIDGE_TOKEN) => handleRequest(new Request(`https://core.example${path}`, {
+    method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
+  }), env);
+  const incompatible = await call('/api/v1/intelligence/jobs', { action: 'analyze_research_case', model: 'typesafe/jev-latest', target_id: 'RSC-1' }, env.CORE_INTELLIGENCE_TOKEN);
+  assert.equal(incompatible.status, 422);
+  assert.equal((await incompatible.json()).error, 'unsupported_action');
+  const code = 'const x = 1;\n'.repeat(400) + 'decisive_payload();\n';
+  const created = await (await call('/api/v1/intelligence/jobs', { action: 'triage_artifact', model: 'typesafe/jev-latest', target_id: 'npm:demo@1',
+    inputs: { artifact_triage: { findings: [{ rule_id: 'R1', matched_strings: ['decisive_payload()'] }], flagged_files: [{ path: 'install.js', content: code, complete: true }] } },
+  }, env.CORE_INTELLIGENCE_TOKEN)).json();
+  const claimed = await (await call('/api/v1/intelligence/bridge/claim', { worker_id: 'test-worker' })).json();
+  assert.equal(claimed.job.selected_model, 'typesafe/jev-latest');
+  assert.equal(claimed.bridge_request.context.artifact_triage.flagged_files[0].content, code);
+  const job = claimed.job;
+  const result = { summary: 'Suspicious installer', risk_assessment: 'Code executes a payload', evidence: ['R1'], recommended_actions: ['Review'], limitations: [],
+    finding_verdict: 'true_positive', finding_confidence: 99, malicious_probability: 75, disposition_recommendation: 'true_positive', decision_evidence_refs: ['R1'] };
+  const path = `/api/v1/intelligence/bridge/jobs/${job.job_id}/complete`;
+  const body = { worker_id: job.worker_id, lease_generation: job.lease_generation, lease_token: job.lease_token, model: 'typesafe/jev-latest', result };
+  assert.equal((await call(path, { ...body, result: { ...result, finding_confidence: null } })).status, 422);
+  assert.equal(db.prepare('SELECT status FROM intelligence_jobs WHERE job_id=?').get(job.job_id).status, 'running');
+  assert.equal((await call(path, body)).status, 200);
+  assert.equal((await call(path, { ...body, result: {} })).status, 200);
+  const stored = JSON.parse(db.prepare('SELECT result_json FROM intelligence_jobs WHERE job_id=?').get(job.job_id).result_json);
+  assert.equal(stored.finding_confidence, 99);
+  assert.equal(stored.malicious_probability, 75);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM intelligence_job_events WHERE job_id=? AND event_type='completed'").get(job.job_id).n, 1);
+  assert.ok(created.job.job_id);
+  const truncated = await (await call('/api/v1/intelligence/jobs', { action: 'triage_artifact', target_id: 'npm:long@1', inputs: { artifact_triage: { findings: [{ rule_id: 'R2' }], flagged_files: [{ content: 'x'.repeat(17000) }] } } }, env.CORE_INTELLIGENCE_TOKEN)).json();
+  assert.equal(JSON.parse(db.prepare('SELECT input_json FROM intelligence_jobs WHERE job_id=?').get(truncated.job.job_id).input_json).artifact_triage.evidence_truncated, true);
+});

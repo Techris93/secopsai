@@ -21,6 +21,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import requests
 import soc_store
+from secopsai.decision_policy import policy_status
 
 from secopsai.intelligence import bridge_output_schema, prepare_bridge_request, validate_bridge_result
 from secopsai.intelligence_jobs import (
@@ -591,6 +592,7 @@ def doctor(
         "probe_fallbacks": bool(probe_fallbacks),
         "provider": provider,
         "selected_model": selected_model,
+        "decision_policy": policy_status(),
         # Catalog availability and live capability are separate signals. The
         # former means the model is selectable; the latter is safe to use for
         # new work only when the probe is live (or its snapshot is fresh).
@@ -720,6 +722,9 @@ def _probe_provider(model: str, settings: BridgeSettings, runner: Runner, *, for
 
     started = time.monotonic()
     result = None
+    if model in {"cloudflare/clef", "cloudflare/clef-flash"}:
+        from secopsai.clef_triage import probe_clef
+        result = {**probe_clef(model.split("/", 1)[1]), "probe_method": "workers_ai_typed_decision"}
     if model.startswith("typesafe/") or model.startswith("typesafe-ai/"):
         from secopsai.typesafe_adapter import probe_typesafe
         t_probe = probe_typesafe()
@@ -969,7 +974,8 @@ def _extract_http_status(message: str) -> int | None:
 
 
 def _safe_error_text(value: Any) -> str:
-    return re.sub(r"(?i)(api[_ -]?key|authorization|bearer|token)\s*[:=]\s*[^\s,;]+", r"\1=<redacted>", str(value or ""))[:1000]
+    text = re.sub(r"(?i)\bbearer\s+[^\s,;]+", "Bearer <redacted>", str(value or ""))
+    return re.sub(r"(?i)(api[_ -]?key|authorization|bearer|token)\s*[:=]\s*[^\s,;]+", r"\1=<redacted>", text)[:1000]
 
 
 def _provider_health_message(providers: dict[str, Any], selected_model: str) -> str:
@@ -1317,7 +1323,8 @@ def run_once(
             except Exception:
                 # A generic hosted envelope remains usable for actions whose
                 # target does not exist in the local ledger.
-                pass
+                from secopsai.intelligence import get_action, _bridge_instructions
+                bridge_request["instructions"] = _bridge_instructions(get_action(job["action"]), job_inputs, db_path=db_path)
         if remote:
             raw, used_model = _invoke_with_model_fallback(bridge_request, job_settings, run, model_chain)
         else:
@@ -1351,7 +1358,9 @@ def run_once(
                     lease_token=job.get("lease_token"),
                     db_path=db_path,
                 )
-        if job.get("action") == "triage_artifact":
+        if job.get("action") == "triage_artifact" and not isinstance(job_inputs.get("artifact_triage"), dict):
+            # Inline research-worker jobs belong to the hosted/research ledger.
+            # They need no second write to an unrelated local artifact ledger.
             from secopsai.artifact_fleet import record_model_result
 
             record_model_result(
@@ -1398,7 +1407,7 @@ def run_once(
             resolved,
             job["job_id"],
             remote=remote,
-            error_code="bridge_failed",
+            error_code=getattr(exc, "category", "bridge_failed"),
             error_message=_safe_error(exc),
             lease_generation=job.get("lease_generation"),
             lease_token=job.get("lease_token", ""),
@@ -1729,13 +1738,15 @@ def _models_from_catalog() -> list[dict[str, Any]]:
 
 
 def _typesafe_models() -> list[dict[str, Any]]:
+    from secopsai.provider_capabilities import model_capabilities
     return [{
         "id": "typesafe/jev-latest",
         "provider": "typesafe_ai",
         "name": "TypeSafe Jev (System One)",
         "source": "typesafe_ai",
         "description": "High-velocity non-autoregressive System One decision engine for typed triage and safety checks.",
-    }]
+        **model_capabilities("typesafe/jev-latest"),
+    }, *[{"id": f"cloudflare/{name}", "provider": "cloudflare", "name": f"Cloudflare {name}", "source": "workers_ai", **model_capabilities(f"cloudflare/{name}")} for name in ("clef", "clef-flash")]]
 
 
 def _normalize_model_entries(item: Any, *, provider: str) -> list[dict[str, Any]]:
@@ -1808,6 +1819,8 @@ def _model_chain(
 
 
 def _provider_for_model(model: str, health: dict[str, Any]) -> str:
+    if model in {"cloudflare/clef", "cloudflare/clef-flash"}:
+        return "workers_ai:clef"
     if not model:
         return PROVIDER_CODEX_NATIVE
     if model.startswith("typesafe/") or model.startswith("typesafe-ai/"):
@@ -1825,21 +1838,58 @@ def _invoke_with_model_fallback(
     runner: Runner,
     model_chain: Sequence[str],
 ) -> tuple[dict[str, Any], str]:
+    from secopsai.provider_capabilities import require_action
+    from secopsai.decision_contracts import DecisionError
+    action = request.get("action", {})
+    action_name = action.get("name", "") if isinstance(action, dict) else str(action)
+    if model_chain:
+        require_action(model_chain[0], action_name)
     errors: list[str] = []
+    last_error: Exception | None = None
+    deadline = time.monotonic() + settings.timeout_seconds
     for index, model_name in enumerate(model_chain):
         try:
-            return _invoke_codex(request, settings, runner, model=model_name), model_name
+            require_action(model_name, action_name)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise DecisionError("evaluation deadline exhausted", category="timeout")
+            raw = _invoke_codex(request, replace(settings, timeout_seconds=remaining), runner, model=model_name)
+            if action_name == "triage_artifact":
+                from secopsai.decision_evidence import build_evidence, evidence_identifiers
+                context = request.get("context", {})
+                artifact = context.get("artifact_triage", context)
+                _, coverage = build_evidence(artifact)
+                refs = raw.get("decision_evidence_refs", [])
+                if not isinstance(refs, list) or any(ref not in evidence_identifiers(artifact) for ref in refs):
+                    raise DecisionError("artifact result cites unsupplied evidence", category="safety")
+                if raw.get("finding_verdict") == "needs_more_evidence":
+                    missing = raw.get("missing_evidence")
+                    if not isinstance(missing, list) or not missing or any(path not in artifact.get("missing_files", []) for path in missing):
+                        raise DecisionError("artifact abstention must select a supplied missing-file identifier", category="safety")
+                raw["evidence_coverage"] = coverage
+                raw["automatic_closure_eligible"] = coverage["complete"] and bool(refs)
+                raw.setdefault("provider", _provider_for_model(model_name, {}))
+                raw.setdefault("model_version", model_name)
+                raw["assessment_version"] = "decision-v2"
+            validate_bridge_result(action_name, raw)
+            return raw, model_name
         except Exception as exc:
+            last_error = exc
             message = _safe_error(exc)
             errors.append(f"{model_name or 'default'}: {message}")
             if index + 1 >= len(model_chain):
                 break
-            should_fallback = provider_failure_allows_fallback(settings.fallback_mode, message)
+            if isinstance(exc, DecisionError):
+                should_fallback = (settings.fallback_mode == "quota_auth" and exc.category in {"authentication", "rate_limit"}) or (settings.fallback_mode == "any_provider" and exc.category in {"authentication", "rate_limit", "availability", "timeout"})
+            else:
+                should_fallback = provider_failure_allows_fallback(settings.fallback_mode, message)
             if not should_fallback:
                 # Validation, schema, and safety failures stay attached to the
                 # selected model instead of being hidden by provider failover.
                 raise
             continue
+    if isinstance(last_error, DecisionError):
+        raise DecisionError("all configured bridge models failed", provider=last_error.provider, category=last_error.category, http_status=last_error.http_status) from last_error
     raise RuntimeError("all bridge models failed: " + " | ".join(errors)[:1600])
 
 
@@ -1860,6 +1910,12 @@ def _invoke_codex(
     *,
     model: str = "",
 ) -> dict[str, Any]:
+    from secopsai.provider_capabilities import require_action, decision_provider
+    action = request.get("action", {})
+    require_action(model, action.get("name", "") if isinstance(action, dict) else str(action))
+    if decision_provider(model) == "clef":
+        from secopsai.clef_triage import invoke_clef_action
+        return invoke_clef_action(request, model=model, timeout=settings.timeout_seconds)
     if model and (model.startswith("typesafe/") or model.startswith("typesafe-ai/")):
         from secopsai.typesafe_adapter import invoke_typesafe_action
         return invoke_typesafe_action(request, model=model, timeout=settings.timeout_seconds)
@@ -2002,6 +2058,10 @@ def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
     items must become readable strings for human review cards.
     """
     result = dict(payload)
+    from secopsai.decision_contracts import number
+    for field in ("finding_confidence", "malicious_probability", "verdict_confidence"):
+        if field in result:
+            number(result[field], 0, 100, field, integer=True)
     analyst_brief = result.get("analyst_brief")
     if isinstance(analyst_brief, dict):
         nested_map = {
@@ -2100,18 +2160,9 @@ def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
         result["verdict_rationale"] = "The model did not provide a bounded package verdict rationale."
     if not isinstance(result.get("verdict_evidence_refs"), list):
         result["verdict_evidence_refs"] = []
-    finding_verdict = str(result.get("finding_verdict") or "").strip().lower()
-    if finding_verdict not in {"true_positive", "false_positive", "benign_expected", "policy_noise", "needs_more_evidence"}:
-        result["finding_verdict"] = "needs_more_evidence"
-    try:
-        result["finding_confidence"] = max(0, min(int(result.get("finding_confidence") or 0), 100))
-    except (TypeError, ValueError):
-        result["finding_confidence"] = 0
-    try:
-        # -1 means "not provided" (older models or runs); never treated as low risk.
-        result["malicious_probability"] = max(0, min(int(result["malicious_probability"]), 100)) if result.get("malicious_probability") is not None else -1
-    except (TypeError, ValueError):
-        result["malicious_probability"] = -1
+    if "finding_verdict" in result:
+        result["finding_verdict"] = str(result["finding_verdict"]).strip().lower()
+    # Missing decision fields stay absent so action validation can reject them.
     disposition = str(result.get("disposition_recommendation") or "").strip().lower()
     if disposition not in {"true_positive", "false_positive", "expected_behavior", "tune_policy", "needs_review"}:
         result["disposition_recommendation"] = "needs_review"
@@ -2385,7 +2436,7 @@ def _is_provider_availability_failure(message: str) -> bool:
 
 
 def _safe_error(exc: Exception) -> str:
-    return f"{type(exc).__name__}: {str(exc)[:1800]}"
+    return _safe_error_text(f"{type(exc).__name__}: {str(exc)[:1800]}")
 
 
 def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:

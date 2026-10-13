@@ -1,3 +1,4 @@
+import { requireModelAction, validateDecisionResult } from "./decision-contracts.js";
 const MAX_ALERT_BYTES = 64 * 1024;
 const SIGNATURE_MAX_AGE_SECONDS = 300;
 const ACCEPTED_ALERT_TYPES = new Set([
@@ -1349,8 +1350,8 @@ async function readJsonObject(request, maximum = MAX_INTELLIGENCE_BYTES, label =
   return parsed;
 }
 
-function boundedJson(value, maximum, label) {
-  const encoded = JSON.stringify(sanitize(value));
+function boundedJson(value, maximum, label, preserveEvidence = false) {
+  const encoded = JSON.stringify(preserveEvidence ? sanitizeTriageInput(value) : sanitize(value));
   if (new TextEncoder().encode(encoded).byteLength > maximum) throw new HttpError(413, "payload_too_large", `${label} exceeds the size limit`);
   return encoded;
 }
@@ -1522,7 +1523,10 @@ async function insertIntelligenceJob(env, requestId, payload) {
   const targetId = clean(payload.target_id, 240);
   const inputs = payload.inputs === undefined ? {} : payload.inputs;
   if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) throw new HttpError(422, "invalid_inputs", "Intelligence inputs must be an object");
-  const inputJson = boundedJson(inputs, MAX_INTELLIGENCE_BYTES, "Intelligence job input");
+  if (payload.model && !inputs.selected_model) inputs.selected_model = clean(payload.model, 200);
+  try { requireModelAction(clean(inputs.selected_model || payload.model, 200), action); }
+  catch { throw new HttpError(422, "unsupported_action", "Selected model does not support this action"); }
+  const inputJson = boundedJson(inputs, MAX_INTELLIGENCE_BYTES, "Intelligence job input", action === "triage_artifact");
   const requestedBy = clean(payload.requested_by, 160) || "mission-control";
   const idempotencyKey = clean(payload.idempotency_key, 256) || await sha256Hex(`${action}|${targetId}|${inputJson}|${requestedBy}`);
   const existing = await env.DB.prepare("SELECT * FROM intelligence_jobs WHERE idempotency_key = ?").bind(idempotencyKey).first();
@@ -1597,14 +1601,15 @@ async function claimIntelligenceJob(request, db, requestId) {
   await writeAudit(db, { requestId, action: "intelligence.bridge.claimed", actorRole: "intelligence_bridge", result: "success", sourceInstance: workerId, details: { job_id: row.job_id, intelligence_action: row.action }, createdAt: now });
   const input = parseJson(row.input_json, {});
   if (row.target_id && input.target_id === undefined) input.target_id = row.target_id;
+  const safeInput = row.action === "triage_artifact" ? sanitizeTriageInput(input) : sanitize(input);
   return {
     status: "claimed",
-    job: { job_id: row.job_id, action: row.action, target_id: row.target_id, status: row.status, attempt: row.attempt, selected_model: clean(input.selected_model, 200), input: sanitize(input), worker_id: row.worker_id, lease_generation: Number(row.lease_generation || 0), lease_token: clean(row.lease_token, 160) },
+    job: { job_id: row.job_id, action: row.action, target_id: row.target_id, status: row.status, attempt: row.attempt, selected_model: clean(input.selected_model, 200), input: safeInput, worker_id: row.worker_id, lease_generation: Number(row.lease_generation || 0), lease_token: clean(row.lease_token, 160) },
     bridge_request: {
       schema_version: INTELLIGENCE_SCHEMA_VERSION,
       action: { name: row.action, read_only: true, requires_bridge: true },
       requested_at: now,
-      context: sanitize({ target_id: row.target_id, inputs: input }),
+      context: row.action === "triage_artifact" ? { artifact_id: row.target_id, artifact_triage: safeInput.artifact_triage || {} } : sanitize({ target_id: row.target_id, inputs: input }),
       instructions: "Use the local SecOpsAI ledger when available. Return summary, risk_assessment, evidence, recommended_actions, and limitations.",
       safety: { read_only: true, raw_telemetry_included: false, artifact_content_included: false, human_review_required: true },
     },
@@ -1624,6 +1629,11 @@ async function completeIntelligenceJob(request, db, jobId, requestId) {
   const required = ["summary", "risk_assessment", "evidence", "recommended_actions", "limitations"];
   const missing = required.filter((key) => result[key] === undefined);
   if (missing.length) throw new HttpError(422, "invalid_result", `Bridge result is missing: ${missing.join(", ")}`);
+  try {
+    requireModelAction(clean(parseJson(row.input_json, {}).selected_model, 200), row.action);
+    requireModelAction(clean(payload.model || parseJson(row.input_json, {}).selected_model, 200), row.action);
+    validateDecisionResult(row.action, result);
+  } catch (error) { throw new HttpError(422, "invalid_result", error.message); }
   const resultJson = boundedJson(result, MAX_INTELLIGENCE_RESULT_BYTES, "Bridge result");
   const now = nowIso();
   const provider = clean(payload.provider, 120) || "hosted_core_bridge";
@@ -2184,17 +2194,23 @@ function response(status, payload, requestId) {
   });
 }
 
-function sanitize(value, depth = 0) {
+function sanitizeTriageInput(value) {
+  const result = sanitize(value, 0, true);
+  if (JSON.stringify(result) !== JSON.stringify(value) && result?.artifact_triage && typeof result.artifact_triage === "object") result.artifact_triage.evidence_truncated = true;
+  return result;
+}
+
+function sanitize(value, depth = 0, preserveText = false) {
   if (depth > 8) return "[truncated]";
-  if (Array.isArray(value)) return value.slice(0, 100).map((item) => sanitize(item, depth + 1));
+  if (Array.isArray(value)) return value.slice(0, 100).map((item) => sanitize(item, depth + 1, preserveText));
   if (value && typeof value === "object") {
     const blocked = new Set(["artifact", "artifact_bytes", "artifact_content", "authorization", "password", "raw_content", "raw_package", "raw_output", "raw_scan", "packet_capture", "pcap", "secret", "token", "access_token", "api_key", "credential", "private_key", "cookie"]);
     return Object.fromEntries(Object.entries(value).filter(([key]) => {
       const normalizedKey = key.toLowerCase();
       return !blocked.has(normalizedKey) && !/(?:^|_)(?:token|secret|password|credential|private_key|api_key)(?:_|$)/.test(normalizedKey);
-    }).map(([key, item]) => [key.slice(0, 128), /(?:^|_)(?:url|uri|locator)$/i.test(key) && typeof item === "string" ? ontologySafeLocatorSync(item) : sanitize(item, depth + 1)]));
+    }).map(([key, item]) => [key.slice(0, 128), /(?:^|_)(?:url|uri|locator)$/i.test(key) && typeof item === "string" ? ontologySafeLocatorSync(item) : sanitize(item, depth + 1, preserveText)]));
   }
-  if (typeof value === "string") return value.replace(/[\r\n]+/g, " ").slice(0, 2000);
+  if (typeof value === "string") return preserveText ? value.slice(0, 16000) : value.replace(/[\r\n]+/g, " ").slice(0, 2000);
   return value === null || ["boolean", "number"].includes(typeof value) ? value : String(value).slice(0, 2000);
 }
 

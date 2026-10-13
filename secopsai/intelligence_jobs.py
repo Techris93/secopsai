@@ -41,6 +41,14 @@ def enqueue_job(
     if initial_status not in {"queued", WAITING_PROVIDER_STATUS}:
         raise ValueError("initial_status must be queued or awaiting_provider")
     normalized_input = dict(inputs or {})
+    from secopsai.provider_capabilities import require_action
+    from secopsai.codex_bridge import load_selected_model
+    selected_model = str(normalized_input.get("selected_model") or load_selected_model(db_path) or os.environ.get("SECOPSAI_BRIDGE_MODEL") or "")
+    require_action(selected_model, action)
+    if selected_model and not normalized_input.get("selected_model"):
+        from secopsai.codex_bridge import load_model_routing
+        routing = load_model_routing(db_path)
+        normalized_input.update(selected_model=selected_model, fallback_models=routing.get("fallback_models", []), fallback_mode=routing.get("fallback_mode", "disabled"))
     input_json = _bounded_json(normalized_input, MAX_INPUT_BYTES, "job input")
     if not idempotency_key:
         seed = f"{action}|{target_id}|{input_json}|{requested_by}"
@@ -324,6 +332,14 @@ def complete_job(
     lease_token: str | None = None,
     db_path: str | None = None,
 ) -> dict[str, Any]:
+    from secopsai.intelligence import validate_bridge_result
+    current = get_job(job_id, db_path=db_path)
+    if current["status"] == "succeeded":
+        return current
+    data = result.get("data") if isinstance(result.get("data"), dict) else result
+    from secopsai.provider_capabilities import require_action
+    require_action(str(current.get("input", {}).get("selected_model") or ""), current["action"])
+    validate_bridge_result(current["action"], data, provider=provider)
     result_json = _bounded_json(result, MAX_RESULT_BYTES, "job result")
     return _finish(
         job_id,
@@ -375,10 +391,6 @@ def requeue_job(
                     ][:8]
                 if fallback_mode is not None:
                     inputs["fallback_mode"] = str(fallback_mode).strip()[:40]
-            else:
-                inputs.pop("selected_model", None)
-                inputs.pop("fallback_models", None)
-                inputs.pop("fallback_mode", None)
             new_input_json = _bounded_json(inputs, MAX_INPUT_BYTES, "job input")
             connection.execute(
                 """UPDATE intelligence_jobs
@@ -428,10 +440,6 @@ def requeue_failed_jobs(
                         ][:8]
                     if fallback_mode is not None:
                         inputs["fallback_mode"] = str(fallback_mode).strip()[:40]
-                else:
-                    inputs.pop("selected_model", None)
-                    inputs.pop("fallback_models", None)
-                    inputs.pop("fallback_mode", None)
                 new_input_json = _bounded_json(inputs, MAX_INPUT_BYTES, "job input")
                 connection.execute(
                     """UPDATE intelligence_jobs
@@ -747,7 +755,7 @@ def rebind_queued_jobs(
     actor: str = "bridge-routing",
     db_path: str | None = None,
 ) -> dict[str, Any]:
-    """Rebind all queued and awaiting_provider jobs to the active selected model routing."""
+    """Bind legacy jobs only; preserve already captured model routing."""
     selected_model = _required(selected_model, "selected_model", 200)
     soc_store.init_db(db_path)
     now = soc_store.utc_now()
@@ -766,6 +774,9 @@ def rebind_queued_jobs(
             for row in rows:
                 job_id = str(row["job_id"])
                 inputs = _decode(str(row["input_json"] or "{}"))
+                if inputs.get("selected_model"):
+                    continue
+
                 inputs["selected_model"] = selected_model
                 inputs["fallback_models"] = clean_fallbacks
                 inputs["fallback_mode"] = clean_mode
