@@ -61,6 +61,8 @@ jobs:
       CLOUDFLARE_WORKERS_AI_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_AI_TOKEN }}
       SECOPSAI_CLEF_PRESCREEN: "0"  # paused to save cost; set to "1" to resume
       SECOPSAI_DECISION_MODE: "observe"  # closure requires reviewed decision-v2 calibration
+      SECOPSAI_PRIMARY_INTEL: "1"  # source intake and draft assembly; never automatic publication
+      SECOPSAI_ARTIFACT_VAULT: "1"  # private, immutable backups of public registry artifacts only
       SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL: https://core.secopsai.dev/api/v1/research/alerts/webhook
       SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET: ${{ secrets.SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET }}
       SECOPSAI_RESEARCH_ALERT_EMAIL: research@secopsai.dev

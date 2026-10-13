@@ -122,7 +122,7 @@ def _sanitize(value: Any, *, key: str = "") -> Any:
 def _case(case_id: str, db_path: str | None) -> dict[str, Any]:
     from secopsai.research_cases import get_case
 
-    case = get_case(case_id, db_path=db_path)
+    case = get_case(case_id, db_path=db_path, include_reliability=False)
     if not case:
         raise ValueError(f"research case not found: {case_id}")
     return case
@@ -147,8 +147,10 @@ def _row_dict(row: Any) -> dict[str, Any]:
 
 
 def _case_fingerprint(case: dict[str, Any]) -> str:
+    from secopsai.research_assurance import case_fingerprint
     return _canonical_hash(
         {
+            "assurance_case_fingerprint": case_fingerprint(case),
             "case": {
                 key: case.get(key)
                 for key in ("case_id", "title", "summary", "case_type", "severity", "confidence", "status", "assessment")
@@ -775,7 +777,7 @@ def _bundle_payload(
             "artifact_hashes": sorted({str(item.get("sha256")).lower() for item in evidence if SHA256_RE.fullmatch(str(item.get("sha256") or ""))}),
             "tools": _tool_versions(case),
             "rule_fingerprints": sorted({str(item.get("fingerprint")) for item in case.get("evidence") or [] if item.get("fingerprint")}),
-            "configuration": {"execution_performed": False, "network_artifact_execution": False},
+            "configuration": {"execution_performed": False, "network_artifact_execution": False, "assurance_case_fingerprint": case["research_assurance"]["fingerprint"]},
             "model_routing": _model_snapshot(db_path),
             "attempts": attempts,
             "errors": failures,
@@ -1126,123 +1128,34 @@ def _canonical_case_records(case: dict[str, Any], bundle: dict[str, Any] | None)
     }
 
 
-def _token_overlap(statement: str, evidence_text: str) -> float:
-    ignore = {"this", "that", "with", "from", "were", "have", "has", "the", "and", "for", "into", "was", "are", "not", "only", "their"}
-    left = {item for item in re.findall(r"[a-z0-9_.@/-]{3,}", statement.lower()) if item not in ignore}
-    right = set(re.findall(r"[a-z0-9_.@/-]{3,}", evidence_text.lower()))
-    return len(left & right) / max(1, len(left))
-
-
 def _verify_statement(statement: str, records: dict[str, Any]) -> dict[str, Any]:
-    claim_type = _claim_type(statement)
-    evidence_ids: list[str] = []
-    contradictions: list[str] = []
-    limitations: list[str] = []
-    identifiers = {
-        "sha256": [value.lower() for value in SHA256_RE.findall(statement)],
-        "cves": [value.upper() for value in CVE_RE.findall(statement)],
-        "ghsas": [value.upper() for value in GHSA_RE.findall(statement)],
-        "urls": [value.rstrip(".,;") for value in URL_RE.findall(statement)],
-        "package_versions": [{"name": name, "version": version} for name, version in VERSION_REF_RE.findall(statement)],
-    }
-    missing: list[str] = []
-    for value in identifiers["sha256"]:
-        if value not in records["hashes"]:
-            missing.append(f"unverified SHA-256 {value}")
-    for value in identifiers["cves"]:
-        if value not in records["cves"]:
-            missing.append(f"unverified advisory {value}")
-    for value in identifiers["ghsas"]:
-        if value not in records["ghsas"]:
-            missing.append(f"unverified advisory {value}")
-    for value in identifiers["urls"]:
-        if value.lower() not in records["urls"]:
-            missing.append(f"unverified URL {value}")
-    for item in identifiers["package_versions"]:
-        if (item["name"].lower(), item["version"].lower()) not in records["versions"]:
-            missing.append(f"unverified package version {item['name']}@{item['version']}")
-        else:
-            evidence_ids.extend(records["source_ids"])
-    for evidence_id, evidence_text in records["corpus"].items():
-        if _token_overlap(statement, evidence_text) >= 0.34 or any(value in evidence_text for value in identifiers["sha256"] + [value.lower() for value in identifiers["cves"] + identifiers["ghsas"]]):
-            evidence_ids.append(evidence_id)
-    if NON_EXECUTION_RE.search(statement):
-        # "Inspected without execution" is a methodology fact recorded on the
-        # evidence and the run bundle; without this the pipeline's own case
-        # summary blocked every source-first case from publication.
-        for item in records["evidence"]:
-            metadata = item.get("metadata") or {}
-            if isinstance(metadata, dict) and metadata.get("execution_performed") is False and item.get("evidence_id"):
-                evidence_ids.append(str(item["evidence_id"]))
-    if claim_type == "runtime_observation":
-        if not records["sandbox_ids"]:
-            missing.append("sandbox evidence for runtime behavior")
-            if records.get("bundle") and records["bundle"].get("payload", {}).get("configuration", {}).get("execution_performed") is False:
-                contradictions.append("SecOpsAI run bundle records that local execution was not performed")
-        else:
-            evidence_ids.extend(records["sandbox_ids"])
-            limitations.append("Runtime evidence is scoped to the named external sandbox and exact artifact hash.")
-    elif claim_type == "static_observation":
-        if not records["static_ids"]:
-            missing.append("static analysis evidence")
-        else:
-            evidence_ids.extend(records["static_ids"])
-            limitations.append("Static observations do not prove runtime behavior or intent.")
-    elif claim_type in {"attribution", "victim_impact"}:
-        verified_types = set()
-        for item in records["evidence"]:
-            metadata = item.get("metadata") or {}
-            if isinstance(metadata, dict):
-                verified_types.update(str(value) for value in metadata.get("verified_claim_types") or [])
-        if claim_type not in verified_types:
-            missing.append(f"explicit source-backed {claim_type.replace('_', ' ')} evidence")
-    elif claim_type == "local_exposure":
-        local_state = str(records.get("bundle", {}).get("payload", {}).get("stage_result", {}).get("local_exposure") or "")
-        if not local_state:
-            limitations.append("Local exposure must be read from the calibrated Research Case field.")
-    elif claim_type == "methodology":
-        bundle = records.get("bundle") or {}
-        executed = " ".join(bundle.get("payload", {}).get("plan", {}).get("executed_methods") or []).lower()
-        if not executed:
-            missing.append("executed-method record in an immutable full research bundle")
-    evidence_ids = sorted(set(evidence_ids))
+    """Extraction cannot establish truth from text similarity or identifiers."""
+    from secopsai.research_operation_store import digest
+
+    claim = records.get("assessments", {}).get(digest(statement), {})
+    current = claim.get("current") is True
+    assessment = claim.get("assessment") if current else "unknown"
+    status = {"observation": "supported", "source_reported": "supported",
+              "inference": "qualified_inference", "disputed": "contradicted"}.get(assessment, "unsupported")
+    missing = [] if status not in {"unsupported", "contradicted"} else ["current claim-specific human evidence assessment"]
     if not records.get("bundle") or records["bundle"].get("status") != "succeeded":
         missing.append("successful immutable full research bundle")
-    if contradictions:
-        status = "contradicted"
-        confidence = 0
-        inference = "not_permitted"
-    elif missing:
-        if INFERENCE_TERMS.search(statement) and evidence_ids:
-            status = "qualified_inference"
-            confidence = min(55, 25 + len(evidence_ids) * 8)
-            inference = "explicit"
-        else:
-            status = "unsupported"
-            confidence = min(35, len(evidence_ids) * 10)
-            inference = "none"
-    elif evidence_ids or identifiers["sha256"] or identifiers["cves"] or identifiers["ghsas"] or identifiers["package_versions"]:
-        status = "supported"
-        confidence = min(100, 75 + len(evidence_ids) * 5)
-        inference = "none"
-    else:
-        status = "qualified_inference" if INFERENCE_TERMS.search(statement) and evidence_ids else "unsupported"
-        confidence = 45 if status == "qualified_inference" else 20
-        inference = "explicit" if status == "qualified_inference" else "none"
-        if status == "unsupported":
-            missing.append("claim-specific evidence")
+        status = "unsupported"
+    refs = claim.get("references", []) if current else []
     return {
-        "claim_type": claim_type,
-        "support_status": status,
-        "confidence": confidence,
-        "evidence_ids": evidence_ids,
-        "contradicting_evidence": contradictions,
-        "inference_status": inference,
+        "claim_type": _claim_type(statement), "support_status": status,
+        "confidence": claim.get("confidence", 0) if current else 0,
+        "evidence_ids": sorted({ref["evidence_id"] for ref in refs}),
+        "contradicting_evidence": claim.get("contradictions", []) if current else [],
+        "inference_status": "explicit" if assessment == "inference" else "none",
         "numeric_values": NUMBER_RE.findall(statement),
-        "identifiers": identifiers,
-        "source_provenance": [{"evidence_id": item, "kind": "case_evidence"} for item in evidence_ids],
-        "limitations": sorted(set([*limitations, *missing])),
-        "verification": {"missing_support": missing, "hard_blocked": status in {"unsupported", "contradicted"}},
+        "identifiers": {"sha256": SHA256_RE.findall(statement), "cves": CVE_RE.findall(statement),
+                        "ghsas": GHSA_RE.findall(statement), "urls": URL_RE.findall(statement),
+                        "package_versions": [{"name": n, "version": v} for n, v in VERSION_REF_RE.findall(statement)]},
+        "source_provenance": refs, "limitations": [*claim.get("limitations", []), *missing],
+        "verification": {"missing_support": missing, "hard_blocked": status in {"unsupported", "contradicted"},
+                         "assessment": assessment, "scope": claim.get("scope", {}),
+                         "likelihood": claim.get("likelihood"), "alternatives": claim.get("alternatives", [])},
     }
 
 
@@ -1268,6 +1181,9 @@ def extract_claim_ledger(
         ).fetchone()
     bundle = inspect_run_bundle(str(full_row["bundle_id"]), db_path=db_path) if full_row else None
     records = _canonical_case_records(case, bundle)
+    from secopsai.research_assurance import claim_assessments
+
+    records["assessments"] = claim_assessments(case, db_path=db_path)
     claims: list[dict[str, Any]] = []
     now = soc_store.utc_now()
     with closing(soc_store.connect(db_path)) as connection:
@@ -1385,6 +1301,9 @@ def verify_claims(
         return extract_claim_ledger(case_id, source_kind=source_kind or "case_summary", source_locator=source_locator, actor=actor, db_path=db_path)
     bundle = inspect_run_bundle(str(full_row["bundle_id"]), db_path=db_path) if full_row else None
     records = _canonical_case_records(case, bundle)
+    from secopsai.research_assurance import claim_assessments
+
+    records["assessments"] = claim_assessments(case, db_path=db_path)
     updated: list[dict[str, Any]] = []
     now = soc_store.utc_now()
     with closing(soc_store.connect(db_path)) as connection:
@@ -1470,6 +1389,9 @@ def _store_audit(
     actor: str,
     db_path: str | None,
 ) -> dict[str, Any]:
+    from secopsai.research_assurance import case_fingerprint
+
+    details = {**details, "assurance_case_fingerprint": case_fingerprint(_case(case_id, db_path))}
     with closing(soc_store.connect(db_path)) as connection:
         bundle = connection.execute("SELECT bundle_id FROM research_run_bundles WHERE case_id=? ORDER BY created_at DESC LIMIT 1", (case_id,)).fetchone()
         audit_id = _id("RRA")
@@ -1582,6 +1504,12 @@ def audit_originality(
     elif max_similarity >= 0.65:
         warnings.append("draft has high similarity to a stored source excerpt; review paraphrasing and attribution")
     blockers.extend(missing_attribution)
+    from secopsai.research_assurance import case_fingerprint
+    from secopsai.research_operation_store import records
+
+    prior = records("prior_art", case_id=case_id, db_path=db_path)
+    if not prior or prior[0]["fingerprint"] != case_fingerprint(case):
+        blockers.append("current dated prior-art searches and specific contribution are required")
     score = max(0, min(100, int(round(100 - max_similarity * 100 - len(missing_attribution) * 20))))
     return _store_audit(case_id, audit_type="originality", status="blocked" if blockers else "passed", score=score, blockers=blockers, warnings=warnings, details={"max_source_similarity": round(max_similarity, 4), "closest_source": closest, "source_references": sources, "attribution_failures": missing_attribution}, actor=actor, db_path=db_path)
 
@@ -1742,6 +1670,8 @@ def _specialist_review_state(case_id: str, db_path: str | None) -> dict[str, Any
     adjudication_status = str(latest.get("adjudication_status") or comparison.get("adjudication_status") or "not_required")
     disagreement_resolved = adjudication_status in {"resolved_primary", "resolved_reviewer"}
     completed = latest.get("status") in {"needs_review", "completed", "accepted"} and bool(review)
+    from secopsai.research_assurance import case_fingerprint
+    current = latest.get("contract", {}).get("research_assurance_fingerprint") == case_fingerprint(_case(case_id, db_path))
     return {
         # A recommend-tier run is "completed" as soon as it is routed; without
         # a review it is still waiting for a model or human reviewer.
@@ -1749,22 +1679,34 @@ def _specialist_review_state(case_id: str, db_path: str | None) -> dict[str, Any
         "material_disagreement": disagreement,
         "adjudication_status": adjudication_status,
         "adjudication_note": str(latest.get("adjudication_note") or ""),
-        "publication_blocked": not completed or (disagreement and not disagreement_resolved),
+        "publication_blocked": not completed or not current or (disagreement and not disagreement_resolved),
         "run": latest,
     }
 
 
-def publication_reliability_gate(case_id: str, *, db_path: str | None = None) -> dict[str, Any]:
+def publication_reliability_gate(case_id: str, *, db_path: str | None = None, target: str = "blog") -> dict[str, Any]:
     workspace = get_reliability_workspace(case_id, db_path=db_path)
-    blockers: list[str] = []
+    from secopsai.research_assurance import assurance_state
+
+    assurance = assurance_state(_case(case_id, db_path), target=target, db_path=db_path)
+    blockers: list[str] = list(assurance["blockers"])
     full = next((item for item in workspace["run_bundles"] if item["stage"] == "full"), None)
     if not full or full["status"] != "succeeded" or not full.get("verification", {}).get("tamper_evident"):
         blockers.append("a successful tamper-evident full research bundle is required")
+    elif full.get("payload", {}).get("configuration", {}).get("assurance_case_fingerprint") != assurance["fingerprint"]:
+        blockers.append("full research bundle is stale after a material evidence change")
     claims = workspace.get("effective_claim_ledger") or workspace["claim_ledger"]
     if not claims:
         blockers.append("a claim ledger is required")
     elif any(item["support_status"] in {"unsupported", "contradicted"} for item in claims):
         blockers.append("unsupported or contradicted claims remain")
+    else:
+        from secopsai.research_assurance import claim_assessments
+        from secopsai.research_operation_store import digest
+
+        current = claim_assessments(_case(case_id, db_path), db_path=db_path)
+        if any(not current.get(digest(item["text_span"]), {}).get("current") for item in claims):
+            blockers.append("claim ledger assessments are stale or missing after a material evidence change")
     review = workspace["specialist_review"]
     if review["publication_blocked"]:
         blockers.append("specialist and blinded independent review must complete without material disagreement")
@@ -1772,6 +1714,8 @@ def publication_reliability_gate(case_id: str, *, db_path: str | None = None) ->
     for audit_type in ("completeness", "originality", "visual_qa"):
         if audit_type not in latest_audits or latest_audits[audit_type]["status"] != "passed":
             blockers.append(f"{audit_type.replace('_', ' ')} audit must pass")
+        elif latest_audits[audit_type].get("details", {}).get("assurance_case_fingerprint") != assurance["fingerprint"]:
+            blockers.append(f"{audit_type.replace('_', ' ')} audit is stale after a material evidence change")
     score = research_quality_score(case_id, workspace=workspace, db_path=db_path)
     blockers.extend(item for item in score["hard_blockers"] if item not in blockers)
     return {"case_id": case_id, "ready": not blockers, "blockers": blockers, "quality": score, "human_publication_approval_required": True, "publish_and_deploy_are_separate": True}

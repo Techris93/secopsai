@@ -59,7 +59,8 @@ const INTELLIGENCE_ACTIONS = new Set([
   "analyze_research_case", "generate_analyst_brief", "review_publication_safety",
   "recommend_remediation", "triage_artifact", "execute_specialist_work", "review_specialist_work",
 ]);
-const COORDINATOR_COMMANDS = new Set(["daily-run", "autopilot-run-now", "autopilot-rollback", "autopilot-rollback-tuning"]);
+const COORDINATOR_COMMANDS = new Set(["daily-run", "autopilot-run-now", "autopilot-rollback", "autopilot-rollback-tuning", "research-operation"]);
+const RESEARCH_OPERATION_ACTIONS = new Set(["person-register", "claim-assess", "prior-art", "experiment", "behavior", "case-review", "source-configure", "event-verify", "roster", "board", "brief-create", "brief-edit", "brief-approve", "brief-correct", "disclosure-milestone", "requirement", "outcome", "compare-releases"]);
 
 export default {
   async fetch(request, env) {
@@ -165,6 +166,25 @@ export async function handleRequest(request, env) {
     if (request.method === "GET" && url.pathname === "/api/v1/research/triage/results") {
       requireBridge(request, env);
       return response(200, await runnerTriageResults(env.DB, url.searchParams), requestId);
+    }
+    if (url.pathname === "/api/v1/research/operation/sync" && request.method === "POST") {
+      requireBridge(request, env);
+      const projection = await readJsonObject(request, 131072, "Research operation projection");
+      if (projection.schema_version !== "secopsai.research.operation.v1" || !Array.isArray(projection.coverage?.sources) || !Array.isArray(projection.editions)) throw new HttpError(422, "invalid_projection", "Research operation projection contract is required");
+      const allowed = ["schema_version", "coverage", "editions", "requirements", "missing_requirements", "reviewed_daily_brief_streak", "fourteen_day_gate_met", "rpo_target_seconds", "rto_target_seconds", "recovery_targets_proven", "decision_mode", "clef_enabled"];
+      if (Object.keys(projection).some(key => !allowed.includes(key))) throw new HttpError(422, "invalid_projection", "Private research records cannot enter the operation projection");
+      await env.DB.prepare("INSERT INTO research_operation_projections VALUES (?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET projection_json=excluded.projection_json,synced_at=excluded.synced_at").bind(clean(env.CORE_WORKSPACE_ID, 160) || "hosted", JSON.stringify(projection), nowIso()).run();
+      return response(200, { status: "stored" }, requestId);
+    }
+    if (url.pathname === "/api/v1/research/operation" && request.method === "GET") {
+      if (request.headers.get("authorization") === `Bearer ${env.CORE_READ_TOKEN}` && env.CORE_READ_TOKEN) requireBearer(request, env.CORE_READ_TOKEN);
+      else requireBridge(request, env);
+      const row = await env.DB.prepare("SELECT projection_json,synced_at FROM research_operation_projections WHERE workspace_id=?").bind(clean(env.CORE_WORKSPACE_ID, 160) || "hosted").first();
+      return response(200, row ? { ...parseJson(row.projection_json, {}), synced_at: row.synced_at, hosted_projection: true } : { status: "awaiting_worker", hosted_projection: true }, requestId);
+    }
+    if (url.pathname === "/api/v1/research/operation" && request.method === "POST") {
+      requireBearer(request, env.CORE_INTELLIGENCE_TOKEN);
+      return response(202, await queueCoordinatorCommand(request, env.DB, requestId, "research-operation", {}), requestId);
     }
     if (request.method === "POST" && url.pathname === "/api/v1/research/cases/sync") {
       requireBridge(request, env);
@@ -1752,14 +1772,18 @@ async function queueCoordinatorCommand(request, db, requestId, commandType, fixe
   if (!COORDINATOR_COMMANDS.has(commandType)) throw new HttpError(422, "invalid_command", "Unsupported coordinator command");
   const body = await readJsonObject(request, MAX_INTELLIGENCE_BYTES, "Coordinator command");
   const payload = { ...fixedPayload, ...(body.payload && typeof body.payload === "object" && !Array.isArray(body.payload) ? body.payload : {}) };
+  if (commandType === "research-operation" && (!RESEARCH_OPERATION_ACTIONS.has(payload.action) || !clean(payload.actor, 160) || !payload.data || typeof payload.data !== "object" || Array.isArray(payload.data))) throw new HttpError(422, "invalid_research_operation", "An explicit supported research action, human actor and data object are required");
   if (commandType === "autopilot-rollback" && !clean(payload.run_id, 80)) throw new HttpError(422, "invalid_run_id", "run_id is required");
   if (commandType === "autopilot-rollback-tuning" && !clean(payload.proposal_id, 80)) throw new HttpError(422, "invalid_proposal_id", "proposal_id is required");
   const active = await db.prepare("SELECT * FROM coordinator_commands WHERE command_type=? AND status IN ('queued','running') ORDER BY queued_at LIMIT 1").bind(commandType).first();
-  if (active) return publicCommand(active, { includeResult: false });
+  if (active && commandType !== "research-operation") return publicCommand(active, { includeResult: false });
   const requestedBy = clean(body.requested_by, 160) || "mission-control";
   const idempotencyKey = clean(body.idempotency_key, 256) || await sha256Hex(`${commandType}|${JSON.stringify(payload)}|${requestedBy}|${Math.floor(Date.now() / 60000)}`);
   const existing = await db.prepare("SELECT * FROM coordinator_commands WHERE idempotency_key=?").bind(idempotencyKey).first();
-  if (existing) return publicCommand(existing, { includeResult: false });
+  if (existing) {
+    if (commandType === "research-operation" && (existing.command_type !== commandType || existing.payload_json !== JSON.stringify(payload))) throw new HttpError(409, "idempotency_conflict", "Research command key was already used for different content");
+    return publicCommand(existing, { includeResult: false });
+  }
   const now = nowIso();
   const commandId = `CMD-${crypto.randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase()}`;
   await db.prepare(`INSERT INTO coordinator_commands

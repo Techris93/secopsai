@@ -400,6 +400,18 @@ def _run_worker_cycle_unlocked(
         capture_exception(exc, context={"component": "research_external_intel"})
         external_intel = {"status": "degraded", "error": str(exc)[:500]}
     selected = {item.lower() for item in ecosystems} if ecosystems else None
+    primary_intel = {"status": "disabled"}
+    editorial = {"status": "disabled"}
+    if os.environ.get("SECOPSAI_PRIMARY_INTEL", "0") == "1":
+        from secopsai.research_primary_intel import collect_due
+        from secopsai.research_editorial import scheduled_brief
+
+        try:
+            primary_intel = collect_due(db_path=db_path, fetcher=fetcher)
+            editorial = scheduled_brief(db_path=db_path)
+        except Exception as exc:
+            capture_exception(exc, context={"component": "research_primary_intel"})
+            primary_intel = {"status": "degraded", "error_category": type(exc).__name__}
     results: List[Dict[str, Any]] = []
     due = due_collectors(db_path=db_path)
     for item in due:
@@ -538,6 +550,12 @@ def _run_worker_cycle_unlocked(
             return True
         return False
 
+    try:
+        from secopsai.research_artifact_vault import backup_public_artifacts
+        artifact_vault = backup_public_artifacts(db_path=db_path)
+    except (ValueError, OSError):
+        artifact_vault = {"status": "degraded", "reason": "artifact_vault_unavailable"}
+
     cycle_degraded = any(
         str(item.get("status") or "").strip().lower() in degraded_statuses
         or bool(item.get("error"))
@@ -548,7 +566,7 @@ def _run_worker_cycle_unlocked(
     )
     cycle_degraded = cycle_degraded or any(
         component_degraded(component)
-        for component in (external_intel, npm_enrichment, scoring, recovery, investigations, daily_automation)
+        for component in (external_intel, primary_intel, npm_enrichment, scoring, recovery, investigations, daily_automation, artifact_vault)
     )
     if isinstance(retries, dict) and int(retries.get("failed") or 0) > 0:
         cycle_degraded = True
@@ -560,6 +578,9 @@ def _run_worker_cycle_unlocked(
     return {
         "status": "degraded" if cycle_degraded else "succeeded",
         "external_intel": external_intel,
+        "primary_intel": primary_intel,
+        "editorial": editorial,
+        "artifact_vault": artifact_vault,
         "collectors_run": len(results),
         "collector_results": results,
         "npm_enrichment": npm_enrichment,
@@ -763,6 +784,10 @@ def run_worker_loop(
 
                     last_summary = dict(last_summary)
                     last_summary["research_case_sync"] = sync_research_cases(core_edge, db_path=db_path)
+                    if os.environ.get("SECOPSAI_PRIMARY_INTEL", "0") == "1":
+                        from secopsai.research_operation import hosted_projection
+
+                        last_summary["research_operation_sync"] = core_edge.sync_research_operation(hosted_projection(db_path=db_path))
                 except Exception as exc:
                     capture_exception(exc, context={"component": "research_case_sync"})
                     last_summary = dict(last_summary)

@@ -594,6 +594,11 @@ class CoreEdgeClient:
             return {"status": "disabled"}
         return self._request("POST", "/api/v1/research/cases/sync", {"cases": cases})
 
+    def sync_research_operation(self, projection: dict[str, Any]) -> dict[str, Any]:
+        if not self.enabled:
+            return {"status": "disabled"}
+        return self._request("POST", "/api/v1/research/operation/sync", projection)
+
     def sync_state(self, summary: Dict[str, Any], *, status: str = "healthy") -> dict[str, Any]:
         if not self.enabled:
             return {"status": "disabled"}
@@ -995,7 +1000,11 @@ class CoreEdgeClient:
                 pulse_thread = Thread(target=pulse, name=f"secopsai-command-heartbeat-{command_id}", daemon=True)
                 pulse_thread.start()
             try:
-                if command_type == "daily-run":
+                if command_type == "research-operation":
+                    from secopsai.research_operation import execute_hosted
+
+                    result = execute_hosted(command_id, payload, db_path=db_path)
+                elif command_type == "daily-run":
                     from secopsai.daily_automation import run_cycle
 
                     result = run_cycle(db_path=db_path, trigger="hosted-core", force=True)

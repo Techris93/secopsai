@@ -12,7 +12,7 @@ from test_research_post import _case  # noqa: E402
 
 
 def _eligible(**overrides):
-    return _case(**{"publication_reviews": [{"status": "approved"}], "embargo_until": None, **overrides})
+    return _case(**{"research_assurance": {"ready": True, "confirmed_observation": True}, "publication_reviews": [{"status": "approved"}], "embargo_until": None, **overrides})
 
 
 @pytest.fixture()
@@ -21,6 +21,8 @@ def real_case(tmp_path, monkeypatch):
     created = research_cases.create_case(title="Hijacked release of left-padder steals npm tokens", db_path=db_path)
     case = _eligible(case_id=created["case_id"])
     monkeypatch.setattr(research_osv, "_case", lambda case_id, db_path: case)
+    # This fixture isolates rendering/transport; exact human release policy has separate integration coverage.
+    monkeypatch.setattr(research_osv, "_release_review", lambda *args, **kwargs: None)
     return case, db_path
 
 
@@ -42,7 +44,9 @@ def test_mal_reports_follow_the_upstream_contribution_rules():
     assert report["aliases"] == ["SECOPSAI-2026-0001"]
     iocs = report["database_specific"]["iocs"]
     assert iocs["urls"] == ["https://discord.com/api/webhooks/1/abc"] and iocs["files"][0]["digests"] == {"sha256": "a" * 64}
-    assert "Trigger: runs automatically when the package is installed." in report["details"]
+    assert "Trigger and demonstrated impact" in report["details"]
+    assert "treated as compromised" not in report["details"]
+    assert report["credits"][0]["type"] == "REPORTER"
     assert research_osv.mal_report_path(report, "SECOPSAI-2026-0001") == "osv/malicious/npm/left-padder/MAL-0000-secopsai-secopsai-2026-0001.json"
     assert research_osv.validate_mal_report({**report, "id": "MAL-1"}) == ["id and summary must not be set"]
     assert iocs["files"][0]["source"] == "PACKAGE_ARCHIVE"

@@ -57,6 +57,8 @@ def project_case(case: Dict[str, Any], summary: Dict[str, Any]) -> Dict[str, Any
         "local_exposure", "evidence_quality",
     ], limit=4000)
     detail["publication_readiness"] = case.get("publication_readiness") if isinstance(case.get("publication_readiness"), dict) else {}
+    assurance = case.get("research_assurance") or {}
+    detail["research_assurance"] = {key: assurance.get(key) for key in ("policy_version", "ready", "blockers", "technical_review_current", "editorial_review_current", "prior_art_current", "confirmed_observation")}
     detail["subjects"] = [_pick(item, ["subject_id", "subject_type", "ecosystem", "name", "version", "publisher", "status", "registry_state", "artifact_state", "validation_state"]) for item in (case.get("subjects") or [])[:50]]
     detail["evidence"] = [
         {**_pick(item, ["evidence_id", "evidence_type", "title", "sha256", "provenance", "notes", "status", "collected_at", "created_at"], limit=1000), "locator": _locator(item.get("locator"))}

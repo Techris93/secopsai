@@ -1887,6 +1887,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     research = sub.add_parser("research", help="Generate source-backed research reports and preflight checks")
     research_sub = research.add_subparsers(dest="research_cmd", required=True)
+    from secopsai.research_operation import READ_ACTIONS, WRITE_ACTIONS
+
+    operation = research_sub.add_parser("operation", help="Run evidence, primary-source and daily editorial workflows")
+    operation.add_argument("action", choices=sorted(READ_ACTIONS | WRITE_ACTIONS))
+    operation.add_argument("--input", help="JSON input file; use - for standard input")
+    operation.add_argument("--actor", default="")
+    operation.add_argument("--case-id", default="")
+    operation.add_argument("--command-id", default="", help="Idempotent operator command identity for safe redelivery")
+    operation.add_argument("--id", default="")
+    operation.add_argument("--db-path", default=None)
 
     research_ecosystems = research_sub.add_parser("ecosystems", help="Show research ecosystem capabilities and coverage modes")
     research_rust_package = research_sub.add_parser("rust-package", help="Safely collect, statically scan, compare, and route a crates.io package")
@@ -3375,7 +3385,17 @@ def maybe_refresh(args: argparse.Namespace) -> Optional[Dict[str, Any]]:
 
 def _run_research_automation_command(args: argparse.Namespace) -> int:
     try:
-        if args.research_cmd == "rule":
+        if args.research_cmd == "operation":
+            from secopsai.research_operation import execute, execute_hosted
+
+            raw = sys.stdin.read(256000) if args.input == "-" else Path(args.input).read_text(encoding="utf-8") if args.input else "{}"
+            if len(raw.encode()) > 250000:
+                raise ValueError("research operation input exceeds budget")
+            if args.command_id:
+                payload = execute_hosted(args.command_id, {"action": args.action, "actor": args.actor, "case_id": args.case_id, "id": args.id, "data": json.loads(raw)}, db_path=args.db_path)
+            else:
+                payload = execute(args.action, json.loads(raw), actor=args.actor, case_id=args.case_id, identity=args.id, db_path=args.db_path)
+        elif args.research_cmd == "rule":
             if args.research_rule_cmd == "propose":
                 payload = generate_rule_proposals(args.case_id, actor=args.actor, db_path=args.db_path)
             elif args.research_rule_cmd == "list":
@@ -4366,7 +4386,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(to_json(payload))
             return 0
 
-        if args.research_cmd in {"rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "external-intel", "npm", "storage", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "resolution", "workflow", "content-pack"}:
+        if args.research_cmd in {"operation", "rule", "ecosystems", "watchlist", "monitor", "candidate", "collect", "score", "worker", "external-intel", "npm", "storage", "compare", "compare-packages", "artifact", "analysis", "artifact-worker", "ioc-candidates", "subject", "partner-request", "campaign", "sandbox", "disclosure", "alert", "intake", "jobs", "pipeline", "resolution", "workflow", "content-pack"}:
             return _run_research_automation_command(args)
 
         if args.research_cmd == "case":

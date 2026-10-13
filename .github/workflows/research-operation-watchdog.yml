@@ -1,0 +1,31 @@
+name: Research Operation Watchdog
+on:
+  schedule:
+    - cron: "11,41 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: research-operation-watchdog
+  cancel-in-progress: false
+jobs:
+  inspect:
+    if: vars.RESEARCH_WORKER_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+      - name: Check checkpoint age, source coverage and public availability
+        env:
+          LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+          SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
+        run: python scripts/research_operation_watchdog.py --output reports/research/watchdog.json
+      - name: Preserve diagnostics even after a failed check
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: research-operation-watchdog
+          path: reports/research/watchdog.json

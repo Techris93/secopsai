@@ -117,3 +117,48 @@ test("overlapping fast lane ticks dispatch a release once", async () => {
   await fastlaneTick(env, { fetcher, now: 9_060_000, dispatch });
   assert.equal(calls, 1, "the next tick sees the release as dispatched");
 });
+
+test("authenticated checkpoint status uses metadata without downloading the snapshot", async () => {
+  const calls = [];
+  const env = { LEDGER_STORE_TOKEN: "secret", LEDGER: {
+    get: async key => { calls.push(key); assert.equal(key, "ledger/LATEST"); return {text: async () => "ledger/snapshots/fixture.db.gz"}; },
+    head: async key => { calls.push(key); return {size: 1450000000, uploaded: new Date("2026-10-13T09:00:00Z")}; },
+  }};
+  assert.equal((await worker.fetch(new Request("https://ls.example/status"), env)).status, 401);
+  const result = await worker.fetch(new Request("https://ls.example/status", {headers: {authorization: "Bearer secret"}}), env);
+  const status = await result.json();
+  assert.equal(status.checkpoint_available, true);
+  assert.equal(status.completion_retry_safe, true);
+  assert.equal(status.size_bytes, 1450000000);
+  assert.equal(status.uploaded_at, "2026-10-13T09:00:00.000Z");
+  assert.equal(calls.length, 2);
+});
+
+import {createHash} from 'node:crypto';
+test('private artifact objects validate checksum, bounds and immutable retries', async () => {
+  const objects = new Map();
+  const env = {LEDGER_STORE_TOKEN: 'secret', LEDGER: {
+    put: async (key, stream, options) => {
+      if (objects.has(key)) return null;
+      const bytes = Buffer.from(await new Response(stream).arrayBuffer());
+      if (createHash('sha256').update(bytes).digest('hex') !== options.sha256) throw new Error('checksum mismatch');
+      const object = {size: bytes.length, customMetadata: options.customMetadata, body: bytes};
+      objects.set(key, object); return object;
+    }, head: async key => objects.get(key), get: async key => objects.get(key),
+  }};
+  const bytes = Buffer.from('benign synthetic recovery fixture');
+  const hash = createHash('sha256').update(bytes).digest('hex');
+  const url = `https://ls.example/artifact-objects/${hash}`;
+  const put = (body, length = body.length) => new Request(url, {method:'PUT', headers:{authorization:'Bearer secret','content-length':String(length)},body});
+  assert.equal((await worker.fetch(new Request(url),env)).status,401);
+  assert.equal((await worker.fetch(put(bytes),env)).status,200);
+  assert.equal((await worker.fetch(put(bytes),env)).status,200);
+  const get = await worker.fetch(new Request(url,{headers:{authorization:'Bearer secret'}}),env);
+  assert.deepEqual(Buffer.from(await get.arrayBuffer()),bytes);
+  assert.equal((await worker.fetch(put(bytes,33*1024*1024),env)).status,413);
+  assert.equal((await worker.fetch(put(Buffer.from('changed')),env)).status,409);
+  const bad = new Request('https://ls.example/artifact-objects/'+ 'a'.repeat(64),{method:'PUT',headers:{authorization:'Bearer secret','content-length':'3'},body:'bad'});
+  assert.equal((await worker.fetch(bad,env)).status,400);
+  assert.equal(objects.size,1);
+  assert.equal((await worker.fetch(new Request(url,{method:'DELETE',headers:{authorization:'Bearer secret'}}),env)).status,405);
+});

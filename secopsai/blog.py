@@ -1514,8 +1514,8 @@ This draft reflects disclosure state `{case.get('disclosure_status', 'not_starte
             "featured": False,
             "external_news": False,
             "review_status": "needs_review",
-            "author": "SecOpsAI Threat Research",
-            "source_name": "SecOpsAI Original Research",
+            "author": str(case.get("owner") or "Author assignment required"),
+            "source_name": "SecOpsAI investigation; contribution requires prior-art review",
             "references": references,
             "research_case_id": case_id,
             "disclosure_status": case.get("disclosure_status"),
@@ -3726,7 +3726,7 @@ def _render_post_html(post: Dict[str, Any]) -> str:
 """
 
 
-def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPaths] = None) -> Dict[str, Any]:
+def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPaths] = None, db_path: Optional[str] = None) -> Dict[str, Any]:
     paths = paths or BlogPaths()
     candidate = Path(draft_or_slug)
     draft_path = candidate if candidate.exists() else _draft_path(draft_or_slug.removesuffix(".json"), paths)
@@ -3739,6 +3739,25 @@ def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPa
             "draft_path": str(draft_path),
             "message": "rerun with --publish to write public blog files",
         }
+    if post.get("research_case_id"):
+        from secopsai.research_assurance import assurance_state
+        from secopsai.research_cases import get_case
+        from secopsai.research_reliability import publication_reliability_gate
+
+        case = get_case(str(post["research_case_id"]), db_path=db_path)
+        state = assurance_state(case, draft=str(post.get("body_markdown") or ""), db_path=db_path)
+        gate = publication_reliability_gate(case["case_id"], db_path=db_path)
+        reviews = case.get("publication_reviews") or []
+        if post.get("title") != case["title"] or post.get("summary") != case["summary"] or post.get("author") != case.get("owner"):
+            raise ValueError("research publication metadata changed after review")
+        if not state["ready"] or not gate["ready"] or not reviews or reviews[0]["status"] != "approved":
+            raise ValueError("research publication requires current evidence, technical review, editorial approval and safety gates for this exact draft")
+    if post.get("editorial_edition_id"):
+        from secopsai.research_editorial import validate_release
+
+        validate_release(str(post["editorial_edition_id"]), post, db_path=db_path)
+    if "Original Research" in (post.get("categories") or []) and not post.get("research_case_id"):
+        raise ValueError("original research publication requires a reviewed research case")
     blockers = external_news_publish_blockers(post)
     if blockers:
         raise ValueError("external-news draft is not publication-ready: " + "; ".join(blockers))
@@ -3769,6 +3788,9 @@ def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPa
         draft_record["published_at"] = post.get("published_at")
         draft_record["updated_at"] = post.get("updated_at")
         _mark_draft_published(draft_path, draft_record, paths, url=_post_url(str(post["slug"])))
+    if post.get("research_case_id"):
+        from secopsai.research_coverage import record_case_stage
+        record_case_stage(case, "published", db_path=db_path)
     return {
         "published": True,
         "post_path": str(_post_html_path(str(post["slug"]), paths)),

@@ -33,7 +33,7 @@ IDENTITY_ID = "identity--" + str(uuid.uuid5(STIX_NAMESPACE, "SecOpsAI Research")
 # verdict (a person's decision, not a score).
 GRADES: Tuple[Tuple[int, str, str], ...] = (
     (90, "Confirmed", "Malicious behaviour is directly observed in the published artifact and a reviewer has recorded a malicious verdict."),
-    (75, "High confidence", "Multiple independent indicators agree and no benign explanation fits the evidence."),
+    (75, "High confidence", "The analyst records high confidence; the claim ledger describes its evidence, scope and alternatives."),
     (50, "Moderate confidence", "The evidence is consistent with malicious intent, but a benign explanation has not been ruled out."),
     (0, "Low confidence", "Early signals only; published to warn, and subject to revision."),
 )
@@ -102,7 +102,10 @@ def confidence_grade(case: Dict[str, Any]) -> Dict[str, Any]:
     """Graded confidence: label, criteria and the numbers behind it."""
     score = int(case.get("confidence") or 0)
     verdict = latest_verdict(case)
-    confirmed = str(verdict.get("verdict") or "").lower() in MALICIOUS_VERDICTS
+    assurance = case.get("research_assurance") or {}
+    confirmed = (str(verdict.get("verdict") or "").lower() in MALICIOUS_VERDICTS
+                 and assurance.get("confirmed_observation") is True
+                 and assurance.get("technical_review_current") is True)
     for threshold, label, criteria in GRADES:
         if score >= threshold and (label != "Confirmed" or confirmed):
             return {"label": label, "criteria": criteria, "score": score,
@@ -126,25 +129,13 @@ def _evidence_text(case: Dict[str, Any]) -> List[Tuple[str, str]]:
 
 
 def attack_mapping(case: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Techniques supported by the case's own evidence, each with its citation."""
-    sources = _evidence_text(case)
-    mapped: List[Dict[str, str]] = []
-    for technique, name, tactic, pattern in ATTACK_TECHNIQUES:
-        if technique == "T1552" and any(item["technique"] == "T1552.001" for item in mapped):
-            continue  # the sub-technique already covers it
-        if technique == "T1567" and any(item["technique"] == "T1567.004" for item in mapped):
-            continue
-        for label, text in sources:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                mapped.append({"technique": technique, "name": name, "tactic": tactic, "evidence": label, "term": match.group(0)[:60]})
-                break
-    return mapped
+    """Only current, human-reviewed behavior mappings may be published."""
+    return list((case.get("research_assurance") or {}).get("behavior_mappings") or [])
 
 
 def takedown_rows(case: Dict[str, Any]) -> List[Dict[str, str]]:
     """Dated status rows: discovery, disclosure, registry action, publication."""
-    rows = [{"date": _date(case.get("created_at")), "event": "Discovered by SecOpsAI", "status": "done"}]
+    rows = [{"date": _date(case.get("created_at")), "event": "Investigation opened by SecOpsAI", "status": "done"}]
     for item in sorted((d for d in case.get("disclosures") or [] if isinstance(d, dict)), key=lambda d: str(d.get("sent_at") or d.get("created_at") or "")):
         sent = bool(item.get("sent_at"))
         rows.append({"date": _date(item.get("sent_at") or item.get("created_at")),

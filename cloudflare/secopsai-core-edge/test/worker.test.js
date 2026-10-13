@@ -753,3 +753,48 @@ test("typed capability and artifact contracts hold through hosted completion and
   const truncated = await (await call('/api/v1/intelligence/jobs', { action: 'triage_artifact', target_id: 'npm:long@1', inputs: { artifact_triage: { findings: [{ rule_id: 'R2' }], flagged_files: [{ content: 'x'.repeat(17000) }] } } }, env.CORE_INTELLIGENCE_TOKEN)).json();
   assert.equal(JSON.parse(db.prepare('SELECT input_json FROM intelligence_jobs WHERE job_id=?').get(truncated.job.job_id).input_json).artifact_triage.evidence_truncated, true);
 });
+
+test("research projections require scoped credentials and reject private records", async () => {
+  const env = { DB: new MockD1(), CORE_READ_TOKEN: "r".repeat(44), CORE_BRIDGE_TOKEN: "b".repeat(44), CORE_INTELLIGENCE_TOKEN: "i".repeat(44) };
+  const endpoint = "https://core.example/api/v1/research/operation";
+  assert.equal((await handleRequest(new Request(endpoint), env)).status, 401);
+  for (const token of [env.CORE_READ_TOKEN, env.CORE_BRIDGE_TOKEN]) {
+    const result = await handleRequest(new Request(endpoint, {headers: {authorization: `Bearer ${token}`}}), env);
+    assert.equal(result.status, 200);
+    assert.equal((await result.json()).status, "awaiting_worker");
+  }
+  const sync = (token, body) => handleRequest(new Request(endpoint + "/sync", {method: "POST", headers: {authorization: `Bearer ${token}`, "content-type": "application/json"}, body: JSON.stringify(body)}), env);
+  const projection = {schema_version: "secopsai.research.operation.v1", coverage: {sources: []}, editions: []};
+  assert.equal((await sync(env.CORE_READ_TOKEN, projection)).status, 401);
+  assert.equal((await sync(env.CORE_BRIDGE_TOKEN, {...projection, partner_submission: "private"})).status, 422);
+  assert.equal((await sync(env.CORE_BRIDGE_TOKEN, projection)).status, 200);
+  const write = (token, action) => handleRequest(new Request(endpoint, {method: "POST", headers: {authorization: `Bearer ${token}`, "content-type": "application/json"}, body: JSON.stringify({payload: {action, actor: "named.operator", data: {}}})}), env);
+  assert.equal((await write(env.CORE_READ_TOKEN, "claim-assess")).status, 401);
+  assert.equal((await write(env.CORE_INTELLIGENCE_TOKEN, "brief-publish")).status, 422);
+  assert.equal((await write(env.CORE_INTELLIGENCE_TOKEN, "submission")).status, 422);
+});
+
+test("research actions match Python hosted capabilities", () => {
+  const python = readFileSync(new URL("../../../secopsai/research_operation.py", import.meta.url), "utf8");
+  const worker = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const catalog = /const RESEARCH_OPERATION_ACTIONS = new Set\(\[([^\]]+)\]\)/.exec(worker)[1];
+  for (const action of [...catalog.matchAll(/"([^"]+)"/g)].map(match => match[1])) assert.ok(python.includes(`"${action}"`), action);
+  assert.ok(!catalog.includes('"brief-publish"'));
+  assert.ok(!catalog.includes('"queue-claim"'));
+});
+
+test("distinct human research commands are retained and conflicting retries fail", {skip: !DatabaseSync}, async () => {
+  const {db, d1} = migratedSqliteD1();
+  const env = {DB: d1, CORE_INTELLIGENCE_TOKEN: "i".repeat(44)};
+  const send = (key, action) => handleRequest(new Request("https://core.example/api/v1/research/operation", {method: "POST", headers: {authorization: `Bearer ${env.CORE_INTELLIGENCE_TOKEN}`, "content-type": "application/json"}, body: JSON.stringify({idempotency_key: key, requested_by: "named.operator", payload: {action, actor: "named.operator", data: {}}})}), env);
+  const first = await send("one", "brief-create");
+  assert.equal(first.status, 202);
+  const firstId = (await first.json()).command_id;
+  const second = await send("two", "brief-create");
+  assert.equal(second.status, 202);
+  assert.notEqual((await second.json()).command_id, firstId);
+  assert.equal((await (await send("one", "brief-create")).json()).command_id, firstId);
+  assert.equal((await send("one", "brief-correct")).status, 409);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM coordinator_commands").get().count, 2);
+  db.close();
+});

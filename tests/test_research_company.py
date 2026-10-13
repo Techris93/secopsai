@@ -1,0 +1,479 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import datetime, timezone
+
+import pytest
+
+import soc_store
+from secopsai import blog, research_post
+from secopsai.research_assurance import (
+    EDITORIAL_CHECKS, TECHNICAL_CHECKS, assess_claim, assurance_state, case_fingerprint,
+    record_behavior, record_experiment, record_prior_art, register_person, review_case,
+)
+from secopsai.research_cases import add_evidence, create_case, get_case, update_case
+from secopsai.research_coverage import coverage_report
+from secopsai.research_editorial import (
+    BRIEF_CHECKS, approve_edition, configure_roster, correct_edition, create_daily_brief,
+    edit_edition, publish_edition, validate_release,
+)
+from secopsai.research_operation import execute, execute_hosted, hosted_projection
+from secopsai.research_operation_store import digest, records
+from secopsai.research_primary_intel import (
+    acquire, claim_job, complete_job, configure_source, fail_job, heartbeat, intel_event, parse_source, verify_event,
+)
+from secopsai.research_reliability import _verify_statement
+
+STATEMENT = "Static inspection found a credential file read in install.js."
+CODE = "const secret = fs.readFileSync('.npmrc');"
+
+
+@pytest.fixture
+def db(tmp_path, monkeypatch):
+    # These tests never read developer credentials or use live providers.
+    monkeypatch.setenv("SECOPSAI_PRIMARY_INTEL", "0")
+    monkeypatch.setenv("SECOPSAI_CLEF_PRESCREEN", "0")
+    path = str(tmp_path / "operation.db")
+    register_person({"person_id": "operator.owner", "display_name": "Test Operator", "roles": ["operator"], "qualification": "Synthetic operator fixture"}, actor="operator.owner", db_path=path)
+    for identity, roles in (("alice", ["author", "researcher"]), ("bob", ["technical_reviewer", "editor", "researcher"]), ("carol", ["editor", "technical_reviewer"])):
+        register_person({"person_id": identity, "display_name": identity.title(), "roles": roles, "qualification": "Synthetic qualified reviewer fixture"}, actor="operator.owner", db_path=path)
+    return path
+
+
+def case(db):
+    value = create_case(title="Credential access in a synthetic release", summary=STATEMENT, owner="alice", confidence=95, db_path=db)
+    return add_evidence(value["case_id"], evidence_type="static_analysis", title="Install script", sha256="a" * 64,
+                        provenance="synthetic package fixture", locator="artifact-analysis:fixture/install.js",
+                        metadata={"file_contents": {"install.js": CODE}}, db_path=db)
+
+
+def assessment(value, **changes):
+    evidence = value["evidence"][0]
+    result = {"statement": STATEMENT, "assessment": "observation", "confidence": 81, "likelihood": 0.6,
+              "malicious_behavior": True, "references": [{"evidence_id": evidence["evidence_id"], "selector": "/metadata/file_contents/install.js", "start": 0, "end": len(CODE), "excerpt": CODE}],
+              "scope": {"versions": "fixture 1.0", "environment": "static source inspection", "sample_set": "one synthetic artifact", "observation_period": "2026-10-13"},
+              "rationale": "The exact code calls the file reader; execution is not claimed.", "quality": "Direct code span, one artifact, no independent runtime evidence",
+              "alternatives": ["A legitimate administration tool might read this file"], "contradictions": [], "limitations": ["Synthetic fixture; no runtime observation"]}
+    result.update(changes)
+    return result
+
+
+def prior_art(value, db):
+    return record_prior_art(value["case_id"], {"searches": [{"query": "fixture credential access", "index": "synthetic index", "searched_at": "2026-10-13T09:00:00Z"}],
+                                            "earlier_reports": [], "contribution": "Independent static reproduction of a synthetic example", "limitations": ["Not a live novelty assessment"]}, actor="alice", db_path=db)
+
+
+def reviews(value, db, draft=STATEMENT):
+    assess_claim(value["case_id"], assessment(value), actor="bob", db_path=db)
+    prior_art(value, db)
+    for role, actor, checks in (("technical_reviewer", "bob", TECHNICAL_CHECKS), ("editor", "carol", EDITORIAL_CHECKS)):
+        review_case(value["case_id"], {"role": role, "checks": dict.fromkeys(checks, "passed"), "draft": draft, "decision": "approved",
+                                     "rationale": "Synthetic exact-draft review", "claim_statements": [STATEMENT]}, actor=actor, db_path=db)
+
+
+def source(db, *, source_class="vendor", source_id="vendor"):
+    return configure_source({"source_id": source_id, "name": "Synthetic vendor", "url": "https://vendor.example/feed", "parser": "normalized_json", "source_class": source_class, "enabled": True}, actor="operator.owner", db_path=db)
+
+
+def event(db, *, config=None):
+    config = config or source(db)
+    body = json.dumps({"events": [{"external_id": "notice-1", "title": "Patch available", "excerpt": "A synthetic patch is available.", "url": "https://vendor.example/notice", "published_at": "2026-10-13T08:00:00Z"}]}).encode()
+    outcome = acquire(config, body, db_path=db)
+    with soc_store.connect(db) as conn:
+        identity = conn.execute("SELECT event_id FROM research_intel_events WHERE snapshot_id=?", (outcome["snapshot_id"],)).fetchone()[0]
+    return intel_event(identity, db_path=db), body
+
+
+def verify(value, db, **changes):
+    payload = {"decision": "verified", "primary_url": value["payload"]["url"], "summary": "The vendor reports a patch is available.", "rationale": "Checked the acquired primary notice", "defensive_action": "Apply the vendor patch after checking affected versions", "limitations": "The fixture does not establish exploitation", "attribution": "source_reported"}
+    payload.update(changes)
+    return verify_event(value["event_id"], payload, actor="bob", db_path=db)
+
+
+def roster(db):
+    return configure_roster({"days": {str(d): {"author_id": "alice", "editor_id": "carol", "backup_id": "bob"} for d in range(7)}}, actor="operator.owner", db_path=db)
+
+
+def test_scores_identifiers_and_sandbox_presence_do_not_verify_claims():
+    records = {"bundle": {"status": "succeeded"}, "corpus": {"E": "package steals secrets " + "a" * 64}, "sandbox_ids": ["E"], "assessments": {}}
+    for statement in ("The package steals secrets.", "The package exfiltrated credentials.", "The artifact hash is " + "a" * 64):
+        result = _verify_statement(statement, records)
+        assert result["support_status"] == "unsupported" and result["confidence"] == 0
+
+
+def test_exact_claim_support_preserves_confidence_separate_from_likelihood(db):
+    value = case(db)
+    assess_claim(value["case_id"], assessment(value), actor="bob", db_path=db)
+    current = get_case(value["case_id"], db_path=db)["research_assurance"]["assessed_claims"][0]
+    result = _verify_statement(STATEMENT, {"bundle": {"status": "succeeded"}, "assessments": {digest(STATEMENT): current}})
+    assert result["support_status"] == "supported" and result["confidence"] == 81
+    assert result["verification"]["likelihood"] == 0.6
+    assert _verify_statement("Static inspection found successful exfiltration in install.js.", {"bundle": {"status": "succeeded"}, "assessments": {digest(STATEMENT): current}})["support_status"] == "unsupported"
+
+
+@pytest.mark.parametrize("change", [{"confidence": float("nan")}, {"likelihood": 1.2}, {"confidence": True}, {"alternatives": []}])
+def test_invalid_assessments_are_rejected(db, change):
+    value = case(db)
+    with pytest.raises(ValueError):
+        assess_claim(value["case_id"], assessment(value, **change), actor="bob", db_path=db)
+
+
+def test_span_mismatch_and_author_self_review_are_rejected(db):
+    value = case(db)
+    payload = assessment(value)
+    payload["references"][0]["excerpt"] = "fabricated code"
+    with pytest.raises(ValueError, match="span"):
+        assess_claim(value["case_id"], payload, actor="bob", db_path=db)
+    with pytest.raises(ValueError):
+        assess_claim(value["case_id"], assessment(value), actor="alice", db_path=db)
+
+
+def test_runtime_claim_cannot_use_static_code_as_execution_proof(db):
+    value = case(db)
+    with pytest.raises(ValueError, match="runtime"):
+        assess_claim(value["case_id"], assessment(value, statement="The package executed and exfiltrated credentials."), actor="bob", db_path=db)
+
+
+def test_reviews_are_bound_to_evidence_scope_author_and_exact_draft(db):
+    value = case(db)
+    reviews(value, db)
+    assert get_case(value["case_id"], db_path=db)["research_assurance"]["ready"]
+    assert not assurance_state(get_case(value["case_id"], db_path=db), draft=STATEMENT + " Victims were compromised.", db_path=db)["ready"]
+    update_case(value["case_id"], summary=STATEMENT + " New scope.", db_path=db)
+    assert not get_case(value["case_id"], db_path=db)["research_assurance"]["ready"]
+    assert len(records("human_review", case_id=value["case_id"], db_path=db)) == 2
+
+
+def test_score_plus_verdict_does_not_confirm_observation(db):
+    value = case(db)
+    value["verdicts"] = [{"verdict": "credible"}]
+    assert research_post.confidence_grade(value)["label"] != "Confirmed"
+    reviews(value, db)
+    current = get_case(value["case_id"], db_path=db)
+    current["verdicts"] = [{"verdict": "credible"}]
+    assert research_post.confidence_grade(current)["label"] == "Confirmed"
+
+
+def test_keyword_mapping_is_absent_until_a_human_reviews_behavior(db):
+    value = case(db)
+    assert research_post.attack_mapping(value) == []
+    assess_claim(value["case_id"], assessment(value), actor="bob", db_path=db)
+    record_behavior(value["case_id"], {"technique": "T1552.001", "statement": STATEMENT, "rationale": "The code reads a credential file"}, actor="bob", db_path=db)
+    assert research_post.attack_mapping(get_case(value["case_id"], db_path=db))[0]["technique"] == "T1552.001"
+
+
+def test_rejected_new_assessment_cannot_resurrect_older_approval(db):
+    value = case(db)
+    reviews(value, db)
+    assess_claim(value["case_id"], assessment(value, assessment="disputed", contradictions=["Benign operation"], malicious_behavior=False), actor="bob", db_path=db)
+    assert not get_case(value["case_id"], db_path=db)["research_assurance"]["technical_review_current"]
+
+
+def test_model_or_unregistered_human_cannot_satisfy_review(db):
+    value = case(db)
+    with pytest.raises(ValueError):
+        assess_claim(value["case_id"], assessment(value), actor="typesafe/jev-latest", db_path=db)
+    with pytest.raises(ValueError):
+        register_person({"person_id": "clef", "display_name": "Model", "roles": ["technical_reviewer"], "qualification": "model"}, actor="operator.owner", db_path=db)
+
+
+def test_intake_stores_bytes_events_and_queue_before_cursor_and_is_idempotent(db):
+    value, body = event(db)
+    repeated = acquire(source(db), body, db_path=db)
+    assert repeated["inserted"] == 0
+    with soc_store.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM research_operation_queue").fetchone()[0] == 1
+        snapshot = conn.execute("SELECT content,sha256 FROM research_source_snapshots").fetchone()
+        assert hashlib.sha256(snapshot[0]).hexdigest() == snapshot[1]
+        cursor = conn.execute("SELECT cursor FROM research_intel_sources").fetchone()[0]
+    assert cursor == value["snapshot_id"]
+
+
+def test_invalid_intake_does_not_advance_cursor(db):
+    config = source(db)
+    with pytest.raises(ValueError):
+        acquire(config, b'{}', db_path=db)
+    with soc_store.connect(db) as conn:
+        assert conn.execute("SELECT cursor FROM research_intel_sources").fetchone()[0] == ""
+
+
+def test_queue_expiry_fences_old_workers_and_completion_redelivery(db):
+    event(db)
+    first = claim_job(worker_id="worker-one", db_path=db, now="2099-01-01T00:00:00Z", lease_seconds=30)
+    second = claim_job(worker_id="worker-two", db_path=db, now="2099-01-01T00:01:00Z")
+    assert second["job_id"] == first["job_id"] and second["lease_token"] != first["lease_token"]
+    with pytest.raises(ValueError, match="stale"):
+        complete_job(first["job_id"], first["lease_token"], {}, db_path=db, now="2099-01-01T00:01:01Z")
+    result = {"normalization": "done"}
+    assert complete_job(second["job_id"], second["lease_token"], result, db_path=db, now="2099-01-01T00:01:01Z")["reused"] is False
+    assert complete_job(second["job_id"], second["lease_token"], result, db_path=db, now="2099-01-01T00:02:00Z")["reused"] is True
+    with pytest.raises(ValueError, match="conflicting"):
+        complete_job(second["job_id"], second["lease_token"], {"changed": True}, db_path=db)
+
+
+def test_nonretryable_failure_becomes_visible_dead_letter(db):
+    event(db)
+    job = claim_job(worker_id="worker", db_path=db)
+    assert fail_job(job["job_id"], job["lease_token"], category="invalid_evidence", retryable=False, db_path=db)["state"] == "dead_letter"
+    assert coverage_report(db_path=db)["health"]["dead_letters"] == 1
+
+
+def test_aggregator_cannot_be_its_own_primary_corroboration(db):
+    value, _ = event(db, config=source(db, source_class="aggregator"))
+    with pytest.raises(ValueError, match="primary source"):
+        verify(value, db)
+
+
+def test_feed_timestamp_does_not_turn_collection_into_publication_time(db):
+    config = source(db)
+    item = parse_source(config, json.dumps({"events": [{"external_id": "n", "title": "No date", "excerpt": "No date", "url": "https://vendor.example/n"}]}).encode())[0]
+    assert item["published_at"] is None and item["observed_exploitation_by_secopsai"] is False
+
+
+def test_daily_workflow_requires_real_roster_and_duty_editor(db, tmp_path):
+    assert create_daily_brief(db_path=db)["status"] == "blocked"
+    roster(db)
+    value, _ = event(db)
+    verify(value, db)
+    edition = create_daily_brief(db_path=db)
+    assert len(edition["draft"]["items"]) == 1
+    assert create_daily_brief(db_path=db)["reused"] is True
+    with pytest.raises(ValueError):
+        publish_edition(edition["edition_id"], actor="carol", db_path=db, paths=blog.BlogPaths(root=tmp_path / "blog"))
+    with pytest.raises(ValueError):
+        approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="alice", db_path=db)
+    approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
+    published = publish_edition(edition["edition_id"], actor="carol", db_path=db, paths=blog.BlogPaths(root=tmp_path / "blog"))
+    assert published["published"] and (tmp_path / "blog" / "posts" / (edition["draft"]["slug"] + ".json")).is_file()
+
+
+def test_edition_edits_and_source_decision_changes_invalidate_release(db):
+    roster(db)
+    value, _ = event(db)
+    verify(value, db)
+    edition = create_daily_brief(db_path=db)
+    approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
+    verify(value, db, defensive_action="A different mitigation")
+    with pytest.raises(ValueError):
+        validate_release(edition["edition_id"], edition["draft"], db_path=db)
+    edit_edition(edition["edition_id"], {"summary": "Changed text"}, actor="alice", db_path=db)
+    with pytest.raises(ValueError):
+        validate_release(edition["edition_id"], edition["draft"], db_path=db)
+
+
+def test_unreviewed_research_cannot_publish_via_generic_blog_boundary(db, tmp_path):
+    value = case(db)
+    draft = blog.draft_research_case(value, paths=blog.BlogPaths(root=tmp_path / "blog"))
+    with pytest.raises(ValueError, match="review"):
+        blog.publish(draft["draft_path"], confirm=True, db_path=db, paths=blog.BlogPaths(root=tmp_path / "blog"))
+
+
+def test_unknown_coverage_denominators_remain_unknown_and_private_notes_are_not_projected(db):
+    source(db)
+    coverage = coverage_report(db_path=db)
+    assert coverage["sources"][0]["eligible_events"] is None
+    assert coverage["sources"][0]["fresh"] is False
+    projection = hosted_projection(db_path=db)
+    assert "claim_assessment" not in projection and "content" not in projection
+    assert projection["decision_mode"] == "observe" and projection["clef_enabled"] is False
+
+
+def test_hosted_duplicate_command_is_atomic_and_conflicting_delivery_rejected(db):
+    payload = {"action": "source-configure", "actor": "operator.owner", "data": {"source_id": "second", "name": "Second source", "url": "https://vendor.example/second", "parser": "rss", "source_class": "vendor"}}
+    first = execute_hosted("command-123", payload, db_path=db)
+    assert execute_hosted("command-123", payload, db_path=db) == first
+    assert len(records("source_configuration", db_path=db)) == 1
+    payload["data"]["name"] = "Changed"
+    with pytest.raises(ValueError, match="conflicting"):
+        execute_hosted("command-123", payload, db_path=db)
+
+
+def test_reviewer_qualification_change_invalidates_claims_and_approvals(db):
+    value = case(db)
+    reviews(value, db)
+    register_person({"person_id": "bob", "display_name": "Bob", "roles": ["technical_reviewer", "editor", "researcher"], "qualification": "Changed qualification"}, actor="operator.owner", db_path=db)
+    assert not get_case(value["case_id"], db_path=db)["research_assurance"]["ready"]
+    register_person({"person_id": "carol", "display_name": "Carol", "roles": ["editor"], "qualification": "Revoked fixture", "active": False}, actor="operator.owner", db_path=db)
+    assert not get_case(value["case_id"], db_path=db)["research_assurance"]["editorial_review_current"]
+
+
+@pytest.mark.parametrize("statement", ["Actor Blue owns this payload hash " + "a" * 64, "82 victims were compromised by this package."])
+def test_lab_code_cannot_prove_victim_or_actor_attribution(db, statement):
+    value = case(db)
+    with pytest.raises(ValueError):
+        assess_claim(value["case_id"], assessment(value, statement=statement), actor="bob", db_path=db)
+
+
+def test_advisory_target_requires_exact_independent_review(db):
+    from secopsai.research_osv import _release_review
+    value = case(db)
+    reviews(value, db)
+    with pytest.raises(ValueError, match="OSV review"):
+        _release_review(get_case(value["case_id"], db_path=db), STATEMENT, actor="carol", db_path=db)
+    for role, actor, checks in (("technical_reviewer", "bob", TECHNICAL_CHECKS), ("editor", "carol", EDITORIAL_CHECKS)):
+        review_case(value["case_id"], {"target": "osv", "role": role, "checks": dict.fromkeys(checks, "passed"), "draft": STATEMENT, "decision": "approved", "rationale": "Reviewed exact advisory", "claim_statements": [STATEMENT]}, actor=actor, db_path=db)
+    assert assurance_state(get_case(value["case_id"], db_path=db), draft=STATEMENT, target="osv", db_path=db)["ready"]
+    with pytest.raises(ValueError, match="safety gates"):
+        _release_review(get_case(value["case_id"], db_path=db), STATEMENT, actor="carol", db_path=db)
+    with pytest.raises(ValueError):
+        _release_review(get_case(value["case_id"], db_path=db), STATEMENT + " New impact.", actor="carol", db_path=db)
+
+
+def test_human_event_verification_completes_the_durable_queue(db):
+    value, _ = event(db)
+    verify(value, db)
+    with soc_store.connect(db) as conn:
+        assert conn.execute("SELECT state FROM research_operation_queue").fetchone()[0] == "completed"
+    assert claim_job(worker_id="idle-worker", db_path=db) is None
+
+
+def test_consistent_recovery_reconciles_rows_and_source_hashes(db, tmp_path):
+    from secopsai.research_recovery import recovery_drill, storage_assessment
+    event(db)
+    result = recovery_drill(output_dir=str(tmp_path / "restores"), actor="operator.owner", db_path=db)
+    assert result["status"] == "passed" and result["reconciled_tables"] > 10
+    assert result["source_hashes_verified"] and not result["rpo_target_proven"]
+    assert storage_assessment(db_path=db)["migration_ready"] is False
+    with pytest.raises(ValueError):
+        recovery_drill(output_dir="", actor="operator.owner", db_path=db)
+
+
+def test_recovery_detects_tampered_source_bytes(db, tmp_path):
+    from secopsai.research_recovery import recovery_drill
+    event(db)
+    with soc_store.connect(db) as conn:
+        conn.execute("UPDATE research_source_snapshots SET content=?", (b"tampered",))
+    with pytest.raises(ValueError, match="provenance"):
+        recovery_drill(output_dir=str(tmp_path / "restores"), actor="operator.owner", db_path=db)
+    assert not records("recovery_drill", db_path=db)
+
+
+def test_hosted_fault_rolls_back_the_applied_action_and_receipt(db, monkeypatch):
+    from secopsai import research_operation_store
+    payload = {"action": "person-register", "actor": "operator.owner", "data": {"person_id": "new.person", "display_name": "Test", "roles": ["researcher"], "qualification": "Synthetic test"}}
+    real_append = research_operation_store.append
+    def fail_receipt(kind, *args, **kwargs):
+        if kind == "hosted_command":
+            raise OSError("synthetic lost commit")
+        return real_append(kind, *args, **kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(research_operation_store, "append", fail_receipt)
+        with pytest.raises(OSError):
+            execute_hosted("rollback", payload, db_path=db)
+    assert not any(p["person_id"] == "new.person" for p in execute("people", db_path=db)["people"])
+    execute_hosted("rollback", payload, db_path=db)
+    assert any(p["person_id"] == "new.person" for p in execute("people", db_path=db)["people"])
+
+
+def test_release_comparison_requires_complete_mcp_catalog_and_keeps_annotations_untrusted(db):
+    from secopsai.research_methods import compare_releases
+    before = {"package": "fixture/mcp", "version": "1", "origin": "https://fixture.example/1", "acquired_at": "2026-10-13T09:00:00Z", "artifact_sha256": "a" * 64,
+              "catalog_complete": True, "tools": [{"name": "read", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": True}}]}
+    after = {**before, "version": "2", "artifact_sha256": "b" * 64, "tools": [{"name": "read", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": False}}]}
+    result = compare_releases({"program": "ai_agent_security", "before": before, "after": after}, actor="alice", db_path=db)
+    assert result["payload"]["observations"][0]["assessment"] == "metadata_difference"
+    with pytest.raises(ValueError, match="complete"):
+        compare_releases({"program": "ai_agent_security", "before": before, "after": {**after, "catalog_complete": False}}, actor="alice", db_path=db)
+
+
+def test_metrics_do_not_invent_quality_denominators_or_accept_nonfinite_effort(db):
+    from secopsai.research_metrics import metrics_report, record_outcome
+    value = case(db)
+    input = {"outcome": "effort", "reference": "timesheet:fixture", "occurred_at": "2026-10-13T09:00:00Z", "rationale": "Fixture time", "researcher_hours": 2, "cost": 10, "currency": "USD"}
+    record_outcome(value["case_id"], input, actor="alice", db_path=db)
+    with pytest.raises(ValueError):
+        record_outcome(value["case_id"], {**input, "cost": float("inf")}, actor="alice", db_path=db)
+    report = metrics_report(db_path=db)
+    assert report["researcher_hours"] == 2 and report["miss_rate"] is None
+    assert report["cost_per_historically_accepted_case"]["USD"] is None
+
+
+def test_requirement_revocation_expiration_and_no_legal_fabrication(db):
+    from secopsai.research_governance import accepted_requirement, operational_requirement
+    value = {"kind": "legal_signoff", "status": "accepted", "responsible_person": "Synthetic counsel fixture", "scope": "Fixture only", "reference": "fixture agreement", "recorded_at": "2026-10-13T09:00:00Z", "limitations": "Not an actual legal opinion"}
+    assert not accepted_requirement("legal_signoff", db_path=db)
+    operational_requirement(value, actor="operator.owner", db_path=db)
+    assert accepted_requirement("legal_signoff", db_path=db)
+    operational_requirement({**value, "status": "revoked"}, actor="operator.owner", db_path=db)
+    assert not accepted_requirement("legal_signoff", db_path=db)
+    operational_requirement({**value, "expires_at": "2000-01-01T00:00:00Z"}, actor="operator.owner", db_path=db)
+    assert not accepted_requirement("legal_signoff", db_path=db)
+
+
+def test_watchdog_reports_failures_without_secrets_and_refuses_redirects(monkeypatch):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("research_watchdog", "scripts/research_operation_watchdog.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setenv("LEDGER_STORE_TOKEN", "synthetic-confidential-token")
+    report = module.inspect(reader=lambda *args: (_ for _ in ()).throw(OSError("synthetic-confidential-token")))
+    assert report["status"] == "failed" and "synthetic-confidential-token" not in json.dumps(report)
+    with pytest.raises(ValueError):
+        module.fetch("https://user:password@fixture.example/status")
+    with pytest.raises(ValueError, match="redirect"):
+        module.NoRedirect().redirect_request(None, None, 302, "Found", {}, "https://other.example/")
+
+
+def test_real_source_catalog_seeds_supported_parsers_and_explicit_omissions(db):
+    from secopsai.research_primary_intel import seed_sources
+    seeded = seed_sources(db_path=db)
+    assert seeded["sources"] and seeded["unsupported_sources"]
+    with soc_store.connect(db) as conn:
+        sources = [json.loads(r[0]) for r in conn.execute("SELECT config_json FROM research_intel_sources")]
+    assert any(s["name"] == "OpenSSF Blog" and s["source_class"] == "project" for s in sources)
+    assert any(s["parser"] == "cisa_kev" for s in sources)
+
+
+def test_kev_catalog_addition_is_not_source_publication_or_local_exploitation(db):
+    config = {**source(db), "parser": "cisa_kev"}
+    body = json.dumps({"vulnerabilities": [{"cveID": "CVE-2026-1234", "vulnerabilityName": "Fixture", "shortDescription": "Fixture report", "dateAdded": "2026-10-13", "requiredAction": "Apply vendor guidance"}]}).encode()
+    parsed = parse_source(config, body)[0]
+    assert parsed["published_at"] is None
+    assert parsed["catalog_added_at"] == "2026-10-13T00:00:00Z"
+    assert not parsed["observed_exploitation_by_secopsai"]
+
+
+def test_complete_original_release_is_possible_and_material_changes_block_reuse(db, tmp_path):
+    """Exercise the full local publication path without any live model or deployment."""
+    from secopsai.research_cases import add_subject
+    from secopsai.research_reliability import (run_scaffold_research, verify_transition, run_full_safe_research, extract_claim_ledger,
+                                              audit_completeness, audit_originality, record_visual_qa, publication_reliability_gate)
+    from secopsai.specialist_orchestrator import create_run, record_human_review
+    from secopsai.research_workflow import record_verdict, publication_safety_check, approve_publication_review
+    value = case(db)
+    value = add_subject(value["case_id"], subject_type="package", ecosystem="npm", name="contract-example", version="1.0", db_path=db)
+    value = add_evidence(value["case_id"], evidence_type="source", title="Archived primary notice", locator="https://fixture.example/notice", sha256="b" * 64, provenance="Synthetic attributable source", db_path=db)
+    record_verdict(value["case_id"], verdict="credible", confidence=90, rationale="The reviewed static observation is scoped to this contract fixture; execution is not claimed.", evidence_ids=[e["evidence_id"] for e in value["evidence"]], db_path=db)
+    value = get_case(value["case_id"], db_path=db)
+    # The static evidence remains the exact reference, regardless of source ordering.
+    original = {**value, "evidence": [e for e in value["evidence"] if e["evidence_type"] == "static_analysis"]}
+    assess_claim(value["case_id"], assessment(original), actor="bob", db_path=db)
+    prior_art(value, db)
+    for role, actor, checks in (("technical_reviewer", "bob", TECHNICAL_CHECKS), ("editor", "carol", EDITORIAL_CHECKS)):
+        review_case(value["case_id"], {"role": role, "checks": dict.fromkeys(checks, "passed"), "draft": STATEMENT, "decision": "approved", "rationale": "Synthetic exact-draft review", "claim_statements": [STATEMENT]}, actor=actor, db_path=db)
+    assert run_scaffold_research(value["case_id"], db_path=db)["status"] == "succeeded"
+    assert verify_transition(value["case_id"], db_path=db)["status"] == "succeeded"
+    assert run_full_safe_research(value["case_id"], db_path=db)["status"] == "succeeded"
+    extract_claim_ledger(value["case_id"], text=STATEMENT, db_path=db)
+    routed = create_run({"task_id": value["case_id"], "title": "Review scoped static evidence", "description": "Contract test of independent review", "domain": "threat-intelligence", "priority": "high", "analysis_only": True}, db_path=db)
+    for stage, reviewer in (("primary", "alice"), ("reviewer", "bob")):
+        record_human_review(routed["run_id"], stage=stage, verdict="credible", summary="The exact fixture code supports only a scoped static credential-file read, with execution and exposure explicitly unknown.", reviewer=reviewer, db_path=db)
+    assert audit_completeness(value["case_id"], db_path=db)["status"] == "passed"
+    assert audit_originality(value["case_id"], text=STATEMENT, db_path=db)["status"] == "passed"
+    # Real generated test PNG bytes, separate from any production visual review.
+    import base64
+    png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aJ1sAAAAASUVORK5CYII=')
+    desktop, mobile = tmp_path / "desktop.png", tmp_path / "mobile.png"
+    desktop.write_bytes(png); mobile.write_bytes(png)
+    assert record_visual_qa(value["case_id"], desktop_rendered=True, mobile_rendered=True, screenshots=[f"desktop={desktop}", f"mobile={mobile}"], db_path=db)["status"] == "passed"
+    gate = publication_reliability_gate(value["case_id"], db_path=db)
+    assert gate["ready"], gate["blockers"]
+    safety = publication_safety_check(value["case_id"], db_path=db)
+    approve_publication_review(value["case_id"], review_id=safety["review_id"], actor="carol", db_path=db)
+    paths = blog.BlogPaths(root=tmp_path / "blog")
+    draft = blog.draft_research_case(get_case(value["case_id"], db_path=db), verified_body=STATEMENT, paths=paths)
+    assert blog.publish(draft["draft_path"], confirm=True, paths=paths, db_path=db)["published"]
+    update_case(value["case_id"], summary=STATEMENT + " Different scope.", db_path=db)
+    with pytest.raises(ValueError):
+        blog.publish(draft["draft_path"], confirm=True, paths=paths, db_path=db)

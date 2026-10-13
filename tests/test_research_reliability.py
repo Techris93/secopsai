@@ -40,6 +40,29 @@ from secopsai.specialist_orchestrator import (
 )
 
 
+def _human_summary(case_id, db, statement=None):
+    """Synthetic precise source review, without network or model evaluation."""
+    from secopsai.research_assurance import register_person, assess_claim, record_prior_art
+    from secopsai.research_reliability import _sentence_spans
+    register_person({"person_id": "review.admin", "display_name": "Fixture operator", "roles": ["operator"], "qualification": "Synthetic test operator"}, actor="review.admin", db_path=db)
+    for identity, roles in (("author.human", ["author", "researcher"]), ("review.human", ["technical_reviewer"])):
+        register_person({"person_id": identity, "display_name": identity, "roles": roles, "qualification": "Synthetic test qualification"}, actor="review.admin", db_path=db)
+    current = update_case(case_id, owner="author.human", db_path=db)
+    content = statement or current["title"] + ". " + current["summary"]
+    current = add_evidence(case_id, evidence_type="source", title="Archived fixture source", sha256="8" * 64,
+                           provenance="Synthetic primary notice for contract testing", locator="https://fixture.example/primary",
+                           metadata={"source_excerpts": content}, db_path=db)
+    evidence = next(e for e in current["evidence"] if e["title"] == "Archived fixture source")
+    for start, end, sentence in _sentence_spans(content):
+        assess_claim(case_id, {"statement": sentence, "assessment": "source_reported", "confidence": 75,
+                     "references": [{"evidence_id": evidence["evidence_id"], "selector": "/metadata/source_excerpts", "start": start, "end": end, "excerpt": sentence}],
+                     "scope": {"versions": "fixture 1.0.107", "environment": "primary fixture notice", "sample_set": "one notice", "observation_period": "2026-10-13"},
+                     "rationale": "The archived source reports this exact sentence", "quality": "A single attributable fixture source", "alternatives": ["Source reporting may contain errors"],
+                     "contradictions": [], "limitations": ["Synthetic contract fixture; no runtime observation"]}, actor="review.human", db_path=db)
+    record_prior_art(case_id, {"searches": [{"query": "proc-macro1 fixture", "index": "test corpus", "searched_at": "2026-10-13T09:00:00Z"}], "earlier_reports": [],
+                              "contribution": "Fixture source reporting", "limitations": ["No claim of live novelty"]}, actor="author.human", db_path=db)
+
+
 def test_guarded_automation_advances_safe_gates_once_and_queues_selected_model(tmp_path):
     case_id, db = _case(tmp_path)
     update_case(
@@ -52,6 +75,7 @@ def test_guarded_automation_advances_safe_gates_once_and_queues_selected_model(t
     persist_model_routing("xai/grok-4.6", fallback_mode="disabled", db_path=db)
     configure_policy(mode="guarded", maximum_automatic_tier="read_only", db_path=db)
 
+    _human_summary(case_id, db)
     first = run_guarded_reliability_automation(case_id, db_path=db)
     actions = [item["action"] for item in first["automated_steps"]]
     assert actions[:7] == [
@@ -91,6 +115,7 @@ def test_guarded_automation_resumes_after_an_operator_disables_model_review(tmp_
     persist_model_routing("xai/grok-4.6", fallback_mode="disabled", db_path=db)
     configure_policy(mode="guarded", maximum_automatic_tier="read_only", db_path=db)
 
+    _human_summary(case_id, db)
     paused = run_guarded_reliability_automation(
         case_id,
         include_model_review=False,
@@ -275,7 +300,7 @@ def test_transition_blocks_mock_fixture_placeholder_and_synthetic_evidence(tmp_p
         run_full_safe_research(case_id, db_path=db)
 
 
-def test_claim_ledger_verifies_canonical_identifiers_and_blocks_fabrications(tmp_path):
+def test_claim_ledger_requires_precise_assessments_even_for_shared_identifiers(tmp_path):
     case_id, db = _case(tmp_path)
     _full(case_id, db)
     text = (
@@ -286,8 +311,8 @@ def test_claim_ledger_verifies_canonical_identifiers_and_blocks_fabrications(tmp
     )
     ledger = extract_claim_ledger(case_id, text=text, source_kind="publication_draft", source_locator="draft-1", db_path=db)
     by_text = {item["text_span"]: item for item in ledger["claims"]}
-    assert next(item for text, item in by_text.items() if "proc-macro1" in text)["support_status"] == "supported"
-    assert next(item for text, item in by_text.items() if "official artifact checksum" in text)["support_status"] == "supported"
+    assert next(item for text, item in by_text.items() if "proc-macro1" in text)["support_status"] == "unsupported"
+    assert next(item for text, item in by_text.items() if "official artifact checksum" in text)["support_status"] == "unsupported"
     assert next(item for text, item in by_text.items() if "payload checksum" in text)["support_status"] == "unsupported"
     assert next(item for text, item in by_text.items() if "CVE-2099" in text)["support_status"] == "unsupported"
     assert ledger["summary"]["publication_blocked"] is True
@@ -297,14 +322,13 @@ def test_runtime_claim_needs_exact_sandbox_evidence_and_local_execution_stays_fa
     case_id, db = _case(tmp_path)
     _full(case_id, db)
     ledger = extract_claim_ledger(case_id, text="The package executed a child process and connected to its runtime server.", db_path=db)
-    assert ledger["claims"][0]["support_status"] == "contradicted"
-    assert "local execution was not performed" in " ".join(ledger["claims"][0]["contradicting_evidence"])
+    assert ledger["claims"][0]["support_status"] == "unsupported"
+    assert ledger["claims"][0]["confidence"] == 0
 
     sandbox_case, sandbox_db = _case(tmp_path / "sandbox", sandbox=True)
     _full(sandbox_case, sandbox_db)
     sandbox_ledger = extract_claim_ledger(sandbox_case, text="The external sandbox observed runtime behavior and executed a child process.", db_path=sandbox_db)
-    assert sandbox_ledger["claims"][0]["support_status"] in {"supported", "qualified_inference"}
-    assert sandbox_ledger["claims"][0]["evidence_ids"]
+    assert sandbox_ledger["claims"][0]["support_status"] == "unsupported", "a sandbox record alone cannot prove the exact claim"
 
 
 def test_hallucination_clipping_keeps_revision_diff_and_never_fabricates_success(tmp_path):
@@ -322,6 +346,7 @@ def test_hallucination_clipping_keeps_revision_diff_and_never_fabricates_success
 
 def test_completeness_originality_and_visual_audits_are_hard_gates(tmp_path):
     case_id, db = _case(tmp_path)
+    _human_summary(case_id, db, "The investigation concerns proc-macro1@1.0.107.")
     _full(case_id, db)
     extract_claim_ledger(case_id, text="The investigation concerns proc-macro1@1.0.107.", db_path=db)
 
@@ -417,6 +442,7 @@ def test_independent_reviewer_context_is_blinded_from_primary_verdict_and_wordin
 
 def test_material_review_disagreement_is_persisted_and_requires_human_adjudication(tmp_path):
     case_id, db = _case(tmp_path)
+    _human_summary(case_id, db, "The investigation concerns proc-macro1@1.0.107.")
     _full(case_id, db)
     extract_claim_ledger(case_id, text="The investigation concerns proc-macro1@1.0.107.", db_path=db)
     persist_model_routing("xai/grok-4.6", fallback_mode="disabled", db_path=db)

@@ -31,7 +31,7 @@ from secopsai import research_post
 
 OSV_SCHEMA_VERSION = "1.5.0"
 UPSTREAM_REPO = "ossf/malicious-packages"
-CREDIT = {"name": "SecOpsAI Research", "type": "FINDER", "contact": ["https://secopsai.dev", "https://blog.secopsai.dev/advisories/"]}
+CREDIT = {"name": "SecOpsAI Research", "type": "REPORTER", "contact": ["https://secopsai.dev", "https://blog.secopsai.dev/advisories/"]}
 CWE_506 = {"cweId": "CWE-506", "description": "The product contains code that appears to be malicious in nature.", "name": "Embedded Malicious Code"}
 OSV_ECOSYSTEMS = {
     "npm": "npm", "pypi": "PyPI", "crates.io": "crates.io", "cargo": "crates.io", "go": "Go", "maven": "Maven",
@@ -73,18 +73,23 @@ def _advisory_row(case_id: str, db_path: Optional[str]) -> Optional[Dict[str, An
     return value
 
 
-def eligibility(case: Dict[str, Any], *, now: Optional[_dt.datetime] = None) -> List[str]:
+def eligibility(case: Dict[str, Any], *, now: Optional[_dt.datetime] = None, for_release: bool = True) -> List[str]:
     """Reasons the case cannot be published as an advisory (empty when it can)."""
     blockers: List[str] = []
+    assurance = case.get("research_assurance") or {}
+    if for_release and (not assurance.get("ready") or not assurance.get("confirmed_observation")):
+        blockers.append("current independent human review and a malicious observation are required")
     verdict = str(research_post.latest_verdict(case).get("verdict") or "")
     if verdict not in ELIGIBLE_VERDICTS:
         blockers.append(f"latest verdict is '{verdict or 'none'}'; advisories need 'credible'")
     if not research_post.packages(case):
         blockers.append("no affected package recorded")
+    elif any(not item.get("version") for item in research_post.packages(case)):
+        blockers.append("exact affected versions are required; an omitted version cannot imply every release is malicious")
     elif any(str(item.get("ecosystem") or "").lower() not in OSV_ECOSYSTEMS for item in research_post.packages(case)):
         blockers.append("an affected package's ecosystem has no OSV name")
     reviews = case.get("publication_reviews") or []
-    if not reviews or reviews[0].get("status") != "approved":
+    if for_release and (not reviews or reviews[0].get("status") != "approved"):
         blockers.append("latest publication safety review is not approved")
     embargo = str(case.get("embargo_until") or "")
     if embargo:
@@ -136,8 +141,8 @@ def _affected(package: Dict[str, Any]) -> Dict[str, Any]:
     entry: Dict[str, Any] = {"package": {"ecosystem": package["ecosystem"], "name": package["name"]}, "database_specific": {"cwes": [CWE_506]}}
     if package["versions"]:
         entry["versions"] = package["versions"]
-    else:  # every version is malicious (a package published to deliver malware)
-        entry["ranges"] = [{"type": "SEMVER" if package["ecosystem"] in {"npm", "crates.io", "Go"} else "ECOSYSTEM", "events": [{"introduced": "0"}]}]
+    else:
+        raise ValueError("affected versions must be demonstrated explicitly")
     return entry
 
 
@@ -170,15 +175,13 @@ def details(case: Dict[str, Any]) -> str:
     verdict = research_post.latest_verdict(case)
     mapping = research_post.attack_mapping(case)
     behaviours = [item["name"] for item in mapping if item["technique"] != "T1195.002"]
-    install_time = any(item["technique"] in {"T1059.007", "T1059.006"} for item in mapping) and re.search(
-        r"postinstall|preinstall|install script|setup\.py|cmdclass", " ".join(f"{e.get('title')} {e.get('notes')}" for e in case.get("evidence") or [] if isinstance(e, dict)) + str(case.get("summary") or ""), re.I)
     parts = [str(case.get("summary") or "").strip()]
     if verdict.get("rationale"):
         parts.append(f"Why it is malicious: {str(verdict['rationale']).strip()}")
     if behaviours:
         parts.append("Observed behaviour: " + "; ".join(behaviours) + ".")
-    parts.append("Trigger: runs automatically when the package is installed." if install_time else "Trigger: runs when the package is imported or executed.")
-    parts.append("Any machine that installed an affected version should be treated as compromised: remove the package and rotate credentials reachable from it.")
+    parts.append("Trigger and demonstrated impact are limited to the scoped observations in the reviewed evidence ledger.")
+    parts.append("Check for affected versions, preserve artifacts and logs, remove confirmed malicious releases, and assess credential exposure using installation and execution evidence.")
     return "\n\n".join(part for part in parts if part)
 
 
@@ -283,7 +286,7 @@ def publish_advisory(case_id: str, *, db_path: Optional[str] = None, paths: Any 
     from secopsai import blog
 
     case = _case(case_id, db_path)
-    blockers = eligibility(case)
+    blockers = eligibility(case, for_release=False)
     if blockers:
         raise ValueError("case is not eligible for an advisory: " + "; ".join(blockers))
     advisory_id = assign_advisory_id(case["case_id"], db_path=db_path)
@@ -293,6 +296,7 @@ def publish_advisory(case_id: str, *, db_path: Optional[str] = None, paths: Any 
     target = paths.root / "advisories" / f"{advisory_id}.json"
     previous = json.loads(target.read_text(encoding="utf-8")) if target.is_file() else {}
     doc = build_advisory(case, advisory_id, osv_ids=row.get("osv_ids"), **urls)
+    _release_review(case, doc["details"], actor=actor, db_path=db_path)
     if previous.get("published"):
         doc["published"] = previous["published"]
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -312,7 +316,7 @@ def publish_advisory(case_id: str, *, db_path: Optional[str] = None, paths: Any 
 def prepare_osv_submission(case_id: str, *, db_path: Optional[str] = None, out_dir: Optional[Path] = None) -> Dict[str, Any]:
     """Write validated MAL-0000 reports to a local folder laid out like the upstream repo."""
     case = _case(case_id, db_path)
-    blockers = eligibility(case)
+    blockers = eligibility(case, for_release=False)
     if blockers:
         raise ValueError("case is not eligible for OSV submission: " + "; ".join(blockers))
     advisory_id = assign_advisory_id(case["case_id"], db_path=db_path)
@@ -343,6 +347,10 @@ def submit_osv(case_id: str, *, confirm: bool = False, db_path: Optional[str] = 
     plan = {"advisory_id": advisory_id, "repo": UPSTREAM_REPO, "branch": branch, "title": title, "files": prepared["files"], "submitted": False}
     if not confirm:
         return {**plan, "message": "dry run: rerun with confirm=True (CLI: research osv submit --confirm) to fork, push and open the pull request"}
+    current = _case(case_id, db_path)
+    for relative in prepared["files"]:
+        report = json.loads((Path(prepared["out_dir"]) / relative).read_text(encoding="utf-8"))
+        _release_review(current, report["details"], actor=actor, db_path=db_path)
     run = runner or (lambda args, **kwargs: subprocess.run(args, check=True, capture_output=True, text=True, **kwargs))
     workdir = Path(tempfile.mkdtemp(prefix="secopsai-osv-"))
     try:
@@ -373,6 +381,19 @@ def submit_osv(case_id: str, *, confirm: bool = False, db_path: Optional[str] = 
         connection.commit()
     _record(case_id, "osv_submitted", f"Submitted {advisory_id} to {UPSTREAM_REPO}.", {"pull_request": url}, db_path, actor)
     return {**plan, "submitted": True, "pull_request": url}
+
+
+def _release_review(case: Dict[str, Any], draft: str, *, actor: str, db_path: Optional[str]) -> None:
+    from secopsai.research_assurance import assurance_state, person
+
+    person(actor, role="editor", db_path=db_path)
+    state = assurance_state(case, draft=draft, target="osv", db_path=db_path)
+    if not state["ready"]:
+        raise ValueError("advisory release requires exact-draft technical and editorial OSV review: " + "; ".join(state["blockers"]))
+    from secopsai.research_reliability import publication_reliability_gate
+    gate = publication_reliability_gate(case["case_id"], target="osv", db_path=db_path)
+    if not gate["ready"] or eligibility({**case, "research_assurance": state}):
+        raise ValueError("advisory release requires current evidence, affected versions and safety gates")
 
 
 def record_osv_ids(case_id: str, osv_ids: List[str], *, db_path: Optional[str] = None, actor: str = "secopsai") -> Dict[str, Any]:

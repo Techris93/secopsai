@@ -512,6 +512,11 @@ def create_run(
     if enqueue and tier != "read_only":
         raise ValueError("only read_only runs may be enqueued during creation")
     contract = build_execution_contract(task, tier=tier, profile_id=profile_id, db_path=db_path)
+    task_id = str(contract["task"].get("task_id") or "").upper()
+    if re.fullmatch(r"RSC-[A-F0-9]{12}", task_id):
+        from secopsai.research_assurance import case_fingerprint
+        from secopsai.research_cases import get_case
+        contract["research_assurance_fingerprint"] = case_fingerprint(get_case(task_id, db_path=db_path))
     if tier != "recommend" and not str(contract["model_routing"].get("primary_model") or "").strip():
         raise ValueError("select and persist an OpenCodex model before creating executable specialist work")
     if tier in {"worktree", "pr_ready"} and contract["repository"]["snapshot_status"] != "captured":
@@ -756,6 +761,9 @@ def specialist_bridge_context(run_id: str, *, db_path: str | None = None, review
         from secopsai.research_workflow import build_evidence_matrix
 
         case = get_case(task_id, db_path=db_path)
+        from secopsai.research_assurance import case_fingerprint
+        if run["contract"].get("research_assurance_fingerprint") != case_fingerprint(case):
+            raise ValueError("research evidence changed after specialist routing; create a new review run")
         # The intelligence bridge applies its normal minimizer after this
         # context is built. Keep local locators out before that boundary too.
         evidence = []

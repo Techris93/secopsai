@@ -677,7 +677,7 @@ def reclassify_ioc_candidates(case_id: str, *, db_path: Optional[str] = None, ac
     return {"case_id": case_id, "changed": changed}
 
 
-def get_case(case_id: str, *, db_path: Optional[str] = None, repair: bool = False) -> Dict[str, Any]:
+def get_case(case_id: str, *, db_path: Optional[str] = None, repair: bool = False, include_reliability: bool = True) -> Dict[str, Any]:
     """Return a case without mutating it unless an explicit repair is requested."""
     case_id = _case_id(case_id)
     soc_store.init_db(db_path)
@@ -874,7 +874,12 @@ def get_case(case_id: str, *, db_path: Optional[str] = None, repair: bool = Fals
             value["requested_behaviors"] = _decode(value.pop("requested_behaviors_json", "[]"), [])
             value["result"] = _decode(value.pop("result_json", "{}"), {})
             result["sandbox_requests"].append(value)
+    from secopsai.research_assurance import assurance_state
+
+    result["research_assurance"] = assurance_state(result, db_path=db_path)
     readiness = publication_readiness(result)
+    readiness["blockers"] = list(dict.fromkeys([*readiness.get("blockers", []), *result["research_assurance"]["blockers"]]))
+    readiness["ready"] = not readiness["blockers"]
     result["publication_readiness"] = readiness
     result["publication_readiness_state"] = "ready" if readiness["ready"] else "blocked"
     # Dynamic-analysis guidance is a pure, read-only policy decision. Keep it
@@ -883,7 +888,8 @@ def get_case(case_id: str, *, db_path: Optional[str] = None, repair: bool = Fals
     from secopsai.research_reliability import get_reliability_workspace
 
     result["sandbox_recommendation"] = recommend_dynamic_analysis(result)
-    result["research_reliability"] = get_reliability_workspace(case_id, db_path=db_path)
+    if include_reliability:
+        result["research_reliability"] = get_reliability_workspace(case_id, db_path=db_path)
     return result
 
 
@@ -1731,30 +1737,12 @@ def campaign_payload(case: Dict[str, Any]) -> Dict[str, Any]:
 
 def draft_case_blog(case_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
     from secopsai.blog import draft_research_case
-    from secopsai.research_reliability import clip_unsupported_claims, publication_reliability_gate
-
+    # Drafting is reversible and must precede review of the exact text.
+    # All publication gates are rechecked at the final blog.publish boundary.
     case = get_case(case_id, db_path=db_path)
     readiness = publication_readiness(case)
-    if not readiness["ready"]:
-        raise ValueError("research case is not publication-ready: " + "; ".join(readiness["blockers"]))
-    publication_reviews = case.get("publication_reviews") or []
-    if publication_reviews and publication_reviews[0].get("status") != "approved":
-        raise ValueError("latest publication safety review is not approved")
-    reliability = publication_reliability_gate(case_id, db_path=db_path)
-    if not reliability["ready"]:
-        raise ValueError("research reliability gates are not ready: " + "; ".join(reliability["blockers"]))
-    preview = draft_research_case(case, write=False)
-    verified = clip_unsupported_claims(
-        case_id,
-        text=str(preview["post"].get("body_markdown") or ""),
-        source_kind="publication_draft",
-        source_locator=str(preview["post"].get("slug") or case_id),
-        actor="research-publication-gate",
-        db_path=db_path,
-    )
-    if verified["publication_blocked"]:
-        raise ValueError("generated publication contains claims that remain unsupported or contradicted")
-    result = draft_research_case(case, verified_body=verified["corrected_text"])
+    reliability = case["research_assurance"]
+    result = draft_research_case(case)
     with closing(soc_store.connect(db_path)) as connection:
         _record_event(
             connection,
@@ -1769,6 +1757,6 @@ def draft_case_blog(case_id: str, *, db_path: Optional[str] = None) -> Dict[str,
         "case_id": case["case_id"],
         "publication_readiness": readiness,
         "research_reliability": reliability,
-        "claim_verification": verified["claim_ledger"]["summary"],
+        "claim_verification": {"review_required": True},
         **result,
     }

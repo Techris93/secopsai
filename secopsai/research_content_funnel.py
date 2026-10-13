@@ -227,6 +227,14 @@ def run(*, db_path: Optional[str] = None, fetcher: Optional[SafeFetcher] = None,
             with closing(soc_store.connect(db_path)) as connection:
                 connection.execute("UPDATE registry_feed_events SET metadata_json = json_set(metadata_json, '$.content_prescan', json(?)) WHERE feed_event_id = ?",
                                    (json.dumps(record), event["feed_event_id"]))
+                from secopsai.research_coverage import record_stage
+
+                source = connection.execute("SELECT collector_id FROM registry_feed_events WHERE feed_event_id=?", (event["feed_event_id"],)).fetchone()
+                if source and status in {"hit", "clean"}:
+                    record_stage(source[0], event["feed_event_id"], "artifact_acquired", connection=connection)
+                    record_stage(source[0], event["feed_event_id"], "artifact_analyzed", connection=connection)
+                elif source:
+                    record_stage(source[0], event["feed_event_id"], "skipped", reason=str(result.get("reason") or status), connection=connection)
                 connection.commit()
             if status == "hit":
                 for rule in result.get("rules_matched") or []:
