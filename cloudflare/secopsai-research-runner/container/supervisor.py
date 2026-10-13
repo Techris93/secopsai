@@ -18,6 +18,7 @@ Only the standard library is used so the production image is unchanged.
 from __future__ import annotations
 
 import gzip
+import http.client
 import json
 import os
 import shutil
@@ -35,6 +36,9 @@ from typing import Callable, Optional
 
 PART_BYTES = 32 * 1024 * 1024
 REQUEST_TIMEOUT_SECONDS = 300
+UPLOAD_TIMEOUT_SECONDS = 600
+REQUEST_ATTEMPTS = 3
+RETRY_HTTP_STATUSES = {408, 429, 500, 502, 503, 504}
 # Cloudflare's browser integrity check rejects the default Python-urllib
 # agent with 403 (error 1010) before the Worker runs.
 USER_AGENT = "SecOpsAI-Research/1.0"
@@ -52,14 +56,41 @@ class LedgerStore:
         self.token = token
         self._open = opener
 
-    def _request(self, method: str, path: str, body: Optional[bytes] = None) -> bytes:
-        request = urllib.request.Request(f"{self.base_url}{path}", data=body, method=method)
-        request.add_header("Authorization", f"Bearer {self.token}")
-        request.add_header("User-Agent", USER_AGENT)
-        if body is not None:
-            request.add_header("Content-Type", "application/octet-stream")
-        with self._open(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            return response.read()
+    def _request(self, method: str, path: str, body: Optional[bytes] = None, *, deadline: float, retry: bool = True) -> bytes:
+        attempts = REQUEST_ATTEMPTS if retry else 1
+        for attempt in range(attempts):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("ledger upload deadline exceeded")
+            request = urllib.request.Request(f"{self.base_url}{path}", data=body, method=method)
+            request.add_header("Authorization", f"Bearer {self.token}")
+            request.add_header("User-Agent", USER_AGENT)
+            if body is not None:
+                request.add_header("Content-Type", "application/octet-stream")
+            try:
+                with self._open(request, timeout=min(REQUEST_TIMEOUT_SECONDS, remaining)) as response:
+                    data = response.read()
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("ledger upload deadline exceeded")
+                return data
+            except urllib.error.HTTPError as exc:
+                if exc.code not in RETRY_HTTP_STATUSES:
+                    raise
+                retry_after = exc.headers.get("Retry-After", "") if exc.headers else ""
+                exc.close()
+            except (urllib.error.URLError, OSError, http.client.HTTPException):
+                retry_after = ""
+            if attempt + 1 == attempts:
+                # Do not log URLs, tokens, or provider response bodies.
+                raise ConnectionError(f"ledger {method} request failed after {attempts} attempt(s)")
+            delay = 2 ** attempt
+            if retry_after.isdigit():
+                delay = max(delay, int(retry_after))
+            if delay >= deadline - time.monotonic():
+                raise TimeoutError("ledger upload deadline exceeded during backoff")
+            _log("ledger_request_retry", method=method, operation=path.split("?")[0], attempt=attempt + 2, delay=delay)
+            time.sleep(delay)
+        raise AssertionError("unreachable")
 
     def download(self, destination: Path) -> bool:
         request = urllib.request.Request(f"{self.base_url}/snapshot", method="GET")
@@ -78,17 +109,23 @@ class LedgerStore:
             raise
 
     def upload(self, compressed: Path) -> str:
-        upload = json.loads(self._request("POST", "/uploads"))
+        deadline = time.monotonic() + UPLOAD_TIMEOUT_SECONDS
+        upload = json.loads(self._request("POST", "/uploads", deadline=deadline))
         upload_id, key = upload["upload_id"], upload["key"]
         parts = []
         with compressed.open("rb") as handle:
             number = 1
             while chunk := handle.read(PART_BYTES):
-                result = json.loads(self._request("PUT", f"/uploads/{upload_id}/parts/{number}?key={key}", chunk))
+                result = json.loads(self._request("PUT", f"/uploads/{upload_id}/parts/{number}?key={key}", chunk, deadline=deadline))
                 parts.append({"partNumber": number, "etag": result["etag"]})
                 number += 1
         body = json.dumps({"parts": parts}).encode("utf-8")
-        result = json.loads(self._request("POST", f"/uploads/{upload_id}/complete?key={key}", body))
+        # Older ledger stores cannot safely repeat completion after a lost
+        # response. Only retry when the server advertises that contract.
+        result = json.loads(self._request(
+            "POST", f"/uploads/{upload_id}/complete?key={key}", body,
+            deadline=deadline, retry=upload.get("completion_retry_safe") is True,
+        ))
         return str(result["key"])
 
 
@@ -181,7 +218,7 @@ def main(argv: Optional[list] = None) -> int:
     if args.max_seconds > 0:
         # A CI job timeout kills the runner without a final checkpoint, losing
         # the whole run.  Stop the worker inside the budget instead, so the
-        # ledger is always saved.
+        # a final checkpoint is attempted before the runner is killed.
         def budget() -> None:
             if not stopping.wait(args.max_seconds) and worker.poll() is None:
                 _log("time_budget_reached", seconds=args.max_seconds)

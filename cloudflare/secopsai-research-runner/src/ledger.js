@@ -45,7 +45,7 @@ export async function handleLedgerRequest(request, bucket) {
   if (request.method === "POST" && url.pathname === "/uploads") {
     const key = `${SNAPSHOT_PREFIX}${new Date().toISOString().replace(/[:.]/g, "-")}.db.gz`;
     const upload = await bucket.createMultipartUpload(key, { httpMetadata: { contentType: "application/gzip" } });
-    return json({ upload_id: upload.uploadId, key });
+    return json({ upload_id: upload.uploadId, key, completion_retry_safe: true });
   }
 
   const key = url.searchParams.get("key") || "";
@@ -63,7 +63,16 @@ export async function handleLedgerRequest(request, bucket) {
     if (request.method === "POST" && parts[2] === "complete") {
       const body = await request.json().catch(() => null);
       if (!Array.isArray(body?.parts) || !body.parts.length) return json({ error: "parts_required" }, 400);
-      await upload.complete(body.parts);
+      // A response can be lost after R2 completed the object. R2 no longer
+      // has that multipart upload, so use the completed object on a retry.
+      if (!(await bucket.head(key))) {
+        try {
+          await upload.complete(body.parts);
+        } catch (error) {
+          // Concurrent attempts may both have observed no object initially.
+          if (!(await bucket.head(key))) throw error;
+        }
+      }
       // Advance the pointer only after the snapshot object is complete.
       await bucket.put(LATEST_POINTER, key);
       await pruneSnapshots(bucket, key);
