@@ -1309,7 +1309,7 @@ def run_once(
             if job.get("target_id"):
                 inputs.setdefault("target_id", job["target_id"])
             bridge_request = prepare_bridge_request(job["action"], inputs, db_path=db_path)
-        elif remote and not isinstance(job_inputs.get("assistant_request"), dict):
+        elif remote:
             # The hosted edge can only persist a minimized queue envelope.  If
             # this process also has the canonical local ledger, rebuild the
             # evidence context locally before sending the request to the model.
@@ -1369,7 +1369,7 @@ def run_once(
                 model=used_model,
                 db_path=job_inputs.get("artifact_db_path") or db_path,
             )
-        elif job.get("action") == "execute_specialist_work" and not (remote and isinstance(job_inputs.get("assistant_request"), dict)):
+        elif job.get("action") == "execute_specialist_work":
             from secopsai.specialist_orchestrator import record_primary_result
 
             record_primary_result(
@@ -1379,7 +1379,7 @@ def run_once(
                 actor=resolved.resolved_worker_id(),
                 db_path=db_path,
             )
-        elif job.get("action") == "review_specialist_work" and not (remote and isinstance(job_inputs.get("assistant_request"), dict)):
+        elif job.get("action") == "review_specialist_work":
             from secopsai.specialist_orchestrator import record_review_result
 
             record_review_result(

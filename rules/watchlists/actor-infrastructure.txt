@@ -3,4 +3,4 @@
 # (BEH_KNOWN_ACTOR_INFRA), so a known beacon reappearing under a new name,
 # for example one imitating a company's internal package, is caught at once.
 # One entry per line: domain or IPv4, then "  # case note".
-oob.s4yhii.com  # dependency-confusion PoC beacon, @s4yhiitestpoc/r3-https and scan-https-d (2026-10-10); OSV MAL-2026-17765, MAL-2026-17766
+oob.s4yhii.com  # dependency-confusion PoC beacon, @s4yhiitestpoc/r3-https and scan-https-d (2026-10-10)
