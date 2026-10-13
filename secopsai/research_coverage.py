@@ -91,10 +91,20 @@ def readiness_report(*, db_path=None) -> dict:
     from secopsai.research_governance import accepted_requirement
     from secopsai.decision_policy import policy_status
     from secopsai.research_ai_triage import clef_enabled
+    from secopsai.research_assurance import person
 
     report = coverage_report(db_path=db_path)
+    roster = records("editorial_roster", db_path=db_path)
+    roster_current = bool(roster)
+    if roster:
+        try:
+            for duty in roster[0]["payload"]["days"].values():
+                for key, role in (("author_id", "author"), ("editor_id", "editor"), ("backup_id", "editor")):
+                    person(duty[key], role=role, db_path=db_path)
+        except ValueError:
+            roster_current = False
     requirements = {
-        "named_seven_day_roster": bool(records("editorial_roster", db_path=db_path)),
+        "named_seven_day_roster": roster_current,
         "research_authorization_and_legal_signoff": accepted_requirement("legal_signoff", db_path=db_path),
         "partner_telemetry_access": accepted_requirement("partner_agreement", db_path=db_path),
         "recovery_drill": bool(records("recovery_drill", db_path=db_path)),

@@ -254,7 +254,7 @@ def intel_event(event_id: str, *, db_path=None) -> dict:
 
 def verify_event(event_id: str, payload: dict, *, actor: str, db_path=None) -> dict:
     from secopsai.research_assurance import person
-    person(actor, role="technical_reviewer", db_path=db_path)
+    reviewer = person(actor, role="technical_reviewer", db_path=db_path)
     event = intel_event(event_id, db_path=db_path)
     verified = payload.get("decision")
     if verified not in {"verified", "rejected", "needs_review"}:
@@ -276,7 +276,7 @@ def verify_event(event_id: str, payload: dict, *, actor: str, db_path=None) -> d
              "defensive_action": text(payload.get("defensive_action", ""), "defensive action", required=False),
              "limitations": text(payload.get("limitations"), "limitations"), "primary_url": payload.get("primary_url", ""),
              "primary_event_id": payload.get("primary_event_id") or event_id, "attribution": "source_reported",
-             "event_fingerprint": digest(event), "reviewer_id": actor}
+             "event_fingerprint": digest(event), "reviewer_id": actor, "reviewer_fingerprint": digest(reviewer)}
     with transaction(db_path) as conn:
         record = append("intel_verification", value, actor=actor, fingerprint=digest(event), connection=conn)
         conn.execute("UPDATE research_operation_queue SET state=?, result_json=?, lease_token='', lease_until=NULL, updated_at=? WHERE kind='verify_intel' AND event_id=?",

@@ -87,7 +87,8 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
         primary = intel_event(decision["primary_event_id"], db_path=db_path)
         if primary["root_source_key"] in roots:
             continue
-        person(decision["reviewer_id"], role="technical_reviewer", db_path=db_path)
+        if decision.get("reviewer_fingerprint") != digest(person(decision["reviewer_id"], role="technical_reviewer", db_path=db_path)):
+            continue
         roots.add(primary["root_source_key"])
         items.append({"event_id": event_id, "event_fingerprint": digest(event), "primary_event_id": primary["event_id"],
                       "primary_fingerprint": digest(primary), "source": primary["source"]["name"], "title": event["payload"]["title"],
@@ -146,7 +147,8 @@ def _items_current(edition: dict, db_path) -> bool:
                 or decision.get("decision") != "verified" or decision.get("event_fingerprint") != digest(event) or digest(decision) != item["verification_fingerprint"]
                 or event["source"]["sharing"] != "public" or primary["source"]["sharing"] != "public"):
             return False
-        person(decision["reviewer_id"], role="technical_reviewer", db_path=db_path)
+        if decision.get("reviewer_fingerprint") != digest(person(decision["reviewer_id"], role="technical_reviewer", db_path=db_path)):
+            return False
     return True
 
 

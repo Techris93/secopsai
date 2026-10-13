@@ -178,6 +178,23 @@ def test_model_or_unregistered_human_cannot_satisfy_review(db):
         register_person({"person_id": "clef", "display_name": "Model", "roles": ["technical_reviewer"], "qualification": "model"}, actor="operator.owner", db_path=db)
 
 
+def test_changed_intel_reviewer_invalidates_brief_and_revoked_roster(db):
+    from secopsai.research_coverage import readiness_report
+    value, _ = event(db)
+    verify(value, db)
+    roster(db)
+    edition = create_daily_brief(date="2026-10-13", db_path=db)
+    assert edition["draft"]["items"]
+    register_person({"person_id": "bob", "display_name": "Bob", "roles": ["technical_reviewer", "editor", "researcher"],
+                     "qualification": "Changed qualification assertion"}, actor="operator.owner", db_path=db)
+    with pytest.raises(ValueError, match="verification changed"):
+        approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked", "expected_fingerprint": edition["fingerprint"],
+                                               "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
+    register_person({"person_id": "bob", "display_name": "Bob", "roles": ["technical_reviewer", "editor", "researcher"],
+                     "qualification": "Changed qualification assertion", "active": False}, actor="operator.owner", db_path=db)
+    assert not readiness_report(db_path=db)["requirements"]["named_seven_day_roster"]
+
+
 def test_intake_stores_bytes_events_and_queue_before_cursor_and_is_idempotent(db):
     value, body = event(db)
     repeated = acquire(source(db), body, db_path=db)
