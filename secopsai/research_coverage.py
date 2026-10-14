@@ -70,11 +70,13 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
         for row in conn.execute("SELECT * FROM research_intel_sources").fetchall():
             config = json.loads(row["config_json"])
             observed = conn.execute("SELECT count(*) FROM research_intel_events WHERE source_id=? AND first_observed_at>=?", (row["source_id"], since)).fetchone()[0]
+            stages = {r["stage"]: r["count"] for r in conn.execute("SELECT stage,count(*) AS count FROM research_coverage_events WHERE source_id=? AND observed_at>=? GROUP BY stage", (row["source_id"], since))}
             delay = _age(row["last_success_at"], now)
             sources.append({"source_id": row["source_id"], "name": config["name"], "coverage_mode": "source_reporting", "enabled": config["enabled"],
                             "eligible_events": None, "observed_events": observed, "last_success_at": row["last_success_at"], "delay_seconds": delay,
                             "fresh": delay is not None and delay <= config["interval_seconds"] * 2, "error_category": row["error_category"],
-                            "consecutive_failures": row["consecutive_failures"], "sharing": config["sharing"]})
+                            "consecutive_failures": row["consecutive_failures"], "sharing": config["sharing"],
+                            "evidence_truncated": stages.get("evidence_truncated", 0), "evidence_omitted": stages.get("evidence_omitted", 0)})
         queue = {r["state"]: r["count"] for r in conn.execute("SELECT state,count(*) AS count FROM research_operation_queue GROUP BY state")}
         oldest = conn.execute("SELECT min(created_at) FROM research_operation_queue WHERE state IN ('queued','retry','running')").fetchone()[0]
         editions = [dict(r) for r in conn.execute("SELECT edition_id,edition_date,state,author_id,published_url,updated_at FROM research_editorial_editions ORDER BY edition_date DESC LIMIT 90")]

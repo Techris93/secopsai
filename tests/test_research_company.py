@@ -442,6 +442,80 @@ def test_real_source_catalog_seeds_supported_parsers_and_explicit_omissions(db):
     assert any(s["parser"] == "cisa_kev" for s in sources)
 
 
+def test_catalog_repairs_preserve_history_and_operator_overrides(db):
+    from secopsai.research_primary_intel import seed_sources
+    identity = "SRC-f5caeafa60f68ccdfed3"
+    legacy = configure_source({"source_id": identity, "name": "Google Online Security Blog", "url": "https://security.googleblog.com/feeds/posts/default",
+                               "parser": "normalized_json", "source_class": "vendor", "enabled": True}, actor="source-catalog", db_path=db)
+    value, _ = event(db, config=legacy)
+    with soc_store.connect(db) as conn:
+        cursor = conn.execute("SELECT cursor FROM research_intel_sources WHERE source_id=?", (identity,)).fetchone()[0]
+    seed_sources(db_path=db)
+    with soc_store.connect(db) as conn:
+        row = conn.execute("SELECT * FROM research_intel_sources WHERE source_id=?", (identity,)).fetchone()
+    repaired = json.loads(row["config_json"])
+    assert repaired["url"] == "https://feeds.feedburner.com/GoogleOnlineSecurityBlog"
+    assert row["cursor"] == cursor and row["last_success_at"] is None
+    assert intel_event(value["event_id"], db_path=db)["payload"]["title"] == "Patch available"
+    count = len(records("source_configuration", db_path=db))
+    seed_sources(db_path=db)
+    assert len(records("source_configuration", db_path=db)) == count
+    custom = configure_source({**repaired, "enabled": False, "url": "https://vendor.example/operator-feed"}, actor="operator.owner", db_path=db)
+    seed_sources(db_path=db)
+    with soc_store.connect(db) as conn:
+        assert json.loads(conn.execute("SELECT config_json FROM research_intel_sources WHERE source_id=?", (identity,)).fetchone()[0]) == custom
+
+
+def test_long_rss_excerpt_keeps_full_archive_and_declares_coverage_limit(db):
+    config = {**source(db), "parser": "rss"}
+    excerpt = "x" * 20000 + " decisive omitted tail"
+    body = ('<rss version="2.0"><channel><title>Fixture</title><link>https://vendor.example/</link><description>Fixture</description>'
+            '<item><guid>notice</guid><title>Notice</title><link>https://vendor.example/notice</link><description>'
+            + excerpt + '</description></item></channel></rss>').encode()
+    result = acquire(config, body, db_path=db)
+    assert result["inserted"] == 1
+    assert acquire(config, body, db_path=db)["inserted"] == 0
+    with soc_store.connect(db) as conn:
+        row = conn.execute("SELECT payload_json FROM research_intel_events WHERE snapshot_id=?", (result["snapshot_id"],)).fetchone()
+        archived = conn.execute("SELECT content FROM research_source_snapshots WHERE snapshot_id=?", (result["snapshot_id"],)).fetchone()[0]
+    value = json.loads(row[0])
+    assert archived == body
+    assert len(value["excerpt"]) == 20000 and value["excerpt_truncated"] is True
+    assert value["excerpt_original_characters"] == len(excerpt)
+    assert value["excerpt_sha256"] == hashlib.sha256(excerpt.encode()).hexdigest()
+    assert value["excerpt_selection"] == {"start": 0, "end": 20000}
+    assert coverage_report(db_path=db)["sources"][0]["evidence_truncated"] == 1
+
+
+def test_legacy_http_citation_is_retained_without_allowing_http_acquisition(db):
+    config = {**source(db), "parser": "rss"}
+    body = b'<rss version="2.0"><channel><title>Fixture</title><link>https://vendor.example/</link><description>Fixture</description><item><guid>old</guid><title>Old notice</title><link>http://vendor.example/old</link><description>Archived statement</description></item></channel></rss>'
+    parsed = parse_source(config, body)[0]
+    assert parsed["url"] == parsed["root_url"] == "http://vendor.example/old"
+    with pytest.raises(ValueError, match="HTTPS"):
+        configure_source({**config, "url": "http://vendor.example/feed"}, actor="operator.owner", db_path=db)
+    from secopsai.research_primary_intel import source_url
+    for value in ("http://user:secret@vendor.example/", "javascript:alert(1)", "http://vendor.example:8080/"):
+        with pytest.raises(ValueError):
+            source_url(value, reference=True)
+
+
+def test_first_collection_is_bounded_and_remaining_feeds_are_not_starved(db, monkeypatch):
+    from secopsai import research_primary_intel as intake
+    monkeypatch.setattr(intake, "seed_sources", lambda **kwargs: {"sources": [], "unsupported_sources": []})
+    for index in range(12):
+        source(db, source_id=f"source-{index}")
+
+    class Feed:
+        def get(self, url, **kwargs):
+            return url, {}, json.dumps({"events": [{"external_id": "notice", "title": "Notice", "excerpt": "Fixture", "url": "https://vendor.example/notice"}]}).encode()
+
+    first = intake.collect_due(db_path=db, fetcher=Feed())
+    second = intake.collect_due(db_path=db, fetcher=Feed())
+    assert len(first["results"]) == 10 and len(second["results"]) == 2
+    assert len({r["source_id"] for r in first["results"] + second["results"]}) == 12
+
+
 def test_kev_catalog_addition_is_not_source_publication_or_local_exploitation(db):
     config = {**source(db), "parser": "cisa_kev"}
     body = json.dumps({"vulnerabilities": [{"cveID": "CVE-2026-1234", "vulnerabilityName": "Fixture", "shortDescription": "Fixture report", "dateAdded": "2026-10-13", "requiredAction": "Apply vendor guidance"}]}).encode()

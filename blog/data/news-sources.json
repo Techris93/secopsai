@@ -35,9 +35,10 @@
       "poll_frequency_hint": "daily"
     },
     {
-      "name": "Microsoft Security Response Center",
-      "url": "https://msrc.microsoft.com/blog",
-      "feed_url": "https://msrc.microsoft.com/blog/feed",
+      "name": "Microsoft Security Response Center Advisories",
+      "source_id": "SRC-8774bf95b3a869bc494c",
+      "url": "https://msrc.microsoft.com/update-guide/",
+      "feed_url": "https://api.msrc.microsoft.com/update-guide/rss",
       "type": "rss",
       "category": "Threat Intelligence",
       "trust_level": "vendor",
@@ -124,8 +125,9 @@
     },
     {
       "name": "Google Online Security Blog",
+      "source_id": "SRC-f5caeafa60f68ccdfed3",
       "url": "https://security.googleblog.com/",
-      "feed_url": "https://security.googleblog.com/feeds/posts/default",
+      "feed_url": "https://feeds.feedburner.com/GoogleOnlineSecurityBlog",
       "type": "rss",
       "category": "Threat Intelligence",
       "trust_level": "vendor",

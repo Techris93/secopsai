@@ -16,7 +16,7 @@ from secopsai.research_operation_store import read_connection
 from secopsai.research_intake import SafeFetcher
 from secopsai.research_operation_store import append, canonical, digest, text, timestamp, transaction
 
-PARSER_VERSION = "primary-intel-v1"
+PARSER_VERSION = "primary-intel-v2"
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
 MAX_EVENTS = 5000
 MAX_PENDING = 10000
@@ -31,12 +31,14 @@ def _future(seconds: int, now: str | None = None) -> str:
     return (datetime.fromisoformat((now or _now()).replace("Z", "+00:00")) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
 
 
-def source_url(value: str) -> str:
+def source_url(value: str, *, reference: bool = False) -> str:
     value = text(value, "source URL", limit=4000)
     parsed = urlparse(value)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.port not in {None, 443}:
-        raise ValueError("source URL must be credential-free HTTPS")
-    return urlunparse(("https", parsed.netloc.lower(), parsed.path or "/", "", parsed.query, ""))
+    allowed_schemes = {"http", "https"} if reference else {"https"}
+    port = 443 if parsed.scheme == "https" else 80
+    if parsed.scheme not in allowed_schemes or not parsed.hostname or parsed.username or parsed.password or parsed.port not in {None, port}:
+        raise ValueError("source reference must be credential-free HTTP(S)" if reference else "source URL must be credential-free HTTPS")
+    return urlunparse((parsed.scheme, parsed.netloc.lower(), parsed.path or "/", "", parsed.query, ""))
 
 
 def configure_source(config: dict, *, actor: str, db_path=None) -> dict:
@@ -66,15 +68,24 @@ def seed_sources(*, db_path=None) -> dict:
             continue
         url = source["feed_url"]
         parser = "cisa_kev" if source["name"] == "CISA Known Exploited Vulnerabilities" else "rss"
-        identity = "SRC-" + hashlib.sha256(url.encode()).hexdigest()[:20]
+        identity = source.get("source_id") or "SRC-" + hashlib.sha256(url.encode()).hexdigest()[:20]
+        desired = {"source_id": identity, "name": source["name"], "url": url, "parser": parser,
+                   "source_class": {"external_research": "research", "platform": "registry"}.get(source["trust_level"], source["trust_level"]),
+                   "sharing": "public", "license": "unknown",
+                   "interval_seconds": 3600 if source.get("poll_frequency_hint") == "hourly" else 86400,
+                   "enabled": bool(source.get("enabled"))}
         soc_store.init_db(db_path)
-        with read_connection(db_path) as conn:
-            existing = conn.execute("SELECT 1 FROM research_intel_sources WHERE source_id=?", (identity,)).fetchone()
-        if not existing:
-            configure_source({"source_id": identity, "name": source["name"], "url": url, "parser": parser,
-                              "source_class": {"external_research": "research", "platform": "registry"}.get(source["trust_level"], source["trust_level"]),
-                              "interval_seconds": 3600 if source.get("poll_frequency_hint") == "hourly" else 86400,
-                              "enabled": bool(source.get("enabled"))}, actor="source-catalog", db_path=db_path)
+        with transaction(db_path) as conn:
+            existing = conn.execute("SELECT config_json FROM research_intel_sources WHERE source_id=?", (identity,)).fetchone()
+            last_config = conn.execute("SELECT actor,payload_json FROM research_operation_records WHERE kind='source_configuration' AND json_extract(payload_json,'$.source_id')=? ORDER BY created_at DESC,rowid DESC LIMIT 1", (identity,)).fetchone()
+            # Update catalog-owned records in place, preserving events and cursors.
+            # Operator overrides remain authoritative even when the catalog changes.
+            catalog_owned = existing and last_config and last_config["actor"] == "source-catalog" and json.loads(existing["config_json"]) == json.loads(last_config["payload_json"])
+            if not existing or (catalog_owned and json.loads(existing["config_json"]) != desired):
+                configure_source(desired, actor="source-catalog", db_path=db_path)
+                previous = json.loads(existing["config_json"]) if existing else None
+                if previous and any(previous[key] != desired[key] for key in ("url", "parser")):
+                    conn.execute("UPDATE research_intel_sources SET last_attempt_at=NULL,last_success_at=NULL,error_category='',consecutive_failures=0 WHERE source_id=?", (identity,))
         supported.append(identity)
     return {"sources": supported, "unsupported_sources": omitted}
 
@@ -99,9 +110,16 @@ def parse_source(config: dict, content: bytes) -> list[dict]:
         feed = feedparser.parse(content)
         if feed.bozo or not feed.get("version"):
             raise ValueError("malformed or unrecognized RSS/Atom feed")
-        items = [{"external_id": e.get("id") or e.get("link"), "url": e.get("link"), "title": e.get("title"),
-                  "excerpt": e.get("summary") or e.get("title"), "published_at": _date(e.get("published") or e.get("updated", "")),
-                  "root_url": e.get("link"), "assessment": "source_reported"} for e in feed.entries]
+        items = []
+        for entry in feed.entries:
+            excerpt = entry.get("summary") or entry.get("title")
+            item = {"external_id": entry.get("id") or entry.get("link"), "url": entry.get("link"), "title": entry.get("title"),
+                    "excerpt": excerpt, "published_at": _date(entry.get("published") or entry.get("updated", "")),
+                    "root_url": entry.get("link"), "assessment": "source_reported"}
+            if isinstance(excerpt, str) and len(excerpt) > 20000:
+                item.update(excerpt=excerpt[:20000], excerpt_truncated=True, excerpt_original_characters=len(excerpt),
+                            excerpt_sha256=hashlib.sha256(excerpt.encode()).hexdigest(), excerpt_selection={"start": 0, "end": 20000})
+            items.append(item)
     elif parser == "cisa_kev":
         body = json.loads(content)
         if not isinstance(body, dict) or not isinstance(body.get("vulnerabilities"), list):
@@ -122,7 +140,10 @@ def parse_source(config: dict, content: bytes) -> list[dict]:
     for item in items:
         value = {**item, "external_id": text(item.get("external_id"), "external ID", limit=4000),
                  "title": text(item.get("title"), "title", limit=1000), "excerpt": text(item.get("excerpt"), "source excerpt", limit=20000),
-                 "url": source_url(item.get("url", "")), "root_url": source_url(item.get("root_url") or item.get("url", "")),
+                 # Publisher citations are untrusted identifiers, never fetch
+                 # targets. Retain legacy HTTP links without upgrading them
+                 # into a different URL or weakening HTTPS acquisition.
+                 "url": source_url(item.get("url", ""), reference=True), "root_url": source_url(item.get("root_url") or item.get("url", ""), reference=True),
                  "published_at": _date(item.get("published_at", "")), "assessment": "source_reported",
                  "observed_exploitation_by_secopsai": False}
         normalized.append(value)
@@ -154,11 +175,13 @@ def acquire(config: dict, content: bytes, *, db_path=None) -> dict:
                 conn.execute("INSERT INTO research_operation_queue(job_id,kind,event_id,payload_json,state,retry_at,created_at,updated_at) VALUES (?,?,?,?,'queued',?,?,?)",
                              ("Q-" + digest(["verify_intel", event_id])[:32], "verify_intel", event_id, canonical({"event_id": event_id}), now, now, now))
                 conn.execute("INSERT OR IGNORE INTO research_coverage_events VALUES (?,?,?,'',?)", (config["source_id"], event_id, "observed", now))
+                if item.get("excerpt_truncated"):
+                    conn.execute("INSERT OR IGNORE INTO research_coverage_events VALUES (?,?,?,?,?)", (config["source_id"], event_id, "evidence_truncated", "RSS excerpt exceeds 20000 characters; complete feed is archived", now))
         conn.execute("UPDATE research_intel_sources SET cursor=?,last_success_at=?,error_category='',consecutive_failures=0 WHERE source_id=?", (snapshot_id, now, config["source_id"]))
     return {"source_id": config["source_id"], "snapshot_id": snapshot_id, "events": len(items), "inserted": inserted, "status": "acquired"}
 
 
-def collect_due(*, db_path=None, fetcher=None, limit: int = 3) -> dict:
+def collect_due(*, db_path=None, fetcher=None, limit: int = 10) -> dict:
     seed = seed_sources(db_path=db_path)
     fetcher = fetcher or SafeFetcher(timeout=15)
     with read_connection(db_path) as conn:
@@ -263,7 +286,7 @@ def verify_event(event_id: str, payload: dict, *, actor: str, db_path=None) -> d
     if verified == "verified":
         if not public or payload.get("attribution") != "source_reported" or not payload.get("defensive_action"):
             raise ValueError("brief items require public sharing rights, source attribution and a checked defensive action")
-        source_url(payload.get("primary_url", ""))
+        source_url(payload.get("primary_url", ""), reference=True)
         # Aggregators require an acquired primary event, not a URL assertion.
         primary_id = payload.get("primary_event_id") or event_id
         primary = intel_event(primary_id, db_path=db_path)
