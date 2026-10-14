@@ -243,20 +243,27 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str
     if not db_path.exists():
         return None
     started = time.monotonic()
+    incremental = os.environ.get("SECOPSAI_INCREMENTAL_CHECKPOINTS", "0") == "1"
+    capture_deadline = started + (240 if incremental else UPLOAD_TIMEOUT_SECONDS)
     captured_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     with tempfile.TemporaryDirectory(dir=workdir) as temp_dir:
         backup_path = Path(temp_dir) / "ledger.db"
         source = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=60)
         target = sqlite3.connect(backup_path)
         try:
-            # The online backup API copies a transactionally consistent image
-            # while the worker keeps writing.
-            source.backup(target, pages=4096, sleep=0.01)
+            # Pin a WAL read snapshot so concurrent commits cannot repeatedly
+            # restart a production-size backup. Bound busy waits as well.
+            source.execute("BEGIN")
+            source.execute("SELECT count(*) FROM sqlite_master").fetchone()
+            def check_capture_deadline(_status, _remaining, _total):
+                if time.monotonic() >= capture_deadline:
+                    raise TimeoutError("checkpoint capture exceeds its bounded budget")
+            source.backup(target, pages=4096, sleep=0.01, progress=check_capture_deadline)
         finally:
             target.close()
             source.close()
-        if os.environ.get("SECOPSAI_INCREMENTAL_CHECKPOINTS", "0") == "1":
-            return store.upload_chunked(backup_path, captured_at=captured_at, deadline=started+240)
+        if incremental:
+            return store.upload_chunked(backup_path, captured_at=captured_at, deadline=capture_deadline)
         compressed = Path(temp_dir) / "ledger.db.gz"
         with backup_path.open("rb") as raw, gzip.open(compressed, "wb", compresslevel=6) as packed:
             shutil.copyfileobj(raw, packed, length=8 * 1024 * 1024)

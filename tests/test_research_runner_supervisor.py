@@ -429,3 +429,56 @@ def test_production_recovery_drill_isolated_from_live_checkpoint(tmp_path, monke
     assert result['source_archives_hash_verified'] == 1
     assert result['rpo_target_proven'] is False
     assert 'synthetic-owner-token' not in report.read_text()
+
+
+def test_checkpoint_capture_deadline_preserves_previous_manifest(tmp_path, monkeypatch):
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS','1')
+    db = tmp_path/'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE data(value TEXT)')
+        conn.execute("INSERT INTO data VALUES('committed')")
+    server = IncrementalServer()
+    client = supervisor.LedgerStore('http://ledger.internal','tok',opener=server)
+    supervisor.checkpoint(db,client,tmp_path)
+    previous = dict(server.manifest)
+    ticks = iter([0,241])
+    monkeypatch.setattr(supervisor.time,'monotonic',lambda: next(ticks))
+    with pytest.raises(TimeoutError,match='capture'):
+        supervisor.checkpoint(db,client,tmp_path)
+    assert server.manifest == previous
+
+
+def test_checkpoint_pins_snapshot_while_wal_writer_keeps_committing(tmp_path, monkeypatch):
+    import threading
+    import time
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS','1')
+    db = tmp_path/'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('CREATE TABLE data(id INTEGER PRIMARY KEY, value BLOB)')
+        conn.execute('INSERT INTO data VALUES(1,zeroblob(30000000))')
+        conn.execute('CREATE TABLE updates(id INTEGER PRIMARY KEY)')
+    stop = threading.Event()
+    def write():
+        with sqlite3.connect(db,timeout=10) as conn:
+            i=0
+            while not stop.is_set():
+                conn.execute('INSERT INTO updates VALUES (?)',(i,))
+                conn.commit()
+                i+=1
+                time.sleep(.002)
+    writer = threading.Thread(target=write)
+    writer.start()
+    server = IncrementalServer()
+    client = supervisor.LedgerStore('http://ledger.internal','tok',opener=server)
+    try:
+        supervisor.checkpoint(db,client,tmp_path)
+    finally:
+        stop.set()
+        writer.join(timeout=10)
+    assert not writer.is_alive()
+    restored = tmp_path/'restored.db'
+    client.download(restored)
+    with sqlite3.connect(restored) as conn, sqlite3.connect(db) as live:
+        assert conn.execute('PRAGMA quick_check').fetchone()[0] == 'ok'
+        assert live.execute('SELECT count(*) FROM updates').fetchone()[0] > conn.execute('SELECT count(*) FROM updates').fetchone()[0]
