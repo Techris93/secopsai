@@ -1,0 +1,33 @@
+name: Deploy Core Edge
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: secopsai-core-edge-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare/secopsai-core-edge/package-lock.json
+      - name: Validate hosted contracts
+        working-directory: cloudflare/secopsai-core-edge
+        run: npm ci && npm run check && npm test
+      - name: Apply additive migrations and deploy Core
+        working-directory: cloudflare/secopsai-core-edge
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npm run deploy:remote
+      - name: Verify authenticated read-only assistant transport
+        env:
+          SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
+        run: python -m scripts.research_core_deployment_smoke

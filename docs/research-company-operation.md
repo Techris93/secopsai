@@ -158,6 +158,14 @@ queue age, missing evidence instrumentation and freshness. Historical rows are
 not comprehensive surveillance. `null` is unknown, not zero. New scan stage
 records identify the same release event through acquisition and analysis.
 
+Deploy the merged Core revision through **Deploy Core Edge** on `main`. This
+protected production workflow validates the hosted contracts, applies additive
+D1 migrations and checks authenticated assistant reads without creating jobs.
+Use **Deploy Ledger Store** to update private immutable storage and verify it
+with a bounded benign object. These workflows use configured repository secrets;
+local access failures do not bypass production authentication. Keep the GitHub
+research worker as the sole ledger writer during this rollout.
+
 The deployed ledger-store protocol advertises safe completion retries. Do not
 start the disabled container runner or another writer. Test the worker, storage
 service and failure/lost-acknowledgement regressions before deployment. The
