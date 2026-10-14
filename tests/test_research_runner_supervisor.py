@@ -288,7 +288,7 @@ def test_shutdown_still_fails_when_checkpoint_retries_exhaust(tmp_path, monkeypa
             raise ConnectionResetError("lost connection")
         return server(request, timeout)
     class FinishedWorker:
-        def wait(self): return 0
+        def wait(self, timeout=None): return 0
     data = tmp_path / "research"
     data.mkdir()
     with sqlite3.connect(data / "openclaw_soc.db") as conn:
@@ -303,3 +303,88 @@ def test_shutdown_still_fails_when_checkpoint_retries_exhaust(tmp_path, monkeypa
     assert supervisor.main(["--cycles", "1"]) == 1
     assert len(calls) == 3
     assert server.latest == "previous"
+
+
+class IncrementalServer:
+    def __init__(self):
+        self.objects, self.manifest, self.puts = {}, None, 0
+    def __call__(self, request, timeout=None):
+        path = request.full_url.replace('http://ledger.internal', '')
+        if path.startswith('/artifact-objects/'):
+            key = path.rsplit('/',1)[1]
+            if request.get_method() == 'PUT':
+                import hashlib
+                assert hashlib.sha256(request.data).hexdigest() == key
+                self.objects[key] = request.data
+                self.puts += 1
+                return _Response(json.dumps({'sha256':key,'size_bytes':len(request.data)}).encode())
+            return _Response(self.objects[key])
+        if path == '/checkpoints':
+            manifest = json.loads(request.data)
+            assert supervisor.valid_manifest(manifest)
+            assert all(c['sha256'] in self.objects for c in manifest['chunks'])
+            self.manifest = manifest
+            return _Response(b'{"key":"ledger/manifests/fixture.json"}')
+        if path == '/checkpoint-manifest':
+            return _Response(json.dumps(self.manifest).encode())
+        raise AssertionError(path)
+
+
+def test_incremental_checkpoint_restores_and_reuses_verified_chunks(tmp_path, monkeypatch):
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS','1')
+    db = tmp_path / 'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE data(id INTEGER PRIMARY KEY, value BLOB)')
+        conn.execute('INSERT INTO data VALUES(1,zeroblob(30000000))')
+    server = IncrementalServer()
+    client = supervisor.LedgerStore('http://ledger.internal','tok',opener=server)
+    supervisor.checkpoint(db,client,tmp_path)
+    first_puts = server.puts
+    assert first_puts == 2
+    supervisor.checkpoint(db,client,tmp_path)
+    assert server.puts == first_puts, 'unchanged chunks must not be uploaded again'
+    destination = tmp_path / 'restored.db'
+    assert client.download(destination)
+    with sqlite3.connect(destination) as restored:
+        assert restored.execute('SELECT length(value) FROM data').fetchone()[0] == 30000000
+    assert destination.stat().st_mode & 0o777 == 0o600
+    original = destination.read_bytes()
+    first_hash = server.manifest['chunks'][0]['sha256']
+    server.objects[first_hash] = b'corrupted compressed chunk'
+    with pytest.raises(ValueError, match='checksum'):
+        client.download(destination)
+    assert destination.read_bytes() == original
+    assert not destination.with_suffix('.restore').exists()
+
+
+def test_invalid_incremental_manifest_cannot_start_restoration(tmp_path):
+    server = IncrementalServer()
+    client = supervisor.LedgerStore('http://ledger.internal','tok',opener=server)
+    for manifest in [{}, {'version':3, 'chunks':[{'raw_size_bytes':float('inf')}]}]:
+        with pytest.raises(ValueError, match='manifest'):
+            client.download_chunked(tmp_path/'missing.db',manifest)
+    assert not (tmp_path/'missing.db').exists()
+
+
+def test_forced_budget_shutdown_is_failed_even_when_checkpoint_survives(tmp_path, monkeypatch):
+    import subprocess as real_subprocess
+    server = FakeLedgerServer()
+    data = tmp_path / "research"
+    data.mkdir()
+    with sqlite3.connect(data / "openclaw_soc.db") as conn:
+        conn.execute("CREATE TABLE retained (value TEXT)")
+        conn.execute("INSERT INTO retained VALUES ('committed before interruption')")
+    monkeypatch.setenv("SECOPS_FINDINGS_DIR", str(data))
+    monkeypatch.setenv("LEDGER_STORE_URL", "http://ledger.internal")
+    monkeypatch.setenv("LEDGER_STORE_TOKEN", "tok")
+    original_init = supervisor.LedgerStore.__init__
+    monkeypatch.setattr(supervisor.LedgerStore,"__init__",lambda self,url,token: original_init(self,url,token,opener=server))
+    original_popen = real_subprocess.Popen
+    command = [supervisor.sys.executable,"-c","import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(120)"]
+    monkeypatch.setattr(supervisor.subprocess,"Popen",lambda _cmd,**kw: original_popen(command,**kw))
+    monkeypatch.setattr(supervisor,"GRACE_SECONDS",1)
+    assert supervisor.main(["--cycles","1","--max-seconds","1"]) == 1
+    restored = tmp_path / "restored.db"
+    assert supervisor.LedgerStore("http://ledger.internal","tok").download(restored)
+    with sqlite3.connect(restored) as conn:
+        assert conn.execute("SELECT value FROM retained").fetchone()[0] == 'committed before interruption'

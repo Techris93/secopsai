@@ -22,6 +22,9 @@ jobs:
       - name: Install source parser dependencies
         run: pip install -r requirements.txt
       - name: Verify public source transport and parsing independently
+        env:
+          LEDGER_STORE_URL: https://ledger.secopsai.dev
+          LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
         run: python -m scripts.research_sources_smoke --output reports/research/sources.json --cisa-advisories
       - name: Check checkpoint age, source coverage and public availability
         if: always()

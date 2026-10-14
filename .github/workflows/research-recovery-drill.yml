@@ -1,0 +1,28 @@
+name: Research Recovery Drill
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: research-recovery-drill
+  cancel-in-progress: false
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LEDGER_STORE_URL: https://ledger.secopsai.dev
+      LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.13'
+      - name: Restore exact production bytes and reconcile in disposable storage
+        run: python scripts/research_recovery_smoke.py --output reports/research/recovery.json
+      - name: Preserve bounded recovery measurements
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: research-recovery-drill
+          path: reports/research/recovery.json

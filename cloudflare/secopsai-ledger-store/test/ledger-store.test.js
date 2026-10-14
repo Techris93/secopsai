@@ -121,7 +121,7 @@ test("overlapping fast lane ticks dispatch a release once", async () => {
 test("authenticated checkpoint status uses metadata without downloading the snapshot", async () => {
   const calls = [];
   const env = { LEDGER_STORE_TOKEN: "secret", LEDGER: {
-    get: async key => { calls.push(key); assert.equal(key, "ledger/LATEST"); return {text: async () => "ledger/snapshots/fixture.db.gz"}; },
+    get: async key => { calls.push(key); if(key === "ledger/LATEST_CHUNKED") return null; assert.equal(key, "ledger/LATEST"); return {text: async () => "ledger/snapshots/fixture.db.gz"}; },
     head: async key => { calls.push(key); return {size: 1450000000, uploaded: new Date("2026-10-13T09:00:00Z")}; },
   }};
   assert.equal((await worker.fetch(new Request("https://ls.example/status"), env)).status, 401);
@@ -131,7 +131,7 @@ test("authenticated checkpoint status uses metadata without downloading the snap
   assert.equal(status.completion_retry_safe, true);
   assert.equal(status.size_bytes, 1450000000);
   assert.equal(status.uploaded_at, "2026-10-13T09:00:00.000Z");
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
 });
 
 import {createHash} from 'node:crypto';
@@ -161,4 +161,55 @@ test('private artifact objects validate checksum, bounds and immutable retries',
   assert.equal((await worker.fetch(bad,env)).status,400);
   assert.equal(objects.size,1);
   assert.equal((await worker.fetch(new Request(url,{method:'DELETE',headers:{authorization:'Bearer secret'}}),env)).status,405);
+});
+
+test('fixed source relay preserves source identity and never forwards private credentials', async () => {
+  const {fetchPublicSource} = await import('../src/index.js');
+  let called = 0;
+  const result = await fetchPublicSource('cisa-news', async (url, opts) => {
+    called++;
+    assert.equal(url, 'https://www.cisa.gov/news.xml');
+    assert.equal(opts.redirect, 'manual');
+    assert.equal(opts.headers.authorization, undefined);
+    return new Response('<rss>fixture</rss>', {headers:{'content-type':'application/xml'}});
+  });
+  assert.equal(result.status,200);
+  assert.equal(result.headers.get('x-secopsai-source-url'),'https://www.cisa.gov/news.xml');
+  assert.match(result.headers.get('x-secopsai-source-sha256'),/^[a-f0-9]{64}$/);
+  assert.equal((await fetchPublicSource('https://attacker.example', () => assert.fail('open proxy'))).status,404);
+  assert.equal(called,1);
+  assert.equal((await worker.fetch(new Request('https://ls.example/public-sources/cisa-news'),{LEDGER_STORE_TOKEN:'secret'})).status,401);
+  assert.equal((await worker.fetch(new Request('https://ls.example/public-sources/cisa-news?url=https://attacker.example',{headers:{authorization:'Bearer secret'}}),{LEDGER_STORE_TOKEN:'secret'})).status,400);
+});
+
+test('source relay refuses challenges, redirects and oversized streams', async () => {
+  const {fetchPublicSource} = await import('../src/index.js');
+  for (const response of [new Response('denied',{status:403}),new Response('',{status:302}),new Response(new Uint8Array(4*1024*1024+1))]) {
+    assert.equal((await fetchPublicSource('cisa-news', async () => response)).status,502);
+  }
+});
+
+test('incremental checkpoint commits only complete immutable chunks and cannot regress the pointer', async () => {
+  const {handleLedgerRequest} = await import('../../secopsai-research-runner/src/ledger.js');
+  const objects = new Map();
+  const bucket = {
+    head: async key => objects.get(key) || null,
+    get: async key => objects.has(key) ? {text:async()=>objects.get(key).text,body:objects.get(key).text} : null,
+    put: async (key,text,options={}) => {objects.set(key,{text,customMetadata:options.customMetadata,size:String(text).length,uploaded:new Date()});},
+  };
+  const hash = 'a'.repeat(64);
+  const m = {version:3,sha256:'b'.repeat(64),size_bytes:100,captured_at:'2026-10-14T10:00:00Z',chunks:[{sha256:hash,size_bytes:50,raw_sha256:'c'.repeat(64),raw_size_bytes:100}]};
+  const post = value => new Request('https://ls.example/checkpoints',{method:'POST',headers:{'content-length':String(JSON.stringify(value).length)},body:JSON.stringify(value)});
+  assert.equal((await handleLedgerRequest(post(m),bucket)).status,409);
+  assert.equal(objects.has('ledger/LATEST_CHUNKED'),false);
+  objects.set('artifacts/sha256/'+hash,{size:50,customMetadata:{sha256:hash}});
+  const result = await handleLedgerRequest(post(m),bucket);
+  assert.equal(result.status,200);
+  const latest = objects.get('ledger/LATEST_CHUNKED').text;
+  assert.equal((await handleLedgerRequest(post({...m,captured_at:'2026-10-13T10:00:00Z'}),bucket)).status,200);
+  assert.equal(objects.get('ledger/LATEST_CHUNKED').text,latest);
+  assert.equal((await handleLedgerRequest(post({...m,size_bytes:101}),bucket)).status,400);
+  const status = await (await handleLedgerRequest(new Request('https://ls.example/status'),bucket)).json();
+  assert.equal(status.protocol,'ledger-checkpoint-v3');
+  assert.equal(status.captured_at,m.captured_at);
 });

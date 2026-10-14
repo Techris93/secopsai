@@ -148,6 +148,8 @@ class SafeFetcher:
     def get(self, url: str, *, allowed_hosts: Iterable[str], max_bytes: int,
             headers: Optional[Dict[str, str]] = None, data: Optional[bytes] = None) -> Tuple[str, Dict[str, str], bytes]:
         """GET (or POST when ``data`` is given, for query APIs) with the same safeguards."""
+        from secopsai.worker_control import check_shutdown
+        check_shutdown()
         current = url
         hosts = {str(host).lower() for host in allowed_hosts}
         request_headers = {"Accept": "application/json, application/octet-stream", "User-Agent": USER_AGENT}
@@ -171,6 +173,7 @@ class SafeFetcher:
                 opener = urllib.request.build_opener(_NoRedirectHandler())
                 max_retries = 3
                 for attempt in range(max_retries):
+                    check_shutdown()
                     try:
                         with opener.open(request, timeout=self.timeout) as response:
                             status = int(response.status)

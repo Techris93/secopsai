@@ -74,6 +74,7 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
             stages = {r["stage"]: r["count"] for r in conn.execute("SELECT stage,count(*) AS count FROM research_coverage_events WHERE source_id=? AND observed_at>=? GROUP BY stage", (row["source_id"], since))}
             delay = _age(row["last_success_at"], now)
             sources.append({"source_id": row["source_id"], "name": config["name"], "coverage_mode": "source_reporting", "enabled": config["enabled"],
+                            "collection_scope": "bounded_recent_index" if config["parser"] in {"github_advisories", "openvsx_index", "jfrog_index", "socket_index"} else "bounded_published_feed",
                             "eligible_events": None, "observed_events": observed, "last_success_at": row["last_success_at"], "delay_seconds": delay,
                             "fresh": delay is not None and delay <= config["interval_seconds"] * 2, "error_category": row["error_category"],
                             "consecutive_failures": row["consecutive_failures"], "sharing": config["sharing"],
@@ -81,6 +82,8 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
         queue = {r["state"]: r["count"] for r in conn.execute("SELECT state,count(*) AS count FROM research_operation_queue GROUP BY state")}
         oldest = conn.execute("SELECT min(created_at) FROM research_operation_queue WHERE state IN ('queued','retry','running')").fetchone()[0]
         editions = [dict(r) for r in conn.execute("SELECT edition_id,edition_date,state,author_id,published_url,updated_at FROM research_editorial_editions ORDER BY edition_date DESC LIMIT 90")]
+        ontology_pending = conn.execute("SELECT count(*) FROM ontology_sync_outbox WHERE status='queued'").fetchone()[0]
+        ontology_oldest = conn.execute("SELECT min(created_at) FROM ontology_sync_outbox WHERE status='queued'").fetchone()[0]
         failures = conn.execute("SELECT count(*) FROM registry_ingestion_runs WHERE status='failed' AND started_at>=?", (since,)).fetchone()[0]
         artifact_rows = conn.execute("SELECT artifact_id,provenance_json FROM research_artifacts WHERE state='collected' ORDER BY updated_at DESC LIMIT 1000").fetchall()
     backed_up = {r["payload"].get("artifact_id") for r in records("artifact_backup", db_path=db_path, limit=10000) if r["payload"].get("status") == "completed"}
@@ -93,7 +96,8 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
             "artifact_backup": {"enabled": vault_enabled, "pending_registered_public": backup_pending,
                                 "coverage": "latest 1000 collected catalog entries; restricted and unregistered artifacts excluded"},
             "health": {"freshness_gaps": gaps, "collector_failures": failures, "dead_letters": queue.get("dead_letter", 0),
-                       "artifact_backup_pending": backup_pending if vault_enabled else None},
+                       "artifact_backup_pending": backup_pending if vault_enabled else None,
+                       "ontology_pending": ontology_pending, "ontology_oldest_age_seconds": _age(ontology_oldest, now)},
             "public_summary": f"Collection is bounded and does not establish comprehensive surveillance. {len(gaps)} enabled sources lack a fresh successful collection. {len(metadata)} registry collectors provide metadata coverage without artifact scanning. Unknown eligible-event and evidence-coverage denominators are reported as unknown."}
 
 

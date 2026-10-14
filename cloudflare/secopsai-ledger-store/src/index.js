@@ -69,6 +69,43 @@ async function putWatchlist(request, env, ecosystem) {
   return json({ status: "stored", ecosystem, count: names.length });
 }
 
+// Fixed upstream identities only: this is a source collector, never an open proxy.
+export const PUBLIC_SOURCES = Object.freeze({
+  "cisa-news": "https://www.cisa.gov/news.xml",
+  "cisa-advisories": "https://www.cisa.gov/cybersecurity-advisories/all.xml",
+});
+export async function fetchPublicSource(identity, fetcher = fetch) {
+  const upstream = PUBLIC_SOURCES[identity];
+  if (!upstream) return json({error: "unknown source"}, 404);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetcher(upstream, {redirect: "manual", signal: controller.signal,
+      headers: {"user-agent": "SecOpsAI-Research/1.0 (+https://secopsai.dev)",
+        accept: "application/rss+xml, application/atom+xml, application/xml;q=0.9"}});
+    if (response.status !== 200) return json({error: "source_unavailable", upstream_status: response.status}, 502);
+    if (!response.body) return json({error: "empty_source"}, 502);
+    const reader = response.body.getReader(), pieces = [];
+    let size = 0;
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 4 * 1024 * 1024) { await reader.cancel(); return json({error: "source_too_large"}, 502); }
+      pieces.push(value);
+    }
+    if (!size) return json({error: "empty_source"}, 502);
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const piece of pieces) { bytes.set(piece, offset); offset += piece.byteLength; }
+    const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), b => b.toString(16).padStart(2, "0")).join("");
+    return new Response(bytes, {headers: {"content-type": response.headers.get("content-type") || "application/octet-stream",
+      "cache-control": "no-store", "x-secopsai-source-url": upstream, "x-secopsai-source-sha256": hash,
+      "x-secopsai-acquired-at": new Date().toISOString()}});
+  } catch { return json({error: "source_transport_failure"}, 502); }
+  finally { clearTimeout(timer); }
+}
+
 export default {
   async scheduled(controller, env, ctx) {
     if (controller.cron === FASTLANE_CRON) {
@@ -107,6 +144,11 @@ export default {
     const owner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);
     if (!owner && !(isUpload(request, url) && await bridgeVerified(request, env))) {
       return json({ error: "unauthorized" }, 401);
+    }
+    if (url.pathname.startsWith("/public-sources/")) {
+      if (!owner) return json({error: "unauthorized"}, 401);
+      if (request.method !== "GET" || url.search) return json({error: "invalid source request"}, 400);
+      return fetchPublicSource(url.pathname.slice("/public-sources/".length));
     }
     return handleLedgerRequest(request, env.LEDGER);
   },

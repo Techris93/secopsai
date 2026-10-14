@@ -180,6 +180,47 @@ def restore_artifact(artifact_id, *, actor, db_path=None, client=None):
         temporary.unlink(missing_ok=True)
 
 
+def recover_public_artifact(artifact_id, *, db_path=None, client=None, fetcher=None):
+    """Recover exact public registry bytes without extraction or execution."""
+    row = artifact_row(artifact_id, db_path)
+    provenance = json.loads(row["provenance_json"])
+    if provenance.get("source") != "secopsai_safe_registry_intake":
+        raise ValueError("automatic recovery is limited to registered public intake")
+    if receipt(artifact_id, db_path):
+        return restore_artifact(artifact_id, actor="research-worker", db_path=db_path, client=client)
+    from secopsai.research_intake import SafeFetcher, get_adapter
+    from secopsai.research_artifacts import quarantine_root
+    adapter = get_adapter(row["ecosystem"])
+    url = provenance.get("artifact_url", "")
+    if not url:
+        raise ValueError("no archived artifact URL; exact recovery requires a verified copy")
+    final, _, body = (fetcher or SafeFetcher(timeout=10)).get(url, allowed_hosts=adapter.artifact_hosts,
+                                                            max_bytes=min(MAX_BYTES, row["size_bytes"]))
+    if len(body) != row["size_bytes"] or hashlib.sha256(body).hexdigest() != row["sha256"]:
+        raise ValueError("reacquired bytes do not match recorded artifact")
+    destination = quarantine_root() / row["sha256"]
+    temporary = destination.with_name("." + destination.name + "." + secrets.token_hex(8))
+    try:
+        with temporary.open("xb") as handle:
+            os.chmod(temporary, 0o600)
+            handle.write(body)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+        with closing(soc_store.connect(db_path)) as conn:
+            conn.execute("UPDATE research_artifacts SET quarantine_path=?,updated_at=? WHERE artifact_id=?", (str(destination), soc_store.utc_now(), artifact_id))
+            conn.commit()
+        # Recovery is complete only after these bytes are durable outside the runner.
+        saved = backup_artifact(artifact_id, actor="research-worker", db_path=db_path, client=client)
+        result = {"artifact_id": artifact_id, "sha256": row["sha256"], "size_bytes": len(body),
+                  "origin": final, "hash_verified": True, "execution_performed": False,
+                  "backup_manifest_sha256": saved["manifest_sha256"]}
+        append("artifact_recovery", result, actor="research-worker", db_path=db_path)
+        return result
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def backup_public_artifacts(*, db_path=None, limit=5, client=None):
     if os.environ.get("SECOPSAI_ARTIFACT_VAULT", "0") != "1":
         return {"status": "skipped", "reason": "artifact_vault_disabled"}
@@ -192,6 +233,9 @@ def backup_public_artifacts(*, db_path=None, limit=5, client=None):
     backed_up = {r["payload"].get("artifact_id") for r in records("artifact_backup", db_path=db_path, limit=10000)}
     pending = [r for r in rows if json.loads(r["provenance_json"]).get("source") == "secopsai_safe_registry_intake" and r["artifact_id"] not in backed_up]
     available = []
+    recovered = []
+    recovery_deadline = time.monotonic() + 60
+    recovery_attempts = 0
     for row in pending:
         try:
             import stat
@@ -200,6 +244,14 @@ def backup_public_artifacts(*, db_path=None, limit=5, client=None):
                 continue
             available.append(row["artifact_id"])
         except FileNotFoundError:
+            if os.environ.get("SECOPSAI_PUBLIC_ARTIFACT_RECOVERY", "0") == "1" and recovery_attempts < limit and time.monotonic() < recovery_deadline:
+                recovery_attempts += 1
+                try:
+                    recovered.append(recover_public_artifact(row["artifact_id"], db_path=db_path, client=client))
+                    continue
+                except (ValueError, OSError):
+                    failures.append({"artifact_id": row["artifact_id"], "reason": "exact_public_recovery_failed"})
+                    continue
             failures.append({"artifact_id": row["artifact_id"], "reason": "local_bytes_missing"})
         except OSError:
             failures.append({"artifact_id": row["artifact_id"], "reason": "local_bytes_unreadable"})
@@ -212,5 +264,6 @@ def backup_public_artifacts(*, db_path=None, limit=5, client=None):
             failures.append({"artifact_id": identity, "reason": "local_bytes_missing"})
         except (ValueError, OSError):
             failures.append({"artifact_id": identity, "reason": "backup_failed"})
-    return {"status": "degraded" if failures or len(pending) > limit else "succeeded", "completed": completed, "failures": failures,
-            "pending_before_cycle": len(pending), "remaining": len(pending) - len(completed), "coverage": "public registered artifacts, bounded to latest 1000 catalog entries"}
+    remaining = len(pending) - len(completed) - len(recovered)
+    return {"status": "degraded" if failures or remaining else "succeeded", "completed": completed, "recovered": recovered, "failures": failures,
+            "pending_before_cycle": len(pending), "remaining": remaining, "coverage": "public registered artifacts, bounded to latest 1000 catalog entries"}

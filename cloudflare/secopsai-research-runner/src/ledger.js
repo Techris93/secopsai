@@ -30,9 +30,61 @@ export function bearer(request) {
   return header.startsWith("Bearer ") ? header.slice(7) : "";
 }
 
+const MANIFEST_PREFIX = "ledger/manifests/";
+const CHUNK_POINTER = "ledger/LATEST_CHUNKED";
+const HASH = /^[a-f0-9]{64}$/;
+
+export function validCheckpointManifest(m) {
+  if (!m || m.version !== 3 || !HASH.test(m.sha256 || "") || !Array.isArray(m.chunks) || !m.chunks.length || m.chunks.length > 900
+      || !Number.isSafeInteger(m.size_bytes) || m.size_bytes <= 0 || !Number.isFinite(Date.parse(m.captured_at))) return false;
+  let total = 0;
+  for (const c of m.chunks) {
+    if (!HASH.test(c.sha256 || "") || !HASH.test(c.raw_sha256 || "") || !Number.isSafeInteger(c.size_bytes) || c.size_bytes <= 0 || c.size_bytes > 32 * 1024 * 1024
+        || !Number.isSafeInteger(c.raw_size_bytes) || c.raw_size_bytes <= 0 || c.raw_size_bytes > 28 * 1024 * 1024) return false;
+    total += c.raw_size_bytes;
+  }
+  return total === m.size_bytes;
+}
+
+export async function handleChunkedCheckpoint(request, bucket) {
+  const path = new URL(request.url).pathname;
+  if (path === "/checkpoint-manifest" && request.method === "GET") {
+    const pointer = await bucket.get(CHUNK_POINTER);
+    if (!pointer) return json({error: "no_chunked_checkpoint"}, 404);
+    const object = await bucket.get(await pointer.text());
+    if (!object) return json({error: "checkpoint_manifest_missing"}, 503);
+    return new Response(object.body, {headers: {"content-type": "application/json", "cache-control": "no-store"}});
+  }
+  if (path !== "/checkpoints" || request.method !== "POST") return null;
+  const length = Number(request.headers.get("content-length"));
+  if (!Number.isSafeInteger(length) || length <= 0 || length > 512 * 1024) return json({error: "manifest_size_invalid"}, 413);
+  const encoded = await request.text();
+  if (new TextEncoder().encode(encoded).byteLength > 512 * 1024) return json({error: "manifest_size_invalid"}, 413);
+  let m;
+  try {m = JSON.parse(encoded);} catch {return json({error: "invalid_checkpoint_manifest"},400);}
+  if (!validCheckpointManifest(m) || Date.parse(m.captured_at) > Date.now() + 300000) return json({error: "invalid_checkpoint_manifest"}, 400);
+  // Stay below the free plan's internal-service request budget and six open connections.
+  for (let i = 0; i < m.chunks.length; i += 6) {
+    const group = m.chunks.slice(i, i + 6);
+    const objects = await Promise.all(group.map(c => bucket.head(`artifacts/sha256/${c.sha256}`)));
+    if (objects.some((o, j) => !o || o.size !== group[j].size_bytes || o.customMetadata?.sha256 !== group[j].sha256))
+      return json({error: "checkpoint_chunk_missing_or_corrupt"}, 409);
+  }
+  const body = JSON.stringify(m);
+  const manifestHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body))), b => b.toString(16).padStart(2,"0")).join("");
+  const key = `${MANIFEST_PREFIX}${m.captured_at.replace(/[:.]/g, "-")}-${manifestHash}.json`;
+  await bucket.put(key, body, {httpMetadata: {contentType: "application/json"}, customMetadata: {captured_at: m.captured_at, size_bytes: String(m.size_bytes)}});
+  const current = await bucket.get(CHUNK_POINTER);
+  if (current && await current.text() > key) return json({key, superseded: true});
+  await bucket.put(CHUNK_POINTER, key);
+  return json({key, protocol: "ledger-checkpoint-v3", completion_retry_safe: true});
+}
+
 export async function handleLedgerRequest(request, bucket) {
   const url = new URL(request.url);
   const parts = url.pathname.split("/").filter(Boolean);
+  const chunked = await handleChunkedCheckpoint(request, bucket);
+  if (chunked) return chunked;
   // Private immutable chunks and manifests. R2 checks the supplied SHA-256
   // against the streamed bytes; existing objects are never overwritten.
   const artifact = url.pathname.match(/^\/artifact-objects\/([a-f0-9]{64})$/);
@@ -66,6 +118,13 @@ export async function handleLedgerRequest(request, bucket) {
     return json({error: "method_not_allowed"}, 405);
   }
   if (request.method === "GET" && url.pathname === "/status") {
+    const chunkedPointer = await bucket.get(CHUNK_POINTER);
+    if (chunkedPointer) {
+      const key = await chunkedPointer.text(), object = await bucket.head(key);
+      return json({protocol: "ledger-checkpoint-v3", completion_retry_safe: true, latest_key: key,
+        size_bytes: Number(object?.customMetadata?.size_bytes) || null, captured_at: object?.customMetadata?.captured_at || null,
+        uploaded_at: object?.uploaded ? new Date(object.uploaded).toISOString() : null, checkpoint_available: Boolean(object)});
+    }
     const pointer = await bucket.get(LATEST_POINTER);
     const key = pointer ? await pointer.text() : null;
     const object = key ? await bucket.head(key) : null;
@@ -76,6 +135,7 @@ export async function handleLedgerRequest(request, bucket) {
   }
 
   if (request.method === "GET" && url.pathname === "/snapshot") {
+    if (await bucket.get(CHUNK_POINTER)) return json({error: "incremental_checkpoint_requires_v3_client"},409);
     const pointer = await bucket.get(LATEST_POINTER);
     if (!pointer) return json({ error: "no_snapshot" }, 404);
     const object = await bucket.get(await pointer.text());

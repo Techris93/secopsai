@@ -184,3 +184,38 @@ def test_public_registration_requires_durable_backup_when_enabled(artifact, monk
         assert records("artifact_backup", db_path=db)[0]["payload"]["status"] == "completed"
     with soc_store.connect(db) as conn:
         assert conn.execute("SELECT artifact_id FROM research_artifacts WHERE artifact_id=?", (identity,)).fetchone()
+
+
+def test_exact_public_reacquisition_is_durable_and_rejects_changed_bytes(artifact, monkeypatch):
+    from pathlib import Path
+    from secopsai.research_artifact_vault import recover_public_artifact
+    from secopsai.research_intake import SafeFetcher
+    db, identity, stored, original = artifact
+    provenance = json.dumps({'source': 'secopsai_safe_registry_intake', 'artifact_url': 'https://registry.npmjs.org/fixture/-/fixture-1.tgz'})
+    with soc_store.connect(db) as conn:
+        conn.execute("UPDATE research_artifacts SET ecosystem='npm',provenance_json=? WHERE artifact_id=?", (provenance, identity))
+        conn.commit()
+    Path(stored).unlink()
+    wrong = SafeFetcher(fetch=lambda url, limit: (200, {}, b'changed'))
+    with pytest.raises(ValueError, match='do not match'):
+        recover_public_artifact(identity, db_path=db, client=MemoryVault(), fetcher=wrong)
+    assert not records('artifact_backup', db_path=db) and not records('artifact_recovery', db_path=db)
+    good = SafeFetcher(fetch=lambda url, limit: (200, {}, original))
+    result = recover_public_artifact(identity, db_path=db, client=MemoryVault(), fetcher=good)
+    assert result['hash_verified'] and not result['execution_performed']
+    assert len(records('artifact_backup', db_path=db)) == 1
+    with soc_store.read_connect(db) as conn:
+        path = conn.execute('SELECT quarantine_path FROM research_artifacts WHERE artifact_id=?', (identity,)).fetchone()[0]
+    assert Path(path).read_bytes() == original and Path(path).stat().st_mode & 0o777 == 0o600
+
+
+def test_recovery_refuses_restricted_samples_and_off_adapter_hosts(artifact):
+    from secopsai.research_artifact_vault import recover_public_artifact
+    db, identity, _, _ = artifact
+    with pytest.raises(ValueError, match='public intake'):
+        recover_public_artifact(identity, db_path=db, client=MemoryVault())
+    with soc_store.connect(db) as conn:
+        conn.execute("UPDATE research_artifacts SET ecosystem='npm',provenance_json=? WHERE artifact_id=?", (json.dumps({'source':'secopsai_safe_registry_intake','artifact_url':'https://attacker.example/steal'}), identity))
+        conn.commit()
+    with pytest.raises(ValueError, match='allowlist'):
+        recover_public_artifact(identity, db_path=db, client=MemoryVault())
