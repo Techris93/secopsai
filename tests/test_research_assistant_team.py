@@ -245,7 +245,7 @@ def hosted(setup, monkeypatch):
 
 def test_hosted_delivery_retries_same_evidence_and_reconciles_both_stages(setup, monkeypatch):
     from secopsai.research_assistant_transport import sync_hosted
-    from secopsai.intelligence_jobs import get_job
+    from secopsai.intelligence_jobs import get_job, peek_next_job, release_waiting_provider_jobs, claim_next_job
     db, case_id = setup
     current = hosted(setup, monkeypatch)
     client = HostedFixture();client.lost = True
@@ -257,6 +257,9 @@ def test_hosted_delivery_retries_same_evidence_and_reconciles_both_stages(setup,
     current = team.get_team(current['team_id'], db_path=db)
     run = get_run(current['runs']['synthesis'], db_path=db)
     assert get_job(run['intelligence_job_id'], db_path=db)['status'] == 'awaiting_provider'
+    assert peek_next_job(include_awaiting_provider=True, db_path=db) is None
+    assert release_waiting_provider_jobs(provider='synthetic', selected_model='opencodex/test-research', db_path=db)['count'] == 0
+    assert claim_next_job(provider='synthetic', worker_id='synthetic-local', db_path=db) is None
     first.update(status='succeeded', result=output(db, case_id))
     assert sync_hosted(client, db_path=db)['applied'] == 1
     assert sync_hosted(client, db_path=db)['delivered'] == 1

@@ -684,6 +684,7 @@ def enqueue_run(run_id: str, *, actor: str = "operator", db_path: str | None = N
         target_id=run["run_id"],
         inputs={
             "specialist_run_id": run["run_id"],
+            "research_team_transport": run["contract"]["task"].get("research_team_transport", "local"),
             "selected_model": selected_model,
             "fallback_models": list(run.get("fallback_models") or []),
             "fallback_mode": str(run.get("fallback_mode") or "disabled"),
@@ -893,6 +894,7 @@ def _queue_review(run: dict[str, Any], *, actor: str, db_path: str | None) -> st
         target_id=run["run_id"],
         inputs={
             "specialist_run_id": run["run_id"],
+            "research_team_transport": run["contract"]["task"].get("research_team_transport", "local"),
             "selected_model": selected_model,
             "fallback_models": list(run.get("fallback_models") or []),
             "fallback_mode": str(run.get("fallback_mode") or "disabled"),

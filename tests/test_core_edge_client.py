@@ -32,6 +32,21 @@ def _settings() -> CoreEdgeSettings:
     )
 
 
+def test_operation_projection_preserves_complete_draft_and_rejects_oversize():
+    import pytest
+    session = _Session()
+    client = CoreEdgeClient(_settings(), session=session)
+    projection = {'schema_version': 'secopsai.research.operation.v1', 'coverage': {'sources': []},
+                  'editions': [{'draft': {'body_markdown': 'Original first line\n' + 'x' * 10000}}],
+                  'assistant_teams': [{'team_id': 'RTM-0123456789ABCDEF', 'status': 'running'}]}
+    client.sync_research_operation(projection)
+    assert session.calls[0][2]['json'] == projection
+    projection['editions'][0]['draft']['body_markdown'] = 'x' * 131073
+    with pytest.raises(ValueError, match='bounded request size'):
+        client.sync_research_operation(projection)
+    assert len(session.calls) == 1
+
+
 def test_process_revision_prefers_deployment_revision(monkeypatch):
     monkeypatch.setenv("SECOPSAI_BUILD_REVISION", "build-123")
     monkeypatch.setenv("RENDER_GIT_COMMIT", "render-456")

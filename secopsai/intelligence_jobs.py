@@ -151,6 +151,7 @@ def claim_next_job(
 
             row = connection.execute(
                 """SELECT job_id FROM intelligence_jobs WHERE status = 'queued'
+                   AND COALESCE(json_extract(input_json,'$.research_team_transport'),'local') <> 'hosted'
                    ORDER BY CASE action
                      WHEN 'execute_specialist_work' THEN 0
                      WHEN 'review_specialist_work' THEN 0
@@ -202,6 +203,7 @@ def peek_next_job(
     with closing(soc_store.read_connect(resolved_path)) as connection:
         row = connection.execute(
             f"""SELECT job_id FROM intelligence_jobs WHERE status IN {statuses}
+               AND COALESCE(json_extract(input_json,'$.research_team_transport'),'local') <> 'hosted'
                ORDER BY CASE action
                  WHEN 'execute_specialist_work' THEN 0
                  WHEN 'review_specialist_work' THEN 0
@@ -629,6 +631,9 @@ def release_waiting_provider_jobs(
             for row in rows:
                 job_id = str(row["job_id"])
                 inputs = _decode(str(row["input_json"] or "{}"))
+                if inputs.get("research_team_transport") == "hosted":
+                    skipped.append(job_id)
+                    continue
                 captured_model = _clean(inputs.get("selected_model"), 200)
                 if captured_model and selected_model and captured_model != selected_model:
                     skipped.append(job_id)

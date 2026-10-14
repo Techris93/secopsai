@@ -551,16 +551,18 @@ class CoreEdgeClient:
             if path == "/api/v1/intelligence/bridge/state"
             else _bounded_bridge_command(payload or {})
             if path.startswith("/api/v1/intelligence/bridge/commands/")
+            else _bounded_json(payload or {}, limit=131072, preserve_lists=True)
+            if path == "/api/v1/research/operation/sync"
             else _bounded_json(payload or {}, limit=4 * 1024 * 1024, preserve_lists=True)
             if path in {"/api/v1/research/cases/sync", "/api/v1/research/triage/jobs", "/api/v1/research/assistant/jobs"}
             else _bounded_json(payload or {}, preserve_lists=path == "/api/v1/ontology/sync")
         )
-        if path == "/api/v1/ontology/sync" and isinstance(body, dict) and body.get("status") == "truncated":
+        if path in {"/api/v1/ontology/sync", "/api/v1/research/operation/sync"} and isinstance(body, dict) and body.get("status") == "truncated":
             # A marker-only request would be accepted by older Core versions
             # while dropping the entire snapshot. Surface it as a degraded
             # control-plane result so the caller can retain/retry the source
             # payload instead of reporting a false successful sync.
-            raise ValueError("ontology snapshot exceeds the bounded request size")
+            raise ValueError("control-plane snapshot exceeds the bounded request size")
         response = self.session.request(
             method,
             f"{self.settings.url}{path}",

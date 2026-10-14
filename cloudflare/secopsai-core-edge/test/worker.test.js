@@ -764,7 +764,7 @@ test("research projections require scoped credentials and reject private records
     assert.equal((await result.json()).status, "awaiting_worker");
   }
   const sync = (token, body) => handleRequest(new Request(endpoint + "/sync", {method: "POST", headers: {authorization: `Bearer ${token}`, "content-type": "application/json"}, body: JSON.stringify(body)}), env);
-  const projection = {schema_version: "secopsai.research.operation.v1", coverage: {sources: []}, editions: []};
+  const projection = {schema_version: "secopsai.research.operation.v1", coverage: {sources: []}, editions: [], assistant_teams: [{team_id: "RTM-0123456789ABCDEF", status: "running"}]};
   assert.equal((await sync(env.CORE_READ_TOKEN, projection)).status, 401);
   assert.equal((await sync(env.CORE_BRIDGE_TOKEN, {...projection, partner_submission: "private"})).status, 422);
   assert.equal((await sync(env.CORE_BRIDGE_TOKEN, projection)).status, 200);
