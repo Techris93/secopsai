@@ -86,9 +86,13 @@ class LedgerStore:
                 if exc.code not in RETRY_HTTP_STATUSES:
                     raise
                 retry_after = exc.headers.get("Retry-After", "") if exc.headers else ""
+                failure_category, failure_status = "http", exc.code
                 exc.close()
-            except (urllib.error.URLError, OSError, http.client.HTTPException):
+            except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
                 retry_after = ""
+                failure_category, failure_status = type(exc).__name__, None
+            _log("ledger_request_failed", method=method, operation=path.split("/")[1],
+                 category=failure_category, http_status=failure_status, request_bytes=len(body or b""))
             if attempt + 1 == attempts:
                 # Do not log URLs, tokens, or provider response bodies.
                 raise ConnectionError(f"ledger {method} request failed after {attempts} attempt(s)")
@@ -155,6 +159,7 @@ class LedgerStore:
                     raise ValueError("checkpoint SQLite integrity check failed")
             partial.replace(destination)
             self.chunk_cache = {c["sha256"] for c in manifest["chunks"]}
+            self.incremental_ready = True
             _log("incremental_restore_verified", bytes=total, sha256=digest.hexdigest())
             return True
         finally:
@@ -163,15 +168,23 @@ class LedgerStore:
     def upload_chunked(self, backup: Path, *, captured_at: str, deadline=None) -> str:
         deadline = deadline or (time.monotonic() + 240)
         cached = getattr(self, "chunk_cache", set())
+        self.chunk_cache = cached
+        cache_lock = threading.Lock()
         entries, whole, total, uploaded = [], hashlib.sha256(), 0, 0
         def upload_piece(raw):
             packed = gzip.compress(raw, compresslevel=1, mtime=0)
             key = hashlib.sha256(packed).hexdigest()
-            was_uploaded = key not in cached
+            with cache_lock:
+                was_uploaded = key not in cached
             if was_uploaded:
                 result = json.loads(self._request("PUT", "/artifact-objects/" + key, packed, deadline=deadline))
                 if result.get("sha256") != key or result.get("size_bytes") != len(packed):
                     raise ValueError("incremental checkpoint upload receipt mismatch")
+                # An immutable verified object remains durable even if another
+                # chunk or the final manifest fails. Preserve that receipt for
+                # the next bounded capture in this runner.
+                with cache_lock:
+                    cached.add(key)
             return ({"sha256": key, "size_bytes": len(packed), "raw_sha256": hashlib.sha256(raw).hexdigest(), "raw_size_bytes": len(raw)}, was_uploaded)
         with backup.open("rb") as source, ThreadPoolExecutor(max_workers=4) as pool:
             while True:
@@ -195,6 +208,7 @@ class LedgerStore:
         body = json.dumps(manifest, separators=(",", ":")).encode()
         result = json.loads(self._request("POST", "/checkpoints", body, deadline=deadline))
         self.chunk_cache = {entry["sha256"] for entry in entries}
+        self.incremental_ready = True
         _log("incremental_checkpoint_uploaded", bytes=total, uploaded_chunks=uploaded, reused_chunks=len(entries)-uploaded,
              captured_at=captured_at, key=result["key"])
         return str(result["key"])
@@ -244,7 +258,9 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str
         return None
     started = time.monotonic()
     incremental = os.environ.get("SECOPSAI_INCREMENTAL_CHECKPOINTS", "0") == "1"
-    capture_deadline = started + (240 if incremental else UPLOAD_TIMEOUT_SECONDS)
+    bootstrap = incremental and not getattr(store, "incremental_ready", False)
+    capture_deadline = started + (600 if bootstrap else 240 if incremental else UPLOAD_TIMEOUT_SECONDS)
+    _log("checkpoint_capture_started", phase="bootstrap" if bootstrap else "recurring", budget_seconds=round(capture_deadline-started))
     captured_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     with tempfile.TemporaryDirectory(dir=workdir) as temp_dir:
         backup_path = Path(temp_dir) / "ledger.db"
@@ -262,6 +278,7 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str
         finally:
             target.close()
             source.close()
+        _log("checkpoint_captured", bytes=backup_path.stat().st_size, seconds=round(time.monotonic()-started,1))
         if incremental:
             return store.upload_chunked(backup_path, captured_at=captured_at, deadline=capture_deadline)
         compressed = Path(temp_dir) / "ledger.db.gz"

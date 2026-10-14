@@ -292,8 +292,11 @@ restore a legacy ledger after the incremental pointer advances.
 
 Deploy the additive Ledger protocol first. Then enable the repository variable
 `RESEARCH_INCREMENTAL_CHECKPOINTS=true` only after checks and the active legacy
-writer complete. The workflow uses a 60-second interval and a 240-second total
-incremental capture/upload budget. These bounds are an implementation design;
+writer complete. The first full transfer has a separate bounded 600-second
+bootstrap budget. Verified immutable chunk receipts survive an interrupted
+manifest commit within a runner. After bootstrap or a verified incremental
+restore, the workflow uses a 60-second interval and a 240-second total recurring
+capture/upload budget. These bounds are an implementation design;
 production five-minute committed-loss guarantees require measured crash drills.
 Use the read-only **Research Recovery Drill** workflow to restore the exact
 production checkpoint in disposable storage, check foreign keys, enumerate rows

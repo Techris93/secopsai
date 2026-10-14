@@ -482,3 +482,66 @@ def test_checkpoint_pins_snapshot_while_wal_writer_keeps_committing(tmp_path, mo
     with sqlite3.connect(restored) as conn, sqlite3.connect(db) as live:
         assert conn.execute('PRAGMA quick_check').fetchone()[0] == 'ok'
         assert live.execute('SELECT count(*) FROM updates').fetchone()[0] > conn.execute('SELECT count(*) FROM updates').fetchone()[0]
+
+
+def test_failed_manifest_reuses_individually_verified_chunk_receipts(tmp_path, monkeypatch):
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS','1')
+    db=tmp_path/'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE data(value BLOB)')
+        conn.execute('INSERT INTO data VALUES(zeroblob(30000000))')
+    server=IncrementalServer()
+    client=supervisor.LedgerStore('http://ledger.internal','tok',opener=server)
+    request=client._request
+    def interrupted(method,path,*args,**kwargs):
+        if method=='POST' and path=='/checkpoints':
+            raise ConnectionError('synthetic lost manifest commit')
+        return request(method,path,*args,**kwargs)
+    monkeypatch.setattr(client,'_request',interrupted)
+    with pytest.raises(ConnectionError):
+        supervisor.checkpoint(db,client,tmp_path)
+    assert server.manifest is None
+    assert len(client.chunk_cache)==server.puts==2
+    monkeypatch.setattr(client,'_request',request)
+    supervisor.checkpoint(db,client,tmp_path)
+    assert server.manifest is not None
+    assert server.puts==2
+    assert supervisor.LedgerStore('http://ledger.internal','tok',opener=server).download(tmp_path/'restored.db')
+
+
+def test_recovery_failure_always_preserves_bounded_report(tmp_path, monkeypatch):
+    import sys
+    monkeypatch.setenv('LEDGER_STORE_URL','http://ledger.internal')
+    monkeypatch.setenv('LEDGER_STORE_TOKEN','synthetic-private-token')
+    def not_ready(request,timeout=None):
+        raise urllib.error.HTTPError(request.full_url,404,'Not Found',{},None)
+    monkeypatch.setattr('urllib.request.urlopen',not_ready)
+    spec = importlib.util.spec_from_file_location('failed_recovery_smoke',ROOT/'scripts/research_recovery_smoke.py')
+    drill=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(drill)
+    report=tmp_path/'failure.json'
+    monkeypatch.setattr(sys,'argv',['recovery','--output',str(report)])
+    assert drill.main()==1
+    result=json.loads(report.read_text())
+    assert result['phase']=='read_production_manifest'
+    assert result['http_status']==404
+    assert result['production_modified'] is False
+    assert 'synthetic-private-token' not in report.read_text()
+    assert len(report.read_bytes())<1024
+
+
+def test_first_full_transfer_has_separate_bounded_bootstrap_budget(tmp_path,monkeypatch):
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS','1')
+    db=tmp_path/'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE data(value TEXT)')
+    client=supervisor.LedgerStore('http://ledger.internal','tok',opener=IncrementalServer())
+    deadlines=[]
+    monkeypatch.setattr(supervisor.time,'monotonic',lambda:100)
+    monkeypatch.setattr(client,'upload_chunked',lambda backup,**kw: deadlines.append(kw['deadline']) or 'fixture')
+    supervisor.checkpoint(db,client,tmp_path)
+    client.chunk_cache={'a'*64}
+    supervisor.checkpoint(db,client,tmp_path)
+    client.incremental_ready=True
+    supervisor.checkpoint(db,client,tmp_path)
+    assert deadlines==[700,700,340]

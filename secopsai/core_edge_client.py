@@ -910,6 +910,8 @@ class CoreEdgeClient:
             return {"status": "degraded", "flushed": 0, "error": self.last_error}
         flushed = 0
         failed = 0
+        delivery_error = ""
+        failure_http_status = None
         for row in rows:
             if time.monotonic() >= deadline:
                 break
@@ -939,6 +941,10 @@ class CoreEdgeClient:
                 raise RuntimeError(str(result.get("error") or "hosted Core did not acknowledge ontology snapshot"))
             except Exception as exc:
                 failed += 1
+                failure_http_status = exc.status if isinstance(exc, CoreEdgeHTTPError) else None
+                delivery_error = (f"Core rejected an ontology chunk (HTTP {failure_http_status})" if failure_http_status
+                                  else f"Core ontology delivery failed ({type(exc).__name__})")
+                self.last_error = delivery_error
                 attempts = max(0, int(row["attempts"] or 0)) + 1
                 backoff = min(3600, 15 * (2 ** min(attempts - 1, 8)))
                 try:
@@ -961,6 +967,7 @@ class CoreEdgeClient:
             pending = connection.execute("SELECT count(*) FROM ontology_sync_outbox").fetchone()[0]
         status = "accepted" if failed == 0 and pending == 0 else "degraded"
         return {"status": status, "flushed": flushed, "failed": failed, "pending": pending,
+                "error": delivery_error, "http_status": failure_http_status,
                 "accepted_chunks": flushed, "rejected_chunks": pending, "chunks": flushed + pending}
 
     def hosted_state(self) -> dict[str, Any]:
