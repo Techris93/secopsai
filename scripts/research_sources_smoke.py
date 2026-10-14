@@ -10,17 +10,18 @@ import re
 from urllib.parse import urlparse
 
 from secopsai.research_intake import SafeFetcher
-from secopsai.research_primary_intel import MAX_SOURCE_BYTES, parse_source, source_url
+from secopsai.research_primary_intel import MAX_SOURCE_BYTES, parse_source, source_headers, source_url
 
 
 def check_source(source, *, fetcher=None):
     result = {"name": source["name"], "status": "failed", "stage": "fetch"}
     if source.get("comparison"):
         result["comparison"] = True
+    parser = "cisa_kev" if source["name"] == "CISA Known Exploited Vulnerabilities" else "rss"
     try:
         url = source_url(source["feed_url"])
         _, headers, body = (fetcher or SafeFetcher(timeout=15)).get(
-            url, allowed_hosts=[urlparse(url).hostname], max_bytes=MAX_SOURCE_BYTES)
+            url, allowed_hosts=[urlparse(url).hostname], max_bytes=MAX_SOURCE_BYTES, headers=source_headers(parser))
     except Exception as error:
         result["error_category"] = type(error).__name__
         status = re.fullmatch(r"registry returned HTTP ([0-9]{3})", str(error))
@@ -30,7 +31,6 @@ def check_source(source, *, fetcher=None):
     result.update(stage="parse", bytes=len(body), sha256=hashlib.sha256(body).hexdigest(),
                   content_type=str(headers.get("content-type", ""))[:160])
     try:
-        parser = "cisa_kev" if source["name"] == "CISA Known Exploited Vulnerabilities" else "rss"
         events = parse_source({"parser": parser, "url": url}, body)
     except Exception as error:
         result["error_category"] = type(error).__name__

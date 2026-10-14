@@ -25,6 +25,7 @@ def test_transport_denial_is_identifiable_without_printing_error_secrets():
 def test_probe_separates_invalid_body_from_successful_feed(body, status):
     class Feed:
         def get(self, *args, **kwargs):
+            assert kwargs["headers"]["Accept"].startswith("application/rss+xml")
             return SOURCE["feed_url"], {"content-type": "application/xml"}, body
 
     result = check_source(SOURCE, fetcher=Feed())

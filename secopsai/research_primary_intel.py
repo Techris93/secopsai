@@ -24,6 +24,10 @@ MAX_PENDING = 10000
 MAX_ATTEMPTS = 8
 
 
+def source_headers(parser: str) -> dict:
+    return {"Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8" if parser == "rss" else "application/json"}
+
+
 def _now() -> str:
     return soc_store.utc_now()
 
@@ -199,7 +203,7 @@ def collect_due(*, db_path=None, fetcher=None, limit: int = 10) -> dict:
             conn.execute("UPDATE research_intel_sources SET last_attempt_at=? WHERE source_id=?", (_now(), config["source_id"]))
         stage = "fetch"
         try:
-            _, _, content = fetcher.get(config["url"], allowed_hosts=[urlparse(config["url"]).hostname], max_bytes=MAX_SOURCE_BYTES)
+            _, _, content = fetcher.get(config["url"], allowed_hosts=[urlparse(config["url"]).hostname], max_bytes=MAX_SOURCE_BYTES, headers=source_headers(config["parser"]))
             stage = "parse"
             results.append(acquire(config, content, db_path=db_path))
         except Exception as exc:
