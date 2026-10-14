@@ -367,3 +367,18 @@ secopsai research operation assistant-team-cancel --actor your.registered.id --i
 Start/cancel commands also use authenticated hosted research-operation receipts,
 so repeated delivery does not duplicate work. The hosted projection reports team
 progress without private model drafts or raw evidence.
+
+Hosted teams use a durable outbox in the canonical worker ledger. The worker
+delivers captured prompts and evidence to authenticated Core jobs; the desktop
+bridge executes them without rebuilding context from its separate local ledger.
+The worker reconciles results back to the canonical specialist runs, checking job,
+action and captured model identity. Lost queue or completion acknowledgements do
+not duplicate work. Each cycle delivers or reconciles at most ten explicit job
+identities. Local teams continue using the local bridge queue.
+
+Transport reserves 60 KB for the full request and 48 KB for a structured result.
+Privacy or size limits that would alter supplied evidence or model output cause
+an explicit failure; Core does not silently shorten assistant results. Evidence
+omissions already identified by the evidence builder remain recorded limitations.
+An incompatible model, rejected contract or stale case stops the team; temporary
+connection failures retain the outbox for retry within the team deadline.

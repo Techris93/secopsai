@@ -117,6 +117,8 @@ def prepare_bridge_request(name: str, inputs: dict[str, Any] | None = None, *, d
     if action.name == "triage_artifact" and minimized_context != context:
         artifact = minimized_context.get("artifact_triage", minimized_context)
         artifact["evidence_truncated"] = True
+    if action.name in {"execute_specialist_work", "review_specialist_work"} and minimized_context != context:
+        minimized_context["evidence_coverage"] = {"complete": False, "reason": "privacy or transport limits changed the supplied context; request precise missing evidence and preserve limitations"}
     return {
         "schema_version": SCHEMA_VERSION,
         "action": action.public(),

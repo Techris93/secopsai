@@ -17,6 +17,7 @@ from secopsai.specialist_orchestrator import get_run, record_primary_result, rec
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
+    monkeypatch.delenv('SECOPSAI_CORE_WORKER_ID', raising=False)
     for key in ('SECOPSAI_BRIDGE_MODEL', 'SECOPSAI_BRIDGE_FALLBACK_MODE', 'SECOPSAI_BRIDGE_FALLBACK_MODELS'):
         monkeypatch.delenv(key, raising=False)
     db = str(tmp_path / 'team.db')
@@ -210,3 +211,139 @@ def test_changed_case_can_still_cancel_queued_work(setup):
     assert team.get_team(current['team_id'], db_path=db)['status'] == 'stale'
     assert team.cancel_team(current['team_id'], actor='operator.owner', db_path=db)['status'] == 'cancel_requested'
     assert team.advance_team(current['team_id'], db_path=db)['status'] == 'canceled'
+
+
+class HostedFixture:
+    enabled = True
+    def __init__(self):
+        self.jobs = {}
+        self.lost = False
+        self.cancelled = []
+    def queue_assistant_job(self, payload):
+        from secopsai.research_operation_store import canonical, digest
+        key = payload['idempotency_key']
+        if key in self.jobs:
+            assert canonical(self.jobs[key]['payload']) == canonical(payload)
+        else:
+            self.jobs[key] = {'payload': copy.deepcopy(payload), 'job_id': 'AIJ-' + digest(key)[:16].upper(), 'status': 'queued'}
+        if self.lost:
+            self.lost = False
+            raise RuntimeError('Synthetic lost queue acknowledgement')
+        return {'job': {'job_id': self.jobs[key]['job_id']}}
+    def assistant_results(self, job_ids):
+        return {'results': [{'job_id': j['job_id'], 'target_id': j['payload']['target_id'], 'action': j['payload']['action'], 'status': j['status'],
+                             'provider': 'synthetic-hosted', 'model': j.get('model', 'opencodex/test-research'), 'result': j.get('result', {})} for j in self.jobs.values() if j['job_id'] in job_ids]}
+    def cancel_assistant_jobs(self, job_ids):
+        self.cancelled.extend(job_ids)
+        return {'canceled': job_ids}
+
+
+def hosted(setup, monkeypatch):
+    monkeypatch.setenv('SECOPSAI_CORE_WORKER_ID', 'github-actions-research-worker')
+    return start(setup, 'hosted-transport')
+
+
+def test_hosted_delivery_retries_same_evidence_and_reconciles_both_stages(setup, monkeypatch):
+    from secopsai.research_assistant_transport import sync_hosted
+    from secopsai.intelligence_jobs import get_job
+    db, case_id = setup
+    current = hosted(setup, monkeypatch)
+    client = HostedFixture();client.lost = True
+    with pytest.raises(RuntimeError):
+        sync_hosted(client, db_path=db)
+    assert len(client.jobs) == 1
+    assert sync_hosted(client, db_path=db)['delivered'] == 1
+    first = next(iter(client.jobs.values()))
+    current = team.get_team(current['team_id'], db_path=db)
+    run = get_run(current['runs']['synthesis'], db_path=db)
+    assert get_job(run['intelligence_job_id'], db_path=db)['status'] == 'awaiting_provider'
+    first.update(status='succeeded', result=output(db, case_id))
+    assert sync_hosted(client, db_path=db)['applied'] == 1
+    assert sync_hosted(client, db_path=db)['delivered'] == 1
+    second = list(client.jobs.values())[1]
+    request = second['payload']['inputs']['assistant_request']
+    assert 'DERIVED-CONCLUSION-MARKER' not in json.dumps(request['context'])
+    assert 'ORIGINAL-CODE-MARKER' in json.dumps(request['context'])
+    second.update(status='succeeded', result=output(db, case_id))
+    assert sync_hosted(client, db_path=db)['applied'] == 1
+    sync_hosted(client, db_path=db)
+    assert team.get_team(current['team_id'], db_path=db)['completed_stages'] == ['synthesis']
+    assert team.get_team(current['team_id'], db_path=db)['publication_approved'] is False
+    assert get_job(run['intelligence_job_id'], db_path=db)['status'] == 'succeeded'
+
+
+def test_hosted_result_receipt_loss_and_cancel_are_idempotent(setup, monkeypatch):
+    from secopsai import research_assistant_transport as transport
+    db, case_id = setup
+    current = hosted(setup, monkeypatch)
+    client = HostedFixture()
+    transport.sync_hosted(client, db_path=db)
+    first = next(iter(client.jobs.values()));first.update(status='succeeded', result=output(db, case_id))
+    terminal = transport._terminal
+    monkeypatch.setattr(transport, '_terminal', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('lost result receipt')))
+    with pytest.raises(RuntimeError):
+        transport.sync_hosted(client, db_path=db)
+    monkeypatch.setattr(transport, '_terminal', terminal)
+    assert transport.sync_hosted(client, db_path=db)['applied'] == 1
+    transport.sync_hosted(client, db_path=db)
+    assert len(client.jobs) == 2
+    team.cancel_team(current['team_id'], actor='operator.owner', db_path=db)
+    assert transport.sync_hosted(client, db_path=db)['canceled'] == 1
+    assert team.get_team(current['team_id'], db_path=db)['status'] == 'canceled'
+    assert len(client.cancelled) == 1
+
+
+def test_hosted_mismatched_model_and_changed_evidence_do_not_advance(setup, monkeypatch):
+    from secopsai.research_assistant_transport import sync_hosted
+    db, case_id = setup
+    current = hosted(setup, monkeypatch)
+    client = HostedFixture();sync_hosted(client, db_path=db)
+    first = next(iter(client.jobs.values()));first.update(status='succeeded', result=output(db, case_id), model='unauthorized/model')
+    assert sync_hosted(client, db_path=db)['rejected'] == 1
+    sync_hosted(client, db_path=db)
+    assert team.get_team(current['team_id'], db_path=db)['status'] == 'failed'
+    other = start(setup, 'changed-hosted')
+    sync_hosted(client, db_path=db)
+    update_case(case_id, summary='Material change', db_path=db)
+    assert sync_hosted(client, db_path=db)['canceled'] == 1
+    assert team.get_team(other['team_id'], db_path=db)['completed_stages'] == []
+
+
+def test_remote_bridge_uses_captured_request_without_local_run(setup, monkeypatch, tmp_path):
+    from pathlib import Path
+    import subprocess
+    from secopsai.codex_bridge import BridgeSettings, run_once
+    from secopsai.research_assistant_transport import sync_hosted
+    db, case_id = setup
+    hosted(setup, monkeypatch)
+    client = HostedFixture();sync_hosted(client, db_path=db)
+    first = next(iter(client.jobs.values()))
+    payload = first['payload']
+    claimed = {'job': {'job_id': first['job_id'], 'action': payload['action'], 'target_id': payload['target_id'], 'input': payload['inputs'], 'lease_generation': 1, 'lease_token': 'synthetic-lease'}, 'bridge_request': payload['inputs']['assistant_request']}
+    monkeypatch.setattr('secopsai.codex_bridge._remote_claim', lambda *a, **k: claimed)
+    monkeypatch.setattr('secopsai.codex_bridge._remote_finish', lambda *a, **k: {'job': {'job_id': first['job_id'], 'status': 'succeeded'}})
+    monkeypatch.setattr('secopsai.codex_bridge._remote_post', lambda *a, **k: {'job': {'status': 'running'}})
+    monkeypatch.setattr('secopsai.codex_bridge.doctor', lambda *a, **k: {'status': 'ready', 'live_ready': True, 'provider': 'opencodex_proxy', 'opencodex': {'status': 'ready'}, 'models': {'default_model': 'opencodex/test-research', 'models': [{'id': 'opencodex/test-research'}]}})
+    def runner(command, stdin, environment, timeout):
+        assert 'ORIGINAL-CODE-MARKER' in stdin
+        Path(command[command.index('--output-last-message') + 1]).write_text(json.dumps(output(db, case_id)), encoding='utf-8')
+        return subprocess.CompletedProcess(command, 0, '', '')
+    result = run_once(db_path=str(tmp_path / 'independent-bridge.db'), settings=BridgeSettings(model='opencodex/test-research', core_api_url='https://synthetic.example', bridge_token='synthetic-bridge-token', worker_id='synthetic-remote-bridge'), runner=runner, require_ready_provider=False)
+    assert result['status'] == 'succeeded', result
+
+
+def test_permanent_hosted_contract_rejection_is_not_retried(setup, monkeypatch):
+    from secopsai.research_assistant_transport import sync_hosted
+    from secopsai.core_edge_client import CoreEdgeHTTPError
+    db, _ = setup
+    current = hosted(setup, monkeypatch)
+    client = HostedFixture()
+    calls = []
+    def reject(payload):
+        calls.append(payload)
+        raise CoreEdgeHTTPError('Synthetic invalid context', status=422, error_code='invalid_assistant_contract')
+    client.queue_assistant_job = reject
+    assert sync_hosted(client, db_path=db)['rejected'] == 1
+    sync_hosted(client, db_path=db)
+    assert len(calls) == 1
+    assert team.get_team(current['team_id'], db_path=db)['status'] == 'failed'

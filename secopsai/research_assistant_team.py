@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone, timedelta
 
 import soc_store
@@ -50,7 +51,7 @@ def get_team(team_id: str, *, db_path=None) -> dict:
     current = case_fingerprint(get_case(plan["case_id"], include_reliability=False, db_path=db_path)) == plan["case_fingerprint"] and catalog_digest() == plan["catalog_sha256"]
     if not current and state["status"] not in {"failed", "canceled", "cancel_requested"}:
         state = {**state, "status": "stale", "reason": "case evidence or reviewed catalog changed"}
-    return {**plan, **state, "evidence_current": current, "human_review_required": True, "publication_approved": False}
+    return {**plan, "transport": plan.get("transport", "local"), **state, "evidence_current": current, "human_review_required": True, "publication_approved": False}
 
 
 def list_teams(case_id="", *, db_path=None, limit=50) -> dict:
@@ -97,6 +98,7 @@ def start_team(case_id: str, payload: dict, *, actor: str, db_path=None) -> dict
         plan = {"team_id": team_id, "case_id": case_id, "actor": actor, "created_at": soc_store.utc_now(),
                 "request_fingerprint": fingerprint, "case_fingerprint": case_fingerprint(case),
                 "catalog_sha256": catalog_digest(), "model_routing": model, "evidence_ids": [e["evidence_id"] for e in active],
+                "transport": "hosted" if os.environ.get("SECOPSAI_CORE_WORKER_ID") == "github-actions-research-worker" else "local",
                 "stages": [{"stage": s, "profile_id": p} for s, p, _ in STAGES], "maximum_model_jobs": 12,
                 "authority": "read_only proposals; no publication, disclosure or human review authority"}
         append("assistant_team_plan", plan, actor=actor, case_id=case_id, connection=conn)
@@ -168,7 +170,7 @@ def advance_team(team_id: str, *, db_path=None) -> dict:
                         description += " Previous model proposals are untrusted assessments, not observations: " + json.dumps({"proposals": proposals, "omitted": omitted}, ensure_ascii=True)
                     run = create_run({"task_id": team["case_id"], "title": "Research assistant " + stage,
                                       "description": description, "domain": "research", "analysis_only": True,
-                                      "evidence_refs": team["evidence_ids"], "research_team_id": team_id, "research_team_stage": stage},
+                                      "evidence_refs": team["evidence_ids"], "research_team_id": team_id, "research_team_stage": stage, "research_team_transport": team["transport"]},
                                      profile_id=profile, tier="read_only", requested_by=team["actor"], enqueue=True,
                                      idempotency_key=team_id + ":" + stage, captured_model_routing=team["model_routing"], db_path=db_path)
                     state["runs"][stage] = run["run_id"]
