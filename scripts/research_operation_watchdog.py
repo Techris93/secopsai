@@ -67,8 +67,11 @@ def inspect(*, reader=fetch, now=None) -> dict:
                 health = value.get("coverage", {}).get("health", {})
                 checks[name]["freshness_gaps"] = health.get("freshness_gaps", [])
                 checks[name]["dead_letters"] = health.get("dead_letters", 0)
+                checks[name]["artifact_backup_pending"] = health.get("artifact_backup_pending")
                 if health.get("freshness_gaps") or health.get("dead_letters"):
                     blockers.append("source freshness or dead-letter review requires attention")
+                if health.get("artifact_backup_pending"):
+                    blockers.append("registered public artifacts lack completed durable backups")
         except Exception as exc:
             # Never print endpoint bodies, credential-bearing errors or tokens.
             checks[name] = {"available": False, "error_category": type(exc).__name__}

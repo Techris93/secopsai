@@ -33,3 +33,21 @@ def test_probe_separates_invalid_body_from_successful_feed(body, status):
     assert "Fixture" not in str(result)
     if status == "passed":
         assert result["events"] == 1
+
+
+def test_watchdog_blocks_incomplete_durable_artifact_backups():
+    from datetime import datetime, timezone
+    import json
+    from scripts.research_operation_watchdog import inspect
+
+    now = datetime(2026, 10, 14, 12, tzinfo=timezone.utc)
+    def reader(url, token):
+        if url.endswith("/status"):
+            return json.dumps({"uploaded_at": now.isoformat(), "checkpoint_available": True, "completion_retry_safe": True}).encode()
+        if "/research/operation" in url:
+            return json.dumps({"synced_at": now.isoformat(), "coverage": {"health": {"artifact_backup_pending": 7}}}).encode()
+        return b"<html>synthetic</html>"
+    result = inspect(reader=reader, now=now)
+    assert result["status"] == "failed"
+    assert result["blockers"] == ["registered public artifacts lack completed durable backups"]
+    assert result["checks"]["research_operation"]["artifact_backup_pending"] == 7

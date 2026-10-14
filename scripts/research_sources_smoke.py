@@ -46,8 +46,8 @@ def main():
     args = parser.parse_args()
     catalog = Path(__file__).resolve().parents[1] / "blog/data/news-sources.json"
     sources = [s for s in json.loads(catalog.read_text())["sources"] if s.get("enabled") and s.get("type") in {"rss", "json"}]
-    if len(sources) > 10:
-        raise ValueError("source probe budget exceeded")
+    if not 1 <= len(sources) <= 10:
+        raise ValueError("source probe requires 1-10 enabled structured sources")
     if args.cisa_advisories:
         sources.append({"name": "CISA Cybersecurity Advisories (comparison)", "feed_url": "https://www.cisa.gov/cybersecurity-advisories/all.xml", "comparison": True})
     with ThreadPoolExecutor(max_workers=3) as pool:
