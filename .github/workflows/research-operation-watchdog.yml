@@ -12,13 +12,19 @@ jobs:
   inspect:
     if: vars.RESEARCH_WORKER_ENABLED == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.13"
+          cache: pip
+      - name: Install source parser dependencies
+        run: pip install -r requirements.txt
+      - name: Verify public source transport and parsing independently
+        run: python -m scripts.research_sources_smoke --output reports/research/sources.json --cisa-advisories
       - name: Check checkpoint age, source coverage and public availability
+        if: always()
         env:
           LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
           SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
@@ -28,4 +34,4 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: research-operation-watchdog
-          path: reports/research/watchdog.json
+          path: reports/research/*.json
