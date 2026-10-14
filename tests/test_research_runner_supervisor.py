@@ -326,7 +326,8 @@ class IncrementalServer:
         if path == '/checkpoints':
             manifest = json.loads(request.data)
             assert supervisor.valid_manifest(manifest)
-            assert all(c['sha256'] in self.objects for c in manifest['chunks'])
+            chunks = manifest['chunks'] if manifest['version']==3 else manifest['base']['chunks']+manifest['patches']
+            assert all(c['sha256'] in self.objects for c in chunks)
             if drill:
                 self.drill_manifest = manifest
             else:
@@ -397,7 +398,8 @@ def test_forced_budget_shutdown_is_failed_even_when_checkpoint_survives(tmp_path
         assert conn.execute("SELECT value FROM retained").fetchone()[0] == 'committed before interruption'
 
 
-def test_production_recovery_drill_isolated_from_live_checkpoint(tmp_path, monkeypatch):
+@pytest.mark.parametrize('writer_failed', [False, True])
+def test_production_recovery_drill_isolated_from_live_checkpoint(tmp_path, monkeypatch, writer_failed):
     import sys
     monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS','1')
     monkeypatch.setenv('LEDGER_STORE_URL','http://ledger.internal')
@@ -418,11 +420,19 @@ def test_production_recovery_drill_isolated_from_live_checkpoint(tmp_path, monke
     drill_spec.loader.exec_module(drill)
     report = tmp_path/'recovery.json'
     monkeypatch.setattr(sys,'argv',['recovery','--output',str(report)])
-    assert drill.main() == 0
+    if writer_failed:
+        class FailedWriter:
+            def poll(self): return 1
+            def wait(self, timeout=None): return 1
+        monkeypatch.setattr(drill.subprocess, 'Popen', lambda *a, **kw: FailedWriter())
+    assert drill.main() == (1 if writer_failed else 0)
     result = json.loads(report.read_text())
     assert server.manifest == production_manifest
     assert server.drill_manifest != production_manifest
     assert result['production_modified'] is False
+    if writer_failed:
+        assert result['status']=='failed' and result['phase']=='simulate_isolated_failed_commit'
+        return
     assert result['failed_commit_preserved_previous_checkpoint'] is True
     assert result['isolated_committed_rows'] > result['isolated_restored_rows'] == 1
     assert result['maximum_committed_loss_seconds'] < 300
@@ -545,3 +555,148 @@ def test_first_full_transfer_has_separate_bounded_bootstrap_budget(tmp_path,monk
     client.incremental_ready=True
     supervisor.checkpoint(db,client,tmp_path)
     assert deadlines==[700,700,340]
+
+
+def test_sparse_checkpoint_preserves_distributed_edits_and_immutable_baseline(tmp_path, monkeypatch):
+    import hashlib
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS','1')
+    monkeypatch.setenv('SECOPSAI_PAGE_DELTA_CHECKPOINTS','1')
+    db=tmp_path/'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE data(id INTEGER PRIMARY KEY, label TEXT, value BLOB)')
+        conn.executemany('INSERT INTO data VALUES (?, ?, zeroblob(5000000))', [(i,'before') for i in range(12)])
+    server=IncrementalServer()
+    client=supervisor.LedgerStore('http://ledger.internal','tok',opener=server)
+    supervisor.checkpoint(db,client,tmp_path)
+    base=dict(server.manifest)
+    base_bytes=client.baseline_path.read_bytes()
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE data SET label='after!'")
+    supervisor.checkpoint(db,client,tmp_path)
+    delta=server.manifest
+    assert delta['version']==4 and delta['base']==base
+    assert sum(c['raw_size_bytes'] for c in delta['patches']) < 1000000
+    assert client.baseline_path.read_bytes()==base_bytes
+    restored=tmp_path/'restored.db'
+    fresh=supervisor.LedgerStore('http://ledger.internal','tok',opener=server)
+    assert fresh.download(restored)
+    assert hashlib.sha256(restored.read_bytes()).hexdigest()==delta['sha256']
+    with sqlite3.connect(restored) as conn:
+        assert conn.execute("SELECT count(*) FROM data WHERE label='after!'").fetchone()[0]==12
+        conn.execute("UPDATE data SET label='latest' WHERE id=1")
+    supervisor.checkpoint(restored,fresh,tmp_path)
+    assert server.manifest['version']==4 and server.manifest['base']==base, 'deltas must not form an unbounded chain'
+    assert fresh.baseline_path.read_bytes()==base_bytes
+
+
+@pytest.mark.parametrize('attack', ['overlap','out_of_bounds','wrong_final_hash','corrupt_frame'])
+def test_sparse_restore_rejects_invalid_deltas_without_replacing_existing_database(tmp_path, monkeypatch, attack):
+    import gzip, hashlib, struct
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS','1')
+    monkeypatch.setenv('SECOPSAI_PAGE_DELTA_CHECKPOINTS','1')
+    db=tmp_path/'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE data(label TEXT, value BLOB)')
+        conn.execute("INSERT INTO data VALUES ('before',zeroblob(30000000))")
+    server=IncrementalServer()
+    client=supervisor.LedgerStore('http://ledger.internal','tok',opener=server)
+    supervisor.checkpoint(db,client,tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE data SET label='after!'")
+    supervisor.checkpoint(db,client,tmp_path)
+    manifest=json.loads(json.dumps(server.manifest))
+    if attack=='wrong_final_hash':
+        manifest['sha256']='a'*64
+    else:
+        entry=manifest['patches'][0]
+        raw=gzip.decompress(server.objects[entry['sha256']])
+        if attack=='overlap':
+            raw+=raw[len(supervisor.DELTA_MAGIC):]
+        elif attack=='out_of_bounds':
+            raw=raw[:8]+struct.pack('>QI',manifest['size_bytes']+4096,4096)+raw[20:]
+        else:
+            raw=b'BADFRAME'+raw[8:]
+        packed=gzip.compress(raw,mtime=0)
+        key=hashlib.sha256(packed).hexdigest()
+        server.objects[key]=packed
+        manifest['patches'][0]={'sha256':key,'size_bytes':len(packed),'raw_sha256':hashlib.sha256(raw).hexdigest(),'raw_size_bytes':len(raw)}
+    target=tmp_path/'existing.db'
+    target.write_bytes(b'previous verified bytes')
+    with pytest.raises(ValueError):
+        client.download_chunked(target,manifest)
+    assert target.read_bytes()==b'previous verified bytes'
+    assert not target.with_suffix('.restore').exists()
+
+
+def test_sparse_checkpoint_rebases_a_large_rewrite_with_a_separate_full_budget(tmp_path, monkeypatch):
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS','1')
+    monkeypatch.setenv('SECOPSAI_PAGE_DELTA_CHECKPOINTS','1')
+    db=tmp_path/'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE data(value BLOB)')
+        conn.execute('INSERT INTO data VALUES(zeroblob(2000000))')
+    server=IncrementalServer()
+    client=supervisor.LedgerStore('http://ledger.internal','tok',opener=server)
+    supervisor.checkpoint(db,client,tmp_path)
+    old=server.manifest['sha256']
+    with sqlite3.connect(db) as conn:
+        conn.execute('UPDATE data SET value=randomblob(2000000)')
+    supervisor.checkpoint(db,client,tmp_path)
+    assert server.manifest['version']==3 and server.manifest['sha256']!=old
+    assert client.baseline_manifest==server.manifest
+
+
+def test_corrupt_local_baseline_is_rebased_instead_of_committing_unrestorable_delta(tmp_path, monkeypatch):
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS','1')
+    monkeypatch.setenv('SECOPSAI_PAGE_DELTA_CHECKPOINTS','1')
+    db=tmp_path/'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE data(value BLOB)')
+        conn.execute('INSERT INTO data VALUES(zeroblob(2000000))')
+    server=IncrementalServer()
+    client=supervisor.LedgerStore('http://ledger.internal','tok',opener=server)
+    supervisor.checkpoint(db,client,tmp_path)
+    original=client.baseline_path.read_bytes()
+    client.baseline_path.chmod(0o600)
+    with client.baseline_path.open('r+b') as baseline:
+        baseline.seek(4096)
+        baseline.write(b'bad')
+    supervisor.checkpoint(db,client,tmp_path)
+    assert server.manifest['version']==3
+    assert client.baseline_path.read_bytes()==original
+    restored=tmp_path/'restored.db'
+    assert client.download(restored)
+    assert restored.read_bytes()==original
+
+
+def test_sparse_restore_handles_growth_and_truncation_against_the_same_baseline(tmp_path,monkeypatch):
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS','1')
+    monkeypatch.setenv('SECOPSAI_PAGE_DELTA_CHECKPOINTS','1')
+    db=tmp_path/'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('PRAGMA auto_vacuum=FULL')
+        conn.execute('CREATE TABLE data(id INTEGER PRIMARY KEY,value BLOB)')
+        conn.execute('INSERT INTO data VALUES(1,zeroblob(30000000))')
+    server=IncrementalServer()
+    client=supervisor.LedgerStore('http://ledger.internal','tok',opener=server)
+    supervisor.checkpoint(db,client,tmp_path)
+    base=dict(server.manifest)
+    with sqlite3.connect(db) as conn:
+        conn.execute('INSERT INTO data VALUES(2,zeroblob(1000000))')
+    supervisor.checkpoint(db,client,tmp_path)
+    assert server.manifest['version']==4 and server.manifest['size_bytes']>base['size_bytes']
+    restored=tmp_path/'growth.db'
+    assert client.download(restored)
+    with sqlite3.connect(restored) as conn:
+        assert conn.execute('SELECT count(*) FROM data').fetchone()[0]==2
+    with sqlite3.connect(db) as conn:
+        conn.execute('DELETE FROM data WHERE id=1')
+    supervisor.checkpoint(db,client,tmp_path)
+    assert server.manifest['version']==4 and server.manifest['base']==base
+    assert server.manifest['size_bytes']<base['size_bytes']
+    target=tmp_path/'truncated.db'
+    fresh=supervisor.LedgerStore('http://ledger.internal','tok',opener=server)
+    assert fresh.download(target)
+    assert target.stat().st_size==server.manifest['size_bytes']
+    with sqlite3.connect(target) as conn:
+        assert conn.execute('SELECT id,length(value) FROM data').fetchall()==[(2,1000000)]

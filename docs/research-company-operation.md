@@ -282,12 +282,19 @@ private durable backup must complete before a recovery receipt exists. This neve
 extracts or executes a sample and cannot recover changed or unavailable bytes.
 Restricted submissions remain outside automatic recovery.
 
-Incremental checkpoints use consistent SQLite backups split into immutable,
-individually hashed gzip chunks. Unchanged chunks are reused. The manifest is
+Incremental checkpoints use consistent SQLite backups. Version 3 pins a full
+baseline in immutable, individually hashed gzip chunks. The opt-in version 4
+format records only changed 4 KiB blocks relative to that baseline, plus the
+complete baseline manifest. A delta never references another delta. This avoids
+retransmitting a large gzip chunk when a small edit lands anywhere within it. The manifest is
 committed only after all referenced objects exist, and older completion retries
 cannot move the pointer backward. Restore verifies compressed chunks, bounded
 decompression, raw chunks, full database hash and SQLite integrity before atomic
-replacement. Legacy checkpoints remain preserved; old clients cannot silently
+replacement. Sparse restoration also validates record ordering, offsets, block
+lengths, frame checksums and the final full database hash. A corrupt local baseline
+or a rewrite changing more than one quarter of its bytes triggers an explicitly
+bounded full rebase. The combined baseline and patch references remain capped at
+900 objects, below the storage service's internal request budget. Legacy checkpoints remain preserved; old clients cannot silently
 restore a legacy ledger after the incremental pointer advances.
 
 Deploy the additive Ledger protocol first. Then enable the repository variable
@@ -298,6 +305,11 @@ manifest commit within a runner. After bootstrap or a verified incremental
 restore, the workflow uses a 60-second interval and a 240-second total recurring
 capture/upload budget. These bounds are an implementation design;
 production five-minute committed-loss guarantees require measured crash drills.
+After deploying the additive version 4 server and passing its gates, enable
+`RESEARCH_PAGE_DELTA_CHECKPOINTS=true`. The runner retains a private immutable
+baseline copy; disk capacity must accommodate the live ledger, baseline and
+consistent capture. Bootstrap and full rebases may exceed the recurring recovery
+objective and must be reported separately rather than represented as a proven RPO.
 Use the read-only **Research Recovery Drill** workflow to restore the exact
 production checkpoint in disposable storage, check foreign keys, enumerate rows
 and verify source archive hashes. It then writes synthetic committed markers to
@@ -323,3 +335,41 @@ parser robustness experiments repeatable; it does not replace authorized
 package execution, victim telemetry or independent human reproduction. A
 synthetic laboratory pass cannot satisfy held-out model calibration or create a
 publication approval.
+
+
+Ontology receipt identity
+------------------------
+
+New `ontology-v2:` receipts hash normalized JSON with stable object-key order;
+array order and factual values remain material. Legacy receipt hashes retain
+their original backend contract. Only an explicit legacy `idempotency_conflict`
+can create a durably recorded versioned retry. The original queued JSON and key
+remain archived in `ontology_sync_receipt_migrations`; acknowledgement of the new
+receipt is required before the old outbox row is removed. Lost acknowledgements
+reuse the same recorded versioned request. Entity identity and scope conflicts
+never trigger this migration.
+
+Named validation failures remain queued for review and do not block later valid
+chunks that can supply missing dependencies. Authorization or transport failures
+stop the bounded batch. The dashboard and watchdog continue to report all pending
+work; a rejected chunk is never counted as delivered. Hosted workers emit bounded
+stage names through `SECOPSAI_WORKER_STAGE_LOGS=1` so an interrupted cycle identifies
+its last stage without exposing case content. Recovery reports preserve SQLite
+error codes and failure phases without recording endpoint bodies or credentials.
+
+
+Source-to-lead delivery
+-----------------------
+
+Per-source, version and archived-source-hash delivery receipts track successful
+advisory-to-lead materialization. The grouped package alert ID is captured rather
+than guessed from a historical dedupe format. Unchanged facts are not repeatedly
+upserted and cannot reopen an operator-resolved lead on every cycle. A changed
+source hash or a missing referenced candidate/alert remains eligible for repair.
+Receipts are written only after a durable alert exists; a crash before receipt
+storage safely repeats the idempotent grouped upsert.
+
+Hosted cycles prioritize historical private backup/recovery and primary-source
+intake before external advisory materialization. The worker bounds that latter
+batch to 100 records, so progress can resume from receipts rather than repeating
+the same first thousand records and starving collection.

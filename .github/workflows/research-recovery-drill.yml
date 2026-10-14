@@ -13,6 +13,7 @@ jobs:
     env:
       LEDGER_STORE_URL: https://ledger.secopsai.dev
       LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+      SECOPSAI_PAGE_DELTA_CHECKPOINTS: '1'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405

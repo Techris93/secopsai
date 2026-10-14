@@ -35,6 +35,15 @@ const CHUNK_POINTER = "ledger/LATEST_CHUNKED";
 const HASH = /^[a-f0-9]{64}$/;
 
 export function validCheckpointManifest(m) {
+  if (m?.version === 4) {
+    return m.base?.version === 3 && validCheckpointManifest(m.base) && m.block_bytes === 4096
+      && HASH.test(m.sha256 || "") && Number.isSafeInteger(m.size_bytes) && m.size_bytes > 0 && m.size_bytes <= 900 * 28 * 1024 * 1024
+      && Number.isFinite(Date.parse(m.captured_at)) && Date.parse(m.base.captured_at) <= Date.parse(m.captured_at)
+      && Array.isArray(m.patches) && m.base.chunks.length + m.patches.length <= 900
+      && m.patches.every(c => HASH.test(c.sha256 || "") && HASH.test(c.raw_sha256 || "")
+        && Number.isSafeInteger(c.size_bytes) && c.size_bytes > 0 && c.size_bytes <= 32 * 1024 * 1024
+        && Number.isSafeInteger(c.raw_size_bytes) && c.raw_size_bytes >= 8 && c.raw_size_bytes <= 28 * 1024 * 1024);
+  }
   if (!m || m.version !== 3 || !HASH.test(m.sha256 || "") || !Array.isArray(m.chunks) || !m.chunks.length || m.chunks.length > 900
       || !Number.isSafeInteger(m.size_bytes) || m.size_bytes <= 0 || !Number.isFinite(Date.parse(m.captured_at))) return false;
   let total = 0;
@@ -68,8 +77,9 @@ export async function handleChunkedCheckpoint(request, bucket) {
   try {m = JSON.parse(encoded);} catch {return json({error: "invalid_checkpoint_manifest"},400);}
   if (!validCheckpointManifest(m) || Date.parse(m.captured_at) > Date.now() + 300000) return json({error: "invalid_checkpoint_manifest"}, 400);
   // Stay below the free plan's internal-service request budget and six open connections.
-  for (let i = 0; i < m.chunks.length; i += 6) {
-    const group = m.chunks.slice(i, i + 6);
+  const chunks = m.version === 4 ? [...m.base.chunks, ...m.patches] : m.chunks;
+  for (let i = 0; i < chunks.length; i += 6) {
+    const group = chunks.slice(i, i + 6);
     const objects = await Promise.all(group.map(c => bucket.head(`artifacts/sha256/${c.sha256}`)));
     if (objects.some((o, j) => !o || o.size !== group[j].size_bytes || o.customMetadata?.sha256 !== group[j].sha256))
       return json({error: "checkpoint_chunk_missing_or_corrupt"}, 409);
@@ -77,11 +87,11 @@ export async function handleChunkedCheckpoint(request, bucket) {
   const body = JSON.stringify(m);
   const manifestHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body))), b => b.toString(16).padStart(2,"0")).join("");
   const key = `${prefix}${m.captured_at.replace(/[:.]/g, "-")}-${manifestHash}.json`;
-  await bucket.put(key, body, {httpMetadata: {contentType: "application/json"}, customMetadata: {captured_at: m.captured_at, size_bytes: String(m.size_bytes)}});
+  await bucket.put(key, body, {httpMetadata: {contentType: "application/json"}, customMetadata: {captured_at: m.captured_at, size_bytes: String(m.size_bytes), protocol: `ledger-checkpoint-v${m.version}`}});
   const current = await bucket.get(pointerKey);
   if (current && await current.text() > key) return json({key, superseded: true});
   await bucket.put(pointerKey, key);
-  return json({key, protocol: "ledger-checkpoint-v3", completion_retry_safe: true});
+  return json({key, protocol: `ledger-checkpoint-v${m.version}`, completion_retry_safe: true});
 }
 
 export async function handleLedgerRequest(request, bucket) {
@@ -125,7 +135,7 @@ export async function handleLedgerRequest(request, bucket) {
     const chunkedPointer = await bucket.get(CHUNK_POINTER);
     if (chunkedPointer) {
       const key = await chunkedPointer.text(), object = await bucket.head(key);
-      return json({protocol: "ledger-checkpoint-v3", completion_retry_safe: true, latest_key: key,
+      return json({protocol: object?.customMetadata?.protocol || "ledger-checkpoint-v3", completion_retry_safe: true, latest_key: key,
         size_bytes: Number(object?.customMetadata?.size_bytes) || null, captured_at: object?.customMetadata?.captured_at || null,
         uploaded_at: object?.uploaded ? new Date(object.uploaded).toISOString() : null, checkpoint_available: Boolean(object)});
     }

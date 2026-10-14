@@ -363,6 +363,13 @@ def due_collectors(*, db_path: Optional[str] = None, now: Optional[datetime] = N
     return due
 
 
+def _cycle_stage(stage: str) -> None:
+    from secopsai.worker_control import check_shutdown
+    check_shutdown()
+    if os.environ.get("SECOPSAI_WORKER_STAGE_LOGS", "0") == "1":
+        print(json.dumps({"component": "research-worker", "event": "cycle_stage", "stage": stage}), flush=True)
+
+
 def _run_worker_cycle_unlocked(
     *,
     db_path: Optional[str] = None,
@@ -379,30 +386,25 @@ def _run_worker_cycle_unlocked(
     # Storage maintenance serializes only its bounded write sections.  Do not
     # wrap it in the worker lock: capacity probes (notably freelist_count) are
     # read-only but can scan a multi-gigabyte database for minutes.
+    _cycle_stage("storage")
     storage = maintain_research_storage(db_path=db_path)
     storage_alert_id = _writer_stage(
         db_path,
         lambda: _record_storage_capacity_alert(storage, db_path=db_path),
     )
     fetcher = fetcher or SafeFetcher()
+    _cycle_stage("artifact_backup")
     try:
-        # External threat-intel is a separate signal from registry telemetry.
-        # Refreshing it before scoring means a public campaign can become an
-        # actionable, source-backed lead even when no local dependency exists.
-        # Advisory feeds perform remote I/O. Keep writer serialization inside
-        # their short persistence transactions instead of holding the shared
-        # lock while a feed request is in flight.
-        external_intel = refresh_and_sync(db_path=db_path, fetcher=fetcher)
-        from secopsai.research_discovery import consolidate_external_advisory_leads
+        from secopsai.research_artifact_vault import backup_public_artifacts
+        artifact_vault = backup_public_artifacts(db_path=db_path)
+    except (ValueError, OSError):
+        artifact_vault = {"status": "degraded", "reason": "artifact_vault_unavailable"}
 
-        external_intel["consolidated_leads"] = consolidate_external_advisory_leads(db_path=db_path)
-    except Exception as exc:  # advisory feeds must never stop registry collection
-        capture_exception(exc, context={"component": "research_external_intel"})
-        external_intel = {"status": "degraded", "error": str(exc)[:500]}
     selected = {item.lower() for item in ecosystems} if ecosystems else None
     primary_intel = {"status": "disabled"}
     editorial = {"status": "disabled"}
     if os.environ.get("SECOPSAI_PRIMARY_INTEL", "0") == "1":
+        _cycle_stage("primary_intelligence")
         from secopsai.research_primary_intel import collect_due
         from secopsai.research_editorial import scheduled_brief
 
@@ -412,8 +414,24 @@ def _run_worker_cycle_unlocked(
         except Exception as exc:
             capture_exception(exc, context={"component": "research_primary_intel"})
             primary_intel = {"status": "degraded", "error_category": type(exc).__name__}
+    _cycle_stage("external_intelligence")
+    try:
+        # External threat-intel is a separate signal from registry telemetry.
+        # Refreshing it before scoring means a public campaign can become an
+        # actionable, source-backed lead even when no local dependency exists.
+        # Advisory feeds perform remote I/O. Keep writer serialization inside
+        # their short persistence transactions instead of holding the shared
+        # lock while a feed request is in flight.
+        external_intel = refresh_and_sync(db_path=db_path, fetcher=fetcher, sync_limit=100)
+        from secopsai.research_discovery import consolidate_external_advisory_leads
+
+        external_intel["consolidated_leads"] = consolidate_external_advisory_leads(db_path=db_path)
+    except Exception as exc:  # advisory feeds must never stop registry collection
+        capture_exception(exc, context={"component": "research_external_intel"})
+        external_intel = {"status": "degraded", "error": str(exc)[:500]}
     results: List[Dict[str, Any]] = []
     due = due_collectors(db_path=db_path)
+    _cycle_stage("registry_collection")
     for item in due:
         if not item["due"]:
             continue
@@ -464,6 +482,7 @@ def _run_worker_cycle_unlocked(
         ],
     )
 
+    _cycle_stage("npm_enrichment")
     try:
         # The npm changes feed identifies package documents, not versions.
         # Resolve exact releases and inspect explainable metadata signals before
@@ -488,6 +507,7 @@ def _run_worker_cycle_unlocked(
         capture_exception(exc, context={"component": "research_npm_enrichment_alert"})
         npm_alert_id = None
 
+    _cycle_stage("scoring_and_recovery")
     scoring = _writer_stage(
         db_path,
         lambda: score_pending_events(limit=score_limit, db_path=db_path),
@@ -498,6 +518,7 @@ def _run_worker_cycle_unlocked(
         lambda: recover_interrupted_runs(db_path=db_path),
     )
     if include_investigations:
+        _cycle_stage("investigations")
         try:
             # The research worker is the durable 24/7 control loop. Keep evidence
             # investigations on the same bounded cadence as registry collection so
@@ -509,6 +530,7 @@ def _run_worker_cycle_unlocked(
     else:
         investigations = {"status": "skipped", "reason": "coordinated_by_daily_automation"}
     if include_alert_delivery:
+        _cycle_stage("alert_delivery")
         try:
             deliveries = deliver_pending_operational_alerts(db_path=db_path)
         except Exception as exc:  # alerting must not stop registry surveillance
@@ -517,6 +539,7 @@ def _run_worker_cycle_unlocked(
     else:
         deliveries = {"status": "skipped", "reason": "coordinated_by_daily_automation"}
     if include_automation:
+        _cycle_stage("daily_automation")
         try:
             from secopsai.daily_automation import run_due as run_due_daily_automation
 
@@ -549,12 +572,6 @@ def _run_worker_cycle_unlocked(
         if isinstance(value.get("sync"), dict) and component_degraded(value["sync"]):
             return True
         return False
-
-    try:
-        from secopsai.research_artifact_vault import backup_public_artifacts
-        artifact_vault = backup_public_artifacts(db_path=db_path)
-    except (ValueError, OSError):
-        artifact_vault = {"status": "degraded", "reason": "artifact_vault_unavailable"}
 
     cycle_degraded = any(
         str(item.get("status") or "").strip().lower() in degraded_statuses

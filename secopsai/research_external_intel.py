@@ -313,9 +313,10 @@ def sync_advisory_candidates(*, db_path: Optional[str] = None, limit: int = 1000
                LEFT JOIN research_candidates c
                  ON c.ecosystem=r.ecosystem AND c.package=r.package
                 AND c.version=r.version AND c.reference_identifier=r.advisory_id
-               LEFT JOIN research_alerts a
-                 ON a.dedupe_key = ('external-advisory:' || r.source_id || ':' ||
-                                    r.package || ':' || r.version || ':' || r.source_hash)
+               LEFT JOIN research_external_advisory_delivery_receipts d
+                 ON d.source_id=r.source_id AND d.ecosystem=r.ecosystem
+                AND d.package=r.package AND d.version=r.version AND d.source_hash=r.source_hash
+               LEFT JOIN research_alerts a ON a.alert_id=d.alert_id
                WHERE r.source_id=? AND r.active=1
                  AND (c.candidate_id IS NULL OR a.alert_id IS NULL)
                ORDER BY r.package, r.version LIMIT ?""",
@@ -399,6 +400,14 @@ def sync_advisory_candidates(*, db_path: Optional[str] = None, limit: int = 1000
             )
         if alert.get("alert_id"):
             alerts += 1
+            with closing(soc_store.connect(db_path)) as connection:
+                with _write_transaction(connection, db_path):
+                    connection.execute("""INSERT INTO research_external_advisory_delivery_receipts
+                        (source_id, ecosystem, package, version, source_hash, candidate_id, alert_id, acknowledged_at)
+                        VALUES (?,?,?,?,?,?,?,?)
+                        ON CONFLICT(source_id, ecosystem, package, version, source_hash)
+                        DO UPDATE SET candidate_id=excluded.candidate_id, alert_id=excluded.alert_id, acknowledged_at=excluded.acknowledged_at""",
+                        (record["source_id"], record["ecosystem"], record["package"], record["version"], record["source_hash"], candidate_payload["candidate_id"], alert["alert_id"], _now()))
         candidate_ids.append(str(candidate_payload["candidate_id"]))
     return {
         "schema_version": SCHEMA_VERSION,
@@ -410,7 +419,7 @@ def sync_advisory_candidates(*, db_path: Optional[str] = None, limit: int = 1000
     }
 
 
-def refresh_and_sync(*, db_path: Optional[str] = None, fetcher: Optional[SafeFetcher] = None, force: bool = False) -> Dict[str, Any]:
+def refresh_and_sync(*, db_path: Optional[str] = None, fetcher: Optional[SafeFetcher] = None, force: bool = False, sync_limit: int = 1000) -> Dict[str, Any]:
     refresh = refresh_keyv_advisory(db_path=db_path, fetcher=fetcher, force=force)
-    sync = sync_advisory_candidates(db_path=db_path)
+    sync = sync_advisory_candidates(db_path=db_path, limit=sync_limit)
     return {"schema_version": SCHEMA_VERSION, "refresh": refresh, "sync": sync}

@@ -95,7 +95,8 @@ def test_sync_ontology_sends_compacted_payload_and_clears_error():
     payload = session.calls[0][2]["json"]
     assert payload["source_instance"] == "runner-test"
     assert payload["entities"][0]["entity_id"] == "pkg:pypi:example"
-    assert len(session.calls[0][2]["headers"]["Idempotency-Key"]) == 64
+    assert session.calls[0][2]["headers"]["Idempotency-Key"].startswith("ontology-v2:")
+    assert len(session.calls[0][2]["headers"]["Idempotency-Key"]) == 76
     assert payload["idempotency_key"] == session.calls[0][2]["headers"]["Idempotency-Key"]
     assert client.last_error == ""
 
@@ -422,3 +423,98 @@ def test_outbox_rejection_diagnostics_are_bounded_and_keep_original_work(tmp_pat
     assert result['pending']==1 and result['failed']==1
     assert 'synthetic-private-token' not in result['error']
     assert len(session.calls)==1
+
+
+def _legacy_outbox_fixture(tmp_path, client):
+    db=str(tmp_path/'legacy.db')
+    receipt=client.enqueue_ontology_snapshot({'entities':[]},db_path=db)
+    current=receipt['idempotency_key']
+    legacy='a'*64
+    with soc_store.connect(db) as conn:
+        payload=json.loads(conn.execute('SELECT payload_json FROM ontology_sync_outbox').fetchone()[0])
+        payload['idempotency_key']=legacy
+        original=json.dumps(payload,sort_keys=True,separators=(',',':'))
+        conn.execute('UPDATE ontology_sync_outbox SET idempotency_key=?,payload_json=? WHERE idempotency_key=?',(legacy,original,current))
+    return db,legacy,original
+
+
+def test_legacy_receipt_migration_survives_lost_ack_and_preserves_original_bytes(tmp_path, monkeypatch):
+    import requests
+    monkeypatch.setattr('secopsai.core_edge_client.time.sleep',lambda _:None)
+    class ReceiptSession(_Session):
+        ready=False
+        def request(self,*args,**kwargs):
+            super().request(*args,**kwargs)
+            key=kwargs['headers']['Idempotency-Key']
+            if not key.startswith('ontology-v2:'):
+                class Conflict(_Response):
+                    status_code=409
+                    ok=False
+                    def json(self):return {'error':'idempotency_conflict','detail':'different serialization'}
+                return Conflict()
+            if not self.ready:raise requests.ConnectionError('lost acknowledgement')
+            class Ack(_Response):
+                def json(self):return {'status':'accepted','idempotency_key':key,'idempotent':True}
+            return Ack()
+    session=ReceiptSession()
+    client=CoreEdgeClient(_settings(),session=session)
+    db,legacy,original=_legacy_outbox_fixture(tmp_path,client)
+    failed=client.flush_ontology_outbox(db_path=db)
+    assert failed['pending']==1 and failed['flushed']==0
+    with soc_store.connect(db) as conn:
+        saved=conn.execute('SELECT * FROM ontology_sync_receipt_migrations').fetchone()
+        assert saved['original_payload_json']==original and saved['acknowledged_at'] is None
+        assert conn.execute('SELECT payload_json FROM ontology_sync_outbox').fetchone()[0]==original
+        conn.execute("UPDATE ontology_sync_outbox SET next_attempt_at='1970-01-01T00:00:00Z'")
+    session.ready=True
+    accepted=client.flush_ontology_outbox(db_path=db)
+    assert accepted['flushed']==1 and accepted['pending']==0
+    migrated=[c[2] for c in session.calls if c[2]['headers']['Idempotency-Key'].startswith('ontology-v2:')]
+    assert all(c['json']==migrated[0]['json'] for c in migrated)
+    assert migrated[0]['json']['idempotency_key']==saved['new_idempotency_key']
+    with soc_store.read_connect(db) as conn:
+        audit=conn.execute('SELECT * FROM ontology_sync_receipt_migrations').fetchone()
+        assert audit['original_payload_json']==original and audit['acknowledged_at']
+
+
+def test_entity_identity_conflict_is_not_migrated_or_discarded(tmp_path):
+    class ConflictSession(_Session):
+        def request(self,*args,**kwargs):
+            super().request(*args,**kwargs)
+            class Conflict(_Response):
+                status_code=409
+                ok=False
+                def json(self):return {'error':'entity_identity_conflict'}
+            return Conflict()
+    session=ConflictSession()
+    client=CoreEdgeClient(_settings(),session=session)
+    db,_,original=_legacy_outbox_fixture(tmp_path,client)
+    failed=client.flush_ontology_outbox(db_path=db)
+    assert failed['pending']==1 and failed['http_status']==409
+    assert len(session.calls)==1
+    with soc_store.read_connect(db) as conn:
+        assert conn.execute('SELECT count(*) FROM ontology_sync_receipt_migrations').fetchone()[0]==0
+        assert conn.execute('SELECT payload_json FROM ontology_sync_outbox').fetchone()[0]==original
+
+
+def test_invalid_dependency_chunk_does_not_block_valid_entity_delivery(tmp_path):
+    class DependencySession(_Session):
+        def request(self,*args,**kwargs):
+            super().request(*args,**kwargs)
+            if kwargs['json'].get('events'):
+                class Rejected(_Response):
+                    status_code=422
+                    ok=False
+                    def json(self):return {'error':'invalid_event'}
+                return Rejected()
+            return _Response()
+    session=DependencySession()
+    client=CoreEdgeClient(_settings(),session=session)
+    db=str(tmp_path/'dependencies.db')
+    client.enqueue_ontology_snapshot({'events':[{'event_id':'event:test','entity_id':'pkg:test','event_type':'observed'}]},db_path=db)
+    client.enqueue_ontology_snapshot({'entities':[{'entity_id':'pkg:test','entity_type':'package','namespace':'test','canonical_key':'test'}]},db_path=db)
+    result=client.flush_ontology_outbox(db_path=db)
+    assert result['failed']==1 and result['flushed']==1 and result['pending']==1
+    assert 'invalid_event' in result['error']
+    with soc_store.read_connect(db) as conn:
+        assert json.loads(conn.execute('SELECT payload_json FROM ontology_sync_outbox').fetchone()[0])['events']

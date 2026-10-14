@@ -835,3 +835,21 @@ test('hosted assistant transport preserves captured evidence, scopes jobs and fe
   assert.deepEqual((await (await call('/api/v1/research/assistant/results',{job_ids:[unrelated]})).json()).results,[]);
   assert.deepEqual((await (await call('/api/v1/research/assistant/cancel',{job_ids:[unrelated]})).json()).canceled,[]);
 });
+
+
+test('versioned ontology receipts tolerate nested key order but reject changed facts', async () => {
+  const env={DB:new MockD1(),CORE_BRIDGE_TOKEN:'b'.repeat(44)};
+  const key='ontology-v2:'+'a'.repeat(64);
+  const evidence={source:'test',locator:'https://example.test/report',summary:{a:1,b:{x:2,y:3}}};
+  const payload={schema_version:'secopsai.ontology.v1',source_instance:'test',evidence_refs:[evidence]};
+  const send=value=>handleRequest(new Request('https://core.example/api/v1/ontology/sync',{method:'POST',headers:{authorization:'Bearer '+env.CORE_BRIDGE_TOKEN,'content-type':'application/json','Idempotency-Key':key},body:JSON.stringify(value)}),env);
+  assert.equal((await send(payload)).status,200);
+  const reordered={source_instance:'test',schema_version:'secopsai.ontology.v1',evidence_refs:[{summary:{b:{y:3,x:2},a:1},locator:evidence.locator,source:'test'}]};
+  const retry=await send(reordered);
+  assert.equal(retry.status,200);
+  assert.equal((await retry.json()).idempotent,true);
+  reordered.evidence_refs[0].summary.a=2;
+  const changed=await send(reordered);
+  assert.equal(changed.status,409);
+  assert.equal((await changed.json()).error,'idempotency_conflict');
+});

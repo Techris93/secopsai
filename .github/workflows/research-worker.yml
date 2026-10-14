@@ -62,6 +62,8 @@ jobs:
       SECOPSAI_CLEF_PRESCREEN: "0"  # paused to save cost; set to "1" to resume
       SECOPSAI_DECISION_MODE: "observe"  # closure requires reviewed decision-v2 calibration
       SECOPSAI_INCREMENTAL_CHECKPOINTS: ${{ vars.RESEARCH_INCREMENTAL_CHECKPOINTS == 'true' && '1' || '0' }}
+      SECOPSAI_PAGE_DELTA_CHECKPOINTS: ${{ vars.RESEARCH_PAGE_DELTA_CHECKPOINTS == 'true' && '1' || '0' }}
+      SECOPSAI_WORKER_STAGE_LOGS: '1'
       SECOPSAI_LEDGER_CHECKPOINT_SECONDS: ${{ vars.RESEARCH_INCREMENTAL_CHECKPOINTS == 'true' && '60' || '3600' }}
       SECOPSAI_PRIMARY_INTEL: "1"  # source intake and draft assembly; never automatic publication
       SECOPSAI_PUBLIC_ARTIFACT_RECOVERY: "1"  # exact public bytes only; hash mismatch cannot recover
