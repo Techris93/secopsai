@@ -507,3 +507,24 @@ def test_failed_manifest_reuses_individually_verified_chunk_receipts(tmp_path, m
     assert server.manifest is not None
     assert server.puts==2
     assert supervisor.LedgerStore('http://ledger.internal','tok',opener=server).download(tmp_path/'restored.db')
+
+
+def test_recovery_failure_always_preserves_bounded_report(tmp_path, monkeypatch):
+    import sys
+    monkeypatch.setenv('LEDGER_STORE_URL','http://ledger.internal')
+    monkeypatch.setenv('LEDGER_STORE_TOKEN','synthetic-private-token')
+    def not_ready(request,timeout=None):
+        raise urllib.error.HTTPError(request.full_url,404,'Not Found',{},None)
+    monkeypatch.setattr('urllib.request.urlopen',not_ready)
+    spec = importlib.util.spec_from_file_location('failed_recovery_smoke',ROOT/'scripts/research_recovery_smoke.py')
+    drill=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(drill)
+    report=tmp_path/'failure.json'
+    monkeypatch.setattr(sys,'argv',['recovery','--output',str(report)])
+    assert drill.main()==1
+    result=json.loads(report.read_text())
+    assert result['phase']=='read_production_manifest'
+    assert result['http_status']==404
+    assert result['production_modified'] is False
+    assert 'synthetic-private-token' not in report.read_text()
+    assert len(report.read_bytes())<1024

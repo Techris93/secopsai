@@ -13,10 +13,8 @@ import tempfile
 import time
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', required=True)
-    args = parser.parse_args()
+def run_drill(progress):
+    progress['phase']='read_production_manifest'
     root = Path(__file__).resolve().parents[1]
     spec = importlib.util.spec_from_file_location('secopsai_checkpoint_supervisor', root/'cloudflare/secopsai-research-runner/container/supervisor.py')
     supervisor = importlib.util.module_from_spec(spec)
@@ -32,8 +30,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix='secopsai-recovery-') as directory:
         os.chmod(directory,0o700)
         destination = Path(directory)/'recovered.db'
+        progress['phase']='restore_production_copy'
         store.download_chunked(destination,manifest)
         restore_seconds = time.monotonic()-start
+        progress['phase']='reconcile_production_copy'
         with sqlite3.connect(f'file:{destination}?mode=ro',uri=True) as conn:
             if conn.execute('PRAGMA foreign_key_check').fetchone():
                 raise ValueError('recovered foreign key inconsistency')
@@ -54,6 +54,7 @@ def main():
         with sqlite3.connect(destination) as conn:
             conn.execute('CREATE TABLE secopsai_recovery_drill_marker (seq INTEGER PRIMARY KEY, committed_ns INTEGER NOT NULL)')
             conn.execute('INSERT INTO secopsai_recovery_drill_marker VALUES (0,?)',(time.time_ns(),))
+        progress['phase']='commit_isolated_baseline'
         store.checkpoint_scope='drill'
         supervisor.checkpoint(destination,store,Path(directory))
         isolated_manifest=json.loads(store._request('GET','/checkpoint-manifest',deadline=time.monotonic()+60))
@@ -66,6 +67,7 @@ def main():
                 raise ConnectionError('synthetic lost checkpoint before manifest commit')
             return request(method,path,*a,**kw)
         try:
+            progress['phase']='simulate_isolated_failed_commit'
             time.sleep(1)
             store._request=interrupted
             try:
@@ -83,6 +85,7 @@ def main():
         with sqlite3.connect(destination) as conn:
             committed_rows=conn.execute('SELECT count(*) FROM secopsai_recovery_drill_marker').fetchone()[0]
         recovered=Path(directory)/'crash-restored.db'
+        progress['phase']='restore_previous_isolated_checkpoint'
         store.download_chunked(recovered,isolated_manifest)
         with sqlite3.connect(recovered) as conn:
             retained_rows,last_ns=conn.execute('SELECT count(*),max(committed_ns) FROM secopsai_recovery_drill_marker').fetchone()
@@ -99,6 +102,22 @@ def main():
                   'limitations':['This production-size isolated crash drill proves the measured scenario; sustained production guarantees require continued capture/commit monitoring.']}
     if not result['rto_target_met'] or not result['rpo_drill_target_met']:
         result['status']='failed'
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', required=True)
+    args = parser.parse_args()
+    progress = {'phase':'initialize'}
+    try:
+        result=run_drill(progress)
+    except Exception as error:
+        result={'status':'failed','scope':'isolated_production_recovery_verification',
+                'production_modified':False,'model_jobs_created':0,
+                'phase':progress['phase'],'error_category':type(error).__name__}
+        if isinstance(getattr(error,'code',None),int):
+            result['http_status']=error.code
     output=Path(args.output)
     output.parent.mkdir(parents=True,exist_ok=True)
     output.write_text(json.dumps(result,indent=2))
