@@ -187,6 +187,13 @@ start the disabled container runner or another writer. Test the worker, storage
 service and failure/lost-acknowledgement regressions before deployment. The
 independent research-operation watchdog checks checkpoint/source freshness and
 public availability; it cannot write the ledger or launch a replay.
+It also acquires and parses the ten supported public feeds independently of the
+worker, distinguishing HTTP transport denial from invalid feed contents. RSS
+requests advertise RSS/Atom/XML media types. Failed acquisition never advances
+the source cursor or records a successful collection. A source reachable from
+a developer machine may still reject hosted runners; that remains a coverage
+gap until the source permits access or an explicitly reviewed intake path is
+available. An unrelated replacement feed cannot establish the missing coverage.
 
 `recovery-drill` copies a selected ledger consistently into a separate owner-only
 file, reconciles table counts, checks foreign keys and source hashes, and records
@@ -197,8 +204,10 @@ reports actual table/storage sizes and the gates for a future metadata-store
 migration. Keep the current ledger authoritative until dual reads, reconciliation,
 rollback and cutover tests pass. The ledger checkpoint alone does not back up
 quarantine files. `SECOPSAI_ARTIFACT_VAULT=1` backs up public registry artifacts
-in bounded batches to private, immutable R2 objects before recording a completed
-manifest receipt in the ledger. Each object and the complete restored artifact
+immediately when registered by the research pipeline, before that step can
+succeed, and retries existing artifacts in bounded batches. It writes private,
+immutable R2 objects before recording a completed manifest receipt in the
+ledger. Each object and the complete restored artifact
 must match their SHA-256 and size. No bytes are extracted or executed.
 
 `artifact-backup` accepts `artifact_id`; restricted/local samples additionally
@@ -212,9 +221,14 @@ whose ephemeral files were already lost require authorized reacquisition; a
 catalog record alone cannot recover them. Restore before sandbox handoff.
 
 Chunks are at most 32 MiB, artifacts at most 250 MiB; the worker attempts five
-public artifacts per cycle with a shared 60-second deadline. Its result records
+public artifacts per cycle with a shared 60-second deadline. Missing historical
+files do not consume upload slots; their failures distinguish missing,
+unreadable and non-regular local bytes from upload failure. Its result records
 the pending backlog and explicit failures within the latest 1,000 catalog
 entries, rather than claiming complete historical backup coverage. The
+hosted coverage projection reports outstanding public backup receipts, and the
+watchdog blocks operational readiness while enabled backups remain incomplete.
+The
 [R2 Workers API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 validates streamed checksums and conditional immutable writes.
 

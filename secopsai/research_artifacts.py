@@ -1,7 +1,8 @@
-"""Local-only artifact catalog and bounded quarantine operations.
+"""Artifact catalog and bounded quarantine operations.
 
-Artifacts never leave the Core host.  This module records hashes and normalized
-metadata in SQLite while keeping package bytes in an owner-only quarantine.
+This module records hashes and normalized metadata in SQLite, keeps package
+bytes in owner-only quarantine and backs up registered public intake when the
+private artifact vault is enabled. Restricted samples need explicit permission.
 """
 from __future__ import annotations
 
@@ -237,6 +238,11 @@ def register_intake_artifact(
         )
         connection.execute("UPDATE research_cases SET updated_at = ? WHERE case_id = ?", (now, case_id))
         connection.commit()
+    if os.environ.get("SECOPSAI_ARTIFACT_VAULT", "0") == "1":
+        from secopsai.research_artifact_vault import backup_artifact
+        # Persist public bytes while this runner still owns them. A failed
+        # upload leaves the catalog for retry but cannot complete this step.
+        backup_artifact(artifact_id, actor=actor, db_path=db_path)
     return {
         "case_id": case_id,
         "artifact_id": artifact_id,

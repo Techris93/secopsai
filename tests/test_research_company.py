@@ -516,6 +516,25 @@ def test_first_collection_is_bounded_and_remaining_feeds_are_not_starved(db, mon
     assert len({r["source_id"] for r in first["results"] + second["results"]}) == 12
 
 
+@pytest.mark.parametrize("transport_failure,category", [(True, "source_http_403"), (False, "invalid_source")])
+def test_source_fetch_denial_is_distinct_from_malformed_feed(db, monkeypatch, transport_failure, category):
+    from secopsai import research_primary_intel as intake
+    monkeypatch.setattr(intake, "seed_sources", lambda **kwargs: {"sources": [], "unsupported_sources": []})
+    config = configure_source({**source(db), "parser": "rss"}, actor="operator.owner", db_path=db)
+
+    class Feed:
+        def get(self, *args, **kwargs):
+            if transport_failure:
+                raise ValueError("registry returned HTTP 403")
+            return config["url"], {}, b"<html>not a feed</html>"
+
+    result = intake.collect_due(db_path=db, fetcher=Feed())
+    assert result["results"][0]["error_category"] == category
+    with soc_store.connect(db) as conn:
+        row = conn.execute("SELECT cursor,last_success_at,error_category FROM research_intel_sources WHERE source_id=?", (config["source_id"],)).fetchone()
+    assert row["cursor"] == "" and row["last_success_at"] is None and row["error_category"] == category
+
+
 def test_kev_catalog_addition_is_not_source_publication_or_local_exploitation(db):
     config = {**source(db), "parser": "cisa_kev"}
     body = json.dumps({"vulnerabilities": [{"cveID": "CVE-2026-1234", "vulnerabilityName": "Fixture", "shortDescription": "Fixture report", "dateAdded": "2026-10-13", "requiredAction": "Apply vendor guidance"}]}).encode()

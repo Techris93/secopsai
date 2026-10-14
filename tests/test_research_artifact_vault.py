@@ -137,3 +137,50 @@ def test_production_smoke_reaches_authenticated_storage_through_edge(monkeypatch
     assert len(objects) == 1
     assert len(requests) == 5
     assert requests[3].get_header("Authorization") is None
+
+
+def test_missing_historical_bytes_do_not_starve_available_backups(artifact, monkeypatch):
+    from secopsai.research_artifact_vault import backup_public_artifacts
+    db, identity, stored, _ = artifact
+    monkeypatch.setenv("SECOPSAI_ARTIFACT_VAULT", "1")
+    public = json.dumps({"source": "secopsai_safe_registry_intake"})
+    with soc_store.connect(db) as conn:
+        conn.execute("UPDATE research_artifacts SET provenance_json=?,updated_at='2026-01-01' WHERE artifact_id=?", (public, identity))
+        for i in range(7):
+            conn.execute("INSERT INTO research_artifacts (artifact_id,sha256,filename,ecosystem,package_name,version,size_bytes,quarantine_path,state,provenance_json,analysis_json,created_at,updated_at) VALUES (?,?,?,'npm','fixture','1',1,?,'collected',?,'{}','2026-01-02','2026-01-02')",
+                         (f"missing-{i}", hashlib.sha256(str(i).encode()).hexdigest(), "missing.zip", stored + f".missing-{i}", public))
+        conn.commit()
+    result = backup_public_artifacts(db_path=db, limit=1, client=MemoryVault())
+    assert result["status"] == "degraded"
+    assert [r["artifact_id"] for r in result["completed"]] == [identity]
+    assert len(result["failures"]) == 7
+    assert {r["reason"] for r in result["failures"]} == {"local_bytes_missing"}
+    assert result["pending_before_cycle"] == 8 and result["remaining"] == 7
+    from secopsai.research_coverage import coverage_report
+    assert coverage_report(db_path=db)["health"]["artifact_backup_pending"] == 7
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_public_registration_requires_durable_backup_when_enabled(artifact, monkeypatch, fail):
+    from secopsai.research_artifacts import register_intake_artifact
+    from secopsai.research_cases import create_case
+    db, identity, _, original = artifact
+    monkeypatch.setenv("SECOPSAI_ARTIFACT_VAULT", "1")
+    client = MemoryVault()
+    if fail:
+        def unavailable(body):
+            raise ValueError("synthetic unavailable vault")
+        client.put = unavailable
+    monkeypatch.setattr("secopsai.research_artifact_vault.VaultClient", lambda **kwargs: client)
+    case = create_case(title="Synthetic durability", summary="Fixture", case_type="malicious_package", severity="low", confidence=50, owner="fixture", db_path=db)
+    intake = {"metadata": {"artifact_sha256": hashlib.sha256(original).hexdigest(), "artifact_bytes": len(original), "ecosystem": "npm", "package": "fixture", "version": "1"}, "analysis": {"filename": "package.zip"}}
+    if fail:
+        with pytest.raises(ValueError, match="unavailable vault"):
+            register_intake_artifact(intake, case_id=case["case_id"], db_path=db)
+        assert not records("artifact_backup", db_path=db)
+    else:
+        result = register_intake_artifact(intake, case_id=case["case_id"], db_path=db)
+        assert result["artifact_id"] == identity
+        assert records("artifact_backup", db_path=db)[0]["payload"]["status"] == "completed"
+    with soc_store.connect(db) as conn:
+        assert conn.execute("SELECT artifact_id FROM research_artifacts WHERE artifact_id=?", (identity,)).fetchone()

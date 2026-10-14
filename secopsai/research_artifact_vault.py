@@ -183,16 +183,34 @@ def restore_artifact(artifact_id, *, actor, db_path=None, client=None):
 def backup_public_artifacts(*, db_path=None, limit=5, client=None):
     if os.environ.get("SECOPSAI_ARTIFACT_VAULT", "0") != "1":
         return {"status": "skipped", "reason": "artifact_vault_disabled"}
+    if type(limit) is not int or not 1 <= limit <= 5:
+        raise ValueError("artifact backup batch must contain 1-5 artifacts")
     client = client or VaultClient(seconds=60)
     completed, failures = [], []
     with closing(soc_store.connect(db_path)) as conn:
-        rows = conn.execute("SELECT artifact_id,provenance_json FROM research_artifacts WHERE state='collected' ORDER BY updated_at DESC LIMIT 1000").fetchall()
+        rows = conn.execute("SELECT artifact_id,provenance_json,quarantine_path FROM research_artifacts WHERE state='collected' ORDER BY updated_at DESC LIMIT 1000").fetchall()
     backed_up = {r["payload"].get("artifact_id") for r in records("artifact_backup", db_path=db_path, limit=10000)}
-    pending = [r["artifact_id"] for r in rows if json.loads(r["provenance_json"]).get("source") == "secopsai_safe_registry_intake" and r["artifact_id"] not in backed_up]
-    for identity in pending[:limit]:
+    pending = [r for r in rows if json.loads(r["provenance_json"]).get("source") == "secopsai_safe_registry_intake" and r["artifact_id"] not in backed_up]
+    available = []
+    for row in pending:
+        try:
+            import stat
+            if not stat.S_ISREG(Path(row["quarantine_path"]).lstat().st_mode):
+                failures.append({"artifact_id": row["artifact_id"], "reason": "local_bytes_not_regular"})
+                continue
+            available.append(row["artifact_id"])
+        except FileNotFoundError:
+            failures.append({"artifact_id": row["artifact_id"], "reason": "local_bytes_missing"})
+        except OSError:
+            failures.append({"artifact_id": row["artifact_id"], "reason": "local_bytes_unreadable"})
+    # Missing historical files must not consume every upload slot and starve
+    # artifacts whose bytes still exist on this ephemeral worker.
+    for identity in available[:limit]:
         try:
             completed.append(backup_artifact(identity, actor="research-worker", db_path=db_path, client=client))
+        except FileNotFoundError:
+            failures.append({"artifact_id": identity, "reason": "local_bytes_missing"})
         except (ValueError, OSError):
-            failures.append({"artifact_id": identity, "reason": "backup_failed_or_local_bytes_missing"})
+            failures.append({"artifact_id": identity, "reason": "backup_failed"})
     return {"status": "degraded" if failures or len(pending) > limit else "succeeded", "completed": completed, "failures": failures,
             "pending_before_cycle": len(pending), "remaining": len(pending) - len(completed), "coverage": "public registered artifacts, bounded to latest 1000 catalog entries"}

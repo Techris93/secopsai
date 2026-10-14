@@ -4,6 +4,7 @@ from __future__ import annotations
 import email.utils
 import hashlib
 import json
+import re
 import secrets
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,10 @@ MAX_SOURCE_BYTES = 4 * 1024 * 1024
 MAX_EVENTS = 5000
 MAX_PENDING = 10000
 MAX_ATTEMPTS = 8
+
+
+def source_headers(parser: str) -> dict:
+    return {"Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8" if parser == "rss" else "application/json"}
 
 
 def _now() -> str:
@@ -196,11 +201,14 @@ def collect_due(*, db_path=None, fetcher=None, limit: int = 10) -> dict:
             break
         with transaction(db_path) as conn:
             conn.execute("UPDATE research_intel_sources SET last_attempt_at=? WHERE source_id=?", (_now(), config["source_id"]))
+        stage = "fetch"
         try:
-            _, _, content = fetcher.get(config["url"], allowed_hosts=[urlparse(config["url"]).hostname], max_bytes=MAX_SOURCE_BYTES)
+            _, _, content = fetcher.get(config["url"], allowed_hosts=[urlparse(config["url"]).hostname], max_bytes=MAX_SOURCE_BYTES, headers=source_headers(config["parser"]))
+            stage = "parse"
             results.append(acquire(config, content, db_path=db_path))
         except Exception as exc:
-            category = "invalid_source" if isinstance(exc, (ValueError, KeyError, TypeError)) else "transport_failure"
+            status = re.fullmatch(r"registry returned HTTP ([0-9]{3})", str(exc)) if stage == "fetch" else None
+            category = f"source_http_{status.group(1)}" if status else "transport_failure" if stage == "fetch" else "invalid_source"
             with transaction(db_path) as conn:
                 conn.execute("UPDATE research_intel_sources SET error_category=?,consecutive_failures=consecutive_failures+1 WHERE source_id=?", (category, config["source_id"]))
             results.append({"source_id": config["source_id"], "status": "failed", "error_category": category})

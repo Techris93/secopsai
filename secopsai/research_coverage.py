@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 
@@ -81,11 +82,18 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
         oldest = conn.execute("SELECT min(created_at) FROM research_operation_queue WHERE state IN ('queued','retry','running')").fetchone()[0]
         editions = [dict(r) for r in conn.execute("SELECT edition_id,edition_date,state,author_id,published_url,updated_at FROM research_editorial_editions ORDER BY edition_date DESC LIMIT 90")]
         failures = conn.execute("SELECT count(*) FROM registry_ingestion_runs WHERE status='failed' AND started_at>=?", (since,)).fetchone()[0]
+        artifact_rows = conn.execute("SELECT artifact_id,provenance_json FROM research_artifacts WHERE state='collected' ORDER BY updated_at DESC LIMIT 1000").fetchall()
+    backed_up = {r["payload"].get("artifact_id") for r in records("artifact_backup", db_path=db_path, limit=10000) if r["payload"].get("status") == "completed"}
+    backup_pending = sum(json.loads(r["provenance_json"]).get("source") == "secopsai_safe_registry_intake" and r["artifact_id"] not in backed_up for r in artifact_rows)
+    vault_enabled = os.environ.get("SECOPSAI_ARTIFACT_VAULT", "0") == "1"
     gaps = [s["name"] for s in sources if s["enabled"] and not s["fresh"]]
     metadata = [s["name"] for s in sources if s["coverage_mode"] == "metadata_only"]
     return {"schema_version": "secopsai.research.coverage.v1", "as_of": now.isoformat(), "window_start": since, "window_hours": window_hours,
             "sources": sources, "queue": {"states": queue, "oldest_pending_age_seconds": _age(oldest, now)}, "editions": editions,
-            "health": {"freshness_gaps": gaps, "collector_failures": failures, "dead_letters": queue.get("dead_letter", 0)},
+            "artifact_backup": {"enabled": vault_enabled, "pending_registered_public": backup_pending,
+                                "coverage": "latest 1000 collected catalog entries; restricted and unregistered artifacts excluded"},
+            "health": {"freshness_gaps": gaps, "collector_failures": failures, "dead_letters": queue.get("dead_letter", 0),
+                       "artifact_backup_pending": backup_pending if vault_enabled else None},
             "public_summary": f"Collection is bounded and does not establish comprehensive surveillance. {len(gaps)} enabled sources lack a fresh successful collection. {len(metadata)} registry collectors provide metadata coverage without artifact scanning. Unknown eligible-event and evidence-coverage denominators are reported as unknown."}
 
 
