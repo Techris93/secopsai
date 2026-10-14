@@ -47,9 +47,13 @@ export function validCheckpointManifest(m) {
 }
 
 export async function handleChunkedCheckpoint(request, bucket) {
-  const path = new URL(request.url).pathname;
+  const original = new URL(request.url).pathname;
+  const drill = original.startsWith("/recovery-drill/");
+  const path = drill ? original.slice("/recovery-drill".length) : original;
+  const pointerKey = drill ? "ledger/recovery-drills/LATEST" : CHUNK_POINTER;
+  const prefix = drill ? "ledger/recovery-drills/manifests/" : MANIFEST_PREFIX;
   if (path === "/checkpoint-manifest" && request.method === "GET") {
-    const pointer = await bucket.get(CHUNK_POINTER);
+    const pointer = await bucket.get(pointerKey);
     if (!pointer) return json({error: "no_chunked_checkpoint"}, 404);
     const object = await bucket.get(await pointer.text());
     if (!object) return json({error: "checkpoint_manifest_missing"}, 503);
@@ -72,11 +76,11 @@ export async function handleChunkedCheckpoint(request, bucket) {
   }
   const body = JSON.stringify(m);
   const manifestHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body))), b => b.toString(16).padStart(2,"0")).join("");
-  const key = `${MANIFEST_PREFIX}${m.captured_at.replace(/[:.]/g, "-")}-${manifestHash}.json`;
+  const key = `${prefix}${m.captured_at.replace(/[:.]/g, "-")}-${manifestHash}.json`;
   await bucket.put(key, body, {httpMetadata: {contentType: "application/json"}, customMetadata: {captured_at: m.captured_at, size_bytes: String(m.size_bytes)}});
-  const current = await bucket.get(CHUNK_POINTER);
+  const current = await bucket.get(pointerKey);
   if (current && await current.text() > key) return json({key, superseded: true});
-  await bucket.put(CHUNK_POINTER, key);
+  await bucket.put(pointerKey, key);
   return json({key, protocol: "ledger-checkpoint-v3", completion_retry_safe: true});
 }
 

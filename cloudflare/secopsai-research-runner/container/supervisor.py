@@ -61,6 +61,8 @@ class LedgerStore:
         self._open = opener
 
     def _request(self, method: str, path: str, body: Optional[bytes] = None, *, deadline: float, retry: bool = True) -> bytes:
+        if getattr(self, "checkpoint_scope", "production") == "drill" and path in {"/checkpoints", "/checkpoint-manifest"}:
+            path = "/recovery-drill" + path
         attempts = REQUEST_ATTEMPTS if retry else 1
         for attempt in range(attempts):
             remaining = deadline - time.monotonic()

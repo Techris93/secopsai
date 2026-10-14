@@ -308,6 +308,7 @@ def test_shutdown_still_fails_when_checkpoint_retries_exhaust(tmp_path, monkeypa
 class IncrementalServer:
     def __init__(self):
         self.objects, self.manifest, self.puts = {}, None, 0
+        self.drill_manifest = None
     def __call__(self, request, timeout=None):
         path = request.full_url.replace('http://ledger.internal', '')
         if path.startswith('/artifact-objects/'):
@@ -319,14 +320,20 @@ class IncrementalServer:
                 self.puts += 1
                 return _Response(json.dumps({'sha256':key,'size_bytes':len(request.data)}).encode())
             return _Response(self.objects[key])
+        drill = path.startswith('/recovery-drill/')
+        if drill:
+            path = path[len('/recovery-drill'):]
         if path == '/checkpoints':
             manifest = json.loads(request.data)
             assert supervisor.valid_manifest(manifest)
             assert all(c['sha256'] in self.objects for c in manifest['chunks'])
-            self.manifest = manifest
+            if drill:
+                self.drill_manifest = manifest
+            else:
+                self.manifest = manifest
             return _Response(b'{"key":"ledger/manifests/fixture.json"}')
         if path == '/checkpoint-manifest':
-            return _Response(json.dumps(self.manifest).encode())
+            return _Response(json.dumps(self.drill_manifest if drill else self.manifest).encode())
         raise AssertionError(path)
 
 
@@ -388,3 +395,37 @@ def test_forced_budget_shutdown_is_failed_even_when_checkpoint_survives(tmp_path
     assert supervisor.LedgerStore("http://ledger.internal","tok").download(restored)
     with sqlite3.connect(restored) as conn:
         assert conn.execute("SELECT value FROM retained").fetchone()[0] == 'committed before interruption'
+
+
+def test_production_recovery_drill_isolated_from_live_checkpoint(tmp_path, monkeypatch):
+    import sys
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS','1')
+    monkeypatch.setenv('LEDGER_STORE_URL','http://ledger.internal')
+    monkeypatch.setenv('LEDGER_STORE_TOKEN','synthetic-owner-token')
+    db = tmp_path/'production.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE research_source_snapshots(content BLOB, sha256 TEXT)')
+        import hashlib
+        content = b'synthetic archived source'
+        conn.execute('INSERT INTO research_source_snapshots VALUES (?,?)', (content,hashlib.sha256(content).hexdigest()))
+    server = IncrementalServer()
+    client = supervisor.LedgerStore('http://ledger.internal','synthetic-owner-token',opener=server)
+    supervisor.checkpoint(db,client,tmp_path)
+    production_manifest = dict(server.manifest)
+    monkeypatch.setattr('urllib.request.urlopen',server)
+    drill_spec = importlib.util.spec_from_file_location('isolated_recovery_smoke',ROOT/'scripts/research_recovery_smoke.py')
+    drill = importlib.util.module_from_spec(drill_spec)
+    drill_spec.loader.exec_module(drill)
+    report = tmp_path/'recovery.json'
+    monkeypatch.setattr(sys,'argv',['recovery','--output',str(report)])
+    assert drill.main() == 0
+    result = json.loads(report.read_text())
+    assert server.manifest == production_manifest
+    assert server.drill_manifest != production_manifest
+    assert result['production_modified'] is False
+    assert result['failed_commit_preserved_previous_checkpoint'] is True
+    assert result['isolated_committed_rows'] > result['isolated_restored_rows'] == 1
+    assert result['maximum_committed_loss_seconds'] < 300
+    assert result['source_archives_hash_verified'] == 1
+    assert result['rpo_target_proven'] is False
+    assert 'synthetic-owner-token' not in report.read_text()

@@ -297,8 +297,14 @@ incremental capture/upload budget. These bounds are an implementation design;
 production five-minute committed-loss guarantees require measured crash drills.
 Use the read-only **Research Recovery Drill** workflow to restore the exact
 production checkpoint in disposable storage, check foreign keys, enumerate rows
-and verify source archive hashes. Its report measures the one-hour restoration
-target and explicitly distinguishes it from proof of committed event loss.
+and verify source archive hashes. It then writes synthetic committed markers to
+the private copy, checkpoints them in the isolated `/recovery-drill` namespace,
+interrupts the next checkpoint before manifest commit and kills only its own
+synthetic writer. Restoring the previous isolated checkpoint measures committed
+loss and confirms that a failed commit preserves the previous pointer. The
+production pointer is never modified. The report checks the one-hour recovery
+and five-minute loss targets for that scenario; continued production timing
+monitoring is required before claiming a sustained guarantee.
 
 No rollout changes Clef enablement, decision mode, replay status, publication
 approval or existing single-writer ownership. Real reviewers, partner agreements,

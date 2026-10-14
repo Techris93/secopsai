@@ -212,4 +212,12 @@ test('incremental checkpoint commits only complete immutable chunks and cannot r
   const status = await (await handleLedgerRequest(new Request('https://ls.example/status'),bucket)).json();
   assert.equal(status.protocol,'ledger-checkpoint-v3');
   assert.equal(status.captured_at,m.captured_at);
+  const drillBody = JSON.stringify({...m,captured_at:'2026-10-14T11:00:00Z'});
+  const drillRequest = new Request('https://ls.example/recovery-drill/checkpoints', {method:'POST',headers:{'content-length':String(drillBody.length)},body:drillBody});
+  assert.equal((await handleLedgerRequest(drillRequest,bucket)).status,200);
+  assert.equal(objects.get('ledger/LATEST_CHUNKED').text,latest);
+  assert.ok(objects.get('ledger/recovery-drills/LATEST').text.startsWith('ledger/recovery-drills/manifests/'));
+  const drill = await (await handleLedgerRequest(new Request('https://ls.example/recovery-drill/checkpoint-manifest'),bucket)).json();
+  assert.equal(drill.captured_at,'2026-10-14T11:00:00Z');
+
 });
