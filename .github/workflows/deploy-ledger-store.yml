@@ -1,0 +1,31 @@
+name: Deploy Ledger Store
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: secopsai-ledger-store-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+      - name: Validate ledger protocol and retry handling
+        working-directory: cloudflare/secopsai-ledger-store
+        run: npm run check && npm test
+      - name: Deploy storage service without starting a second ledger writer
+        working-directory: cloudflare/secopsai-ledger-store
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4.149.0 deploy
+      - name: Verify private immutable storage with a benign synthetic object
+        env:
+          LEDGER_STORE_URL: https://ledger.secopsai.dev
+          LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+        run: python -m scripts.research_artifact_vault_smoke

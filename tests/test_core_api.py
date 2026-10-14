@@ -921,3 +921,20 @@ def test_production_settings_fail_closed():
     with pytest.raises(RuntimeError, match="WORKSPACE_ID"):
         with TestClient(create_app(missing_workspace)):
             pass
+
+
+def test_research_operation_local_api_requires_scoped_auth_and_idempotent_exact_actions(client):
+    test_client, settings = client
+    endpoint = "/api/v1/research/operation"
+    assert test_client.get(endpoint).status_code == 401
+    assert test_client.get(endpoint, headers={"Authorization": "Bearer " + READ_TOKEN}).status_code == 200
+    payload = {"idempotency_key": "local-research-command", "payload": {"action": "person-register", "actor": "real.operator", "data": {"person_id": "real.operator", "display_name": "Synthetic operator fixture", "roles": ["operator"], "qualification": "Synthetic authorization fixture"}}}
+    assert test_client.post(endpoint, headers={"Authorization": "Bearer " + READ_TOKEN}, json=payload).status_code == 401
+    headers = {"Authorization": "Bearer " + INTELLIGENCE_TOKEN}
+    first = test_client.post(endpoint, headers=headers, json=payload)
+    assert first.status_code == 200
+    assert test_client.post(endpoint, headers=headers, json=payload).json()["result"] == first.json()["result"]
+    payload["payload"]["data"]["display_name"] = "Changed content"
+    assert test_client.post(endpoint, headers=headers, json=payload).status_code == 422
+    with soc_store.connect(settings.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM research_people").fetchone()[0] == 1

@@ -26,6 +26,9 @@ UNSAFE_GUIDANCE_PATTERNS = (
 )
 
 TASK_RULES: tuple[tuple[str, str, str], ...] = (
+    ("research_synthesis", r"\b(source synthesis|prior art|literature review)\b", "research/research-synthesist"),
+    ("research_challenge", r"\b(skeptical review|research challenge|reality check)\b", "testing/reality-checker"),
+    ("detection_engineering", r"\b(detection engineering|behavioral detection|sigma rule)\b", "security/threat-detection-engineer"),
     ("incident_response", r"\b(incident|breach|compromis(?:e|ed)|containment|forensic|outage|production failure)\b", "security/incident-responder"),
     ("devops_ci", r"\b(github actions|workflow run|ci/cd|ci failure|build failed|deploy(?:ment)?|docker|cloudflare|runner|release pipeline)\b", "engineering/devops-automator"),
     ("database", r"\b(database|query|n\+1|pagination|index(?:es|ing)?|connection pool|select \*|postgres|sqlite|schema migration)\b", "engineering/database-optimizer"),
@@ -133,6 +136,8 @@ def validate_catalog(
             warnings.append(f"multiple profiles reference {source_path}")
         source_paths.add(source_path)
         source_hash = str(profile.get("source_sha256") or "")
+        if profile.get("source_commit") is not None and not COMMIT_RE.fullmatch(str(profile["source_commit"])):
+            errors.append(f"{prefix}.source_commit must be a pinned 40-character commit")
         if not SHA256_RE.fullmatch(source_hash):
             errors.append(f"{prefix}.source_sha256 must be a lowercase SHA-256")
         if str(profile.get("risk_ceiling") or "") not in RISK_LEVELS:
@@ -179,6 +184,7 @@ def validate_catalog(
             source_checks.append({
                 "profile_id": profile.get("id"),
                 "source_path": relative,
+                "source_commit": profile.get("source_commit", upstream.get("commit")),
                 "expected_sha256": expected,
                 "actual_sha256": actual,
                 "matches": matches,
@@ -215,6 +221,9 @@ def _clean_task(task: dict[str, Any]) -> dict[str, Any]:
         "owner_role": 120,
         "reviewer_role": 120,
         "repo_alias": 40,
+        "research_team_id": 80,
+        "research_team_stage": 40,
+        "research_team_transport": 40,
     }
     for key, limit in limits.items():
         value = str(task.get(key) or "").strip()
@@ -359,4 +368,8 @@ def route_task(
         "catalog_version": resolved.get("catalog_version"),
         "catalog_sha256": validation["catalog_sha256"],
         "upstream_commit": resolved.get("upstream", {}).get("commit"),
+        "profile_source_commits": {
+            primary_id: primary.get("source_commit", resolved.get("upstream", {}).get("commit")),
+            reviewer_id: profiles[reviewer_id].get("source_commit", resolved.get("upstream", {}).get("commit")),
+        },
     }

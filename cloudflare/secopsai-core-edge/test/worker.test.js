@@ -753,3 +753,85 @@ test("typed capability and artifact contracts hold through hosted completion and
   const truncated = await (await call('/api/v1/intelligence/jobs', { action: 'triage_artifact', target_id: 'npm:long@1', inputs: { artifact_triage: { findings: [{ rule_id: 'R2' }], flagged_files: [{ content: 'x'.repeat(17000) }] } } }, env.CORE_INTELLIGENCE_TOKEN)).json();
   assert.equal(JSON.parse(db.prepare('SELECT input_json FROM intelligence_jobs WHERE job_id=?').get(truncated.job.job_id).input_json).artifact_triage.evidence_truncated, true);
 });
+
+test("research projections require scoped credentials and reject private records", async () => {
+  const env = { DB: new MockD1(), CORE_READ_TOKEN: "r".repeat(44), CORE_BRIDGE_TOKEN: "b".repeat(44), CORE_INTELLIGENCE_TOKEN: "i".repeat(44) };
+  const endpoint = "https://core.example/api/v1/research/operation";
+  assert.equal((await handleRequest(new Request(endpoint), env)).status, 401);
+  for (const token of [env.CORE_READ_TOKEN, env.CORE_BRIDGE_TOKEN]) {
+    const result = await handleRequest(new Request(endpoint, {headers: {authorization: `Bearer ${token}`}}), env);
+    assert.equal(result.status, 200);
+    assert.equal((await result.json()).status, "awaiting_worker");
+  }
+  const sync = (token, body) => handleRequest(new Request(endpoint + "/sync", {method: "POST", headers: {authorization: `Bearer ${token}`, "content-type": "application/json"}, body: JSON.stringify(body)}), env);
+  const projection = {schema_version: "secopsai.research.operation.v1", coverage: {sources: []}, editions: [], assistant_teams: [{team_id: "RTM-0123456789ABCDEF", status: "running"}]};
+  assert.equal((await sync(env.CORE_READ_TOKEN, projection)).status, 401);
+  assert.equal((await sync(env.CORE_BRIDGE_TOKEN, {...projection, partner_submission: "private"})).status, 422);
+  assert.equal((await sync(env.CORE_BRIDGE_TOKEN, projection)).status, 200);
+  const write = (token, action) => handleRequest(new Request(endpoint, {method: "POST", headers: {authorization: `Bearer ${token}`, "content-type": "application/json"}, body: JSON.stringify({payload: {action, actor: "named.operator", data: {}}})}), env);
+  assert.equal((await write(env.CORE_READ_TOKEN, "claim-assess")).status, 401);
+  assert.equal((await write(env.CORE_INTELLIGENCE_TOKEN, "brief-publish")).status, 422);
+  assert.equal((await write(env.CORE_INTELLIGENCE_TOKEN, "submission")).status, 422);
+});
+
+test("research actions match Python hosted capabilities", () => {
+  const python = readFileSync(new URL("../../../secopsai/research_operation.py", import.meta.url), "utf8");
+  const worker = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const catalog = /const RESEARCH_OPERATION_ACTIONS = new Set\(\[([^\]]+)\]\)/.exec(worker)[1];
+  for (const action of [...catalog.matchAll(/"([^"]+)"/g)].map(match => match[1])) assert.ok(python.includes(`"${action}"`), action);
+  assert.ok(!catalog.includes('"brief-publish"'));
+  assert.ok(!catalog.includes('"queue-claim"'));
+});
+
+test("distinct human research commands are retained and conflicting retries fail", {skip: !DatabaseSync}, async () => {
+  const {db, d1} = migratedSqliteD1();
+  const env = {DB: d1, CORE_INTELLIGENCE_TOKEN: "i".repeat(44)};
+  const send = (key, action) => handleRequest(new Request("https://core.example/api/v1/research/operation", {method: "POST", headers: {authorization: `Bearer ${env.CORE_INTELLIGENCE_TOKEN}`, "content-type": "application/json"}, body: JSON.stringify({idempotency_key: key, requested_by: "named.operator", payload: {action, actor: "named.operator", data: {}}})}), env);
+  const first = await send("one", "brief-create");
+  assert.equal(first.status, 202);
+  const firstId = (await first.json()).command_id;
+  const second = await send("two", "brief-create");
+  assert.equal(second.status, 202);
+  assert.notEqual((await second.json()).command_id, firstId);
+  assert.equal((await (await send("one", "brief-create")).json()).command_id, firstId);
+  assert.equal((await send("one", "brief-correct")).status, 409);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM coordinator_commands").get().count, 2);
+  db.close();
+});
+
+test('hosted assistant transport preserves captured evidence, scopes jobs and fences completion', {skip: !DatabaseSync}, async () => {
+  const {db, d1} = migratedSqliteD1();
+  const env = {DB:d1, CORE_BRIDGE_TOKEN:'b'.repeat(44), CORE_INTELLIGENCE_TOKEN:'i'.repeat(44)};
+  const call = (path, body, token=env.CORE_BRIDGE_TOKEN) => handleRequest(new Request('https://core.example'+path, {method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)}),env);
+  const target = 'SOR-0123456789ABCDEF';
+  const request = {action:{name:'execute_specialist_work'},context:{specialist_run_id:target,original_evidence:'line 1\nline 2'},instructions:'Bounded supplied evidence only',safety:{read_only:true,human_review_required:true}};
+  const payload = {action:'execute_specialist_work',target_id:target,idempotency_key:'assistant:fixture',inputs:{target_id:target,selected_model:'opencodex/test-research',fallback_models:[],fallback_mode:'disabled',assistant_request:request}};
+  assert.equal((await call('/api/v1/research/assistant/jobs',payload,'wrong')).status,401);
+  const first = await (await call('/api/v1/research/assistant/jobs',payload)).json();
+  assert.equal(first.created,true);
+  const again = await (await call('/api/v1/research/assistant/jobs',{...payload,inputs:Object.fromEntries(Object.entries(payload.inputs).reverse())})).json();
+  assert.equal(again.created,false);
+  const conflict = structuredClone(payload);conflict.inputs.assistant_request.context.original_evidence='different evidence';
+  assert.equal((await call('/api/v1/research/assistant/jobs',conflict)).status,409);
+  const unsafe = structuredClone(payload);unsafe.idempotency_key='assistant:unsafe';unsafe.inputs.assistant_request.context.api_key='synthetic secret';
+  assert.equal((await call('/api/v1/research/assistant/jobs',unsafe)).status,422);
+  const incompatible = structuredClone(payload);incompatible.idempotency_key='assistant:typed';incompatible.inputs.selected_model='typesafe/jev-latest';
+  assert.equal((await call('/api/v1/research/assistant/jobs',incompatible)).status,422);
+  const claim = await (await call('/api/v1/intelligence/bridge/claim',{worker_id:'bridge-fixture'})).json();
+  assert.deepEqual(claim.bridge_request,request);
+  const result = {summary:'Recorded model proposal',risk_assessment:'Human review required',evidence:['E1'],recommended_actions:['Verify observations'],limitations:['Synthetic fixture']};
+  const completion = {model:'opencodex/test-research',worker_id:'bridge-fixture',lease_generation:claim.job.lease_generation,lease_token:claim.job.lease_token};
+  assert.equal((await call(`/api/v1/intelligence/bridge/jobs/${first.job.job_id}/complete`,{...completion,result:{...result,summary:'x'.repeat(16001)}})).status,422);
+  result.risk_assessment = 'Preserve this line\n' + 'x'.repeat(3000);
+  assert.equal((await call(`/api/v1/intelligence/bridge/jobs/${first.job.job_id}/complete`,{result,model:'opencodex/test-research',worker_id:'bridge-fixture',lease_generation:claim.job.lease_generation,lease_token:'wrong'})).status,409);
+  assert.equal((await call(`/api/v1/intelligence/bridge/jobs/${first.job.job_id}/complete`,{result,model:'opencodex/test-research',worker_id:'bridge-fixture',lease_generation:claim.job.lease_generation,lease_token:claim.job.lease_token})).status,200);
+  const results = await (await call('/api/v1/research/assistant/results',{job_ids:[first.job.job_id]})).json();
+  assert.equal(results.results[0].model,'opencodex/test-research');
+  assert.equal(results.results[0].status,'succeeded');
+  assert.equal(results.results[0].result.summary,'Recorded model proposal');
+  assert.equal(results.results[0].result.risk_assessment,result.risk_assessment);
+  const unrelated = 'AIJ-FFFFFFFFFFFFFFFF';
+  db.prepare("INSERT INTO intelligence_jobs (job_id,action,target_id,status,requested_by,idempotency_key,queued_at,updated_at,input_json,result_json) VALUES (?,?,?,?,?,?,?,?,?,?)").run(unrelated,'triage_artifact','ART-other','queued','other-worker','other-key','2026-01-01','2026-01-01','{}','{}');
+  assert.deepEqual((await (await call('/api/v1/research/assistant/results',{job_ids:[unrelated]})).json()).results,[]);
+  assert.deepEqual((await (await call('/api/v1/research/assistant/cancel',{job_ids:[unrelated]})).json()).canceled,[]);
+});

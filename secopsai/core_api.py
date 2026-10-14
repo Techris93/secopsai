@@ -458,6 +458,24 @@ def create_app(settings: CoreAPISettings | None = None) -> FastAPI:
             "request_id": request.state.request_id,
         }
 
+    @application.get("/api/v1/research/operation")
+    def research_operation_status(_role: str = Depends(require_read)) -> dict[str, Any]:
+        from secopsai.research_operation import hosted_projection
+
+        return hosted_projection(db_path=resolved.db_path)
+
+    @application.post("/api/v1/research/operation")
+    async def research_operation_action(request: Request, _role: str = Depends(require_intelligence)) -> dict[str, Any]:
+        from secopsai.research_operation import execute_hosted
+
+        payload = _decode_json_object(await _read_request_bytes(request, 65536, "Research operation"))
+        command = payload.get("payload", payload)
+        identity = payload.get("idempotency_key") or request.state.request_id
+        try:
+            return {"result": execute_hosted(identity, command, db_path=resolved.db_path), "request_id": request.state.request_id}
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @application.get("/api/v1/workspace")
     def operator_workspace(
         limit: int = 100,

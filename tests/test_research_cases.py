@@ -187,7 +187,8 @@ class ResearchCaseTests(unittest.TestCase):
             self.assertEqual(duplicate["subjects"][0]["publisher"], "updated-publisher")
             self.assertEqual(len(duplicate["iocs"]), 1)
             self.assertEqual(duplicate["iocs"][0]["confidence"], 95)
-            self.assertTrue(duplicate["publication_readiness"]["ready"])
+            self.assertFalse(duplicate["publication_readiness"]["ready"])
+            self.assertIn("current independent qualified human technical review is required", duplicate["publication_readiness"]["blockers"])
             self.assertGreaterEqual(len(duplicate["timeline"]), 7)
 
             exported = export_case(
@@ -200,7 +201,7 @@ class ResearchCaseTests(unittest.TestCase):
             markdown = Path(exported["markdown_report"]).read_text(encoding="utf-8")
             self.assertIn("Indicators of Compromise", markdown)
             self.assertIn("checkout-telemetry.example", markdown)
-            self.assertTrue(exported["publication_readiness"]["ready"])
+            self.assertFalse(exported["publication_readiness"]["ready"])
 
             repeat_dir = Path(temp_dir) / "repeat"
             repeated = export_case(case["case_id"], db_path=db_path, output_dir=str(repeat_dir))
@@ -351,7 +352,7 @@ class ResearchCaseTests(unittest.TestCase):
 
             self.assertEqual(len(case["rules"]), 3)
             self.assertTrue(all(item["validation_status"] == "passed" for item in case["rules"]))
-            self.assertTrue(case["publication_readiness"]["ready"])
+            self.assertFalse(case["publication_readiness"]["ready"])
 
             exported = export_case(case["case_id"], db_path=db_path, output_dir=str(Path(temp_dir) / "reports"))
             export_payload = json.loads(Path(exported["json_report"]).read_text(encoding="utf-8"))
@@ -400,7 +401,8 @@ class ResearchCaseTests(unittest.TestCase):
                 db_path=db_path,
             )
             self.assertEqual(retracted["rules"][0]["status"], "retracted")
-            self.assertTrue(retracted["publication_readiness"]["ready"])
+            self.assertFalse(retracted["publication_readiness"]["ready"])
+            self.assertNotIn("every active detection rule must pass structural validation", retracted["publication_readiness"]["blockers"])
 
     def test_cli_add_rule_reads_a_local_file_without_execution(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -458,47 +460,18 @@ class ResearchCaseTests(unittest.TestCase):
             markdown = Path(exported["markdown_report"]).read_text(encoding="utf-8")
             self.assertNotIn("https://example.test/packages/braintree-payments-sdk", markdown)
 
-    def test_blog_handoff_is_blocked_until_disclosure_and_evidence_are_ready(self) -> None:
+    def test_blog_draft_is_available_before_review_but_never_authorizes_release(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = str(Path(temp_dir) / "soc.db")
             case = create_case(title="Incomplete package investigation", db_path=db_path)
-
-            with self.assertRaisesRegex(ValueError, "not publication-ready"):
-                draft_case_blog(case["case_id"], db_path=db_path)
-
-            ready = self._build_ready_case(db_path)
-            with self.assertRaisesRegex(ValueError, "research reliability gates are not ready"):
-                draft_case_blog(ready["case_id"], db_path=db_path)
-
-            preview = {
-                "draft_path": "/tmp/review-draft.json",
-                "post": {"slug": "review-draft", "body_markdown": "Evidence-grounded preview."},
-            }
-            written = {
-                "draft_path": "/tmp/review-draft.json",
-                "review_status": "needs_review",
-                "post": {"slug": "review-draft", "body_markdown": "Evidence-grounded preview."},
-            }
-            gate = {"ready": True, "blockers": [], "quality": {"score": 100}}
-            clipped = {
-                "publication_blocked": False,
-                "corrected_text": "Evidence-grounded preview.",
-                "claim_ledger": {"summary": {"publication_blocked": False, "evidence_coverage_percent": 100}},
-            }
-            with (
-                mock.patch("secopsai.research_reliability.publication_reliability_gate", return_value=gate),
-                mock.patch("secopsai.research_reliability.clip_unsupported_claims", return_value=clipped),
-                mock.patch("secopsai.blog.draft_research_case", side_effect=[preview, written]) as draft,
-            ):
-                payload = draft_case_blog(ready["case_id"], db_path=db_path)
-
+            preview = {"draft_path": "/tmp/review-draft.json", "post": {"slug": "review-draft", "body_markdown": "Evidence needs review."}}
+            with mock.patch("secopsai.blog.draft_research_case", return_value=preview) as draft:
+                payload = draft_case_blog(case["case_id"], db_path=db_path)
             self.assertEqual(payload["draft_path"], "/tmp/review-draft.json")
-            research_case = draft.call_args_list[0].args[0]
-            self.assertEqual(research_case["case_id"], ready["case_id"])
-            self.assertEqual(research_case["iocs"][0]["value"], "checkout-telemetry.example")
-            self.assertFalse(draft.call_args_list[0].kwargs["write"])
-            self.assertEqual(draft.call_args_list[1].kwargs["verified_body"], "Evidence-grounded preview.")
-            self.assertTrue(get_case(ready["case_id"], db_path=db_path)["timeline"][-1]["event_type"] == "blog_draft_created")
+            self.assertFalse(payload["research_reliability"]["ready"])
+            self.assertEqual(draft.call_count, 1)
+            self.assertEqual(draft.call_args.args[0]["case_id"], case["case_id"])
+            self.assertEqual(get_case(case["case_id"], db_path=db_path)["timeline"][-1]["event_type"], "blog_draft_created")
 
     def test_invalid_evidence_hash_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

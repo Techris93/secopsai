@@ -613,6 +613,9 @@ def publication_safety_check(case_id: str, *, actor: str = "analyst", db_path: O
 
 
 def approve_publication_review(case_id: str, *, review_id: str = "", actor: str = "publisher", waivers: Optional[Sequence[str]] = None, db_path: Optional[str] = None) -> Dict[str, Any]:
+    from secopsai.research_assurance import person
+
+    person(actor, role="editor", db_path=db_path)
     case = get_case(case_id, db_path=db_path)
     reviews = case.get("publication_reviews") or []
     review = next((item for item in reviews if not review_id or item.get("review_id") == review_id), None)

@@ -82,7 +82,7 @@ export default {
 
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/healthz") return json({ status: "ok", service: "secopsai-ledger-store" });
+    if (url.pathname === "/healthz") return json({ status: "ok", service: "secopsai-ledger-store", checkpoint_protocol: "ledger-checkpoint-v2", completion_retry_safe: true });
     const watchlistMatch = url.pathname.match(/^\/fastlane\/watchlist\/([a-z]+)$/);
     if (watchlistMatch || url.pathname === "/fastlane/status") {
       const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);

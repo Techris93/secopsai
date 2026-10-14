@@ -230,7 +230,7 @@ def test_workflow_records_human_gates(tmp_path, monkeypatch):
     assert review["status"] in {"needs_approval", "blocked"}
     reliability_blockers = [item for item in review["blockers"] if item.startswith("Reliability:")]
     assert reliability_blockers
-    with pytest.raises(ValueError, match="publication reliability blockers remain"):
+    with pytest.raises(ValueError, match="active registered human identity is required"):
         approve_publication_review(
             case["case_id"],
             review_id=review["review_id"],

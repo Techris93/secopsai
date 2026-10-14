@@ -33,6 +33,47 @@ export function bearer(request) {
 export async function handleLedgerRequest(request, bucket) {
   const url = new URL(request.url);
   const parts = url.pathname.split("/").filter(Boolean);
+  // Private immutable chunks and manifests. R2 checks the supplied SHA-256
+  // against the streamed bytes; existing objects are never overwritten.
+  const artifact = url.pathname.match(/^\/artifact-objects\/([a-f0-9]{64})$/);
+  if (artifact) {
+    const hash = artifact[1];
+    const objectKey = `artifacts/sha256/${hash}`;
+    if (request.method === "PUT") {
+      const length = Number(request.headers.get("content-length"));
+      if (!Number.isSafeInteger(length) || length <= 0) return json({error: "content_length_required"}, 411);
+      if (length > 32 * 1024 * 1024) return json({error: "object_too_large"}, 413);
+      try {
+        await bucket.put(objectKey, request.body, {sha256: hash,
+          onlyIf: new Headers({"If-None-Match": "*"}),
+          httpMetadata: {contentType: "application/octet-stream"}, customMetadata: {sha256: hash}});
+      } catch {
+        return json({error: "object_write_or_integrity_failure"}, 400);
+      }
+      const object = await bucket.head(objectKey);
+      if (!object || object.size !== length || object.customMetadata?.sha256 !== hash) return json({error: "object_integrity_failure"}, 409);
+      return json({sha256: hash, size_bytes: object.size});
+    }
+    if (request.method === "HEAD" || request.method === "GET") {
+      const object = request.method === "HEAD" ? await bucket.head(objectKey) : await bucket.get(objectKey);
+      if (!object) return json({error: "object_missing"}, 404);
+      return new Response(request.method === "HEAD" ? null : object.body, {headers: {
+        "content-type": "application/octet-stream", "content-length": String(object.size),
+        "x-artifact-sha256": hash, "cache-control": "no-store", "x-content-type-options": "nosniff",
+        "content-disposition": "attachment", "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+      }});
+    }
+    return json({error: "method_not_allowed"}, 405);
+  }
+  if (request.method === "GET" && url.pathname === "/status") {
+    const pointer = await bucket.get(LATEST_POINTER);
+    const key = pointer ? await pointer.text() : null;
+    const object = key ? await bucket.head(key) : null;
+    return json({ protocol: "ledger-checkpoint-v2", completion_retry_safe: true,
+      latest_key: object ? key : null, size_bytes: object?.size ?? null,
+      uploaded_at: object?.uploaded ? new Date(object.uploaded).toISOString() : null,
+      checkpoint_available: Boolean(object) });
+  }
 
   if (request.method === "GET" && url.pathname === "/snapshot") {
     const pointer = await bucket.get(LATEST_POINTER);

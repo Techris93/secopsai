@@ -5,6 +5,14 @@ domain specialist checks the technical interpretation; a separate independent
 reviewer checks the same evidence without seeing the primary review's verdict,
 confidence, wording, or recommendation.
 
+These specialist challenges supplement the qualified human release process.
+Consequential original findings also require registered technical and editorial
+reviewers, distinct from the author, who approve the same exact draft under the
+[Research Company Operation](research-company-operation.md) contract. The run
+captures the material evidence fingerprint; changed evidence requires a fresh
+specialist run and renewed human approvals. Historical model agreement cannot
+authorize publication of new evidence.
+
 ## Automatic routing
 
 The Specialist Orchestrator selects a reviewed profile from

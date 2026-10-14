@@ -302,3 +302,83 @@ do not change permissions or the selected model.
   explainable but requires rule/catalog maintenance as domains evolve.
 - The orchestrator does not replace issue ownership, code review, CI, release
   approval, or incident command.
+
+## Research assistant team
+
+The curated catalog now contains 20 profiles. Three previously integrated roles
+are reused: Threat Intelligence Analyst, Application Security Engineer and
+Technical Writer. Research Synthesist, Threat Detection Engineer and Reality
+Checker are adapted from the additional source commit recorded **per profile**;
+the original 17 retain their earlier reviewed source hashes and global commit.
+When verifying against upstream files, materialize each profile from its recorded
+`source_commit`, falling back to `upstream.commit`. A single current upstream
+checkout cannot verify a catalog with multiple recorded source revisions.
+
+The Research panel can start a bounded case workflow:
+
+1. Source synthesis and prior-art gaps.
+2. Threat observations and alternative explanations.
+3. Application security and proposed reproduction.
+4. Detection proposals and positive, benign and evasion test plans.
+5. Skeptical assessment of original evidence.
+6. Attributed draft and unresolved limitations.
+
+Each stage uses the existing read-only specialist bridge and a separate blinded
+model review. The team captures its model and fallback configuration once; later
+administration changes do not alter queued stages. Up to twelve model jobs can
+run per team, with a 24-hour deadline and at most twenty active teams. The normal
+research worker advances only explicitly started teams, at most five per cycle.
+It does not automatically enroll the historical case backlog or start a replay.
+
+The skeptical stage and all stage reviewers receive original code, source
+excerpts, matched strings, traces and experiment output before seeing other
+assistants' conclusions. Summaries, analyst notes, verdicts, confidence scores,
+claim-support labels and earlier draft text are withheld from those contexts.
+Omitted evidence is identified. Cases must have 1–25 active evidence records;
+excess records require explicitly narrowing the case rather than silently dropping
+material evidence. Model outputs remain in specialist runs, separate from factual
+evidence and qualified human assessments. Writer context omissions are recorded
+with the stored run identities for full human review.
+
+Changed evidence or catalog guidance invalidates the team. Missing results,
+provider failures and unresolved material disagreements stop advancement. Use the
+existing specialist disagreement adjudication interface to record a human outcome;
+then the worker can resume the same bounded team. The Research panel's **Stop**
+control prevents further stages and requests cancellation of queued work. Running
+work may finish, but no subsequent stage starts.
+
+These are model roles, not staffed positions. They have no fictional employment
+history, cannot claim searches or validation experiments absent from records,
+cannot register themselves as humans and cannot approve publication. Completion
+is `awaiting_human_review`. The existing qualified technical reviewer, exact-draft
+editorial checks, disclosure restrictions and your release approval still apply.
+Jev and Clef remain restricted to validated triage actions and cannot execute this
+research workflow. Clef remains paused and closure remains in observation mode.
+
+Local equivalents (use your real registered human identity and compatible model;
+`team-request.json` contains an object such as `{"request_id":"case-research-2026-10-14"}`):
+
+```sh
+secopsai research operation assistant-team-start --actor your.registered.id --case-id RSC-012345ABCDEF --input team-request.json
+secopsai research operation assistant-teams --case-id RSC-012345ABCDEF
+secopsai research operation assistant-team-cancel --actor your.registered.id --id RTM-0123456789ABCDEF
+```
+
+Start/cancel commands also use authenticated hosted research-operation receipts,
+so repeated delivery does not duplicate work. The hosted projection reports team
+progress without private model drafts or raw evidence.
+
+Hosted teams use a durable outbox in the canonical worker ledger. The worker
+delivers captured prompts and evidence to authenticated Core jobs; the desktop
+bridge executes them without rebuilding context from its separate local ledger.
+The worker reconciles results back to the canonical specialist runs, checking job,
+action and captured model identity. Lost queue or completion acknowledgements do
+not duplicate work. Each cycle delivers or reconciles at most ten explicit job
+identities. Local teams continue using the local bridge queue.
+
+Transport reserves 60 KB for the full request and 48 KB for a structured result.
+Privacy or size limits that would alter supplied evidence or model output cause
+an explicit failure; Core does not silently shorten assistant results. Evidence
+omissions already identified by the evidence builder remain recorded limitations.
+An incompatible model, rejected contract or stale case stops the team; temporary
+connection failures retain the outbox for retry within the team deadline.

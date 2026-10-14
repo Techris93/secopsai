@@ -41,6 +41,13 @@ MAX_COMMAND_RESULT_BYTES = 28 * 1024
 DEFAULT_URL = "https://core.secopsai.dev"
 
 
+class CoreEdgeHTTPError(RuntimeError):
+    def __init__(self, message: str, *, status: int, error_code: str):
+        super().__init__(message)
+        self.status = status
+        self.error_code = error_code
+
+
 def _clean(value: Any, limit: int = 2000) -> str:
     return str(value or "").strip()[:limit]
 
@@ -544,16 +551,18 @@ class CoreEdgeClient:
             if path == "/api/v1/intelligence/bridge/state"
             else _bounded_bridge_command(payload or {})
             if path.startswith("/api/v1/intelligence/bridge/commands/")
+            else _bounded_json(payload or {}, limit=131072, preserve_lists=True)
+            if path == "/api/v1/research/operation/sync"
             else _bounded_json(payload or {}, limit=4 * 1024 * 1024, preserve_lists=True)
-            if path in {"/api/v1/research/cases/sync", "/api/v1/research/triage/jobs"}
+            if path in {"/api/v1/research/cases/sync", "/api/v1/research/triage/jobs", "/api/v1/research/assistant/jobs"}
             else _bounded_json(payload or {}, preserve_lists=path == "/api/v1/ontology/sync")
         )
-        if path == "/api/v1/ontology/sync" and isinstance(body, dict) and body.get("status") == "truncated":
+        if path in {"/api/v1/ontology/sync", "/api/v1/research/operation/sync"} and isinstance(body, dict) and body.get("status") == "truncated":
             # A marker-only request would be accepted by older Core versions
             # while dropping the entire snapshot. Surface it as a degraded
             # control-plane result so the caller can retain/retry the source
             # payload instead of reporting a false successful sync.
-            raise ValueError("ontology snapshot exceeds the bounded request size")
+            raise ValueError("control-plane snapshot exceeds the bounded request size")
         response = self.session.request(
             method,
             f"{self.settings.url}{path}",
@@ -572,7 +581,7 @@ class CoreEdgeClient:
             raise RuntimeError("hosted Core response must be an object")
         if not response.ok:
             detail = _clean(result.get("detail") or result.get("error") or "request failed", 500)
-            raise RuntimeError(f"hosted Core rejected {path} ({response.status_code}): {detail}")
+            raise CoreEdgeHTTPError(f"hosted Core rejected {path} ({response.status_code}): {detail}", status=response.status_code, error_code=_clean(result.get("error"), 100))
         return result
 
     def queue_triage_jobs(self, jobs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -588,11 +597,25 @@ class CoreEdgeClient:
         query = urllib.parse.urlencode({"since": since or "1970-01-01T00:00:00Z", "limit": max(1, min(int(limit), 200))})
         return self._request("GET", f"/api/v1/research/triage/results?{query}")
 
+    def queue_assistant_job(self, payload: dict) -> dict:
+        return self._request("POST", "/api/v1/research/assistant/jobs", payload)
+
+    def assistant_results(self, job_ids: list[str]) -> dict:
+        return self._request("POST", "/api/v1/research/assistant/results", {"job_ids": job_ids[:10]})
+
+    def cancel_assistant_jobs(self, job_ids: list[str]) -> dict:
+        return self._request("POST", "/api/v1/research/assistant/cancel", {"job_ids": job_ids[:10]})
+
     def sync_research_cases(self, cases: list[dict[str, Any]]) -> dict[str, Any]:
         """Upsert bounded research-case projections into the hosted Core."""
         if not self.enabled:
             return {"status": "disabled"}
         return self._request("POST", "/api/v1/research/cases/sync", {"cases": cases})
+
+    def sync_research_operation(self, projection: dict[str, Any]) -> dict[str, Any]:
+        if not self.enabled:
+            return {"status": "disabled"}
+        return self._request("POST", "/api/v1/research/operation/sync", projection)
 
     def sync_state(self, summary: Dict[str, Any], *, status: str = "healthy") -> dict[str, Any]:
         if not self.enabled:
@@ -995,7 +1018,11 @@ class CoreEdgeClient:
                 pulse_thread = Thread(target=pulse, name=f"secopsai-command-heartbeat-{command_id}", daemon=True)
                 pulse_thread.start()
             try:
-                if command_type == "daily-run":
+                if command_type == "research-operation":
+                    from secopsai.research_operation import execute_hosted
+
+                    result = execute_hosted(command_id, payload, db_path=db_path)
+                elif command_type == "daily-run":
                     from secopsai.daily_automation import run_cycle
 
                     result = run_cycle(db_path=db_path, trigger="hosted-core", force=True)

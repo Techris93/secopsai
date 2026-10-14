@@ -26,7 +26,7 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 # silently lost after its source checkpoint advances.  The ontology is an
 # additive semantic layer over the existing findings, research, and Edge graph
 # stores; it does not replace those durable records.
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 REQUIRED_ONTOLOGY_TABLES = frozenset(
     {
         "ontology_entities",
@@ -2052,6 +2052,8 @@ def init_db(db_path: str | None = None) -> None:
                 ON registry_ingestion_runs (status, started_at);
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_cursor
                 ON registry_feed_events (collector_id, registry_timestamp);
+            CREATE INDEX IF NOT EXISTS idx_registry_feed_events_collection_window
+                ON registry_feed_events (collector_id, collected_at);
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_processing_state_time
                 ON registry_feed_events (processing_state, registry_timestamp);
             CREATE INDEX IF NOT EXISTS idx_registry_feed_events_ecosystem_state_time
@@ -2137,6 +2139,9 @@ def init_db(db_path: str | None = None) -> None:
             _ensure_column(connection, "daily_automation_runs", "lease_until", "TEXT")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_ontology_entities_validity ON ontology_entities (valid_from, valid_to, freshness_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_ontology_evidence_workspace ON ontology_evidence_refs (workspace_id, observed_at DESC)")
+            from secopsai.research_operation_store import SCHEMA as RESEARCH_OPERATION_SCHEMA
+
+            connection.executescript(RESEARCH_OPERATION_SCHEMA)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             connection.commit()
 

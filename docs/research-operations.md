@@ -339,8 +339,8 @@ section is backed by data the gates above have checked:
 | TL;DR | Affected packages, graded assessment, registry status, the first recommended action |
 | Affected packages | Case subjects with their recorded registry state |
 | Status and takedown tracker | Case creation, disclosures (recipient, sent date), each version's registry state, OSV id when recorded |
-| Our assessment | Calibrated confidence graded as Confirmed (90+ **and** a recorded malicious verdict), High (75+), Moderate (50+) or Low |
-| MITRE ATT&CK mapping | Techniques matched in the case's own evidence, IOCs and rules; each row cites the evidence and the term that triggered it |
+| Our assessment | Recorded confidence graded as Confirmed (90+, credible verdict and current qualified human review of a malicious observation), High (75+), Moderate (50+) or Low; thresholds are not a calibration result |
+| MITRE ATT&CK mapping | Current qualified human mappings of demonstrated behavior, with precise reviewed claim references; keywords only generate investigative leads |
 | Indicators of compromise | Case IOCs, with JSON, CSV and STIX 2.1 downloads written to `blog/iocs/<slug>.*` at publish time |
 | Recommended actions | Ecosystem-specific checks (`npm ls`, `pip show`), plus credential rotation when credential access is mapped |
 
