@@ -158,6 +158,22 @@ queue age, missing evidence instrumentation and freshness. Historical rows are
 not comprehensive surveillance. `null` is unknown, not zero. New scan stage
 records identify the same release event through acquisition and analysis.
 
+Primary-source collection visits at most ten due feeds per cycle, so initial
+coverage does not wait for several registry cycles. Catalog feed repairs retain
+the original source identity and archived events; explicit operator changes take
+precedence. Google's feed uses its HTTPS FeedBurner endpoint. MSRC uses the
+Security Update Guide advisory feed because its old blog feed now serves HTML.
+RSS excerpts over 20,000 characters carry a truncation flag, original length,
+hash and selected range; the full feed remains archived and coverage counts the
+truncation. A shortened excerpt cannot establish claims about omitted text.
+Publisher-provided HTTP citation links remain untrusted source identifiers;
+collection and every redirect still require HTTPS. Citation normalization never
+asserts that an HTTP link was fetched or silently substitutes a different URL.
+
+The private artifact client and its production smoke use an explicit application
+User-Agent. Authentication, checksum validation and redirect rejection remain
+required; the edge receiving a request is not evidence of a successful backup.
+
 Deploy the merged Core revision through **Deploy Core Edge** on `main`. This
 protected production workflow validates the hosted contracts, applies additive
 D1 migrations and checks authenticated assistant reads without creating jobs.

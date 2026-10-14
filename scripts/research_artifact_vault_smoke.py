@@ -1,11 +1,10 @@
 """Bounded benign private-object smoke check; never collects or executes samples."""
 import hashlib
 import json
-import os
 import urllib.error
 import urllib.request
 
-from secopsai.research_artifact_vault import NoRedirect, VaultClient
+from secopsai.research_artifact_vault import NoRedirect, USER_AGENT, VaultClient
 
 
 def main():
@@ -15,7 +14,9 @@ def main():
     if client.put(body) != sha or client.get(sha) != body:
         raise ValueError("immutable storage round trip failed")
     try:
-        urllib.request.build_opener(NoRedirect()).open(client.url + "/artifact-objects/" + sha, timeout=15)
+        request = urllib.request.Request(client.url + "/artifact-objects/" + sha, headers={"User-Agent": USER_AGENT})
+        with urllib.request.build_opener(NoRedirect()).open(request, timeout=15):
+            pass
     except urllib.error.HTTPError as error:
         if error.code != 401:
             raise ValueError("private object access contract failed") from None

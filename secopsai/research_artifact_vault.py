@@ -23,6 +23,7 @@ from secopsai.research_operation_store import append, canonical, records
 CHUNK_BYTES = 32 * 1024 * 1024
 MAX_BYTES = 250 * 1024 * 1024
 HASH = re.compile(r"[a-f0-9]{64}\Z")
+USER_AGENT = "SecOpsAI-Artifact-Vault/1"
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -48,7 +49,7 @@ class VaultClient:
             if remaining <= 0:
                 raise ValueError("artifact vault deadline exceeded")
             request = urllib.request.Request(self.url + "/artifact-objects/" + digest, data=body, method=method,
-                                            headers={"Authorization": "Bearer " + self.token, "Content-Type": "application/octet-stream"})
+                                            headers={"Authorization": "Bearer " + self.token, "Content-Type": "application/octet-stream", "User-Agent": USER_AGENT})
             try:
                 with self.opener.open(request, timeout=min(15, remaining)) as response:
                     limit = CHUNK_BYTES if method == "GET" else 4096

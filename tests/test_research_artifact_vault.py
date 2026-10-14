@@ -2,6 +2,8 @@ import hashlib
 import json
 import os
 import zipfile
+import io
+import urllib.error
 
 import pytest
 
@@ -103,3 +105,35 @@ def test_invalid_manifest_shape_preserves_catalog_and_bytes(artifact):
     with pytest.raises(ValueError, match="invalid artifact manifest"):
         restore_artifact(identity, actor="operator.owner", db_path=db, client=client)
     assert open(stored, "rb").read() == original
+
+
+def test_production_smoke_reaches_authenticated_storage_through_edge(monkeypatch, capsys):
+    from scripts.research_artifact_vault_smoke import main
+
+    objects, requests = {}, []
+
+    class EdgeVault:
+        def open(self, request, timeout):
+            requests.append(request)
+            # The production edge rejects urllib's default agent before the
+            # Worker can check authentication or object integrity.
+            if request.get_header("User-agent") != "SecOpsAI-Artifact-Vault/1":
+                raise urllib.error.HTTPError(request.full_url, 403, "edge rejected", {}, None)
+            if request.get_header("Authorization") != "Bearer synthetic":
+                raise urllib.error.HTTPError(request.full_url, 401, "unauthorized", {}, None)
+            key = request.full_url.rsplit("/", 1)[1]
+            if request.get_method() == "PUT":
+                if hashlib.sha256(request.data).hexdigest() != key:
+                    raise urllib.error.HTTPError(request.full_url, 400, "hash mismatch", {}, None)
+                objects.setdefault(key, request.data)
+                return io.BytesIO(json.dumps({"sha256": key, "size_bytes": len(objects[key])}).encode())
+            return io.BytesIO(objects[key])
+
+    monkeypatch.setenv("LEDGER_STORE_URL", "https://vault.example")
+    monkeypatch.setenv("LEDGER_STORE_TOKEN", "synthetic")
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: EdgeVault())
+    main()
+    assert json.loads(capsys.readouterr().out)["status"] == "passed"
+    assert len(objects) == 1
+    assert len(requests) == 5
+    assert requests[3].get_header("Authorization") is None
