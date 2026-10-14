@@ -163,15 +163,23 @@ class LedgerStore:
     def upload_chunked(self, backup: Path, *, captured_at: str, deadline=None) -> str:
         deadline = deadline or (time.monotonic() + 240)
         cached = getattr(self, "chunk_cache", set())
+        self.chunk_cache = cached
+        cache_lock = threading.Lock()
         entries, whole, total, uploaded = [], hashlib.sha256(), 0, 0
         def upload_piece(raw):
             packed = gzip.compress(raw, compresslevel=1, mtime=0)
             key = hashlib.sha256(packed).hexdigest()
-            was_uploaded = key not in cached
+            with cache_lock:
+                was_uploaded = key not in cached
             if was_uploaded:
                 result = json.loads(self._request("PUT", "/artifact-objects/" + key, packed, deadline=deadline))
                 if result.get("sha256") != key or result.get("size_bytes") != len(packed):
                     raise ValueError("incremental checkpoint upload receipt mismatch")
+                # An immutable verified object remains durable even if another
+                # chunk or the final manifest fails. Preserve that receipt for
+                # the next bounded capture in this runner.
+                with cache_lock:
+                    cached.add(key)
             return ({"sha256": key, "size_bytes": len(packed), "raw_sha256": hashlib.sha256(raw).hexdigest(), "raw_size_bytes": len(raw)}, was_uploaded)
         with backup.open("rb") as source, ThreadPoolExecutor(max_workers=4) as pool:
             while True:
