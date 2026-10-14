@@ -401,3 +401,24 @@ def test_outbox_deadline_leaves_unattempted_work_durable(tmp_path, monkeypatch):
     result = client.flush_ontology_outbox(db_path=db,max_items=100,seconds=1)
     assert result['flushed']==1 and result['pending']==2 and result['status']=='degraded'
     assert len(session.calls)==1
+
+
+def test_outbox_rejection_diagnostics_are_bounded_and_keep_original_work(tmp_path):
+    class Rejected(_Session):
+        def request(self,*args,**kwargs):
+            super().request(*args,**kwargs)
+            class Response(_Response):
+                status_code=422
+                ok=False
+                def json(self):
+                    return {'error':'invalid_event','detail':'synthetic-private-token'}
+            return Response()
+    session=Rejected()
+    client=CoreEdgeClient(_settings(),session=session)
+    db=str(tmp_path/'rejected.db')
+    client.enqueue_ontology_snapshot({'entities':[]},db_path=db)
+    result=client.flush_ontology_outbox(db_path=db)
+    assert result['http_status']==422
+    assert result['pending']==1 and result['failed']==1
+    assert 'synthetic-private-token' not in result['error']
+    assert len(session.calls)==1

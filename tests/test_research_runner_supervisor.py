@@ -528,3 +528,20 @@ def test_recovery_failure_always_preserves_bounded_report(tmp_path, monkeypatch)
     assert result['production_modified'] is False
     assert 'synthetic-private-token' not in report.read_text()
     assert len(report.read_bytes())<1024
+
+
+def test_first_full_transfer_has_separate_bounded_bootstrap_budget(tmp_path,monkeypatch):
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS','1')
+    db=tmp_path/'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE data(value TEXT)')
+    client=supervisor.LedgerStore('http://ledger.internal','tok',opener=IncrementalServer())
+    deadlines=[]
+    monkeypatch.setattr(supervisor.time,'monotonic',lambda:100)
+    monkeypatch.setattr(client,'upload_chunked',lambda backup,**kw: deadlines.append(kw['deadline']) or 'fixture')
+    supervisor.checkpoint(db,client,tmp_path)
+    client.chunk_cache={'a'*64}
+    supervisor.checkpoint(db,client,tmp_path)
+    client.incremental_ready=True
+    supervisor.checkpoint(db,client,tmp_path)
+    assert deadlines==[700,700,340]
