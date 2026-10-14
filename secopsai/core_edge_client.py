@@ -535,9 +535,15 @@ class CoreEdgeClient:
         payload: Optional[dict[str, Any]] = None,
         *,
         headers: Optional[dict[str, str]] = None,
+        deadline: Optional[float] = None,
     ) -> dict[str, Any]:
         if not self.enabled:
             return {"status": "disabled"}
+        from secopsai.worker_control import check_shutdown
+        check_shutdown()
+        remaining = self.settings.timeout_seconds if deadline is None else deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Core delivery deadline exceeded")
         request_headers = {
             "Authorization": f"Bearer {self.settings.token}",
             "Accept": "application/json",
@@ -568,7 +574,7 @@ class CoreEdgeClient:
             f"{self.settings.url}{path}",
             headers=request_headers,
             json=body,
-            timeout=self.settings.timeout_seconds,
+            timeout=min(self.settings.timeout_seconds, remaining),
             allow_redirects=False,
         )
         if len(response.content) > MAX_RESPONSE_BYTES:
@@ -673,6 +679,37 @@ class CoreEdgeClient:
             self.last_error = _clean(exc, 500)
             return {"status": "degraded", "error": self.last_error}
 
+    def _send_ontology_chunk(self, payload, key, *, deadline):
+        for attempt in range(3):
+            try:
+                result = self._request("POST", "/api/v1/ontology/sync", payload,
+                                       headers={"Idempotency-Key": key}, deadline=deadline)
+                if result.get("status") not in {"accepted", "succeeded"} and result.get("idempotent") is not True:
+                    raise ValueError("Core did not acknowledge ontology chunk")
+                return result
+            except CoreEdgeHTTPError as exc:
+                if exc.status not in {408, 429, 500, 502, 503, 504}:
+                    raise
+            except (requests.RequestException, OSError):
+                pass
+            if attempt == 2:
+                raise ConnectionError("Core ontology delivery exhausted transient retries")
+            from secopsai.worker_control import check_shutdown
+            check_shutdown()
+            delay = 0.5 * (attempt + 1)
+            if time.monotonic() + delay >= deadline:
+                raise TimeoutError("Core ontology delivery deadline exceeded")
+            time.sleep(delay)
+
+    def deliver_ontology(self, snapshot, *, db_path=None, seconds=60):
+        """Commit exact chunks before transport; retain all unacknowledged work."""
+        queued = self.enqueue_ontology_snapshot(snapshot, db_path=db_path)
+        if queued.get("status") != "queued":
+            return {"status": "degraded", "error": queued.get("error", "outbox unavailable")}
+        result = self.flush_ontology_outbox(db_path=db_path, max_items=100, seconds=seconds)
+        self.last_ontology_sync = result
+        return result
+
     def sync_ontology(self, snapshot: Dict[str, Any]) -> dict[str, Any]:
         """Send a bounded semantic snapshot without making collection depend on it."""
         if not self.enabled:
@@ -705,6 +742,7 @@ class CoreEdgeClient:
             rejected_counts: dict[str, int] = {}
             idempotent_results: list[bool] = []
             failure: Optional[str] = None
+            deadline = time.monotonic() + 60
             for index, chunk in enumerate(chunks):
                 # The Core receipt table uses this key to make retries safe
                 # across request timeouts and worker restarts.  Each chunk has
@@ -726,12 +764,7 @@ class CoreEdgeClient:
                     })
                     continue
                 try:
-                    result = self._request(
-                        "POST",
-                        "/api/v1/ontology/sync",
-                        chunk,
-                        headers={"Idempotency-Key": idempotency_key},
-                    )
+                    result = self._send_ontology_chunk(chunk, idempotency_key, deadline=deadline)
                     if result.get("status") not in {"accepted", "succeeded"} and result.get("idempotent") is not True:
                         raise RuntimeError(str(result.get("error") or result.get("detail") or "hosted Core did not accept ontology chunk"))
                     results.append(result)
@@ -813,10 +846,9 @@ class CoreEdgeClient:
     ) -> dict[str, Any]:
         """Persist one bounded snapshot for retry when Core is unavailable.
 
-        The outbox is intentionally compact and latest-observation oriented:
-        each idempotency key is unique, and old rows are pruned after 100
-        pending observations so a prolonged outage cannot consume the local
-        research disk.
+        Each receipt key is unique. Unacknowledged chunks are never pruned.
+        Backpressure rejects new snapshots before the bounded backlog fills;
+        existing work remains intact for recovery.
         """
         resolved_db = db_path or soc_store.default_db_path()
         try:
@@ -835,14 +867,14 @@ class CoreEdgeClient:
             now = soc_store.utc_now()
             with sqlite_writer_lock(resolved_db):
                 with soc_store.connect(resolved_db) as connection:
+                    existing = {row[0] for row in connection.execute("SELECT idempotency_key FROM ontology_sync_outbox")}
+                    if len(existing | {key for key, _ in encoded_payloads}) > 2000:
+                        return {"status": "rejected", "error": "ontology outbox backpressure; pending work retained"}
                     for idempotency_key, encoded in encoded_payloads:
                         connection.execute(
-                            "INSERT INTO ontology_sync_outbox (idempotency_key, payload_json, status, attempts, next_attempt_at, last_error, created_at, updated_at) VALUES (?, ?, 'queued', 0, ?, ?, ?, ?) ON CONFLICT(idempotency_key) DO UPDATE SET payload_json=excluded.payload_json, status='queued', next_attempt_at=excluded.next_attempt_at, last_error=excluded.last_error, updated_at=excluded.updated_at",
+                            "INSERT INTO ontology_sync_outbox (idempotency_key, payload_json, status, attempts, next_attempt_at, last_error, created_at, updated_at) VALUES (?, ?, 'queued', 0, ?, ?, ?, ?) ON CONFLICT(idempotency_key) DO NOTHING",
                             (idempotency_key, encoded, now, _clean(error, 2000), now, now),
                         )
-                    connection.execute(
-                        "DELETE FROM ontology_sync_outbox WHERE idempotency_key IN (SELECT idempotency_key FROM ontology_sync_outbox ORDER BY updated_at DESC LIMIT -1 OFFSET 100)"
-                    )
                     connection.commit()
             response = {"status": "queued", "chunks": len(encoded_payloads), "idempotency_keys": [key for key, _ in encoded_payloads]}
             if len(encoded_payloads) == 1:
@@ -857,6 +889,7 @@ class CoreEdgeClient:
         *,
         db_path: Optional[str] = None,
         max_items: int = 5,
+        seconds: float = 60,
     ) -> dict[str, Any]:
         """Retry due ontology snapshots and remove only acknowledged receipts."""
         if not self.enabled:
@@ -865,7 +898,8 @@ class CoreEdgeClient:
         try:
             soc_store.init_db(resolved_db)
             now = soc_store.utc_now()
-            bound = max(1, min(int(max_items), 10))
+            bound = max(1, min(int(max_items), 100))
+            deadline = time.monotonic() + max(1, min(float(seconds), 120))
             with soc_store.read_connect(resolved_db) as connection:
                 rows = connection.execute(
                     "SELECT idempotency_key, payload_json, attempts FROM ontology_sync_outbox WHERE status = 'queued' AND next_attempt_at <= ? ORDER BY next_attempt_at, created_at LIMIT ?",
@@ -877,6 +911,8 @@ class CoreEdgeClient:
         flushed = 0
         failed = 0
         for row in rows:
+            if time.monotonic() >= deadline:
+                break
             key = str(row["idempotency_key"])
             try:
                 payload = json.loads(row["payload_json"] or "{}")
@@ -892,12 +928,7 @@ class CoreEdgeClient:
                 # verbatim so retries remain transactionally idempotent.
                 if not payload:
                     raise ValueError("ontology outbox payload is invalid")
-                result = self._request(
-                    "POST",
-                    "/api/v1/ontology/sync",
-                    payload,
-                    headers={"Idempotency-Key": key},
-                )
+                result = self._send_ontology_chunk(payload, key, deadline=deadline)
                 if result.get("status") in {"accepted", "succeeded"} or result.get("idempotent") is True:
                     with sqlite_writer_lock(resolved_db):
                         with soc_store.connect(resolved_db) as connection:
@@ -923,8 +954,14 @@ class CoreEdgeClient:
                             (attempts, retry_at, _clean(exc, 2000), soc_store.utc_now(), key),
                         )
                         connection.commit()
-        status = "accepted" if failed == 0 else "degraded"
-        return {"status": status, "flushed": flushed, "failed": failed, "pending": max(0, len(rows) - flushed)}
+                # A failed transport should not consume the deadline on every
+                # queued item. Retry the remaining backlog next cycle.
+                break
+        with soc_store.read_connect(resolved_db) as connection:
+            pending = connection.execute("SELECT count(*) FROM ontology_sync_outbox").fetchone()[0]
+        status = "accepted" if failed == 0 and pending == 0 else "degraded"
+        return {"status": status, "flushed": flushed, "failed": failed, "pending": pending,
+                "accepted_chunks": flushed, "rejected_chunks": pending, "chunks": flushed + pending}
 
     def hosted_state(self) -> dict[str, Any]:
         return self._request("GET", "/api/v1/intelligence/bridge/state")

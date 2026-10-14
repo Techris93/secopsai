@@ -438,3 +438,19 @@ def test_operator_can_enable_paused_collectors_by_environment(tmp_path, monkeypa
     monkeypatch.setenv("SECOPSAI_ENABLE_COLLECTORS", "vscode-marketplace")
     due = due_collectors(db_path=db_path)
     assert all(item["due"] for item in due)
+
+
+def test_shutdown_skips_expensive_followup_stages_and_returns_cleanly(tmp_path, monkeypatch):
+    import secopsai.research_worker as worker
+    from secopsai.worker_control import request_shutdown,shutdown_requested
+    class Disabled:
+        enabled=False
+    monkeypatch.setattr('secopsai.core_edge_client.coordinator_client',lambda:Disabled())
+    def stopped_cycle(**kwargs):
+        request_shutdown()
+        return {'status':'succeeded'}
+    monkeypatch.setattr(worker,'run_worker_cycle',stopped_cycle)
+    result = worker.run_worker_loop(db_path=_db(tmp_path),max_cycles=1)
+    assert result['stopped_by_signal'] and result['cycles']==0
+    assert result['last_cycle']=={'status':'succeeded'}
+    assert not shutdown_requested(), 'one stopped loop must not poison later tasks'

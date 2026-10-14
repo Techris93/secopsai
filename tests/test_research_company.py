@@ -435,7 +435,7 @@ def test_watchdog_reports_failures_without_secrets_and_refuses_redirects(monkeyp
 def test_real_source_catalog_seeds_supported_parsers_and_explicit_omissions(db):
     from secopsai.research_primary_intel import seed_sources
     seeded = seed_sources(db_path=db)
-    assert seeded["sources"] and seeded["unsupported_sources"]
+    assert len(seeded["sources"]) == 15 and not seeded["unsupported_sources"]
     with soc_store.connect(db) as conn:
         sources = [json.loads(r[0]) for r in conn.execute("SELECT config_json FROM research_intel_sources")]
     assert any(s["name"] == "OpenSSF Blog" and s["source_class"] == "project" for s in sources)

@@ -17,18 +17,20 @@ def check_source(source, *, fetcher=None):
     result = {"name": source["name"], "status": "failed", "stage": "fetch"}
     if source.get("comparison"):
         result["comparison"] = True
-    parser = "cisa_kev" if source["name"] == "CISA Known Exploited Vulnerabilities" else "rss"
+    from secopsai.research_source_parsers import source_spec
+    url, parser = source_spec(source)
     try:
-        url = source_url(source["feed_url"])
-        _, headers, body = (fetcher or SafeFetcher(timeout=15)).get(
-            url, allowed_hosts=[urlparse(url).hostname], max_bytes=MAX_SOURCE_BYTES, headers=source_headers(parser))
+        url = source_url(url)
+        from secopsai.research_source_transport import fetch_source
+        _, headers, body = fetch_source(url, fetcher=fetcher or SafeFetcher(timeout=15),
+                                        max_bytes=MAX_SOURCE_BYTES, headers=source_headers(parser))
     except Exception as error:
         result["error_category"] = type(error).__name__
         status = re.fullmatch(r"registry returned HTTP ([0-9]{3})", str(error))
         if status:
             result["http_status"] = int(status.group(1))
         return result
-    result.update(stage="parse", bytes=len(body), sha256=hashlib.sha256(body).hexdigest(),
+    result.update(stage="parse", transport=headers.get("secopsai-transport", "direct"), bytes=len(body), sha256=hashlib.sha256(body).hexdigest(),
                   content_type=str(headers.get("content-type", ""))[:160])
     try:
         events = parse_source({"parser": parser, "url": url}, body)
@@ -45,9 +47,9 @@ def main():
     parser.add_argument("--cisa-advisories", action="store_true", help="Also verify CISA's official advisory feed as a separately labeled comparison")
     args = parser.parse_args()
     catalog = Path(__file__).resolve().parents[1] / "blog/data/news-sources.json"
-    sources = [s for s in json.loads(catalog.read_text())["sources"] if s.get("enabled") and s.get("type") in {"rss", "json"}]
-    if not 1 <= len(sources) <= 10:
-        raise ValueError("source probe requires 1-10 enabled structured sources")
+    sources = [s for s in json.loads(catalog.read_text())["sources"] if s.get("enabled")]
+    if not 1 <= len(sources) <= 20:
+        raise ValueError("source probe requires 1-20 enabled reviewed sources")
     if args.cisa_advisories:
         sources.append({"name": "CISA Cybersecurity Advisories (comparison)", "feed_url": "https://www.cisa.gov/cybersecurity-advisories/all.xml", "comparison": True})
     with ThreadPoolExecutor(max_workers=3) as pool:

@@ -632,10 +632,13 @@ def run_worker_loop(
     """Run cycles forever until SIGTERM/SIGINT or max_cycles is reached."""
     interval = max(15, int(interval_seconds))
     initialize_observability(service="secopsai-research-worker")
+    from secopsai.worker_control import WorkerShutdown, check_shutdown, request_shutdown, reset_shutdown
+    reset_shutdown()
     stop = {"requested": False}
 
     def _handle_signal(signum, frame):
         stop["requested"] = True
+        request_shutdown()
 
     previous_handlers = {}
     for signum in (signal.SIGTERM, signal.SIGINT):
@@ -657,7 +660,7 @@ def run_worker_loop(
                 try:
                     flush_outbox = getattr(core_edge, "flush_ontology_outbox", None)
                     if callable(flush_outbox):
-                        flush_outbox(db_path=db_path, max_items=3)
+                        flush_outbox(db_path=db_path, max_items=100)
                 except Exception as exc:  # outbox recovery is optional control-plane work
                     capture_exception(exc, context={"component": "research_ontology_outbox"})
                 try:
@@ -693,6 +696,7 @@ def run_worker_loop(
                     "storage": failed_storage,
                     "completed_at": _utcnow().isoformat().replace("+00:00", "Z"),
                 }
+            check_shutdown()
             # AI triage first: it is cheap (queue pending hits, collect verdicts)
             # and the operator's bridge depends on it, so long scanning steps
             # must never push it past the run's time budget.
@@ -774,6 +778,7 @@ def run_worker_loop(
                               **{key: last_summary.get(key) for key in ("status", "content_funnel", "actions_watch", "retriage", "campaigns") if key in last_summary}},
                              default=str)[:4000], flush=True)
             cycles += 1
+            check_shutdown()
             if core_edge.enabled:
                 # Publish the final heartbeat only after ontology sync and
                 # command processing below.  A pre-sync heartbeat made the
@@ -790,18 +795,16 @@ def run_worker_loop(
 
                     last_summary = dict(last_summary)
                     last_summary["research_case_sync"] = sync_research_cases(core_edge, db_path=db_path)
-                    if os.environ.get("SECOPSAI_PRIMARY_INTEL", "0") == "1":
-                        from secopsai.research_operation import hosted_projection
-
-                        last_summary["research_operation_sync"] = core_edge.sync_research_operation(hosted_projection(db_path=db_path))
                 except Exception as exc:
                     capture_exception(exc, context={"component": "research_case_sync"})
                     last_summary = dict(last_summary)
                     last_summary["research_case_sync"] = {"status": "degraded", "error": str(exc)[:500]}
                 try:
                     ontology_result = materialize_recent(db_path=db_path, limit=100)
-                    ontology_sync = core_edge.sync_ontology(ontology_result.get("snapshot") or {})
-                    if ontology_sync.get("status") == "degraded":
+                    delivery = getattr(core_edge, "deliver_ontology", None)
+                    ontology_sync = (delivery(ontology_result.get("snapshot") or {}, db_path=db_path)
+                                     if callable(delivery) else core_edge.sync_ontology(ontology_result.get("snapshot") or {}))
+                    if not callable(delivery) and ontology_sync.get("status") == "degraded":
                         try:
                             enqueue_outbox = getattr(core_edge, "enqueue_ontology_snapshot", None)
                             if callable(enqueue_outbox):
@@ -826,6 +829,12 @@ def run_worker_loop(
                     capture_exception(exc, context={"component": "research_ontology_sync"})
                     last_summary = dict(last_summary)
                     last_summary["ontology"] = {"status": "degraded", "error": str(exc)[:500]}
+                if os.environ.get("SECOPSAI_PRIMARY_INTEL", "0") == "1":
+                    try:
+                        from secopsai.research_operation import hosted_projection
+                        last_summary["research_operation_sync"] = core_edge.sync_research_operation(hosted_projection(db_path=db_path))
+                    except Exception as exc:
+                        last_summary["research_operation_sync"] = {"status": "degraded", "error": str(exc)[:500]}
                 try:
                     commands = core_edge.process_commands(db_path=db_path)
                 except Exception as exc:  # command polling is optional control-plane work
@@ -860,7 +869,10 @@ def run_worker_loop(
             while slept < interval and not stop["requested"]:
                 time.sleep(min(1.0, interval - slept))
                 slept += 1.0
+    except WorkerShutdown:
+        stop["requested"] = True
     finally:
+        reset_shutdown()
         for signum, handler in previous_handlers.items():
             try:
                 signal.signal(signum, handler)

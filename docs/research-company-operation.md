@@ -253,3 +253,70 @@ reproduced cases and tested defenses. Days 61–90 require reviewed original rep
 disclosure follow-ups and an honest held-out quality/coverage report. Expanding
 telemetry and ecosystems depends on consent, measured discovery value and review
 capacity. These elapsed-time and staffing gates cannot be accelerated by software.
+
+## Operational recovery rollout
+
+The worker cooperatively stops at safe transport/stage boundaries. A forced
+shutdown still writes a final checkpoint but now fails the run; preserving bytes
+must not label an incomplete cycle healthy. Semantic chunks are persisted before
+transport, retained until acknowledgement, retried with the same receipt, and
+subject to backpressure instead of deleting pending work. Each delivery pass has
+a shared deadline. The hosted readiness view reports the complete pending count.
+
+All fifteen configured publisher/registry sources have reviewed intake paths.
+Grafana uses its official RSS index, GitHub its public advisory API, Open VSX its
+release API, and JFrog/Socket bounded same-origin publisher indexes. These indexes
+are source-reported leads, not complete historical coverage or full article
+acquisition. Missing dates stay unknown. Empty/challenged index pages fail closed.
+
+If the original CISA feed returns 403, a token-authenticated fixed-source collector
+on the Ledger Worker may acquire the same original URL. Only CISA News and the
+separate advisory comparison are allowed. The private token is never forwarded
+to a publisher. Hashes, original source identity and collection transport are
+validated and retained. A failed relay remains a collection gap.
+
+`SECOPSAI_PUBLIC_ARTIFACT_RECOVERY=1` permits bounded reacquisition of registered
+public registry artifacts from their archived URL and the ecosystem adapter's
+host allowlist. Both the original hash and size must match before catalog repair;
+private durable backup must complete before a recovery receipt exists. This never
+extracts or executes a sample and cannot recover changed or unavailable bytes.
+Restricted submissions remain outside automatic recovery.
+
+Incremental checkpoints use consistent SQLite backups split into immutable,
+individually hashed gzip chunks. Unchanged chunks are reused. The manifest is
+committed only after all referenced objects exist, and older completion retries
+cannot move the pointer backward. Restore verifies compressed chunks, bounded
+decompression, raw chunks, full database hash and SQLite integrity before atomic
+replacement. Legacy checkpoints remain preserved; old clients cannot silently
+restore a legacy ledger after the incremental pointer advances.
+
+Deploy the additive Ledger protocol first. Then enable the repository variable
+`RESEARCH_INCREMENTAL_CHECKPOINTS=true` only after checks and the active legacy
+writer complete. The workflow uses a 60-second interval and a 240-second total
+incremental capture/upload budget. These bounds are an implementation design;
+production five-minute committed-loss guarantees require measured crash drills.
+Use the read-only **Research Recovery Drill** workflow to restore the exact
+production checkpoint in disposable storage, check foreign keys, enumerate rows
+and verify source archive hashes. It then writes synthetic committed markers to
+the private copy, checkpoints them in the isolated `/recovery-drill` namespace,
+interrupts the next checkpoint before manifest commit and kills only its own
+synthetic writer. Restoring the previous isolated checkpoint measures committed
+loss and confirms that a failed commit preserves the previous pointer. The
+production pointer is never modified. The report checks the one-hour recovery
+and five-minute loss targets for that scenario; continued production timing
+monitoring is required before claiming a sustained guarantee.
+
+No rollout changes Clef enablement, decision mode, replay status, publication
+approval or existing single-writer ownership. Real reviewers, partner agreements,
+consented telemetry and independently labeled evaluation evidence remain external
+activation requirements.
+
+The disposable parser laboratory (`python -m secopsai.research_parser_lab`)
+performs deterministic mutation tests on fixed SecOpsAI-owned parser targets.
+It creates a separate process with no inherited provider credentials, blocks
+network sockets, bounds CPU/runtime/input count, and records the exact corpus
+hash, seed and failure identities. It executes no package code. This makes
+parser robustness experiments repeatable; it does not replace authorized
+package execution, victim telemetry or independent human reproduction. A
+synthetic laboratory pass cannot satisfy held-out model calibration or create a
+publication approval.

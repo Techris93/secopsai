@@ -17,7 +17,7 @@ from secopsai.research_operation_store import read_connection
 from secopsai.research_intake import SafeFetcher
 from secopsai.research_operation_store import append, canonical, digest, text, timestamp, transaction
 
-PARSER_VERSION = "primary-intel-v2"
+PARSER_VERSION = "primary-intel-v3"
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
 MAX_EVENTS = 5000
 MAX_PENDING = 10000
@@ -25,6 +25,8 @@ MAX_ATTEMPTS = 8
 
 
 def source_headers(parser: str) -> dict:
+    if parser in {"jfrog_index", "socket_index"}:
+        return {"Accept": "text/html"}
     return {"Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8" if parser == "rss" else "application/json"}
 
 
@@ -52,7 +54,7 @@ def configure_source(config: dict, *, actor: str, db_path=None) -> dict:
              "parser": config.get("parser"), "source_class": config.get("source_class"),
              "sharing": config.get("sharing", "public"), "license": text(config.get("license", "unknown"), "license", limit=1000),
              "interval_seconds": config.get("interval_seconds", 86400), "enabled": config.get("enabled", False)}
-    if value["parser"] not in {"rss", "cisa_kev", "normalized_json"} or value["source_class"] not in {"government", "vendor", "registry", "research", "partner", "aggregator", "project"}:
+    if value["parser"] not in {"rss", "cisa_kev", "normalized_json", "github_advisories", "openvsx_index", "jfrog_index", "socket_index"} or value["source_class"] not in {"government", "vendor", "registry", "research", "partner", "aggregator", "project"}:
         raise ValueError("unsupported source parser or class")
     if type(value["interval_seconds"]) is not int or not 300 <= value["interval_seconds"] <= 604800 or type(value["enabled"]) is not bool:
         raise ValueError("invalid source interval or enablement")
@@ -68,12 +70,13 @@ def seed_sources(*, db_path=None) -> dict:
     config_file = Path(__file__).resolve().parents[1] / "blog/data/news-sources.json"
     supported, omitted = [], []
     for source in json.loads(config_file.read_text())["sources"]:
-        if source.get("type") == "html":
-            omitted.append({"name": source["name"], "reason": "HTML source requires a dedicated verified parser; existing blog intake remains separate"})
+        from secopsai.research_source_parsers import source_spec
+        try:
+            url, parser = source_spec(source)
+        except ValueError:
+            omitted.append({"name": source["name"], "reason": "source requires a reviewed parser"})
             continue
-        url = source["feed_url"]
-        parser = "cisa_kev" if source["name"] == "CISA Known Exploited Vulnerabilities" else "rss"
-        identity = source.get("source_id") or "SRC-" + hashlib.sha256(url.encode()).hexdigest()[:20]
+        identity = source.get("source_id") or "SRC-" + hashlib.sha256(source["feed_url"].encode()).hexdigest()[:20]
         desired = {"source_id": identity, "name": source["name"], "url": url, "parser": parser,
                    "source_class": {"external_research": "research", "platform": "registry"}.get(source["trust_level"], source["trust_level"]),
                    "sharing": "public", "license": "unknown",
@@ -125,6 +128,9 @@ def parse_source(config: dict, content: bytes) -> list[dict]:
                 item.update(excerpt=excerpt[:20000], excerpt_truncated=True, excerpt_original_characters=len(excerpt),
                             excerpt_sha256=hashlib.sha256(excerpt.encode()).hexdigest(), excerpt_selection={"start": 0, "end": 20000})
             items.append(item)
+    elif parser in {"github_advisories", "openvsx_index", "jfrog_index", "socket_index"}:
+        from secopsai.research_source_parsers import parse_index
+        items = parse_index(config, content)
     elif parser == "cisa_kev":
         body = json.loads(content)
         if not isinstance(body, dict) or not isinstance(body.get("vulnerabilities"), list):
@@ -155,7 +161,7 @@ def parse_source(config: dict, content: bytes) -> list[dict]:
     return normalized
 
 
-def acquire(config: dict, content: bytes, *, db_path=None) -> dict:
+def acquire(config: dict, content: bytes, *, db_path=None, transport="direct") -> dict:
     """Commit the archived bytes, every parsed event and queue item before cursor advancement."""
     items = parse_source(config, content)
     sha256 = hashlib.sha256(content).hexdigest()
@@ -182,6 +188,8 @@ def acquire(config: dict, content: bytes, *, db_path=None) -> dict:
                 conn.execute("INSERT OR IGNORE INTO research_coverage_events VALUES (?,?,?,'',?)", (config["source_id"], event_id, "observed", now))
                 if item.get("excerpt_truncated"):
                     conn.execute("INSERT OR IGNORE INTO research_coverage_events VALUES (?,?,?,?,?)", (config["source_id"], event_id, "evidence_truncated", "RSS excerpt exceeds 20000 characters; complete feed is archived", now))
+        append("source_acquisition", {"source_id": config["source_id"], "source_url": config["url"],
+               "snapshot_id": snapshot_id, "sha256": sha256, "transport": transport}, actor="source-collector", connection=conn)
         conn.execute("UPDATE research_intel_sources SET cursor=?,last_success_at=?,error_category='',consecutive_failures=0 WHERE source_id=?", (snapshot_id, now, config["source_id"]))
     return {"source_id": config["source_id"], "snapshot_id": snapshot_id, "events": len(items), "inserted": inserted, "status": "acquired"}
 
@@ -203,9 +211,11 @@ def collect_due(*, db_path=None, fetcher=None, limit: int = 10) -> dict:
             conn.execute("UPDATE research_intel_sources SET last_attempt_at=? WHERE source_id=?", (_now(), config["source_id"]))
         stage = "fetch"
         try:
-            _, _, content = fetcher.get(config["url"], allowed_hosts=[urlparse(config["url"]).hostname], max_bytes=MAX_SOURCE_BYTES, headers=source_headers(config["parser"]))
+            from secopsai.research_source_transport import fetch_source
+            _, received_headers, content = fetch_source(config["url"], max_bytes=MAX_SOURCE_BYTES,
+                                                       headers=source_headers(config["parser"]), fetcher=fetcher)
             stage = "parse"
-            results.append(acquire(config, content, db_path=db_path))
+            results.append(acquire(config, content, db_path=db_path, transport=received_headers.get("secopsai-transport", "direct")))
         except Exception as exc:
             status = re.fullmatch(r"registry returned HTTP ([0-9]{3})", str(exc)) if stage == "fetch" else None
             category = f"source_http_{status.group(1)}" if status else "transport_failure" if stage == "fetch" else "invalid_source"

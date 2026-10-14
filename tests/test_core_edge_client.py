@@ -204,7 +204,7 @@ def test_sync_ontology_is_failure_tolerant():
     client = CoreEdgeClient(_settings(), session=FailingSession())
     result = client.sync_ontology({"entities": [], "relationships": [], "events": [], "evidence_refs": []})
     assert result["status"] == "degraded"
-    assert "network offline" in result["error"]
+    assert "exhausted transient retries" in result["error"]
 
 
 def test_sync_ontology_reports_resumable_partial_chunk_outcome():
@@ -323,3 +323,81 @@ def test_ontology_outbox_retries_and_removes_acknowledged_snapshot(tmp_path):
     assert session.calls[-1][2]["json"]["idempotency_key"] == queued["idempotency_key"]
     with soc_store.read_connect(db_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM ontology_sync_outbox").fetchone()[0] == 0
+
+
+def test_transient_chunk_retries_use_the_same_receipt(monkeypatch):
+    import requests
+    from secopsai import core_edge_client as module
+    monkeypatch.setattr(module.time, 'sleep', lambda _: None)
+    class LostAcknowledgement(_Session):
+        def request(self, *args, **kwargs):
+            super().request(*args, **kwargs)
+            if len(self.calls) == 1:
+                raise requests.ConnectionError('synthetic dropped response')
+            return _Response()
+    session = LostAcknowledgement()
+    result = CoreEdgeClient(_settings(), session=session).sync_ontology({'entities': [], 'relationships': [], 'events': [], 'evidence_refs': []})
+    assert result['status'] == 'accepted'
+    assert len(session.calls) == 2
+    assert session.calls[0][2]['headers']['Idempotency-Key'] == session.calls[1][2]['headers']['Idempotency-Key']
+    assert session.calls[0][2]['json'] == session.calls[1][2]['json']
+
+
+def test_outbox_preserves_more_than_100_unacknowledged_chunks(tmp_path):
+    db = str(tmp_path / 'outbox.db')
+    client = CoreEdgeClient(_settings(), session=_Session())
+    for i in range(103):
+        result = client.enqueue_ontology_snapshot({'entities': [{'entity_id': f'pkg:npm:{i}', 'entity_type': 'package', 'namespace': 'npm', 'canonical_key': str(i)}]}, db_path=db)
+        assert result['status'] == 'queued'
+    with soc_store.read_connect(db) as conn:
+        assert conn.execute('SELECT count(*) FROM ontology_sync_outbox').fetchone()[0] == 103
+    result = client.flush_ontology_outbox(db_path=db, max_items=100)
+    assert result['flushed'] == 100 and result['pending'] == 3 and result['status'] == 'degraded'
+    result = client.flush_ontology_outbox(db_path=db)
+    assert result['flushed'] == 3 and result['pending'] == 0
+
+
+def test_worker_shutdown_does_not_send_new_requests():
+    import pytest
+    from secopsai.worker_control import WorkerShutdown, request_shutdown, reset_shutdown
+    session = _Session()
+    try:
+        request_shutdown()
+        with pytest.raises(WorkerShutdown):
+            CoreEdgeClient(_settings(), session=session).sync_ontology({'entities': []})
+        assert not session.calls
+    finally:
+        reset_shutdown()
+
+
+def test_chunk_authentication_failure_is_not_retried():
+    class Unauthorized(_Session):
+        def request(self,*args,**kwargs):
+            super().request(*args,**kwargs)
+            class Response(_Response):
+                status_code = 401
+                ok = False
+                def json(self): return {'error':'unauthorized'}
+            return Response()
+    session = Unauthorized()
+    result = CoreEdgeClient(_settings(),session=session).sync_ontology({'entities':[]})
+    assert result['status']=='degraded' and len(session.calls)==1
+
+
+def test_outbox_deadline_leaves_unattempted_work_durable(tmp_path, monkeypatch):
+    from secopsai import core_edge_client as module
+    db = str(tmp_path/'deadline.db')
+    clock = [0.0]
+    monkeypatch.setattr(module.time,'monotonic',lambda:clock[0])
+    class Slow(_Session):
+        def request(self,*args,**kwargs):
+            assert 0 < kwargs['timeout'] <= 1
+            clock[0] += 1.1
+            return super().request(*args,**kwargs)
+    session = Slow()
+    client = CoreEdgeClient(_settings(),session=session)
+    for i in range(3):
+        client.enqueue_ontology_snapshot({'entities':[{'entity_id':f'pkg:npm:{i}','entity_type':'package','namespace':'npm','canonical_key':str(i)}]},db_path=db)
+    result = client.flush_ontology_outbox(db_path=db,max_items=100,seconds=1)
+    assert result['flushed']==1 and result['pending']==2 and result['status']=='degraded'
+    assert len(session.calls)==1

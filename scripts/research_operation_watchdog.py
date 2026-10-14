@@ -62,7 +62,13 @@ def inspect(*, reader=fetch, now=None) -> dict:
                 raise ValueError("checkpoint protocol is not ready")
             if age < -300 or age > 5400:
                 blockers.append(f"{name} freshness is outside the operational limit")
-            checks[name] = {"available": True, "age_seconds": round(age), "rpo_target_met": age <= 300 if name == "checkpoint" else None}
+            checks[name] = {"available": True, "age_seconds": round(age), "rpo_target_met": None}
+            if name == "checkpoint":
+                captured = value.get("captured_at")
+                capture_age = (now - datetime.fromisoformat(captured.replace("Z", "+00:00"))).total_seconds() if captured else None
+                checks[name].update(protocol=value.get("protocol"), capture_age_seconds=capture_age,
+                                    snapshot_age_within_300_seconds=capture_age is not None and 0 <= capture_age <= 300,
+                                    rpo_limitation="Snapshot age is a freshness measurement; committed event loss requires a verified crash drill.")
             if name == "research_operation":
                 health = value.get("coverage", {}).get("health", {})
                 checks[name]["freshness_gaps"] = health.get("freshness_gaps", [])
@@ -72,6 +78,9 @@ def inspect(*, reader=fetch, now=None) -> dict:
                     blockers.append("source freshness or dead-letter review requires attention")
                 if health.get("artifact_backup_pending"):
                     blockers.append("registered public artifacts lack completed durable backups")
+                checks[name]["ontology_pending"] = health.get("ontology_pending")
+                if health.get("ontology_pending"):
+                    blockers.append("semantic delivery has unacknowledged durable chunks")
         except Exception as exc:
             # Never print endpoint bodies, credential-bearing errors or tokens.
             checks[name] = {"available": False, "error_category": type(exc).__name__}
