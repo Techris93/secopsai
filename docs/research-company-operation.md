@@ -304,3 +304,13 @@ No rollout changes Clef enablement, decision mode, replay status, publication
 approval or existing single-writer ownership. Real reviewers, partner agreements,
 consented telemetry and independently labeled evaluation evidence remain external
 activation requirements.
+
+The disposable parser laboratory (`python -m secopsai.research_parser_lab`)
+performs deterministic mutation tests on fixed SecOpsAI-owned parser targets.
+It creates a separate process with no inherited provider credentials, blocks
+network sockets, bounds CPU/runtime/input count, and records the exact corpus
+hash, seed and failure identities. It executes no package code. This makes
+parser robustness experiments repeatable; it does not replace authorized
+package execution, victim telemetry or independent human reproduction. A
+synthetic laboratory pass cannot satisfy held-out model calibration or create a
+publication approval.
