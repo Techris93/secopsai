@@ -932,10 +932,18 @@ class CoreEdgeClient:
             return {"status": "degraded", "flushed": 0, "error": self.last_error}
         flushed = 0
         failed = 0
+        deferred = 0
         delivery_error = ""
         failure_http_status = None
-        for row in rows:
-            if time.monotonic() >= deadline:
+        minimum_request_window = min(float(self.settings.timeout_seconds), 15.0, max(1.0, min(float(seconds), 120.0)))
+        for index, row in enumerate(rows):
+            # Do not start a request with only the tail of this batch budget
+            # available. _request would shorten its timeout to that remainder,
+            # and a transient timeout would then push durable work into a long
+            # retry backoff even though the batch itself had simply run out of
+            # room. Leave the row due for the next bounded flush instead.
+            if deadline - time.monotonic() < minimum_request_window:
+                deferred = len(rows) - index
                 break
             key = str(row["idempotency_key"])
             try:
@@ -1021,6 +1029,7 @@ class CoreEdgeClient:
         status = "accepted" if failed == 0 and pending == 0 else "degraded"
         return {"status": status, "flushed": flushed, "failed": failed, "pending": pending,
                 "error": delivery_error, "http_status": failure_http_status,
+                "deferred": deferred,
                 "accepted_chunks": flushed, "rejected_chunks": pending, "chunks": flushed + pending}
 
     def hosted_state(self) -> dict[str, Any]:

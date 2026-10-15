@@ -404,6 +404,32 @@ def test_outbox_deadline_leaves_unattempted_work_durable(tmp_path, monkeypatch):
     assert len(session.calls)==1
 
 
+def test_outbox_defers_next_chunk_when_batch_has_less_than_one_request_window(tmp_path, monkeypatch):
+    from secopsai import core_edge_client as module
+    db = str(tmp_path/'deferred.db')
+    clock = [0.0]
+    monkeypatch.setattr(module.time, 'monotonic', lambda: clock[0])
+    class SlowFirstRequest(_Session):
+        def request(self, *args, **kwargs):
+            super().request(*args, **kwargs)
+            if len(self.calls) == 1:
+                clock[0] += 8
+            return _Response()
+    session = SlowFirstRequest()
+    client = CoreEdgeClient(_settings(), session=session)
+    for i in range(3):
+        client.enqueue_ontology_snapshot({'entities': [{'entity_id': f'pkg:npm:deferred-{i}', 'entity_type': 'package', 'namespace': 'npm', 'canonical_key': f'deferred-{i}'}]}, db_path=db)
+
+    result = client.flush_ontology_outbox(db_path=db, max_items=100, seconds=20)
+
+    assert result['flushed'] == 1 and result['failed'] == 0
+    assert result['pending'] == 2 and result['deferred'] == 2
+    assert len(session.calls) == 1
+    with soc_store.read_connect(db) as connection:
+        deferred = connection.execute("SELECT attempts FROM ontology_sync_outbox ORDER BY created_at, idempotency_key").fetchall()
+    assert [row['attempts'] for row in deferred] == [0, 0]
+
+
 def test_outbox_rejection_diagnostics_are_bounded_and_keep_original_work(tmp_path):
     class Rejected(_Session):
         def request(self,*args,**kwargs):
