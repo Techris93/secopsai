@@ -16,6 +16,14 @@ on:
         description: "Worker cycles to run"
         required: false
         default: "6"
+      delivery_only:
+        description: "Verify restored delivery without repeating collection, analysis or model jobs"
+        type: boolean
+        default: false
+      retry_sources:
+        description: "Optional comma-separated names of failed primary sources to retry once during delivery verification"
+        required: false
+        default: ""
       allow_empty_ledger:
         description: "Start a new empty ledger if none exists in R2 (first run only)"
         type: boolean
@@ -63,6 +71,8 @@ jobs:
       SECOPSAI_DECISION_MODE: "observe"  # closure requires reviewed decision-v2 calibration
       SECOPSAI_INCREMENTAL_CHECKPOINTS: ${{ vars.RESEARCH_INCREMENTAL_CHECKPOINTS == 'true' && '1' || '0' }}
       SECOPSAI_PAGE_DELTA_CHECKPOINTS: ${{ vars.RESEARCH_PAGE_DELTA_CHECKPOINTS == 'true' && '1' || '0' }}
+      SECOPSAI_VERIFY_RETRY_SOURCES: ${{ inputs.retry_sources }}
+      SECOPSAI_VERIFY_DELIVERY_ONLY: ${{ inputs.delivery_only && '1' || '0' }}
       SECOPSAI_WORKER_STAGE_LOGS: '1'
       SECOPSAI_LEDGER_CHECKPOINT_SECONDS: ${{ vars.RESEARCH_INCREMENTAL_CHECKPOINTS == 'true' && '60' || '3600' }}
       SECOPSAI_PRIMARY_INTEL: "1"  # source intake and draft assembly; never automatic publication
@@ -122,4 +132,7 @@ jobs:
         # Reserve time for the multi-GB ledger restore, worker shutdown,
         # compression, and a bounded 10-minute upload including retries.
         # Exhausted retries still fail the run so an unsaved checkpoint is visible.
-        run: python -u cloudflare/secopsai-research-runner/container/supervisor.py --cycles "${{ inputs.cycles || '6' }}" --max-seconds 900
+        run: |
+          delivery_args=()
+          if [ "$SECOPSAI_VERIFY_DELIVERY_ONLY" = "1" ]; then delivery_args+=(--delivery-only); fi
+          python -u cloudflare/secopsai-research-runner/container/supervisor.py --cycles "${{ inputs.cycles || '6' }}" --max-seconds 900 "${delivery_args[@]}"

@@ -231,6 +231,10 @@ def _ontology_sync_chunks(snapshot: Dict[str, Any]) -> list[dict[str, Any]]:
         if source.get(envelope_key) is not None:
             base[envelope_key] = _clean(source.get(envelope_key), 160 if envelope_key != "exported_at" else 64)
 
+    # Include worst-case bounded chunk metadata while packing, rather than
+    # attaching it after a chunk has already filled its byte allowance.
+    base.update(snapshot_chunk_index=2147483647, snapshot_chunk_count=2147483647,
+                snapshot_truncated=False)
     target = ONTOLOGY_CHUNK_TARGET_BYTES
     records_by_kind = {
         "entities": source.get("entities") if isinstance(source.get("entities"), list) else [],
@@ -621,7 +625,25 @@ class CoreEdgeClient:
     def sync_research_operation(self, projection: dict[str, Any]) -> dict[str, Any]:
         if not self.enabled:
             return {"status": "disabled"}
-        return self._request("POST", "/api/v1/research/operation/sync", projection)
+        # This endpoint atomically replaces one workspace projection. Repeating
+        # the same captured body after a lost acknowledgement is safe.
+        deadline = time.monotonic() + 45
+        for attempt in range(3):
+            try:
+                return self._request("POST", "/api/v1/research/operation/sync", projection, deadline=deadline)
+            except CoreEdgeHTTPError as exc:
+                if exc.status not in {408, 429, 500, 502, 503, 504} or attempt == 2:
+                    raise
+            except (requests.RequestException, OSError):
+                if attempt == 2:
+                    raise
+            delay = 0.5 * (attempt + 1)
+            if time.monotonic() + delay >= deadline:
+                raise TimeoutError("Core projection delivery deadline exceeded")
+            from secopsai.worker_control import check_shutdown
+            check_shutdown()
+            time.sleep(delay)
+        raise RuntimeError("Core projection delivery did not complete")
 
     def sync_state(self, summary: Dict[str, Any], *, status: str = "healthy") -> dict[str, Any]:
         if not self.enabled:

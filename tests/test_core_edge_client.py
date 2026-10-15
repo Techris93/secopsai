@@ -518,3 +518,75 @@ def test_invalid_dependency_chunk_does_not_block_valid_entity_delivery(tmp_path)
     assert 'invalid_event' in result['error']
     with soc_store.read_connect(db) as conn:
         assert json.loads(conn.execute('SELECT payload_json FROM ontology_sync_outbox').fetchone()[0])['events']
+
+
+def test_chunk_metadata_is_included_before_the_packing_boundary():
+    import secopsai.core_edge_client as edge
+    base = {'schema_version': 'secopsai.ontology.v1', 'source_instance': 'runner-test'}
+    records = [{'entity_id': f'pkg:pypi:boundary-{i}', 'entity_type': 'package', 'namespace': 'pypi',
+                'canonical_key': f'boundary-{i}', 'properties': {f'p{n}': 'a' * 4000 for n in range(7)}} for i in range(2)]
+    space = edge.ONTOLOGY_CHUNK_TARGET_BYTES - 20 - edge._json_size({**base, 'entities': records})
+    assert 4000 < space < 8000
+    records[0]['properties']['pad'] = 'b' * 4000
+    # Account for the first padding key, then make the former pre-metadata
+    # envelope land within twenty bytes of its limit.
+    space = edge.ONTOLOGY_CHUNK_TARGET_BYTES - 20 - edge._json_size({**base, 'entities': records})
+    records[1]['properties']['pad'] = 'c' * (space - len(',"pad":""'))
+    chunks = edge._ontology_sync_chunks({**base, 'entities': records})
+    assert len(chunks) == 2
+    assert [record for chunk in chunks for record in chunk['entities']] == records
+    assert all(edge._json_size(chunk) <= edge.ONTOLOGY_CHUNK_TARGET_BYTES for chunk in chunks)
+    assert all(edge._json_size({**chunk, 'idempotency_key': edge._ontology_idempotency_key(chunk)}) <= edge.MAX_REQUEST_BYTES for chunk in chunks)
+
+
+def test_operation_projection_retries_lost_ack_with_same_body(monkeypatch):
+    import requests
+    import secopsai.core_edge_client as edge
+    session = _Session()
+    original = session.request
+    def flaky(*args, **kwargs):
+        if not session.calls:
+            session.calls.append((args[0], args[1], kwargs))
+            raise requests.ReadTimeout('synthetic timeout')
+        return original(*args, **kwargs)
+    session.request = flaky
+    monkeypatch.setattr(edge.time, 'sleep', lambda _seconds: None)
+    client = CoreEdgeClient(_settings(), session=session)
+    projection = {'schema_version': 'secopsai.research.operation.v1', 'coverage': {'sources': []}, 'editions': []}
+    client.sync_research_operation(projection)
+    assert len(session.calls) == 2
+    assert all(call[2]['json'] == projection for call in session.calls)
+
+
+def test_operation_projection_retries_share_one_deadline(monkeypatch):
+    import requests
+    import pytest
+    import secopsai.core_edge_client as edge
+    clock = [0.0]
+    timeouts = []
+    class TimeoutSession:
+        def request(self, *args, **kwargs):
+            timeouts.append(kwargs['timeout'])
+            clock[0] += kwargs['timeout']
+            raise requests.ReadTimeout('synthetic')
+    monkeypatch.setattr(edge.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(edge.time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    with pytest.raises(requests.ReadTimeout):
+        CoreEdgeClient(_settings(), session=TimeoutSession()).sync_research_operation({'coverage': {'sources': []}, 'editions': []})
+    assert timeouts == [15, 15, 13.5]
+    assert clock[0] == 45
+
+
+def test_operation_projection_does_not_retry_auth_or_contract_errors(monkeypatch):
+    import pytest
+    import secopsai.core_edge_client as edge
+    for status in (401, 422):
+        client = CoreEdgeClient(_settings())
+        calls = []
+        def reject(*args, **kwargs):
+            calls.append(kwargs)
+            raise edge.CoreEdgeHTTPError('synthetic rejection', status=status, error_code='invalid_projection')
+        monkeypatch.setattr(client, '_request', reject)
+        with pytest.raises(edge.CoreEdgeHTTPError):
+            client.sync_research_operation({})
+        assert len(calls) == 1

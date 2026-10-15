@@ -387,3 +387,15 @@ the current run's exact owner and generation, retaining completed step evidence.
 Daily automation invoked after the current worker's surveillance records that
 step as already performed instead of recursively collecting the same sources.
 Standalone daily automation still performs its own surveillance pass.
+
+For delivery repair after collection/analysis already passed, the Research Worker
+workflow's `delivery_only` input restores the canonical ledger, materializes a
+bounded semantic snapshot, durably queues it, drains acknowledged delivery within
+an 840-second budget and refreshes the hosted research-operation projection. It
+uses the same single-writer lock and final checkpoint. It performs no registry
+scans, package analysis or model jobs. Rejected or unacknowledged records remain
+queued and fail verification. Optional `retry_sources` names select only enabled
+primary sources still reporting failures; already recovered sources are skipped,
+and disabled sources cannot be resumed by this path. A successful projection
+write retries transient transport/server failures against one 45-second deadline;
+authentication and contract failures are never retried as availability failures.
