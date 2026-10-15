@@ -18,8 +18,8 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
     from secopsai.research_operation import hosted_projection
     from secopsai.research_primary_intel import collect_due
 
-    if not 1 <= seconds <= 840:
-        raise ValueError("delivery verification budget must be 1–840 seconds")
+    if not 1 <= seconds <= 2700:
+        raise ValueError("delivery verification budget must be 1–2700 seconds")
     deadline = time.monotonic() + seconds
     client = client or coordinator_client()
     if not client.enabled:
@@ -100,7 +100,8 @@ def main():
         if os.environ.pop('SECOPSAI_RESTORED_LEDGER_RECOVERY', '0') == '1':
             from secopsai.daily_automation import recover_interrupted_runs
             recover_interrupted_runs(db_path=None, restored_snapshot=True)
-        report = verify_delivery(retry_source_names=tuple(name.strip() for name in os.environ.get('SECOPSAI_VERIFY_RETRY_SOURCES', '').split(',') if name.strip()))
+        seconds = int(os.environ.get('SECOPSAI_VERIFY_DELIVERY_SECONDS', '840'))
+        report = verify_delivery(seconds=seconds, retry_source_names=tuple(name.strip() for name in os.environ.get('SECOPSAI_VERIFY_RETRY_SOURCES', '').split(',') if name.strip()))
         return 0 if report['status'] == 'passed' else 1
     except (Exception, WorkerShutdown) as exc:
         print(json.dumps({'event': 'delivery_verification_failed', 'error_category': type(exc).__name__, 'http_status': getattr(exc, 'status', None)}), flush=True)
