@@ -136,3 +136,14 @@ jobs:
           delivery_args=()
           if [ "$SECOPSAI_VERIFY_DELIVERY_ONLY" = "1" ]; then delivery_args+=(--delivery-only); fi
           python -u cloudflare/secopsai-research-runner/container/supervisor.py --cycles "${{ inputs.cycles || '6' }}" --max-seconds 900 "${delivery_args[@]}"
+
+      - name: Verify final checkpoint and hosted delivery health
+        if: always() && inputs.delivery_only
+        run: python scripts/research_operation_watchdog.py --output reports/research/delivery-health.json
+
+      - name: Preserve delivery verification diagnostics
+        if: always() && inputs.delivery_only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: research-delivery-verification
+          path: reports/research/delivery-health.json

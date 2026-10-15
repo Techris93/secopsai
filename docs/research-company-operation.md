@@ -399,3 +399,7 @@ primary sources still reporting failures; already recovered sources are skipped,
 and disabled sources cannot be resumed by this path. A successful projection
 write retries transient transport/server failures against one 45-second deadline;
 authentication and contract failures are never retried as availability failures.
+
+After the delivery-only final checkpoint, the workflow runs the independent
+checkpoint/hosted-state/public-availability watchdog and preserves its bounded
+diagnostic report. This does not repeat the fifteen-source parsing probe.
