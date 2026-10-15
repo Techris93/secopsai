@@ -316,7 +316,7 @@ def _ontology_idempotency_key(payload: Dict[str, Any]) -> str:
     # new receipt on every worker cycle.
     for volatile in ("exported_at", "generated_at", "synced_at"):
         material.pop(volatile, None)
-    return hashlib.sha256(
+    return "ontology-v2:" + hashlib.sha256(
         json.dumps(material, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     ).hexdigest()
 
@@ -930,11 +930,34 @@ class CoreEdgeClient:
                 # verbatim so retries remain transactionally idempotent.
                 if not payload:
                     raise ValueError("ontology outbox payload is invalid")
-                result = self._send_ontology_chunk(payload, key, deadline=deadline)
+                with soc_store.read_connect(resolved_db) as connection:
+                    migration = connection.execute("SELECT new_idempotency_key, original_payload_json FROM ontology_sync_receipt_migrations WHERE original_idempotency_key=?", (key,)).fetchone()
+                if migration:
+                    if migration["original_payload_json"] != row["payload_json"]:
+                        raise ValueError("ontology receipt migration payload changed")
+                    payload = {**payload, "idempotency_key": migration["new_idempotency_key"]}
+                wire_key = payload.get("idempotency_key", key)
+                try:
+                    result = self._send_ontology_chunk(payload, wire_key, deadline=deadline)
+                except CoreEdgeHTTPError as conflict:
+                    if migration or key.startswith("ontology-v2:") or conflict.status != 409 or conflict.error_code != "idempotency_conflict":
+                        raise
+                    wire_key = _ontology_idempotency_key(payload)
+                    # Preserve the original queued bytes and legacy key before
+                    # issuing a new versioned semantic-upsert receipt. Other
+                    # identity conflicts remain explicit failures.
+                    with sqlite_writer_lock(resolved_db):
+                        with soc_store.connect(resolved_db) as connection:
+                            connection.execute("INSERT INTO ontology_sync_receipt_migrations (original_idempotency_key, original_payload_json, new_idempotency_key, created_at) VALUES (?,?,?,?) ON CONFLICT(original_idempotency_key) DO NOTHING", (key, row["payload_json"], wire_key, soc_store.utc_now()))
+                            connection.commit()
+                    result = self._send_ontology_chunk({**payload, "idempotency_key": wire_key}, wire_key, deadline=deadline)
                 if result.get("status") in {"accepted", "succeeded"} or result.get("idempotent") is True:
+                    if wire_key != key and result.get("idempotency_key") != wire_key:
+                        raise ValueError("Core did not acknowledge the migrated receipt key")
                     with sqlite_writer_lock(resolved_db):
                         with soc_store.connect(resolved_db) as connection:
                             connection.execute("DELETE FROM ontology_sync_outbox WHERE idempotency_key = ?", (key,))
+                            connection.execute("UPDATE ontology_sync_receipt_migrations SET acknowledged_at=? WHERE original_idempotency_key=?", (soc_store.utc_now(), key))
                             connection.commit()
                     flushed += 1
                     continue
@@ -944,6 +967,10 @@ class CoreEdgeClient:
                 failure_http_status = exc.status if isinstance(exc, CoreEdgeHTTPError) else None
                 delivery_error = (f"Core rejected an ontology chunk (HTTP {failure_http_status})" if failure_http_status
                                   else f"Core ontology delivery failed ({type(exc).__name__})")
+                validation_codes = {"invalid_entity", "invalid_event", "invalid_relationship", "invalid_evidence_ref", "invalid_payload", "invalid_schema", "invalid_idempotency_key", "identity_conflict", "entity_identity_conflict", "relationship_identity_conflict", "idempotency_conflict"}
+                failure_code = exc.error_code if isinstance(exc, CoreEdgeHTTPError) and exc.error_code in validation_codes else None
+                if failure_code:
+                    delivery_error += f" ({failure_code})"
                 self.last_error = delivery_error
                 attempts = max(0, int(row["attempts"] or 0)) + 1
                 backoff = min(3600, 15 * (2 ** min(attempts - 1, 8)))
@@ -960,8 +987,12 @@ class CoreEdgeClient:
                             (attempts, retry_at, _clean(exc, 2000), soc_store.utc_now(), key),
                         )
                         connection.commit()
-                # A failed transport should not consume the deadline on every
-                # queued item. Retry the remaining backlog next cycle.
+                # Invalid records remain queued and visible for review. They
+                # must not prevent a later entity chunk from repairing a
+                # missing dependency or block unrelated valid work. Outages
+                # and authorization failures still stop this bounded batch.
+                if failure_http_status in {409, 422} and failure_code:
+                    continue
                 break
         with soc_store.read_connect(resolved_db) as connection:
             pending = connection.execute("SELECT count(*) FROM ontology_sync_outbox").fetchone()[0]

@@ -33,6 +33,7 @@ import sys
 import tempfile
 import threading
 import time
+import struct
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -46,6 +47,12 @@ RETRY_HTTP_STATUSES = {408, 429, 500, 502, 503, 504}
 # Cloudflare's browser integrity check rejects the default Python-urllib
 # agent with 403 (error 1010) before the Worker runs.
 USER_AGENT = "SecOpsAI-Research/1.0"
+DELTA_MAGIC = b"SOCDLT1\0"
+DELTA_BLOCK_BYTES = 4096
+
+
+class RebaseRequired(Exception):
+    """A bounded full snapshot is preferable to a large sparse delta."""
 
 
 def _log(event: str, **fields: object) -> None:
@@ -133,6 +140,12 @@ class LedgerStore:
     def download_chunked(self, destination: Path, manifest: dict) -> bool:
         if not valid_manifest(manifest):
             raise ValueError("invalid incremental checkpoint manifest")
+        if manifest["version"] == 4 or os.environ.get("SECOPSAI_PAGE_DELTA_CHECKPOINTS", "0") == "1":
+            footprint = max(manifest["size_bytes"], manifest.get("base", {}).get("size_bytes", 0))
+            if shutil.disk_usage(destination.parent).free < footprint * 3 + 1024**3:
+                raise ValueError("insufficient capacity for checkpoint, immutable baseline and consistent capture")
+        if manifest["version"] == 4:
+            return self.download_sparse(destination, manifest)
         deadline = time.monotonic() + 3600
         partial = destination.with_suffix(".restore")
         digest, total = hashlib.sha256(), 0
@@ -160,10 +173,143 @@ class LedgerStore:
             partial.replace(destination)
             self.chunk_cache = {c["sha256"] for c in manifest["chunks"]}
             self.incremental_ready = True
+            if os.environ.get("SECOPSAI_PAGE_DELTA_CHECKPOINTS", "0") == "1":
+                self.freeze_baseline(destination, manifest)
             _log("incremental_restore_verified", bytes=total, sha256=digest.hexdigest())
             return True
         finally:
             partial.unlink(missing_ok=True)
+
+    def freeze_baseline(self, source, manifest, *, move=False):
+        baseline = source.parent / ".checkpoint-base.db"
+        if move:
+            # The caller supplies a consistent private snapshot, not the live DB.
+            source.replace(baseline)
+        else:
+            staging = baseline.with_suffix(".copy")
+            try:
+                shutil.copyfile(source, staging)
+                os.chmod(staging, 0o400)
+                staging.replace(baseline)
+            finally:
+                staging.unlink(missing_ok=True)
+        os.chmod(baseline, 0o400)
+        self.baseline_path, self.baseline_manifest = baseline, manifest
+
+    def download_sparse(self, destination, manifest):
+        base = manifest["base"]
+        if getattr(self, "baseline_manifest", None) != base or not getattr(self, "baseline_path", None) or not self.baseline_path.exists():
+            with tempfile.TemporaryDirectory(dir=destination.parent) as directory:
+                restored = Path(directory) / "base.db"
+                self.download_chunked(restored, base)
+                if not getattr(self, "baseline_path", None) or getattr(self, "baseline_manifest", None) != base:
+                    self.freeze_baseline(restored, base)
+                durable_base = destination.parent / ".checkpoint-base.db"
+                self.baseline_path.replace(durable_base)
+                self.baseline_path = durable_base
+        partial = destination.with_suffix(".restore")
+        deadline = time.monotonic() + 3600
+        last_offset = -1
+        try:
+            shutil.copyfile(self.baseline_path, partial)
+            os.chmod(partial, 0o600)
+            with partial.open("r+b") as output:
+                for entry in manifest["patches"]:
+                    packed = self._request("GET", "/artifact-objects/" + entry["sha256"], deadline=deadline)
+                    if len(packed) != entry["size_bytes"] or hashlib.sha256(packed).hexdigest() != entry["sha256"]:
+                        raise ValueError("sparse checkpoint chunk checksum mismatch")
+                    with gzip.GzipFile(fileobj=io.BytesIO(packed)) as reader:
+                        raw = reader.read(entry["raw_size_bytes"] + 1)
+                    if len(raw) != entry["raw_size_bytes"] or hashlib.sha256(raw).hexdigest() != entry["raw_sha256"] or not raw.startswith(DELTA_MAGIC):
+                        raise ValueError("sparse checkpoint frame checksum mismatch")
+                    cursor = len(DELTA_MAGIC)
+                    while cursor < len(raw):
+                        if len(raw) - cursor < 12:
+                            raise ValueError("truncated sparse checkpoint record")
+                        offset, length = struct.unpack_from(">QI", raw, cursor)
+                        cursor += 12
+                        expected = min(DELTA_BLOCK_BYTES, manifest["size_bytes"] - offset)
+                        if offset <= last_offset or offset % DELTA_BLOCK_BYTES or length != expected or not 0 < length <= DELTA_BLOCK_BYTES or cursor + length > len(raw):
+                            raise ValueError("invalid sparse checkpoint offset")
+                        output.seek(offset)
+                        output.write(raw[cursor:cursor+length])
+                        cursor += length
+                        last_offset = offset
+                output.truncate(manifest["size_bytes"])
+                output.flush()
+                os.fsync(output.fileno())
+            digest = hashlib.sha256()
+            with partial.open("rb") as source:
+                for raw in iter(lambda: source.read(8*1024*1024), b""):
+                    digest.update(raw)
+            if digest.hexdigest() != manifest["sha256"]:
+                raise ValueError("sparse checkpoint database checksum mismatch")
+            with sqlite3.connect(f"file:{partial}?mode=ro", uri=True) as recovered:
+                if recovered.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    raise ValueError("sparse checkpoint SQLite integrity check failed")
+            partial.replace(destination)
+            self.incremental_ready = True
+            self.chunk_cache.update(entry["sha256"] for entry in manifest["patches"])
+            _log("sparse_restore_verified", bytes=manifest["size_bytes"], patches=len(manifest["patches"]), sha256=manifest["sha256"])
+            return True
+        finally:
+            partial.unlink(missing_ok=True)
+
+    def upload_sparse(self, backup, *, captured_at, deadline):
+        base = self.baseline_manifest
+        entries, digest, offset, dirty = [], hashlib.sha256(), 0, 0
+        frame = bytearray(DELTA_MAGIC)
+        limit = 28 * 1024 * 1024
+        cached = self.chunk_cache
+        current_size = backup.stat().st_size
+        baseline_digest = hashlib.sha256()
+        if self.baseline_path.stat().st_size != base["size_bytes"]:
+            raise RebaseRequired("local baseline size changed")
+        def flush_frame():
+            packed = gzip.compress(frame, compresslevel=1, mtime=0)
+            key = hashlib.sha256(packed).hexdigest()
+            if key not in cached:
+                receipt = json.loads(self._request("PUT", "/artifact-objects/" + key, packed, deadline=deadline))
+                if receipt.get("sha256") != key or receipt.get("size_bytes") != len(packed):
+                    raise ValueError("sparse checkpoint upload receipt mismatch")
+                cached.add(key)
+            entries.append({"sha256": key, "size_bytes": len(packed), "raw_sha256": hashlib.sha256(frame).hexdigest(), "raw_size_bytes": len(frame)})
+            frame[:] = DELTA_MAGIC
+        with backup.open("rb") as current, self.baseline_path.open("rb") as previous:
+            while group := current.read(1024*1024):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("sparse checkpoint scan exceeds its bounded budget")
+                old_group = previous.read(1024*1024)
+                digest.update(group)
+                baseline_digest.update(old_group)
+                if group != old_group:
+                    for index in range(0, len(group), DELTA_BLOCK_BYTES):
+                        raw = group[index:index+DELTA_BLOCK_BYTES]
+                        if raw == old_group[index:index+DELTA_BLOCK_BYTES]:
+                            continue
+                        dirty += len(raw)
+                        if dirty > max(base["size_bytes"], current_size) // 4:
+                            raise RebaseRequired("more than one quarter of baseline bytes changed")
+                        if len(frame) + 12 + len(raw) > limit:
+                            flush_frame()
+                        frame.extend(struct.pack(">QI", offset+index, len(raw)))
+                        frame.extend(raw)
+                offset += len(group)
+            for tail in iter(lambda: previous.read(1024*1024), b""):
+                baseline_digest.update(tail)
+            if baseline_digest.hexdigest() != base["sha256"]:
+                raise RebaseRequired("local baseline checksum changed")
+            if len(frame) > len(DELTA_MAGIC):
+                flush_frame()
+        if len(base["chunks"]) + len(entries) > 900:
+            raise RebaseRequired("sparse checkpoint object budget exceeded")
+        manifest = {"version": 4, "base": base, "block_bytes": DELTA_BLOCK_BYTES, "patches": entries,
+                    "sha256": digest.hexdigest(), "size_bytes": offset, "captured_at": captured_at}
+        result = json.loads(self._request("POST", "/checkpoints", json.dumps(manifest, separators=(",", ":")).encode(), deadline=deadline))
+        if result.get("superseded") is True:
+            raise ValueError("sparse checkpoint was superseded by a newer capture")
+        _log("sparse_checkpoint_uploaded", bytes=offset, changed_bytes=dirty, patch_chunks=len(entries), captured_at=captured_at, key=result["key"])
+        return str(result["key"])
 
     def upload_chunked(self, backup: Path, *, captured_at: str, deadline=None) -> str:
         deadline = deadline or (time.monotonic() + 240)
@@ -207,8 +353,12 @@ class LedgerStore:
                     "captured_at": captured_at, "chunks": entries}
         body = json.dumps(manifest, separators=(",", ":")).encode()
         result = json.loads(self._request("POST", "/checkpoints", body, deadline=deadline))
+        if result.get("superseded") is True:
+            raise ValueError("incremental checkpoint was superseded by a newer capture")
         self.chunk_cache = {entry["sha256"] for entry in entries}
         self.incremental_ready = True
+        self.baseline_manifest = manifest
+        self.baseline_path = None
         _log("incremental_checkpoint_uploaded", bytes=total, uploaded_chunks=uploaded, reused_chunks=len(entries)-uploaded,
              captured_at=captured_at, key=result["key"])
         return str(result["key"])
@@ -237,6 +387,19 @@ class LedgerStore:
 def valid_manifest(m):
     import re
     good_hash = lambda h: isinstance(h, str) and bool(re.fullmatch(r"[a-f0-9]{64}", h))
+    if isinstance(m, dict) and m.get("version") == 4:
+        base, patches = m.get("base"), m.get("patches")
+        try:
+            timestamps_valid = datetime.fromisoformat(base["captured_at"].replace("Z", "+00:00")) <= datetime.fromisoformat(m["captured_at"].replace("Z", "+00:00"))
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return False
+        return (isinstance(base, dict) and base.get("version") == 3 and valid_manifest(base) and timestamps_valid
+                and m.get("block_bytes") == DELTA_BLOCK_BYTES and good_hash(m.get("sha256"))
+                and type(m.get("size_bytes")) is int and 0 < m["size_bytes"] <= 900*28*1024*1024
+                and isinstance(patches, list) and len(base["chunks"])+len(patches) <= 900
+                and all(isinstance(c, dict) and good_hash(c.get("sha256")) and good_hash(c.get("raw_sha256"))
+                        and type(c.get("size_bytes")) is int and 0 < c["size_bytes"] <= 32*1024*1024
+                        and type(c.get("raw_size_bytes")) is int and 8 <= c["raw_size_bytes"] <= 28*1024*1024 for c in patches))
     if not isinstance(m, dict) or m.get("version") != 3 or not good_hash(m.get("sha256")) or type(m.get("size_bytes")) is not int or m["size_bytes"] <= 0:
         return False
     chunks = m.get("chunks")
@@ -280,7 +443,21 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str
             source.close()
         _log("checkpoint_captured", bytes=backup_path.stat().st_size, seconds=round(time.monotonic()-started,1))
         if incremental:
-            return store.upload_chunked(backup_path, captured_at=captured_at, deadline=capture_deadline)
+            delta_enabled = os.environ.get("SECOPSAI_PAGE_DELTA_CHECKPOINTS", "0") == "1"
+            if delta_enabled and getattr(store, "baseline_path", None):
+                try:
+                    return store.upload_sparse(backup_path, captured_at=captured_at, deadline=capture_deadline)
+                except RebaseRequired as reason:
+                    capture_deadline = started + 600
+                    _log("checkpoint_rebase_required", reason=str(reason), budget_seconds=600)
+            key = store.upload_chunked(backup_path, captured_at=captured_at, deadline=capture_deadline)
+            if delta_enabled:
+                # Keep the baseline outside the temporary capture directory.
+                frozen = workdir / ".checkpoint-base.db"
+                backup_path.replace(frozen)
+                os.chmod(frozen, 0o400)
+                store.baseline_path = frozen
+            return key
         compressed = Path(temp_dir) / "ledger.db.gz"
         with backup_path.open("rb") as raw, gzip.open(compressed, "wb", compresslevel=6) as packed:
             shutil.copyfileobj(raw, packed, length=8 * 1024 * 1024)

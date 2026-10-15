@@ -179,3 +179,29 @@ def test_resolving_a_research_lead_updates_its_canonical_finding(tmp_path):
         ).fetchone()
     assert row["status"] == "triaged"
     assert row["disposition"] == "needs_review"
+
+
+def test_unchanged_advisory_does_not_reopen_operator_closed_lead(tmp_path):
+    db_path=_db(tmp_path)
+    body=b'Package,Malicious Versions\nkeyv,6.0.0\n'
+    first=refresh_and_sync(db_path=db_path,fetcher=_fetcher(body),force=True)
+    assert first['sync']['alerts_upserted']==1
+    with soc_store.connect(db_path) as connection:
+        alert_id=connection.execute("SELECT alert_id FROM research_alerts WHERE alert_type='external_advisory_match'").fetchone()[0]
+    resolve_alert(alert_id,db_path=db_path)
+    repeated=refresh_and_sync(db_path=db_path,fetcher=_fetcher(body),force=True)
+    assert repeated['sync']['records_seen']==0 and repeated['sync']['alerts_upserted']==0
+    with soc_store.read_connect(db_path) as connection:
+        assert connection.execute('SELECT status FROM research_alerts WHERE alert_id=?',(alert_id,)).fetchone()[0]=='resolved'
+
+
+def test_bounded_advisory_delivery_progresses_past_already_delivered_records(tmp_path):
+    db_path=_db(tmp_path)
+    body=b'Package,Malicious Versions\nkeyv,6.0.0\ncacheable,2.5.1\n'
+    first=refresh_and_sync(db_path=db_path,fetcher=_fetcher(body),force=True,sync_limit=1)
+    second=refresh_and_sync(db_path=db_path,fetcher=_fetcher(body),force=False,sync_limit=1)
+    third=refresh_and_sync(db_path=db_path,fetcher=_fetcher(body),force=False,sync_limit=1)
+    assert first['sync']['records_seen']==second['sync']['records_seen']==1
+    assert third['sync']['records_seen']==0
+    with soc_store.read_connect(db_path) as connection:
+        assert connection.execute('SELECT count(*) FROM research_external_advisory_delivery_receipts').fetchone()[0]==2

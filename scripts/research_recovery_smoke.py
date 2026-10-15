@@ -1,4 +1,5 @@
 """Read-only production checkpoint restore and reconciliation in disposable storage."""
+from contextlib import closing
 import argparse
 import hashlib
 import importlib.util
@@ -24,7 +25,8 @@ def run_drill(progress):
     if not supervisor.valid_manifest(manifest):
         raise ValueError('invalid recovery manifest')
     start = time.monotonic()
-    if shutil.disk_usage(tempfile.gettempdir()).free < manifest['size_bytes'] * 3 + 1024**3:
+    footprint=max(manifest['size_bytes'],manifest.get('base',{}).get('size_bytes',0))
+    if shutil.disk_usage(tempfile.gettempdir()).free < footprint * 3 + 1024**3:
         raise ValueError('insufficient isolated recovery capacity')
     os.environ['SECOPSAI_INCREMENTAL_CHECKPOINTS']='1'
     with tempfile.TemporaryDirectory(prefix='secopsai-recovery-') as directory:
@@ -34,7 +36,7 @@ def run_drill(progress):
         store.download_chunked(destination,manifest)
         restore_seconds = time.monotonic()-start
         progress['phase']='reconcile_production_copy'
-        with sqlite3.connect(f'file:{destination}?mode=ro',uri=True) as conn:
+        with closing(sqlite3.connect(f'file:{destination}?mode=ro',uri=True)) as conn:
             if conn.execute('PRAGMA foreign_key_check').fetchone():
                 raise ValueError('recovered foreign key inconsistency')
             names = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
@@ -51,9 +53,12 @@ def run_drill(progress):
                     verified_sources += 1
         # An independent crash drill writes only a private copy and a separate
         # checkpoint namespace; the production LATEST pointer is never touched.
-        with sqlite3.connect(destination) as conn:
+        with closing(sqlite3.connect(destination)) as conn:
+            if conn.execute('PRAGMA journal_mode=WAL').fetchone()[0].lower() != 'wal':
+                raise ValueError('isolated synthetic writer requires WAL mode')
             conn.execute('CREATE TABLE secopsai_recovery_drill_marker (seq INTEGER PRIMARY KEY, committed_ns INTEGER NOT NULL)')
             conn.execute('INSERT INTO secopsai_recovery_drill_marker VALUES (0,?)',(time.time_ns(),))
+            conn.commit()
         progress['phase']='commit_isolated_baseline'
         store.checkpoint_scope='drill'
         supervisor.checkpoint(destination,store,Path(directory))
@@ -69,6 +74,9 @@ def run_drill(progress):
         try:
             progress['phase']='simulate_isolated_failed_commit'
             time.sleep(1)
+            with closing(sqlite3.connect(destination)) as conn:
+                if conn.execute('SELECT count(*) FROM secopsai_recovery_drill_marker').fetchone()[0] <= 1:
+                    raise ValueError('synthetic workload did not commit before the interruption')
             store._request=interrupted
             try:
                 supervisor.checkpoint(destination,store,Path(directory))
@@ -76,19 +84,27 @@ def run_drill(progress):
                 failed_commit_verified=True
         finally:
             store._request=request
-            writer.kill()
+            writer_exited_early=writer.poll() is not None
+            if not writer_exited_early:
+                writer.kill()
             writer.wait(timeout=10)
+        if writer_exited_early:
+            raise ValueError('synthetic writer stopped before the controlled crash')
         crash_ns=time.time_ns()
+        progress['phase']='verify_isolated_checkpoint_pointer'
         unchanged=json.loads(store._request('GET','/checkpoint-manifest',deadline=time.monotonic()+60))
         if not failed_commit_verified or unchanged!=isolated_manifest:
             raise ValueError('failed isolated checkpoint advanced the durable pointer')
-        with sqlite3.connect(destination) as conn:
+        progress['phase']='count_synthetic_commits'
+        with closing(sqlite3.connect(destination)) as conn:
             committed_rows=conn.execute('SELECT count(*) FROM secopsai_recovery_drill_marker').fetchone()[0]
         recovered=Path(directory)/'crash-restored.db'
         progress['phase']='restore_previous_isolated_checkpoint'
         store.download_chunked(recovered,isolated_manifest)
-        with sqlite3.connect(recovered) as conn:
+        with closing(sqlite3.connect(recovered)) as conn:
             retained_rows,last_ns=conn.execute('SELECT count(*),max(committed_ns) FROM secopsai_recovery_drill_marker').fetchone()
+        if committed_rows <= retained_rows:
+            raise ValueError('crash drill did not lose any committed synthetic workload')
         loss_seconds=max(0,(crash_ns-last_ns)/1e9)
         total_seconds = time.monotonic()-start
         result = {'status':'passed','scope':'isolated_restore_of_exact_production_checkpoint',
@@ -98,7 +114,7 @@ def run_drill(progress):
                   'rto_target_met':total_seconds<=3600,'source_archives_hash_verified':verified_sources,
                   'tables':counts,'rpo_target_proven':False,'rpo_drill_target_met':loss_seconds<=300,'maximum_committed_loss_seconds':round(loss_seconds,3),
                   'isolated_committed_rows':committed_rows,'isolated_restored_rows':retained_rows,
-                  'failed_commit_preserved_previous_checkpoint':failed_commit_verified,
+                  'failed_commit_preserved_previous_checkpoint':failed_commit_verified,'synthetic_journal_mode':'wal',
                   'limitations':['This production-size isolated crash drill proves the measured scenario; sustained production guarantees require continued capture/commit monitoring.']}
     if not result['rto_target_met'] or not result['rpo_drill_target_met']:
         result['status']='failed'
@@ -118,6 +134,11 @@ def main():
                 'phase':progress['phase'],'error_category':type(error).__name__}
         if isinstance(getattr(error,'code',None),int):
             result['http_status']=error.code
+        if isinstance(error, sqlite3.DatabaseError):
+            code=getattr(error,'sqlite_errorcode',None)
+            name=getattr(error,'sqlite_errorname',None)
+            if isinstance(code,int): result['sqlite_errorcode']=code
+            if isinstance(name,str) and name.startswith('SQLITE_') and name.isidentifier(): result['sqlite_errorname']=name
     output=Path(args.output)
     output.parent.mkdir(parents=True,exist_ok=True)
     output.write_text(json.dumps(result,indent=2))

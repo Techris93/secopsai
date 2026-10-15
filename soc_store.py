@@ -512,6 +512,14 @@ def init_db(db_path: str | None = None) -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS ontology_sync_receipt_migrations (
+                original_idempotency_key TEXT PRIMARY KEY,
+                original_payload_json TEXT NOT NULL CHECK(length(original_payload_json) <= 65536),
+                new_idempotency_key TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                acknowledged_at TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS ontology_backfill_pending (
                 pending_id TEXT PRIMARY KEY,
                 stream_key TEXT NOT NULL,
@@ -1793,6 +1801,18 @@ def init_db(db_path: str | None = None) -> None:
                 last_seen TEXT NOT NULL,
                 UNIQUE (source_id, ecosystem, package, version),
                 FOREIGN KEY (source_id) REFERENCES research_external_advisory_sources (source_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS research_external_advisory_delivery_receipts (
+                source_id TEXT NOT NULL,
+                ecosystem TEXT NOT NULL,
+                package TEXT NOT NULL,
+                version TEXT NOT NULL,
+                source_hash TEXT NOT NULL,
+                candidate_id TEXT NOT NULL,
+                alert_id TEXT NOT NULL,
+                acknowledged_at TEXT NOT NULL,
+                PRIMARY KEY (source_id, ecosystem, package, version, source_hash)
             );
 
             CREATE TABLE IF NOT EXISTS research_npm_package_snapshots (

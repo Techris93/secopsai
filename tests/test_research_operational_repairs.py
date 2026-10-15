@@ -68,3 +68,23 @@ def test_reviewed_source_indexes_are_scoped_leads(parser,url,body,count):
 @pytest.mark.parametrize('parser,body',[('jfrog_index',b'<html>challenge page</html>'),('socket_index',b'<html>no articles</html>'),('github_advisories',b'{"message":"API denied"}'),('openvsx_index',b'{}')])
 def test_malformed_or_challenged_indexes_cannot_advance(parser,body):
     with pytest.raises(ValueError): parse_source({'parser':parser,'url':'https://vendor.example/'},body)
+
+
+def test_interrupted_advisory_processing_cannot_starve_backups_or_primary_intake(tmp_path,monkeypatch):
+    from secopsai import research_worker
+    from secopsai.worker_control import WorkerShutdown
+    events=[]
+    monkeypatch.setenv('SECOPSAI_PRIMARY_INTEL','1')
+    monkeypatch.setattr(research_worker,'maintain_research_storage',lambda **kw:{})
+    monkeypatch.setattr(research_worker,'_record_storage_capacity_alert',lambda *a,**kw:None)
+    monkeypatch.setattr('secopsai.research_artifact_vault.backup_public_artifacts',lambda **kw:events.append('backup') or {'status':'succeeded'})
+    monkeypatch.setattr('secopsai.research_primary_intel.collect_due',lambda **kw:events.append('primary') or {'status':'succeeded'})
+    monkeypatch.setattr('secopsai.research_editorial.scheduled_brief',lambda **kw:{'status':'blocked'})
+    def expensive(**kw):
+        events.append('external')
+        assert kw['sync_limit']==100
+        raise WorkerShutdown('synthetic budget stop')
+    monkeypatch.setattr(research_worker,'refresh_and_sync',expensive)
+    with pytest.raises(WorkerShutdown):
+        research_worker._run_worker_cycle_unlocked(db_path=str(tmp_path/'worker.db'))
+    assert events==['backup','primary','external']

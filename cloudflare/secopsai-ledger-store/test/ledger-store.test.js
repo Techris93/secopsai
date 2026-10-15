@@ -221,3 +221,30 @@ test('incremental checkpoint commits only complete immutable chunks and cannot r
   assert.equal(drill.captured_at,'2026-10-14T11:00:00Z');
 
 });
+
+
+test('sparse checkpoints require a complete pinned baseline and patch objects before advancing the pointer', async () => {
+  const {handleLedgerRequest} = await import('../../secopsai-research-runner/src/ledger.js');
+  const objects=new Map();
+  const bucket={head:async key=>objects.get(key)||null,
+    get:async key=>objects.has(key)?{text:async()=>objects.get(key).text,body:objects.get(key).text}:null,
+    put:async(key,text,options={})=>objects.set(key,{text,size:text.length,customMetadata:options.customMetadata,uploaded:new Date()})};
+  const chunk={sha256:'a'.repeat(64),raw_sha256:'b'.repeat(64),size_bytes:40,raw_size_bytes:8192};
+  const base={version:3,sha256:'c'.repeat(64),size_bytes:8192,captured_at:'2026-10-14T10:00:00Z',chunks:[chunk]};
+  const patch={sha256:'d'.repeat(64),raw_sha256:'e'.repeat(64),size_bytes:30,raw_size_bytes:4120};
+  const delta={version:4,base,block_bytes:4096,patches:[patch],sha256:'f'.repeat(64),size_bytes:8192,captured_at:'2026-10-14T11:00:00Z'};
+  const post=value=>new Request('https://ls.example/checkpoints',{method:'POST',headers:{'content-length':String(JSON.stringify(value).length)},body:JSON.stringify(value)});
+  objects.set('artifacts/sha256/'+chunk.sha256,{size:40,customMetadata:{sha256:chunk.sha256}});
+  assert.equal((await handleLedgerRequest(post(base),bucket)).status,200);
+  const old=objects.get('ledger/LATEST_CHUNKED').text;
+  assert.equal((await handleLedgerRequest(post(delta),bucket)).status,409);
+  assert.equal(objects.get('ledger/LATEST_CHUNKED').text,old);
+  objects.set('artifacts/sha256/'+patch.sha256,{size:30,customMetadata:{sha256:patch.sha256}});
+  assert.equal((await handleLedgerRequest(post(delta),bucket)).status,200);
+  const current=objects.get('ledger/LATEST_CHUNKED').text;
+  assert.equal((await handleLedgerRequest(post({...delta,base:delta}),bucket)).status,400);
+  assert.equal((await handleLedgerRequest(post({...delta,patches:Array(901).fill(patch)}),bucket)).status,400);
+  assert.equal(objects.get('ledger/LATEST_CHUNKED').text,current);
+  const status=await(await handleLedgerRequest(new Request('https://ls.example/status'),bucket)).json();
+  assert.equal(status.protocol,'ledger-checkpoint-v4');
+});

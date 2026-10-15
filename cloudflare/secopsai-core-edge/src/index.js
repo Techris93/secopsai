@@ -921,13 +921,18 @@ async function syncOntology(request, env, requestId) {
   if (suppliedIdempotency && !/^[A-Za-z0-9._:-]{8,200}$/.test(suppliedIdempotency)) {
     throw new HttpError(422, "invalid_idempotency_key", "Idempotency-Key must be 8-200 ASCII letters, digits, '.', '_', ':' or '-'");
   }
-  const requestHash = await sha256Hex(JSON.stringify({
+  const requestMaterial = {
     schema_version: schemaVersion,
     source_instance: payload.source_instance || "ontology-bridge",
     organization_id: payload.organization_id || "",
     workspace_id: payload.workspace_id || "",
     entities, relationships, events, evidence_refs: evidenceRefs,
-  }));
+  };
+  // v2 receipt identity is independent of object-key serialization order.
+  // Legacy receipt hashes retain their original contract; old conflicts are
+  // reconciled through an explicitly versioned, durably recorded client receipt.
+  const requestHash = await sha256Hex(suppliedIdempotency.startsWith("ontology-v2:")
+    ? canonicalOntologyJson(requestMaterial) : JSON.stringify(requestMaterial));
   const idempotencyKey = suppliedIdempotency || requestHash;
   const expectedOrganization = clean(env.CORE_ORGANIZATION_ID, 160);
   const expectedWorkspace = clean(env.CORE_WORKSPACE_ID, 160);
@@ -1386,6 +1391,12 @@ function boundedJson(value, maximum, label, preserveEvidence = false) {
 // and/or leave an earlier part of the snapshot durable.  Keep this check
 // separate from ``boundedJson`` so existing response sanitization retains its
 // established behavior.
+function canonicalOntologyJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalOntologyJson).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalOntologyJson(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+
 function preflightBoundedJson(value, maximum, label) {
   let encoded;
   try {
