@@ -723,7 +723,7 @@ class CoreEdgeClient:
                 raise TimeoutError("Core ontology delivery deadline exceeded")
             time.sleep(delay)
 
-    def deliver_ontology(self, snapshot, *, db_path=None, seconds=60):
+    def deliver_ontology(self, snapshot, *, db_path=None, seconds=120):
         """Commit exact chunks before transport; retain all unacknowledged work."""
         queued = self.enqueue_ontology_snapshot(snapshot, db_path=db_path)
         if queued.get("status") != "queued":
@@ -911,7 +911,7 @@ class CoreEdgeClient:
         *,
         db_path: Optional[str] = None,
         max_items: int = 5,
-        seconds: float = 60,
+        seconds: float = 120,
     ) -> dict[str, Any]:
         """Retry due ontology snapshots and remove only acknowledged receipts."""
         if not self.enabled:

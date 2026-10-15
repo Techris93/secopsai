@@ -682,7 +682,7 @@ def run_worker_loop(
                 try:
                     flush_outbox = getattr(core_edge, "flush_ontology_outbox", None)
                     if callable(flush_outbox):
-                        flush_result = flush_outbox(db_path=db_path, max_items=100)
+                        flush_result = flush_outbox(db_path=db_path, max_items=100, seconds=120)
                         print(json.dumps({"component":"research-worker", "event":"ontology_outbox_flush",
                                           **{key:flush_result.get(key) for key in ("status","flushed","failed","pending","deferred","error","http_status")}},default=str),flush=True)
                 except Exception as exc:  # outbox recovery is optional control-plane work
