@@ -74,3 +74,22 @@ def test_selected_source_that_already_recovered_is_not_fetched_again(tmp_path, m
         def sync_research_operation(self, value): return {'status': 'stored'}
     result = verify_delivery(db_path=db, client=Client(), retry_source_names=('Already Healthy',))
     assert result['status'] == 'passed' and result['sources_retried'] == 0
+
+
+def test_later_entity_delivery_can_repair_an_older_relationship(tmp_path, monkeypatch):
+    db = str(tmp_path/'dependencies.db')
+    soc_store.init_db(db)
+    with soc_store.connect(db) as connection:
+        connection.execute("INSERT INTO ontology_sync_outbox(idempotency_key,payload_json,next_attempt_at,created_at,updated_at) VALUES ('new-entity','{}','2020-01-01','2020-01-01','2020-01-01')")
+        connection.commit()
+    monkeypatch.setattr('secopsai.ontology.materialize_recent', lambda **kwargs: {'snapshot': {}})
+    monkeypatch.setattr('secopsai.research_operation.hosted_projection', lambda **kwargs: {'coverage': {'health': {}}})
+    class Client:
+        enabled = True
+        outcomes = iter([{'pending': 2, 'flushed': 0, 'http_status': 422},
+                         {'pending': 0, 'flushed': 2, 'status': 'accepted'}])
+        def enqueue_ontology_snapshot(self, *args, **kwargs): return {'status': 'queued'}
+        def flush_ontology_outbox(self, **kwargs): return next(self.outcomes)
+        def sync_research_operation(self, value): return {'status': 'stored'}
+    result = verify_delivery(db_path=db, client=Client())
+    assert result['status'] == 'passed' and result['flushed_total'] == 2

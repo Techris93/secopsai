@@ -54,8 +54,17 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
                          ('status', 'flushed', 'failed', 'pending', 'http_status', 'error')}}), flush=True)
         if delivery.get('pending') == 0:
             break
-        if delivery.get('http_status') in {400, 401, 403, 409, 422}:
-            break  # preserve invalid/unauthorized records for explicit repair
+        if delivery.get('http_status') in {400, 401, 403}:
+            break  # do not retry invalid envelopes or authorization failures
+        if delivery.get('http_status') in {409, 422} and not delivery.get('flushed'):
+            # A later entity batch may repair a missing endpoint for an older
+            # relationship. Respect each rejected row's backoff while allowing
+            # still-due, unattempted work through before declaring it invalid.
+            with read_connection(db_path) as connection:
+                due = connection.execute("SELECT count(*) FROM ontology_sync_outbox WHERE status='queued' AND next_attempt_at<=?", (soc_store.utc_now(),)).fetchone()[0]
+            if not due:
+                break
+            continue
         if not delivery.get('flushed'):
             # Respect durable retry times instead of resubmitting hot loops.
             with read_connection(db_path) as connection:
