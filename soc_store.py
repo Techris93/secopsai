@@ -26,7 +26,8 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 # silently lost after its source checkpoint advances.  The ontology is an
 # additive semantic layer over the existing findings, research, and Edge graph
 # stores; it does not replace those durable records.
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
+REQUIRED_DELIVERY_TABLES = frozenset({"ontology_sync_receipt_migrations", "research_external_advisory_delivery_receipts"})
 REQUIRED_ONTOLOGY_TABLES = frozenset(
     {
         "ontology_entities",
@@ -234,7 +235,7 @@ def init_db(db_path: str | None = None) -> None:
         evidence_ref_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ontology_evidence_refs)").fetchall()} if "ontology_evidence_refs" in existing_tables else set()
         entity_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ontology_entities)").fetchall()} if "ontology_entities" in existing_tables else set()
         type_aware_identity = _has_type_aware_entity_identity(connection)
-    if current_version >= SCHEMA_VERSION and (REQUIRED_ONTOLOGY_TABLES | REQUIRED_COORDINATOR_TABLES) <= existing_tables and {"workspace_id"} <= evidence_ref_columns and {"valid_from", "valid_to"} <= entity_columns and type_aware_identity:
+    if current_version >= SCHEMA_VERSION and (REQUIRED_ONTOLOGY_TABLES | REQUIRED_COORDINATOR_TABLES | REQUIRED_DELIVERY_TABLES) <= existing_tables and {"workspace_id"} <= evidence_ref_columns and {"valid_from", "valid_to"} <= entity_columns and type_aware_identity:
         return
 
     with sqlite_writer_lock(resolved_path):
@@ -246,7 +247,7 @@ def init_db(db_path: str | None = None) -> None:
             }
             evidence_ref_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ontology_evidence_refs)").fetchall()} if "ontology_evidence_refs" in existing_tables else set()
             entity_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ontology_entities)").fetchall()} if "ontology_entities" in existing_tables else set()
-            if current_version >= SCHEMA_VERSION and (REQUIRED_ONTOLOGY_TABLES | REQUIRED_COORDINATOR_TABLES) <= existing_tables and {"workspace_id"} <= evidence_ref_columns and {"valid_from", "valid_to"} <= entity_columns and _has_type_aware_entity_identity(connection):
+            if current_version >= SCHEMA_VERSION and (REQUIRED_ONTOLOGY_TABLES | REQUIRED_COORDINATOR_TABLES | REQUIRED_DELIVERY_TABLES) <= existing_tables and {"workspace_id"} <= evidence_ref_columns and {"valid_from", "valid_to"} <= entity_columns and _has_type_aware_entity_identity(connection):
                 return
             journal_mode = str(connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]).lower()
             if journal_mode != "wal":

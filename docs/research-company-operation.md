@@ -303,7 +303,10 @@ writer complete. The first full transfer has a separate bounded 600-second
 bootstrap budget. Verified immutable chunk receipts survive an interrupted
 manifest commit within a runner. After bootstrap or a verified incremental
 restore, the workflow uses a 60-second interval and a 240-second total recurring
-capture/upload budget. These bounds are an implementation design;
+capture/upload budget. The interval is measured from capture start; saves never
+overlap and a slow save does not add another idle interval. A compact hash index
+verified against the immutable baseline avoids rereading that full file on every
+sparse capture. These bounds are an implementation design;
 production five-minute committed-loss guarantees require measured crash drills.
 After deploying the additive version 4 server and passing its gates, enable
 `RESEARCH_PAGE_DELTA_CHECKPOINTS=true`. The runner retains a private immutable
@@ -373,3 +376,14 @@ Hosted cycles prioritize historical private backup/recovery and primary-source
 intake before external advisory materialization. The worker bounds that latter
 batch to 100 records, so progress can resume from receipts rather than repeating
 the same first thousand records and starving collection.
+
+
+Existing ledgers migrate to schema version 14 before ontology receipt migration
+or external advisory delivery. Both required delivery tables participate in the
+initializer's fast-path check, including recovery from an incomplete upgrade.
+A fresh supervisor restore fences running daily jobs from the serialized snapshot;
+ordinary starts preserve live owners' leases. Cooperative shutdown releases only
+the current run's exact owner and generation, retaining completed step evidence.
+Daily automation invoked after the current worker's surveillance records that
+step as already performed instead of recursively collecting the same sources.
+Standalone daily automation still performs its own surveillance pass.

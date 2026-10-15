@@ -547,6 +547,7 @@ def _run_worker_cycle_unlocked(
                 db_path=db_path,
                 trigger="research-worker",
                 fetcher=fetcher,
+                surveillance_already_completed=True,
             )
         except Exception as exc:  # the coordinator must never stop surveillance
             capture_exception(exc, context={"component": "daily_automation"})
@@ -672,6 +673,10 @@ def run_worker_loop(
 
     core_edge = coordinator_client()
     try:
+        if os.environ.pop("SECOPSAI_RESTORED_LEDGER_RECOVERY", "0") == "1":
+            from secopsai.daily_automation import recover_interrupted_runs
+            recovered = recover_interrupted_runs(db_path=db_path, restored_snapshot=True)
+            print(json.dumps({"component": "research-worker", "event": "restored_run_recovery", "runs": recovered}), flush=True)
         while not stop["requested"]:
             if core_edge.enabled:
                 try:

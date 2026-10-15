@@ -509,13 +509,55 @@ def _finish_run(
     return get_run(run_id, db_path=db_path)
 
 
+
+def recover_interrupted_runs(*, db_path: Optional[str], restored_snapshot: bool = False,
+                             run_id: Optional[str] = None, owner_id: Optional[str] = None,
+                             generation: Optional[int] = None) -> int:
+    """Fence dead owners from an exclusively restored snapshot, or this owner on shutdown.
+
+    Snapshot recovery is called only by the supervisor's fresh-restore startup
+    path. Ordinary starts must not invalidate another live owner's lease.
+    """
+    if not restored_snapshot and (not run_id or not owner_id or generation is None):
+        raise ValueError("interruption recovery requires a restored snapshot or an exact owned run")
+    soc_store.init_db(db_path)
+    now = soc_store.utc_now()
+    reason = "Owner interrupted before checkpoint restore." if restored_snapshot else "Worker stopped cooperatively."
+    clause = "status='running'"
+    params: list[Any] = []
+    if not restored_snapshot:
+        clause += " AND run_id=? AND owner_id=? AND generation=?"
+        params = [run_id, owner_id, generation]
+    with sqlite_writer_lock(db_path):
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            runs = connection.execute(f"SELECT run_id FROM daily_automation_runs WHERE {clause}", params).fetchall()
+            for row in runs:
+                connection.execute(
+                    "UPDATE daily_automation_steps SET status='failed', completed_at=?, error_message=? "
+                    "WHERE run_id=? AND status='running'", (now, reason, row["run_id"]),
+                )
+                connection.execute(
+                    "UPDATE daily_automation_runs SET status='degraded', completed_at=?, updated_at=?, "
+                    "lease_until=NULL, next_run_at=?, error_message=? WHERE run_id=?",
+                    (now, now, now, reason, row["run_id"]),
+                )
+            if runs:
+                connection.execute("UPDATE daily_automation_settings SET next_run_at=?, updated_at=? WHERE settings_id=1", (now, now))
+            connection.commit()
+    return len(runs)
+
+
 def run_cycle(
     *,
     db_path: Optional[str] = None,
     trigger: str = "operator",
     force: bool = False,
     fetcher: Any = None,
+    surveillance_already_completed: bool = False,
 ) -> Dict[str, Any]:
+    if surveillance_already_completed and trigger != "research-worker":
+        raise ValueError("only the current research worker may skip its completed surveillance pass")
     settings = get_settings(db_path=db_path)
     if not settings["enabled"] and not force:
         return {"schema_version": SCHEMA_VERSION, "status": "skipped", "reason": "automation_disabled", "settings": settings}
@@ -551,7 +593,7 @@ def run_cycle(
         ),
         (
             "registry_surveillance",
-            lambda: run_worker_cycle(
+            (lambda: {"status": "skipped", "reason": "surveillance_already_completed_by_current_worker"}) if surveillance_already_completed else lambda: run_worker_cycle(
                 db_path=db_path,
                 fetcher=fetcher,
                 include_investigations=False,
@@ -609,18 +651,24 @@ def run_cycle(
         ),
     ]
     step_results: list[Dict[str, Any]] = []
-    for name, callback in steps:
-        step = _record_step(
-            run_id,
-            name,
-            callback,
-            db_path=db_path,
-            owner_id=created.get("owner_id"),
-            generation=created.get("generation"),
-        )
-        step_results.append(step)
-        if step.get("fenced"):
-            break
+    from secopsai.worker_control import WorkerShutdown
+    try:
+        for name, callback in steps:
+            step = _record_step(
+                run_id,
+                name,
+                callback,
+                db_path=db_path,
+                owner_id=created.get("owner_id"),
+                generation=created.get("generation"),
+            )
+            step_results.append(step)
+            if step.get("fenced"):
+                break
+    except WorkerShutdown:
+        recover_interrupted_runs(db_path=db_path, run_id=run_id,
+                                 owner_id=created["owner_id"], generation=created["generation"])
+        raise
     failed = [item for item in step_results if item["status"] == "failed"]
     summary: Dict[str, Any] = {
         "steps": step_results,
@@ -663,7 +711,7 @@ def run_cycle(
     )
 
 
-def run_due(*, db_path: Optional[str] = None, trigger: str = "worker", fetcher: Any = None) -> Dict[str, Any]:
+def run_due(*, db_path: Optional[str] = None, trigger: str = "worker", fetcher: Any = None, surveillance_already_completed: bool = False) -> Dict[str, Any]:
     settings = get_settings(db_path=db_path)
     if not settings["enabled"]:
         return {"schema_version": SCHEMA_VERSION, "status": "skipped", "reason": "automation_disabled", "settings": settings}
@@ -674,7 +722,7 @@ def run_due(*, db_path: Optional[str] = None, trigger: str = "worker", fetcher: 
             "next_run_at": settings.get("next_run_at"),
             "settings": settings,
         }
-    return run_cycle(db_path=db_path, trigger=trigger, force=True, fetcher=fetcher)
+    return run_cycle(db_path=db_path, trigger=trigger, force=True, fetcher=fetcher, surveillance_already_completed=surveillance_already_completed)
 
 
 def status(*, db_path: Optional[str] = None, limit: int = 10) -> Dict[str, Any]:

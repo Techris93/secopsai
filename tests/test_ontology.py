@@ -548,3 +548,20 @@ def test_materialize_recent_preserves_typed_graph_endpoints(db_path: str):
         ).fetchone()
     assert relation is not None
     assert relation[1] == service[0]
+
+
+@pytest.mark.parametrize('prior_version', [13, soc_store.SCHEMA_VERSION])
+def test_delivery_schema_upgrade_repairs_existing_ledger_without_losing_outbox(tmp_path, prior_version):
+    path = str(tmp_path / 'upgrade.db')
+    soc_store.init_db(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute("INSERT INTO ontology_sync_outbox (idempotency_key, payload_json, attempts, next_attempt_at, last_error, created_at, updated_at) VALUES ('old-key', '{\"entities\":[]}', 2, '2026-01-01', 'retained', '2026-01-01', '2026-01-01')")
+        for name in soc_store.REQUIRED_DELIVERY_TABLES:
+            connection.execute(f'DROP TABLE {name}')
+        connection.execute(f'PRAGMA user_version={prior_version}')
+    soc_store.init_db(path)
+    with sqlite3.connect(path) as connection:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert soc_store.REQUIRED_DELIVERY_TABLES <= tables
+        assert connection.execute('PRAGMA user_version').fetchone()[0] == soc_store.SCHEMA_VERSION
+        assert connection.execute('SELECT idempotency_key, payload_json, attempts, last_error FROM ontology_sync_outbox').fetchone() == ('old-key', '{"entities":[]}', 2, 'retained')

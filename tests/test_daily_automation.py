@@ -195,3 +195,62 @@ def test_oversized_run_summary_is_compacted_within_the_database_bound():
     assert len(encoded) <= daily_automation.MAX_SUMMARY_JSON_CHARS
     assert '"truncated":true' in encoded
     assert '"status":"completed"' in encoded
+
+
+def test_worker_daily_cycle_reuses_completed_surveillance(tmp_path, monkeypatch):
+    calls = _stub_modules(monkeypatch)
+    result = daily_automation.run_cycle(db_path=str(tmp_path / 'worker.db'), trigger='research-worker',
+                                        force=True, surveillance_already_completed=True)
+    assert result['status'] == 'succeeded'
+    assert 'registry_surveillance' not in calls
+    assert 'operational_alert_delivery' in calls
+    step = next(step for step in result['steps'] if step['step_name'] == 'registry_surveillance')
+    assert step['result']['reason'] == 'surveillance_already_completed_by_current_worker'
+
+
+def test_operator_cannot_skip_surveillance_as_a_worker(tmp_path):
+    import pytest
+    with pytest.raises(ValueError, match='current research worker'):
+        daily_automation.run_cycle(db_path=str(tmp_path / 'operator.db'), trigger='operator',
+                                    surveillance_already_completed=True)
+
+
+def test_shutdown_releases_only_its_owned_run_and_preserves_completed_steps(tmp_path, monkeypatch):
+    import pytest
+    from secopsai.worker_control import WorkerShutdown
+    db = str(tmp_path / 'stop.db')
+    _stub_modules(monkeypatch)
+    def interrupt(**kwargs):
+        raise WorkerShutdown()
+    monkeypatch.setattr('secopsai.research_discovery.run_promotion_policy', interrupt)
+    with pytest.raises(WorkerShutdown):
+        daily_automation.run_cycle(db_path=db, force=True)
+    stored = daily_automation.list_runs(db_path=db)[0]
+    assert stored['status'] == 'degraded'
+    assert stored['lease_until'] is None
+    assert stored['steps'][0]['status'] == 'succeeded'
+    assert stored['steps'][-1]['status'] == 'failed'
+    assert daily_automation._is_due(daily_automation.get_settings(db_path=db)['next_run_at'])
+    _stub_modules(monkeypatch)
+    assert daily_automation.run_due(db_path=db)['status'] == 'succeeded'
+
+
+def test_restored_snapshot_recovery_fences_dead_owner_but_normal_recovery_requires_identity(tmp_path):
+    import pytest
+    db = str(tmp_path / 'restore.db')
+    daily_automation.get_settings(db_path=db)
+    old = daily_automation._create_run(trigger='research-worker', owner_id='dead-host:123', db_path=db)
+    daily_automation._record_step(old['run_id'], 'completed', lambda: {'value': 7}, db_path=db)
+    with pytest.raises(ValueError, match='exact owned run'):
+        daily_automation.recover_interrupted_runs(db_path=db)
+    assert daily_automation.recover_interrupted_runs(db_path=db, run_id=old['run_id'],
+                                                    owner_id='wrong-owner', generation=old['generation']) == 0
+    assert daily_automation.get_run(old['run_id'], db_path=db)['status'] == 'running'
+    assert daily_automation.recover_interrupted_runs(db_path=db, restored_snapshot=True) == 1
+    stored = daily_automation.get_run(old['run_id'], db_path=db)
+    assert stored['status'] == 'degraded'
+    assert stored['steps'][0]['result'] == {'value': 7}
+    fenced = daily_automation._record_step(old['run_id'], 'late-write', lambda: {'bad': True}, db_path=db,
+                                         owner_id=old['owner_id'], generation=old['generation'])
+    assert fenced['fenced'] is True
+    assert daily_automation._create_run(trigger='research-worker', db_path=db)['status'] == 'created'
