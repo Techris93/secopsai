@@ -48,10 +48,15 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
     while time.monotonic() < deadline:
         check_shutdown()
         remaining = deadline - time.monotonic()
+        if remaining < 15:
+            # Leave enough time for one complete coordinator request. Passing
+            # a tiny final slice to the client can manufacture a timeout and
+            # put an otherwise healthy outbox row into exponential backoff.
+            break
         delivery = client.flush_ontology_outbox(db_path=db_path, max_items=100, seconds=min(120, remaining))
         flushed_total += int(delivery.get('flushed', 0))
         print(json.dumps({'event': 'delivery_verification_batch', **{key: delivery.get(key) for key in
-                         ('status', 'flushed', 'failed', 'pending', 'http_status', 'error')}}), flush=True)
+                         ('status', 'flushed', 'failed', 'pending', 'deferred', 'http_status', 'error')}}), flush=True)
         if delivery.get('pending') == 0:
             break
         if delivery.get('http_status') in {400, 401, 403}:

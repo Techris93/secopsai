@@ -38,6 +38,18 @@ def test_delivery_verification_preserves_rejected_backlog_and_fails(tmp_path, mo
     assert result['status'] == 'failed' and result['pending'] == 1
 
 
+def test_delivery_verification_does_not_start_a_partial_final_request(tmp_path, monkeypatch):
+    monkeypatch.setattr('secopsai.ontology.materialize_recent', lambda **kwargs: {'snapshot': {}})
+    monkeypatch.setattr('secopsai.research_operation.hosted_projection', lambda **kwargs: {'coverage': {'health': {}}})
+    class Client:
+        enabled = True
+        def enqueue_ontology_snapshot(self, *args, **kwargs): return {'status': 'queued'}
+        def flush_ontology_outbox(self, **kwargs): raise AssertionError('short remaining budget must not flush')
+        def sync_research_operation(self, value): return {'status': 'stored'}
+    result = verify_delivery(db_path=str(tmp_path/'short-budget.db'), client=Client(), seconds=1)
+    assert result['status'] == 'failed'
+
+
 def test_explicit_source_retry_only_attempts_selected_enabled_source(tmp_path, monkeypatch):
     from secopsai.research_primary_intel import collect_due, configure_source
     from secopsai.research_intake import SafeFetcher
