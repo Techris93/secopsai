@@ -20,6 +20,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import io
+from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import http.client
@@ -167,7 +168,7 @@ class LedgerStore:
                 os.fsync(output.fileno())
             if total != manifest["size_bytes"] or digest.hexdigest() != manifest["sha256"]:
                 raise ValueError("checkpoint database checksum mismatch")
-            with sqlite3.connect(f"file:{partial}?mode=ro", uri=True) as recovered:
+            with closing(sqlite3.connect(f"file:{partial}?mode=ro", uri=True)) as recovered:
                 if recovered.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                     raise ValueError("checkpoint SQLite integrity check failed")
             partial.replace(destination)
@@ -195,6 +196,28 @@ class LedgerStore:
                 staging.unlink(missing_ok=True)
         os.chmod(baseline, 0o400)
         self.baseline_path, self.baseline_manifest = baseline, manifest
+        self.index_baseline()
+
+    def index_baseline(self, *, deadline=None):
+        """Bind compact page hashes to a verified immutable baseline once per restore.
+
+        Recurring captures read only the current database. These hashes describe
+        the canonical remote base; no page bytes or mutable live data are cached.
+        """
+        whole, pages, groups = hashlib.sha256(), bytearray(), bytearray()
+        with self.baseline_path.open("rb") as source:
+            while group := source.read(1024*1024):
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError("baseline indexing exceeds checkpoint budget")
+                whole.update(group)
+                groups.extend(hashlib.sha256(group).digest())
+                for offset in range(0, len(group), DELTA_BLOCK_BYTES):
+                    pages.extend(hashlib.sha256(group[offset:offset+DELTA_BLOCK_BYTES]).digest())
+        if whole.hexdigest() != self.baseline_manifest["sha256"]:
+            raise RebaseRequired("local baseline checksum changed")
+        self.baseline_pages, self.baseline_groups = pages, groups
+        stat = self.baseline_path.stat()
+        self.baseline_identity = (stat.st_size, stat.st_mtime_ns, stat.st_ino, self.baseline_manifest["sha256"])
 
     def download_sparse(self, destination, manifest):
         base = manifest["base"]
@@ -244,7 +267,7 @@ class LedgerStore:
                     digest.update(raw)
             if digest.hexdigest() != manifest["sha256"]:
                 raise ValueError("sparse checkpoint database checksum mismatch")
-            with sqlite3.connect(f"file:{partial}?mode=ro", uri=True) as recovered:
+            with closing(sqlite3.connect(f"file:{partial}?mode=ro", uri=True)) as recovered:
                 if recovered.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                     raise ValueError("sparse checkpoint SQLite integrity check failed")
             partial.replace(destination)
@@ -262,9 +285,12 @@ class LedgerStore:
         limit = 28 * 1024 * 1024
         cached = self.chunk_cache
         current_size = backup.stat().st_size
-        baseline_digest = hashlib.sha256()
-        if self.baseline_path.stat().st_size != base["size_bytes"]:
+        stat = self.baseline_path.stat()
+        identity = (stat.st_size, stat.st_mtime_ns, stat.st_ino, base["sha256"])
+        if stat.st_size != base["size_bytes"]:
             raise RebaseRequired("local baseline size changed")
+        if getattr(self, "baseline_identity", None) != identity:
+            self.index_baseline(deadline=deadline)
         def flush_frame():
             packed = gzip.compress(frame, compresslevel=1, mtime=0)
             key = hashlib.sha256(packed).hexdigest()
@@ -275,17 +301,17 @@ class LedgerStore:
                 cached.add(key)
             entries.append({"sha256": key, "size_bytes": len(packed), "raw_sha256": hashlib.sha256(frame).hexdigest(), "raw_size_bytes": len(frame)})
             frame[:] = DELTA_MAGIC
-        with backup.open("rb") as current, self.baseline_path.open("rb") as previous:
+        with backup.open("rb") as current:
             while group := current.read(1024*1024):
                 if time.monotonic() >= deadline:
                     raise TimeoutError("sparse checkpoint scan exceeds its bounded budget")
-                old_group = previous.read(1024*1024)
                 digest.update(group)
-                baseline_digest.update(old_group)
-                if group != old_group:
+                group_index = (offset // (1024*1024)) * 32
+                if hashlib.sha256(group).digest() != self.baseline_groups[group_index:group_index+32]:
                     for index in range(0, len(group), DELTA_BLOCK_BYTES):
                         raw = group[index:index+DELTA_BLOCK_BYTES]
-                        if raw == old_group[index:index+DELTA_BLOCK_BYTES]:
+                        page_index = ((offset+index) // DELTA_BLOCK_BYTES) * 32
+                        if hashlib.sha256(raw).digest() == self.baseline_pages[page_index:page_index+32]:
                             continue
                         dirty += len(raw)
                         if dirty > max(base["size_bytes"], current_size) // 4:
@@ -295,10 +321,6 @@ class LedgerStore:
                         frame.extend(struct.pack(">QI", offset+index, len(raw)))
                         frame.extend(raw)
                 offset += len(group)
-            for tail in iter(lambda: previous.read(1024*1024), b""):
-                baseline_digest.update(tail)
-            if baseline_digest.hexdigest() != base["sha256"]:
-                raise RebaseRequired("local baseline checksum changed")
             if len(frame) > len(DELTA_MAGIC):
                 flush_frame()
         if len(base["chunks"]) + len(entries) > 900:
@@ -457,6 +479,7 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str
                 backup_path.replace(frozen)
                 os.chmod(frozen, 0o400)
                 store.baseline_path = frozen
+                store.index_baseline(deadline=capture_deadline)
             return key
         compressed = Path(temp_dir) / "ledger.db.gz"
         with backup_path.open("rb") as raw, gzip.open(compressed, "wb", compresslevel=6) as packed:
@@ -465,6 +488,15 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str
         key = store.upload(compressed)
         _log("checkpoint_uploaded", key=key, bytes=compressed.stat().st_size, seconds=round(time.monotonic() - started, 1))
         return key
+
+
+def periodic_checkpoints(stopping, interval, capture):
+    """Schedule from capture start, without overlapping saves or spinning on errors."""
+    next_start = time.monotonic() + interval
+    while not stopping.wait(max(0, next_start - time.monotonic())):
+        started = time.monotonic()
+        capture()
+        next_start = started + interval
 
 
 GRACE_SECONDS = 180
@@ -490,6 +522,7 @@ def main(argv: Optional[list] = None) -> int:
         _log("migration_checkpoint", key=key)
         return 0 if key else 1
 
+    restored = False
     if not db_path.exists():
         restored = store.download(db_path)
         if not restored and os.environ.get("SECOPSAI_LEDGER_ALLOW_EMPTY", "").lower() != "true":
@@ -502,7 +535,8 @@ def main(argv: Optional[list] = None) -> int:
     command = [sys.executable, "-u", "-m", "secopsai.cli", "research", "worker", "run", "--interval", os.environ.get("SECOPSAI_WORKER_INTERVAL", "60")]
     if args.cycles > 0:
         command += ["--max-cycles", str(args.cycles)]
-    worker = subprocess.Popen(command, env={**os.environ, "SECOPS_FINDINGS_DIR": str(data_dir)})
+    worker = subprocess.Popen(command, env={**os.environ, "SECOPS_FINDINGS_DIR": str(data_dir),
+                                               "SECOPSAI_RESTORED_LEDGER_RECOVERY": "1" if restored else "0"})
     stopping = threading.Event()
     forced = threading.Event()
     budget_stop = threading.Event()
@@ -516,8 +550,7 @@ def main(argv: Optional[list] = None) -> int:
                 _log("checkpoint_failed", reason=reason, error=str(exc)[:500])
 
     def periodic() -> None:
-        while not stopping.wait(interval):
-            safe_checkpoint("interval")
+        periodic_checkpoints(stopping, interval, lambda: safe_checkpoint("interval"))
 
     threading.Thread(target=periodic, daemon=True).start()
 

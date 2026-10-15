@@ -454,3 +454,22 @@ def test_shutdown_skips_expensive_followup_stages_and_returns_cleanly(tmp_path, 
     assert result['stopped_by_signal'] and result['cycles']==0
     assert result['last_cycle']=={'status':'succeeded'}
     assert not shutdown_requested(), 'one stopped loop must not poison later tasks'
+
+
+def test_fresh_restore_recovers_dead_daily_owners_once(tmp_path, monkeypatch):
+    import secopsai.research_worker as worker
+    from secopsai.worker_control import request_shutdown
+    calls = []
+    class Disabled:
+        enabled = False
+    monkeypatch.setattr('secopsai.core_edge_client.coordinator_client', lambda: Disabled())
+    monkeypatch.setattr('secopsai.daily_automation.recover_interrupted_runs', lambda **kwargs: calls.append(kwargs) or 1)
+    def stopped_cycle(**kwargs):
+        request_shutdown()
+        return {'status': 'succeeded'}
+    monkeypatch.setattr(worker, 'run_worker_cycle', stopped_cycle)
+    monkeypatch.setenv('SECOPSAI_RESTORED_LEDGER_RECOVERY', '1')
+    db = _db(tmp_path)
+    worker.run_worker_loop(db_path=db, max_cycles=1)
+    worker.run_worker_loop(db_path=db, max_cycles=1)
+    assert calls == [{'db_path': db, 'restored_snapshot': True}]

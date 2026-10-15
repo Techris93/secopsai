@@ -700,3 +700,46 @@ def test_sparse_restore_handles_growth_and_truncation_against_the_same_baseline(
     assert target.stat().st_size==server.manifest['size_bytes']
     with sqlite3.connect(target) as conn:
         assert conn.execute('SELECT id,length(value) FROM data').fetchall()==[(2,1000000)]
+
+
+def test_checkpoint_schedule_uses_capture_start_and_never_overlaps(monkeypatch):
+    clock = [0.0]
+    starts = []
+    class Stop:
+        def wait(self, seconds):
+            clock[0] += seconds
+            return len(starts) == 3
+    def capture():
+        starts.append(clock[0])
+        clock[0] += 140
+    monkeypatch.setattr(supervisor.time, 'monotonic', lambda: clock[0])
+    supervisor.periodic_checkpoints(Stop(), 60, capture)
+    assert starts == [60, 200, 340]
+
+
+def test_sparse_capture_reuses_verified_page_index_without_rereading_baseline(tmp_path, monkeypatch):
+    from pathlib import Path
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS', '1')
+    monkeypatch.setenv('SECOPSAI_PAGE_DELTA_CHECKPOINTS', '1')
+    db = tmp_path / 'live.db'
+    with sqlite3.connect(db) as connection:
+        connection.execute('CREATE TABLE data(label TEXT, payload BLOB)')
+        connection.execute("INSERT INTO data VALUES ('before', zeroblob(2000000))")
+    server = IncrementalServer()
+    client = supervisor.LedgerStore('http://ledger.internal', 'tok', opener=server)
+    supervisor.checkpoint(db, client, tmp_path)
+    with sqlite3.connect(db) as connection:
+        connection.execute("UPDATE data SET label='after!'")
+    original_open = Path.open
+    baseline = client.baseline_path
+    def guarded_open(path, *args, **kwargs):
+        assert path != baseline, 'unchanged verified baseline must not be read every capture'
+        return original_open(path, *args, **kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'open', guarded_open)
+        supervisor.checkpoint(db, client, tmp_path)
+    assert server.manifest['version'] == 4
+    restored = tmp_path / 'restored.db'
+    assert client.download(restored)
+    with sqlite3.connect(restored) as connection:
+        assert connection.execute('SELECT label FROM data').fetchone()[0] == 'after!'
