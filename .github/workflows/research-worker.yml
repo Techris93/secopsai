@@ -20,6 +20,10 @@ on:
         description: "Verify restored delivery without repeating collection, analysis or model jobs"
         type: boolean
         default: false
+      delivery_seconds:
+        description: "Maximum seconds for a delivery-only outbox drain (1–2700)"
+        type: number
+        default: 840
       retry_sources:
         description: "Optional comma-separated names of failed primary sources to retry once during delivery verification"
         required: false
@@ -44,7 +48,7 @@ jobs:
   run:
     if: inputs.trigger != 'cloudflare-cron' || vars.RESEARCH_WORKER_ENABLED == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: ${{ inputs.delivery_only && 75 || 45 }}
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       SECOPS_FINDINGS_DIR: /home/runner/research
@@ -73,6 +77,7 @@ jobs:
       SECOPSAI_PAGE_DELTA_CHECKPOINTS: ${{ vars.RESEARCH_PAGE_DELTA_CHECKPOINTS == 'true' && '1' || '0' }}
       SECOPSAI_VERIFY_RETRY_SOURCES: ${{ inputs.retry_sources }}
       SECOPSAI_VERIFY_DELIVERY_ONLY: ${{ inputs.delivery_only && '1' || '0' }}
+      SECOPSAI_VERIFY_DELIVERY_SECONDS: ${{ inputs.delivery_seconds || 840 }}
       SECOPSAI_WORKER_STAGE_LOGS: '1'
       SECOPSAI_LEDGER_CHECKPOINT_SECONDS: ${{ vars.RESEARCH_INCREMENTAL_CHECKPOINTS == 'true' && '60' || '3600' }}
       SECOPSAI_PRIMARY_INTEL: "1"  # source intake and draft assembly; never automatic publication
@@ -129,13 +134,26 @@ jobs:
         run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
 
       - name: Restore ledger, run worker cycles, checkpoint
-        # Reserve time for the multi-GB ledger restore, worker shutdown,
-        # compression, and a bounded 10-minute upload including retries.
+        # Delivery-only runs may drain for up to 45 minutes; the job timeout
+        # reserves additional time for ledger restore and the final checkpoint.
         # Exhausted retries still fail the run so an unsaved checkpoint is visible.
         run: |
           delivery_args=()
-          if [ "$SECOPSAI_VERIFY_DELIVERY_ONLY" = "1" ]; then delivery_args+=(--delivery-only); fi
-          python -u cloudflare/secopsai-research-runner/container/supervisor.py --cycles "${{ inputs.cycles || '6' }}" --max-seconds 900 "${delivery_args[@]}"
+          max_seconds=900
+          if [ "$SECOPSAI_VERIFY_DELIVERY_ONLY" = "1" ]; then
+            if ! [[ "$SECOPSAI_VERIFY_DELIVERY_SECONDS" =~ ^[0-9]+$ ]]; then
+              echo "delivery_seconds must be between 1 and 2700" >&2
+              exit 2
+            fi
+            delivery_seconds=$((10#$SECOPSAI_VERIFY_DELIVERY_SECONDS))
+            if (( delivery_seconds < 1 || delivery_seconds > 2700 )); then
+              echo "delivery_seconds must be between 1 and 2700" >&2
+              exit 2
+            fi
+            delivery_args+=(--delivery-only)
+            max_seconds=$((delivery_seconds + 60))
+          fi
+          python -u cloudflare/secopsai-research-runner/container/supervisor.py --cycles "${{ inputs.cycles || '6' }}" --max-seconds "$max_seconds" "${delivery_args[@]}"
 
       - name: Verify final checkpoint and hosted delivery health
         if: always() && inputs.delivery_only

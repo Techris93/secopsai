@@ -1,4 +1,5 @@
 import soc_store
+import pytest
 from secopsai.research_delivery_verification import verify_delivery
 
 
@@ -19,7 +20,7 @@ def test_delivery_verification_drains_exact_backlog_and_projects_without_reanaly
             return next(self.results)
         def sync_research_operation(self, projection):
             return {'status': 'stored'}
-    result = verify_delivery(db_path=db, client=Client())
+    result = verify_delivery(db_path=db, client=Client(), seconds=2700)
     assert result['status'] == 'passed'
     assert result['flushed_total'] == 3 and result['pending'] == 0
     assert result['model_jobs_created'] == 0 and result['registry_scans_performed'] is False
@@ -48,6 +49,11 @@ def test_delivery_verification_does_not_start_a_partial_final_request(tmp_path, 
         def sync_research_operation(self, value): return {'status': 'stored'}
     result = verify_delivery(db_path=str(tmp_path/'short-budget.db'), client=Client(), seconds=1)
     assert result['status'] == 'failed'
+
+
+def test_delivery_verification_rejects_budgets_above_workflow_limit():
+    with pytest.raises(ValueError, match='1–2700 seconds'):
+        verify_delivery(client=object(), seconds=2701)
 
 
 def test_explicit_source_retry_only_attempts_selected_enabled_source(tmp_path, monkeypatch):
