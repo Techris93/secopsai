@@ -743,3 +743,27 @@ def test_sparse_capture_reuses_verified_page_index_without_rereading_baseline(tm
     assert client.download(restored)
     with sqlite3.connect(restored) as connection:
         assert connection.execute('SELECT label FROM data').fetchone()[0] == 'after!'
+
+
+def test_delivery_only_supervisor_uses_verifier_and_preserves_final_checkpoint(tmp_path, monkeypatch):
+    import subprocess as real_subprocess
+    server = FakeLedgerServer()
+    data = tmp_path / 'research'
+    data.mkdir()
+    with sqlite3.connect(data / 'openclaw_soc.db') as connection:
+        connection.execute('CREATE TABLE synthetic(value)')
+    monkeypatch.setenv('SECOPS_FINDINGS_DIR', str(data))
+    monkeypatch.setenv('LEDGER_STORE_URL', 'http://ledger.internal')
+    monkeypatch.setenv('LEDGER_STORE_TOKEN', 'tok')
+    monkeypatch.setenv('SECOPSAI_RESTORED_LEDGER_RECOVERY', '1')
+    monkeypatch.setattr(supervisor.LedgerStore, '__init__', lambda self, url, token: (setattr(self, 'base_url', url), setattr(self, 'token', token), setattr(self, '_open', server)) and None)
+    original_popen = real_subprocess.Popen
+    commands = []
+    def launch(command, **kwargs):
+        commands.append(command)
+        assert kwargs['env']['SECOPSAI_RESTORED_LEDGER_RECOVERY'] == '0', 'existing local ledgers cannot inherit restored-owner recovery'
+        return original_popen([supervisor.sys.executable, '-c', 'raise SystemExit(0)'], **kwargs)
+    monkeypatch.setattr(supervisor.subprocess, 'Popen', launch)
+    assert supervisor.main(['--delivery-only', '--cycles', '1']) == 0
+    assert commands[0][-1] == 'secopsai.research_delivery_verification'
+    assert server.latest is not None

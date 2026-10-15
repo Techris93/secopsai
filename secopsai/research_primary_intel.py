@@ -194,16 +194,20 @@ def acquire(config: dict, content: bytes, *, db_path=None, transport="direct") -
     return {"source_id": config["source_id"], "snapshot_id": snapshot_id, "events": len(items), "inserted": inserted, "status": "acquired"}
 
 
-def collect_due(*, db_path=None, fetcher=None, limit: int = 10) -> dict:
+def collect_due(*, db_path=None, fetcher=None, limit: int = 10, force_source_ids: tuple[str, ...] = ()) -> dict:
+    # Explicit recovery selects only the named sources; normal calls retain
+    # the existing due schedule and never bypass operator disablement.
     seed = seed_sources(db_path=db_path)
     fetcher = fetcher or SafeFetcher(timeout=15)
     with read_connection(db_path) as conn:
         sources = [dict(r) for r in conn.execute("SELECT * FROM research_intel_sources ORDER BY COALESCE(last_attempt_at,'') ASC").fetchall()]
     results = []
     for source in sources:
+        if force_source_ids and source["source_id"] not in force_source_ids:
+            continue
         config = json.loads(source["config_json"])
         interval = min(config["interval_seconds"], 300 * 2 ** min(source["consecutive_failures"], 4)) if source["consecutive_failures"] else config["interval_seconds"]
-        if not config["enabled"] or (source["last_attempt_at"] and _future(interval, source["last_attempt_at"]) > _now()):
+        if not config["enabled"] or (source["source_id"] not in force_source_ids and source["last_attempt_at"] and _future(interval, source["last_attempt_at"]) > _now()):
             continue
         if len(results) >= min(10, max(1, limit)):
             break

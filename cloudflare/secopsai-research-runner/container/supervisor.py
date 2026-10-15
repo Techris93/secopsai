@@ -507,6 +507,7 @@ def main(argv: Optional[list] = None) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--cycles", type=int, default=0, help="Run N worker cycles then checkpoint and exit (0 = run until SIGTERM)")
+    parser.add_argument("--delivery-only", action="store_true", help="Verify durable delivery without collection, analysis, or model jobs")
     parser.add_argument("--checkpoint-only", action="store_true", help="Upload the existing local ledger and exit (migration)")
     parser.add_argument("--max-seconds", type=int, default=0, help="Stop the worker after this many seconds, then checkpoint (0 = no budget)")
     args = parser.parse_args(argv)
@@ -533,7 +534,9 @@ def main(argv: Optional[list] = None) -> int:
         _log("ledger_restored" if restored else "ledger_initialized", path=str(db_path))
 
     command = [sys.executable, "-u", "-m", "secopsai.cli", "research", "worker", "run", "--interval", os.environ.get("SECOPSAI_WORKER_INTERVAL", "60")]
-    if args.cycles > 0:
+    if args.delivery_only:
+        command = [sys.executable, "-u", "-m", "secopsai.research_delivery_verification"]
+    elif args.cycles > 0:
         command += ["--max-cycles", str(args.cycles)]
     worker = subprocess.Popen(command, env={**os.environ, "SECOPS_FINDINGS_DIR": str(data_dir),
                                                "SECOPSAI_RESTORED_LEDGER_RECOVERY": "1" if restored else "0"})
