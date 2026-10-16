@@ -29,6 +29,8 @@ DEFAULT_MIN_FREE_BYTES = 128 * 1024 * 1024
 DEFAULT_WARNING_USED_PERCENT = 70.0
 DEFAULT_MAX_USED_PERCENT = 85.0
 DEFAULT_BATCH_SIZE = 5000
+ROUTINE_BATCH_SIZE_CAP = 250
+ROUTINE_MAX_BATCHES = 2
 RESERVE_FILENAME = ".secopsai-storage-reserve"
 
 
@@ -418,13 +420,14 @@ def maintain_research_storage(
     before = storage_status(db_path=db_path, include_page_stats=False)
     released = release_storage_reserve(db_path=db_path) if before["pressure"] or aggressive else 0
     database = _resolved_db_path(db_path)
-    batch_size = _env_int("SECOPSAI_STORAGE_PRUNE_BATCH_SIZE", DEFAULT_BATCH_SIZE, minimum=100)
+    configured_batch_size = _env_int("SECOPSAI_STORAGE_PRUNE_BATCH_SIZE", DEFAULT_BATCH_SIZE, minimum=100)
     # Disk pressure used to trigger the same 200-batch path as explicit
     # operator-requested aggressive maintenance. That turned a warning into
     # an hours-long automatic writer lock on large databases. Routine worker
     # cycles stay tightly bounded; aggressive pruning remains an explicit CLI
     # operation after the operator has reviewed capacity and backup state.
-    max_batches = 200 if aggressive else 4
+    batch_size = configured_batch_size if aggressive else min(configured_batch_size, ROUTINE_BATCH_SIZE_CAP)
+    max_batches = 200 if aggressive else ROUTINE_MAX_BATCHES
     deleted: Dict[str, int] = {}
     # Hold the cross-process writer lock only for schema setup and bounded
     # deletes.  The expensive read-only capacity probes above/below stay

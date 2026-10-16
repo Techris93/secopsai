@@ -134,6 +134,7 @@ def test_storage_retention_predicates_have_supporting_indexes(tmp_path):
 
 def test_pressure_does_not_expand_automatic_pruning_batches(tmp_path, monkeypatch):
     db_path = _db(tmp_path)
+    monkeypatch.setenv("SECOPSAI_STORAGE_PRUNE_BATCH_SIZE", "5000")
     pressure = {
         "pressure": True,
         "warning": True,
@@ -150,20 +151,23 @@ def test_pressure_does_not_expand_automatic_pruning_batches(tmp_path, monkeypatc
         "sqlite_reclaimable_bytes": 0,
     }
     batch_limits = []
+    row_limits = []
     monkeypatch.setattr(research_storage, "storage_status", lambda **_kwargs: dict(pressure))
     monkeypatch.setattr(research_storage, "release_storage_reserve", lambda **_kwargs: 0)
     monkeypatch.setattr(research_storage, "ensure_storage_reserve", lambda **_kwargs: 0)
-    monkeypatch.setattr(
-        research_storage,
-        "_delete_batches",
-        lambda _connection, *, max_batches, **_kwargs: batch_limits.append(max_batches) or 0,
-    )
+    def capture_batch(_connection, *, max_batches, batch_size, **_kwargs):
+        batch_limits.append(max_batches)
+        row_limits.append(batch_size)
+        return 0
+
+    monkeypatch.setattr(research_storage, "_delete_batches", capture_batch)
 
     result = maintain_research_storage(db_path=db_path)
 
     assert result["before"]["pressure"] is True
     assert batch_limits
-    assert set(batch_limits) == {4}
+    assert set(batch_limits) == {research_storage.ROUTINE_MAX_BATCHES}
+    assert set(row_limits) == {research_storage.ROUTINE_BATCH_SIZE_CAP}
 
 
 def test_completed_npm_analysis_retention_does_not_scan_candidate_evidence():
@@ -181,8 +185,10 @@ def test_routine_storage_maintenance_skips_database_wide_optimize(tmp_path, monk
     monkeypatch.setenv("SECOPSAI_STORAGE_RESERVE_BYTES", "0")
     monkeypatch.setenv("SECOPSAI_STORAGE_MIN_FREE_BYTES", "0")
     monkeypatch.setenv("SECOPSAI_STORAGE_MAX_USED_PERCENT", "100")
+    monkeypatch.setenv("SECOPSAI_STORAGE_PRUNE_BATCH_SIZE", "5000")
     db_path = _db(tmp_path)
     optimize_calls = []
+    prune_limits = []
     original_connect = research_storage.soc_store.connect
 
     class ConnectionProxy:
@@ -209,12 +215,22 @@ def test_routine_storage_maintenance_skips_database_wide_optimize(tmp_path, monk
         "connect",
         lambda path: ConnectionProxy(original_connect(path)),
     )
+    def capture_prune(_connection, *, batch_size, max_batches, **_kwargs):
+        prune_limits.append((batch_size, max_batches))
+        return 0
+
+    monkeypatch.setattr(research_storage, "_delete_batches", capture_prune)
 
     maintain_research_storage(db_path=db_path)
     assert optimize_calls == []
+    assert prune_limits
+    assert set(prune_limits) == {(research_storage.ROUTINE_BATCH_SIZE_CAP, research_storage.ROUTINE_MAX_BATCHES)}
 
+    prune_limits.clear()
     maintain_research_storage(db_path=db_path, aggressive=True)
     assert len(optimize_calls) == 1
+    assert prune_limits
+    assert set(prune_limits) == {(5000, 200)}
 
 
 def test_storage_reserve_is_real_and_releasable(tmp_path, monkeypatch):
