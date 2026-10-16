@@ -432,6 +432,47 @@ def test_watchdog_reports_failures_without_secrets_and_refuses_redirects(monkeyp
         module.NoRedirect().redirect_request(None, None, 302, "Found", {}, "https://other.example/")
 
 
+def test_delivery_watchdog_keeps_source_freshness_visible_without_failing_delivery_scope():
+    from scripts.research_operation_watchdog import inspect
+
+    now = datetime(2026, 10, 16, 12, tzinfo=timezone.utc)
+
+    def reader(url, _token):
+        if url.endswith("/status"):
+            return json.dumps({"uploaded_at": now.isoformat(), "checkpoint_available": True,
+                               "completion_retry_safe": True, "captured_at": now.isoformat()}).encode()
+        if "/research/operation" in url:
+            return json.dumps({"synced_at": now.isoformat(), "coverage": {"health": {
+                "freshness_gaps": ["Synthetic stale source"], "dead_letters": 0,
+                "artifact_backup_pending": 0, "ontology_pending": 0,
+            }}}).encode()
+        return b"<html>synthetic</html>"
+
+    delivery = inspect(reader=reader, now=now, scope="delivery")
+    assert delivery["status"] == "passed"
+    assert delivery["operational_status"] == "degraded"
+    assert delivery["checks"]["research_operation"]["freshness_gaps"] == ["Synthetic stale source"]
+    assert delivery["warnings"] == ["enabled source freshness needs review: Synthetic stale source"]
+    assert delivery["blockers"] == []
+
+    operations = inspect(reader=reader, now=now, scope="all")
+    assert operations["status"] == "failed"
+    assert operations["operational_status"] == "degraded"
+    assert operations["blockers"] == ["enabled research sources are outside their freshness targets"]
+
+    def dead_letter_reader(url, token):
+        raw = reader(url, token)
+        if "/research/operation" not in url:
+            return raw
+        value = json.loads(raw)
+        value["coverage"]["health"]["dead_letters"] = 1
+        return json.dumps(value).encode()
+
+    blocked_delivery = inspect(reader=dead_letter_reader, now=now, scope="delivery")
+    assert blocked_delivery["status"] == "failed"
+    assert blocked_delivery["blockers"] == ["research delivery has dead-letter items requiring review"]
+
+
 def test_real_source_catalog_seeds_supported_parsers_and_explicit_omissions(db):
     from secopsai.research_primary_intel import seed_sources
     seeded = seed_sources(db_path=db)

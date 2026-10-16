@@ -402,4 +402,9 @@ authentication and contract failures are never retried as availability failures.
 
 After the delivery-only final checkpoint, the workflow runs the independent
 checkpoint/hosted-state/public-availability watchdog and preserves its bounded
-diagnostic report. This does not repeat the fifteen-source parsing probe.
+diagnostic report. In this mode, delivery backlog, checkpoint, backup, ontology
+and endpoint failures are release blockers. Source-freshness gaps remain in the
+report as an explicit degraded operational status, but do not fail a delivery
+run that performs no collection. The watchdog's default full-operation scope
+continues to block on those gaps. This does not repeat the fifteen-source
+parsing probe.

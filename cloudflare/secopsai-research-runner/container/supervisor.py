@@ -50,6 +50,8 @@ RETRY_HTTP_STATUSES = {408, 429, 500, 502, 503, 504}
 USER_AGENT = "SecOpsAI-Research/1.0"
 DELTA_MAGIC = b"SOCDLT1\0"
 DELTA_BLOCK_BYTES = 4096
+SPARSE_FRAME_RAW_LIMIT = 28 * 1024 * 1024
+SPARSE_UPLOAD_WORKERS = 4
 
 
 class RebaseRequired(Exception):
@@ -279,10 +281,11 @@ class LedgerStore:
             partial.unlink(missing_ok=True)
 
     def upload_sparse(self, backup, *, captured_at, deadline):
+        started = time.monotonic()
         base = self.baseline_manifest
-        entries, digest, offset, dirty = [], hashlib.sha256(), 0, 0
+        entries, pending, digest, offset, dirty = [], [], hashlib.sha256(), 0, 0
         frame = bytearray(DELTA_MAGIC)
-        limit = 28 * 1024 * 1024
+        cache_lock = threading.Lock()
         cached = self.chunk_cache
         current_size = backup.stat().st_size
         stat = self.baseline_path.stat()
@@ -291,38 +294,58 @@ class LedgerStore:
             raise RebaseRequired("local baseline size changed")
         if getattr(self, "baseline_identity", None) != identity:
             self.index_baseline(deadline=deadline)
-        def flush_frame():
-            packed = gzip.compress(frame, compresslevel=1, mtime=0)
+
+        def upload_frame(raw):
+            if time.monotonic() >= deadline:
+                raise TimeoutError("sparse checkpoint upload exceeds its bounded budget")
+            packed = gzip.compress(raw, compresslevel=1, mtime=0)
             key = hashlib.sha256(packed).hexdigest()
-            if key not in cached:
+            with cache_lock:
+                already_uploaded = key in cached
+            if not already_uploaded:
                 receipt = json.loads(self._request("PUT", "/artifact-objects/" + key, packed, deadline=deadline))
                 if receipt.get("sha256") != key or receipt.get("size_bytes") != len(packed):
                     raise ValueError("sparse checkpoint upload receipt mismatch")
-                cached.add(key)
-            entries.append({"sha256": key, "size_bytes": len(packed), "raw_sha256": hashlib.sha256(frame).hexdigest(), "raw_size_bytes": len(frame)})
+                with cache_lock:
+                    cached.add(key)
+            elif time.monotonic() >= deadline:
+                raise TimeoutError("sparse checkpoint upload exceeds its bounded budget")
+            return {"sha256": key, "size_bytes": len(packed), "raw_sha256": hashlib.sha256(raw).hexdigest(), "raw_size_bytes": len(raw)}
+
+        def flush_frame(pool):
+            raw = bytes(frame)
+            pending.append(pool.submit(upload_frame, raw))
             frame[:] = DELTA_MAGIC
+            # Keep at most four frames in flight so scanning can overlap the
+            # network without retaining an unbounded portion of a large delta.
+            if len(pending) >= SPARSE_UPLOAD_WORKERS:
+                entries.append(pending.pop(0).result())
+
         with backup.open("rb") as current:
-            while group := current.read(1024*1024):
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("sparse checkpoint scan exceeds its bounded budget")
-                digest.update(group)
-                group_index = (offset // (1024*1024)) * 32
-                if hashlib.sha256(group).digest() != self.baseline_groups[group_index:group_index+32]:
-                    for index in range(0, len(group), DELTA_BLOCK_BYTES):
-                        raw = group[index:index+DELTA_BLOCK_BYTES]
-                        page_index = ((offset+index) // DELTA_BLOCK_BYTES) * 32
-                        if hashlib.sha256(raw).digest() == self.baseline_pages[page_index:page_index+32]:
-                            continue
-                        dirty += len(raw)
-                        if dirty > max(base["size_bytes"], current_size) // 4:
-                            raise RebaseRequired("more than one quarter of baseline bytes changed")
-                        if len(frame) + 12 + len(raw) > limit:
-                            flush_frame()
-                        frame.extend(struct.pack(">QI", offset+index, len(raw)))
-                        frame.extend(raw)
-                offset += len(group)
-            if len(frame) > len(DELTA_MAGIC):
-                flush_frame()
+            with ThreadPoolExecutor(max_workers=SPARSE_UPLOAD_WORKERS) as pool:
+                while group := current.read(1024*1024):
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("sparse checkpoint scan exceeds its bounded budget")
+                    digest.update(group)
+                    group_index = (offset // (1024*1024)) * 32
+                    if hashlib.sha256(group).digest() != self.baseline_groups[group_index:group_index+32]:
+                        for index in range(0, len(group), DELTA_BLOCK_BYTES):
+                            raw = group[index:index+DELTA_BLOCK_BYTES]
+                            page_index = ((offset+index) // DELTA_BLOCK_BYTES) * 32
+                            if hashlib.sha256(raw).digest() == self.baseline_pages[page_index:page_index+32]:
+                                continue
+                            dirty += len(raw)
+                            if dirty > max(base["size_bytes"], current_size) // 4:
+                                raise RebaseRequired("more than one quarter of baseline bytes changed")
+                            if len(frame) + 12 + len(raw) > SPARSE_FRAME_RAW_LIMIT:
+                                flush_frame(pool)
+                            frame.extend(struct.pack(">QI", offset+index, len(raw)))
+                            frame.extend(raw)
+                    offset += len(group)
+                if len(frame) > len(DELTA_MAGIC):
+                    flush_frame(pool)
+                while pending:
+                    entries.append(pending.pop(0).result())
         if len(base["chunks"]) + len(entries) > 900:
             raise RebaseRequired("sparse checkpoint object budget exceeded")
         manifest = {"version": 4, "base": base, "block_bytes": DELTA_BLOCK_BYTES, "patches": entries,
@@ -330,7 +353,8 @@ class LedgerStore:
         result = json.loads(self._request("POST", "/checkpoints", json.dumps(manifest, separators=(",", ":")).encode(), deadline=deadline))
         if result.get("superseded") is True:
             raise ValueError("sparse checkpoint was superseded by a newer capture")
-        _log("sparse_checkpoint_uploaded", bytes=offset, changed_bytes=dirty, patch_chunks=len(entries), captured_at=captured_at, key=result["key"])
+        _log("sparse_checkpoint_uploaded", bytes=offset, changed_bytes=dirty, patch_chunks=len(entries),
+             elapsed_seconds=round(time.monotonic()-started, 1), captured_at=captured_at, key=result["key"])
         return str(result["key"])
 
     def upload_chunked(self, backup: Path, *, captured_at: str, deadline=None) -> str:
