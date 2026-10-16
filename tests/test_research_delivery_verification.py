@@ -141,6 +141,43 @@ def test_explicit_registry_collector_retry_runs_only_selected_enabled_collector(
     assert result['registry_scans_performed'] is True and result['analysis_performed'] is False
 
 
+def test_multiple_explicit_registry_collector_retries_cover_selected_sources(tmp_path, monkeypatch):
+    db = str(tmp_path/'multiple-collector-retry.db')
+    soc_store.init_db(db)
+    monkeypatch.setattr('secopsai.ontology.materialize_recent', lambda **kwargs: {'snapshot': {}})
+    monkeypatch.setattr('secopsai.research_operation.hosted_projection', lambda **kwargs: {'coverage': {'health': {}}})
+    calls = []
+
+    def run_registry_collector(**kwargs):
+        calls.append(kwargs)
+        return {'status': 'completed', 'coverage': 'complete', 'pages_selected': 20,
+                'pages_processed': 20, 'events_stored': 3}
+
+    monkeypatch.setattr('secopsai.research_surveillance.run_registry_collector', run_registry_collector)
+
+    class Client:
+        enabled = True
+        def enqueue_ontology_snapshot(self, *args, **kwargs): return {'status': 'queued'}
+        def flush_ontology_outbox(self, **kwargs): return {'pending': 0, 'flushed': 0}
+        def sync_research_operation(self, value): return {'status': 'stored'}
+
+    names = (
+        'crates.io recently updated crates',
+        'Go module index',
+        'npm replicate changes',
+        'NuGet V3 Catalog',
+        'Packagist metadata changes',
+    )
+    result = verify_delivery(db_path=db, client=Client(), retry_collector_names=names)
+
+    assert {call['ecosystem'] for call in calls} == {'crates', 'go', 'npm', 'nuget', 'packagist'}
+    assert [item['name'] for item in result['registry_collectors']] == list(names)
+    assert result['status'] == 'passed'
+    assert result['registry_collectors_retried'] == len(names)
+    assert result['registry_collector_failures'] == 0
+    assert result['registry_scans_performed'] is True and result['analysis_performed'] is False
+
+
 def test_incomplete_registry_collector_retry_keeps_delivery_verification_failed(tmp_path, monkeypatch):
     db = str(tmp_path/'collector-gap.db')
     soc_store.init_db(db)

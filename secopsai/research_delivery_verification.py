@@ -42,8 +42,8 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
     collector_results = []
     if retry_collector_names:
         requested = {name.strip().casefold() for name in retry_collector_names if name.strip()}
-        if len(requested) != 1:
-            raise ValueError("registry collector recovery permits exactly one named collector")
+        if not requested or len(requested) > 10:
+            raise ValueError("registry collector recovery permits one to ten named collectors")
         from secopsai.research_surveillance import ensure_collectors, run_registry_collector
         from secopsai.research_worker import MAX_PAGES_PER_CYCLE, collector_page_budget
 
@@ -54,6 +54,8 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
         if any(not bool(collector['enabled']) for collector in selected):
             raise ValueError("registry collector recovery requires an enabled collector")
         for collector in selected:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("registry collector recovery exceeded the delivery verification budget")
             result = run_registry_collector(
                 ecosystem=collector['ecosystem'],
                 max_pages=collector_page_budget(collector['ecosystem'], MAX_PAGES_PER_CYCLE),
@@ -70,8 +72,8 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
                 'error_category': 'collector_error' if result.get('error') else None,
             })
             print(json.dumps({'event': 'registry_collector_recovery_result', **collector_results[-1]}), flush=True)
-        if time.monotonic() >= deadline:
-            raise TimeoutError("registry collector recovery exceeded the delivery verification budget")
+            if time.monotonic() >= deadline:
+                raise TimeoutError("registry collector recovery exceeded the delivery verification budget")
     snapshot = materialize_recent(db_path=db_path, limit=100)['snapshot']
     queued = client.enqueue_ontology_snapshot(snapshot, db_path=db_path)
     if queued.get('status') != 'queued':
