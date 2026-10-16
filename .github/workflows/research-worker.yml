@@ -166,7 +166,10 @@ jobs:
 
       - name: Verify final checkpoint and hosted delivery health
         if: always() && inputs.delivery_only
-        run: python scripts/research_operation_watchdog.py --output reports/research/delivery-health.json
+        # Delivery-only runs intentionally do not collect new source data.
+        # Source-freshness gaps remain explicit in the report, but do not turn
+        # a successful outbox/checkpoint verification into a false failure.
+        run: python scripts/research_operation_watchdog.py --scope delivery --output reports/research/delivery-health.json
 
       - name: Preserve delivery verification diagnostics
         if: always() && inputs.delivery_only

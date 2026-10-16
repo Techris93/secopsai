@@ -37,9 +37,11 @@ def fetch(url, token="", *, opener=None):
             time.sleep(attempt + 1)
 
 
-def inspect(*, reader=fetch, now=None) -> dict:
+def inspect(*, reader=fetch, now=None, scope="all") -> dict:
+    if scope not in {"all", "delivery"}:
+        raise ValueError("watchdog scope must be 'all' or 'delivery'")
     now = now or datetime.now(timezone.utc)
-    checks, blockers = {}, []
+    checks, blockers, warnings = {}, [], []
     for name, url, token in (
         ("checkpoint", os.environ.get("LEDGER_STORE_URL", "https://ledger.secopsai.dev") + "/status", os.environ.get("LEDGER_STORE_TOKEN", "")),
         ("research_operation", os.environ.get("SECOPSAI_CORE_COORDINATOR_URL", "https://core.secopsai.dev") + "/api/v1/research/operation", os.environ.get("SECOPSAI_CORE_BRIDGE_TOKEN", "")),
@@ -71,11 +73,17 @@ def inspect(*, reader=fetch, now=None) -> dict:
                                     rpo_limitation="Snapshot age is a freshness measurement; committed event loss requires a verified crash drill.")
             if name == "research_operation":
                 health = value.get("coverage", {}).get("health", {})
-                checks[name]["freshness_gaps"] = health.get("freshness_gaps", [])
+                freshness_gaps = health.get("freshness_gaps", [])
+                checks[name]["freshness_gaps"] = freshness_gaps
+                checks[name]["source_freshness_status"] = "degraded" if freshness_gaps else "healthy"
                 checks[name]["dead_letters"] = health.get("dead_letters", 0)
                 checks[name]["artifact_backup_pending"] = health.get("artifact_backup_pending")
-                if health.get("freshness_gaps") or health.get("dead_letters"):
-                    blockers.append("source freshness or dead-letter review requires attention")
+                if freshness_gaps:
+                    warnings.append("enabled source freshness needs review: " + ", ".join(freshness_gaps))
+                if health.get("dead_letters"):
+                    blockers.append("research delivery has dead-letter items requiring review")
+                if freshness_gaps and scope == "all":
+                    blockers.append("enabled research sources are outside their freshness targets")
                 if health.get("artifact_backup_pending"):
                     blockers.append("registered public artifacts lack completed durable backups")
                 checks[name]["ontology_pending"] = health.get("ontology_pending")
@@ -85,18 +93,25 @@ def inspect(*, reader=fetch, now=None) -> dict:
             # Never print endpoint bodies, credential-bearing errors or tokens.
             checks[name] = {"available": False, "error_category": type(exc).__name__}
             blockers.append(f"{name} availability/freshness check failed")
-    return {"as_of": now.isoformat(), "status": "failed" if blockers else "passed", "checks": checks, "blockers": blockers}
+    status = "failed" if blockers else "passed"
+    operational_status = "degraded" if blockers or warnings else "healthy"
+    return {"as_of": now.isoformat(), "scope": scope, "status": status,
+            "operational_status": operational_status, "checks": checks,
+            "warnings": warnings, "blockers": blockers}
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True)
+    parser.add_argument("--scope", choices=("all", "delivery"), default="all",
+                        help="Gate all operational checks, or only the delivery path while reporting unrelated source-freshness warnings")
     args = parser.parse_args()
-    report = inspect()
+    report = inspect(scope=args.scope)
     path = Path(args.output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2))
-    print(json.dumps({"status": report["status"], "blockers": report["blockers"]}))
+    print(json.dumps({"status": report["status"], "operational_status": report["operational_status"],
+                      "warnings": report["warnings"], "blockers": report["blockers"]}))
     return 0 if report["status"] == "passed" else 1
 
 

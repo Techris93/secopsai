@@ -773,6 +773,57 @@ def test_sparse_capture_reuses_verified_page_index_without_rereading_baseline(tm
         assert connection.execute('SELECT label FROM data').fetchone()[0] == 'after!'
 
 
+def test_sparse_checkpoint_uploads_changed_frames_in_parallel_and_commits_complete_manifest(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS', '1')
+    monkeypatch.setenv('SECOPSAI_PAGE_DELTA_CHECKPOINTS', '1')
+    monkeypatch.setattr(supervisor, 'SPARSE_FRAME_RAW_LIMIT', 64 * 1024)
+    db = tmp_path / 'live.db'
+    with sqlite3.connect(db) as connection:
+        connection.execute('CREATE TABLE data(value BLOB)')
+        connection.execute('INSERT INTO data VALUES(zeroblob(4194304))')
+
+    server = IncrementalServer()
+    active, maximum, sparse_puts = [0], [0], [0]
+    lock = threading.Lock()
+
+    def delayed(request, timeout=None):
+        is_sparse_put = request.get_method() == 'PUT' and '/artifact-objects/' in request.full_url
+        if is_sparse_put:
+            with lock:
+                active[0] += 1
+                maximum[0] = max(maximum[0], active[0])
+                sparse_puts[0] += 1
+            time.sleep(0.01)
+        try:
+            return server(request, timeout)
+        finally:
+            if is_sparse_put:
+                with lock:
+                    active[0] -= 1
+
+    client = supervisor.LedgerStore('http://ledger.internal', 'tok', opener=delayed)
+    supervisor.checkpoint(db, client, tmp_path)
+    maximum[0] = sparse_puts[0] = 0
+    with sqlite3.connect(db) as connection:
+        connection.execute('UPDATE data SET value=randomblob(524288)||substr(value,524289)')
+
+    supervisor.checkpoint(db, client, tmp_path)
+
+    assert maximum[0] > 1
+    assert maximum[0] <= supervisor.SPARSE_UPLOAD_WORKERS
+    assert sparse_puts[0] > 1
+    assert server.manifest['version'] == 4
+    assert all(patch['sha256'] in server.objects for patch in server.manifest['patches'])
+    restored = tmp_path / 'restored.db'
+    assert client.download(restored)
+    with sqlite3.connect(restored) as connection:
+        # length(TEXT) stops at a random NUL; cast back to BLOB to check all bytes.
+        assert connection.execute('SELECT length(CAST(value AS BLOB)) FROM data').fetchone()[0] == 4194304
+
+
 def test_delivery_only_supervisor_uses_verifier_and_preserves_final_checkpoint(tmp_path, monkeypatch):
     import subprocess as real_subprocess
     server = FakeLedgerServer()
