@@ -141,8 +141,15 @@ def main():
         signal.signal(signum, lambda _signum, _frame: request_shutdown())
     try:
         if os.environ.pop('SECOPSAI_RESTORED_LEDGER_RECOVERY', '0') == '1':
-            from secopsai.daily_automation import recover_interrupted_runs
-            recover_interrupted_runs(db_path=None, restored_snapshot=True)
+            from secopsai.daily_automation import recover_interrupted_runs as recover_automation_runs
+            from secopsai.research_surveillance import recover_interrupted_runs as recover_registry_runs
+            automation_recovery = recover_automation_runs(db_path=None, restored_snapshot=True)
+            registry_recovery = recover_registry_runs(db_path=None, restored_snapshot=True)
+            print(json.dumps({
+                'event': 'restored_snapshot_recovery',
+                'automation_runs': automation_recovery,
+                'registry_runs': registry_recovery,
+            }), flush=True)
         seconds = int(os.environ.get('SECOPSAI_VERIFY_DELIVERY_SECONDS', '840'))
         report = verify_delivery(
             seconds=seconds,

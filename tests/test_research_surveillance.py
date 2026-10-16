@@ -324,6 +324,40 @@ def test_recover_interrupted_runs_marks_old_running(tmp_path):
     assert status["last_run"]["status"] == "interrupted"
 
 
+def test_restored_snapshot_recovery_interrupts_recent_collector_and_releases_it(tmp_path):
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+    started = soc_store.utc_now()
+    with soc_store.connect(db_path) as connection:
+        connection.execute(
+            """INSERT INTO registry_ingestion_runs
+            (run_id, collector_id, status, cursor_before, cursor_after, coverage_mode, started_at)
+            VALUES ('RIR-RESTORED-OPENVSX', 'COL-OPENVSX-SEARCH', 'running', '', '', 'index_reconcile', ?)""",
+            (started,),
+        )
+
+    assert recover_interrupted_runs(restored_snapshot=True, db_path=db_path) == {"interrupted": 1}
+    payload = json.dumps({
+        "totalSize": 1,
+        "extensions": [{
+            "namespace": "synthetic", "name": "restored-run-check",
+            "timestamp": "2026-10-15T00:00:00.000Z", "version": "1.0.0",
+        }],
+    }).encode()
+
+    def fetch(url, max_bytes):
+        assert url.startswith("https://open-vsx.org/api/-/search?")
+        return 200, {"content-type": "application/json"}, payload
+
+    result = run_registry_collector(
+        ecosystem="open-vsx", max_pages=400, db_path=db_path,
+        fetcher=SafeFetcher(fetch=fetch),
+    )
+    assert result["status"] == "completed"
+    assert result["coverage"] == "complete"
+    assert result["pages_processed"] > 0
+
+
 def test_fetch_leaves_enriches_metadata_and_dead_letters_leaf_failure(tmp_path):
     db_path = _db(tmp_path)
     failing_leaf = "https://api.nuget.org/v3/catalog0/data/2026.07.20.11.00.00/adventureworks.core.2.0.0.json"

@@ -674,9 +674,11 @@ def run_worker_loop(
     core_edge = coordinator_client()
     try:
         if os.environ.pop("SECOPSAI_RESTORED_LEDGER_RECOVERY", "0") == "1":
-            from secopsai.daily_automation import recover_interrupted_runs
-            recovered = recover_interrupted_runs(db_path=db_path, restored_snapshot=True)
-            print(json.dumps({"component": "research-worker", "event": "restored_run_recovery", "runs": recovered}), flush=True)
+            from secopsai.daily_automation import recover_interrupted_runs as recover_automation_runs
+            automation_recovered = recover_automation_runs(db_path=db_path, restored_snapshot=True)
+            registry_recovered = recover_interrupted_runs(db_path=db_path, restored_snapshot=True)
+            print(json.dumps({"component": "research-worker", "event": "restored_run_recovery",
+                              "automation_runs": automation_recovered, "registry_runs": registry_recovered}), flush=True)
         while not stop["requested"]:
             if core_edge.enabled:
                 try:
