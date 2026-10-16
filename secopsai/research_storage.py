@@ -15,6 +15,7 @@ import json
 import secrets
 import shutil
 import sqlite3
+import time
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -40,6 +41,13 @@ class ResearchStorageCapacityError(RuntimeError):
 
 HISTORY_ARCHIVE_SCHEMA = "secopsai.storage.history-archive.v1"
 DEFAULT_HISTORY_ARCHIVE_BATCH = 100
+
+
+def _storage_progress(event: str, **fields: Any) -> None:
+    """Emit bounded storage-stage diagnostics when worker stage logging is enabled."""
+    if os.environ.get("SECOPSAI_WORKER_STAGE_LOGS", "0") != "1":
+        return
+    print(json.dumps({"component": "research-storage", "event": event, **fields}, sort_keys=True), flush=True)
 
 
 def _history_archive_dir(db_path: Optional[str], archive_dir: Optional[str]) -> Path:
@@ -468,7 +476,10 @@ def maintain_research_storage(
     aggressive: bool = False,
 ) -> Dict[str, Any]:
     """Prune bounded operational history and make freed pages reusable."""
+    started = time.monotonic()
+    _storage_progress("maintenance_started", aggressive=aggressive)
     before = storage_status(db_path=db_path, include_page_stats=False)
+    _storage_progress("capacity_probe_complete", free_bytes=before["filesystem_free_bytes"], pressure=before["pressure"])
     released = release_storage_reserve(db_path=db_path) if before["pressure"] or aggressive else 0
     database = _resolved_db_path(db_path)
     configured_batch_size = _env_int("SECOPSAI_STORAGE_PRUNE_BATCH_SIZE", DEFAULT_BATCH_SIZE, minimum=100)
@@ -484,10 +495,15 @@ def maintain_research_storage(
     # the shared lock so collectors, bridge heartbeats, and refresh jobs can
     # make progress between retention rules.
     try:
+        schema_started = time.monotonic()
+        _storage_progress("schema_init_started")
         with sqlite_writer_lock(str(database)):
             soc_store.init_db(str(database))
+        _storage_progress("schema_init_completed", seconds=round(time.monotonic() - schema_started, 3))
         with closing(soc_store.connect(str(database))) as connection:
             for table, predicate, params in _prune_rules(include_high_volume=aggressive):
+                prune_started = time.monotonic()
+                _storage_progress("prune_started", table=table)
                 count = _delete_batches_with_writer_yields(
                     connection,
                     db_path=str(database),
@@ -498,8 +514,12 @@ def maintain_research_storage(
                     max_batches=max_batches,
                 )
                 deleted[table] = deleted.get(table, 0) + count
+                _storage_progress("prune_completed", table=table, deleted=count,
+                                  seconds=round(time.monotonic() - prune_started, 3))
 
             keep_snapshots = _env_int("SECOPSAI_RESEARCH_SNAPSHOTS_PER_COLLECTOR", 2, minimum=1)
+            snapshots_started = time.monotonic()
+            _storage_progress("snapshots_prune_started")
             deleted["registry_snapshots"] = _delete_batches_with_writer_yields(
                 connection,
                 db_path=str(database),
@@ -517,16 +537,21 @@ def maintain_research_storage(
                 batch_size=batch_size,
                 max_batches=max_batches,
             )
+            _storage_progress("snapshots_prune_completed", deleted=deleted["registry_snapshots"],
+                              seconds=round(time.monotonic() - snapshots_started, 3))
             # Query-planner statistics maintenance can walk large b-trees.
             # Keep that work out of routine worker cycles.
             if aggressive:
                 with sqlite_writer_lock(str(database)):
                     connection.execute("PRAGMA optimize")
+            checkpoint_started = time.monotonic()
+            _storage_progress("wal_checkpoint_started")
             with sqlite_writer_lock(str(database)):
                 try:
                     connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 except sqlite3.Error:
                     pass
+            _storage_progress("wal_checkpoint_completed", seconds=round(time.monotonic() - checkpoint_started, 3))
     except sqlite3.OperationalError as exc:
         if "full" in str(exc).lower():
             raise ResearchStorageCapacityError(
@@ -555,7 +580,7 @@ def maintain_research_storage(
         include_page_stats=aggressive,
         include_freelist=aggressive,
     )
-    return {
+    result = {
         "before": before,
         "after": after,
         "deleted_rows": deleted,
@@ -564,3 +589,5 @@ def maintain_research_storage(
         "vacuumed": vacuumed,
         "aggressive": aggressive,
     }
+    _storage_progress("maintenance_completed", seconds=round(time.monotonic() - started, 3), deleted_rows=deleted)
+    return result

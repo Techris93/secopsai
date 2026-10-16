@@ -30,6 +30,8 @@ STATUSES = {"active", "paused", "archived", "new", "review", "dismissed", "promo
 PROMOTION_MODES = {"review_only", "draft_case"}
 RESEARCH_ALERT_FINDING_SOURCE = "secopsai_research"
 OPERATIONAL_ALERT_TYPES = {"collector_degraded", "collector_retention_risk", "storage_capacity_warning"}
+ALERT_SYNC_BATCH_SIZE = 25
+MAX_ALERT_SYNC_BATCH_SIZE = 100
 
 
 def _id(prefix: str) -> str:
@@ -839,55 +841,129 @@ def _upsert_research_alert_finding(
     return finding_id
 
 
-def sync_actionable_alert_findings(*, db_path: Optional[str] = None) -> Dict[str, Any]:
-    """Idempotently normalize current and historical research alerts for agent triage."""
+def sync_actionable_alert_findings(
+    *,
+    db_path: Optional[str] = None,
+    alert_ids: Optional[Iterable[str]] = None,
+    batch_size: int = ALERT_SYNC_BATCH_SIZE,
+) -> Dict[str, Any]:
+    """Idempotently normalize active alerts without holding the writer over scans.
+
+    Alert and candidate evidence are read in bounded, query-only batches. Each
+    finding is then revalidated and persisted under a short writer lock. This
+    keeps large historical evidence rows from blocking collectors and refreshes.
+    """
     soc_store.init_db(db_path)
+    try:
+        page_size = max(1, min(int(batch_size), MAX_ALERT_SYNC_BATCH_SIZE))
+    except (TypeError, ValueError):
+        page_size = ALERT_SYNC_BATCH_SIZE
     synced: list[str] = []
-    # This path is called by the Research Monitor after degraded-alert writes
-    # and can also be called by the triage helper. Keep its read/normalize/write
-    # batch in the same cross-process critical section as every other Core
-    # writer so Edge sync cannot interleave with finding upserts.
-    with sqlite_writer_lock(db_path):
-        with closing(soc_store.connect(db_path)) as connection:
-            rows = connection.execute(
-                """SELECT a.*, c.ecosystem, c.package, c.version, c.score,
-                          c.first_seen AS candidate_first_seen, c.last_seen AS candidate_last_seen,
-                          c.evidence_json AS candidate_evidence_json
-                   FROM research_alerts a
-                   LEFT JOIN research_candidates c ON c.candidate_id = a.candidate_id
-                   WHERE a.status IN ('open', 'in_review')
-                   ORDER BY a.created_at ASC"""
-            ).fetchall()
-            for row in rows:
-                alert = dict(row)
-                if str(alert.get("alert_type") or "") in OPERATIONAL_ALERT_TYPES:
-                    continue
-                candidate = {
-                    "candidate_id": alert.get("candidate_id"),
-                    "ecosystem": alert.get("ecosystem"),
-                    "package": alert.get("package"),
-                    "version": alert.get("version"),
-                    "score": alert.get("score"),
-                    "first_seen": alert.get("candidate_first_seen"),
-                    "last_seen": alert.get("candidate_last_seen"),
-                    "evidence": _decode(alert.get("candidate_evidence_json"), {}),
-                }
-                if str(alert.get("alert_type") or "") == "external_advisory_match" and not _has_artifact_evidence(candidate["evidence"]):
-                    score = float(candidate.get("score") or 0)
-                    normalized_severity = _external_lead_severity(score)
-                    if str(alert.get("severity") or "").lower() != normalized_severity:
-                        connection.execute(
-                            "UPDATE research_alerts SET severity=?, updated_at=? WHERE alert_id=?",
-                            (normalized_severity, _now(), alert["alert_id"]),
-                        )
-                        alert["severity"] = normalized_severity
-                synced.append(_upsert_research_alert_finding(connection, alert, candidate=candidate))
-            connection.commit()
+    skipped_changed = 0
+    batches = 0
+    requested_ids = list(dict.fromkeys(str(value) for value in (alert_ids or []) if str(value)))
+    id_batches = (
+        [requested_ids[index:index + page_size] for index in range(0, len(requested_ids), page_size)]
+        if alert_ids is not None else None
+    )
+    cursor: Optional[tuple[str, str]] = None
+
+    def read_rows(ids: Optional[list[str]]) -> list[Dict[str, Any]]:
+        columns = """a.alert_id, a.alert_type, a.severity, a.candidate_id,
+                      a.campaign_id, a.case_id, a.reason, a.evidence_json,
+                      a.status, a.created_at, a.updated_at,
+                      c.ecosystem, c.package, c.version, c.score,
+                      c.first_seen AS candidate_first_seen,
+                      c.last_seen AS candidate_last_seen,
+                      c.evidence_json AS candidate_evidence_json"""
+        params: list[Any] = []
+        filters = ["a.status IN ('open', 'in_review')"]
+        if OPERATIONAL_ALERT_TYPES:
+            placeholders = ",".join("?" for _ in OPERATIONAL_ALERT_TYPES)
+            filters.append(f"a.alert_type NOT IN ({placeholders})")
+            params.extend(sorted(OPERATIONAL_ALERT_TYPES))
+        if ids is not None:
+            placeholders = ",".join("?" for _ in ids)
+            filters.append(f"a.alert_id IN ({placeholders})")
+            params.extend(ids)
+        elif cursor is not None:
+            filters.append("(a.created_at > ? OR (a.created_at = ? AND a.alert_id > ?))")
+            params.extend((cursor[0], cursor[0], cursor[1]))
+        query = (
+            f"SELECT {columns} FROM research_alerts a "
+            "LEFT JOIN research_candidates c ON c.candidate_id = a.candidate_id "
+            f"WHERE {' AND '.join(filters)} "
+            "ORDER BY a.created_at ASC, a.alert_id ASC LIMIT ?"
+        )
+        params.append(page_size)
+        with closing(soc_store.read_connect(db_path)) as connection:
+            return [dict(row) for row in connection.execute(query, params).fetchall()]
+
+    def sync_row(alert: Dict[str, Any]) -> bool:
+        nonlocal skipped_changed
+        alert_id = str(alert.get("alert_id") or "")
+        if not alert_id:
+            return False
+        candidate = {
+            "candidate_id": alert.get("candidate_id"),
+            "ecosystem": alert.get("ecosystem"),
+            "package": alert.get("package"),
+            "version": alert.get("version"),
+            "score": alert.get("score"),
+            "first_seen": alert.get("candidate_first_seen"),
+            "last_seen": alert.get("candidate_last_seen"),
+            "evidence": _decode(alert.get("candidate_evidence_json"), {}),
+        }
+        with sqlite_writer_lock(db_path):
+            with closing(soc_store.connect(db_path)) as connection:
+                with connection:
+                    current = connection.execute(
+                        "SELECT status, alert_type, updated_at FROM research_alerts WHERE alert_id=?",
+                        (alert_id,),
+                    ).fetchone()
+                    if (
+                        current is None
+                        or str(current["status"] or "").lower() not in {"open", "in_review"}
+                        or str(current["alert_type"] or "") in OPERATIONAL_ALERT_TYPES
+                        or str(current["updated_at"] or "") != str(alert.get("updated_at") or "")
+                    ):
+                        skipped_changed += 1
+                        return False
+                    if str(alert.get("alert_type") or "") == "external_advisory_match" and not _has_artifact_evidence(candidate["evidence"]):
+                        score = float(candidate.get("score") or 0)
+                        normalized_severity = _external_lead_severity(score)
+                        if str(alert.get("severity") or "").lower() != normalized_severity:
+                            connection.execute(
+                                "UPDATE research_alerts SET severity=?, updated_at=? WHERE alert_id=?",
+                                (normalized_severity, _now(), alert_id),
+                            )
+                            alert["severity"] = normalized_severity
+                    synced.append(_upsert_research_alert_finding(connection, alert, candidate=candidate))
+                    return True
+
+    if id_batches is not None:
+        for ids in id_batches:
+            rows = read_rows(ids)
+            batches += 1
+            for alert in rows:
+                sync_row(alert)
+    else:
+        while True:
+            rows = read_rows(None)
+            if not rows:
+                break
+            batches += 1
+            for alert in rows:
+                sync_row(alert)
+            last = rows[-1]
+            cursor = (str(last.get("created_at") or ""), str(last.get("alert_id") or ""))
     return {
         "schema_version": "secopsai.research.alert-sync.v1",
         "synced": len(synced),
         "finding_ids": synced,
         "operational_alert_types": sorted(OPERATIONAL_ALERT_TYPES),
+        "batches": batches,
+        "skipped_changed": skipped_changed,
     }
 
 
