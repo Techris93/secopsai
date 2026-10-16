@@ -94,6 +94,53 @@ def test_selected_source_that_already_recovered_is_not_fetched_again(tmp_path, m
     assert result['status'] == 'passed' and result['sources_retried'] == 0
 
 
+def test_explicit_registry_collector_retry_runs_only_selected_enabled_collector(tmp_path, monkeypatch):
+    db = str(tmp_path/'collector-retry.db')
+    soc_store.init_db(db)
+    monkeypatch.setattr('secopsai.ontology.materialize_recent', lambda **kwargs: {'snapshot': {}})
+    monkeypatch.setattr('secopsai.research_operation.hosted_projection', lambda **kwargs: {'coverage': {'health': {}}})
+    calls = []
+
+    def run_registry_collector(**kwargs):
+        calls.append(kwargs)
+        return {'status': 'completed', 'coverage': 'complete', 'pages_selected': 36,
+                'pages_processed': 36, 'events_stored': 4}
+
+    monkeypatch.setattr('secopsai.research_surveillance.run_registry_collector', run_registry_collector)
+
+    class Client:
+        enabled = True
+        def enqueue_ontology_snapshot(self, *args, **kwargs): return {'status': 'queued'}
+        def flush_ontology_outbox(self, **kwargs): return {'pending': 0, 'flushed': 0}
+        def sync_research_operation(self, value): return {'status': 'stored'}
+
+    result = verify_delivery(db_path=db, client=Client(), retry_collector_names=('Open VSX search reconciliation',))
+    assert len(calls) == 1
+    assert calls[0]['ecosystem'] == 'open-vsx' and calls[0]['max_pages'] == 400
+    assert result['status'] == 'passed'
+    assert result['registry_collectors_retried'] == 1 and result['registry_collector_failures'] == 0
+    assert result['registry_scans_performed'] is True and result['analysis_performed'] is False
+
+
+def test_incomplete_registry_collector_retry_keeps_delivery_verification_failed(tmp_path, monkeypatch):
+    db = str(tmp_path/'collector-gap.db')
+    soc_store.init_db(db)
+    monkeypatch.setattr('secopsai.ontology.materialize_recent', lambda **kwargs: {'snapshot': {}})
+    monkeypatch.setattr('secopsai.research_operation.hosted_projection', lambda **kwargs: {'coverage': {'health': {}}})
+    monkeypatch.setattr('secopsai.research_surveillance.run_registry_collector', lambda **kwargs: {
+        'status': 'completed', 'coverage': 'gap', 'pages_selected': 400,
+        'pages_processed': 400, 'events_stored': 4})
+
+    class Client:
+        enabled = True
+        def enqueue_ontology_snapshot(self, *args, **kwargs): return {'status': 'queued'}
+        def flush_ontology_outbox(self, **kwargs): return {'pending': 0, 'flushed': 0}
+        def sync_research_operation(self, value): return {'status': 'stored'}
+
+    result = verify_delivery(db_path=db, client=Client(), retry_collector_names=('Open VSX search reconciliation',))
+    assert result['status'] == 'failed' and result['registry_collector_failures'] == 1
+
+
 def test_later_entity_delivery_can_repair_an_older_relationship(tmp_path, monkeypatch):
     db = str(tmp_path/'dependencies.db')
     soc_store.init_db(db)

@@ -28,6 +28,10 @@ on:
         description: "Optional comma-separated names of failed primary sources to retry once during delivery verification"
         required: false
         default: ""
+      retry_collectors:
+        description: "Optional exact name of one enabled registry collector to run once during delivery verification"
+        required: false
+        default: ""
       allow_empty_ledger:
         description: "Start a new empty ledger if none exists in R2 (first run only)"
         type: boolean
@@ -76,6 +80,7 @@ jobs:
       SECOPSAI_INCREMENTAL_CHECKPOINTS: ${{ vars.RESEARCH_INCREMENTAL_CHECKPOINTS == 'true' && '1' || '0' }}
       SECOPSAI_PAGE_DELTA_CHECKPOINTS: ${{ vars.RESEARCH_PAGE_DELTA_CHECKPOINTS == 'true' && '1' || '0' }}
       SECOPSAI_VERIFY_RETRY_SOURCES: ${{ inputs.retry_sources }}
+      SECOPSAI_VERIFY_RETRY_COLLECTORS: ${{ inputs.retry_collectors }}
       SECOPSAI_VERIFY_DELIVERY_ONLY: ${{ inputs.delivery_only && '1' || '0' }}
       SECOPSAI_VERIFY_DELIVERY_SECONDS: ${{ inputs.delivery_seconds || 840 }}
       SECOPSAI_WORKER_STAGE_LOGS: '1'
@@ -140,6 +145,10 @@ jobs:
         run: |
           delivery_args=()
           max_seconds=900
+          if [ -n "$SECOPSAI_VERIFY_RETRY_COLLECTORS" ] && [ "$SECOPSAI_VERIFY_DELIVERY_ONLY" != "1" ]; then
+            echo "retry_collectors requires delivery_only=true" >&2
+            exit 2
+          fi
           if [ "$SECOPSAI_VERIFY_DELIVERY_ONLY" = "1" ]; then
             if ! [[ "$SECOPSAI_VERIFY_DELIVERY_SECONDS" =~ ^[0-9]+$ ]]; then
               echo "delivery_seconds must be between 1 and 2700" >&2
