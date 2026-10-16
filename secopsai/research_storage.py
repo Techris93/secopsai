@@ -371,13 +371,57 @@ def _delete_batches(
 ) -> int:
     deleted = 0
     for _ in range(max_batches):
-        before = connection.total_changes
-        connection.execute(
-            f"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {predicate} LIMIT ?)",
-            (*tuple(params), batch_size),
+        changed = _delete_batch(
+            connection,
+            table=table,
+            predicate=predicate,
+            params=params,
+            batch_size=batch_size,
         )
-        connection.commit()
-        changed = connection.total_changes - before
+        deleted += changed
+        if changed < batch_size:
+            break
+    return deleted
+
+
+def _delete_batch(
+    connection: sqlite3.Connection,
+    *,
+    table: str,
+    predicate: str,
+    params: Iterable[Any],
+    batch_size: int,
+) -> int:
+    before = connection.total_changes
+    connection.execute(
+        f"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {predicate} LIMIT ?)",
+        (*tuple(params), batch_size),
+    )
+    connection.commit()
+    return connection.total_changes - before
+
+
+def _delete_batches_with_writer_yields(
+    connection: sqlite3.Connection,
+    *,
+    db_path: str,
+    table: str,
+    predicate: str,
+    params: Iterable[Any],
+    batch_size: int,
+    max_batches: int,
+) -> int:
+    """Prune bounded batches while giving other writers a turn between them."""
+    deleted = 0
+    for _ in range(max_batches):
+        with sqlite_writer_lock(db_path):
+            changed = _delete_batch(
+                connection,
+                table=table,
+                predicate=predicate,
+                params=params,
+                batch_size=batch_size,
+            )
         deleted += changed
         if changed < batch_size:
             break
@@ -429,47 +473,49 @@ def maintain_research_storage(
     batch_size = configured_batch_size if aggressive else min(configured_batch_size, ROUTINE_BATCH_SIZE_CAP)
     max_batches = 200 if aggressive else ROUTINE_MAX_BATCHES
     deleted: Dict[str, int] = {}
-    # Hold the cross-process writer lock only for schema setup and bounded
-    # deletes.  The expensive read-only capacity probes above/below stay
-    # outside the lock so dashboard requests and bridge heartbeats are not
-    # blocked for minutes on a large SQLite ledger.
+    # Schema setup is serialized once, then each small prune batch releases
+    # the shared lock so collectors, bridge heartbeats, and refresh jobs can
+    # make progress between retention rules.
     try:
         with sqlite_writer_lock(str(database)):
             soc_store.init_db(str(database))
-            with closing(soc_store.connect(str(database))) as connection:
-                for table, predicate, params in _prune_rules():
-                    count = _delete_batches(
-                        connection,
-                        table=table,
-                        predicate=predicate,
-                        params=params,
-                        batch_size=batch_size,
-                        max_batches=max_batches,
-                    )
-                    deleted[table] = deleted.get(table, 0) + count
-
-                keep_snapshots = _env_int("SECOPSAI_RESEARCH_SNAPSHOTS_PER_COLLECTOR", 2, minimum=1)
-                deleted["registry_snapshots"] = _delete_batches(
+        with closing(soc_store.connect(str(database))) as connection:
+            for table, predicate, params in _prune_rules():
+                count = _delete_batches_with_writer_yields(
                     connection,
-                    table="registry_snapshots",
-                    predicate="""rowid IN (
-                        SELECT rowid FROM (
-                            SELECT rowid,
-                                   ROW_NUMBER() OVER (
-                                       PARTITION BY collector_id ORDER BY created_at DESC
-                                   ) AS rank
-                            FROM registry_snapshots
-                        ) WHERE rank > ?
-                    )""",
-                    params=(keep_snapshots,),
+                    db_path=str(database),
+                    table=table,
+                    predicate=predicate,
+                    params=params,
                     batch_size=batch_size,
                     max_batches=max_batches,
                 )
-                # Query-planner statistics maintenance can walk large b-trees.
-                # Keep that work out of routine worker cycles, which share this
-                # writer lock with collection and dashboard operations.
-                if aggressive:
+                deleted[table] = deleted.get(table, 0) + count
+
+            keep_snapshots = _env_int("SECOPSAI_RESEARCH_SNAPSHOTS_PER_COLLECTOR", 2, minimum=1)
+            deleted["registry_snapshots"] = _delete_batches_with_writer_yields(
+                connection,
+                db_path=str(database),
+                table="registry_snapshots",
+                predicate="""rowid IN (
+                    SELECT rowid FROM (
+                        SELECT rowid,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY collector_id ORDER BY created_at DESC
+                               ) AS rank
+                        FROM registry_snapshots
+                    ) WHERE rank > ?
+                )""",
+                params=(keep_snapshots,),
+                batch_size=batch_size,
+                max_batches=max_batches,
+            )
+            # Query-planner statistics maintenance can walk large b-trees.
+            # Keep that work out of routine worker cycles.
+            if aggressive:
+                with sqlite_writer_lock(str(database)):
                     connection.execute("PRAGMA optimize")
+            with sqlite_writer_lock(str(database)):
                 try:
                     connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 except sqlite3.Error:

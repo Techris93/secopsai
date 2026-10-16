@@ -160,7 +160,7 @@ def test_pressure_does_not_expand_automatic_pruning_batches(tmp_path, monkeypatc
         row_limits.append(batch_size)
         return 0
 
-    monkeypatch.setattr(research_storage, "_delete_batches", capture_batch)
+    monkeypatch.setattr(research_storage, "_delete_batches_with_writer_yields", capture_batch)
 
     result = maintain_research_storage(db_path=db_path)
 
@@ -219,7 +219,7 @@ def test_routine_storage_maintenance_skips_database_wide_optimize(tmp_path, monk
         prune_limits.append((batch_size, max_batches))
         return 0
 
-    monkeypatch.setattr(research_storage, "_delete_batches", capture_prune)
+    monkeypatch.setattr(research_storage, "_delete_batches_with_writer_yields", capture_prune)
 
     maintain_research_storage(db_path=db_path)
     assert optimize_calls == []
@@ -231,6 +231,43 @@ def test_routine_storage_maintenance_skips_database_wide_optimize(tmp_path, monk
     assert len(optimize_calls) == 1
     assert prune_limits
     assert set(prune_limits) == {(5000, 200)}
+
+
+def test_storage_pruning_releases_writer_lock_between_batches(tmp_path, monkeypatch):
+    db_path = _db(tmp_path)
+    with soc_store.connect(db_path) as connection:
+        connection.execute("CREATE TABLE prune_test_rows (value TEXT NOT NULL)")
+        connection.executemany(
+            "INSERT INTO prune_test_rows (value) VALUES ('expired')",
+            [()] * 550,
+        )
+        connection.commit()
+
+    lock_entries = []
+
+    class FakeLock:
+        def __enter__(self):
+            lock_entries.append("acquired")
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(research_storage, "sqlite_writer_lock", lambda _path: FakeLock())
+    with soc_store.connect(db_path) as connection:
+        deleted = research_storage._delete_batches_with_writer_yields(
+            connection,
+            db_path=db_path,
+            table="prune_test_rows",
+            predicate="value = 'expired'",
+            params=(),
+            batch_size=250,
+            max_batches=2,
+        )
+        remaining = connection.execute("SELECT COUNT(*) FROM prune_test_rows").fetchone()[0]
+
+    assert deleted == 500
+    assert remaining == 50
+    assert lock_entries == ["acquired", "acquired"]
 
 
 def test_storage_reserve_is_real_and_releasable(tmp_path, monkeypatch):

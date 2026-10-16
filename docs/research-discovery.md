@@ -82,7 +82,7 @@ secopsai research storage maintain --aggressive --json
 secopsai research storage release-reserve --json
 ```
 
-`maintain --aggressive` is an explicit operator action that prunes up to 200 configured-size batches per eligible table, updates SQLite query-planner statistics, and runs `VACUUM` only when enough free capacity exists to do so safely. Routine worker maintenance caps each batch at 250 rows and skips the database-wide statistics pass to keep its shared writer-lock interval bounded. It never deletes pending events, canonical candidates, cases, case evidence, IOCs, rules, unresolved alerts, completed npm release analyses, or quarantined artifacts.
+`maintain --aggressive` is an explicit operator action that prunes up to 200 configured-size batches per eligible table, updates SQLite query-planner statistics, and runs `VACUUM` only when enough free capacity exists to do so safely. Routine worker maintenance caps each batch at 250 rows, releases the shared writer lock between batches, and skips the database-wide statistics pass. It never deletes pending events, canonical candidates, cases, case evidence, IOCs, rules, unresolved alerts, completed npm release analyses, or quarantined artifacts.
 
 If Render reports `database or disk is full`, increase the worker disk from its **Disks** page before redeploying. Render supports increasing a persistent disk without downtime, but does not allow reducing it later. After capacity becomes available, deploy this release; the worker performs maintenance before it starts another collector. Then verify `storage status`, confirm `pressure=false`, and confirm a complete worker cycle in the logs.
 
