@@ -1,4 +1,4 @@
-"""Bounded production delivery recovery; no registry scans, analysis or model jobs."""
+"""Bounded production recovery with no analysis or model jobs."""
 from __future__ import annotations
 
 import json
@@ -13,7 +13,7 @@ from secopsai.research_operation_store import read_connection
 from secopsai.worker_control import WorkerShutdown, check_shutdown, request_shutdown
 
 
-def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_names=()):
+def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_names=(), retry_collector_names=()):
     from secopsai.ontology import materialize_recent
     from secopsai.research_operation import hosted_projection
     from secopsai.research_primary_intel import collect_due
@@ -39,6 +39,39 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
             raise ValueError("source recovery permits at most ten failed sources")
         if eligible:
             source_results = collect_due(db_path=db_path, force_source_ids=tuple(eligible), limit=len(eligible))['results']
+    collector_results = []
+    if retry_collector_names:
+        requested = {name.strip().casefold() for name in retry_collector_names if name.strip()}
+        if len(requested) != 1:
+            raise ValueError("registry collector recovery permits exactly one named collector")
+        from secopsai.research_surveillance import ensure_collectors, run_registry_collector
+        from secopsai.research_worker import MAX_PAGES_PER_CYCLE, collector_page_budget
+
+        collectors = ensure_collectors(db_path=db_path)
+        selected = [collector for collector in collectors if collector['name'].strip().casefold() in requested]
+        if {collector['name'].strip().casefold() for collector in selected} != requested:
+            raise ValueError("registry collector recovery requires an existing collector name")
+        if any(not bool(collector['enabled']) for collector in selected):
+            raise ValueError("registry collector recovery requires an enabled collector")
+        for collector in selected:
+            result = run_registry_collector(
+                ecosystem=collector['ecosystem'],
+                max_pages=collector_page_budget(collector['ecosystem'], MAX_PAGES_PER_CYCLE),
+                db_path=db_path,
+            )
+            collector_results.append({
+                'name': collector['name'],
+                'ecosystem': collector['ecosystem'],
+                'status': result.get('status'),
+                'coverage': result.get('coverage'),
+                'pages_selected': result.get('pages_selected', 0),
+                'pages_processed': result.get('pages_processed', 0),
+                'events_stored': result.get('events_stored', 0),
+                'error_category': 'collector_error' if result.get('error') else None,
+            })
+            print(json.dumps({'event': 'registry_collector_recovery_result', **collector_results[-1]}), flush=True)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("registry collector recovery exceeded the delivery verification budget")
     snapshot = materialize_recent(db_path=db_path, limit=100)['snapshot']
     queued = client.enqueue_ontology_snapshot(snapshot, db_path=db_path)
     if queued.get('status') != 'queued':
@@ -83,11 +116,21 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
     stored = client.sync_research_operation(projection)
     accepted = delivery.get('pending') == 0 and stored.get('status') == 'stored'
     sources_ok = all(item.get('status') == 'acquired' for item in source_results)
-    report = {'status': 'passed' if accepted and sources_ok else 'failed', 'flushed_total': flushed_total,
+    collectors_ok = all(
+        item.get('status') == 'completed' and item.get('coverage') == 'complete'
+        for item in collector_results
+    )
+    report = {'status': 'passed' if accepted and sources_ok and collectors_ok else 'failed', 'flushed_total': flushed_total,
               'pending': delivery.get('pending'), 'projection_status': stored.get('status'),
               'health': projection.get('coverage', {}).get('health', {}),
               'sources_retried': len(source_results), 'source_failures': sum(item.get('status') != 'acquired' for item in source_results),
-              'registry_scans_performed': False, 'analysis_performed': False, 'model_jobs_created': 0,
+              'registry_collectors_retried': len(collector_results),
+              'registry_collector_failures': sum(
+                  not (item.get('status') == 'completed' and item.get('coverage') == 'complete')
+                  for item in collector_results
+              ),
+              'registry_collectors': collector_results,
+              'registry_scans_performed': bool(collector_results), 'analysis_performed': False, 'model_jobs_created': 0,
               'clef_enabled': projection.get('clef_enabled'), 'decision_mode': projection.get('decision_mode')}
     print(json.dumps({'event': 'delivery_verification_completed', **report}), flush=True)
     return report
@@ -101,7 +144,11 @@ def main():
             from secopsai.daily_automation import recover_interrupted_runs
             recover_interrupted_runs(db_path=None, restored_snapshot=True)
         seconds = int(os.environ.get('SECOPSAI_VERIFY_DELIVERY_SECONDS', '840'))
-        report = verify_delivery(seconds=seconds, retry_source_names=tuple(name.strip() for name in os.environ.get('SECOPSAI_VERIFY_RETRY_SOURCES', '').split(',') if name.strip()))
+        report = verify_delivery(
+            seconds=seconds,
+            retry_source_names=tuple(name.strip() for name in os.environ.get('SECOPSAI_VERIFY_RETRY_SOURCES', '').split(',') if name.strip()),
+            retry_collector_names=tuple(name.strip() for name in os.environ.get('SECOPSAI_VERIFY_RETRY_COLLECTORS', '').split(',') if name.strip()),
+        )
         return 0 if report['status'] == 'passed' else 1
     except (Exception, WorkerShutdown) as exc:
         print(json.dumps({'event': 'delivery_verification_failed', 'error_category': type(exc).__name__, 'http_status': getattr(exc, 'status', None)}), flush=True)
