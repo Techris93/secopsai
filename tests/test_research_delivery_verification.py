@@ -56,6 +56,25 @@ def test_delivery_verification_rejects_budgets_above_workflow_limit():
         verify_delivery(client=object(), seconds=2701)
 
 
+def test_delivery_entrypoint_recovers_registry_runs_from_restored_snapshot(monkeypatch):
+    from secopsai import daily_automation, research_delivery_verification as delivery
+    from secopsai import research_surveillance
+
+    monkeypatch.setenv('SECOPSAI_RESTORED_LEDGER_RECOVERY', '1')
+    calls = []
+    monkeypatch.setattr(daily_automation, 'recover_interrupted_runs',
+                        lambda **kwargs: calls.append(('automation', kwargs)) or 1)
+    monkeypatch.setattr(research_surveillance, 'recover_interrupted_runs',
+                        lambda **kwargs: calls.append(('registry', kwargs)) or {'interrupted': 1})
+    monkeypatch.setattr(delivery, 'verify_delivery', lambda **kwargs: {'status': 'passed'})
+
+    assert delivery.main() == 0
+    assert calls == [
+        ('automation', {'db_path': None, 'restored_snapshot': True}),
+        ('registry', {'db_path': None, 'restored_snapshot': True}),
+    ]
+
+
 def test_explicit_source_retry_only_attempts_selected_enabled_source(tmp_path, monkeypatch):
     from secopsai.research_primary_intel import collect_due, configure_source
     from secopsai.research_intake import SafeFetcher

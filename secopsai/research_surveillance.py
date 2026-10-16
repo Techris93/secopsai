@@ -2695,20 +2695,39 @@ def retry_dead_letters(
     return results
 
 
-def recover_interrupted_runs(*, max_age_seconds: int = 3600, db_path: Optional[str] = None) -> Dict[str, Any]:
-    """Mark collector runs that died without completing as interrupted."""
+def recover_interrupted_runs(
+    *,
+    max_age_seconds: int = 3600,
+    db_path: Optional[str] = None,
+    restored_snapshot: bool = False,
+) -> Dict[str, Any]:
+    """Mark collector runs that died without completing as interrupted.
+
+    A restored ledger snapshot has no live collector process attached to it,
+    so every persisted ``running`` row is abandoned regardless of age. Normal
+    worker cycles keep the age fence to avoid interrupting an active run.
+    """
     with sqlite_writer_lock(db_path):
         ensure_collectors(db_path=db_path)
-        cutoff = _format_ts(_utcnow() - timedelta(seconds=max(60, int(max_age_seconds))))
         now = _format_ts(_utcnow())
         with closing(soc_store.connect(db_path)) as connection:
             with _write_transaction(connection, db_path):
-                cursor = connection.execute(
-                    """UPDATE registry_ingestion_runs
-                    SET status = 'interrupted', completed_at = ?, error_message = 'run exceeded the liveness window'
-                    WHERE status = 'running' AND started_at < ?""",
-                    (now, cutoff),
-                )
+                if restored_snapshot:
+                    cursor = connection.execute(
+                        """UPDATE registry_ingestion_runs
+                        SET status = 'interrupted', completed_at = ?,
+                            error_message = 'run was active in a restored ledger snapshot'
+                        WHERE status = 'running'""",
+                        (now,),
+                    )
+                else:
+                    cutoff = _format_ts(_utcnow() - timedelta(seconds=max(60, int(max_age_seconds))))
+                    cursor = connection.execute(
+                        """UPDATE registry_ingestion_runs
+                        SET status = 'interrupted', completed_at = ?, error_message = 'run exceeded the liveness window'
+                        WHERE status = 'running' AND started_at < ?""",
+                        (now, cutoff),
+                    )
     return {"interrupted": cursor.rowcount}
 
 
