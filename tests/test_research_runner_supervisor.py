@@ -451,11 +451,39 @@ def test_checkpoint_capture_deadline_preserves_previous_manifest(tmp_path, monke
     client = supervisor.LedgerStore('http://ledger.internal','tok',opener=server)
     supervisor.checkpoint(db,client,tmp_path)
     previous = dict(server.manifest)
-    ticks = iter([0,241])
+    ticks = iter([0,301])
     monkeypatch.setattr(supervisor.time,'monotonic',lambda: next(ticks))
     with pytest.raises(TimeoutError,match='capture'):
         supervisor.checkpoint(db,client,tmp_path)
     assert server.manifest == previous
+
+
+def test_recurring_incremental_checkpoint_reserves_sparse_upload_time(tmp_path, monkeypatch):
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS','1')
+    monkeypatch.setenv('SECOPSAI_PAGE_DELTA_CHECKPOINTS','1')
+    db = tmp_path/'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE data(value TEXT)')
+        conn.execute("INSERT INTO data VALUES('committed')")
+
+    class TimedStore:
+        incremental_ready = True
+        baseline_path = tmp_path/'baseline.db'
+
+        def upload_sparse(self, backup, *, captured_at, deadline):
+            self.upload_deadline = deadline
+            return 'sparse-checkpoint'
+
+    # Model a backup that has taken 241 seconds. Recurring checkpoints must
+    # still enter the sparse upload path with the remaining bounded budget.
+    clock = iter([0])
+    def monotonic():
+        return next(clock, 241)
+    monkeypatch.setattr(supervisor.time,'monotonic',monotonic)
+
+    store = TimedStore()
+    assert supervisor.checkpoint(db,store,tmp_path) == 'sparse-checkpoint'
+    assert store.upload_deadline == 300
 
 
 def test_checkpoint_pins_snapshot_while_wal_writer_keeps_committing(tmp_path, monkeypatch):
@@ -554,7 +582,7 @@ def test_first_full_transfer_has_separate_bounded_bootstrap_budget(tmp_path,monk
     supervisor.checkpoint(db,client,tmp_path)
     client.incremental_ready=True
     supervisor.checkpoint(db,client,tmp_path)
-    assert deadlines==[700,700,340]
+    assert deadlines==[700,700,400]
 
 
 def test_sparse_checkpoint_preserves_distributed_edits_and_immutable_baseline(tmp_path, monkeypatch):
