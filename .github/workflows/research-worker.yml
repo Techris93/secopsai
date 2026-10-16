@@ -29,7 +29,7 @@ on:
         required: false
         default: ""
       retry_collectors:
-        description: "Optional exact name of one enabled registry collector to run once during delivery verification"
+        description: "Optional comma-separated names of up to ten enabled registry collectors to retry once during delivery verification"
         required: false
         default: ""
       allow_empty_ledger:
