@@ -467,6 +467,11 @@ def _adjudicate(
     ]
     valid_refs = _valid_evidence_refs(finding, deterministic, evidence_refs)
     contradictions = [str(item) for item in recommendation.get("counterarguments") or [] if str(item).strip()]
+    from secopsai.decision_policy import closure_decision
+    closure_contract = dict(recommendation)
+    closure_contract.setdefault("provider", provider)
+    closure_contract.setdefault("model_version", run.get("selected_model") or "")
+    closure_allowed, closure_reason = closure_decision(closure_contract)
     det_disposition = _clean(deterministic.get("recommended_disposition"), 40).lower()
     decision: Dict[str, Any] = {
         "mode": settings["mode"],
@@ -476,6 +481,9 @@ def _adjudicate(
         "submitted_evidence_refs": evidence_refs,
         "validated_evidence_refs": valid_refs,
         "deterministic_disposition": det_disposition,
+        "malicious_probability": recommendation.get("malicious_probability"),
+        "closure_policy_eligible": closure_allowed,
+        "closure_policy_reason": closure_reason,
         "guardrail_reasons": [],
     }
     previous = {"status": finding.get("status"), "disposition": finding.get("disposition")}
@@ -491,6 +499,8 @@ def _adjudicate(
         valid_evidence_refs=valid_refs,
         contradictions=contradictions,
         settings=settings,
+        closure_policy_eligible=closure_allowed,
+        closure_policy_reason=closure_reason,
     )
     decision["guardrail_reasons"].extend(reasons)
     if settings["mode"] == "guarded" and can_close:
@@ -604,8 +614,12 @@ def _safe_auto_close(
     valid_evidence_refs: list[str],
     contradictions: list[str],
     settings: Dict[str, Any],
+    closure_policy_eligible: bool = False,
+    closure_policy_reason: str = "calibration_not_approved",
 ) -> tuple[bool, str, list[str]]:
     reasons: list[str] = []
+    if not closure_policy_eligible:
+        reasons.append(f"shared decision policy blocks automatic closure: {closure_policy_reason}")
     if model_verdict not in {"false_positive", "benign_expected", "policy_noise"}:
         reasons.append("model did not recommend a benign disposition")
     if model_disposition not in {"false_positive", "expected_behavior", "tune_policy"}:

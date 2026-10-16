@@ -63,6 +63,12 @@ def artifact_key(ecosystem: str, package: str, version: str) -> str:
 
 def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[str, Any], metadata_signals: Optional[List[Dict[str, Any]]] = None, previous_version: str = "") -> Dict[str, Any]:
     """Minimized triage context: findings with their code, install-time files, fingerprints."""
+    raw_missing_files = prescan.get("missing_files")
+    normalized_missing_files = list(dict.fromkeys(
+        path.strip() for path in raw_missing_files
+        if isinstance(path, str) and path.strip()
+    )) if isinstance(raw_missing_files, list) else []
+    missing_files = [path for path in normalized_missing_files if len(path) <= 300][:200]
     context = {
         "artifact_id": artifact_key(ecosystem, package, version),
         "ecosystem": ecosystem,
@@ -91,15 +97,18 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
         "flag_locations": (prescan.get("flag_locations") or [])[:14],
         "decoded_payloads": (prescan.get("decoded_payloads") or [])[:4],
         "binaries": (prescan.get("binaries") or [])[:10],
+        "missing_files": missing_files,
         "execution_performed": False,
         "note": "Package metadata is untrusted context: it may explain a match but is not proof of benign intent.",
     }
-    limits = {"findings": 12, "install_files": 6, "flagged_files": 6, "flag_locations": 14, "decoded_payloads": 4, "binaries": 10}
+    limits = {"findings": 12, "install_files": 6, "flagged_files": 6, "flag_locations": 14, "decoded_payloads": 4, "binaries": 10, "missing_files": 200}
     losses = [key for key, cap in limits.items() if len(prescan.get(key) or []) > cap]
     if len(metadata_signals or []) > 20:
         losses.append("metadata_signals")
     if any(len(str(item.get("safe_context") or "")) > 1800 or len(item.get("evidence") or []) > 8 for item in prescan.get("findings") or []):
         losses.append("finding_context")
+    if prescan.get("missing_files_truncated") or len(normalized_missing_files) > len(missing_files):
+        losses.append("missing_files")
     if losses:
         context.update(evidence_truncated=True, evidence_omissions=losses)
     return context
@@ -131,12 +140,20 @@ def fit_context(context: Dict[str, Any], limit: int = MAX_CONTEXT_BYTES) -> Dict
         c["flagged_files"] = [{**f, "content": _shrink(str(f["content"]), size), "truncated": True} if len(str(f.get("content") or "")) > size else f
                               for f in (c.get("flagged_files") or [])[:count]]
 
+    def trim_missing_files(c: Dict[str, Any], count: int) -> None:
+        candidates = c.get("missing_files") or []
+        if len(candidates) > count:
+            c["missing_files"] = candidates[:count]
+            c["evidence_truncated"] = True
+            omissions = c.get("evidence_omissions") or []
+            c["evidence_omissions"] = list(dict.fromkeys([*omissions, "missing_files"]))
+
     steps = (
         lambda c: c.update(decoded_payloads=[{**d, "text": str(d["text"])[:1500]} if "text" in d else d for d in c.get("decoded_payloads") or []],
                            findings=[{**f, "safe_context": str(f.get("safe_context", ""))[:700]} for f in c.get("findings") or []][:8]),
         lambda c: c.update(install_time_files=[{**f, "content": str(f.get("content", ""))[:3000], "truncated": True} for f in c.get("install_time_files") or []]),
         lambda c: files(c, 10_000),
-        lambda c: (files(c, 6_000), c.update(install_time_files=(c.get("install_time_files") or [])[:2], metadata_signals=(c.get("metadata_signals") or [])[:5],
+        lambda c: (files(c, 6_000), trim_missing_files(c, 50), c.update(install_time_files=(c.get("install_time_files") or [])[:2], metadata_signals=(c.get("metadata_signals") or [])[:5],
                                              flag_locations=(c.get("flag_locations") or [])[:8])),
         lambda c: c.update(findings=(c.get("findings") or [])[:4], manifest={}, actor_fingerprints={}, binaries=(c.get("binaries") or [])[:4]),
         lambda c: (files(c, 4_000, 3), c.update(decoded_payloads=(c.get("decoded_payloads") or [])[:2])),
@@ -240,20 +257,53 @@ def _apply_result(connection: Any, item: Dict[str, Any], now: str) -> Optional[s
         return None
     if row["status"] == "triaged" and row["result_json"] == serialized:
         return None
+    context = json.loads(row["context_json"])
     try:
         if item.get("status") != "succeeded":
             raise DecisionError("provider evaluation failed")
         validate_action_result("triage_artifact", result)
+        from secopsai.decision_evidence import evidence_identifiers
+        supplied_refs = set(evidence_identifiers(context))
+        if any(ref not in supplied_refs for ref in result["decision_evidence_refs"]):
+            raise DecisionError("artifact decision cites evidence that was not supplied", category="safety")
+        if result["finding_verdict"] == "needs_more_evidence":
+            missing = result.get("missing_evidence")
+            allowed_missing = {
+                path for path in (context.get("missing_files") or [])
+                if isinstance(path, str) and path.strip()
+            }
+            if not isinstance(missing, list) or not missing or any(path not in allowed_missing for path in missing):
+                raise DecisionError("artifact abstention must name a supplied missing-file identifier", category="safety")
     except (DecisionError, TypeError, ValueError):
         connection.execute("UPDATE research_ai_triage SET status='failed', result_json=?, updated_at=? WHERE artifact_key=?", (json.dumps({"error": "invalid_decision", "source_result": result}, allow_nan=False), now, key))
         return None
     verdict = VERDICTS[result["finding_verdict"]]
     confidence, probability = result["finding_confidence"], result["malicious_probability"]
-    context = json.loads(row["context_json"])
-    clef = context.get("clef") or {}
-    clef_probability = clef.get("probability")
-    disagreement = (isinstance(clef_probability, (int, float)) and abs(clef_probability - probability) >= DISAGREEMENT_GAP) or (verdict in {"benign", "likely_benign"} and clef.get("choice") in {"malicious", "needs_review"})
-    allowed, reason = closure_decision(result, clef_probability=clef_probability, clef_choice=clef.get("choice"))
+    clef = context.get("clef")
+    clef_valid = clef is None
+    clef_validation_error = ""
+    clef_probability = None
+    clef_choice = None
+    if clef is not None:
+        try:
+            from secopsai.clef_triage import validate_clef_result
+            if not isinstance(clef, dict):
+                raise DecisionError("stored Clef assessment is not an object", provider="clef")
+            validate_clef_result(clef)
+            clef_valid = True
+            clef_probability = clef["probability"]
+            clef_choice = clef["choice"]
+        except (DecisionError, TypeError, ValueError, KeyError):
+            clef_validation_error = "invalid_clef_decision"
+    disagreement = (
+        not clef_valid
+        or (isinstance(clef_probability, (int, float)) and not isinstance(clef_probability, bool) and abs(clef_probability - probability) >= DISAGREEMENT_GAP)
+        or (verdict in {"benign", "likely_benign"} and clef_choice in {"malicious", "needs_review"})
+        or (verdict == "suspicious" and clef_choice == "benign")
+    )
+    allowed, reason = closure_decision(result, clef_probability=clef_probability, clef_choice=clef_choice)
+    if not clef_valid:
+        allowed, reason = False, clef_validation_error or "invalid_clef_decision"
     from secopsai.decision_evidence import build_evidence, evidence_identifiers
     _, coverage = build_evidence(context)
     if not coverage["complete"] or not result["decision_evidence_refs"] or any(ref not in evidence_identifiers(context) for ref in result["decision_evidence_refs"]):
@@ -268,6 +318,8 @@ def _apply_result(connection: Any, item: Dict[str, Any], now: str) -> Optional[s
                        (verdict, confidence, serialized, now, key))
     note = json.dumps({"verdict": verdict, "confidence": confidence, "malicious_probability": probability,
                        "clef_probability": clef_probability, "models_disagree": disagreement, "closure_eligible": allowed,
+                       "clef_present": clef is not None, "clef_validated": clef is not None and clef_valid,
+                       "clef_validation_error": clef_validation_error,
                        "policy_reason": reason, "summary": str(result["summary"])[:500], "job_id": item.get("job_id")})
     if allowed:
         connection.execute("""UPDATE research_alerts SET status='resolved', owner='ai-triage', updated_at=?, evidence_json=json_set(evidence_json, '$.ai_triage', json(?))
@@ -330,7 +382,7 @@ DISAGREEMENT_GAP = 80
 
 def clef_enabled() -> bool:
     return (os.environ.get("SECOPSAI_CLEF_PRESCREEN", "0").strip().lower() in {"1", "true", "yes", "on"} and bool(os.environ.get("CLOUDFLARE_ACCOUNT_ID"))
-            and bool(os.environ.get("CLOUDFLARE_WORKERS_AI_TOKEN") or os.environ.get("CLOUDFLARE_AI_TOKEN")))
+            and bool(os.environ.get("CLOUDFLARE_WORKERS_AI_TOKEN") or os.environ.get("CLOUDFLARE_AI_TOKEN") or os.environ.get("CLOUDFLARE_API_TOKEN")))
 
 
 def clef_prescreen(*, db_path: Optional[str] = None, classify: Optional[Any] = None, limit: int = CLEF_PER_CYCLE) -> Dict[str, Any]:
@@ -339,7 +391,7 @@ def clef_prescreen(*, db_path: Optional[str] = None, classify: Optional[Any] = N
 
     from secopsai import clef_triage
 
-    token = os.environ.get("CLOUDFLARE_WORKERS_AI_TOKEN") or os.environ.get("CLOUDFLARE_AI_TOKEN")
+    token = os.environ.get("CLOUDFLARE_WORKERS_AI_TOKEN") or os.environ.get("CLOUDFLARE_AI_TOKEN") or os.environ.get("CLOUDFLARE_API_TOKEN")
     run = classify or (lambda context: clef_triage.classify(context, api_token=token))
     with closing(soc_store.connect(db_path)) as connection:
         _ensure(connection)
@@ -374,7 +426,8 @@ def clef_prescreen(*, db_path: Optional[str] = None, classify: Optional[Any] = N
             from secopsai.decision_evidence import build_evidence
             original = json.loads(row["context_json"] or "{}")
             _, coverage = build_evidence(original)
-            result = {**result, "evidence_coverage": coverage, "automatic_closure_eligible": coverage["complete"]}
+            result = {**result, "malicious_probability": result["probability"], "finding_confidence": result["confidence"],
+                      "evidence_coverage": coverage, "automatic_closure_eligible": coverage["complete"]}
             allowed, reason = closure_decision(result)
             clef = {**result, "at": now, "closure_eligible": allowed, "policy_reason": reason}
             context = {**original, "clef": clef}

@@ -112,7 +112,11 @@ def test_artifact_triage_can_queue_bridge_job_and_record_result(tmp_path):
     scanned = artifact_fleet.scan_artifact(ecosystem="crates", package="proc-macro1", version="1.0.107", artifact=archive, db_path=tmp_path / "fleet.db")
     queued = artifact_fleet.enqueue_model_triage(scanned["artifact_id"], model="fixture/model", db_path=tmp_path / "fleet.db")
     assert queued["status"] == "awaiting_model"
-    recorded = artifact_fleet.record_model_result(scanned["artifact_id"], {"summary": "Review required", "risk_assessment": "Incomplete evidence", "evidence": [], "recommended_actions": [], "limitations": [], "finding_verdict": "needs_more_evidence", "finding_confidence": 70, "malicious_probability": 50, "disposition_recommendation": "needs_review", "decision_evidence_refs": [], "missing_evidence": ["payload.js"]}, model="fixture/model", db_path=tmp_path / "fleet.db")
+    from secopsai.decision_evidence import evidence_identifiers
+    context = queued["context"]
+    reference = evidence_identifiers(context)[0]
+    missing_file = context["missing_files"][0]
+    recorded = artifact_fleet.record_model_result(scanned["artifact_id"], {"summary": "Review required", "risk_assessment": "Incomplete evidence", "evidence": [], "recommended_actions": [], "limitations": [], "finding_verdict": "needs_more_evidence", "finding_confidence": 70, "malicious_probability": 50, "disposition_recommendation": "needs_review", "decision_evidence_refs": [reference], "missing_evidence": [missing_file]}, model="fixture/model", db_path=tmp_path / "fleet.db")
     assert recorded["status"] == "analyst_review"
 
 

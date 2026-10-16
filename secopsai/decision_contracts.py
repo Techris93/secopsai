@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, Mapping
 
 
@@ -68,7 +69,14 @@ FINDING_VERDICTS = {"true_positive", "false_positive", "benign_expected", "polic
 DISPOSITIONS = {"true_positive", "false_positive", "expected_behavior", "tune_policy", "needs_review"}
 
 
-def validate_action_result(action: str, value: Any) -> dict[str, Any]:
+def validate_action_result(
+    action: str,
+    value: Any,
+    *,
+    supplied_evidence_refs: set[str] | None = None,
+    supplied_finding_ids: set[str] | None = None,
+    supplied_missing_files: set[str] | None = None,
+) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise DecisionError("bridge result must be an object")
     for key in ("summary", "risk_assessment"):
@@ -79,6 +87,11 @@ def validate_action_result(action: str, value: Any) -> dict[str, Any]:
             raise DecisionError(f"bridge result requires a string array: {key}")
     if action != "analyze_research_case" and (value.get("verdict_recommendation", "inconclusive") != "inconclusive" or value.get("verdict_confidence", 0) != 0):
         raise DecisionError("research credibility was not assessed by this action", category="safety")
+    if action not in {"triage_artifact", "triage_finding"} and any(
+        value.get(key) is not None
+        for key in ("finding_verdict", "finding_confidence", "malicious_probability", "disposition_recommendation")
+    ):
+        raise DecisionError("finding decision fields were returned by an unrelated action", category="safety")
     if action in {"triage_artifact", "triage_finding"}:
         if not isinstance(value.get("finding_verdict"), str) or not isinstance(value.get("disposition_recommendation"), str) or value["finding_verdict"] not in FINDING_VERDICTS or value["disposition_recommendation"] not in DISPOSITIONS:
             raise DecisionError("triage result requires valid verdict and disposition")
@@ -88,23 +101,56 @@ def validate_action_result(action: str, value: Any) -> dict[str, Any]:
         if value["disposition_recommendation"] != expected[value["finding_verdict"]]:
             raise DecisionError("finding verdict contradicts its disposition", category="safety")
         number(value.get("finding_confidence"), 0, 100, "finding_confidence", integer=True)
+        number(value.get("malicious_probability"), 0, 100, "malicious_probability", integer=True)
         if action == "triage_artifact":
-            number(value.get("malicious_probability"), 0, 100, "malicious_probability", integer=True)
             if value["finding_verdict"] == "needs_more_evidence":
                 missing = value.get("missing_evidence")
                 if not isinstance(missing, list) or not missing or any(not isinstance(path, str) or not path.strip() or "\n" in path for path in missing):
                     raise DecisionError("artifact abstention requires a named missing file", category="safety")
+                if supplied_missing_files is not None and any(path not in supplied_missing_files for path in missing):
+                    raise DecisionError("artifact abstention cites a file that was not identified as missing", category="safety")
         refs = value.get("decision_evidence_refs")
-        if not isinstance(refs, list) or any(not isinstance(ref, str) or not ref for ref in refs):
-            raise DecisionError("triage requires decision_evidence_refs")
+        if not isinstance(refs, list) or not refs or any(not isinstance(ref, str) or not ref for ref in refs):
+            raise DecisionError("triage requires at least one decision evidence reference")
+        if supplied_evidence_refs is not None and any(ref not in supplied_evidence_refs for ref in refs):
+            raise DecisionError("triage cites evidence that was not supplied", category="safety")
+    if action == "prioritize_findings":
+        priorities = value.get("finding_priorities")
+        if not isinstance(priorities, list):
+            raise DecisionError("prioritization requires a per-finding result array")
+        seen: set[str] = set()
+        for index, item in enumerate(priorities):
+            if not isinstance(item, dict):
+                raise DecisionError("each finding priority must be an object")
+            finding_id = item.get("finding_id")
+            if not isinstance(finding_id, str) or not finding_id.strip() or finding_id in seen:
+                raise DecisionError("finding priorities require unique nonempty finding IDs")
+            seen.add(finding_id)
+            number(item.get("priority"), 0, 100, f"finding_priorities[{index}].priority", integer=True)
+            if not isinstance(item.get("rationale"), str) or not item["rationale"].strip():
+                raise DecisionError("each finding priority requires a rationale")
+            refs = item.get("evidence_refs")
+            if not isinstance(refs, list) or not refs or any(not isinstance(ref, str) or not ref for ref in refs):
+                raise DecisionError("each finding priority requires at least one evidence reference")
+            if supplied_evidence_refs is not None and any(ref not in supplied_evidence_refs for ref in refs):
+                raise DecisionError("finding priority cites evidence that was not supplied", category="safety")
+        if supplied_finding_ids is not None and seen != supplied_finding_ids:
+            raise DecisionError("prioritization must return exactly one result for each supplied finding", category="safety")
     if action == "analyze_research_case":
         if not isinstance(value.get("verdict_recommendation"), str) or value["verdict_recommendation"] not in {"credible", "likely", "inconclusive", "not_substantiated", "benign"}:
             raise DecisionError("research result requires a verdict")
         number(value.get("verdict_confidence"), 0, 100, "verdict_confidence", integer=True)
-        if value["verdict_recommendation"] in {"credible", "likely", "benign"}:
-            refs = value.get("verdict_evidence_refs")
-            if not isinstance(refs, list) or not refs or any(not isinstance(ref, str) or not ref for ref in refs) or not isinstance(value.get("verdict_rationale"), str) or not value["verdict_rationale"].strip():
-                raise DecisionError("research verdict requires supporting evidence references and rationale")
+        rationale = value.get("verdict_rationale")
+        if not isinstance(rationale, str) or not rationale.strip():
+            raise DecisionError("research assessment requires a rationale")
+        refs = value.get("verdict_evidence_refs")
+        if not isinstance(refs, list) or any(not isinstance(ref, str) or not ref for ref in refs):
+            raise DecisionError("research assessment requires an evidence reference array")
+        if supplied_evidence_refs is not None and any(ref not in supplied_evidence_refs for ref in refs):
+            raise DecisionError("research assessment cites evidence that was not supplied", category="safety")
+        if value["verdict_recommendation"] != "inconclusive":
+            if not refs:
+                raise DecisionError("research conclusion requires supporting evidence references and rationale")
     if action == "generate_analyst_brief":
         outline = value.get("article_outline")
         if not isinstance(outline, list) or not outline or any(not isinstance(item, str) or not item.strip() for item in outline):
@@ -113,6 +159,29 @@ def validate_action_result(action: str, value: Any) -> dict[str, Any]:
         risks = value.get("publication_risks")
         if not isinstance(risks, list) or any(not isinstance(item, str) for item in risks) or not isinstance(value.get("disclosure_draft"), str) or not value["disclosure_draft"].strip():
             raise DecisionError("publication review requires risk findings and a review-only disclosure draft")
+        checks = value.get("publication_checks")
+        required_checks = {"evidence", "privacy", "credential_leakage", "operational_safety", "legal_disclosure", "reproducibility"}
+        if not isinstance(checks, dict) or set(checks) != required_checks:
+            raise DecisionError("publication review requires every structured safety check")
+        unresolved: set[str] = set()
+        for name, check in checks.items():
+            if not isinstance(check, dict) or check.get("status") not in {"clear", "concern", "unknown"}:
+                raise DecisionError(f"publication check {name} has a missing or invalid status")
+            finding = check.get("finding")
+            if not isinstance(finding, str) or not finding.strip():
+                raise DecisionError(f"publication check {name} requires a finding")
+            if check["status"] != "clear":
+                unresolved.add(finding.strip())
+        if set(item.strip() for item in risks) != unresolved:
+            raise DecisionError("publication risks contradict the structured safety checks", category="safety")
+        if unresolved and not value.get("recommended_actions"):
+            raise DecisionError("publication concerns require corrective actions")
+        review_text = [value.get("summary", ""), value.get("risk_assessment", ""), value["disclosure_draft"]]
+        review_text.extend(value.get("recommended_actions") or [])
+        review_text.extend(risks)
+        review_text.extend(check["finding"] for check in checks.values())
+        if re.search(r"\bapproved\b|\bproceed\s+with\s+publication\b", "\n".join(review_text), re.IGNORECASE):
+            raise DecisionError("publication review cannot approve release", category="safety")
         if value.get("publication_approved") is True or value.get("approved") is True:
             raise DecisionError("publication review cannot authorize publication", category="safety")
     return value

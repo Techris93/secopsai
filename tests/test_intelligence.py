@@ -50,7 +50,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _valid_result(**extra):
-    return {"summary": "Assessment", "risk_assessment": "Risk requires review", "evidence": [], "recommended_actions": [], "limitations": [], **extra}
+    return {"summary": "Assessment", "risk_assessment": "Risk requires review", "evidence": [], "recommended_actions": [], "limitations": [], "finding_priorities": [], **extra}
 
 
 def _finding() -> dict:
@@ -1116,6 +1116,30 @@ def test_bridge_promotes_schema_adjacent_triage_depth():
         "Collect and hash both artifacts.",
         "Open a Research Case if static comparison corroborates the signal.",
     ]
+
+
+def test_persistence_contract_rejects_invented_research_refs_and_incomplete_priorities():
+    from secopsai.intelligence import validate_bridge_result
+    research = {
+        "summary": "Evidence-bounded research assessment.", "risk_assessment": "Independent review required.",
+        "evidence": [], "recommended_actions": [], "limitations": [],
+        "verdict_recommendation": "likely", "verdict_confidence": 75,
+        "verdict_rationale": "The supplied evidence supports a likely conclusion.",
+        "verdict_evidence_refs": ["EVD-1"],
+    }
+    context = {"evidence": [{"evidence_id": "EVD-1"}]}
+    assert validate_bridge_result("analyze_research_case", research, context=context)["data"]["verdict_evidence_refs"] == ["EVD-1"]
+    with pytest.raises(ValueError):
+        validate_bridge_result("analyze_research_case", {**research, "verdict_evidence_refs": ["INVENTED"]}, context=context)
+
+    priority = {
+        "summary": "Per-finding priority assessment.", "risk_assessment": "Priorities are advisory.",
+        "evidence": [], "recommended_actions": [], "limitations": [],
+        "finding_priorities": [{"finding_id": "FND-1", "priority": 70, "rationale": "Higher severity.", "evidence_refs": ["RULE-1"]}],
+    }
+    assert validate_bridge_result("prioritize_findings", priority, context={"findings": [{"finding_id": "FND-1", "rule_ids": ["RULE-1"]}]})["data"]["finding_priorities"] == priority["finding_priorities"]
+    with pytest.raises(ValueError):
+        validate_bridge_result("prioritize_findings", {**priority, "finding_priorities": []}, context={"findings": [{"finding_id": "FND-1"}]})
 
 
 def test_research_bridge_prompt_requests_evidence_led_depth():

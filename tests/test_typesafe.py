@@ -162,3 +162,21 @@ def test_catalog_exposes_capabilities():
     assert models['typesafe/jev-latest']['supported_actions'] == ['triage_finding', 'triage_artifact']
     assert models['cloudflare/clef']['decision_only']
     assert _provider_for_model('typesafe/jev-latest', {}) == 'typesafe_ai:jev'
+
+
+def test_generic_capabilities_are_explicit_and_unknown_actions_rejected():
+    from secopsai.provider_capabilities import model_capabilities, require_action
+    caps = model_capabilities('xai/grok-4.6')
+    assert caps['supported_actions'] and 'analyze_research_case' in caps['supported_actions']
+    with pytest.raises(DecisionError) as exc:
+        require_action('xai/grok-4.6', 'invented_action')
+    assert exc.value.category == 'unsupported_action'
+
+
+def test_research_action_does_not_receive_a_fabricated_fallback_verdict():
+    from secopsai.codex_bridge import _normalize_bridge_result
+    raw = _normalize_bridge_result({'summary': 'Research summary', 'risk_assessment': 'Uncertain',
+                                    'evidence': [], 'recommended_actions': [], 'limitations': []},
+                                   action_name='analyze_research_case')
+    with pytest.raises(DecisionError):
+        validate_bridge_result('analyze_research_case', raw)

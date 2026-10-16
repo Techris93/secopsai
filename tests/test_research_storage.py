@@ -5,6 +5,7 @@ import pytest
 
 import soc_store
 from secopsai import cli
+from secopsai import research_storage
 from secopsai.research_storage import (
     RESERVE_FILENAME,
     archive_and_prune_history,
@@ -129,6 +130,91 @@ def test_storage_retention_predicates_have_supporting_indexes(tmp_path):
         }
 
     assert required <= present
+
+
+def test_pressure_does_not_expand_automatic_pruning_batches(tmp_path, monkeypatch):
+    db_path = _db(tmp_path)
+    pressure = {
+        "pressure": True,
+        "warning": True,
+        "filesystem_free_bytes": 1,
+        "filesystem_total_bytes": 100,
+        "filesystem_used_percent": 99.0,
+        "database_bytes": 10,
+        "journal_bytes": 0,
+        "wal_bytes": 0,
+        "reserve_bytes": 0,
+        "sqlite_page_size": 0,
+        "sqlite_page_count": 0,
+        "sqlite_freelist_pages": 0,
+        "sqlite_reclaimable_bytes": 0,
+    }
+    batch_limits = []
+    monkeypatch.setattr(research_storage, "storage_status", lambda **_kwargs: dict(pressure))
+    monkeypatch.setattr(research_storage, "release_storage_reserve", lambda **_kwargs: 0)
+    monkeypatch.setattr(research_storage, "ensure_storage_reserve", lambda **_kwargs: 0)
+    monkeypatch.setattr(
+        research_storage,
+        "_delete_batches",
+        lambda _connection, *, max_batches, **_kwargs: batch_limits.append(max_batches) or 0,
+    )
+
+    result = maintain_research_storage(db_path=db_path)
+
+    assert result["before"]["pressure"] is True
+    assert batch_limits
+    assert set(batch_limits) == {4}
+
+
+def test_completed_npm_analysis_retention_does_not_scan_candidate_evidence():
+    analysis_rules = [
+        rule for rule in research_storage._prune_rules()
+        if rule[0] == "research_npm_release_analyses"
+    ]
+
+    assert len(analysis_rules) == 1
+    assert "status = 'failed'" in analysis_rules[0][1]
+    assert "evidence_json" not in analysis_rules[0][1]
+
+
+def test_routine_storage_maintenance_skips_database_wide_optimize(tmp_path, monkeypatch):
+    monkeypatch.setenv("SECOPSAI_STORAGE_RESERVE_BYTES", "0")
+    monkeypatch.setenv("SECOPSAI_STORAGE_MIN_FREE_BYTES", "0")
+    monkeypatch.setenv("SECOPSAI_STORAGE_MAX_USED_PERCENT", "100")
+    db_path = _db(tmp_path)
+    optimize_calls = []
+    original_connect = research_storage.soc_store.connect
+
+    class ConnectionProxy:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+        def __enter__(self):
+            self.connection.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.connection.__exit__(*args)
+
+        def execute(self, sql, *args, **kwargs):
+            if "PRAGMA optimize" in sql:
+                optimize_calls.append(sql)
+            return self.connection.execute(sql, *args, **kwargs)
+
+    monkeypatch.setattr(
+        research_storage.soc_store,
+        "connect",
+        lambda path: ConnectionProxy(original_connect(path)),
+    )
+
+    maintain_research_storage(db_path=db_path)
+    assert optimize_calls == []
+
+    maintain_research_storage(db_path=db_path, aggressive=True)
+    assert len(optimize_calls) == 1
 
 
 def test_storage_reserve_is_real_and_releasable(tmp_path, monkeypatch):

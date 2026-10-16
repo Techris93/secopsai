@@ -15,7 +15,7 @@ def _decision(verdict="needs_more_evidence", confidence=60, probability=50):
     disposition = {"true_positive": "true_positive", "false_positive": "false_positive", "needs_more_evidence": "needs_review"}[verdict]
     return {"summary": "Evidence assessment", "risk_assessment": "Review risk", "evidence": [], "recommended_actions": [], "limitations": [],
             "finding_verdict": verdict, "finding_confidence": confidence, "malicious_probability": probability,
-            "disposition_recommendation": disposition, "decision_evidence_refs": [], "missing_evidence": ["payload.js"] if verdict == "needs_more_evidence" else []}
+            "disposition_recommendation": disposition, "decision_evidence_refs": ["YARA:X"], "missing_evidence": ["payload.js"] if verdict == "needs_more_evidence" else []}
 
 
 def _tgz(files):
@@ -196,7 +196,7 @@ def test_malicious_probability_resolves_or_escalates(tmp_path):
     db_path = str(tmp_path / "soc.db")
     soc_store.init_db(db_path)
     for name in ("low", "mid", "high", "missing"):
-        research_ai_triage.record_hit(ecosystem="npm", package=name, version="1", prescan={"score": 60, "findings": []}, db_path=db_path)
+        research_ai_triage.record_hit(ecosystem="npm", package=name, version="1", prescan={"score": 60, "findings": [{"rule_id": "YARA:X"}], "missing_files": ["payload.js"]}, db_path=db_path)
         with soc_store.connect(db_path) as connection:
             connection.execute("INSERT INTO research_alerts (alert_id, alert_type, severity, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at) VALUES (?, 'registry_release_anomaly', 'high', ?, 'r', ?, 'open', '', 't', 't')",
                                (f"RAL-{name}", f"d-{name}", json.dumps({"package": name, "version": "1"})))
@@ -220,7 +220,7 @@ def test_clef_prescreen_closes_low_scores_and_hides_its_score_from_chat(tmp_path
     db_path = str(tmp_path / "soc.db")
     soc_store.init_db(db_path)
     for name in ("quiet", "loud"):
-        research_ai_triage.record_hit(ecosystem="npm", package=name, version="1", prescan={"score": 60, "findings": []}, db_path=db_path)
+        research_ai_triage.record_hit(ecosystem="npm", package=name, version="1", prescan={"score": 60, "findings": [{"rule_id": "YARA:X"}], "missing_files": ["payload.js"]}, db_path=db_path)
         with soc_store.connect(db_path) as connection:
             connection.execute("INSERT INTO research_alerts (alert_id, alert_type, severity, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at) VALUES (?, 'registry_release_anomaly', 'high', ?, 'r', ?, 'open', '', 't', 't')",
                                (f"RAL-{name}", f"d-{name}", json.dumps({"package": name, "version": "1"})))

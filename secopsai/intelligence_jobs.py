@@ -49,6 +49,8 @@ def enqueue_job(
         from secopsai.codex_bridge import load_model_routing
         routing = load_model_routing(db_path)
         normalized_input.update(selected_model=selected_model, fallback_models=routing.get("fallback_models", []), fallback_mode=routing.get("fallback_mode", "disabled"))
+    for fallback_model in normalized_input.get("fallback_models") or []:
+        require_action(str(fallback_model), action)
     input_json = _bounded_json(normalized_input, MAX_INPUT_BYTES, "job input")
     if not idempotency_key:
         seed = f"{action}|{target_id}|{input_json}|{requested_by}"
@@ -341,7 +343,20 @@ def complete_job(
     data = result.get("data") if isinstance(result.get("data"), dict) else result
     from secopsai.provider_capabilities import require_action
     require_action(str(current.get("input", {}).get("selected_model") or ""), current["action"])
-    validate_bridge_result(current["action"], data, provider=provider)
+    job_input = current.get("input") if isinstance(current.get("input"), dict) else {}
+    job_input.setdefault("target_id", str(current.get("target_id") or ""))
+    context = job_input.get("context") if isinstance(job_input.get("context"), dict) else None
+    if context is None and isinstance(job_input.get("artifact_triage"), dict):
+        context = {"artifact_triage": job_input["artifact_triage"]}
+    if current["action"] in {"triage_finding", "triage_artifact", "prioritize_findings", "analyze_research_case"}:
+        # Reconstruct trusted identifiers at the persistence boundary. If the
+        # underlying evidence changed after model invocation, the result fails
+        # closed instead of attaching invented or stale references.
+        from secopsai.intelligence import prepare_bridge_request
+        trusted_context = prepare_bridge_request(current["action"], job_input, db_path=db_path).get("context")
+        if isinstance(trusted_context, dict):
+            context = trusted_context
+    validate_bridge_result(current["action"], data, provider=provider, context=context)
     result_json = _bounded_json(result, MAX_RESULT_BYTES, "job result")
     return _finish(
         job_id,
@@ -372,7 +387,7 @@ def requeue_job(
     now = soc_store.utc_now()
     with sqlite_writer_lock(db_path):
         with closing(soc_store.connect(db_path)) as connection:
-            row = connection.execute("SELECT status, input_json FROM intelligence_jobs WHERE job_id = ?", (job_id,)).fetchone()
+            row = connection.execute("SELECT status, action, input_json FROM intelligence_jobs WHERE job_id = ?", (job_id,)).fetchone()
             if row is None:
                 raise ValueError(f"intelligence job not found: {job_id}")
             status = str(row["status"])
@@ -393,6 +408,10 @@ def requeue_job(
                     ][:8]
                 if fallback_mode is not None:
                     inputs["fallback_mode"] = str(fallback_mode).strip()[:40]
+            from secopsai.provider_capabilities import require_action
+            require_action(str(inputs.get("selected_model") or ""), str(row["action"]))
+            for fallback_model in inputs.get("fallback_models") or []:
+                require_action(str(fallback_model), str(row["action"]))
             new_input_json = _bounded_json(inputs, MAX_INPUT_BYTES, "job input")
             connection.execute(
                 """UPDATE intelligence_jobs
@@ -426,7 +445,7 @@ def requeue_failed_jobs(
     with sqlite_writer_lock(db_path):
         with closing(soc_store.connect(db_path)) as connection:
             rows = connection.execute(
-                "SELECT job_id, input_json FROM intelligence_jobs WHERE status = 'failed' ORDER BY queued_at, job_id LIMIT ?",
+                "SELECT job_id, action, input_json FROM intelligence_jobs WHERE status = 'failed' ORDER BY queued_at, job_id LIMIT ?",
                 (bounded_limit,),
             ).fetchall()
             for row in rows:
@@ -442,6 +461,10 @@ def requeue_failed_jobs(
                         ][:8]
                     if fallback_mode is not None:
                         inputs["fallback_mode"] = str(fallback_mode).strip()[:40]
+                from secopsai.provider_capabilities import require_action
+                require_action(str(inputs.get("selected_model") or ""), str(row["action"]))
+                for fallback_model in inputs.get("fallback_models") or []:
+                    require_action(str(fallback_model), str(row["action"]))
                 new_input_json = _bounded_json(inputs, MAX_INPUT_BYTES, "job input")
                 connection.execute(
                     """UPDATE intelligence_jobs

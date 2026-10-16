@@ -70,7 +70,7 @@ On Render, the `secopsai-research-worker` background worker in `render.yaml` run
 
 ### Storage capacity and recovery
 
-The worker runs bounded storage maintenance before every collection cycle. It preserves pending events, candidate-linked records, research cases, evidence, IOCs, active alerts, and the newest registry comparison snapshots. It removes only processed operational feed history after its configured retention period, old completed run history, resolved dead letters, expired delivery history, and superseded snapshots. Freed SQLite pages are reused by later collections.
+The worker runs bounded storage maintenance before every collection cycle. Routine maintenance deletes at most four batches per eligible table even when disk pressure is high; pressure does not turn a scheduled cycle into an aggressive cleanup. It preserves pending events, candidate-linked records, research cases, evidence, IOCs, active alerts, completed npm release analyses, and the newest registry comparison snapshots. It removes only processed operational feed history after its configured retention period, old completed run history, resolved dead letters, expired delivery history, and superseded snapshots. Freed SQLite pages are reused by later collections.
 
 The production Blueprint reserves 16 MB on the persistent disk. If free space drops below 128 MB or disk use reaches 85%, the worker releases that reserve before cleanup so SQLite can commit the recovery transaction. Storage pressure is reported separately from registry health; a full disk must not be presented as proof that a registry is unavailable.
 
@@ -82,17 +82,18 @@ secopsai research storage maintain --aggressive --json
 secopsai research storage release-reserve --json
 ```
 
-`maintain --aggressive` prunes all eligible batches and runs `VACUUM` only when enough free capacity exists to do so safely. It never deletes pending events, canonical candidates, cases, case evidence, IOCs, rules, unresolved alerts, or quarantined artifacts.
+`maintain --aggressive` is an explicit operator action that prunes up to 200 batches per eligible table, updates SQLite query-planner statistics, and runs `VACUUM` only when enough free capacity exists to do so safely. Routine worker maintenance skips the database-wide statistics pass to keep its shared writer-lock interval bounded. It never deletes pending events, canonical candidates, cases, case evidence, IOCs, rules, unresolved alerts, completed npm release analyses, or quarantined artifacts.
 
 If Render reports `database or disk is full`, increase the worker disk from its **Disks** page before redeploying. Render supports increasing a persistent disk without downtime, but does not allow reducing it later. After capacity becomes available, deploy this release; the worker performs maintenance before it starts another collector. Then verify `storage status`, confirm `pressure=false`, and confirm a complete worker cycle in the logs.
 
 The production Blueprint provisions 5 GB for continuous global-registry surveillance. Capacity must still be reviewed against measured ingestion rate: retain the automatic pressure guard and review the Disk Usage metric weekly. A bounded development deployment can use 1 GB, but a future multi-worker service must move this ledger to a managed datastore because Render persistent disks are single-service and cannot be shared.
 
-Completed npm release analyses are retained for 30 days by default, while
-candidate-linked evidence, failed/retryable analyses, exact events, and
-quarantined artifacts are preserved by the storage guard. Override the
-completed-analysis window with `SECOPSAI_RESEARCH_NPM_ANALYSIS_RETENTION_DAYS`
-only after measuring the disk budget.
+Completed npm release analyses are retained until candidate references move
+from free-form evidence JSON into a normalized, indexed relation. The previous
+substring check scanned every candidate evidence blob for each analysis row
+and could monopolize the shared SQLite writer lock. Failed analyses remain
+eligible for bounded retention pruning; pending/retryable work, exact events,
+candidate-linked evidence, and quarantined artifacts remain preserved.
 
 The worker creates a deduplicated high-severity `collector_degraded` alert when a registry run fails, leaves a coverage gap, or reaches a bounded collection limit. It creates at most one such alert per ecosystem per UTC day and continues collecting other registries. Delivery is disabled by default outside the production Blueprint. For a standalone deployment, configure:
 

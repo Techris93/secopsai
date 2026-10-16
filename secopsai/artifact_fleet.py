@@ -589,7 +589,21 @@ def scan_artifact(*, ecosystem: str, package: str, version: str, artifact: str |
 def build_triage_context(result: dict[str, Any]) -> dict[str, Any]:
     if not result.get("findings"):
         raise ValueError("clean artifacts must not enter model triage")
-    return {"artifact_id": result.get("artifact_id"), "ecosystem": result.get("ecosystem"), "package": result.get("package"), "version": result.get("version"), "sha256": result.get("sha256"), "source_reference": result.get("source_reference"), "findings": [{key: item.get(key) for key in ("rule_id", "severity", "confidence", "file_path", "matched_indicator", "matched_patterns", "matched_strings", "safe_context", "recommended_mitigation")} for item in result.get("findings", [])[:100]], "iocs": result.get("iocs") or {}, "execution_performed": False, "evidence_truncated": True, "evidence_omissions": ["full_artifact_files_not_supplied"]}
+    findings = result.get("findings", [])[:100]
+    paths = sorted({
+        str(item.get("path"))
+        for item in result.get("files") or []
+        if isinstance(item, dict) and isinstance(item.get("path"), str) and item.get("path").strip()
+    })
+    supplied_complete = {
+        str(item.get("file_path"))[:300]
+        for item in findings
+        if isinstance(item, dict) and isinstance(item.get("file_path"), str) and item.get("file_path").strip()
+        and item.get("complete") is True and item.get("truncated") is not True
+    }
+    missing_files = [path for path in paths if path not in supplied_complete]
+    bounded_missing_files = [path for path in missing_files if len(path) <= 300][:200]
+    return {"artifact_id": result.get("artifact_id"), "ecosystem": result.get("ecosystem"), "package": result.get("package"), "version": result.get("version"), "sha256": result.get("sha256"), "source_reference": result.get("source_reference"), "findings": [{key: item.get(key) for key in ("rule_id", "severity", "confidence", "file_path", "matched_indicator", "matched_patterns", "matched_strings", "safe_context", "recommended_mitigation")} for item in findings], "iocs": result.get("iocs") or {}, "missing_files": bounded_missing_files, "missing_files_truncated": len(missing_files) > len(bounded_missing_files), "execution_performed": False, "evidence_truncated": True, "evidence_omissions": ["full_artifact_files_not_supplied"]}
 
 
 def triage_artifact(artifact_id: str, *, model: str = "", model_call: Callable[[dict[str, Any]], dict[str, Any]] | None = None, db_path: str | Path | None = None) -> dict[str, Any]:
@@ -646,14 +660,20 @@ def enqueue_model_triage(
 def record_model_result(artifact_id: str, response: dict[str, Any], *, model: str = "", db_path: str | Path | None = None) -> dict[str, Any]:
     from secopsai.decision_contracts import validate_action_result
     from secopsai.decision_policy import closure_decision
-    validate_action_result("triage_artifact", response)
+    from secopsai.decision_evidence import evidence_identifiers
+    context = triage_show(artifact_id, db_path=db_path)["context"]
+    validate_action_result(
+        "triage_artifact",
+        response,
+        supplied_evidence_refs=set(evidence_identifiers(context)),
+        supplied_missing_files=set(context.get("missing_files") or []),
+    )
     verdict = {"true_positive": "suspicious", "needs_more_evidence": "inconclusive", "benign_expected": "benign", "false_positive": "likely_benign"}[response["finding_verdict"]]
     confidence = response["finding_confidence"]
     if response["malicious_probability"] >= 70:
         verdict = "suspicious"
     allowed, reason = closure_decision(response)
-    from secopsai.decision_evidence import build_evidence, evidence_identifiers
-    context = triage_show(artifact_id, db_path=db_path)["context"]
+    from secopsai.decision_evidence import build_evidence
     _, coverage = build_evidence(context)
     if not coverage["complete"] or not response["decision_evidence_refs"] or any(ref not in evidence_identifiers(context) for ref in response["decision_evidence_refs"]):
         allowed, reason = False, "incomplete_evidence"

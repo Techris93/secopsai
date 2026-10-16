@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-CATEGORIES = ("findings", "flag_locations", "install_time_files", "decoded_payloads", "flagged_files", "binaries", "metadata_signals")
+CATEGORIES = ("matched_strings", "flag_locations", "findings", "install_time_files", "decoded_payloads", "flagged_files", "binaries", "metadata_signals")
 MAX_STATE_CHARS = 32_000
 
 
@@ -13,8 +13,41 @@ def build_evidence(context: dict[str, Any], limit: int = MAX_STATE_CHARS) -> tup
     records: list[tuple[str, Any]] = []
     omitted: list[str] = []
     truncated: list[str] = []
+    findings = context.get("findings") or []
+    if not isinstance(findings, list):
+        findings = [findings]
+    matched_records = context.get("matched_strings") or []
+    if not isinstance(matched_records, list):
+        matched_records = [matched_records]
+    location_records = context.get("flag_locations") or []
+    if not isinstance(location_records, list):
+        location_records = [location_records]
+    normalized_findings = []
+    for finding in findings[:64]:
+        if not isinstance(finding, dict):
+            normalized_findings.append(finding)
+            continue
+        match = {key: finding[key] for key in ("rule_id", "file_path", "matched_indicator", "matched_patterns", "matched_strings", "safe_context", "matched_regions_shown") if key in finding}
+        if match and not (isinstance(matched_records, list) and any(item == match for item in matched_records)):
+            matched_records.append(match)
+        for location in finding.get("evidence_locations") or finding.get("evidence") or []:
+            if isinstance(location, dict):
+                normalized_location = {key: location[key] for key in ("rule_id", "flag", "file_path", "line", "code") if key in location}
+                if normalized_location and normalized_location not in location_records:
+                    location_records.append(normalized_location)
+        normalized_findings.append({key: value for key, value in finding.items() if key not in {
+            "matched_indicator", "matched_patterns", "matched_strings", "safe_context", "matched_regions_shown", "evidence", "evidence_locations",
+        }})
+    for category, items in (("matched_strings", matched_records), ("flag_locations", location_records)):
+        records.extend((category, item) for item in items[:64])
+        if len(items) > 64:
+            omitted.append(category)
     for category in CATEGORIES:
+        if category in {"matched_strings", "flag_locations"}:
+            continue
         items = context.get(category) or []
+        if category == "findings":
+            items = normalized_findings
         if not isinstance(items, list):
             items = [items]
         records.extend((category, item) for item in items[:64])

@@ -70,3 +70,5 @@ def test_budget_preserves_matches_after_large_install_file():
         'flagged_files': [{'path': 'payload.js', 'content': 'DECISIVE_TEXT'}]})
     assert 'DECISIVE_TEXT' in state
     assert not json.loads(state)['coverage']['complete']
+    assert 'matched_strings' in json.loads(state)['evidence']
+    assert json.loads(state)['evidence']['matched_strings'][0]['matched_strings'] == ['DECISIVE_TEXT']
