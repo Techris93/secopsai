@@ -70,7 +70,7 @@ On Render, the `secopsai-research-worker` background worker in `render.yaml` run
 
 ### Storage capacity and recovery
 
-The worker runs bounded storage maintenance before every collection cycle. Routine maintenance deletes at most two batches of 250 rows per eligible retention rule, even when disk pressure is high; pressure does not turn a scheduled cycle into an aggressive cleanup. It preserves pending events, candidate-linked records, research cases, evidence, IOCs, active alerts, completed npm release analyses, and the newest registry comparison snapshots. It removes only processed operational feed history after its configured retention period, old completed run history, resolved dead letters, expired delivery history, and superseded snapshots. Freed SQLite pages are reused by later collections.
+The worker runs bounded storage maintenance before every collection cycle. Routine maintenance deletes at most two batches of 250 rows per eligible retention rule, even when disk pressure is high; pressure does not turn a scheduled cycle into an aggressive cleanup. It preserves the high-volume `registry_feed_events` ledger, pending events, candidate-linked records, research cases, evidence, IOCs, active alerts, completed npm release analyses, and the newest registry comparison snapshots. It removes only smaller operational histories after their configured retention periods. Freed SQLite pages are reused by later collections.
 
 The production Blueprint reserves 16 MB on the persistent disk. If free space drops below 128 MB or disk use reaches 85%, the worker releases that reserve before cleanup so SQLite can commit the recovery transaction. Storage pressure is reported separately from registry health; a full disk must not be presented as proof that a registry is unavailable.
 
@@ -82,7 +82,7 @@ secopsai research storage maintain --aggressive --json
 secopsai research storage release-reserve --json
 ```
 
-`maintain --aggressive` is an explicit operator action that prunes up to 200 configured-size batches per eligible table, updates SQLite query-planner statistics, and runs `VACUUM` only when enough free capacity exists to do so safely. Routine worker maintenance caps each batch at 250 rows, releases the shared writer lock between batches, and skips the database-wide statistics pass. It never deletes pending events, canonical candidates, cases, case evidence, IOCs, rules, unresolved alerts, completed npm release analyses, or quarantined artifacts.
+`maintain --aggressive` is an explicit operator action that also enables pruning the high-volume registry feed ledger, processes up to 200 configured-size batches per eligible table, updates SQLite query-planner statistics, and runs `VACUUM` only when enough free capacity exists to do so safely. Routine worker maintenance caps each batch at 250 rows, releases the shared writer lock between batches, and skips the database-wide statistics pass. It never deletes pending events, canonical candidates, cases, case evidence, IOCs, rules, unresolved alerts, completed npm release analyses, or quarantined artifacts.
 
 If Render reports `database or disk is full`, increase the worker disk from its **Disks** page before redeploying. Render supports increasing a persistent disk without downtime, but does not allow reducing it later. After capacity becomes available, deploy this release; the worker performs maintenance before it starts another collector. Then verify `storage status`, confirm `pressure=false`, and confirm a complete worker cycle in the logs.
 

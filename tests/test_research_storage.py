@@ -152,12 +152,14 @@ def test_pressure_does_not_expand_automatic_pruning_batches(tmp_path, monkeypatc
     }
     batch_limits = []
     row_limits = []
+    pruned_tables = []
     monkeypatch.setattr(research_storage, "storage_status", lambda **_kwargs: dict(pressure))
     monkeypatch.setattr(research_storage, "release_storage_reserve", lambda **_kwargs: 0)
     monkeypatch.setattr(research_storage, "ensure_storage_reserve", lambda **_kwargs: 0)
     def capture_batch(_connection, *, max_batches, batch_size, **_kwargs):
         batch_limits.append(max_batches)
         row_limits.append(batch_size)
+        pruned_tables.append(_kwargs.get("table"))
         return 0
 
     monkeypatch.setattr(research_storage, "_delete_batches_with_writer_yields", capture_batch)
@@ -168,6 +170,12 @@ def test_pressure_does_not_expand_automatic_pruning_batches(tmp_path, monkeypatc
     assert batch_limits
     assert set(batch_limits) == {research_storage.ROUTINE_MAX_BATCHES}
     assert set(row_limits) == {research_storage.ROUTINE_BATCH_SIZE_CAP}
+    assert "registry_feed_events" not in pruned_tables
+
+
+def test_high_volume_feed_retention_is_explicit_only():
+    assert not any(table == "registry_feed_events" for table, *_rest in research_storage._prune_rules())
+    assert sum(table == "registry_feed_events" for table, *_rest in research_storage._prune_rules(include_high_volume=True)) == 2
 
 
 def test_completed_npm_analysis_retention_does_not_scan_candidate_evidence():

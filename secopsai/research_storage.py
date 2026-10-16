@@ -428,14 +428,14 @@ def _delete_batches_with_writer_yields(
     return deleted
 
 
-def _prune_rules() -> Tuple[Tuple[str, str, Tuple[Any, ...]], ...]:
+def _prune_rules(*, include_high_volume: bool = False) -> Tuple[Tuple[str, str, Tuple[Any, ...]], ...]:
     event_hours = _env_int("SECOPSAI_RESEARCH_EVENT_RETENTION_HOURS", 24, minimum=1)
     candidate_days = _env_int("SECOPSAI_RESEARCH_CANDIDATE_EVENT_RETENTION_DAYS", 90, minimum=1)
     run_days = _env_int("SECOPSAI_RESEARCH_RUN_RETENTION_DAYS", 30, minimum=1)
     gap_days = _env_int("SECOPSAI_RESEARCH_GAP_RETENTION_DAYS", 180, minimum=1)
     delivery_days = _env_int("SECOPSAI_RESEARCH_DELIVERY_RETENTION_DAYS", 90, minimum=1)
     npm_analysis_days = _env_int("SECOPSAI_RESEARCH_NPM_ANALYSIS_RETENTION_DAYS", 30, minimum=1)
-    return (
+    rules = (
         ("registry_feed_events", "processing_state IN ('scored','ignored') AND collected_at < ?", (_iso_cutoff(hours=event_hours),)),
         ("registry_feed_events", "processing_state = 'candidate' AND collected_at < ?", (_iso_cutoff(days=candidate_days),)),
         ("research_registry_events", "observed_at < ? AND NOT EXISTS (SELECT 1 FROM research_candidates c WHERE c.event_id = research_registry_events.event_id)", (_iso_cutoff(hours=event_hours),)),
@@ -453,6 +453,13 @@ def _prune_rules() -> Tuple[Tuple[str, str, Tuple[Any, ...]], ...]:
         ("research_npm_release_analyses", "status = 'failed' AND updated_at < ?", (_iso_cutoff(days=npm_analysis_days),)),
         ("research_npm_enrichment_runs", "status != 'running' AND completed_at IS NOT NULL AND completed_at < ?", (_iso_cutoff(days=run_days),)),
     )
+    if include_high_volume:
+        return rules
+    # The production feed ledger has millions of rows. Even indexed routine
+    # deletes cause disproportionate random I/O and contend with active
+    # collectors. Preserve it during scheduled cycles; operators can prune it
+    # explicitly during aggressive maintenance after reviewing capacity.
+    return tuple(rule for rule in rules if rule[0] != "registry_feed_events")
 
 
 def maintain_research_storage(
@@ -480,7 +487,7 @@ def maintain_research_storage(
         with sqlite_writer_lock(str(database)):
             soc_store.init_db(str(database))
         with closing(soc_store.connect(str(database))) as connection:
-            for table, predicate, params in _prune_rules():
+            for table, predicate, params in _prune_rules(include_high_volume=aggressive):
                 count = _delete_batches_with_writer_yields(
                     connection,
                     db_path=str(database),
