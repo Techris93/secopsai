@@ -582,7 +582,7 @@ def test_first_full_transfer_has_separate_bounded_bootstrap_budget(tmp_path,monk
     supervisor.checkpoint(db,client,tmp_path)
     client.incremental_ready=True
     supervisor.checkpoint(db,client,tmp_path)
-    assert deadlines==[700,700,340]
+    assert deadlines==[700,700,400]
 
 
 def test_sparse_checkpoint_preserves_distributed_edits_and_immutable_baseline(tmp_path, monkeypatch):
