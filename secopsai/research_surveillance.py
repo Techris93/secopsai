@@ -54,6 +54,7 @@ RUBYGEMS_TIMEFRAME_URL = "https://rubygems.org/api/v1/timeframe_versions.json"
 CRATES_RECENT_URL = "https://crates.io/api/v1/crates?sort=recent-updates&per_page=100"
 CRATES_ALLOWED_HOSTS: Tuple[str, ...] = ("crates.io",)
 CRATES_PAGE_DELAY_SECONDS = 1.0
+MAX_REGISTRY_PAGES_PER_RUN = 500
 VSCODE_QUERY_URL = "https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery"
 VSCODE_ALLOWED_HOSTS: Tuple[str, ...] = ("marketplace.visualstudio.com",)
 VSCODE_PAGE_SIZE = 100
@@ -1363,7 +1364,7 @@ def _ingest_crates_recent(
     reached = False
     page_url = collector["feed_url"]
     with closing(soc_store.connect(db_path)) as connection:
-        for _page in range(max(1, min(int(max_pages), 50))):
+        for _page in range(max(1, min(int(max_pages), MAX_REGISTRY_PAGES_PER_RUN))):
             try:
                 payload = _fetch_json(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_TIMEFRAME_PAGE_BYTES)
             except (IntakeError, CollectorError, ValueError) as exc:
@@ -2494,7 +2495,7 @@ def _run_registry_collector_unlocked(
     if not int(collector["enabled"]):
         raise CollectorError(f"collector {collector['collector_id']} is paused")
     fetcher = fetcher or SafeFetcher()
-    max_pages = max(1, min(int(max_pages), 500))
+    max_pages = max(1, min(int(max_pages), MAX_REGISTRY_PAGES_PER_RUN))
     cursor_before = _effective_cursor(collector, since)
 
     run_id, rejection = _open_run(collector=collector, cursor_before=cursor_before, db_path=db_path)

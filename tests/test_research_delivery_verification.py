@@ -171,6 +171,7 @@ def test_multiple_explicit_registry_collector_retries_cover_selected_sources(tmp
     result = verify_delivery(db_path=db, client=Client(), retry_collector_names=names)
 
     assert {call['ecosystem'] for call in calls} == {'crates', 'go', 'npm', 'nuget', 'packagist'}
+    assert next(call['max_pages'] for call in calls if call['ecosystem'] == 'crates') == 500
     assert [item['name'] for item in result['registry_collectors']] == list(names)
     assert result['status'] == 'passed'
     assert result['registry_collectors_retried'] == len(names)

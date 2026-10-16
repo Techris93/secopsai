@@ -103,6 +103,41 @@ def test_ensure_collectors_seeds_nuget_catalog(tmp_path):
     assert nuget["cursor"]["cursor_value"]
 
 
+def test_crates_collector_catches_up_beyond_routine_50_page_budget(tmp_path, monkeypatch):
+    db_path = _db(tmp_path)
+    since = "2026-10-15T00:00:00.000Z"
+    urls = []
+    monkeypatch.setattr("secopsai.research_surveillance.time.sleep", lambda _seconds: None)
+
+    def fetch(url, max_bytes):
+        page = int(urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("page", ["1"])[0])
+        urls.append(url)
+        if page <= 50:
+            updated_at = "2026-10-15T01:00:00.000Z"
+            crates = [{"name": f"synthetic-{page}", "newest_version": "1.0.0", "updated_at": updated_at}]
+        else:
+            # The cursor boundary appears on page 51, proving that the
+            # recovery pass can complete instead of stopping at 50 pages.
+            crates = [{"name": "cursor-boundary", "newest_version": "1.0.0", "updated_at": since}]
+        return 200, {"content-type": "application/json"}, json.dumps({
+            "crates": crates,
+            "meta": {"next_page": f"?page={page + 1}"},
+        }).encode()
+
+    result = run_registry_collector(
+        ecosystem="crates",
+        since=since,
+        max_pages=500,
+        db_path=db_path,
+        fetcher=SafeFetcher(fetch=fetch),
+    )
+
+    assert result["status"] == "completed"
+    assert result["coverage"] == "complete"
+    assert result["pages_processed"] == 51
+    assert len(urls) == 51
+
+
 def test_current_collector_reads_do_not_require_a_database_write(tmp_path):
     db_path = _db(tmp_path)
     ensure_collectors(db_path=db_path)
