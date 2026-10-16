@@ -444,7 +444,11 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str
     started = time.monotonic()
     incremental = os.environ.get("SECOPSAI_INCREMENTAL_CHECKPOINTS", "0") == "1"
     bootstrap = incremental and not getattr(store, "incremental_ready", False)
-    capture_deadline = started + (600 if bootstrap else 240 if incremental else UPLOAD_TIMEOUT_SECONDS)
+    # A production-sized SQLite backup can consume roughly two minutes on its
+    # own. Leave a bounded remainder for the sparse scan and object/manifest
+    # uploads while keeping the checkpoint timestamp inside the watchdog's
+    # five-minute freshness window.
+    capture_deadline = started + (600 if bootstrap else 300 if incremental else UPLOAD_TIMEOUT_SECONDS)
     _log("checkpoint_capture_started", phase="bootstrap" if bootstrap else "recurring", budget_seconds=round(capture_deadline-started))
     captured_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     with tempfile.TemporaryDirectory(dir=workdir) as temp_dir:
