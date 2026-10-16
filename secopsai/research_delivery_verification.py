@@ -44,7 +44,11 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
         requested = {name.strip().casefold() for name in retry_collector_names if name.strip()}
         if not requested or len(requested) > 10:
             raise ValueError("registry collector recovery permits one to ten named collectors")
-        from secopsai.research_surveillance import ensure_collectors, run_registry_collector
+        from secopsai.research_surveillance import (
+            MAX_REGISTRY_PAGES_PER_RUN,
+            ensure_collectors,
+            run_registry_collector,
+        )
         from secopsai.research_worker import MAX_PAGES_PER_CYCLE, collector_page_budget
 
         collectors = ensure_collectors(db_path=db_path)
@@ -56,9 +60,16 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
         for collector in selected:
             if time.monotonic() >= deadline:
                 raise TimeoutError("registry collector recovery exceeded the delivery verification budget")
+            # An explicitly requested catch-up may drain a Crates.io backlog
+            # beyond the routine worker's smaller per-cycle page budget.
+            max_pages = (
+                MAX_REGISTRY_PAGES_PER_RUN
+                if collector['ecosystem'] == 'crates'
+                else collector_page_budget(collector['ecosystem'], MAX_PAGES_PER_CYCLE)
+            )
             result = run_registry_collector(
                 ecosystem=collector['ecosystem'],
-                max_pages=collector_page_budget(collector['ecosystem'], MAX_PAGES_PER_CYCLE),
+                max_pages=max_pages,
                 db_path=db_path,
             )
             collector_results.append({
