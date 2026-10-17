@@ -25,19 +25,58 @@ test("bridge tokens may upload only while the migration window is open", async (
   assert.equal((await worker.fetch(read, open)).status, 401);
 });
 
-test("cron dispatches the research worker only when a token is configured", async () => {
+function githubFake(runs, { listStatus = 200 } = {}) {
   const calls = [];
-  const fetcher = async (url, init) => { calls.push({ url, init }); return new Response(null, { status: 204 }); };
-  assert.equal((await dispatchResearchWorker({}, fetcher)).status, "skipped");
-  assert.equal(calls.length, 0);
-  const result = await dispatchResearchWorker({ GITHUB_DISPATCH_TOKEN: "gh" }, fetcher);
+  const fetcher = async (url, init = {}) => {
+    calls.push({ url, init });
+    if (String(url).includes("/runs?")) return new Response(JSON.stringify({ workflow_runs: runs }), { status: listStatus });
+    return new Response(null, { status: 204 });
+  };
+  return { calls, fetcher, dispatches: () => calls.filter((call) => String(call.url).endsWith("/dispatches")) };
+}
+
+const NOW = Date.parse("2026-10-17T17:00:00Z");
+
+test("cron dispatches the research worker only when a token is configured", async () => {
+  const gh = githubFake([{ id: 1, status: "completed", created_at: "2026-10-17T16:00:00Z" }]);
+  assert.equal((await dispatchResearchWorker({}, gh.fetcher, NOW)).status, "skipped");
+  assert.equal(gh.calls.length, 0);
+  const result = await dispatchResearchWorker({ GITHUB_DISPATCH_TOKEN: "gh" }, gh.fetcher, NOW);
   assert.equal(result.status, "dispatched");
-  assert.equal(calls[0].url, "https://api.github.com/repos/Techris93/secopsai/actions/workflows/research-worker.yml/dispatches");
-  assert.equal(calls[0].init.headers.authorization, "Bearer gh");
-  assert.ok(calls[0].init.headers["user-agent"], "GitHub rejects requests without a User-Agent");
-  assert.deepEqual(JSON.parse(calls[0].init.body), { ref: "main", inputs: { trigger: "cloudflare-cron" } });
-  const failed = await dispatchResearchWorker({ GITHUB_DISPATCH_TOKEN: "gh" }, async () => new Response("{}", { status: 401 }));
+  const [dispatch] = gh.dispatches();
+  assert.equal(dispatch.url, "https://api.github.com/repos/Techris93/secopsai/actions/workflows/research-worker.yml/dispatches");
+  assert.equal(dispatch.init.headers.authorization, "Bearer gh");
+  assert.ok(dispatch.init.headers["user-agent"], "GitHub rejects requests without a User-Agent");
+  assert.deepEqual(JSON.parse(dispatch.init.body), { ref: "main", inputs: { trigger: "cloudflare-cron" } });
+  const failed = await dispatchResearchWorker({ GITHUB_DISPATCH_TOKEN: "gh" }, async (url) => String(url).includes("/runs?")
+    ? new Response(JSON.stringify({ workflow_runs: [] }), { status: 200 }) : new Response("{}", { status: 401 }), NOW);
   assert.equal(failed.status, "failed");
+});
+
+test("a new research worker run starts only after the previous one finishes", async () => {
+  const env = { GITHUB_DISPATCH_TOKEN: "gh" };
+  // A run is still going (or queued): never queue another behind it.
+  for (const status of ["in_progress", "queued", "pending"]) {
+    const gh = githubFake([{ id: 7, status, created_at: "2026-10-17T15:50:00Z" }]);
+    const result = await dispatchResearchWorker(env, gh.fetcher, NOW);
+    assert.equal(result.status, "skipped");
+    assert.match(result.reason, new RegExp(`run 7 is ${status}`));
+    assert.equal(gh.dispatches().length, 0);
+  }
+  // Finished, but started less than 30 minutes ago: keep the cadence.
+  let gh = githubFake([{ id: 8, status: "completed", created_at: "2026-10-17T16:45:00Z" }]);
+  assert.equal((await dispatchResearchWorker(env, gh.fetcher, NOW)).status, "skipped");
+  assert.equal(gh.dispatches().length, 0);
+  // Finished and started 30+ minutes ago: dispatch.
+  gh = githubFake([{ id: 9, status: "completed", created_at: "2026-10-17T16:20:00Z" }]);
+  assert.equal((await dispatchResearchWorker(env, gh.fetcher, NOW)).status, "dispatched");
+  // The interval is configurable.
+  gh = githubFake([{ id: 10, status: "completed", created_at: "2026-10-17T16:45:00Z" }]);
+  assert.equal((await dispatchResearchWorker({ ...env, RESEARCH_WORKER_MIN_INTERVAL_MINUTES: "10" }, gh.fetcher, NOW)).status, "dispatched");
+  // If GitHub cannot be asked, fall back to dispatching; the concurrency group
+  // still guarantees a single ledger writer.
+  gh = githubFake([], { listStatus: 503 });
+  assert.equal((await dispatchResearchWorker(env, gh.fetcher, NOW)).status, "dispatched");
 });
 
 import { fastlaneTick, parsePypiRss } from "../src/fastlane.js";
