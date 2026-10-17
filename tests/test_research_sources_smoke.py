@@ -116,6 +116,7 @@ def test_watchdog_reports_active_worker_and_recent_delivery_as_in_progress():
     assert active["status"] == "in_progress" and active["decision_final"] is False
     assert active["blockers"] == []
     assert "provisional" in active["warnings"][0]
+    assert active["checks"]["research_operation"]["source_freshness_status"] == "provisional"
 
     current = inspect(reader=reader, now=now, worker_active=False)
     assert current["status"] == "in_progress" and current["decision_final"] is False
@@ -144,6 +145,41 @@ def test_watchdog_reports_active_worker_and_recent_delivery_as_in_progress():
     strict = inspect(reader=reader, now=now, scope="delivery", worker_active=False)
     assert strict["status"] == "failed"
     assert "semantic delivery has unacknowledged durable chunks" in strict["blockers"]
+
+
+def test_watchdog_defers_source_freshness_gate_until_worker_snapshot_is_final():
+    from datetime import datetime, timezone
+    import json
+    from scripts.research_operation_watchdog import inspect
+
+    now = datetime(2026, 10, 17, 12, tzinfo=timezone.utc)
+
+    def reader(url, _token):
+        if url.endswith("/status"):
+            return json.dumps({"uploaded_at": now.isoformat(), "checkpoint_available": True,
+                               "completion_retry_safe": True, "captured_at": now.isoformat()}).encode()
+        if "/research/operation" in url:
+            health = {"freshness_gaps": ["crates.io recently updated crates"],
+                      "dead_letters": 0, "artifact_backup_pending": 0, "ontology_pending": 0}
+            return json.dumps({"synced_at": now.isoformat(), "coverage": {"health": health}}).encode()
+        return b"<html>synthetic</html>"
+
+    provisional = inspect(reader=reader, now=now, scope="all", worker_active=True)
+    assert provisional["status"] == "in_progress"
+    assert provisional["decision_final"] is False
+    assert provisional["blockers"] == []
+    assert provisional["checks"]["research_operation"]["source_freshness_status"] == "provisional"
+    assert provisional["checks"]["research_operation"]["freshness_gaps"] == [
+        "crates.io recently updated crates"
+    ]
+
+    final = inspect(reader=reader, now=now, scope="all", worker_active=False,
+                    upstream_worker_conclusion="success",
+                    upstream_worker_completed_at=now.isoformat(),
+                    upstream_worker_run_id="synthetic-worker-run")
+    assert final["status"] == "failed"
+    assert final["checks"]["research_operation"]["source_freshness_status"] == "degraded"
+    assert final["blockers"] == ["enabled research sources are outside their freshness targets"]
 
 
 def test_watchdog_fails_stalled_or_permanently_rejected_delivery_and_stale_post_run_snapshot():

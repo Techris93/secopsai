@@ -94,14 +94,21 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
                 health = value.get("coverage", {}).get("health", {})
                 freshness_gaps = health.get("freshness_gaps", [])
                 checks[name]["freshness_gaps"] = freshness_gaps
-                checks[name]["source_freshness_status"] = "degraded" if freshness_gaps else "healthy"
+                source_status = "degraded" if freshness_gaps else "healthy"
+                if worker_active or stale_projection:
+                    # A worker can refresh these collectors while the shared
+                    # operation snapshot still describes the prior cycle.
+                    # Preserve any gaps, but do not treat this provisional
+                    # snapshot as the post-run source verdict.
+                    source_status = "provisional"
+                checks[name]["source_freshness_status"] = source_status
                 checks[name]["dead_letters"] = health.get("dead_letters", 0)
                 checks[name]["artifact_backup_pending"] = health.get("artifact_backup_pending")
                 if freshness_gaps:
                     warnings.append("enabled source freshness needs review: " + ", ".join(freshness_gaps))
                 if health.get("dead_letters"):
                     blockers.append("research delivery has dead-letter items requiring review")
-                if freshness_gaps and scope == "all":
+                if freshness_gaps and scope == "all" and not (worker_active or stale_projection):
                     blockers.append("enabled research sources are outside their freshness targets")
                 if health.get("artifact_backup_pending"):
                     blockers.append("registered public artifacts lack completed durable backups")
