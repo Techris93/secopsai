@@ -55,8 +55,16 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
     elif upstream_worker_run_id:
         checks["research_worker"] = {"active": False, "run_id": upstream_worker_run_id,
                                       "conclusion": upstream_worker_conclusion or "unknown"}
-    if upstream_worker_conclusion and upstream_worker_conclusion != "success":
+    # GitHub keeps one pending run per concurrency group: a queued Research
+    # Worker is cancelled when a newer dispatch replaces it.  That run did no
+    # work and the newer one triggers this watchdog again, so a cancelled
+    # upstream is provisional (judge the next run), never a blocker.
+    superseded = upstream_worker_conclusion == "cancelled"
+    if superseded:
+        warnings.append(f"Research Worker run {upstream_worker_run_id or 'unknown'} was superseded by a newer run; the next run decides health")
+    elif upstream_worker_conclusion and upstream_worker_conclusion != "success":
         blockers.append(f"Research Worker run {upstream_worker_run_id or 'unknown'} concluded {upstream_worker_conclusion}")
+    provisional = worker_active or superseded
     for name, url, token in (
         ("checkpoint", os.environ.get("LEDGER_STORE_URL", "https://ledger.secopsai.dev") + "/status", os.environ.get("LEDGER_STORE_TOKEN", "")),
         ("research_operation", os.environ.get("SECOPSAI_CORE_COORDINATOR_URL", "https://core.secopsai.dev") + "/api/v1/research/operation", os.environ.get("SECOPSAI_CORE_BRIDGE_TOKEN", "")),
@@ -95,7 +103,7 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
                 freshness_gaps = health.get("freshness_gaps", [])
                 checks[name]["freshness_gaps"] = freshness_gaps
                 source_status = "degraded" if freshness_gaps else "healthy"
-                if worker_active or stale_projection:
+                if provisional or stale_projection:
                     # A worker can refresh these collectors while the shared
                     # operation snapshot still describes the prior cycle.
                     # Preserve any gaps, but do not treat this provisional
@@ -108,7 +116,7 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
                     warnings.append("enabled source freshness needs review: " + ", ".join(freshness_gaps))
                 if health.get("dead_letters"):
                     blockers.append("research delivery has dead-letter items requiring review")
-                if freshness_gaps and scope == "all" and not (worker_active or stale_projection):
+                if freshness_gaps and scope == "all" and not (provisional or stale_projection):
                     blockers.append("enabled research sources are outside their freshness targets")
                 if health.get("artifact_backup_pending"):
                     blockers.append("registered public artifacts lack completed durable backups")
@@ -143,13 +151,13 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
                         blockers.append("semantic delivery has unacknowledged durable chunks")
                     elif oldest_age is None:
                         blockers.append("pending semantic delivery has no measurable age")
-                    elif not worker_active and oldest_age is not None and oldest_age > DELIVERY_SERVICE_WINDOW_SECONDS:
+                    elif not provisional and oldest_age is not None and oldest_age > DELIVERY_SERVICE_WINDOW_SECONDS:
                         blockers.append("oldest semantic delivery exceeds the two-hour service window")
-                    elif not worker_active and stalled_age is not None and stalled_age > DELIVERY_STALL_WINDOW_SECONDS:
+                    elif not provisional and stalled_age is not None and stalled_age > DELIVERY_STALL_WINDOW_SECONDS:
                         blockers.append("semantic delivery has stopped acknowledging work for over one hour")
                     else:
                         warnings.append(f"semantic delivery is in progress with {pending} durable chunk(s) pending")
-                if upstream_worker_completed_at and observed and not worker_active:
+                if upstream_worker_completed_at and observed and not provisional:
                     completed_at = datetime.fromisoformat(upstream_worker_completed_at.replace("Z", "+00:00"))
                     synced_at = datetime.fromisoformat(observed.replace("Z", "+00:00"))
                     if synced_at.timestamp() + 60 < completed_at.timestamp():
@@ -158,7 +166,7 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
             # Never print endpoint bodies, credential-bearing errors or tokens.
             checks[name] = {"available": False, "error_category": type(exc).__name__}
             blockers.append(f"{name} availability/freshness check failed")
-    in_progress = worker_active or stale_projection or (scope == "all" and any("semantic delivery is in progress" in item for item in warnings))
+    in_progress = provisional or stale_projection or (scope == "all" and any("semantic delivery is in progress" in item for item in warnings))
     status = "failed" if blockers else "in_progress" if in_progress else "passed"
     operational_status = "degraded" if blockers else "in_progress" if in_progress else "degraded" if warnings else "healthy"
     return {"as_of": now.isoformat(), "scope": scope, "status": status,
