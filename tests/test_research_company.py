@@ -537,6 +537,39 @@ def test_delivery_watchdog_keeps_source_freshness_visible_without_failing_delive
     assert blocked_delivery["blockers"] == ["research delivery has dead-letter items requiring review"]
 
 
+def test_watchdog_treats_a_superseded_worker_run_as_provisional_not_failed():
+    from scripts.research_operation_watchdog import inspect
+
+    now = datetime(2026, 10, 17, 16, 37, tzinfo=timezone.utc)
+
+    def reader(url, _token):
+        if url.endswith("/status"):
+            return json.dumps({"uploaded_at": now.isoformat(), "checkpoint_available": True,
+                               "completion_retry_safe": True, "captured_at": now.isoformat()}).encode()
+        if "/research/operation" in url:
+            return json.dumps({"synced_at": now.isoformat(), "coverage": {"health": {
+                "freshness_gaps": ["Synthetic stale source"], "dead_letters": 0,
+                "artifact_backup_pending": 0, "ontology_pending": 34,
+                "ontology_oldest_age_seconds": 9000,
+            }}}).encode()
+        return b"<html>synthetic</html>"
+
+    # GitHub cancels a queued run when a newer dispatch replaces it: no blocker.
+    superseded = inspect(reader=reader, now=now, worker_active=False,
+                         upstream_worker_conclusion="cancelled", upstream_worker_run_id="39048013659")
+    assert superseded["blockers"] == []
+    assert superseded["status"] == "in_progress"
+    assert superseded["decision_final"] is False
+    assert any("superseded by a newer run" in item for item in superseded["warnings"])
+
+    # A run that actually failed or timed out still blocks.
+    for conclusion in ("failure", "timed_out"):
+        failed = inspect(reader=reader, now=now, worker_active=False,
+                         upstream_worker_conclusion=conclusion, upstream_worker_run_id="1")
+        assert failed["status"] == "failed"
+        assert f"Research Worker run 1 concluded {conclusion}" in failed["blockers"]
+
+
 def test_real_source_catalog_seeds_supported_parsers_and_explicit_omissions(db):
     from secopsai.research_primary_intel import seed_sources
     seeded = seed_sources(db_path=db)
