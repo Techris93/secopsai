@@ -52,7 +52,7 @@ jobs:
   run:
     if: inputs.trigger != 'cloudflare-cron' || vars.RESEARCH_WORKER_ENABLED == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.delivery_only && 75 || 45 }}
+    timeout-minutes: ${{ inputs.delivery_only && 75 || 60 }}
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       SECOPS_FINDINGS_DIR: /home/runner/research
@@ -139,8 +139,8 @@ jobs:
         run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
 
       - name: Restore ledger, run worker cycles, checkpoint
-        # Delivery-only runs may drain for up to 45 minutes; the job timeout
-        # reserves additional time for ledger restore and the final checkpoint.
+        # Routine bounded runs include an additional 14-minute durable delivery
+        # drain; the job timeout reserves time for restore and checkpoints.
         # Exhausted retries still fail the run so an unsaved checkpoint is visible.
         run: |
           delivery_args=()
@@ -161,18 +161,19 @@ jobs:
             fi
             delivery_args+=(--delivery-only)
             max_seconds=$((delivery_seconds + 60))
+          else
+            delivery_args+=(--drain-after-cycles)
           fi
           python -u cloudflare/secopsai-research-runner/container/supervisor.py --cycles "${{ inputs.cycles || '6' }}" --max-seconds "$max_seconds" "${delivery_args[@]}"
 
       - name: Verify final checkpoint and hosted delivery health
-        if: always() && inputs.delivery_only
-        # Delivery-only runs intentionally do not collect new source data.
-        # Source-freshness gaps remain explicit in the report, but do not turn
-        # a successful outbox/checkpoint verification into a false failure.
+        if: always()
+        # This runs after the supervisor's final checkpoint and routine drain.
+        # Any durable chunk still pending keeps the delivery gate red.
         run: python scripts/research_operation_watchdog.py --scope delivery --output reports/research/delivery-health.json
 
       - name: Preserve delivery verification diagnostics
-        if: always() && inputs.delivery_only
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: research-delivery-verification

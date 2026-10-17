@@ -207,6 +207,70 @@ def test_intake_stores_bytes_events_and_queue_before_cursor_and_is_idempotent(db
     assert cursor == value["snapshot_id"]
 
 
+def test_msrc_large_feed_uses_revision_window_and_accounts_for_historical_entries(db):
+    from datetime import timedelta
+    from secopsai.research_primary_intel import parse_source_report, msrc_window_start
+
+    now = datetime(2026, 10, 17, 12, tzinfo=timezone.utc)
+    items = []
+    for index in range(5280):
+        published = now - timedelta(days=30 + index % 100)
+        updated = published
+        if index == 0:
+            published = updated = now - timedelta(hours=1)
+        elif index == 1:
+            updated = now - timedelta(minutes=30)
+        items.append(
+            f"<entry><id>ADV-{index:04d}</id><title>Advisory {index}</title>"
+            f"<updated>{updated.isoformat()}</updated><published>{published.isoformat()}</published>"
+            f"<link href=\"https://msrc.example/advisory/{index}\"/></entry>"
+        )
+    body = ("<feed xmlns=\"http://www.w3.org/2005/Atom\"><id>fixture</id><title>MSRC</title>"
+            f"<updated>{now.isoformat()}</updated>{''.join(items)}</feed>").encode()
+    config = {**source(db, source_id="msrc"), "parser": "msrc_rss"}
+    report = parse_source_report({**config, "msrc_lookback_start": msrc_window_start(now=now)}, body, now=now)
+    assert report["events_total"] == 5280
+    assert report["events_in_scope"] == 2 and report["historical_excluded"] == 5278
+    assert report["events_total"] == report["events_in_scope"] + report["historical_excluded"]
+    assert report["items"][1]["published_at"].startswith("2026-09-")
+    assert report["items"][1]["source_updated_at"] == "2026-10-17T11:30:00Z"
+    assert msrc_window_start(last_success_at="2026-10-10T12:00:00Z", now=now) == "2026-10-07T12:00:00Z"
+
+
+def test_source_ingest_resumes_archived_snapshot_after_queue_backpressure(db, monkeypatch):
+    from secopsai import research_primary_intel as intake
+    config = source(db)
+    monkeypatch.setattr(intake, "EVENT_BATCH_SIZE", 2)
+    monkeypatch.setattr(intake, "MAX_PENDING", 2)
+    body = json.dumps({"events": [
+        {"external_id": f"notice-{i}", "title": f"Notice {i}", "excerpt": "Fixture", "url": f"https://vendor.example/{i}"}
+        for i in range(3)
+    ]}).encode()
+    with pytest.raises(intake.IntakeBackpressureError):
+        acquire(config, body, db_path=db)
+    with soc_store.connect(db) as conn:
+        progress = conn.execute("SELECT snapshot_id,next_index,total_items FROM research_source_ingest_progress WHERE source_id=?", (config["source_id"],)).fetchone()
+        assert tuple(progress)[1:] == (2, 3)
+        assert conn.execute("SELECT cursor FROM research_intel_sources WHERE source_id=?", (config["source_id"],)).fetchone()[0] == ""
+        conn.execute("UPDATE research_operation_queue SET state='completed'")
+    monkeypatch.setattr(intake, "seed_sources", lambda **kwargs: {"sources": [], "unsupported_sources": []})
+
+    class NeverFetch:
+        def get(self, *args, **kwargs):
+            raise AssertionError("resumable intake must use its archived response")
+
+    result = intake.collect_due(db_path=db, fetcher=NeverFetch())
+    assert result["status"] == "succeeded"
+    assert result["results"][0]["snapshot_id"] == progress["snapshot_id"]
+    with soc_store.connect(db) as conn:
+        assert conn.execute("SELECT count(*) FROM research_intel_events WHERE source_id=?", (config["source_id"],)).fetchone()[0] == 3
+        assert conn.execute("SELECT count(*) FROM research_source_ingest_progress WHERE source_id=?", (config["source_id"],)).fetchone()[0] == 0
+        assert conn.execute("SELECT cursor FROM research_intel_sources WHERE source_id=?", (config["source_id"],)).fetchone()[0] == progress["snapshot_id"]
+    collection = next(item for item in coverage_report(db_path=db)["sources"] if item["source_id"] == config["source_id"])
+    assert collection["last_collection"]["status"] == "completed"
+    assert collection["last_collection"]["events_in_scope"] == 3
+
+
 def test_invalid_intake_does_not_advance_cursor(db):
     config = source(db)
     with pytest.raises(ValueError):

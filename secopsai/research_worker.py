@@ -225,8 +225,6 @@ def _record_npm_enrichment_alert(result: Dict[str, Any], *, db_path: Optional[st
                 (f"RAL-{secrets.token_hex(8).upper()}", dedupe_key, reason, json.dumps(evidence, sort_keys=True), now, now),
             )
             row = connection.execute("SELECT * FROM research_alerts WHERE dedupe_key=?", (dedupe_key,)).fetchone()
-    # Keep local operator views in sync even when the Core API is not running.
-    sync_actionable_alert_findings(db_path=db_path)
     return str(row["alert_id"]) if row else None
 
 
@@ -295,7 +293,9 @@ def _record_storage_capacity_alert(storage: Dict[str, Any], *, db_path: Optional
                 row = connection.execute(
                     "SELECT alert_id FROM research_alerts WHERE dedupe_key=?", (dedupe_key,)
                 ).fetchone()
-    sync_actionable_alert_findings(db_path=db_path)
+    # Storage capacity is an operational health alert, not an analyst finding.
+    # Its type is excluded from alert normalization, so syncing here only did
+    # an unnecessary full evidence scan while the worker held its writer lock.
     return str(row["alert_id"]) if row else None
 
 
@@ -499,13 +499,18 @@ def _run_worker_cycle_unlocked(
         }
 
     try:
-        npm_alert_id = _writer_stage(
-            db_path,
-            lambda: _record_npm_enrichment_alert(npm_enrichment, db_path=db_path),
-        )
+        # The helper owns short writer transactions internally. Do not wrap it
+        # in a second, outer writer stage: finding sync below must run unlocked.
+        npm_alert_id = _record_npm_enrichment_alert(npm_enrichment, db_path=db_path)
     except Exception as exc:  # an exhausted disk must not terminate other collectors
         capture_exception(exc, context={"component": "research_npm_enrichment_alert"})
         npm_alert_id = None
+    if npm_alert_id:
+        _cycle_stage("npm_enrichment_alert_sync")
+        try:
+            sync_actionable_alert_findings(db_path=db_path, alert_ids=[npm_alert_id])
+        except Exception as exc:  # alert projection must not stop other collectors
+            capture_exception(exc, context={"component": "research_npm_enrichment_alert_sync"})
 
     _cycle_stage("scoring_and_recovery")
     scoring = _writer_stage(
@@ -686,7 +691,7 @@ def run_worker_loop(
                     if callable(flush_outbox):
                         flush_result = flush_outbox(db_path=db_path, max_items=100, seconds=120)
                         print(json.dumps({"component":"research-worker", "event":"ontology_outbox_flush",
-                                          **{key:flush_result.get(key) for key in ("status","flushed","failed","pending","deferred","error","http_status")}},default=str),flush=True)
+                                          **{key:flush_result.get(key) for key in ("status","attempted","flushed","failed","pending","due_pending","deferred","oldest_pending_age_seconds","max_attempts","validation_failures","authorization_failures","error","http_status")}},default=str),flush=True)
                 except Exception as exc:  # outbox recovery is optional control-plane work
                     capture_exception(exc, context={"component": "research_ontology_outbox"})
                 try:
@@ -849,6 +854,12 @@ def run_worker_loop(
                         "rejected_chunks": ontology_sync.get("rejected_chunks", 0),
                         "accepted_chunk_ids": ontology_sync.get("accepted_chunk_ids", []),
                         "rejected_chunk_ids": ontology_sync.get("rejected_chunk_ids", []),
+                        "enqueued_chunks": ontology_sync.get("enqueued_chunks", 0),
+                        "new_unique_chunks": ontology_sync.get("new_chunks", 0),
+                        "deduplicated_chunks": ontology_sync.get("deduplicated_chunks", 0),
+                        "pending_chunks": ontology_sync.get("pending"),
+                        "oldest_pending_age_seconds": ontology_sync.get("oldest_pending_age_seconds"),
+                        "due_pending_chunks": ontology_sync.get("due_pending"),
                         "error": str(ontology_sync.get("error") or "")[:500],
                     }
                 except Exception as exc:  # semantic sync must not stop surveillance

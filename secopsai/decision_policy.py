@@ -26,8 +26,8 @@ def closure_decision(result: dict, *, clef_probability=None, clef_choice=None) -
     if result.get("assessment_version") != POLICY_VERSION:
         return False, "uncalibrated_assessment_version"
     try:
-        p = number(result.get("malicious_probability", result.get("probability")), 0, 100, "probability", integer=True)
-        confidence = number(result.get("finding_confidence", result.get("confidence")), 0, 100, "confidence", integer=True)
+        p = number(result.get("malicious_probability"), 0, 100, "malicious_probability", integer=True)
+        confidence = number(result.get("finding_confidence"), 0, 100, "finding_confidence", integer=True)
     except DecisionError:
         return False, "invalid_decision"
     benign = (result.get("finding_verdict") in {"false_positive", "benign_expected"} if "finding_verdict" in result else result.get("choice") == "benign")

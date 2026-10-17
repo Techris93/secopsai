@@ -41,6 +41,24 @@ CREATE TABLE IF NOT EXISTS research_source_snapshots (
   object_path TEXT NOT NULL, acquired_at TEXT NOT NULL, parser_version TEXT NOT NULL, content BLOB NOT NULL,
   UNIQUE(source_id,sha256), FOREIGN KEY(source_id) REFERENCES research_intel_sources(source_id)
 );
+CREATE TABLE IF NOT EXISTS research_source_ingest_progress (
+  source_id TEXT PRIMARY KEY, snapshot_id TEXT NOT NULL, next_index INTEGER NOT NULL DEFAULT 0,
+  total_items INTEGER NOT NULL, window_start TEXT NOT NULL DEFAULT '', events_total INTEGER NOT NULL DEFAULT 0,
+  historical_excluded INTEGER NOT NULL DEFAULT 0, inserted_items INTEGER NOT NULL DEFAULT 0,
+  started_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  FOREIGN KEY(source_id) REFERENCES research_intel_sources(source_id),
+  FOREIGN KEY(snapshot_id) REFERENCES research_source_snapshots(snapshot_id)
+);
+CREATE TABLE IF NOT EXISTS research_source_collection_runs (
+  run_id TEXT PRIMARY KEY, source_id TEXT NOT NULL, snapshot_id TEXT NOT NULL,
+  status TEXT NOT NULL, events_total INTEGER NOT NULL, events_in_scope INTEGER NOT NULL,
+  historical_excluded INTEGER NOT NULL, inserted_events INTEGER NOT NULL,
+  window_start TEXT NOT NULL DEFAULT '', acquired_at TEXT NOT NULL, completed_at TEXT NOT NULL,
+  FOREIGN KEY(source_id) REFERENCES research_intel_sources(source_id),
+  FOREIGN KEY(snapshot_id) REFERENCES research_source_snapshots(snapshot_id)
+);
+CREATE INDEX IF NOT EXISTS research_source_collection_runs_latest
+  ON research_source_collection_runs(source_id, completed_at DESC);
 CREATE TABLE IF NOT EXISTS research_intel_events (
   event_id TEXT PRIMARY KEY, source_id TEXT NOT NULL, root_source_key TEXT NOT NULL,
   snapshot_id TEXT NOT NULL, published_at TEXT, collected_at TEXT NOT NULL,

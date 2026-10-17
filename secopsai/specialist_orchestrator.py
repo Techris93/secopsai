@@ -1358,14 +1358,20 @@ def execute_worktree_run(
                     model_result = _parse_model_output(output_path)
                     used_model = candidate_model
                     break
-                error, _ = _redact_text(str(completed.stderr or completed.stdout or "OpenCodex execution failed").strip()[:2000])
+                raw_error = str(completed.stderr or completed.stdout or "OpenCodex execution failed").strip()[:2000]
+                error, _ = _redact_text(raw_error)
                 errors.append(f"{candidate_model}: {error}")
                 if index + 1 >= len(model_chain):
                     break
-                from secopsai.codex_bridge import provider_failure_allows_fallback
+                from secopsai.codex_bridge import provider_error_from_process, provider_failure_allows_fallback
 
-                if not provider_failure_allows_fallback(fallback_mode, error):
-                    raise RuntimeError(error)
+                failure = provider_error_from_process(
+                    candidate_model,
+                    returncode=completed.returncode,
+                    output=raw_error,
+                )
+                if not provider_failure_allows_fallback(fallback_mode, failure):
+                    raise failure
             if model_result is None:
                 raise RuntimeError("all captured OpenCodex models failed: " + " | ".join(errors)[:2000])
 

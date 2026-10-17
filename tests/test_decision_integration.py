@@ -51,6 +51,45 @@ def test_artifact_true_positive_survives_all_boundaries(tmp_path, monkeypatch):
         assert connection.execute("SELECT status FROM research_alerts WHERE alert_id='A1'").fetchone()[0] == 'open'
 
 
+def test_alert_boundary_revalidates_stored_clef_before_closure(tmp_path, monkeypatch):
+    db = str(tmp_path / 'core.db')
+    soc_store.init_db(db)
+    key = research_ai_triage.record_hit(
+        ecosystem='npm', package='demo', version='2',
+        prescan={'score': 30, 'findings': [{'rule_id': 'R1', 'file_path': 'install.js', 'matched_strings': ['benign text']} ]},
+        db_path=db,
+    )
+    with soc_store.connect(db) as connection:
+        row = connection.execute('SELECT context_json, package, version FROM research_ai_triage WHERE artifact_key=?', (key,)).fetchone()
+        context = json.loads(row['context_json'])
+        context['clef'] = {'probability': 0, 'choice': 'benign'}  # Missing model, confidence and distribution.
+        connection.execute('UPDATE research_ai_triage SET context_json=? WHERE artifact_key=?', (json.dumps(context), key))
+        connection.execute("INSERT INTO research_alerts(alert_id,alert_type,severity,dedupe_key,reason,evidence_json,status,owner,created_at,updated_at) VALUES('A2','registry_release_anomaly','low','A2','test',?,'open','','t','t')", (json.dumps({'package': row['package'], 'version': row['version']}),))
+
+        monkeypatch.setattr('secopsai.decision_policy.closure_decision', lambda *a, **kw: (True, 'synthetic-approved-policy'))
+        primary = {
+            'summary': 'Benign static match.', 'risk_assessment': 'Low.', 'evidence': ['R1'],
+            'recommended_actions': ['Retain for audit.'], 'limitations': ['No runtime execution.'],
+            'finding_verdict': 'benign_expected', 'finding_confidence': 99, 'malicious_probability': 2,
+            'disposition_recommendation': 'expected_behavior', 'decision_evidence_refs': ['R1'],
+            'assessment_version': 'decision-v2', 'provider': 'typesafe', 'model_version': 'jev-fixed',
+            'automatic_closure_eligible': True, 'evidence_coverage': {'complete': True},
+        }
+        outcome = research_ai_triage._apply_result(
+            connection,
+            {'artifact_id': key, 'status': 'succeeded', 'job_id': 'AIJ-CLEF-REVALIDATE', 'result': primary},
+            't2',
+        )
+        assert outcome == 'escalated'
+        stored = connection.execute('SELECT verdict FROM research_ai_triage WHERE artifact_key=?', (key,)).fetchone()
+        assert stored['verdict'] == 'inconclusive'
+        alert = connection.execute("SELECT status, evidence_json FROM research_alerts WHERE alert_id='A2'").fetchone()
+        assert alert['status'] == 'open'
+        note = json.loads(alert['evidence_json'])['ai_triage']
+        assert note['clef_present'] and not note['clef_validated']
+        assert note['policy_reason'] == 'invalid_clef_decision'
+
+
 @pytest.mark.parametrize('bulk', [False, True])
 def test_requeue_preserves_captured_routing(tmp_path, bulk):
     db = str(tmp_path / 'core.db')

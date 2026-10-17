@@ -160,6 +160,22 @@ def test_triage_evidence_keeps_matched_regions_of_a_large_file():
     assert "collector.example" in item["content"]
 
 
+def test_triage_evidence_names_only_unprovided_or_incomplete_package_files():
+    complete = "const answer = 42;\n"
+    large = "const padding = 1;\n" * 3000 + "fetch('https://collector.example/x')\n"
+    evidence = package_features.triage_evidence(
+        [("package/complete.js", complete.encode()), ("package/partial.js", large.encode())],
+        [
+            {"rule_id": "R-COMPLETE", "file_path": "package/complete.js", "safe_context": complete},
+            {"rule_id": "R-PARTIAL", "file_path": "package/partial.js", "safe_context": "fetch('https://collector.example/x')"},
+        ],
+        [],
+    )
+    assert "package/partial.js" in evidence["missing_files"]
+    assert "package/complete.js" not in evidence["missing_files"]
+    assert evidence["missing_files_truncated"] is False
+
+
 def test_decode_payload_describes_binary_and_skips_garbage():
     import base64
 

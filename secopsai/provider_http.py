@@ -24,7 +24,7 @@ def _retry_after(response: Any) -> float | None:
             return None
 
 
-def post_json(url: str, *, headers: dict, payload: dict, timeout: float, provider: str, session: Any = None, max_attempts: int = 3) -> dict:
+def post_json(url: str, *, headers: dict, payload: dict, timeout: float, provider: str, session: Any = None, max_attempts: int = 3, allow_redirects: bool | None = None) -> dict:
     http = session or requests
     deadline = time.monotonic() + timeout
     error = DecisionError("evaluation deadline exhausted", provider=provider, category="timeout")
@@ -34,7 +34,10 @@ def post_json(url: str, *, headers: dict, payload: dict, timeout: float, provide
             raise error
         retry_delay = None
         try:
-            response = http.post(url, headers=headers, json=payload, timeout=remaining)
+            request_options = {"headers": headers, "json": payload, "timeout": remaining}
+            if allow_redirects is not None:
+                request_options["allow_redirects"] = allow_redirects
+            response = http.post(url, **request_options)
             status = response.status_code
             if not isinstance(status, int):
                 raise DecisionError("invalid HTTP response status", provider=provider)

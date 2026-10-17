@@ -847,30 +847,21 @@ def _post_opencodex_response(model: str, prompt: str, *, schema: dict[str, Any] 
                 "schema": schema,
             }
         }
-    try:
-        session = requests.Session()
-        session.trust_env = False
-        response = session.post(
-            endpoint,
-            headers={"Content-Type": "application/json"},
-            json=body,
-            timeout=timeout,
-            allow_redirects=False,
-        )
-    except requests.RequestException as exc:
-        raise RuntimeError(f"OpenCodex loopback request failed: {_safe_error(exc)}") from exc
-    if len(response.content) > MAX_PROCESS_OUTPUT_BYTES:
+    session = requests.Session()
+    session.trust_env = False
+    from secopsai.provider_http import post_json
+    payload = post_json(
+        endpoint,
+        headers={"Content-Type": "application/json"},
+        payload=body,
+        timeout=timeout,
+        provider="opencodex",
+        session=session,
+        max_attempts=2,
+        allow_redirects=False,
+    )
+    if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > MAX_PROCESS_OUTPUT_BYTES:
         raise RuntimeError("OpenCodex loopback response exceeds the bridge output limit")
-    if not response.ok:
-        raise RuntimeError(
-            f"OpenCodex loopback request failed ({response.status_code}): {_safe_error_text(response.text)}"
-        )
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise RuntimeError("OpenCodex loopback returned invalid JSON") from exc
-    if not isinstance(payload, dict):
-        raise RuntimeError("OpenCodex loopback response must be an object")
     return payload
 
 
@@ -1006,7 +997,11 @@ def list_models(settings: BridgeSettings | None = None, *, runner: Runner | None
         if not model_id:
             continue
         merged[model_id] = item
-    models = sorted(merged.values(), key=lambda item: (item.get("provider") or "", item.get("id") or ""))
+    from secopsai.provider_capabilities import model_capabilities
+    models = sorted(
+        ({**item, **model_capabilities(str(item.get("id") or ""))} for item in merged.values()),
+        key=lambda item: (item.get("provider") or "", item.get("id") or ""),
+    )
     default_model = (
         resolved.model
         or _default_model_from_codex_config()
@@ -1871,7 +1866,8 @@ def _invoke_with_model_fallback(
                 raw.setdefault("provider", _provider_for_model(model_name, {}))
                 raw.setdefault("model_version", model_name)
                 raw["assessment_version"] = "decision-v2"
-            validate_bridge_result(action_name, raw)
+            context = request.get("context") if isinstance(request.get("context"), dict) else None
+            validate_bridge_result(action_name, raw, context=context)
             return raw, model_name
         except Exception as exc:
             last_error = exc
@@ -1882,25 +1878,58 @@ def _invoke_with_model_fallback(
             if isinstance(exc, DecisionError):
                 should_fallback = (settings.fallback_mode == "quota_auth" and exc.category in {"authentication", "rate_limit"}) or (settings.fallback_mode == "any_provider" and exc.category in {"authentication", "rate_limit", "availability", "timeout"})
             else:
-                should_fallback = provider_failure_allows_fallback(settings.fallback_mode, message)
+                should_fallback = provider_failure_allows_fallback(settings.fallback_mode, exc)
             if not should_fallback:
                 # Validation, schema, and safety failures stay attached to the
                 # selected model instead of being hidden by provider failover.
                 raise
             continue
     if isinstance(last_error, DecisionError):
-        raise DecisionError("all configured bridge models failed", provider=last_error.provider, category=last_error.category, http_status=last_error.http_status) from last_error
+        detail = _safe_error(last_error)
+        raise DecisionError(f"all configured bridge models failed: {detail[:1400]}", provider=last_error.provider, category=last_error.category, http_status=last_error.http_status) from last_error
     raise RuntimeError("all bridge models failed: " + " | ".join(errors)[:1600])
 
 
-def provider_failure_allows_fallback(mode: str, message: str) -> bool:
-    """Return whether an operator-selected fallback policy permits failover."""
+def provider_failure_allows_fallback(mode: str, failure: Exception | str) -> bool:
+    """Fail over only when the provider boundary classified an availability error."""
+    from secopsai.decision_contracts import DecisionError
+    if not isinstance(failure, DecisionError):
+        return False
     normalized = _clean_fallback_mode(mode)
     return (
-        normalized == "quota_auth" and _is_quota_or_auth_failure(message)
+        normalized == "quota_auth" and failure.category in {"authentication", "rate_limit"}
     ) or (
-        normalized == "any_provider" and _is_provider_availability_failure(message)
+        normalized == "any_provider" and failure.category in {"authentication", "rate_limit", "availability", "timeout"}
     )
+
+
+def provider_error_from_process(model: str, *, returncode: int, output: str) -> Exception:
+    """Translate a provider CLI failure into a typed, credential-safe error."""
+    from secopsai.decision_contracts import DecisionError
+    message = _safe_error_text(str(output or "").strip()[:1800]) or f"provider process exited with code {returncode}"
+    status_match = re.search(r"\b(?:HTTP(?:\s+error)?\s*[:(]?\s*)?(401|403|408|429|500|502|503|504|529)\b", message, re.I)
+    status = int(status_match.group(1)) if status_match else None
+    if status in {401, 403}:
+        category = "authentication"
+    elif status == 429:
+        category = "rate_limit"
+    elif status in {408, 500, 502, 503, 504, 529}:
+        category = "availability"
+    elif status is not None:
+        category = "invalid_request"
+    else:
+        lowered = message.lower()
+        if any(marker in lowered for marker in ("timed out", "timeout")):
+            category = "timeout"
+        elif any(marker in lowered for marker in ("connection refused", "connection reset", "failed to connect", "network unavailable")):
+            category = "availability"
+        elif any(marker in lowered for marker in ("unauthorized", "not logged in", "authentication failed", "insufficient permission", "usage limit", "rate limit", "quota exceeded", "too many requests")):
+            category = "authentication"
+            if any(marker in lowered for marker in ("usage limit", "rate limit", "quota exceeded", "too many requests")):
+                category = "rate_limit"
+        else:
+            category = "provider_failure"
+    return DecisionError(message or "provider process failed", provider=_provider_for_model(model, {}), category=category, http_status=status)
 
 
 def _invoke_codex(
@@ -1936,7 +1965,8 @@ def _invoke_codex(
         output = _opencodex_output_text(payload)
         if not output:
             raise RuntimeError("OpenCodex loopback did not produce a structured result")
-        return _normalize_bridge_result(_parse_structured_result(output))
+        action_name = request.get("action", {}).get("name", "") if isinstance(request.get("action"), dict) else ""
+        return _normalize_bridge_result(_parse_structured_result(output), action_name=action_name)
 
     executable = shutil.which(settings.codex_binary) or settings.codex_binary
     with tempfile.TemporaryDirectory(prefix="secopsai-codex-") as temp_dir:
@@ -1979,13 +2009,18 @@ def _invoke_codex(
             environment["OCX_SHIM_BYPASS"] = "1"
         completed = runner(command, prompt, environment, settings.timeout_seconds)
         if completed.returncode != 0:
-            raise RuntimeError(f"Codex execution failed: {_provider_failure_message(completed)}")
+            raise provider_error_from_process(
+                model,
+                returncode=completed.returncode,
+                output=_provider_failure_message(completed),
+            )
         if not output_path.exists():
             raise RuntimeError("Codex did not produce a structured result")
         raw = output_path.read_bytes()
         if len(raw) > MAX_PROCESS_OUTPUT_BYTES:
             raise RuntimeError("Codex result exceeds the bridge output limit")
-        return _normalize_bridge_result(_parse_structured_result(raw.decode("utf-8", errors="replace")))
+        action_name = request.get("action", {}).get("name", "") if isinstance(request.get("action"), dict) else ""
+        return _normalize_bridge_result(_parse_structured_result(raw.decode("utf-8", errors="replace")), action_name=action_name)
 
 
 _BRIDGE_REQUIRED_KEYS = ("summary", "risk_assessment", "evidence", "recommended_actions", "limitations")
@@ -2049,7 +2084,7 @@ def _parse_structured_result(text: str) -> dict[str, Any]:
     return payload
 
 
-def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
+def _normalize_bridge_result(payload: dict[str, Any], *, action_name: str = "") -> dict[str, Any]:
     """Map schema-adjacent model output into the canonical bridge result.
 
     Chat models routed through OpenCodex (Kimi, Grok, Gemini) approximate the
@@ -2060,7 +2095,7 @@ def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
     result = dict(payload)
     from secopsai.decision_contracts import number
     for field in ("finding_confidence", "malicious_probability", "verdict_confidence"):
-        if field in result:
+        if field in result and result[field] is not None:
             number(result[field], 0, 100, field, integer=True)
     analyst_brief = result.get("analyst_brief")
     if isinstance(analyst_brief, dict):
@@ -2149,23 +2184,33 @@ def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
     if not _present(result.get("limitations")):
         missing = result.get("missing_evidence")
         result["limitations"] = list(missing[:25]) if isinstance(missing, list) else []
-    recommendation = str(result.get("verdict_recommendation") or "").strip().lower()
-    if recommendation not in {"credible", "likely", "inconclusive", "not_substantiated", "benign"}:
-        result["verdict_recommendation"] = "inconclusive"
-    try:
-        result["verdict_confidence"] = max(0, min(int(result.get("verdict_confidence") or 0), 100))
-    except (TypeError, ValueError):
-        result["verdict_confidence"] = 0
-    if not _present(result.get("verdict_rationale")):
-        result["verdict_rationale"] = "The model did not provide a bounded package verdict rationale."
-    if not isinstance(result.get("verdict_evidence_refs"), list):
-        result["verdict_evidence_refs"] = []
-    if "finding_verdict" in result:
+    if action_name == "analyze_research_case":
+        if isinstance(result.get("verdict_recommendation"), str):
+            result["verdict_recommendation"] = result["verdict_recommendation"].strip().lower()
+    else:
+        recommendation = str(result.get("verdict_recommendation") or "").strip().lower()
+        # Preserve any attempted non-inconclusive credibility claim so the
+        # action validator can reject it; only missing fields get safe defaults.
+        result["verdict_recommendation"] = recommendation or "inconclusive"
+        if "verdict_confidence" not in result:
+            result["verdict_confidence"] = 0
+        if not _present(result.get("verdict_rationale")):
+            result["verdict_rationale"] = "Verdict not assessed by this action"
+        if not isinstance(result.get("verdict_evidence_refs"), list):
+            result["verdict_evidence_refs"] = []
+    if isinstance(result.get("finding_verdict"), str):
         result["finding_verdict"] = str(result["finding_verdict"]).strip().lower()
-    # Missing decision fields stay absent so action validation can reject them.
-    disposition = str(result.get("disposition_recommendation") or "").strip().lower()
-    if disposition not in {"true_positive", "false_positive", "expected_behavior", "tune_policy", "needs_review"}:
-        result["disposition_recommendation"] = "needs_review"
+    # Non-triage actions explicitly carry null decision slots; a missing model
+    # answer must not be converted into a benign or suspicious assessment.
+    if action_name not in {"triage_finding", "triage_artifact"}:
+        result.setdefault("finding_verdict", None)
+        result.setdefault("finding_confidence", None)
+        result.setdefault("malicious_probability", None)
+        result.setdefault("disposition_recommendation", None)
+    else:
+        disposition = str(result.get("disposition_recommendation") or "").strip().lower()
+        if disposition not in {"true_positive", "false_positive", "expected_behavior", "tune_policy", "needs_review"}:
+            result["disposition_recommendation"] = "needs_review"
     if not isinstance(result.get("decision_evidence_refs"), list):
         result["decision_evidence_refs"] = []
     exposure = str(result.get("exposure_assessment") or "").strip().lower()
@@ -2178,6 +2223,10 @@ def _normalize_bridge_result(payload: dict[str, Any]) -> dict[str, Any]:
         result["counterarguments"] = []
     proposals = result.get("rule_tuning_proposals")
     result["rule_tuning_proposals"] = proposals[:10] if isinstance(proposals, list) else []
+    if not isinstance(result.get("finding_priorities"), list):
+        result["finding_priorities"] = []
+    if not isinstance(result.get("publication_checks"), dict):
+        result["publication_checks"] = {}
     return result
 
 
@@ -2389,50 +2438,6 @@ def _provider_failure_message(completed: subprocess.CompletedProcess[str]) -> st
     if not diagnostic:
         return f"process exited with code {completed.returncode}; no safe diagnostic was returned"
     return _bounded_output("\n".join(reversed(diagnostic)))
-
-
-def _is_quota_or_auth_failure(message: str) -> bool:
-    lowered = message.lower()
-    return any(
-        marker in lowered
-        for marker in (
-            "usage limit",
-            "rate limit",
-            "quota",
-            "too many requests",
-            "not logged in",
-            "unauthorized",
-            "authentication",
-            "auth",
-            "insufficient",
-        )
-    )
-
-
-def _is_provider_availability_failure(message: str) -> bool:
-    lowered = message.lower()
-    if _is_quota_or_auth_failure(lowered):
-        return True
-    return any(
-        marker in lowered
-        for marker in (
-            "timed out",
-            "timeout",
-            "connection refused",
-            "connection reset",
-            "failed to connect",
-            "service unavailable",
-            "bad gateway",
-            "gateway timeout",
-            "provider unavailable",
-            "model unavailable",
-            "model not found",
-            "http error: 500",
-            "http error: 502",
-            "http error: 503",
-            "http error: 504",
-        )
-    )
 
 
 def _safe_error(exc: Exception) -> str:

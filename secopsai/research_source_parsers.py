@@ -4,6 +4,10 @@ import json
 from urllib.parse import urljoin, urlparse
 
 PRIMARY_SOURCE_OVERRIDES = {
+    # The official RSS endpoint returns a rolling historical catalogue with
+    # more entries than one transactional intake pass should process. The
+    # source-specific parser applies a durable, overlapping update window.
+    "Microsoft Security Response Center Advisories": ("https://api.msrc.microsoft.com/update-guide/rss", "msrc_rss"),
     "GitHub Security Advisories": ("https://api.github.com/advisories?per_page=100&sort=updated&direction=desc", "github_advisories"),
     "JFrog Security Research": ("https://research.jfrog.com/", "jfrog_index"),
     "Grafana Security": ("https://grafana.com/security/security-advisories/index.xml", "rss"),

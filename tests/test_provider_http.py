@@ -50,7 +50,7 @@ def test_connection_recovery_and_invalid_json():
 @pytest.mark.parametrize('category,mode,fallback', [('authentication', 'quota_auth', True), ('rate_limit', 'quota_auth', True), ('availability', 'any_provider', True), ('invalid_response', 'any_provider', False), ('safety', 'any_provider', False), ('unsupported_action', 'any_provider', False)])
 def test_fallback_uses_categories(monkeypatch, category, mode, fallback):
     attempts = []
-    result = {'summary': 'Triage', 'risk_assessment': 'Risk', 'evidence': [], 'recommended_actions': [], 'limitations': [], 'finding_verdict': 'true_positive', 'finding_confidence': 99, 'disposition_recommendation': 'true_positive', 'decision_evidence_refs': ['F1']}
+    result = {'summary': 'Triage', 'risk_assessment': 'Risk', 'evidence': [], 'recommended_actions': [], 'limitations': [], 'finding_verdict': 'true_positive', 'finding_confidence': 99, 'malicious_probability': 99, 'disposition_recommendation': 'true_positive', 'decision_evidence_refs': ['F1']}
     def invoke(request, settings, runner, *, model):
         attempts.append(model)
         if len(attempts) == 1: raise DecisionError('provider failed', category=category, http_status=401)

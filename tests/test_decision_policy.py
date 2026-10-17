@@ -43,6 +43,9 @@ def test_enforcement_requires_reviewed_heldout_calibration(tmp_path, monkeypatch
     assert not closure_decision(decision(evidence_coverage={'complete': False}))[0]
     assert not closure_decision(decision(finding_verdict='needs_more_evidence'))[0]
     assert not closure_decision(decision(malicious_probability=True))[0]
+    without_explicit_probability = decision(probability=1)
+    without_explicit_probability.pop('malicious_probability')
+    assert closure_decision(without_explicit_probability) == (False, 'invalid_decision')
     assert not closure_decision(decision(model_version='different-model'))[0]
     manifest.write_text('{}')
     assert not closure_decision(decision())[0]

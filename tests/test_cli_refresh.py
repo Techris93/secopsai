@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest import mock
 
@@ -35,6 +36,7 @@ class RefreshCliTests(unittest.TestCase):
              mock.patch.object(cli, "run_detection", return_value={"findings": [{"finding_id": "MAC-1"}]}), \
              mock.patch("soc_store.init_db"), \
              mock.patch("soc_store.persist_findings", return_value="/tmp/openclaw_soc.db") as persist_mock, \
+             mock.patch("secopsai.sqlite_writer_lock.sqlite_writer_lock", return_value=nullcontext()), \
              mock.patch("builtins.print"):
             summary = cli._run_adapter_refresh(
                 "macos,openclaw",

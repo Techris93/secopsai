@@ -1,11 +1,13 @@
 import hashlib
 import hmac
 import json
+from contextlib import contextmanager
 
 import soc_store
 
 from secopsai.research_delivery import deliver_pending_operational_alerts, send_email, send_research_alert
 from secopsai.research_discovery import create_candidate_alert, resolve_alert, sync_actionable_alert_findings
+from secopsai import research_discovery
 from secopsai.research_worker import _record_collector_degraded_alert
 
 
@@ -100,6 +102,71 @@ def test_historical_research_alerts_are_backfilled_but_collector_health_is_not(t
             "SELECT COUNT(*) AS count FROM findings WHERE payload_json LIKE '%RAL-HEALTH%'"
         ).fetchone()["count"]
     assert health_count == 0
+
+
+def test_alert_sync_reads_bounded_batches_outside_writer_lock_and_can_scope_ids(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    soc_store.init_db(db)
+    now = soc_store.utc_now()
+    with soc_store.connect(db) as connection:
+        for index in range(5):
+            connection.execute(
+                """INSERT INTO research_alerts
+                   (alert_id, alert_type, severity, candidate_id, campaign_id, case_id,
+                    dedupe_key, reason, evidence_json, status, owner, created_at, updated_at)
+                   VALUES (?, 'watched_package_version', 'info', NULL, NULL, NULL,
+                           ?, 'Package version changed', ?, 'open', '', ?, ?)""",
+                (f"RAL-BATCH-{index}", f"batch-{index}", json.dumps({"package": f"pkg-{index}", "ecosystem": "npm"}), now, now),
+            )
+        connection.execute(
+            """INSERT INTO research_alerts
+               (alert_id, alert_type, severity, candidate_id, campaign_id, case_id,
+                dedupe_key, reason, evidence_json, status, owner, created_at, updated_at)
+               VALUES ('RAL-BATCH-HEALTH', 'collector_degraded', 'high', NULL, NULL, NULL,
+                       'batch-health', 'Collector is delayed', '{}', 'open', '', ?, ?)""",
+            (now, now),
+        )
+
+    state = {"writer": False, "reads": 0}
+
+    @contextmanager
+    def tracked_writer_lock(db_path=None):
+        assert not state["writer"], "alert sync must not nest writer locks"
+        state["writer"] = True
+        try:
+            yield None
+        finally:
+            state["writer"] = False
+
+    original_read = soc_store.read_connect
+
+    def tracked_read(*args, **kwargs):
+        assert not state["writer"], "evidence scans must run outside the writer lock"
+        state["reads"] += 1
+        return original_read(*args, **kwargs)
+
+    original_upsert = research_discovery._upsert_research_alert_finding
+
+    def tracked_upsert(*args, **kwargs):
+        assert state["writer"], "finding writes must remain serialized"
+        return original_upsert(*args, **kwargs)
+
+    monkeypatch.setattr(research_discovery, "sqlite_writer_lock", tracked_writer_lock)
+    monkeypatch.setattr(soc_store, "read_connect", tracked_read)
+    monkeypatch.setattr(research_discovery, "_upsert_research_alert_finding", tracked_upsert)
+
+    result = sync_actionable_alert_findings(db_path=db, batch_size=2)
+    assert result["synced"] == 5
+    assert result["batches"] == 3
+    # A final empty keyset read confirms the cursor has drained the queue.
+    assert state["reads"] == 4
+    assert state["writer"] is False
+
+    scoped = sync_actionable_alert_findings(db_path=db, alert_ids=["RAL-BATCH-3"], batch_size=1)
+    assert scoped["synced"] == 1
+    assert scoped["finding_ids"] == [f"RSCF-{hashlib.sha256(b'RAL-BATCH-3').hexdigest()[:16].upper()}"]
+    assert scoped["batches"] == 1
+    assert state["reads"] == 5
 
 
 def test_email_uses_branded_multipart_content_and_safe_sender(monkeypatch):

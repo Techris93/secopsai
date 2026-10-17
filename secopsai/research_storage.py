@@ -15,6 +15,7 @@ import json
 import secrets
 import shutil
 import sqlite3
+import time
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,6 +30,8 @@ DEFAULT_MIN_FREE_BYTES = 128 * 1024 * 1024
 DEFAULT_WARNING_USED_PERCENT = 70.0
 DEFAULT_MAX_USED_PERCENT = 85.0
 DEFAULT_BATCH_SIZE = 5000
+ROUTINE_BATCH_SIZE_CAP = 250
+ROUTINE_MAX_BATCHES = 2
 RESERVE_FILENAME = ".secopsai-storage-reserve"
 
 
@@ -38,6 +41,13 @@ class ResearchStorageCapacityError(RuntimeError):
 
 HISTORY_ARCHIVE_SCHEMA = "secopsai.storage.history-archive.v1"
 DEFAULT_HISTORY_ARCHIVE_BATCH = 100
+
+
+def _storage_progress(event: str, **fields: Any) -> None:
+    """Emit bounded storage-stage diagnostics when worker stage logging is enabled."""
+    if os.environ.get("SECOPSAI_WORKER_STAGE_LOGS", "0") != "1":
+        return
+    print(json.dumps({"component": "research-storage", "event": event, **fields}, sort_keys=True), flush=True)
 
 
 def _history_archive_dir(db_path: Optional[str], archive_dir: Optional[str]) -> Path:
@@ -369,27 +379,71 @@ def _delete_batches(
 ) -> int:
     deleted = 0
     for _ in range(max_batches):
-        before = connection.total_changes
-        connection.execute(
-            f"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {predicate} LIMIT ?)",
-            (*tuple(params), batch_size),
+        changed = _delete_batch(
+            connection,
+            table=table,
+            predicate=predicate,
+            params=params,
+            batch_size=batch_size,
         )
-        connection.commit()
-        changed = connection.total_changes - before
         deleted += changed
         if changed < batch_size:
             break
     return deleted
 
 
-def _prune_rules() -> Tuple[Tuple[str, str, Tuple[Any, ...]], ...]:
+def _delete_batch(
+    connection: sqlite3.Connection,
+    *,
+    table: str,
+    predicate: str,
+    params: Iterable[Any],
+    batch_size: int,
+) -> int:
+    before = connection.total_changes
+    connection.execute(
+        f"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {predicate} LIMIT ?)",
+        (*tuple(params), batch_size),
+    )
+    connection.commit()
+    return connection.total_changes - before
+
+
+def _delete_batches_with_writer_yields(
+    connection: sqlite3.Connection,
+    *,
+    db_path: str,
+    table: str,
+    predicate: str,
+    params: Iterable[Any],
+    batch_size: int,
+    max_batches: int,
+) -> int:
+    """Prune bounded batches while giving other writers a turn between them."""
+    deleted = 0
+    for _ in range(max_batches):
+        with sqlite_writer_lock(db_path):
+            changed = _delete_batch(
+                connection,
+                table=table,
+                predicate=predicate,
+                params=params,
+                batch_size=batch_size,
+            )
+        deleted += changed
+        if changed < batch_size:
+            break
+    return deleted
+
+
+def _prune_rules(*, include_high_volume: bool = False) -> Tuple[Tuple[str, str, Tuple[Any, ...]], ...]:
     event_hours = _env_int("SECOPSAI_RESEARCH_EVENT_RETENTION_HOURS", 24, minimum=1)
     candidate_days = _env_int("SECOPSAI_RESEARCH_CANDIDATE_EVENT_RETENTION_DAYS", 90, minimum=1)
     run_days = _env_int("SECOPSAI_RESEARCH_RUN_RETENTION_DAYS", 30, minimum=1)
     gap_days = _env_int("SECOPSAI_RESEARCH_GAP_RETENTION_DAYS", 180, minimum=1)
     delivery_days = _env_int("SECOPSAI_RESEARCH_DELIVERY_RETENTION_DAYS", 90, minimum=1)
     npm_analysis_days = _env_int("SECOPSAI_RESEARCH_NPM_ANALYSIS_RETENTION_DAYS", 30, minimum=1)
-    return (
+    rules = (
         ("registry_feed_events", "processing_state IN ('scored','ignored') AND collected_at < ?", (_iso_cutoff(hours=event_hours),)),
         ("registry_feed_events", "processing_state = 'candidate' AND collected_at < ?", (_iso_cutoff(days=candidate_days),)),
         ("research_registry_events", "observed_at < ? AND NOT EXISTS (SELECT 1 FROM research_candidates c WHERE c.event_id = research_registry_events.event_id)", (_iso_cutoff(hours=event_hours),)),
@@ -399,13 +453,21 @@ def _prune_rules() -> Tuple[Tuple[str, str, Tuple[Any, ...]], ...]:
         ("registry_coverage_windows", "state != 'complete' AND created_at < ?", (_iso_cutoff(days=gap_days),)),
         ("registry_dead_letters", "status = 'resolved' AND updated_at < ?", (_iso_cutoff(days=run_days),)),
         ("research_notification_deliveries", "status IN ('sent','failed') AND updated_at < ?", (_iso_cutoff(days=delivery_days),)),
-        # Clean npm analyses are reproducible from the exact event, hash, and
-        # quarantine locator. Keep candidate-linked evidence and all failed or
-        # pending work until its retry/triage state is no longer active.
-        ("research_npm_release_analyses", "status = 'completed' AND updated_at < ? AND NOT EXISTS (SELECT 1 FROM research_candidates c WHERE c.evidence_json LIKE '%' || research_npm_release_analyses.artifact_sha256 || '%')", (_iso_cutoff(days=npm_analysis_days),)),
+        # Preserve completed analyses until candidate references are stored in
+        # a normalized, indexed relation. Matching artifact hashes with a
+        # leading-wildcard LIKE against research_candidates.evidence_json made
+        # cleanup scan every large evidence record for each analysis row and
+        # could hold the shared writer lock for hours on production ledgers.
         ("research_npm_release_analyses", "status = 'failed' AND updated_at < ?", (_iso_cutoff(days=npm_analysis_days),)),
         ("research_npm_enrichment_runs", "status != 'running' AND completed_at IS NOT NULL AND completed_at < ?", (_iso_cutoff(days=run_days),)),
     )
+    if include_high_volume:
+        return rules
+    # The production feed ledger has millions of rows. Even indexed routine
+    # deletes cause disproportionate random I/O and contend with active
+    # collectors. Preserve it during scheduled cycles; operators can prune it
+    # explicitly during aggressive maintenance after reviewing capacity.
+    return tuple(rule for rule in rules if rule[0] != "registry_feed_events")
 
 
 def maintain_research_storage(
@@ -414,53 +476,82 @@ def maintain_research_storage(
     aggressive: bool = False,
 ) -> Dict[str, Any]:
     """Prune bounded operational history and make freed pages reusable."""
+    started = time.monotonic()
+    _storage_progress("maintenance_started", aggressive=aggressive)
     before = storage_status(db_path=db_path, include_page_stats=False)
+    _storage_progress("capacity_probe_complete", free_bytes=before["filesystem_free_bytes"], pressure=before["pressure"])
     released = release_storage_reserve(db_path=db_path) if before["pressure"] or aggressive else 0
     database = _resolved_db_path(db_path)
-    batch_size = _env_int("SECOPSAI_STORAGE_PRUNE_BATCH_SIZE", DEFAULT_BATCH_SIZE, minimum=100)
-    max_batches = 200 if aggressive or before["pressure"] else 4
+    configured_batch_size = _env_int("SECOPSAI_STORAGE_PRUNE_BATCH_SIZE", DEFAULT_BATCH_SIZE, minimum=100)
+    # Disk pressure used to trigger the same 200-batch path as explicit
+    # operator-requested aggressive maintenance. That turned a warning into
+    # an hours-long automatic writer lock on large databases. Routine worker
+    # cycles stay tightly bounded; aggressive pruning remains an explicit CLI
+    # operation after the operator has reviewed capacity and backup state.
+    batch_size = configured_batch_size if aggressive else min(configured_batch_size, ROUTINE_BATCH_SIZE_CAP)
+    max_batches = 200 if aggressive else ROUTINE_MAX_BATCHES
     deleted: Dict[str, int] = {}
-    # Hold the cross-process writer lock only for schema setup and bounded
-    # deletes.  The expensive read-only capacity probes above/below stay
-    # outside the lock so dashboard requests and bridge heartbeats are not
-    # blocked for minutes on a large SQLite ledger.
+    # Schema setup is serialized once, then each small prune batch releases
+    # the shared lock so collectors, bridge heartbeats, and refresh jobs can
+    # make progress between retention rules.
     try:
+        schema_started = time.monotonic()
+        _storage_progress("schema_init_started")
         with sqlite_writer_lock(str(database)):
             soc_store.init_db(str(database))
-            with closing(soc_store.connect(str(database))) as connection:
-                for table, predicate, params in _prune_rules():
-                    count = _delete_batches(
-                        connection,
-                        table=table,
-                        predicate=predicate,
-                        params=params,
-                        batch_size=batch_size,
-                        max_batches=max_batches,
-                    )
-                    deleted[table] = deleted.get(table, 0) + count
-
-                keep_snapshots = _env_int("SECOPSAI_RESEARCH_SNAPSHOTS_PER_COLLECTOR", 2, minimum=1)
-                deleted["registry_snapshots"] = _delete_batches(
+        _storage_progress("schema_init_completed", seconds=round(time.monotonic() - schema_started, 3))
+        with closing(soc_store.connect(str(database))) as connection:
+            for table, predicate, params in _prune_rules(include_high_volume=aggressive):
+                prune_started = time.monotonic()
+                _storage_progress("prune_started", table=table)
+                count = _delete_batches_with_writer_yields(
                     connection,
-                    table="registry_snapshots",
-                    predicate="""rowid IN (
-                        SELECT rowid FROM (
-                            SELECT rowid,
-                                   ROW_NUMBER() OVER (
-                                       PARTITION BY collector_id ORDER BY created_at DESC
-                                   ) AS rank
-                            FROM registry_snapshots
-                        ) WHERE rank > ?
-                    )""",
-                    params=(keep_snapshots,),
+                    db_path=str(database),
+                    table=table,
+                    predicate=predicate,
+                    params=params,
                     batch_size=batch_size,
                     max_batches=max_batches,
                 )
-                connection.execute("PRAGMA optimize")
+                deleted[table] = deleted.get(table, 0) + count
+                _storage_progress("prune_completed", table=table, deleted=count,
+                                  seconds=round(time.monotonic() - prune_started, 3))
+
+            keep_snapshots = _env_int("SECOPSAI_RESEARCH_SNAPSHOTS_PER_COLLECTOR", 2, minimum=1)
+            snapshots_started = time.monotonic()
+            _storage_progress("snapshots_prune_started")
+            deleted["registry_snapshots"] = _delete_batches_with_writer_yields(
+                connection,
+                db_path=str(database),
+                table="registry_snapshots",
+                predicate="""rowid IN (
+                    SELECT rowid FROM (
+                        SELECT rowid,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY collector_id ORDER BY created_at DESC
+                               ) AS rank
+                        FROM registry_snapshots
+                    ) WHERE rank > ?
+                )""",
+                params=(keep_snapshots,),
+                batch_size=batch_size,
+                max_batches=max_batches,
+            )
+            _storage_progress("snapshots_prune_completed", deleted=deleted["registry_snapshots"],
+                              seconds=round(time.monotonic() - snapshots_started, 3))
+            # Query-planner statistics maintenance can walk large b-trees.
+            # Keep that work out of routine worker cycles.
+            if aggressive:
+                with sqlite_writer_lock(str(database)):
+                    connection.execute("PRAGMA optimize")
+            checkpoint_started = time.monotonic()
+            _storage_progress("wal_checkpoint_started")
+            with sqlite_writer_lock(str(database)):
                 try:
                     connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 except sqlite3.Error:
                     pass
+            _storage_progress("wal_checkpoint_completed", seconds=round(time.monotonic() - checkpoint_started, 3))
     except sqlite3.OperationalError as exc:
         if "full" in str(exc).lower():
             raise ResearchStorageCapacityError(
@@ -489,7 +580,7 @@ def maintain_research_storage(
         include_page_stats=aggressive,
         include_freelist=aggressive,
     )
-    return {
+    result = {
         "before": before,
         "after": after,
         "deleted_rows": deleted,
@@ -498,3 +589,5 @@ def maintain_research_storage(
         "vacuumed": vacuumed,
         "aggressive": aggressive,
     }
+    _storage_progress("maintenance_completed", seconds=round(time.monotonic() - started, 3), deleted_rows=deleted)
+    return result

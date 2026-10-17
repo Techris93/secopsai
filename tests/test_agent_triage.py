@@ -60,6 +60,7 @@ def _model_result(*, proposal: bool = False) -> dict:
         "limitations": ["No runtime execution was performed."],
         "finding_verdict": "false_positive",
         "finding_confidence": 99,
+        "malicious_probability": 4,
         "disposition_recommendation": "false_positive",
         "decision_evidence_refs": ["FND-AUTO-1", "RULE-EXAMPLE"],
         "exposure_assessment": "not_observed",
@@ -125,7 +126,7 @@ def test_dependency_manifest_inventory_prunes_generated_environments(tmp_path):
     assert paths == [tracked]
 
 
-def test_guarded_model_triage_closes_only_with_deterministic_corroboration_and_rolls_back(tmp_path, monkeypatch):
+def test_guarded_model_triage_cannot_close_outside_shared_calibrated_policy(tmp_path, monkeypatch):
     db = str(tmp_path / "soc.db")
     soc_store.persist_findings([_finding()], source="secopsai-supply-chain", db_path=db)
     agent_triage.update_settings(mode="guarded", min_evidence_refs=2, actor="test", db_path=db)
@@ -136,18 +137,20 @@ def test_guarded_model_triage_closes_only_with_deterministic_corroboration_and_r
     _complete_one(db, _model_result(proposal=True))
 
     finding = soc_store.get_finding("FND-AUTO-1", db)
-    assert finding and finding["status"] == "closed"
-    assert finding["disposition"] == "false_positive"
+    assert finding and finding["status"] == "in_review"
+    assert finding["disposition"] == "unreviewed"
     run = agent_triage.list_runs(db_path=db)[0]
-    assert run["status"] == "applied"
-    assert run["final_action"] == "auto_closed:false_positive"
+    assert run["status"] == "escalated"
+    assert run["final_action"] == "auto_started_review"
+    assert run["decision"]["closure_policy_eligible"] is False
+    assert run["decision"]["closure_policy_reason"] == "uncalibrated_assessment_version"
+    assert any("shared decision policy blocks automatic closure" in reason for reason in run["decision"]["guardrail_reasons"])
     assert run["decision"]["validated_evidence_refs"] == ["FND-AUTO-1", "RULE-EXAMPLE"]
     proposals = agent_triage.list_tuning_proposals(db_path=db)
     assert proposals[0]["status"] == "shadow_insufficient_data"
     assert proposals[0]["shadow_metrics"]["activation_allowed"] is False
 
-    rolled_back = agent_triage.rollback_run(run["run_id"], actor="test", db_path=db)
-    assert rolled_back["status"] == "rolled_back"
+    assert agent_triage.rollback_run(run["run_id"], actor="test", db_path=db)["status"] == "rolled_back"
     restored = soc_store.get_finding("FND-AUTO-1", db)
     assert restored and restored["status"] == "open" and restored["disposition"] == "unreviewed"
 

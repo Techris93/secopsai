@@ -316,14 +316,41 @@ def test_ontology_outbox_retries_and_removes_acknowledged_snapshot(tmp_path):
     client = CoreEdgeClient(_settings(), session=session)
     queued = client.enqueue_ontology_snapshot({"entities": [], "relationships": [], "events": [], "evidence_refs": []}, db_path=db_path, error="offline")
     assert queued["status"] == "queued"
+    assert queued["inserted_chunks"] == 1 and queued["deduplicated_chunks"] == 0
+    duplicate = client.enqueue_ontology_snapshot({"entities": [], "relationships": [], "events": [], "evidence_refs": []}, db_path=db_path)
+    assert duplicate["inserted_chunks"] == 0 and duplicate["deduplicated_chunks"] == 1
     with soc_store.read_connect(db_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM ontology_sync_outbox").fetchone()[0] == 1
     flushed = client.flush_ontology_outbox(db_path=db_path)
     assert flushed["flushed"] == 1
+    assert flushed["attempted"] == 1 and flushed["pending"] == 0 and flushed["last_acknowledged_at"]
     assert session.calls[-1][2]["headers"]["Idempotency-Key"] == queued["idempotency_key"]
     assert session.calls[-1][2]["json"]["idempotency_key"] == queued["idempotency_key"]
     with soc_store.read_connect(db_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM ontology_sync_outbox").fetchone()[0] == 0
+        batch = connection.execute("SELECT attempted,acknowledged,pending FROM ontology_sync_delivery_batches ORDER BY completed_at DESC LIMIT 1").fetchone()
+        assert tuple(batch) == (1, 1, 0)
+        ingress = connection.execute("SELECT chunks,inserted_chunks,deduplicated_chunks FROM ontology_sync_enqueue_batches ORDER BY created_at DESC LIMIT 1").fetchone()
+        assert tuple(ingress) == (1, 0, 1)
+
+
+def test_semantic_delivery_metrics_migrate_without_touching_queued_receipts(tmp_path):
+    db = str(tmp_path / "legacy-outbox.db")
+    client = CoreEdgeClient(_settings(), session=_Session())
+    receipt = client.enqueue_ontology_snapshot({"entities": []}, db_path=db)
+    with soc_store.connect(db) as connection:
+        connection.execute("DROP TABLE ontology_sync_delivery_batches")
+        connection.execute("DROP TABLE ontology_sync_enqueue_batches")
+        connection.execute("ALTER TABLE ontology_sync_outbox DROP COLUMN failure_category")
+        connection.execute("PRAGMA user_version = 14")
+        connection.commit()
+
+    soc_store.init_db(db)
+    with soc_store.read_connect(db) as connection:
+        row = connection.execute("SELECT idempotency_key,status,failure_category FROM ontology_sync_outbox").fetchone()
+        assert tuple(row) == (receipt["idempotency_key"], "queued", "")
+        tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"ontology_sync_delivery_batches", "ontology_sync_enqueue_batches"} <= tables
 
 
 def test_transient_chunk_retries_use_the_same_receipt(monkeypatch):
@@ -447,8 +474,11 @@ def test_outbox_rejection_diagnostics_are_bounded_and_keep_original_work(tmp_pat
     result=client.flush_ontology_outbox(db_path=db)
     assert result['http_status']==422
     assert result['pending']==1 and result['failed']==1
+    assert result['validation_failures'] == 1 and result['failure_category'] == 'validation'
     assert 'synthetic-private-token' not in result['error']
     assert len(session.calls)==1
+    with soc_store.read_connect(db) as conn:
+        assert conn.execute('SELECT failure_category FROM ontology_sync_outbox').fetchone()[0] == 'validation'
 
 
 def _legacy_outbox_fixture(tmp_path, client):

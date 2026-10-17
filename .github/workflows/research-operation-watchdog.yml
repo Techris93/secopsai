@@ -1,16 +1,18 @@
 name: Research Operation Watchdog
 on:
-  schedule:
-    - cron: "11,41 * * * *"
+  workflow_run:
+    workflows: ["Research Worker"]
+    types: [completed]
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: research-operation-watchdog
   cancel-in-progress: false
 jobs:
   inspect:
-    if: vars.RESEARCH_WORKER_ENABLED == 'true'
+    if: vars.RESEARCH_WORKER_ENABLED == 'true' && (github.event_name != 'workflow_run' || github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -21,6 +23,20 @@ jobs:
           cache: pip
       - name: Install source parser dependencies
         run: pip install -r requirements.txt
+      - name: Detect a concurrently active Research Worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          active=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/research-worker.yml/runs?status=in_progress&branch=main&per_page=100" --jq '.workflow_runs | length')
+          if ! [[ "$active" =~ ^[0-9]+$ ]]; then
+            echo "Could not determine active Research Worker runs" >&2
+            exit 1
+          fi
+          if (( active > 0 )); then
+            echo "SECOPSAI_WATCHDOG_WORKER_ACTIVE=1" >> "$GITHUB_ENV"
+          else
+            echo "SECOPSAI_WATCHDOG_WORKER_ACTIVE=0" >> "$GITHUB_ENV"
+          fi
       - name: Verify public source transport and parsing independently
         env:
           LEDGER_STORE_URL: https://ledger.secopsai.dev
@@ -31,7 +47,15 @@ jobs:
         env:
           LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
           SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
-        run: python scripts/research_operation_watchdog.py --output reports/research/watchdog.json
+          SECOPSAI_WATCHDOG_UPSTREAM_CONCLUSION: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion || '' }}
+          SECOPSAI_WATCHDOG_UPSTREAM_COMPLETED_AT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.completed_at || '' }}
+          SECOPSAI_WATCHDOG_UPSTREAM_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || '' }}
+        run: |
+          python scripts/research_operation_watchdog.py \
+            --upstream-worker-conclusion "$SECOPSAI_WATCHDOG_UPSTREAM_CONCLUSION" \
+            --upstream-worker-completed-at "$SECOPSAI_WATCHDOG_UPSTREAM_COMPLETED_AT" \
+            --upstream-worker-run-id "$SECOPSAI_WATCHDOG_UPSTREAM_RUN_ID" \
+            --output reports/research/watchdog.json
       - name: Preserve diagnostics even after a failed check
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

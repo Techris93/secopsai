@@ -465,6 +465,18 @@ def triage_evidence(members: Iterable[Tuple[str, bytes]], findings: Iterable[Dic
         content, truncated = _excerpt(text, positions, FLAGGED_FILE_BYTES)
         files.append({"path": path[:300], "bytes": len(data), "complete": not truncated, "truncated": truncated,
                       "matched_regions_shown": bool(positions) or not truncated, "content": content})
+    install_files = install_time_files(members)
+    fully_supplied = {
+        str(item.get("path"))
+        for item in [*files, *install_files]
+        if isinstance(item, dict)
+        and item.get("path")
+        and item.get("truncated") is not True
+        and item.get("complete") is not False
+    }
+    package_paths = sorted({str(path) for path, _data in members if str(path).strip()})
+    missing_files = [path for path in package_paths if path not in fully_supplied]
+    bounded_missing_files = [path for path in missing_files if len(path) <= 300][:200]
     flag_set = {flag.removeprefix("new:") for flag in flags}
     locations = [found for found in (flag_evidence(members, flag, window=240) for flag in RISKY_FLAGS if flag in flag_set) if found][:14]
     payloads: List[Dict[str, object]] = []
@@ -497,4 +509,5 @@ def triage_evidence(members: Iterable[Tuple[str, bytes]], findings: Iterable[Dic
                 if len(item["referenced_by"]) < 3 and path != item["path"] and name in text:
                     item["referenced_by"].append(path[:300])
     return {"flagged_files": files, "flag_locations": locations, "decoded_payloads": payloads, "binaries": binaries[:10],
-            "binaries_total": len(binaries)}
+            "binaries_total": len(binaries), "missing_files": bounded_missing_files,
+            "missing_files_truncated": len(missing_files) > len(bounded_missing_files)}

@@ -171,6 +171,10 @@ def build_triage_questions() -> dict[str, Any]:
                 "false": "No emergency containment required.",
             },
         },
+        "malicious": {
+            "type": "noul",
+            "instructions": "Estimate the probability, from 0 to 1, that the activity is malicious. Keep this separate from classification confidence.",
+        },
     }
 
 
@@ -251,6 +255,7 @@ def _format_triage_result(answers: dict[str, Any], state: Any) -> dict[str, Any]
     automation = answers["automation_recommendation"]["choice"]
     risk = answers["risk_severity"]["score"]
     containment = answers["containment_needed"]["noul"]
+    malicious_probability = round(100 * answers["malicious"]["noul"])
     actions = [f"Review the {automation.replace('_', ' ')} recommendation against operator policy."]
     if containment >= .65:
         actions.append("Consider containment or credential isolation under the existing emergency response policy.")
@@ -261,6 +266,7 @@ def _format_triage_result(answers: dict[str, Any], state: Any) -> dict[str, Any]
         "recommended_actions": actions,
         "limitations": ["Typed decisions are recommendations; operator permissions remain unchanged."],
         "finding_verdict": verdict, "finding_confidence": confidence,
+        "malicious_probability": malicious_probability,
         "disposition_recommendation": {"true_positive": "true_positive", "false_positive": "false_positive", "benign_expected": "expected_behavior", "policy_noise": "tune_policy", "needs_more_evidence": "needs_review"}[verdict],
         "exposure_assessment": exposure, "automation_recommendation": automation,
         "decision_evidence_refs": [],
@@ -293,11 +299,18 @@ def _format_publication_safety_result(answers: dict[str, Any], state: Any) -> di
 def _artifact_questions(context: dict, instructions: str) -> tuple[dict, dict, dict]:
     questions = build_triage_questions()
     questions["finding_verdict"]["criteria"].pop("policy_noise")
-    questions["malicious"] = {"type": "noul", "instructions": "Is this release malicious based on the supplied code? Probability of malice is independent of classification confidence."}
+    questions["malicious"] = {"type": "noul", "instructions": "Estimate the probability, from 0 to 1, that this release is malicious based on the supplied code. This probability is independent of classification confidence."}
     refs = {f"e{i}": ref for i, ref in enumerate(evidence_identifiers(context))}
     questions["strongest_evidence"] = {"type": "choice", "instructions": "Select the strongest supplied rule or file supporting your decision.",
         "criteria": {"none": "No supplied identifier supports the decision", **{key: value for key, value in refs.items()}}}
-    supplied = {f.get("path") for f in context.get("flagged_files", []) + context.get("install_time_files", []) if isinstance(f, dict)}
+    supplied = {
+        f.get("path")
+        for f in context.get("flagged_files", []) + context.get("install_time_files", [])
+        if isinstance(f, dict)
+        and f.get("path")
+        and f.get("truncated") is not True
+        and f.get("complete") is not False
+    }
     missing = {f"m{i}": path for i, path in enumerate(context.get("missing_files") or []) if isinstance(path, str) and path not in supplied}
     missing = dict(list(missing.items())[:200])
     if missing:

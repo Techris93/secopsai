@@ -13,6 +13,7 @@ from secopsai.research_worker import (
     run_worker_cycle,
     run_worker_loop,
 )
+from secopsai.research_discovery import sync_actionable_alert_findings
 from secopsai.research_storage import ResearchStorageCapacityError
 from secopsai.research_intake import SafeFetcher
 
@@ -152,6 +153,20 @@ def test_storage_capacity_warning_is_deduplicated_and_resolved(tmp_path, monkeyp
         ).fetchone()["status"] == "resolved"
 
 
+def test_storage_capacity_alert_does_not_run_actionable_finding_sync(tmp_path, monkeypatch):
+    db_path = _db(tmp_path)
+
+    def fail_if_called(**kwargs):
+        raise AssertionError("operational storage alerts must not trigger alert finding synchronization")
+
+    monkeypatch.setattr("secopsai.research_worker.sync_actionable_alert_findings", fail_if_called)
+    alert_id = _record_storage_capacity_alert(
+        {"warning": True, "filesystem_used_percent": 72, "warning_used_percent": 70},
+        db_path=db_path,
+    )
+    assert alert_id
+
+
 def test_collector_degraded_alert_threshold_and_auto_resolve(tmp_path, monkeypatch):
     monkeypatch.setenv("SECOPSAI_COLLECTOR_ALERT_THRESHOLD", "3")
     db_path = _db(tmp_path)
@@ -263,6 +278,7 @@ def test_npm_enrichment_degraded_alert_is_visible_and_resolves(tmp_path):
     }
     alert_id = _record_npm_enrichment_alert(degraded, db_path=db_path)
     assert alert_id
+    sync_actionable_alert_findings(db_path=db_path, alert_ids=[alert_id])
     with soc_store.connect(db_path) as connection:
         alert = connection.execute("SELECT * FROM research_alerts WHERE alert_id=?", (alert_id,)).fetchone()
         finding = connection.execute("SELECT * FROM findings WHERE finding_id=?", (f"RSCF-{hashlib.sha256(alert_id.encode()).hexdigest()[:16].upper()}",)).fetchone()

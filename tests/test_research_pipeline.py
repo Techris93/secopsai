@@ -114,13 +114,21 @@ def _bridge_result(action: str) -> dict:
                 "verdict_recommendation": "likely",
                 "verdict_confidence": 78,
                 "verdict_rationale": "Static package and comparison evidence supports a likely verdict while runtime behavior remains unobserved.",
-                "verdict_evidence_refs": ["collect_subject", "compare_packages"],
+                # The suspect package is always present; a comparison step may
+                # be awaiting input and therefore cannot be cited.
+                "verdict_evidence_refs": ["collect_subject"],
             }
         )
     elif action == "generate_analyst_brief":
         data["article_outline"] = ["Summary", "Technical comparison", "Defensive guidance"]
     else:
-        data["publication_risks"] = ["Do not describe static indicators as observed runtime behavior."]
+        risk = "Do not describe static indicators as observed runtime behavior."
+        data["publication_risks"] = [risk]
+        data["publication_checks"] = {
+            name: {"status": "clear", "finding": f"No {name} issue found in supplied evidence."}
+            for name in ("evidence", "privacy", "credential_leakage", "operational_safety", "legal_disclosure", "reproducibility")
+        }
+        data["publication_checks"]["evidence"] = {"status": "concern", "finding": risk}
         data["disclosure_draft"] = "Review-only disclosure draft."
     return {"schema_version": "secopsai.intelligence.v1", "action": action, "data": data}
 

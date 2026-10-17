@@ -1080,15 +1080,58 @@ def agent_complete_pipeline(
             and item.get("evidence_id")
             and str((item.get("metadata") or {}).get("pipeline_id") or "") == pipeline_id
         ]
-        evidence_ids = [str(item["evidence_id"]) for item in active_evidence[:50]]
+        all_pipeline_evidence_ids = [str(item["evidence_id"]) for item in active_evidence[:50]]
+        submitted_refs = data.get("verdict_evidence_refs")
+        if not isinstance(submitted_refs, list) or any(not isinstance(ref, str) or not ref.strip() for ref in submitted_refs):
+            submitted_refs = []
+        succeeded_steps = {
+            str(step.get("step_key")): step
+            for step in pipeline.get("steps", [])
+            if step.get("status") == "succeeded" and str(step.get("step_key") or "")
+        }
+        allowed_refs = set(all_pipeline_evidence_ids) | set(succeeded_steps)
+        invalid_refs = [ref for ref in submitted_refs if ref not in allowed_refs]
+        linked_evidence_ids: list[str] = []
+        evidence_by_id = {str(item["evidence_id"]): item for item in active_evidence if item.get("evidence_id")}
+        for ref in submitted_refs:
+            if ref in evidence_by_id:
+                linked_evidence_ids.append(ref)
+                continue
+            step = succeeded_steps.get(ref)
+            if not step:
+                continue
+            step_result = step.get("result") if isinstance(step.get("result"), dict) else {}
+            step_evidence_ids = step_result.get("evidence_ids")
+            if not isinstance(step_evidence_ids, list):
+                step_evidence_ids = []
+            candidates = [step_result.get("evidence_id"), *step_evidence_ids]
+            for evidence_id in candidates:
+                if isinstance(evidence_id, str) and evidence_id in evidence_by_id:
+                    linked_evidence_ids.append(evidence_id)
+            role_for_step = {"collect_subject": "suspect", "collect_reference": "reference"}.get(ref)
+            for evidence in active_evidence:
+                metadata = evidence.get("metadata") if isinstance(evidence.get("metadata"), dict) else {}
+                if str(metadata.get("step_key") or metadata.get("intelligence_action") or "") == ref:
+                    linked_evidence_ids.append(str(evidence["evidence_id"]))
+                elif role_for_step and str(metadata.get("comparison_role") or "") == role_for_step:
+                    linked_evidence_ids.append(str(evidence["evidence_id"]))
+                elif ref == "compare_packages" and str(metadata.get("comparison_role") or "") in {"suspect", "reference"}:
+                    linked_evidence_ids.append(str(evidence["evidence_id"]))
+        evidence_ids = list(dict.fromkeys(linked_evidence_ids))[:50]
         strong_proof = any(
             str(item.get("evidence_type") or "") == "sandbox_analysis"
             or bool((item.get("metadata") or {}).get("advisory_backed"))
-            for item in active_evidence
+            for item in (evidence_by_id[evidence_id] for evidence_id in evidence_ids if evidence_id in evidence_by_id)
         )
 
         verdict = requested
         guardrail_notes: list[str] = []
+        if invalid_refs:
+            verdict = "inconclusive"
+            guardrail_notes.append("verdict cited evidence or pipeline steps that were not supplied")
+        if not submitted_refs or not evidence_ids:
+            verdict = "inconclusive"
+            guardrail_notes.append("verdict references did not resolve to active evidence linked to this pipeline")
         if not evidence_ids or confidence < 60:
             verdict = "inconclusive"
             guardrail_notes.append("insufficient linked evidence or confidence")
@@ -1111,7 +1154,7 @@ def agent_complete_pipeline(
             verdict = "likely"
             guardrail_notes.append("unsupported claims prevent a credible verdict")
 
-        if evidence_ids:
+        if evidence_ids and not invalid_refs:
             rationale_text = rationale or "Agent completed bounded review of normalized research evidence."
             if guardrail_notes:
                 rationale_text += " Guardrails: " + "; ".join(guardrail_notes) + "."
@@ -1404,6 +1447,11 @@ def pipeline_intelligence_context(pipeline_id: str, *, db_path: Optional[str] = 
         "pipeline_id": pipeline_id,
         "case_id": pipeline["case_id"],
         "status": pipeline["status"],
+        "available_step_refs": [
+            str(step.get("step_key"))
+            for step in pipeline.get("steps", [])
+            if step.get("status") == "succeeded" and str(step.get("step_key") or "")
+        ],
         "suspect": intake_summary("collect_subject"),
         "reference": intake_summary("collect_reference") if _step_result(pipeline, "collect_reference").get("metadata") else None,
         "comparison": _step_result(pipeline, "compare_packages"),

@@ -17,17 +17,24 @@ from secopsai.research_operation_store import read_connection
 from secopsai.research_intake import SafeFetcher
 from secopsai.research_operation_store import append, canonical, digest, text, timestamp, transaction
 
-PARSER_VERSION = "primary-intel-v3"
+PARSER_VERSION = "primary-intel-v4"
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
-MAX_EVENTS = 5000
+MAX_EVENTS = 10000
+EVENT_BATCH_SIZE = 250
 MAX_PENDING = 10000
 MAX_ATTEMPTS = 8
+MSRC_INITIAL_LOOKBACK_DAYS = 7
+MSRC_OVERLAP_DAYS = 3
+
+
+class IntakeBackpressureError(ValueError):
+    """The source snapshot is durable, but queued work has reached its bound."""
 
 
 def source_headers(parser: str) -> dict:
     if parser in {"jfrog_index", "socket_index"}:
         return {"Accept": "text/html"}
-    return {"Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8" if parser == "rss" else "application/json"}
+    return {"Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8" if parser in {"rss", "msrc_rss"} else "application/json"}
 
 
 def _now() -> str:
@@ -54,7 +61,7 @@ def configure_source(config: dict, *, actor: str, db_path=None) -> dict:
              "parser": config.get("parser"), "source_class": config.get("source_class"),
              "sharing": config.get("sharing", "public"), "license": text(config.get("license", "unknown"), "license", limit=1000),
              "interval_seconds": config.get("interval_seconds", 86400), "enabled": config.get("enabled", False)}
-    if value["parser"] not in {"rss", "cisa_kev", "normalized_json", "github_advisories", "openvsx_index", "jfrog_index", "socket_index"} or value["source_class"] not in {"government", "vendor", "registry", "research", "partner", "aggregator", "project"}:
+    if value["parser"] not in {"rss", "msrc_rss", "cisa_kev", "normalized_json", "github_advisories", "openvsx_index", "jfrog_index", "socket_index"} or value["source_class"] not in {"government", "vendor", "registry", "research", "partner", "aggregator", "project"}:
         raise ValueError("unsupported source parser or class")
     if type(value["interval_seconds"]) is not int or not 300 <= value["interval_seconds"] <= 604800 or type(value["enabled"]) is not bool:
         raise ValueError("invalid source interval or enablement")
@@ -110,27 +117,68 @@ def _date(raw: str) -> str | None:
             return None  # Missing provider publication time is never collection time.
 
 
-def parse_source(config: dict, content: bytes) -> list[dict]:
+def msrc_window_start(*, last_success_at: str | None = None, now=None) -> str:
+    """Return the shared initial-baseline or overlap watermark for MSRC."""
+    current = now or datetime.now(timezone.utc)
+    if isinstance(current, str):
+        current = datetime.fromisoformat(current.replace("Z", "+00:00"))
+    if current.tzinfo is None:
+        raise ValueError("MSRC lookback requires a timezone-aware clock")
+    if last_success_at:
+        watermark = datetime.fromisoformat(timestamp(last_success_at).replace("Z", "+00:00"))
+        cutoff = watermark - timedelta(days=MSRC_OVERLAP_DAYS)
+    else:
+        cutoff = current.astimezone(timezone.utc) - timedelta(days=MSRC_INITIAL_LOOKBACK_DAYS)
+    return cutoff.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def parse_source_report(config: dict, content: bytes, *, now=None) -> dict:
     if not content or len(content) > MAX_SOURCE_BYTES:
         raise ValueError("source body is empty or exceeds budget")
     parser = config["parser"]
-    if parser == "rss":
+    historical_excluded = 0
+    window_start = ""
+    if parser in {"rss", "msrc_rss"}:
         feed = feedparser.parse(content)
         if feed.bozo or not feed.get("version"):
             raise ValueError("malformed or unrecognized RSS/Atom feed")
         items = []
+        cutoff = None
+        if parser == "msrc_rss":
+            if config.get("msrc_lookback_start"):
+                window_start = timestamp(config["msrc_lookback_start"])
+            else:
+                window_start = msrc_window_start(now=now)
+            cutoff = datetime.fromisoformat(window_start.replace("Z", "+00:00"))
         for entry in feed.entries:
             excerpt = entry.get("summary") or entry.get("title")
+            source_updated_at = _date(entry.get("updated", ""))
+            published_at = _date(entry.get("published", "")) or source_updated_at
+            if parser == "msrc_rss":
+                # Use the publisher's revision time when present so late
+                # advisory updates are collected even if their original
+                # publication date is old. An undated entry cannot safely be
+                # classified as historical or in-scope.
+                event_time = source_updated_at or published_at
+                if not event_time:
+                    raise ValueError("MSRC feed entry has no reliable publication or update time")
+                if datetime.fromisoformat(event_time.replace("Z", "+00:00")) < cutoff:
+                    historical_excluded += 1
+                    continue
             item = {"external_id": entry.get("id") or entry.get("link"), "url": entry.get("link"), "title": entry.get("title"),
-                    "excerpt": excerpt, "published_at": _date(entry.get("published") or entry.get("updated", "")),
+                    "excerpt": excerpt, "published_at": published_at,
                     "root_url": entry.get("link"), "assessment": "source_reported"}
+            if parser == "msrc_rss" and source_updated_at:
+                item["source_updated_at"] = source_updated_at
             if isinstance(excerpt, str) and len(excerpt) > 20000:
                 item.update(excerpt=excerpt[:20000], excerpt_truncated=True, excerpt_original_characters=len(excerpt),
                             excerpt_sha256=hashlib.sha256(excerpt.encode()).hexdigest(), excerpt_selection={"start": 0, "end": 20000})
             items.append(item)
+        events_total = len(feed.entries)
     elif parser in {"github_advisories", "openvsx_index", "jfrog_index", "socket_index"}:
         from secopsai.research_source_parsers import parse_index
         items = parse_index(config, content)
+        events_total = len(items)
     elif parser == "cisa_kev":
         body = json.loads(content)
         if not isinstance(body, dict) or not isinstance(body.get("vulnerabilities"), list):
@@ -140,11 +188,13 @@ def parse_source(config: dict, content: bytes) -> list[dict]:
                   "excerpt": e["shortDescription"], "published_at": None, "catalog_added_at": _date(e["dateAdded"] + "T00:00:00Z"),
                   "date_kind": "catalog_added", "required_action": e["requiredAction"], "assessment": "source_reported",
                   "observed_exploitation_by_secopsai": False} for e in body["vulnerabilities"]]
+        events_total = len(items)
     else:
         body = json.loads(content)
         if not isinstance(body, dict) or not isinstance(body.get("events"), list):
             raise ValueError("normalized JSON must contain events")
         items = body["events"]
+        events_total = len(items)
     if len(items) > MAX_EVENTS:
         raise ValueError("source event budget exceeded; cursor cannot advance over omitted events")
     normalized = []
@@ -158,40 +208,102 @@ def parse_source(config: dict, content: bytes) -> list[dict]:
                  "published_at": _date(item.get("published_at", "")), "assessment": "source_reported",
                  "observed_exploitation_by_secopsai": False}
         normalized.append(value)
-    return normalized
+    return {"items": normalized, "events_total": events_total, "events_in_scope": len(normalized),
+            "historical_excluded": historical_excluded, "window_start": window_start}
+
+
+def parse_source(config: dict, content: bytes) -> list[dict]:
+    """Return all in-scope events; use parse_source_report for coverage counts."""
+    return parse_source_report(config, content)["items"]
 
 
 def acquire(config: dict, content: bytes, *, db_path=None, transport="direct") -> dict:
-    """Commit the archived bytes, every parsed event and queue item before cursor advancement."""
-    items = parse_source(config, content)
+    """Persist an archived source snapshot and ingest it in resumable batches.
+
+    The source cursor advances only after every in-scope item has been
+    committed. If queue backpressure or a process stop interrupts a batch,
+    the archived bytes and next item index remain durable for the next run.
+    """
     sha256 = hashlib.sha256(content).hexdigest()
     snapshot_id = "SNP-" + digest([config["source_id"], sha256])[:32]
     now = _now()
-    inserted = 0
+    with read_connection(db_path) as conn:
+        progress = conn.execute("SELECT * FROM research_source_ingest_progress WHERE source_id=?", (config["source_id"],)).fetchone()
+    if progress and progress["snapshot_id"] != snapshot_id:
+        raise ValueError("an earlier source snapshot must be resumed before accepting a newer response")
+    if progress and config.get("parser") == "msrc_rss":
+        config = {**config, "msrc_lookback_start": progress["window_start"]}
+    report = parse_source_report(config, content)
+    items = report["items"]
+    if progress and int(progress["total_items"]) != len(items):
+        raise ValueError("resumed source snapshot no longer matches its persisted item count")
+    inserted = int(progress["inserted_items"] or 0) if progress else 0
+    start_index = int(progress["next_index"] or 0) if progress else 0
+    acquired_at = now
     with transaction(db_path) as conn:
-        backlog = conn.execute("SELECT COUNT(*) FROM research_operation_queue WHERE state IN ('queued','running','retry')").fetchone()[0]
-        pending_ids = {"INT-" + digest([config["source_id"], item["external_id"], item])[:32] for item in items}
-        new_events = sum(not conn.execute("SELECT 1 FROM research_intel_events WHERE event_id=?", (identity,)).fetchone() for identity in pending_ids)
-        if backlog + new_events > MAX_PENDING:
-            raise ValueError("intake backpressure: acquire will retry without advancing cursor")
         conn.execute("INSERT OR IGNORE INTO research_source_snapshots VALUES (?,?,?,?,?,?,?)", (snapshot_id, config["source_id"], sha256, "sqlite:research_source_snapshots", now, PARSER_VERSION, content))
-        for item in items:
-            # Updating a source entry makes a new event; syndicated entries
-            # share a root key without pretending to be independent evidence.
-            event_id = "INT-" + digest([config["source_id"], item["external_id"], item])[:32]
-            root = digest(item["root_url"])
-            changed = conn.execute("INSERT OR IGNORE INTO research_intel_events VALUES (?,?,?,?,?,?,?,?)", (event_id, config["source_id"], root, snapshot_id, item["published_at"], now, now, canonical(item))).rowcount
-            if changed:
-                inserted += 1
-                conn.execute("INSERT INTO research_operation_queue(job_id,kind,event_id,payload_json,state,retry_at,created_at,updated_at) VALUES (?,?,?,?,'queued',?,?,?)",
-                             ("Q-" + digest(["verify_intel", event_id])[:32], "verify_intel", event_id, canonical({"event_id": event_id}), now, now, now))
-                conn.execute("INSERT OR IGNORE INTO research_coverage_events VALUES (?,?,?,'',?)", (config["source_id"], event_id, "observed", now))
-                if item.get("excerpt_truncated"):
-                    conn.execute("INSERT OR IGNORE INTO research_coverage_events VALUES (?,?,?,?,?)", (config["source_id"], event_id, "evidence_truncated", "RSS excerpt exceeds 20000 characters; complete feed is archived", now))
+        if progress:
+            stored = conn.execute("SELECT acquired_at FROM research_source_snapshots WHERE snapshot_id=?", (snapshot_id,)).fetchone()
+            acquired_at = stored["acquired_at"] if stored else now
+        else:
+            conn.execute("INSERT INTO research_source_ingest_progress(source_id,snapshot_id,next_index,total_items,window_start,events_total,historical_excluded,inserted_items,started_at,updated_at) VALUES (?,?,0,?,?,?,?,0,?,?)",
+                         (config["source_id"], snapshot_id, len(items), report["window_start"], report["events_total"], report["historical_excluded"], now, now))
+
+    batch_count = 0
+    for offset in range(start_index, len(items), EVENT_BATCH_SIZE):
+        batch = items[offset:offset + EVENT_BATCH_SIZE]
+        batch_inserted = 0
+        with transaction(db_path) as conn:
+            current = conn.execute("SELECT next_index,inserted_items FROM research_source_ingest_progress WHERE source_id=? AND snapshot_id=?", (config["source_id"], snapshot_id)).fetchone()
+            if not current:
+                raise ValueError("source ingest progress disappeared before completion")
+            if int(current["next_index"]) != offset:
+                # Another process may have resumed the same immutable feed.
+                # Restart from the persisted offset; deterministic IDs keep
+                # already committed items idempotent.
+                if int(current["next_index"]) > offset:
+                    continue
+                raise ValueError("source ingest progress is not contiguous")
+            backlog = conn.execute("SELECT COUNT(*) FROM research_operation_queue WHERE state IN ('queued','running','retry')").fetchone()[0]
+            pending_ids = {"INT-" + digest([config["source_id"], item["external_id"], item])[:32] for item in batch}
+            new_events = sum(not conn.execute("SELECT 1 FROM research_intel_events WHERE event_id=?", (identity,)).fetchone() for identity in pending_ids)
+            if backlog + new_events > MAX_PENDING:
+                raise IntakeBackpressureError("intake backpressure: archived source snapshot will resume without cursor advancement")
+            for item in batch:
+                # Updating a source entry makes a new event; syndicated entries
+                # share a root key without pretending to be independent evidence.
+                event_id = "INT-" + digest([config["source_id"], item["external_id"], item])[:32]
+                root = digest(item["root_url"])
+                changed = conn.execute("INSERT OR IGNORE INTO research_intel_events VALUES (?,?,?,?,?,?,?,?)", (event_id, config["source_id"], root, snapshot_id, item["published_at"], now, now, canonical(item))).rowcount
+                if changed:
+                    batch_inserted += 1
+                    conn.execute("INSERT INTO research_operation_queue(job_id,kind,event_id,payload_json,state,retry_at,created_at,updated_at) VALUES (?,?,?,?,'queued',?,?,?)",
+                                 ("Q-" + digest(["verify_intel", event_id])[:32], "verify_intel", event_id, canonical({"event_id": event_id}), now, now, now))
+                    conn.execute("INSERT OR IGNORE INTO research_coverage_events VALUES (?,?,?,'',?)", (config["source_id"], event_id, "observed", now))
+                    if item.get("excerpt_truncated"):
+                        conn.execute("INSERT OR IGNORE INTO research_coverage_events VALUES (?,?,?,?,?)", (config["source_id"], event_id, "evidence_truncated", "RSS excerpt exceeds 20000 characters; complete feed is archived", now))
+            conn.execute("UPDATE research_source_ingest_progress SET next_index=?,inserted_items=inserted_items+?,updated_at=? WHERE source_id=? AND snapshot_id=?",
+                         (offset + len(batch), batch_inserted, now, config["source_id"], snapshot_id))
+        inserted += batch_inserted
+        batch_count += 1
+
+    with transaction(db_path) as conn:
+        current = conn.execute("SELECT * FROM research_source_ingest_progress WHERE source_id=? AND snapshot_id=?", (config["source_id"], snapshot_id)).fetchone()
+        if not current or int(current["next_index"]) != len(items):
+            raise ValueError("source snapshot cannot advance before all in-scope events are durable")
         append("source_acquisition", {"source_id": config["source_id"], "source_url": config["url"],
-               "snapshot_id": snapshot_id, "sha256": sha256, "transport": transport}, actor="source-collector", connection=conn)
+               "snapshot_id": snapshot_id, "sha256": sha256, "transport": transport,
+               "events_total": report["events_total"], "events_in_scope": len(items),
+               "historical_excluded": report["historical_excluded"], "window_start": report["window_start"]}, actor="source-collector", connection=conn)
+        run_id = "SRC-RUN-" + digest([config["source_id"], snapshot_id, now])[:24]
+        conn.execute("INSERT OR IGNORE INTO research_source_collection_runs(run_id,source_id,snapshot_id,status,events_total,events_in_scope,historical_excluded,inserted_events,window_start,acquired_at,completed_at) VALUES (?,?,?,'completed',?,?,?,?,?,?,?)",
+                     (run_id, config["source_id"], snapshot_id, report["events_total"], len(items), report["historical_excluded"], inserted, report["window_start"], acquired_at, now))
         conn.execute("UPDATE research_intel_sources SET cursor=?,last_success_at=?,error_category='',consecutive_failures=0 WHERE source_id=?", (snapshot_id, now, config["source_id"]))
-    return {"source_id": config["source_id"], "snapshot_id": snapshot_id, "events": len(items), "inserted": inserted, "status": "acquired"}
+        conn.execute("DELETE FROM research_source_ingest_progress WHERE source_id=? AND snapshot_id=?", (config["source_id"], snapshot_id))
+    return {"source_id": config["source_id"], "snapshot_id": snapshot_id,
+            "events": len(items), "events_total": report["events_total"], "events_in_scope": len(items),
+            "historical_excluded": report["historical_excluded"], "window_start": report["window_start"],
+            "inserted": inserted, "batches": batch_count, "status": "acquired"}
 
 
 def collect_due(*, db_path=None, fetcher=None, limit: int = 10, force_source_ids: tuple[str, ...] = ()) -> dict:
@@ -206,8 +318,14 @@ def collect_due(*, db_path=None, fetcher=None, limit: int = 10, force_source_ids
         if force_source_ids and source["source_id"] not in force_source_ids:
             continue
         config = json.loads(source["config_json"])
+        with read_connection(db_path) as conn:
+            progress = conn.execute(
+                "SELECT p.snapshot_id,p.window_start,s.content,s.sha256 FROM research_source_ingest_progress p "
+                "JOIN research_source_snapshots s USING(snapshot_id) WHERE p.source_id=?",
+                (source["source_id"],),
+            ).fetchone()
         interval = min(config["interval_seconds"], 300 * 2 ** min(source["consecutive_failures"], 4)) if source["consecutive_failures"] else config["interval_seconds"]
-        if not config["enabled"] or (source["source_id"] not in force_source_ids and source["last_attempt_at"] and _future(interval, source["last_attempt_at"]) > _now()):
+        if not config["enabled"] or (not progress and source["source_id"] not in force_source_ids and source["last_attempt_at"] and _future(interval, source["last_attempt_at"]) > _now()):
             continue
         if len(results) >= min(10, max(1, limit)):
             break
@@ -215,18 +333,32 @@ def collect_due(*, db_path=None, fetcher=None, limit: int = 10, force_source_ids
             conn.execute("UPDATE research_intel_sources SET last_attempt_at=? WHERE source_id=?", (_now(), config["source_id"]))
         stage = "fetch"
         try:
-            from secopsai.research_source_transport import fetch_source
-            _, received_headers, content = fetch_source(config["url"], max_bytes=MAX_SOURCE_BYTES,
-                                                       headers=source_headers(config["parser"]), fetcher=fetcher)
+            if progress:
+                content = bytes(progress["content"])
+                if hashlib.sha256(content).hexdigest() != progress["sha256"]:
+                    raise ValueError("archived source snapshot integrity check failed")
+                if config["parser"] == "msrc_rss":
+                    config = {**config, "msrc_lookback_start": progress["window_start"]}
+                received_headers = {"secopsai-transport": "archived-resume"}
+            else:
+                from secopsai.research_source_transport import fetch_source
+                if config["parser"] == "msrc_rss":
+                    config = {**config, "msrc_lookback_start": msrc_window_start(last_success_at=source["last_success_at"])}
+                _, received_headers, content = fetch_source(config["url"], max_bytes=MAX_SOURCE_BYTES,
+                                                           headers=source_headers(config["parser"]), fetcher=fetcher)
             stage = "parse"
             results.append(acquire(config, content, db_path=db_path, transport=received_headers.get("secopsai-transport", "direct")))
         except Exception as exc:
             status = re.fullmatch(r"registry returned HTTP ([0-9]{3})", str(exc)) if stage == "fetch" else None
-            category = f"source_http_{status.group(1)}" if status else "transport_failure" if stage == "fetch" else "invalid_source"
+            backpressure = isinstance(exc, IntakeBackpressureError)
+            category = ("intake_backpressure" if backpressure else
+                        f"source_http_{status.group(1)}" if status else
+                        "transport_failure" if stage == "fetch" else "invalid_source")
             with transaction(db_path) as conn:
-                conn.execute("UPDATE research_intel_sources SET error_category=?,consecutive_failures=consecutive_failures+1 WHERE source_id=?", (category, config["source_id"]))
-            results.append({"source_id": config["source_id"], "status": "failed", "error_category": category})
-    return {"status": "degraded" if any(r["status"] == "failed" for r in results) else "succeeded", "results": results, **seed}
+                conn.execute("UPDATE research_intel_sources SET error_category=?,consecutive_failures=consecutive_failures+? WHERE source_id=?", (category, 0 if backpressure else 1, config["source_id"]))
+            results.append({"source_id": config["source_id"], "status": "deferred" if backpressure else "failed", "error_category": category,
+                            "snapshot_resumable": bool(progress) or backpressure})
+    return {"status": "degraded" if any(r["status"] in {"failed", "deferred"} for r in results) else "succeeded", "results": results, **seed}
 
 
 def claim_job(*, worker_id: str, db_path=None, lease_seconds: int = 300, now=None) -> dict | None:
