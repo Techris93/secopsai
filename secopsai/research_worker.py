@@ -691,7 +691,7 @@ def run_worker_loop(
                     if callable(flush_outbox):
                         flush_result = flush_outbox(db_path=db_path, max_items=100, seconds=120)
                         print(json.dumps({"component":"research-worker", "event":"ontology_outbox_flush",
-                                          **{key:flush_result.get(key) for key in ("status","flushed","failed","pending","deferred","error","http_status")}},default=str),flush=True)
+                                          **{key:flush_result.get(key) for key in ("status","attempted","flushed","failed","pending","due_pending","deferred","oldest_pending_age_seconds","max_attempts","validation_failures","authorization_failures","error","http_status")}},default=str),flush=True)
                 except Exception as exc:  # outbox recovery is optional control-plane work
                     capture_exception(exc, context={"component": "research_ontology_outbox"})
                 try:
@@ -854,6 +854,12 @@ def run_worker_loop(
                         "rejected_chunks": ontology_sync.get("rejected_chunks", 0),
                         "accepted_chunk_ids": ontology_sync.get("accepted_chunk_ids", []),
                         "rejected_chunk_ids": ontology_sync.get("rejected_chunk_ids", []),
+                        "enqueued_chunks": ontology_sync.get("enqueued_chunks", 0),
+                        "new_unique_chunks": ontology_sync.get("new_chunks", 0),
+                        "deduplicated_chunks": ontology_sync.get("deduplicated_chunks", 0),
+                        "pending_chunks": ontology_sync.get("pending"),
+                        "oldest_pending_age_seconds": ontology_sync.get("oldest_pending_age_seconds"),
+                        "due_pending_chunks": ontology_sync.get("due_pending"),
                         "error": str(ontology_sync.get("error") or "")[:500],
                     }
                 except Exception as exc:  # semantic sync must not stop surveillance

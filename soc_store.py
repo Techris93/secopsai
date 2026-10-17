@@ -21,12 +21,10 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-# Schema version 12 adds durable backfill pending records so a relationship or
-# timeline row whose endpoint is projected later is retried instead of being
-# silently lost after its source checkpoint advances.  The ontology is an
-# additive semantic layer over the existing findings, research, and Edge graph
-# stores; it does not replace those durable records.
-SCHEMA_VERSION = 14
+# Schema version 15 adds durable semantic delivery measurements and explicit
+# retry classification. The ontology remains additive over the existing
+# findings, research, and Edge graph stores.
+SCHEMA_VERSION = 15
 REQUIRED_DELIVERY_TABLES = frozenset({"ontology_sync_receipt_migrations", "research_external_advisory_delivery_receipts"})
 REQUIRED_ONTOLOGY_TABLES = frozenset(
     {
@@ -41,6 +39,8 @@ REQUIRED_ONTOLOGY_TABLES = frozenset(
         "ontology_conflicts",
         "ontology_ingest_receipts",
         "ontology_sync_outbox",
+        "ontology_sync_delivery_batches",
+        "ontology_sync_enqueue_batches",
         "ontology_backfill_pending",
     }
 )
@@ -509,8 +509,31 @@ def init_db(db_path: str | None = None) -> None:
                 attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
                 next_attempt_at TEXT NOT NULL,
                 last_error TEXT NOT NULL DEFAULT '',
+                failure_category TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ontology_sync_delivery_batches (
+                batch_id TEXT PRIMARY KEY,
+                completed_at TEXT NOT NULL,
+                attempted INTEGER NOT NULL DEFAULT 0,
+                acknowledged INTEGER NOT NULL DEFAULT 0,
+                failed INTEGER NOT NULL DEFAULT 0,
+                deferred INTEGER NOT NULL DEFAULT 0,
+                pending INTEGER NOT NULL DEFAULT 0,
+                oldest_pending_age_seconds REAL,
+                http_status INTEGER,
+                failure_category TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS ontology_sync_enqueue_batches (
+                batch_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                chunks INTEGER NOT NULL DEFAULT 0,
+                inserted_chunks INTEGER NOT NULL DEFAULT 0,
+                deduplicated_chunks INTEGER NOT NULL DEFAULT 0,
+                pending INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS ontology_sync_receipt_migrations (
@@ -542,6 +565,10 @@ def init_db(db_path: str | None = None) -> None:
                 ON ontology_aliases (entity_id, alias_type, normalized_value);
             CREATE INDEX IF NOT EXISTS idx_ontology_sync_outbox_due
                 ON ontology_sync_outbox (status, next_attempt_at, created_at);
+            CREATE INDEX IF NOT EXISTS idx_ontology_sync_delivery_batches_completed
+                ON ontology_sync_delivery_batches (completed_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ontology_sync_enqueue_batches_created
+                ON ontology_sync_enqueue_batches (created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_ontology_entities_type_key
                 ON ontology_entities (entity_type, canonical_key);
             CREATE INDEX IF NOT EXISTS idx_ontology_entities_source_id
@@ -2158,6 +2185,9 @@ def init_db(db_path: str | None = None) -> None:
             _ensure_column(connection, "daily_automation_runs", "owner_id", "TEXT NOT NULL DEFAULT ''")
             _ensure_column(connection, "daily_automation_runs", "generation", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(connection, "daily_automation_runs", "lease_until", "TEXT")
+            _ensure_column(connection, "ontology_sync_outbox", "failure_category", "TEXT NOT NULL DEFAULT ''")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_ontology_sync_delivery_batches_completed ON ontology_sync_delivery_batches (completed_at DESC)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_ontology_sync_enqueue_batches_created ON ontology_sync_enqueue_batches (created_at DESC)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_ontology_entities_validity ON ontology_entities (valid_from, valid_to, freshness_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_ontology_evidence_workspace ON ontology_evidence_refs (workspace_id, observed_at DESC)")
             from secopsai.research_operation_store import SCHEMA as RESEARCH_OPERATION_SCHEMA

@@ -10,11 +10,12 @@ import re
 from urllib.parse import urlparse
 
 from secopsai.research_intake import SafeFetcher
-from secopsai.research_primary_intel import MAX_SOURCE_BYTES, parse_source, source_headers, source_url
+from secopsai.research_primary_intel import MAX_SOURCE_BYTES, msrc_window_start, parse_source_report, source_headers, source_url
 
 
-def check_source(source, *, fetcher=None):
-    result = {"name": source["name"], "status": "failed", "stage": "fetch"}
+def check_source(source, *, fetcher=None, now=None):
+    result = {"name": source["name"], "status": "failed", "stage": "fetch", "eligible_events": 0,
+              "ingested_events": 0, "historical_excluded": 0, "failed_events": 0}
     if source.get("comparison"):
         result["comparison"] = True
     from secopsai.research_source_parsers import source_spec
@@ -33,11 +34,22 @@ def check_source(source, *, fetcher=None):
     result.update(stage="parse", transport=headers.get("secopsai-transport", "direct"), bytes=len(body), sha256=hashlib.sha256(body).hexdigest(),
                   content_type=str(headers.get("content-type", ""))[:160])
     try:
-        events = parse_source({"parser": parser, "url": url}, body)
+        config = {"parser": parser, "url": url}
+        if parser == "msrc_rss":
+            config["msrc_lookback_start"] = msrc_window_start(now=now)
+        parsed = parse_source_report(config, body, now=now)
     except Exception as error:
         result["error_category"] = type(error).__name__
         return result
-    result.update(status="passed", events=len(events), truncated_excerpts=sum(bool(e.get("excerpt_truncated")) for e in events))
+    omitted = parsed["events_total"] - parsed["events_in_scope"] - parsed["historical_excluded"]
+    if omitted:
+        result.update(error_category="event_accounting_mismatch", failed_events=omitted)
+        return result
+    result.update(status="passed", events=parsed["events_in_scope"],
+                  events_total=parsed["events_total"], eligible_events=parsed["events_in_scope"],
+                  ingested_events=parsed["events_in_scope"], historical_excluded=parsed["historical_excluded"],
+                  failed_events=0, ingestion_mode="read_only_would_ingest", window_start=parsed["window_start"],
+                  truncated_excerpts=sum(bool(e.get("excerpt_truncated")) for e in parsed["items"]))
     return result
 
 
@@ -54,8 +66,14 @@ def main():
         sources.append({"name": "CISA Cybersecurity Advisories (comparison)", "feed_url": "https://www.cisa.gov/cybersecurity-advisories/all.xml", "comparison": True})
     with ThreadPoolExecutor(max_workers=3) as pool:
         results = list(pool.map(check_source, sources))
-    report = {"status": "passed" if all(r["status"] == "passed" for r in results if not r.get("comparison")) else "failed", "results": results,
-              "scope": "Read-only bounded source acquisition and parsing; no production ledger writes"}
+    required = [r for r in results if not r.get("comparison")]
+    report = {"status": "passed" if all(r["status"] == "passed" for r in required) else "failed", "results": results,
+              "counts": {"eligible_events": sum(r.get("eligible_events", 0) for r in required),
+                         "ingested_events": sum(r.get("ingested_events", 0) for r in required),
+                         "historical_excluded": sum(r.get("historical_excluded", 0) for r in required),
+                         "failed_sources": sum(r.get("status") != "passed" for r in required),
+                         "failed_events": sum(r.get("failed_events", 0) for r in required)},
+              "scope": "Read-only bounded source acquisition and parsing; ingested_events means eligible for intake, with no production ledger writes"}
     path = Path(args.output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2))

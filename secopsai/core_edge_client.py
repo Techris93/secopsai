@@ -14,7 +14,7 @@ import os
 import socket
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -729,6 +729,9 @@ class CoreEdgeClient:
         if queued.get("status") != "queued":
             return {"status": "degraded", "error": queued.get("error", "outbox unavailable")}
         result = self.flush_ontology_outbox(db_path=db_path, max_items=100, seconds=seconds)
+        result["enqueued_chunks"] = queued.get("chunks", 0)
+        result["new_chunks"] = queued.get("inserted_chunks", 0)
+        result["deduplicated_chunks"] = queued.get("deduplicated_chunks", 0)
         self.last_ontology_sync = result
         return result
 
@@ -890,15 +893,28 @@ class CoreEdgeClient:
             with sqlite_writer_lock(resolved_db):
                 with soc_store.connect(resolved_db) as connection:
                     existing = {row[0] for row in connection.execute("SELECT idempotency_key FROM ontology_sync_outbox")}
-                    if len(existing | {key for key, _ in encoded_payloads}) > 2000:
+                    unique_keys = {key for key, _ in encoded_payloads}
+                    if len(existing | unique_keys) > 2000:
                         return {"status": "rejected", "error": "ontology outbox backpressure; pending work retained"}
+                    inserted_chunks = len(unique_keys - existing)
                     for idempotency_key, encoded in encoded_payloads:
                         connection.execute(
                             "INSERT INTO ontology_sync_outbox (idempotency_key, payload_json, status, attempts, next_attempt_at, last_error, created_at, updated_at) VALUES (?, ?, 'queued', 0, ?, ?, ?, ?) ON CONFLICT(idempotency_key) DO NOTHING",
                             (idempotency_key, encoded, now, _clean(error, 2000), now, now),
                         )
+                    pending = connection.execute("SELECT count(*) FROM ontology_sync_outbox WHERE status='queued'").fetchone()[0]
+                    connection.execute(
+                        "INSERT INTO ontology_sync_enqueue_batches(batch_id,created_at,chunks,inserted_chunks,deduplicated_chunks,pending) VALUES (?,?,?,?,?,?)",
+                        (uuid.uuid4().hex, now, len(encoded_payloads), inserted_chunks,
+                         len(encoded_payloads) - inserted_chunks, pending),
+                    )
+                    connection.execute("DELETE FROM ontology_sync_enqueue_batches WHERE created_at < ?",
+                                       ((datetime.now(timezone.utc) - timedelta(days=90)).isoformat().replace("+00:00", "Z"),))
                     connection.commit()
-            response = {"status": "queued", "chunks": len(encoded_payloads), "idempotency_keys": [key for key, _ in encoded_payloads]}
+            response = {"status": "queued", "chunks": len(encoded_payloads), "pending": pending,
+                        "inserted_chunks": inserted_chunks,
+                        "deduplicated_chunks": len(encoded_payloads) - inserted_chunks,
+                        "idempotency_keys": [key for key, _ in encoded_payloads]}
             if len(encoded_payloads) == 1:
                 response["idempotency_key"] = encoded_payloads[0][0]
             return response
@@ -933,8 +949,11 @@ class CoreEdgeClient:
         flushed = 0
         failed = 0
         deferred = 0
+        attempted = 0
+        started_at = time.monotonic()
         delivery_error = ""
         failure_http_status = None
+        delivery_failure_category = ""
         minimum_request_window = min(float(self.settings.timeout_seconds), 15.0, max(1.0, min(float(seconds), 120.0)))
         for index, row in enumerate(rows):
             # Do not start a request with only the tail of this batch budget
@@ -946,6 +965,7 @@ class CoreEdgeClient:
                 deferred = len(rows) - index
                 break
             key = str(row["idempotency_key"])
+            attempted += 1
             try:
                 payload = json.loads(row["payload_json"] or "{}")
             except (TypeError, json.JSONDecodeError):
@@ -999,22 +1019,22 @@ class CoreEdgeClient:
                                   else f"Core ontology delivery failed ({type(exc).__name__})")
                 validation_codes = {"invalid_entity", "invalid_event", "invalid_relationship", "invalid_evidence_ref", "invalid_payload", "invalid_schema", "invalid_idempotency_key", "identity_conflict", "entity_identity_conflict", "relationship_identity_conflict", "idempotency_conflict"}
                 failure_code = exc.error_code if isinstance(exc, CoreEdgeHTTPError) and exc.error_code in validation_codes else None
+                delivery_failure_category = (
+                    "validation" if failure_code or failure_http_status in {400, 409, 422} or isinstance(exc, ValueError) else
+                    "authorization" if failure_http_status in {401, 403} else
+                    "transient"
+                )
                 if failure_code:
                     delivery_error += f" ({failure_code})"
                 self.last_error = delivery_error
                 attempts = max(0, int(row["attempts"] or 0)) + 1
                 backoff = min(3600, 15 * (2 ** min(attempts - 1, 8)))
-                try:
-                    from datetime import datetime, timedelta, timezone
-
-                    retry_at = (datetime.now(timezone.utc) + timedelta(seconds=backoff)).isoformat().replace("+00:00", "Z")
-                except Exception:
-                    retry_at = now
+                retry_at = (datetime.now(timezone.utc) + timedelta(seconds=backoff)).isoformat().replace("+00:00", "Z")
                 with sqlite_writer_lock(resolved_db):
                     with soc_store.connect(resolved_db) as connection:
                         connection.execute(
-                            "UPDATE ontology_sync_outbox SET status='queued', attempts=?, next_attempt_at=?, last_error=?, updated_at=? WHERE idempotency_key=?",
-                            (attempts, retry_at, _clean(exc, 2000), soc_store.utc_now(), key),
+                            "UPDATE ontology_sync_outbox SET status='queued', attempts=?, next_attempt_at=?, last_error=?, failure_category=?, updated_at=? WHERE idempotency_key=?",
+                            (attempts, retry_at, _clean(exc, 2000), delivery_failure_category, soc_store.utc_now(), key),
                         )
                         connection.commit()
                 # Invalid records remain queued and visible for review. They
@@ -1025,11 +1045,45 @@ class CoreEdgeClient:
                     continue
                 break
         with soc_store.read_connect(resolved_db) as connection:
-            pending = connection.execute("SELECT count(*) FROM ontology_sync_outbox").fetchone()[0]
+            stats = connection.execute(
+                "SELECT count(*) AS pending,min(created_at) AS oldest_created_at,"
+                "sum(CASE WHEN next_attempt_at<=? THEN 1 ELSE 0 END) AS due_pending,"
+                "max(attempts) AS max_attempts,"
+                "sum(CASE WHEN failure_category='validation' THEN 1 ELSE 0 END) AS validation_failures,"
+                "sum(CASE WHEN failure_category='authorization' THEN 1 ELSE 0 END) AS authorization_failures "
+                "FROM ontology_sync_outbox WHERE status='queued'",
+                (soc_store.utc_now(),),
+            ).fetchone()
+            pending = stats["pending"]
+            last_ack = connection.execute(
+                "SELECT max(completed_at) FROM ontology_sync_delivery_batches WHERE acknowledged>0"
+            ).fetchone()[0]
+        age = None
+        if stats["oldest_created_at"]:
+            age = max(0.0, (datetime.now(timezone.utc) - datetime.fromisoformat(stats["oldest_created_at"].replace("Z", "+00:00"))).total_seconds())
+        elapsed = max(0.0, time.monotonic() - started_at)
+        completed_at = soc_store.utc_now()
+        with sqlite_writer_lock(resolved_db):
+            with soc_store.connect(resolved_db) as connection:
+                connection.execute(
+                    "INSERT INTO ontology_sync_delivery_batches(batch_id,completed_at,attempted,acknowledged,failed,deferred,pending,oldest_pending_age_seconds,http_status,failure_category) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (uuid.uuid4().hex, completed_at, attempted, flushed, failed, deferred, pending, age, failure_http_status, delivery_failure_category),
+                )
+                connection.execute("DELETE FROM ontology_sync_delivery_batches WHERE completed_at < ?",
+                                   ((datetime.now(timezone.utc) - timedelta(days=90)).isoformat().replace("+00:00", "Z"),))
+                connection.commit()
+        if flushed:
+            last_ack = completed_at
         status = "accepted" if failed == 0 and pending == 0 else "degraded"
         return {"status": status, "flushed": flushed, "failed": failed, "pending": pending,
                 "error": delivery_error, "http_status": failure_http_status,
                 "deferred": deferred,
+                "attempted": attempted, "due_pending": stats["due_pending"] or 0,
+                "oldest_pending_age_seconds": age, "max_attempts": stats["max_attempts"] or 0,
+                "validation_failures": stats["validation_failures"] or 0,
+                "authorization_failures": stats["authorization_failures"] or 0,
+                "failure_category": delivery_failure_category,
+                "elapsed_seconds": round(elapsed, 3), "last_acknowledged_at": last_ack,
                 "accepted_chunks": flushed, "rejected_chunks": pending, "chunks": flushed + pending}
 
     def hosted_state(self) -> dict[str, Any]:

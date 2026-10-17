@@ -73,17 +73,43 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
             observed = conn.execute("SELECT count(*) FROM research_intel_events WHERE source_id=? AND first_observed_at>=?", (row["source_id"], since)).fetchone()[0]
             stages = {r["stage"]: r["count"] for r in conn.execute("SELECT stage,count(*) AS count FROM research_coverage_events WHERE source_id=? AND observed_at>=? GROUP BY stage", (row["source_id"], since))}
             delay = _age(row["last_success_at"], now)
+            last_collection = conn.execute(
+                "SELECT events_total,events_in_scope,historical_excluded,inserted_events,window_start,acquired_at,completed_at "
+                "FROM research_source_collection_runs WHERE source_id=? ORDER BY completed_at DESC LIMIT 1",
+                (row["source_id"],),
+            ).fetchone()
+            ingest_progress = conn.execute(
+                "SELECT total_items,next_index,events_total,historical_excluded,window_start,started_at "
+                "FROM research_source_ingest_progress WHERE source_id=?",
+                (row["source_id"],),
+            ).fetchone()
+            source_collection = dict(last_collection) if last_collection else None
+            if source_collection:
+                source_collection["status"] = "completed"
+            if ingest_progress:
+                source_collection = {**(source_collection or {}), "status": "resumable", **dict(ingest_progress)}
             sources.append({"source_id": row["source_id"], "name": config["name"], "coverage_mode": "source_reporting", "enabled": config["enabled"],
-                            "collection_scope": "bounded_recent_index" if config["parser"] in {"github_advisories", "openvsx_index", "jfrog_index", "socket_index"} else "bounded_published_feed",
+                            "collection_scope": ("bounded_revision_overlap" if config["parser"] == "msrc_rss" else
+                                                 "bounded_recent_index" if config["parser"] in {"github_advisories", "openvsx_index", "jfrog_index", "socket_index"} else "bounded_published_feed"),
                             "eligible_events": None, "observed_events": observed, "last_success_at": row["last_success_at"], "delay_seconds": delay,
                             "fresh": delay is not None and delay <= config["interval_seconds"] * 2, "error_category": row["error_category"],
                             "consecutive_failures": row["consecutive_failures"], "sharing": config["sharing"],
+                            "last_collection": source_collection,
                             "evidence_truncated": stages.get("evidence_truncated", 0), "evidence_omitted": stages.get("evidence_omitted", 0)})
         queue = {r["state"]: r["count"] for r in conn.execute("SELECT state,count(*) AS count FROM research_operation_queue GROUP BY state")}
         oldest = conn.execute("SELECT min(created_at) FROM research_operation_queue WHERE state IN ('queued','retry','running')").fetchone()[0]
         editions = [dict(r) for r in conn.execute("SELECT edition_id,edition_date,state,author_id,published_url,updated_at FROM research_editorial_editions ORDER BY edition_date DESC LIMIT 90")]
         ontology_pending = conn.execute("SELECT count(*) FROM ontology_sync_outbox WHERE status='queued'").fetchone()[0]
         ontology_oldest = conn.execute("SELECT min(created_at) FROM ontology_sync_outbox WHERE status='queued'").fetchone()[0]
+        ontology_due = conn.execute("SELECT count(*) FROM ontology_sync_outbox WHERE status='queued' AND next_attempt_at<=?", (now.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),)).fetchone()[0]
+        ontology_retries = conn.execute("SELECT COALESCE(max(attempts),0) FROM ontology_sync_outbox WHERE status='queued'").fetchone()[0]
+        ontology_validation_failures = conn.execute("SELECT count(*) FROM ontology_sync_outbox WHERE status='queued' AND failure_category='validation'").fetchone()[0]
+        ontology_authorization_failures = conn.execute("SELECT count(*) FROM ontology_sync_outbox WHERE status='queued' AND failure_category='authorization'").fetchone()[0]
+        ontology_ack = conn.execute("SELECT max(completed_at) FROM ontology_sync_delivery_batches WHERE acknowledged>0").fetchone()[0]
+        ontology_last_batch = conn.execute("SELECT completed_at,attempted,acknowledged,failed,deferred,pending,failure_category FROM ontology_sync_delivery_batches ORDER BY completed_at DESC LIMIT 1").fetchone()
+        rate_since = (now.astimezone(timezone.utc) - timedelta(hours=24)).isoformat().replace("+00:00", "Z")
+        ontology_ingress_24h = conn.execute("SELECT COALESCE(sum(inserted_chunks),0) FROM ontology_sync_enqueue_batches WHERE created_at>=?", (rate_since,)).fetchone()[0]
+        ontology_ack_24h = conn.execute("SELECT COALESCE(sum(acknowledged),0) FROM ontology_sync_delivery_batches WHERE completed_at>=?", (rate_since,)).fetchone()[0]
         failures = conn.execute("SELECT count(*) FROM registry_ingestion_runs WHERE status='failed' AND started_at>=?", (since,)).fetchone()[0]
         artifact_rows = conn.execute("SELECT artifact_id,provenance_json FROM research_artifacts WHERE state='collected' ORDER BY updated_at DESC LIMIT 1000").fetchall()
     backed_up = {r["payload"].get("artifact_id") for r in records("artifact_backup", db_path=db_path, limit=10000) if r["payload"].get("status") == "completed"}
@@ -97,7 +123,15 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
                                 "coverage": "latest 1000 collected catalog entries; restricted and unregistered artifacts excluded"},
             "health": {"freshness_gaps": gaps, "collector_failures": failures, "dead_letters": queue.get("dead_letter", 0),
                        "artifact_backup_pending": backup_pending if vault_enabled else None,
-                       "ontology_pending": ontology_pending, "ontology_oldest_age_seconds": _age(ontology_oldest, now)},
+                       "ontology_pending": ontology_pending, "ontology_due_pending": ontology_due,
+                       "ontology_oldest_age_seconds": _age(ontology_oldest, now),
+                       "ontology_max_attempts": ontology_retries,
+                       "ontology_validation_failures": ontology_validation_failures,
+                       "ontology_authorization_failures": ontology_authorization_failures,
+                       "ontology_last_acknowledged_at": ontology_ack,
+                       "ontology_last_batch": dict(ontology_last_batch) if ontology_last_batch else None,
+                       "ontology_new_unique_chunks_24h": ontology_ingress_24h,
+                       "ontology_acknowledged_chunks_24h": ontology_ack_24h},
             "public_summary": f"Collection is bounded and does not establish comprehensive surveillance. {len(gaps)} enabled sources lack a fresh successful collection. {len(metadata)} registry collectors provide metadata coverage without artifact scanning. Unknown eligible-event and evidence-coverage denominators are reported as unknown."}
 
 

@@ -536,9 +536,14 @@ def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--cycles", type=int, default=0, help="Run N worker cycles then checkpoint and exit (0 = run until SIGTERM)")
     parser.add_argument("--delivery-only", action="store_true", help="Verify durable delivery without collection, analysis, or model jobs")
+    parser.add_argument("--drain-after-cycles", action="store_true", help="Run bounded delivery verification after worker cycles before the final checkpoint")
     parser.add_argument("--checkpoint-only", action="store_true", help="Upload the existing local ledger and exit (migration)")
     parser.add_argument("--max-seconds", type=int, default=0, help="Stop the worker after this many seconds, then checkpoint (0 = no budget)")
     args = parser.parse_args(argv)
+    if args.delivery_only and args.drain_after_cycles:
+        parser.error("--delivery-only and --drain-after-cycles cannot be combined")
+    if args.drain_after_cycles and args.cycles <= 0 and args.max_seconds <= 0:
+        parser.error("--drain-after-cycles requires a bounded worker run")
 
     data_dir = Path(os.environ.get("SECOPS_FINDINGS_DIR", "/home/secops/research"))
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -568,6 +573,7 @@ def main(argv: Optional[list] = None) -> int:
         command += ["--max-cycles", str(args.cycles)]
     worker = subprocess.Popen(command, env={**os.environ, "SECOPS_FINDINGS_DIR": str(data_dir),
                                                "SECOPSAI_RESTORED_LEDGER_RECOVERY": "1" if restored else "0"})
+    active_child = [worker]
     stopping = threading.Event()
     forced = threading.Event()
     budget_stop = threading.Event()
@@ -588,8 +594,9 @@ def main(argv: Optional[list] = None) -> int:
     def handle_term(signum: int, _frame: object) -> None:
         _log("shutdown_requested", signal=signum)
         stopping.set()
-        if worker.poll() is None:
-            worker.terminate()
+        child = active_child[0]
+        if child.poll() is None:
+            child.terminate()
 
     signal.signal(signal.SIGTERM, handle_term)
     signal.signal(signal.SIGINT, handle_term)
@@ -620,6 +627,54 @@ def main(argv: Optional[list] = None) -> int:
     elif exit_code == -signal.SIGTERM and budget_stop.is_set():
         exit_code = 0
     stopping.set()
+    if args.drain_after_cycles and exit_code == 0:
+        # Persist the worker's complete queue before any acknowledgement can
+        # remove rows locally. The next snapshot makes retries safe even if
+        # the runner is interrupted during the bounded drain.
+        with lock:
+            try:
+                checkpoint(db_path, store, data_dir)
+            except Exception as exc:
+                _log("checkpoint_failed", reason="before_delivery_verification", error=str(exc)[:500])
+                exit_code = 1
+    if args.drain_after_cycles and exit_code == 0:
+        try:
+            delivery_seconds = int(os.environ.get("SECOPSAI_VERIFY_DELIVERY_SECONDS", "840"))
+        except ValueError:
+            _log("delivery_verification_invalid_budget")
+            delivery_seconds = 0
+        if not 1 <= delivery_seconds <= 2700:
+            _log("delivery_verification_invalid_budget", seconds=delivery_seconds)
+            exit_code = 1
+        else:
+            drain = subprocess.Popen(
+                [sys.executable, "-u", "-m", "secopsai.research_delivery_verification"],
+                env={**os.environ, "SECOPS_FINDINGS_DIR": str(data_dir),
+                     "SECOPSAI_VERIFY_DELIVERY_SECONDS": str(delivery_seconds)},
+            )
+            active_child[0] = drain
+            drain_started = time.monotonic()
+            while True:
+                try:
+                    drain_code = drain.wait(timeout=1)
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() - drain_started > delivery_seconds + 30:
+                        _log("delivery_verification_timeout", seconds=delivery_seconds)
+                        drain.terminate()
+                        try:
+                            drain_code = drain.wait(timeout=GRACE_SECONDS)
+                        except subprocess.TimeoutExpired:
+                            drain.kill()
+                            drain_code = drain.wait()
+                        drain_code = drain_code or 1
+                        break
+                    if stopping.is_set():
+                        continue
+            _log("delivery_verification_exited", exit_code=drain_code)
+            if drain_code != 0:
+                exit_code = 1
+            active_child[0] = worker
     # Final checkpoint after the worker released its write transactions.
     # A failed final checkpoint fails the run so a lost update is visible.
     with lock:

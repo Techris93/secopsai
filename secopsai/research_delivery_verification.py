@@ -102,7 +102,9 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
         delivery = client.flush_ontology_outbox(db_path=db_path, max_items=100, seconds=min(120, remaining))
         flushed_total += int(delivery.get('flushed', 0))
         print(json.dumps({'event': 'delivery_verification_batch', **{key: delivery.get(key) for key in
-                         ('status', 'flushed', 'failed', 'pending', 'deferred', 'http_status', 'error')}}), flush=True)
+                         ('status', 'attempted', 'flushed', 'failed', 'pending', 'due_pending', 'deferred',
+                          'oldest_pending_age_seconds', 'max_attempts', 'validation_failures',
+                          'authorization_failures', 'http_status', 'error')}}), flush=True)
         if delivery.get('pending') == 0:
             break
         if delivery.get('http_status') in {400, 401, 403}:

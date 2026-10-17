@@ -846,3 +846,31 @@ def test_delivery_only_supervisor_uses_verifier_and_preserves_final_checkpoint(t
     assert supervisor.main(['--delivery-only', '--cycles', '1']) == 0
     assert commands[0][-1] == 'secopsai.research_delivery_verification'
     assert server.latest is not None
+
+
+def test_bounded_research_run_drains_delivery_before_final_checkpoint(tmp_path, monkeypatch):
+    import subprocess as real_subprocess
+    server = FakeLedgerServer()
+    data = tmp_path / 'research-drain'
+    data.mkdir()
+    with sqlite3.connect(data / 'openclaw_soc.db') as connection:
+        connection.execute('CREATE TABLE synthetic(value)')
+    monkeypatch.setenv('SECOPS_FINDINGS_DIR', str(data))
+    monkeypatch.setenv('LEDGER_STORE_URL', 'http://ledger.internal')
+    monkeypatch.setenv('LEDGER_STORE_TOKEN', 'tok')
+    monkeypatch.setenv('SECOPSAI_VERIFY_DELIVERY_SECONDS', '10')
+    monkeypatch.setattr(supervisor.LedgerStore, '__init__', lambda self, url, token: (setattr(self, 'base_url', url), setattr(self, 'token', token), setattr(self, '_open', server)) and None)
+    original_popen = real_subprocess.Popen
+    commands = []
+
+    def launch(command, **kwargs):
+        commands.append(command)
+        return original_popen([supervisor.sys.executable, '-c', 'raise SystemExit(0)'], **kwargs)
+
+    monkeypatch.setattr(supervisor.subprocess, 'Popen', launch)
+    assert supervisor.main(['--cycles', '1', '--drain-after-cycles']) == 0
+    assert len(commands) == 2
+    assert commands[0][commands[0].index('secopsai.cli') + 1:commands[0].index('secopsai.cli') + 3] == ['research', 'worker']
+    assert commands[0][-2:] == ['--max-cycles', '1']
+    assert 'secopsai.research_delivery_verification' in commands[1]
+    assert server.latest is not None
