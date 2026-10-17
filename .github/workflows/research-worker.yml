@@ -5,7 +5,9 @@ name: Research Worker
 # worker cycles, checkpoints the ledger back, and exits.  The concurrency
 # group guarantees a single ledger writer.
 #
-# Runs are started every 30 minutes by the ledger-store Worker's Cron Trigger
+# Runs are started by the ledger-store Worker's Cron Trigger, which checks every
+# five minutes and dispatches only after the previous run has finished and at
+# least 30 minutes after it started, so runs never queue behind each other
 # (GitHub's own schedule trigger proved unreliable for this cadence).  Those
 # dispatches pass trigger=cloudflare-cron and run only while the repository
 # variable RESEARCH_WORKER_ENABLED is "true", which is the kill switch.

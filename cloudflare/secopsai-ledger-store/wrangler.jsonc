@@ -14,5 +14,5 @@
   // Crons (secret GITHUB_DISPATCH_TOKEN, Actions read/write on
   // Techris93/secopsai only): research worker every 30 minutes, the
   // popular-package fast lane every minute, watchlist refresh daily.
-  "triggers": { "crons": ["7,37 * * * *", "* * * * *", "17 3 * * *"] }
+  "triggers": { "crons": ["2-57/5 * * * *", "* * * * *", "17 3 * * *"] }
 }

@@ -46,11 +46,55 @@ export async function dispatchWorkflow(env, workflow, inputs, fetcher = fetch) {
   return result;
 }
 
+const ACTIVE_RUN_STATUSES = new Set(["queued", "in_progress", "waiting", "pending", "requested"]);
+const DEFAULT_MIN_INTERVAL_MINUTES = 30;
+
+// Research Worker runs share one concurrency group, and GitHub keeps only one
+// pending run there: dispatching on a fixed clock while a long run is going
+// queued a run that a later dispatch then cancelled.  This cron fires every few
+// minutes and starts the next run only after the previous one has finished and
+// at least RESEARCH_WORKER_MIN_INTERVAL_MINUTES after it started, so runs never
+// queue behind each other.  If GitHub cannot be asked, it falls back to
+// dispatching (the concurrency group still keeps a single ledger writer).
+export async function researchWorkerDispatchDecision(env, now = Date.now(), fetcher = fetch) {
+  const repo = env.RESEARCH_WORKER_REPO || "Techris93/secopsai";
+  const workflow = env.RESEARCH_WORKER_WORKFLOW || "research-worker.yml";
+  const minutes = Number(env.RESEARCH_WORKER_MIN_INTERVAL_MINUTES || DEFAULT_MIN_INTERVAL_MINUTES);
+  try {
+    const response = await fetcher(`https://api.github.com/repos/${repo}/actions/workflows/${workflow}/runs?branch=main&per_page=10`, {
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`,
+        "user-agent": "secopsai-ledger-store",
+        "x-github-api-version": "2022-11-28",
+      },
+    });
+    if (response.status !== 200) return { dispatch: true, reason: `run check returned HTTP ${response.status}` };
+    const runs = (await response.json()).workflow_runs || [];
+    const active = runs.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
+    if (active) return { dispatch: false, reason: `run ${active.id} is ${active.status}` };
+    const last = runs.reduce((latest, run) => Math.max(latest, Date.parse(run.created_at) || 0), 0);
+    if (last && now - last < minutes * 60_000) {
+      return { dispatch: false, reason: `last run started ${Math.round((now - last) / 60_000)} min ago (< ${minutes})` };
+    }
+    return { dispatch: true, reason: "previous run finished" };
+  } catch (error) {
+    return { dispatch: true, reason: `run check failed: ${String(error).slice(0, 120)}` };
+  }
+}
+
 // GitHub's schedule trigger is best-effort and may never start a half-hourly
 // workflow, so this Worker's Cron Trigger dispatches the research worker
 // instead.  GITHUB_DISPATCH_TOKEN is a fine-grained token limited to Actions
 // read/write on the repository; without it the cron does nothing.
-export async function dispatchResearchWorker(env, fetcher = fetch) {
+export async function dispatchResearchWorker(env, fetcher = fetch, now = Date.now()) {
+  if (!env.GITHUB_DISPATCH_TOKEN) return { status: "skipped", reason: "GITHUB_DISPATCH_TOKEN is not set" };
+  const decision = await researchWorkerDispatchDecision(env, now, fetcher);
+  if (!decision.dispatch) {
+    const result = { status: "skipped", reason: decision.reason };
+    console.log(JSON.stringify({ component: "workflow-dispatch", workflow: env.RESEARCH_WORKER_WORKFLOW || "research-worker.yml", ...result }));
+    return result;
+  }
   return dispatchWorkflow(env, env.RESEARCH_WORKER_WORKFLOW || "research-worker.yml", { trigger: "cloudflare-cron" }, fetcher);
 }
 
