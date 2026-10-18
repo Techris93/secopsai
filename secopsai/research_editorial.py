@@ -285,6 +285,8 @@ def _incorporate_verified_update(edition_id: str, draft: dict, update_fingerprin
 def approve_edition(edition_id: str, payload: dict, *, actor: str, db_path=None) -> dict:
     edition = _edition(edition_id, db_path=db_path)
     person(actor, role="editor", db_path=db_path)
+    if edition["state"] != "verifying":
+        raise ValueError("only a current verifying draft can be approved; published editions require the correction workflow")
     duty = edition["draft"].get("duty") or {}
     assigned_editors = {duty.get("editor_id"), duty.get("backup_id")} - {"", None}
     if actor == edition["author_id"] or (assigned_editors and actor not in assigned_editors):

@@ -347,6 +347,8 @@ def test_daily_workflow_requires_real_roster_and_duty_editor(db, tmp_path):
     approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
     published = publish_edition(edition["edition_id"], actor="carol", db_path=db, paths=blog.BlogPaths(root=tmp_path / "blog"))
     assert published["published"] and (tmp_path / "blog" / "posts" / (edition["draft"]["slug"] + ".json")).is_file()
+    with pytest.raises(ValueError, match="correction workflow"):
+        approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "repeat approval", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
 
 
 def test_automated_brief_picks_up_late_roster_and_preserves_human_edits(db):
