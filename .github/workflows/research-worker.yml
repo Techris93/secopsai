@@ -95,6 +95,10 @@ jobs:
       SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET: ${{ secrets.SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET }}
       SECOPSAI_RESEARCH_ALERT_EMAIL: research@secopsai.dev
       SECOPSAI_RESEARCH_FROM_EMAIL: research@secopsai.dev
+      # Urgent review uses the existing SMTP delivery and research inbox, but
+      # opts into its own channel so ordinary alert routing cannot enable it.
+      SECOPSAI_RESEARCH_URGENT_ALERT_CHANNELS: email
+      SECOPSAI_RESEARCH_URGENT_REVIEWER_EMAIL: research@secopsai.dev
       SECOPSAI_EMAIL_LOGO_URL: https://secopsai.dev/assets/favicon-512.png
       SECOPSAI_EMAIL_PRODUCT_URL: https://secopsai.dev/
       SECOPSAI_RESEARCH_ALERT_MAX_ATTEMPTS: "5"

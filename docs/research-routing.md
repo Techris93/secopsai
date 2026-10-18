@@ -22,9 +22,11 @@ scoped experiment. A rule hit, package-name match, or model score cannot
 create an urgent route by itself.
 
 Immediate notifications are deliberately isolated from ordinary discovery and
-collector email settings. Configure `SECOPSAI_RESEARCH_URGENT_ALERT_CHANNELS`
-with `email`, `webhook`, or both. Email requires
-`SECOPSAI_RESEARCH_URGENT_REVIEWER_EMAIL`; signed webhooks require
+collector channel selection. The hosted Research Worker explicitly routes
+urgent review email to the already configured `research@secopsai.dev` inbox
+through the existing SMTP delivery. Self-hosted deployments must configure
+`SECOPSAI_RESEARCH_URGENT_ALERT_CHANNELS` with `email`, `webhook`, or both.
+Email requires `SECOPSAI_RESEARCH_URGENT_REVIEWER_EMAIL`; signed webhooks require
 `SECOPSAI_RESEARCH_URGENT_REVIEWER_WEBHOOK_URL` and
 `SECOPSAI_RESEARCH_URGENT_REVIEWER_WEBHOOK_SECRET`. With no dedicated channel,
 the urgent alert remains open and visible in Mission Control; it is never sent
