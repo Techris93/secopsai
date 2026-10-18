@@ -844,6 +844,22 @@ TRANSIENT_BRIDGE_ERROR_MARKERS = (
 )
 
 
+def job_recovery(job: dict[str, Any]) -> dict[str, Any]:
+    if job.get("status") != "failed":
+        return {"eligible": False, "reason": "not_failed", "action": "Monitor active stage"}
+    message = str(job.get("error_message") or "").lower()
+    if message.rstrip().endswith("all configured bridge models failed"):
+        return {"eligible": False, "reason": "historical_cause_not_recorded", "action": "Investigate missing failure detail"}
+    if int(job.get("attempt") or 0) >= 3:
+        return {"eligible": False, "reason": "attempt_limit", "action": "Review exhausted attempts"}
+    code = job.get("error_code")
+    eligible = code in {"availability", "rate_limit", "timeout", "bridge_timeout"}
+    if code == "bridge_failed" and not any(value in message for value in ("invalid_json_schema", "invalid output schema", "invalid_request_error")):
+        eligible = any(marker in message for marker in TRANSIENT_BRIDGE_ERROR_MARKERS)
+    return {"eligible": eligible, "reason": "transient_provider_failure" if eligible else code or "unclassified",
+            "action": "Recover transient failure" if eligible else "Inspect failure before recovery"}
+
+
 def recover_transient_jobs(
     *,
     limit: int = 10,
@@ -871,16 +887,14 @@ def recover_transient_jobs(
             rows = connection.execute(
                 """SELECT job_id, attempt, error_code, error_message, updated_at
                    FROM intelligence_jobs
-                   WHERE status='failed' AND error_code='bridge_failed'
+                   WHERE status='failed' AND error_code IN ('bridge_failed','availability','rate_limit','timeout','bridge_timeout')
                      AND attempt < ? AND updated_at <= ?
                    ORDER BY updated_at ASC, job_id ASC LIMIT ?""",
                 (attempts_limit, cutoff_text, bounded_limit),
             ).fetchall()
             for row in rows:
                 job_id = str(row["job_id"])
-                message = _clean(row["error_message"], 2000)
-                normalized = message.lower()
-                if not any(marker in normalized for marker in TRANSIENT_BRIDGE_ERROR_MARKERS):
+                if not job_recovery({**dict(row), "status": "failed"})["eligible"]:
                     skipped.append({"job_id": job_id, "reason": "no_transient_transport_marker"})
                     continue
                 updated = connection.execute(
@@ -889,7 +903,7 @@ def recover_transient_jobs(
                            updated_at=?, error_code='transient_recovered',
                            error_message=?, worker_id='', lease_until=NULL,
                            lease_generation=lease_generation + 1, lease_token=''
-                       WHERE job_id=? AND status='failed' AND error_code='bridge_failed'""",
+                       WHERE job_id=? AND status='failed' AND error_code IN ('bridge_failed','availability','rate_limit','timeout','bridge_timeout')""",
                     (
                         now,
                         "Recovered a transient bridge failure; retry remains bound to the captured model.",
@@ -904,7 +918,7 @@ def recover_transient_jobs(
                     "transient_recovered",
                     actor,
                     "A bounded recovery returned a transient bridge failure to the queue.",
-                    {"previous_error_code": "bridge_failed", "attempt": int(row["attempt"] or 0)},
+                    {"previous_error_code": row["error_code"], "attempt": int(row["attempt"] or 0)},
                 )
                 recovered.append(job_id)
             connection.commit()
@@ -1090,6 +1104,7 @@ def _event(
 
 def _row(row: sqlite3.Row, *, include_result: bool = True, include_lease: bool = False) -> dict[str, Any]:
     result = dict(row)
+    result["recovery"] = job_recovery(result)
     result["schema_version"] = SCHEMA_VERSION
     raw_input = str(result.pop("input_json", "{}"))
     decoded_input = _decode(raw_input)

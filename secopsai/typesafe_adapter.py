@@ -303,16 +303,8 @@ def _artifact_questions(context: dict, instructions: str) -> tuple[dict, dict, d
     refs = {f"e{i}": ref for i, ref in enumerate(evidence_identifiers(context))}
     questions["strongest_evidence"] = {"type": "choice", "instructions": "Select the strongest supplied rule or file supporting your decision.",
         "criteria": {"none": "No supplied identifier supports the decision", **{key: value for key, value in refs.items()}}}
-    supplied = {
-        f.get("path")
-        for f in context.get("flagged_files", []) + context.get("install_time_files", [])
-        if isinstance(f, dict)
-        and f.get("path")
-        and f.get("truncated") is not True
-        and f.get("complete") is not False
-    }
-    missing = {f"m{i}": path for i, path in enumerate(context.get("missing_files") or []) if isinstance(path, str) and path not in supplied}
-    missing = dict(list(missing.items())[:200])
+    from secopsai.decision_evidence import missing_file_identifiers
+    missing = {f"m{i}": path for i, path in enumerate(missing_file_identifiers(context))}
     if missing:
         questions["missing_file"] = {"type": "choice", "instructions": "Select a referenced file absent from the supplied evidence that would change the verdict; otherwise select none.",
             "criteria": {"none": "No specific missing file would change the verdict", **missing}}
