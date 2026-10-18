@@ -873,9 +873,16 @@ test('versioned ontology receipts tolerate nested key order but reject changed f
 test('hosted recovery classifies recorded causes and refuses lost or permanent diagnostics', () => {
   assert.equal(intelligenceRecovery({status:'failed',error_code:'safety',attempt:1,error_message:'DecisionError: decision: all configured bridge models failed'}).reason,'historical_cause_not_recorded');
   assert.equal(intelligenceRecovery({status:'failed',error_code:'timeout',attempt:1,error_message:'DecisionError: decision: all configured bridge models failed'}).eligible,false);
+  assert.equal(intelligenceRecovery({status:'failed',error_code:'safety',attempt:1,error_message:'DecisionError: decision: all configured bridge models failed',failure_details:{error_code:'timeout'}}).eligible,true);
+  assert.equal(intelligenceRecovery({status:'failed',error_code:'safety',attempt:1,error_message:'DecisionError: decision: all configured bridge models failed',failure_details:{error_code:'safety'}}).reason,'safety');
+  assert.equal(intelligenceRecovery({status:'failed',error_code:'timeout',attempt:1,error_message:'request timed out',failure_details:{error_code:'safety',category:'timeout'}}).eligible,false);
+  assert.equal(intelligenceRecovery({status:'failed',error_code:'bridge_failed',attempt:1,error_message:'Codex execution failed',failure_details:{category:'timeout'}}).eligible,true);
   assert.equal(intelligenceRecovery({status:'failed',error_code:'availability',attempt:1,error_message:'Connection reset'}).eligible,true);
+  assert.equal(intelligenceRecovery({status:'failed',error_code:'bridge_failed',attempt:1,error_message:'Codex execution failed: HTTP error: 426 Upgrade Required'}).eligible,true);
+  assert.equal(intelligenceRecovery({status:'failed',error_code:'bridge_failed',attempt:1,error_message:'invalid_json_schema after HTTP error: 426 Upgrade Required'}).eligible,false);
   assert.equal(intelligenceRecovery({status:'failed',error_code:'authentication',attempt:1}).eligible,false);
   assert.equal(intelligenceRecovery({status:'failed',error_code:'rate_limit',attempt:3}).eligible,false);
+  assert.equal(intelligenceRecovery({status:'failed',error_code:'timeout',attempt:2,error_message:'request timed out'},{maxAttempts:2}).reason,'attempt_limit');
 });
 
 test('hosted claims snapshot legacy routing and persistence rejects unsupplied evidence', {skip:!DatabaseSync}, async () => {
@@ -934,5 +941,48 @@ test('repair recovery is explicit, idempotent and preserves originals and resear
   const results=await response.json();
   assert.equal(results.results[0].recovery_of_job_id,id);
   assert.equal(results.results[0].recovery_contract_version,'artifact-choices-v3');
+  db.close();
+});
+
+test('transient recovery uses saved provider diagnostics, legacy routing, age and attempt bounds', {skip:!DatabaseSync}, async () => {
+  const {db,d1}=migratedSqliteD1();
+  const env={DB:d1,CORE_BRIDGE_TOKEN:'bridge-fixture',CORE_INTELLIGENCE_TOKEN:'operator-fixture'};
+  const call=(path,body)=>handleRequest(new Request('https://core.example'+path,{method:'POST',headers:{authorization:'Bearer '+env.CORE_INTELLIGENCE_TOKEN,'content-type':'application/json'},body:JSON.stringify(body)}),env);
+  const seedFailed=(id,{errorCode,errorMessage,details,input={},attempt=1,updatedAt='2026-01-01T00:00:00.000Z'})=>{
+    db.prepare("INSERT INTO intelligence_jobs (job_id,action,target_id,status,requested_by,idempotency_key,attempt,queued_at,updated_at,error_code,error_message,input_json,result_json) VALUES (?,?,?,'failed','test',?,?,?,?,?,?,?,'{}')")
+      .run(id,'triage_artifact',`npm:${id.toLowerCase()}@1`,`key-${id}`,attempt,'2026-01-01T00:00:00.000Z',updatedAt,errorCode,errorMessage,JSON.stringify(input));
+    db.prepare("INSERT INTO intelligence_job_events (job_id,event_type,actor,message,data_json,created_at) VALUES (?,'failed','test',?,?,?)")
+      .run(id,errorMessage,JSON.stringify(details),updatedAt);
+  };
+  const wrappedTimeout='AIJ-AAAAAAAAAAAAAAAA';
+  const bridge426='AIJ-BBBBBBBBBBBBBBBB';
+  const unknownSafety='AIJ-CCCCCCCCCCCCCCCC';
+  const tooRecent='AIJ-DDDDDDDDDDDDDDDD';
+  const exhausted='AIJ-EEEEEEEEEEEEEEEE';
+  const malformedDetails='AIJ-FFFFFFFFFFFFFFFF';
+  const conflictingCause='AIJ-1111111111111111';
+  seedFailed(wrappedTimeout,{errorCode:'safety',errorMessage:'DecisionError: decision: all configured bridge models failed',details:{error_code:'timeout'},input:{}});
+  seedFailed(bridge426,{errorCode:'bridge_failed',errorMessage:'Codex execution failed: HTTP error: 426 Upgrade Required',details:{error_code:'bridge_failed'},input:{selected_model:'gpt-6-luna'}});
+  seedFailed(unknownSafety,{errorCode:'safety',errorMessage:'DecisionError: decision: all configured bridge models failed',details:{error_code:'safety'},input:{}});
+  seedFailed(tooRecent,{errorCode:'timeout',errorMessage:'request timed out',details:{error_code:'timeout'},input:{selected_model:'gpt-6-luna'},updatedAt:new Date().toISOString()});
+  seedFailed(exhausted,{errorCode:'timeout',errorMessage:'request timed out',details:{error_code:'timeout'},input:{selected_model:'gpt-6-luna'},attempt:3});
+  seedFailed(malformedDetails,{errorCode:'safety',errorMessage:'safety validation failed',details:{error_code:'safety'},input:{}});
+  db.prepare("UPDATE intelligence_job_events SET data_json='not-json' WHERE job_id=? AND event_type='failed'").run(malformedDetails);
+  seedFailed(conflictingCause,{errorCode:'timeout',errorMessage:'request timed out',details:{error_code:'safety',category:'timeout'},input:{selected_model:'gpt-6-luna'}});
+
+  const response=await call('/api/v1/intelligence/jobs/recover',{
+    limit:10,max_attempts:3,min_age_seconds:300,selected_model:'gpt-6-luna',fallback_models:[],fallback_mode:'disabled',
+  });
+  assert.equal(response.status,200);
+  const result=await response.json();
+  assert.equal(result.count,2);
+  assert.deepEqual(new Set(result.eligible),new Set([wrappedTimeout,bridge426]));
+  assert.ok(result.skipped.some(item=>item.job_id===tooRecent&&item.reason==='minimum_age_not_met'));
+  assert.ok(result.skipped.some(item=>item.job_id===exhausted&&item.reason==='attempt_limit'));
+  assert.equal(result.skipped.some(item=>item.job_id===unknownSafety),false,'unknown safety failures are not treated as transport retries');
+  assert.ok(result.skipped.some(item=>item.job_id===conflictingCause&&item.reason==='safety'));
+  const recoveredLegacy=db.prepare("SELECT input_json FROM intelligence_jobs WHERE json_extract(input_json,'$.recovery_of_job_id')=?").get(wrappedTimeout);
+  assert.equal(JSON.parse(recoveredLegacy.input_json).selected_model,'gpt-6-luna');
+  assert.equal(db.prepare('SELECT status FROM intelligence_jobs WHERE job_id=?').get(wrappedTimeout).status,'failed');
   db.close();
 });

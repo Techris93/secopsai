@@ -1465,8 +1465,8 @@ function decodeRowJson(row, column, fallback = {}) {
 function publicJob(row, { includeInput = true, includeResult = true, includeLease = false } = {}) {
   if (!row) return null;
   const output = { ...row, schema_version: INTELLIGENCE_JOB_SCHEMA_VERSION };
-  output.recovery = intelligenceRecovery(row);
   if (row.failure_details_json) output.failure_details = parseJson(row.failure_details_json, {});
+  output.recovery = intelligenceRecovery({ ...row, failure_details: output.failure_details || {} });
   delete output.failure_details_json;
   delete output.idempotency_key;
   const rawInput = String(row.input_json || "{}");
@@ -1515,16 +1515,31 @@ async function recoverIntelligenceJobs(request, env, requestId) {
   }
   if (payload.repair_version && (payload.repair_version !== ARTIFACT_REPAIR_VERSION || !ids)) throw new HttpError(422, "repair_required", "Contract repair needs a supported repair version and explicit job IDs");
   const limit = boundedLimit(payload.limit, 10, 10);
+  const maxAttempts = payload.max_attempts === undefined ? 3 : boundedInteger(payload.max_attempts, 3, 1, 10, "max_attempts");
+  const minAgeSeconds = payload.min_age_seconds === undefined ? 300 : boundedInteger(payload.min_age_seconds, 300, 0, 86400, "min_age_seconds");
+  const latestFailureDetails = "(SELECT e.data_json FROM intelligence_job_events e WHERE e.job_id=j.job_id AND e.event_type='failed' ORDER BY e.event_id DESC LIMIT 1)";
+  const projection = `SELECT j.*, ${latestFailureDetails} AS failure_details_json FROM intelligence_jobs j`;
+  const recoverableCodes = "'availability','rate_limit','timeout','bridge_timeout','bridge_failed'";
+  const recoverableDetailCodes = "'availability','rate_limit','timeout','bridge_timeout','bridge_failed'";
   const rows = ids
-    ? await env.DB.prepare(`SELECT * FROM intelligence_jobs WHERE job_id IN (${ids.map(() => "?").join(",")}) ORDER BY updated_at,job_id`).bind(...ids).all()
-    : await env.DB.prepare("SELECT * FROM intelligence_jobs WHERE status='failed' AND error_code IN ('availability','rate_limit','timeout','bridge_timeout','bridge_failed') ORDER BY updated_at,job_id LIMIT 1000").all();
+    ? await env.DB.prepare(`${projection} WHERE j.job_id IN (${ids.map(() => "?").join(",")}) ORDER BY j.updated_at,j.job_id`).bind(...ids).all()
+    : await env.DB.prepare(`${projection} WHERE j.status='failed' AND (
+        j.error_code IN (${recoverableCodes})
+        OR CASE WHEN json_valid(${latestFailureDetails}) THEN json_extract(${latestFailureDetails}, '$.error_code') END IN (${recoverableDetailCodes})
+        OR CASE WHEN json_valid(${latestFailureDetails}) THEN json_extract(${latestFailureDetails}, '$.category') END IN (${recoverableDetailCodes})
+      ) ORDER BY j.updated_at,j.job_id LIMIT 1000`).all();
   const queued = [], existing = [], eligible = [], skipped = [];
   for (const row of rows.results || []) {
-    const recovery = intelligenceRecovery(row);
+    const recovery = intelligenceRecovery(row, { maxAttempts });
     const repaired = payload.repair_version === ARTIFACT_REPAIR_VERSION && recovery.reason === "artifact_contract_repair";
     if ((!recovery.eligible && !repaired) || eligible.length >= limit) {
       skipped.push({ job_id: row.job_id, reason: recovery.reason });
       continue;
+    }
+    if (!repaired) {
+      const updatedAt = Date.parse(String(row.updated_at || ""));
+      if (!Number.isFinite(updatedAt)) { skipped.push({ job_id: row.job_id, reason: "failure_timestamp_unavailable" }); continue; }
+      if (updatedAt > Date.now() - minAgeSeconds * 1000) { skipped.push({ job_id: row.job_id, reason: "minimum_age_not_met" }); continue; }
     }
     const input = parseJson(row.input_json, {});
     const depth = Number(input.recovery_depth || 0);
