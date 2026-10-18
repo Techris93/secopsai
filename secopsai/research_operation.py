@@ -129,23 +129,50 @@ def execute(action: str, payload: dict | None = None, *, actor: str = "", case_i
 
 
 def hosted_projection(*, db_path=None) -> dict:
+    import os
     from secopsai.intelligence import minimize
+    from secopsai.research_editorial import pending_edition_update
+    from secopsai.research_operation_store import records
+    from secopsai.research_primary_intel import pending_public_reviews
 
     status = execute("status", db_path=db_path)
     from secopsai.research_assistant_team import list_teams
     teams = [{key: team.get(key) for key in ("team_id", "case_id", "status", "completed_stages", "runs", "reason", "human_review_required", "publication_approved")}
              for team in list_teams(db_path=db_path, limit=20)["teams"]]
+    pending_reviews = pending_public_reviews(db_path=db_path, limit=10)
+    dispatches = records("assistant_team_automation_dispatch", db_path=db_path, limit=1)
+    auto_cycles = records("assistant_team_automation_cycle", db_path=db_path, limit=1)
     editions = []
     for index, item in enumerate(execute("editions", db_path=db_path)["editions"]):
         value = {key: item.get(key) for key in ("edition_id", "edition_date", "product", "author_id", "state", "published_url", "updated_at", "fingerprint")}
+        update = pending_edition_update(item["edition_id"], db_path=db_path)
+        if update:
+            value["pending_update"] = {"fingerprint": update["draft_fingerprint"],
+                                       "edition_state": update["edition_state"],
+                                       "new_items": [{key: str(source_item.get(key) or "")[:500]
+                                                      for key in ("event_id", "title", "source", "url", "summary", "defensive_action", "limitations")}
+                                                     for source_item in update.get("new_items", [])],
+                                       "replace_event_ids": update.get("replace_event_ids", []),
+                                       "remove_event_ids": update.get("remove_event_ids", []),
+                                       "removed_items": [{key: str(source_item.get(key) or "")[:500]
+                                                          for key in ("event_id", "title", "source", "url")}
+                                                         for source_item in update.get("removed_items", [])],
+                                       "coverage_summary": str(update.get("coverage_summary") or "")[:1000]}
         if index < 3 and len(item["draft"]["body_markdown"].encode()) <= 30000:
             value["draft"] = {key: item["draft"].get(key) for key in ("title", "summary", "body_markdown", "author", "references")}
         else:
             value["draft_omitted"] = "Full draft remains in the ledger; it cannot be approved from this projection"
         editions.append(value)
-    # Raw samples, private submissions, legal agreements, source excerpts and
-    # confidential review notes are never sent to the hosted read surface.
+    # Raw samples, restricted source material, private submissions, legal
+    # agreements and confidential review notes are never sent to the hosted
+    # read surface. Pending review contains only capped excerpts from sources
+    # explicitly configured for public sharing, with archive hashes attached.
     projection = minimize({"schema_version": "secopsai.research.operation.v1", "coverage": status["coverage"], "editions": editions, "assistant_teams": teams,
+                     "pending_source_reviews": pending_reviews,
+                     "automation": {"assistant_team_autostart_enabled": os.environ.get("SECOPSAI_RESEARCH_ASSISTANT_AUTOSTART") == "1",
+                                    "daily_brief_assembly_enabled": os.environ.get("SECOPSAI_PRIMARY_INTEL") == "1",
+                                    "team_dispatch": dispatches[0]["payload"] if dispatches else None,
+                                    "team_cycle": auto_cycles[0]["payload"] if auto_cycles else None},
                      "requirements": status["requirements"], "missing_requirements": status["missing_requirements"],
                      "reviewed_daily_brief_streak": status["reviewed_daily_brief_streak"], "fourteen_day_gate_met": status["fourteen_day_gate_met"],
                      "rpo_target_seconds": status["rpo_target_seconds"], "rto_target_seconds": status["rto_target_seconds"],

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 import soc_store
 from secopsai.research_operation_store import append, digest, read_connection, records, text, transaction
@@ -18,6 +19,13 @@ STAGES = (
     ("writing", "engineering/technical-writer", "Prepare a clearly attributed draft with exact evidence references, limitations and outstanding blockers."),
 )
 FINAL = {"awaiting_human_review", "stale", "failed", "canceled"}
+AUTOMATION_ACTOR = "research-worker-automation"
+AUTOMATION_TIMEZONE = ZoneInfo("Europe/Istanbul")
+
+
+def _automation_enabled() -> bool:
+    return (os.environ.get("SECOPSAI_RESEARCH_ASSISTANT_AUTOSTART") == "1"
+            and os.environ.get("SECOPSAI_CORE_WORKER_ID") == "github-actions-research-worker")
 
 
 def _pending(*, db_path=None, limit=21):
@@ -58,16 +66,20 @@ def list_teams(case_id="", *, db_path=None, limit=50) -> dict:
     return {"teams": [get_team(p["team_id"], db_path=db_path) for p in _plans(case_id, db_path=db_path, limit=limit)]}
 
 
-def start_team(case_id: str, payload: dict, *, actor: str, db_path=None) -> dict:
+def start_team(case_id: str, payload: dict, *, actor: str, db_path=None, _automated: bool = False) -> dict:
     from secopsai.research_assurance import person, case_fingerprint
     from secopsai.research_cases import get_case
     from secopsai.specialist_catalog import catalog_digest, validate_catalog
     from secopsai.specialist_orchestrator import build_execution_contract
     from secopsai.provider_capabilities import require_action
 
-    human = person(actor, db_path=db_path)
-    if not {"operator", "researcher"} & set(human["roles"]):
-        raise ValueError("researcher or operator role is required to start an assistant team")
+    if _automated:
+        if actor != AUTOMATION_ACTOR or not _automation_enabled():
+            raise ValueError("automatic assistant dispatch is only available to the enabled Research Worker")
+    else:
+        human = person(actor, db_path=db_path)
+        if not {"operator", "researcher"} & set(human["roles"]):
+            raise ValueError("researcher or operator role is required to start an assistant team")
     request = text(payload.get("request_id"), "team request identity", limit=160)
     fingerprint = digest({"case_id": case_id, "actor": actor, "payload": payload})
     team_id = "RTM-" + digest({"actor": actor, "request": request})[:16].upper()
@@ -103,6 +115,109 @@ def start_team(case_id: str, payload: dict, *, actor: str, db_path=None) -> dict
                 "authority": "read_only proposals; no publication, disclosure or human review authority"}
         append("assistant_team_plan", plan, actor=actor, case_id=case_id, connection=conn)
     return get_team(team_id, db_path=db_path)
+
+
+def start_due_automatically(*, db_path=None, now=None, limit: int = 1) -> dict:
+    """Start at most one eligible case team per local calendar day.
+
+    The Research Worker is a service principal for bounded read-only model
+    proposals; it never receives a human reviewer or publication authority.
+    """
+    if not _automation_enabled():
+        return {"status": "disabled", "started": 0, "reason": "research_worker_automation_not_enabled"}
+    from secopsai.research_assurance import case_fingerprint
+    from secopsai.research_cases import get_case
+    from secopsai.research_operation_store import append
+    from secopsai.specialist_catalog import validate_catalog
+
+    local_now = (now or datetime.now(AUTOMATION_TIMEZONE)).astimezone(AUTOMATION_TIMEZONE)
+    local_date = local_now.date().isoformat()
+    attempts = records("assistant_team_automation_dispatch", db_path=db_path, limit=10000)
+    today = [row["payload"] for row in attempts if row["payload"].get("local_date") == local_date]
+    if today:
+        latest = today[0]
+        if latest.get("status") == "reserved" and latest.get("case_id") and latest.get("case_fingerprint"):
+            request_id = f"auto:{local_date}:{latest['case_id']}:{latest['case_fingerprint']}"
+            try:
+                recovered = start_team(latest["case_id"], {"request_id": request_id}, actor=AUTOMATION_ACTOR,
+                                       db_path=db_path, _automated=True)
+            except (ValueError, KeyError) as error:
+                append("assistant_team_automation_dispatch", {**latest, "status": "blocked",
+                        "error_category": type(error).__name__}, actor=AUTOMATION_ACTOR, db_path=db_path)
+                return {"status": "blocked", "started": 0, "case_id": latest["case_id"],
+                        "reason": "reserved_dispatch_could_not_be_recovered", "error_category": type(error).__name__}
+            append("assistant_team_automation_dispatch", {**latest, "team_id": recovered["team_id"], "status": "started"},
+                   actor=AUTOMATION_ACTOR, db_path=db_path)
+            return {"status": "started", "started": 1, "case_id": latest["case_id"],
+                    "team_id": recovered["team_id"], "recovered_reservation": True}
+        return {"status": latest.get("status", "already_dispatched"), "started": 0,
+                "team_id": latest.get("team_id"), "case_id": latest.get("case_id"),
+                "reason": "daily_dispatch_limit_reached"}
+
+    if not validate_catalog().get("ok"):
+        return {"status": "blocked", "started": 0, "reason": "reviewed_specialist_catalog_invalid"}
+
+    from secopsai.research_operation_store import read_connection
+    with read_connection(db_path) as conn:
+        rows = conn.execute("""SELECT case_id FROM research_cases
+            WHERE status IN ('draft','investigating','validation')
+            ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1
+                                   WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
+                     updated_at DESC, created_at DESC
+            LIMIT 200""").fetchall()
+
+    eligible = []
+    skipped = {}
+    for row in rows:
+        try:
+            case = get_case(row["case_id"], include_reliability=False, db_path=db_path)
+        except ValueError:
+            skipped["case_unavailable"] = skipped.get("case_unavailable", 0) + 1
+            continue
+        active = [item for item in case.get("evidence", []) if item.get("status", "active") == "active"]
+        if not 1 <= len(active) <= 25:
+            skipped["evidence_count_out_of_bounds"] = skipped.get("evidence_count_out_of_bounds", 0) + 1
+            continue
+        if not any(item.get("evidence_type") != "analyst_note"
+                   and set(item.get("metadata") or {}) & {"file_contents", "source_excerpts", "matched_strings", "trace_events", "experiment_output"}
+                   for item in active):
+            skipped["original_evidence_not_ready"] = skipped.get("original_evidence_not_ready", 0) + 1
+            continue
+        fingerprint = case_fingerprint(case)
+        if any(plan.get("case_fingerprint") == fingerprint for plan in _plans(case["case_id"], db_path=db_path, limit=200)):
+            skipped["team_already_exists_for_current_evidence"] = skipped.get("team_already_exists_for_current_evidence", 0) + 1
+            continue
+        eligible.append((case, fingerprint))
+        if len(eligible) >= max(1, min(int(limit), 20)):
+            break
+
+    if not eligible:
+        result = {"status": "idle", "started": 0, "reason": "no_case_has_complete_original_evidence",
+                  "examined": len(rows), "skipped": skipped}
+        append("assistant_team_automation_cycle", {"local_date": local_date, **result}, actor=AUTOMATION_ACTOR, db_path=db_path)
+        return result
+
+    # One team daily bounds provider usage while leaving all eligible cases in
+    # the durable queue for subsequent days. The deterministic request key
+    # makes recovery safe if a receipt is lost after the plan commits.
+    case, fingerprint = eligible[0]
+    request_id = f"auto:{local_date}:{case['case_id']}:{fingerprint}"
+    append("assistant_team_automation_dispatch", {"local_date": local_date, "case_id": case["case_id"],
+            "case_fingerprint": fingerprint, "status": "reserved"}, actor=AUTOMATION_ACTOR, db_path=db_path)
+    try:
+        current = start_team(case["case_id"], {"request_id": request_id}, actor=AUTOMATION_ACTOR,
+                             db_path=db_path, _automated=True)
+    except (ValueError, KeyError) as error:
+        append("assistant_team_automation_dispatch", {"local_date": local_date, "case_id": case["case_id"],
+                "case_fingerprint": fingerprint, "status": "blocked", "error_category": type(error).__name__},
+               actor=AUTOMATION_ACTOR, db_path=db_path)
+        return {"status": "blocked", "started": 0, "case_id": case["case_id"],
+                "reason": "case_or_model_contract_not_ready", "error_category": type(error).__name__}
+    append("assistant_team_automation_dispatch", {"local_date": local_date, "case_id": case["case_id"],
+            "case_fingerprint": fingerprint, "team_id": current["team_id"], "status": "started"},
+           actor=AUTOMATION_ACTOR, db_path=db_path)
+    return {"status": "started", "started": 1, "case_id": case["case_id"], "team_id": current["team_id"],
+            "examined": len(rows), "skipped": skipped}
 
 
 def _save(team: dict, state: dict, *, db_path=None) -> dict:
@@ -144,9 +259,13 @@ def advance_team(team_id: str, *, db_path=None) -> dict:
                     return team  # Running work may finish; no further stages start.
             return _save(team, {**state, "status": "canceled"}, db_path=db_path)
         try:
-            human = person(team["actor"], db_path=db_path)
-            if not {"researcher", "operator"} & set(human["roles"]):
-                raise ValueError("team owner no longer has a researcher or operator role")
+            if team["actor"] == AUTOMATION_ACTOR:
+                if not _automation_enabled():
+                    return team
+            else:
+                human = person(team["actor"], db_path=db_path)
+                if not {"researcher", "operator"} & set(human["roles"]):
+                    raise ValueError("team owner no longer has a researcher or operator role")
             case = get_case(team["case_id"], include_reliability=False, db_path=db_path)
             if case_fingerprint(case) != team["case_fingerprint"] or catalog_digest() != team["catalog_sha256"]:
                 return _save(team, {**state, "status": "stale", "reason": "case evidence or reviewed catalog changed; start a new explicitly bounded team"}, db_path=db_path)
@@ -200,4 +319,5 @@ def advance_team(team_id: str, *, db_path=None) -> dict:
 
 def advance_due(*, limit=5, db_path=None) -> dict:
     pending = _pending(db_path=db_path, limit=max(1, min(int(limit), 5)))
-    return {"processed": [advance_team(t["team_id"], db_path=db_path) for t in pending], "publication_performed": False}
+    processed = [advance_team(t["team_id"], db_path=db_path) for t in pending]
+    return {"processed": processed, "publication_performed": False}

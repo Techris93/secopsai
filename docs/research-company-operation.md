@@ -81,8 +81,13 @@ owner may have at most two active original investigations on the editorial board
 
 `SECOPSAI_PRIMARY_INTEL=1` enables bounded primary intake and draft assembly in
 the existing single-writer Research Worker. It cannot approve or publish.
-Assembly is idempotent for the edition date. A missing roster is an explicit
-blocker. A quiet day is an honest coverage/update brief; nothing is fabricated.
+Assembly is idempotent for the edition date. When no valid roster exists, it
+still creates a machine-attributed, unassigned review draft; it does not invent
+an author or release approver. A quiet day is an honest coverage/update brief;
+nothing is fabricated. The hosted console exposes pending public-source items
+for a registered human technical reviewer. Aggregator reports require a
+separately acquired primary event, and restricted submissions are never shown
+in this queue.
 
 Event verification records a checked summary, defensive action, limitations,
 primary event and primary URL. Aggregators cannot corroborate themselves.
@@ -98,7 +103,12 @@ approved from a truncated view. `brief-publish` creates the reviewed public blog
 files; use the existing controlled Blog Ops deployment process to release them.
 Hosted commands exclude local sample paths, queue leases and publication from
 an ephemeral worker. Corrections retain the original body and require a new
-review of the corrected or retraction notice.
+review of the corrected or retraction notice. Newly verified source material
+arriving after a draft is edited or released is recorded as a pending edition
+update; the console shows the source details and requires an author to reconcile
+it into a new reviewable draft. Published editions use the correction workflow,
+and new text must pass release approval again before the existing Blog Ops
+release.
 
 ## Evidence and lab inputs
 

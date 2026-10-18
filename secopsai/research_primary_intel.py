@@ -429,6 +429,54 @@ def intel_event(event_id: str, *, db_path=None) -> dict:
     return result
 
 
+def pending_public_reviews(*, db_path=None, limit: int = 20) -> list[dict]:
+    """Return a bounded, privacy-safe queue for the independent human reviewer."""
+    from secopsai.research_operation_store import records
+
+    decisions = {}
+    for record in records("intel_verification", db_path=db_path, limit=10000):
+        event_id = record["payload"].get("event_id")
+        if event_id and event_id not in decisions:
+            decisions[event_id] = record["payload"]
+    with read_connection(db_path) as conn:
+        rows = conn.execute("""SELECT e.event_id,e.source_id,e.root_source_key,e.snapshot_id,e.published_at,
+                e.collected_at,e.first_observed_at,e.payload_json,s.config_json,p.sha256
+            FROM research_intel_events e JOIN research_intel_sources s USING(source_id)
+            JOIN research_source_snapshots p USING(snapshot_id)
+            WHERE json_extract(s.config_json,'$.sharing')='public'
+            ORDER BY e.first_observed_at DESC, e.event_id DESC LIMIT 500""").fetchall()
+    pending = []
+    verified_snapshots = {}
+    for row in rows:
+        event = {key: row[key] for key in ("event_id", "source_id", "root_source_key", "snapshot_id", "published_at", "collected_at", "first_observed_at", "sha256")}
+        event["payload"] = json.loads(row["payload_json"])
+        event["source"] = json.loads(row["config_json"])
+        decision = decisions.get(event["event_id"])
+        current = bool(decision and decision.get("event_fingerprint") == digest(event))
+        if current and decision.get("decision") in {"verified", "rejected"}:
+            continue
+        if event["snapshot_id"] not in verified_snapshots:
+            with read_connection(db_path) as conn:
+                snapshot = conn.execute("SELECT content,sha256 FROM research_source_snapshots WHERE snapshot_id=?", (event["snapshot_id"],)).fetchone()
+            verified_snapshots[event["snapshot_id"]] = bool(
+                snapshot and hashlib.sha256(snapshot["content"]).hexdigest() == snapshot["sha256"]
+                and snapshot["sha256"] == event["sha256"])
+        if not verified_snapshots[event["snapshot_id"]]:
+            continue
+        payload = event["payload"]
+        excerpt = str(payload.get("excerpt") or "")
+        pending.append({"event_id": event["event_id"], "source_id": event["source_id"],
+                        "source_name": event["source"]["name"], "source_class": event["source"]["source_class"],
+                        "url": payload["url"], "title": payload["title"], "excerpt": excerpt[:800],
+                        "excerpt_truncated": len(excerpt) > 800, "published_at": event["published_at"],
+                        "collected_at": event["collected_at"], "first_observed_at": event["first_observed_at"],
+                        "source_sha256": event["sha256"],
+                        "review_status": (decision or {}).get("decision", "pending_review") if current else "source_changed_review_required"})
+        if len(pending) >= max(1, min(int(limit), 50)):
+            break
+    return pending
+
+
 def verify_event(event_id: str, payload: dict, *, actor: str, db_path=None) -> dict:
     from secopsai.research_assurance import person
     reviewer = person(actor, role="technical_reviewer", db_path=db_path)
