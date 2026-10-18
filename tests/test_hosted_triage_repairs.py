@@ -176,3 +176,15 @@ def test_structured_transient_recovery_preserves_unknown_historical_causes(tmp_p
     recovered = recover_transient_jobs(db_path=db, min_age_seconds=0)
     assert recovered["job_ids"] == jobs[:1]
     assert get_job(jobs[1], db_path=db)["status"] == "failed"
+
+
+@pytest.mark.parametrize("message,category", [
+    ("You've hit your usage limit. Try again at 4:41 AM.", "rate_limit"),
+    ("Authentication failed: not logged in", "authentication"),
+])
+def test_terminal_provider_rejection_outranks_abandoned_websocket_warning(message, category):
+    failure = codex_bridge.provider_error_from_process("gpt-6-luna", returncode=1,
+        output="failed to connect to websocket: HTTP error: 426 Upgrade Required\nERROR: " + message)
+    assert failure.category == category
+    assert codex_bridge.provider_failure_allows_fallback("quota_auth", failure)
+    assert not codex_bridge.provider_failure_allows_fallback("disabled", failure)

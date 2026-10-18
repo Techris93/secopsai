@@ -1935,6 +1935,12 @@ def provider_error_from_process(model: str, *, returncode: int, output: str) -> 
     message = _safe_error_text(str(output or "").strip()[:1800]) or f"provider process exited with code {returncode}"
     if any(marker in message.lower() for marker in ("invalid_json_schema", "invalid_request_error", "invalid schema for response_format")):
         return DecisionError(message, provider=_provider_for_model(model, {}), category="invalid_request")
+    # A terminal provider decision outranks an abandoned transport warning.
+    lowered = message.lower()
+    if any(marker in lowered for marker in ("usage limit", "rate limit", "quota exceeded", "too many requests")):
+        return DecisionError(message, provider=_provider_for_model(model, {}), category="rate_limit", http_status=429)
+    if any(marker in lowered for marker in ("unauthorized", "not logged in", "authentication failed", "insufficient permission")):
+        return DecisionError(message, provider=_provider_for_model(model, {}), category="authentication")
     status_match = re.search(r"\b(?:HTTP(?:\s+error)?\s*[:(]?\s*)?(401|403|408|429|500|502|503|504|529)\b", message, re.I)
     status = int(status_match.group(1)) if status_match else None
     if status in {401, 403}:
