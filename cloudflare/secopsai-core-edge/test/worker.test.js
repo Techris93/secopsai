@@ -24,6 +24,7 @@ class Statement {
     if (this.sql.includes("SELECT 1 AS ready")) return { ready: 1 };
     if (this.sql.includes("WHERE source_alert_id")) return this.db.alerts.get(this.values[0]) || null;
     if (this.sql.includes("FROM ontology_ingest_receipts")) return this.db.ontologyReceipts.get(this.values[0]) || null;
+    if (this.sql.includes("FROM research_operation_projections")) return this.db.researchOperationProjections.get(this.values[0]) || null;
     return null;
   }
   async all() {
@@ -46,12 +47,16 @@ class Statement {
       const [idempotency_key, request_hash, source_instance, response_json, created_at] = this.values;
       if (!this.db.ontologyReceipts.has(idempotency_key)) this.db.ontologyReceipts.set(idempotency_key, { idempotency_key, request_hash, source_instance, response_json, created_at });
     }
+    if (this.sql.includes("INSERT INTO research_operation_projections")) {
+      const [workspace_id, projection_json, synced_at] = this.values;
+      this.db.researchOperationProjections.set(workspace_id, { projection_json, synced_at });
+    }
     return { success: true };
   }
 }
 
 class MockD1 {
-  constructor() { this.alerts = new Map(); this.audit = []; this.ontologyReceipts = new Map(); }
+  constructor() { this.alerts = new Map(); this.audit = []; this.ontologyReceipts = new Map(); this.researchOperationProjections = new Map(); }
   prepare(sql) { return new Statement(this, sql); }
   async batch(statements) {
     const results = [];
@@ -765,10 +770,20 @@ test("research projections require scoped credentials and reject private records
     assert.equal((await result.json()).status, "awaiting_worker");
   }
   const sync = (token, body) => handleRequest(new Request(endpoint + "/sync", {method: "POST", headers: {authorization: `Bearer ${token}`, "content-type": "application/json"}, body: JSON.stringify(body)}), env);
-  const projection = {schema_version: "secopsai.research.operation.v1", coverage: {sources: []}, editions: [], assistant_teams: [{team_id: "RTM-0123456789ABCDEF", status: "running"}]};
+  const projection = {
+    schema_version: "secopsai.research.operation.v1",
+    coverage: {sources: []},
+    editions: [],
+    assistant_teams: [{team_id: "RTM-0123456789ABCDEF", status: "running"}],
+    pending_source_reviews: [{source_id: "public-advisory-1", excerpt: "Public source excerpt"}],
+    automation: {assistant_team_autostart_enabled: true, daily_brief_assembly_enabled: true, team_dispatch: {status: "started"}, team_cycle: {status: "idle"}},
+  };
   assert.equal((await sync(env.CORE_READ_TOKEN, projection)).status, 401);
   assert.equal((await sync(env.CORE_BRIDGE_TOKEN, {...projection, partner_submission: "private"})).status, 422);
   assert.equal((await sync(env.CORE_BRIDGE_TOKEN, projection)).status, 200);
+  const storedProjection = await (await handleRequest(new Request(endpoint, {headers: {authorization: `Bearer ${env.CORE_BRIDGE_TOKEN}`}}), env)).json();
+  assert.deepEqual(storedProjection.pending_source_reviews, projection.pending_source_reviews);
+  assert.deepEqual(storedProjection.automation, projection.automation);
   const write = (token, action) => handleRequest(new Request(endpoint, {method: "POST", headers: {authorization: `Bearer ${token}`, "content-type": "application/json"}, body: JSON.stringify({payload: {action, actor: "named.operator", data: {}}})}), env);
   assert.equal((await write(env.CORE_READ_TOKEN, "claim-assess")).status, 401);
   assert.equal((await write(env.CORE_INTELLIGENCE_TOKEN, "brief-publish")).status, 422);

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import time
 from datetime import datetime, timezone
@@ -173,7 +174,11 @@ def main():
         )
         return 0 if report['status'] == 'passed' else 1
     except (Exception, WorkerShutdown) as exc:
-        print(json.dumps({'event': 'delivery_verification_failed', 'error_category': type(exc).__name__, 'http_status': getattr(exc, 'status', None)}), flush=True)
+        error_code = getattr(exc, 'error_code', '')
+        if not isinstance(error_code, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,99}', error_code):
+            error_code = None
+        print(json.dumps({'event': 'delivery_verification_failed', 'error_category': type(exc).__name__,
+                          'http_status': getattr(exc, 'status', None), 'error_code': error_code}), flush=True)
         return 1
 
 
