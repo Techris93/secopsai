@@ -12,12 +12,13 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 def sync_hosted(client, *, db_path=None) -> dict:
     if not getattr(client, 'enabled', False):
         return {'status': 'disabled', 'publication_performed': False}
-    from secopsai.research_assistant_team import advance_due, get_team
+    from secopsai.research_assistant_team import advance_due, get_team, start_due_automatically
     from secopsai.specialist_orchestrator import get_policy, get_run, cancel_run, record_primary_result, record_review_result
     from secopsai.intelligence import prepare_bridge_request, validate_bridge_result
     from secopsai.core_edge_client import CoreEdgeHTTPError
 
     get_policy(db_path=db_path)
+    automatic = start_due_automatically(db_path=db_path)
     advanced = advance_due(db_path=db_path)
     delivered, applied, canceled, rejected = 0, 0, 0, 0
     with sqlite_writer_lock(db_path):
@@ -107,7 +108,7 @@ def sync_hosted(client, *, db_path=None) -> dict:
                 except (ValueError, TypeError, KeyError):
                     _terminal(job, team, status='failed', reason='invalid_hosted_assistant_result', db_path=db_path)
                     rejected += 1
-    return {'status': 'ok', 'advanced': len(advanced['processed']), 'delivered': delivered, 'applied': applied, 'canceled': canceled, 'rejected': rejected, 'publication_performed': False}
+    return {'status': 'ok', 'automatic_dispatch': automatic, 'advanced': len(advanced['processed']), 'delivered': delivered, 'applied': applied, 'canceled': canceled, 'rejected': rejected, 'publication_performed': False}
 
 
 def _terminal(job, team, *, status, reason='', result=None, db_path=None):

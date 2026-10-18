@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -132,6 +133,61 @@ def test_conflicting_request_unsupported_model_and_evidence_changes(setup):
     assert team.advance_team(current['team_id'], db_path=db)['status'] == 'stale'
     with soc_store.connect(db) as conn:
         assert conn.execute('SELECT count(*) FROM specialist_runs').fetchone()[0] == 0
+
+
+def test_worker_autostarts_one_evidence_ready_team_per_istanbul_day(setup, monkeypatch):
+    db, case_id = setup
+    monkeypatch.setenv('SECOPSAI_CORE_WORKER_ID', 'github-actions-research-worker')
+    monkeypatch.setenv('SECOPSAI_RESEARCH_ASSISTANT_AUTOSTART', '1')
+    now = datetime(2026, 10, 18, 9, 0, tzinfo=timezone.utc)
+
+    first = team.start_due_automatically(db_path=db, now=now)
+    assert first['status'] == 'started' and first['started'] == 1
+    current = team.get_team(first['team_id'], db_path=db)
+    assert current['case_id'] == case_id
+    assert current['actor'] == team.AUTOMATION_ACTOR
+    assert current['human_review_required'] is True
+    assert current['publication_approved'] is False
+
+    second = team.start_due_automatically(db_path=db, now=now)
+    assert second['started'] == 0 and second['reason'] == 'daily_dispatch_limit_reached'
+    advanced = team.advance_team(first['team_id'], db_path=db)
+    assert advanced['status'] == 'running'
+    assert advanced['runs']['synthesis']
+    with soc_store.connect(db) as conn:
+        assert conn.execute('SELECT count(*) FROM specialist_runs').fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM research_operation_records WHERE kind='human_review'").fetchone()[0] == 0
+
+
+def test_worker_autostart_requires_explicit_worker_enablement(setup, monkeypatch):
+    db, _ = setup
+    monkeypatch.setenv('SECOPSAI_CORE_WORKER_ID', 'github-actions-research-worker')
+    monkeypatch.delenv('SECOPSAI_RESEARCH_ASSISTANT_AUTOSTART', raising=False)
+    result = team.start_due_automatically(db_path=db)
+    assert result == {'status': 'disabled', 'started': 0, 'reason': 'research_worker_automation_not_enabled'}
+    assert team.list_teams(db_path=db)['teams'] == []
+
+
+def test_worker_autostart_recovers_a_lost_dispatch_receipt(setup, monkeypatch):
+    db, _ = setup
+    monkeypatch.setenv('SECOPSAI_CORE_WORKER_ID', 'github-actions-research-worker')
+    monkeypatch.setenv('SECOPSAI_RESEARCH_ASSISTANT_AUTOSTART', '1')
+    now = datetime(2026, 10, 18, 9, 0, tzinfo=timezone.utc)
+    original = team.start_team
+
+    def lose_receipt(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError('simulated lost dispatch receipt')
+
+    monkeypatch.setattr(team, 'start_team', lose_receipt)
+    with pytest.raises(RuntimeError, match='lost dispatch receipt'):
+        team.start_due_automatically(db_path=db, now=now)
+    monkeypatch.setattr(team, 'start_team', original)
+
+    recovered = team.start_due_automatically(db_path=db, now=now)
+    assert recovered['status'] == 'started' and recovered['recovered_reservation'] is True
+    with soc_store.connect(db) as conn:
+        assert conn.execute("SELECT count(*) FROM research_operation_records WHERE kind='assistant_team_plan'").fetchone()[0] == 1
 
 
 def test_disagreement_and_failed_provider_cannot_advance(setup):

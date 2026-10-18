@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -21,7 +22,7 @@ from secopsai.research_editorial import (
 from secopsai.research_operation import execute, execute_hosted, hosted_projection
 from secopsai.research_operation_store import digest, records
 from secopsai.research_primary_intel import (
-    acquire, claim_job, complete_job, configure_source, fail_job, heartbeat, intel_event, parse_source, verify_event,
+    acquire, claim_job, complete_job, configure_source, fail_job, heartbeat, intel_event, parse_source, pending_public_reviews, verify_event,
 )
 from secopsai.research_reliability import _verify_statement
 
@@ -207,6 +208,20 @@ def test_intake_stores_bytes_events_and_queue_before_cursor_and_is_idempotent(db
     assert cursor == value["snapshot_id"]
 
 
+def test_human_source_review_queue_only_exposes_public_archived_events(db):
+    public_event, _ = event(db)
+    private = configure_source({"source_id": "private-source", "name": "Synthetic restricted source",
+                                "url": "https://private.example/feed", "parser": "normalized_json",
+                                "source_class": "partner", "sharing": "restricted", "enabled": True},
+                               actor="operator.owner", db_path=db)
+    body = json.dumps({"events": [{"external_id": "private-1", "title": "Private notice", "excerpt": "Do not project this excerpt.",
+                                    "url": "https://private.example/notice"}]}).encode()
+    acquire(private, body, db_path=db)
+    pending = pending_public_reviews(db_path=db)
+    assert [item["event_id"] for item in pending] == [public_event["event_id"]]
+    assert pending[0]["excerpt"] == "A synthetic patch is available."
+
+
 def test_msrc_large_feed_uses_revision_window_and_accounts_for_historical_entries(db):
     from datetime import timedelta
     from secopsai.research_primary_intel import parse_source_report, msrc_window_start
@@ -313,12 +328,17 @@ def test_feed_timestamp_does_not_turn_collection_into_publication_time(db):
 
 
 def test_daily_workflow_requires_real_roster_and_duty_editor(db, tmp_path):
-    assert create_daily_brief(db_path=db)["status"] == "blocked"
+    unassigned = create_daily_brief(db_path=db)
+    assert unassigned["state"] == "verifying"
+    assert unassigned["author_id"] == "secopsai-automated-research-desk"
+    assert unassigned["draft"]["duty"]["unassigned"] is True
+    assert unassigned["draft"]["items"] == []
     roster(db)
     value, _ = event(db)
     verify(value, db)
     edition = create_daily_brief(db_path=db)
     assert len(edition["draft"]["items"]) == 1
+    assert edition["draft"]["items"][0]["verification_fingerprint"]
     assert create_daily_brief(db_path=db)["reused"] is True
     with pytest.raises(ValueError):
         publish_edition(edition["edition_id"], actor="carol", db_path=db, paths=blog.BlogPaths(root=tmp_path / "blog"))
@@ -327,6 +347,85 @@ def test_daily_workflow_requires_real_roster_and_duty_editor(db, tmp_path):
     approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
     published = publish_edition(edition["edition_id"], actor="carol", db_path=db, paths=blog.BlogPaths(root=tmp_path / "blog"))
     assert published["published"] and (tmp_path / "blog" / "posts" / (edition["draft"]["slug"] + ".json")).is_file()
+    with pytest.raises(ValueError, match="correction workflow"):
+        approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "repeat approval", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
+
+
+def test_automated_brief_picks_up_late_roster_and_preserves_human_edits(db):
+    from secopsai.research_editorial import AUTOMATED_BRIEF_AUTHOR_ID
+
+    value, _ = event(db)
+    local_date = datetime.fromisoformat(value["first_observed_at"].replace("Z", "+00:00")).astimezone(ZoneInfo("Europe/Istanbul")).date().isoformat()
+    initial = create_daily_brief(date=local_date, db_path=db)
+    assert initial["author_id"] == AUTOMATED_BRIEF_AUTHOR_ID
+    assert initial["draft"]["duty"]["unassigned"] is True
+
+    roster(db)
+    verify(value, db)
+    refreshed = create_daily_brief(date=local_date, db_path=db)
+    assert refreshed["author_id"] == AUTOMATED_BRIEF_AUTHOR_ID
+    assert refreshed["draft"]["duty"]["editor_id"] == "carol"
+    assert len(refreshed["draft"]["items"]) == 1
+
+    revised_text = refreshed["draft"]["body_markdown"] + "\n\nHuman editorial note."
+    edit_edition(refreshed["edition_id"], {"body_markdown": revised_text}, actor="alice", db_path=db)
+    second_source = source(db, source_id="vendor-two")
+    body = json.dumps({"events": [{"external_id": "notice-2", "title": "Second patch", "excerpt": "A second synthetic patch is available.",
+                                    "url": "https://vendor.example/second", "published_at": "2026-10-13T08:00:00Z"}]}).encode()
+    acquired = acquire(second_source, body, db_path=db)
+    with soc_store.connect(db) as conn:
+        event_id = conn.execute("SELECT event_id FROM research_intel_events WHERE snapshot_id=?", (acquired["snapshot_id"],)).fetchone()[0]
+    verify(intel_event(event_id, db_path=db), db)
+
+    waiting = create_daily_brief(date=local_date, db_path=db)
+    assert waiting["updates_waiting_for_editor"] is True
+    assert waiting["draft"]["body_markdown"] == revised_text
+    assert len(waiting["draft"]["items"]) == 1
+    pending_update = hosted_projection(db_path=db)["editions"][0]["pending_update"]
+    reconciled_text = revised_text + "\n\n## Second patch\n\nSource: https://vendor.example/second\nA second synthetic patch is available."
+    reconciled = edit_edition(waiting["edition_id"], {
+        "body_markdown": reconciled_text,
+        "incorporate_update_fingerprint": pending_update["fingerprint"],
+    }, actor="alice", db_path=db)
+    assert len(reconciled["draft"]["items"]) == 2
+    assert "Human editorial note." in reconciled["draft"]["body_markdown"]
+    assert "https://vendor.example/second" in reconciled["draft"]["sources"]
+    assert hosted_projection(db_path=db)["editions"][0].get("pending_update") is None
+
+
+def test_published_brief_late_source_requires_a_reviewed_correction(db, tmp_path):
+    roster(db)
+    value, _ = event(db)
+    verify(value, db)
+    local_date = datetime.fromisoformat(value["first_observed_at"].replace("Z", "+00:00")).astimezone(ZoneInfo("Europe/Istanbul")).date().isoformat()
+    edition = create_daily_brief(date=local_date, db_path=db)
+    approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "Checked the exact edition", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
+    paths = blog.BlogPaths(root=tmp_path / "blog")
+    published = publish_edition(edition["edition_id"], actor="carol", db_path=db, paths=paths)
+    assert published["published"]
+
+    second_source = source(db, source_id="vendor-correction")
+    body = json.dumps({"events": [{"external_id": "notice-correction", "title": "Correction notice", "excerpt": "A later patch notice.",
+                                    "url": "https://vendor.example/correction", "published_at": "2026-10-13T08:00:00Z"}]}).encode()
+    acquired = acquire(second_source, body, db_path=db)
+    with soc_store.connect(db) as conn:
+        event_id = conn.execute("SELECT event_id FROM research_intel_events WHERE snapshot_id=?", (acquired["snapshot_id"],)).fetchone()[0]
+    verify(intel_event(event_id, db_path=db), db)
+    create_daily_brief(date=local_date, db_path=db)
+    pending = hosted_projection(db_path=db)["editions"][0]["pending_update"]
+
+    correction_body = edition["draft"]["body_markdown"] + "\n\n## Correction notice\n\nSource: https://vendor.example/correction\nA later patch notice."
+    corrected = correct_edition(edition["edition_id"], {
+        "action": "correction", "reason": "Include newly verified source reporting",
+        "body_markdown": correction_body, "incorporate_update_fingerprint": pending["fingerprint"],
+    }, actor="carol", db_path=db)
+    assert len(corrected["draft"]["items"]) == 2
+    with pytest.raises(ValueError, match="approval"):
+        publish_edition(edition["edition_id"], actor="carol", db_path=db, paths=paths)
+    approve_edition(corrected["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "Reviewed the corrected exact edition", "expected_fingerprint": corrected["fingerprint"], "reviewed_draft": corrected["draft"]["body_markdown"]}, actor="carol", db_path=db)
+    correction_published = publish_edition(corrected["edition_id"], actor="carol", db_path=db, paths=paths)
+    assert correction_published["published"]
+    assert hosted_projection(db_path=db)["editions"][0].get("pending_update") is None
 
 
 def test_edition_edits_and_source_decision_changes_invalidate_release(db):
@@ -351,12 +450,14 @@ def test_unreviewed_research_cannot_publish_via_generic_blog_boundary(db, tmp_pa
 
 
 def test_unknown_coverage_denominators_remain_unknown_and_private_notes_are_not_projected(db):
-    source(db)
+    event(db)
     coverage = coverage_report(db_path=db)
     assert coverage["sources"][0]["eligible_events"] is None
-    assert coverage["sources"][0]["fresh"] is False
+    assert coverage["sources"][0]["fresh"] is True
     projection = hosted_projection(db_path=db)
     assert "claim_assessment" not in projection and "content" not in projection
+    assert projection["pending_source_reviews"][0]["title"] == "Patch available"
+    assert projection["pending_source_reviews"][0]["excerpt"] == "A synthetic patch is available."
     assert projection["decision_mode"] == "observe" and projection["clef_enabled"] is False
 
 

@@ -61,6 +61,16 @@ for the exact limits and safe click path.
 
 The unattended workflow cannot approve a sandbox submission, send external disclosure, or approve and publish an article. Those remain the final operator gates.
 
+## Scheduled research teams and daily review drafts
+
+The scheduled GitHub Actions Research Worker enables `SECOPSAI_RESEARCH_ASSISTANT_AUTOSTART` and starts at most one team per Europe/Istanbul calendar day. It selects an open case only when the case has 1–25 active evidence records, including original archived code, source excerpts, matched text, trace events, or experiment output. A deterministic case-and-evidence identity prevents a repeated worker cycle from creating duplicate teams. Cases without enough evidence remain in the case queue; they are not promoted into model work just to fill a quota.
+
+The six roles run as bounded, read-only proposals. The independent-challenge role receives the original evidence before the other roles' conclusions. A completed team stops at `awaiting_human_review`; it cannot record a human review, approve a publication, or publish content. Provider failures and stale evidence remain visible in the team history.
+
+Primary-source collection runs on the worker's existing schedule. At 16:00 Europe/Istanbul, the worker creates or refreshes that day's daily-brief review draft from source events that have a current human technical verification. If no eligible source has been verified, the system still creates an honest quiet-day draft. A missing or revoked editorial roster does not suppress draft assembly: the draft is attributed to the SecOpsAI Research Desk as an automated draft and remains unassigned. The console exposes public source events awaiting review with their archived excerpt and provenance; only a registered human technical reviewer can mark an item verified. Aggregator reports require a separately acquired primary source.
+
+Newly verified events are incorporated on the next worker cycle unless an author has edited the draft; edits are preserved and the console flags later verified items for editorial reconciliation. Release still requires a registered human editor to check the exact edition, current source verification, privacy, secrets, sharing rights, licensing, embargoes, credits, conflicts, and defensive guidance. The scheduled worker never publishes or deploys the edition.
+
 ## Primary Mission Control workflow
 
 The normal workflow no longer requires an evidence-bundle export, a file upload, or a copied prompt.

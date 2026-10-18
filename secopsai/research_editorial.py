@@ -14,6 +14,7 @@ from secopsai.research_operation_store import append, canonical, digest, records
 from secopsai.research_primary_intel import intel_event
 
 TIMEZONE = ZoneInfo("Europe/Istanbul")
+AUTOMATED_BRIEF_AUTHOR_ID = "secopsai-automated-research-desk"
 PRODUCTS = {"daily_brief", "technical_advisory", "research_report"}
 BOARD_STATES = {"proposed", "verifying", "vendor_contact", "embargoed", "technical_review", "approved", "published", "updating", "corrected", "retracted"}
 BRIEF_CHECKS = {"claims", "primary_sources", "affected_versions", "defensive_actions", "uncertainty", "privacy", "secrets", "sharing_rights", "licensing", "embargo", "credits", "conflicts"}
@@ -53,6 +54,42 @@ def _edition(edition_id: str, *, db_path=None) -> dict:
     return value
 
 
+def pending_edition_update(edition_id: str, *, db_path=None) -> dict | None:
+    """Return the newest verified-content update not yet reconciled by an author."""
+    reconciled = {
+        row["payload"].get("update_fingerprint")
+        for row in records("edition_update_reconciled", db_path=db_path, limit=10000)
+        if row["payload"].get("edition_id") == edition_id
+    }
+    latest = next((row["payload"] for row in records("edition_update_available", db_path=db_path, limit=10000)
+                   if row["payload"].get("edition_id") == edition_id), None)
+    if not latest or latest.get("draft_fingerprint") in reconciled:
+        return None
+    return latest
+
+
+def _record_edition_update(edition: dict, draft: dict, *, db_path=None) -> dict:
+    previous_items = {item["event_id"]: item for item in edition["draft"].get("items", [])}
+    current_items = {item["event_id"]: item for item in draft.get("items", [])}
+    replace_ids = sorted(event_id for event_id in previous_items.keys() & current_items.keys()
+                         if previous_items[event_id] != current_items[event_id])
+    remove_ids = sorted(previous_items.keys() - current_items.keys())
+    add_items = [item for item in draft.get("items", [])
+                 if item["event_id"] not in previous_items or previous_items[item["event_id"]] != item]
+    fingerprint = digest(draft)
+    pending = pending_edition_update(edition["edition_id"], db_path=db_path)
+    if pending and pending.get("draft_fingerprint") == fingerprint:
+        return pending
+    update = {"edition_id": edition["edition_id"], "edition_state": edition["state"],
+              "draft_fingerprint": fingerprint, "new_items": add_items,
+              "replace_event_ids": replace_ids, "remove_event_ids": remove_ids,
+              "removed_items": [previous_items[event_id] for event_id in remove_ids],
+              "coverage_summary": (draft.get("coverage") or {}).get("public_summary", ""),
+              "created_at": soc_store.utc_now()}
+    append("edition_update_available", update, actor="editorial-scheduler", db_path=db_path)
+    return update
+
+
 def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
     date = date or datetime.now(TIMEZONE).date().isoformat()
     day = datetime.fromisoformat(date).date()
@@ -62,15 +99,47 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
     soc_store.init_db(db_path)
     with read_connection(db_path) as conn:
         existing = conn.execute("SELECT 1 FROM research_editorial_editions WHERE edition_id=?", (identity,)).fetchone()
-    if existing:
-        return {**_edition(identity, db_path=db_path), "reused": True}
+    existing_edition = _edition(identity, db_path=db_path) if existing else None
     rosters = records("editorial_roster", db_path=db_path)
-    if not rosters:
-        return {"status": "blocked", "blockers": ["a named seven-day editorial roster and backup are required"]}
-    duty = rosters[0]["payload"]["days"][str(day.weekday())]
-    author = person(duty["author_id"], role="author", db_path=db_path)
-    person(duty["editor_id"], role="editor", db_path=db_path)
-    person(duty["backup_id"], role="editor", db_path=db_path)
+    if existing_edition:
+        # Keep the original edition's accountable author/duty assignment when
+        # the scheduled worker refreshes it with newly reviewed items.
+        duty = existing_edition["draft"].get("duty") or {}
+        if existing_edition["author_id"] == AUTOMATED_BRIEF_AUTHOR_ID:
+            author = {"person_id": AUTOMATED_BRIEF_AUTHOR_ID, "display_name": "SecOpsAI Research Desk (automated draft)"}
+            # If a draft was assembled before the roster existed, attach the
+            # real current shift once staffing is configured. Never replace a
+            # previously assigned human duty on an existing edition.
+            if duty.get("unassigned") and rosters:
+                candidate = rosters[0]["payload"]["days"][str(day.weekday())]
+                try:
+                    person(candidate["author_id"], role="author", db_path=db_path)
+                    person(candidate["editor_id"], role="editor", db_path=db_path)
+                    person(candidate["backup_id"], role="editor", db_path=db_path)
+                except (KeyError, ValueError):
+                    duty = {**duty, "roster_unavailable": True}
+                else:
+                    duty = {**candidate, "timezone": "Europe/Istanbul", "brief_at": "16:00"}
+        else:
+            author = person(existing_edition["author_id"], role="author", db_path=db_path)
+    elif rosters:
+        duty = rosters[0]["payload"]["days"][str(day.weekday())]
+        try:
+            author = person(duty["author_id"], role="author", db_path=db_path)
+            person(duty["editor_id"], role="editor", db_path=db_path)
+            person(duty["backup_id"], role="editor", db_path=db_path)
+        except ValueError:
+            duty = {"author_id": AUTOMATED_BRIEF_AUTHOR_ID, "editor_id": "", "backup_id": "",
+                    "timezone": "Europe/Istanbul", "brief_at": "16:00", "unassigned": True,
+                    "roster_unavailable": True}
+            author = {"person_id": AUTOMATED_BRIEF_AUTHOR_ID, "display_name": "SecOpsAI Research Desk (automated draft)"}
+    else:
+        # Assembly is an automated preparation step. Missing human staffing
+        # must leave a visible, unassigned draft rather than suppressing it or
+        # inventing an author/reviewer identity.
+        author = {"person_id": AUTOMATED_BRIEF_AUTHOR_ID, "display_name": "SecOpsAI Research Desk (automated draft)"}
+        duty = {"author_id": AUTOMATED_BRIEF_AUTHOR_ID, "editor_id": "", "backup_id": "",
+                "timezone": "Europe/Istanbul", "brief_at": "16:00", "unassigned": True}
     decisions = _event_decisions(db_path=db_path)
     start = datetime.combine(day, datetime.min.time(), TIMEZONE)
     end = start + timedelta(days=1)
@@ -113,6 +182,33 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
              "sources": [item["url"] for item in items], "references": [item["url"] for item in items], "categories": ["Threat Intelligence"], "severity": "info",
              "editorial_edition_id": identity, "review_status": "needs_review", "coverage": coverage, "external_news": False,
              "duty": duty, "status": "draft"}
+    if existing_edition:
+        if existing_edition["state"] in {"approved", "published", "corrected", "retracted"}:
+            previous_coverage = existing_edition["draft"].get("coverage") or {}
+            if (existing_edition["draft"].get("items") != draft.get("items")
+                    or previous_coverage.get("public_summary") != coverage.get("public_summary")):
+                update = _record_edition_update(existing_edition, draft, db_path=db_path)
+                return {**existing_edition, "reused": True, "updates_waiting_for_editor": True,
+                        "pending_update_fingerprint": update["draft_fingerprint"]}
+            return {**existing_edition, "reused": True}
+        previous_coverage = existing_edition["draft"].get("coverage") or {}
+        if (existing_edition["draft"].get("items") == draft.get("items")
+                and previous_coverage.get("public_summary") == coverage.get("public_summary")
+                and existing_edition["draft"].get("duty") == duty):
+            return {**existing_edition, "reused": True}
+        revisions = [row for row in records("edition_revision", db_path=db_path, limit=10000)
+                     if row["payload"].get("edition_id") == identity]
+        if revisions:
+            update = _record_edition_update(existing_edition, draft, db_path=db_path)
+            return {**existing_edition, "reused": True, "updates_waiting_for_editor": True,
+                    "pending_update_fingerprint": update["draft_fingerprint"]}
+        with transaction(db_path) as conn:
+            append("edition_auto_refresh", {"edition_id": identity, "before_fingerprint": existing_edition["fingerprint"],
+                   "after_fingerprint": digest(draft), "item_count": len(items)}, actor="editorial-scheduler",
+                   fingerprint=existing_edition["fingerprint"], connection=conn)
+            conn.execute("UPDATE research_editorial_editions SET draft_json=?,fingerprint=?,state='verifying',updated_at=? WHERE edition_id=?",
+                         (canonical(draft), digest(draft), soc_store.utc_now(), identity))
+        return _edition(identity, db_path=db_path)
     now = soc_store.utc_now()
     with transaction(db_path) as conn:
         conn.execute("INSERT INTO research_editorial_editions VALUES (?,?,?,?,?,?,'verifying','',?,?)", (identity, date, "daily_brief", author["person_id"], canonical(draft), digest(draft), now, now))
@@ -123,16 +219,27 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
 def edit_edition(edition_id: str, payload: dict, *, actor: str, db_path=None) -> dict:
     person(actor, role="author", db_path=db_path)
     edition = _edition(edition_id, db_path=db_path)
-    if actor != edition["author_id"]:
+    machine_authored = edition["author_id"] == AUTOMATED_BRIEF_AUTHOR_ID
+    if actor != edition["author_id"] and not (machine_authored and "author" in person(actor, db_path=db_path)["roles"]):
         raise ValueError("only the assigned author may change the edition")
     if edition["state"] in {"published", "corrected", "retracted"}:
         raise ValueError("published editions require the correction workflow")
-    allowed = {"title", "summary", "body_markdown"}
-    if not payload or not set(payload) <= allowed:
+    update_fingerprint = payload.get("incorporate_update_fingerprint")
+    allowed = {"title", "summary", "body_markdown", "incorporate_update_fingerprint"}
+    if not payload or not set(payload) <= allowed or not (set(payload) & {"title", "summary", "body_markdown"}):
         raise ValueError("edition edit supports title, summary and body_markdown")
-    draft = {**edition["draft"], **{k: text(v, k, limit=200000) for k, v in payload.items()}}
+    draft = {**edition["draft"], **{k: text(v, k, limit=200000) for k, v in payload.items()
+                                    if k in {"title", "summary", "body_markdown"}}}
+    update = None
+    if update_fingerprint:
+        draft, update = _incorporate_verified_update(edition_id, draft, update_fingerprint, db_path=db_path)
     with transaction(db_path) as conn:
-        append("edition_revision", {"edition_id": edition_id, "before": edition["draft"], "after": draft}, actor=actor, connection=conn)
+        append("edition_revision", {"edition_id": edition_id, "before": edition["draft"], "after": draft,
+               "incorporated_update_fingerprint": update_fingerprint or ""}, actor=actor, connection=conn)
+        if update:
+            append("edition_update_reconciled", {"edition_id": edition_id,
+                   "update_fingerprint": update_fingerprint, "after_fingerprint": digest(draft)},
+                   actor=actor, connection=conn)
         conn.execute("UPDATE research_editorial_editions SET draft_json=?,fingerprint=?,state='verifying',updated_at=? WHERE edition_id=?", (canonical(draft), digest(draft), soc_store.utc_now(), edition_id))
     return _edition(edition_id, db_path=db_path)
 
@@ -152,10 +259,37 @@ def _items_current(edition: dict, db_path) -> bool:
     return True
 
 
+def _incorporate_verified_update(edition_id: str, draft: dict, update_fingerprint: str, *, db_path=None) -> tuple[dict, dict]:
+    update = pending_edition_update(edition_id, db_path=db_path)
+    if not update or update.get("draft_fingerprint") != update_fingerprint:
+        raise ValueError("the verified update changed; refresh the edition before reconciling it")
+    body = draft["body_markdown"]
+    for item in update.get("new_items", []):
+        if item["title"] not in body or item["url"] not in body:
+            raise ValueError("the edited brief must include each new verified item and its source URL")
+    for item in update.get("removed_items", []):
+        if item["title"] in body or item["url"] in body:
+            raise ValueError("remove source material that is no longer eligible before reconciling the update")
+    replaced = set(update.get("replace_event_ids", []))
+    removed = set(update.get("remove_event_ids", []))
+    items = [item for item in draft.get("items", []) if item["event_id"] not in replaced | removed]
+    items.extend(update.get("new_items", []))
+    draft["items"] = items
+    draft["sources"] = list(dict.fromkeys(item["url"] for item in items))
+    draft["references"] = list(draft["sources"])
+    if not _items_current({"draft": draft}, db_path):
+        raise ValueError("the verified update is no longer current; refresh the edition")
+    return draft, update
+
+
 def approve_edition(edition_id: str, payload: dict, *, actor: str, db_path=None) -> dict:
     edition = _edition(edition_id, db_path=db_path)
     person(actor, role="editor", db_path=db_path)
-    if actor == edition["author_id"] or actor not in {edition["draft"]["duty"]["editor_id"], edition["draft"]["duty"]["backup_id"]}:
+    if edition["state"] != "verifying":
+        raise ValueError("only a current verifying draft can be approved; published editions require the correction workflow")
+    duty = edition["draft"].get("duty") or {}
+    assigned_editors = {duty.get("editor_id"), duty.get("backup_id")} - {"", None}
+    if actor == edition["author_id"] or (assigned_editors and actor not in assigned_editors):
         raise ValueError("release requires the assigned duty editor or backup, distinct from the author")
     checks = payload.get("checks")
     if payload.get("expected_fingerprint") != edition["fingerprint"]:
@@ -219,14 +353,27 @@ def correct_edition(edition_id: str, payload: dict, *, actor: str, db_path=None)
     reason = text(payload.get("reason"), "public correction reason")
     draft = dict(edition["draft"])
     draft["correction_action"] = action
+    update_fingerprint = payload.get("incorporate_update_fingerprint")
     if action == "correction":
         draft["body_markdown"] = text(payload.get("body_markdown"), "corrected draft", limit=200000)
+        update = None
+        if update_fingerprint:
+            draft, update = _incorporate_verified_update(edition_id, draft, update_fingerprint, db_path=db_path)
     else:
+        if update_fingerprint:
+            raise ValueError("a retraction cannot incorporate verified updates")
+        update = None
         draft["items"] = []
         draft["body_markdown"] = f"# Retraction: {draft['title']}\n\n{reason}\n\nThe original record remains preserved in SecOpsAI's editorial audit history."
     draft["body_markdown"] += f"\n\n## Correction history\n\n{soc_store.utc_now()}: {reason}"
     with transaction(db_path) as conn:
-        append("edition_correction", {"edition_id": edition_id, "action": action, "reason": reason, "before": edition["draft"], "after": draft}, actor=actor, connection=conn)
+        append("edition_correction", {"edition_id": edition_id, "action": action, "reason": reason,
+               "before": edition["draft"], "after": draft,
+               "incorporated_update_fingerprint": update_fingerprint or ""}, actor=actor, connection=conn)
+        if update:
+            append("edition_update_reconciled", {"edition_id": edition_id,
+                   "update_fingerprint": update_fingerprint, "after_fingerprint": digest(draft)},
+                   actor=actor, connection=conn)
         conn.execute("UPDATE research_editorial_editions SET state='verifying',draft_json=?,fingerprint=?,updated_at=? WHERE edition_id=?", (canonical(draft), digest(draft), soc_store.utc_now(), edition_id))
     return _edition(edition_id, db_path=db_path)
 
