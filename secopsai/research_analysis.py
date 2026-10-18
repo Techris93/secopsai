@@ -188,28 +188,80 @@ def inspect_nuget_archive(data: bytes, filename: str = "package.nupkg") -> Dict[
 
 
 def correlate_candidates(*, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Create stable campaign links for exact shared evidence only."""
+    """Create idempotent correlation groups from exact release/artifact/behavior keys.
+
+    Shared publisher text is deliberately excluded: it is too common to imply a
+    campaign relationship. Correlation confidence stays zero until calibrated
+    and human reviewed; grouping is an evidence-navigation aid, not attribution.
+    """
     soc_store.init_db(db_path)
     with closing(soc_store.connect(db_path)) as connection:
         candidates = [dict(row) for row in connection.execute("SELECT * FROM research_candidates WHERE status IN ('new', 'review', 'promoted') ORDER BY package, version").fetchall()]
     campaigns: List[Dict[str, Any]] = []
-    groups: Dict[str, List[Dict[str, Any]]] = {}
+    groups: Dict[str, Dict[str, Any]] = {}
     for candidate in candidates:
         evidence = _read_json(candidate.get("evidence_json"), {})
-        key = str(evidence.get("publisher") or "").strip().casefold()
-        if key:
-            groups.setdefault(f"publisher:{key}", []).append(candidate)
-    for group_key, items in groups.items():
+        ecosystem = str(candidate.get("ecosystem") or "").strip().lower()
+        package = str(candidate.get("package") or "").strip().casefold()
+        version = str(candidate.get("version") or "").strip().casefold()
+        if ecosystem and package and version:
+            key = f"release:{ecosystem}:{package}@{version}"
+            groups.setdefault(key, {"kind": "same_release", "items": []})["items"].append(candidate)
+        analysis = evidence.get("analysis") if isinstance(evidence.get("analysis"), dict) else {}
+        artifact_hash = str(evidence.get("artifact_sha256") or analysis.get("artifact_sha256") or "").lower()
+        if re.fullmatch(r"[a-f0-9]{64}", artifact_hash):
+            key = f"artifact:{artifact_hash}"
+            groups.setdefault(key, {"kind": "same_artifact", "items": []})["items"].append(candidate)
+        fingerprints: set[str] = set()
+        stack: list[Any] = [evidence]
+        while stack:
+            value = stack.pop()
+            if isinstance(value, dict):
+                fingerprint = value.get("observation_fingerprint")
+                if isinstance(fingerprint, str) and re.fullmatch(r"[a-f0-9]{32,128}", fingerprint.lower()):
+                    fingerprints.add(fingerprint.lower())
+                stack.extend(child for key, child in value.items() if key not in {"snippet", "notes", "reason"})
+            elif isinstance(value, list):
+                stack.extend(value)
+        for fingerprint in fingerprints:
+            key = f"behavior:{fingerprint}"
+            groups.setdefault(key, {"kind": "shared_behavior", "items": []})["items"].append(candidate)
+
+    # Avoid a second cluster when two records are already grouped by the
+    # stronger exact-release or exact-artifact key with the same membership.
+    priority = {"same_release": 0, "same_artifact": 1, "shared_behavior": 2}
+    selected: Dict[tuple[str, ...], tuple[str, Dict[str, Any]]] = {}
+    for group_key, group in groups.items():
+        items = group["items"]
         if len(items) < 2:
             continue
-        campaign_id = _id("CMPG")
+        candidate_ids = tuple(sorted({str(item["candidate_id"]) for item in items}))
+        current = selected.get(candidate_ids)
+        if current is None or priority[group["kind"]] < priority[current[1]["kind"]]:
+            selected[candidate_ids] = (group_key, group)
+    for candidate_ids, (group_key, group) in sorted(selected.items()):
+        items_by_id = {str(item["candidate_id"]): item for item in group["items"]}
+        items = [items_by_id[item_id] for item_id in candidate_ids]
+        campaign_id = "CMPG-" + hashlib.sha256(f"{CORRELATION_VERSION}|{group_key}|{'|'.join(candidate_ids)}".encode()).hexdigest()[:16].upper()
         now = _now()
+        kind = group["kind"]
+        evidence = {"group_key": group_key, "group_type": kind, "candidate_ids": list(candidate_ids), "attribution_inferred": False}
+        title = {
+            "same_release": f"Exact release cluster: {items[0]['ecosystem']}:{items[0]['package']}@{items[0]['version']}",
+            "same_artifact": f"Exact artifact cluster: {group_key.rsplit(':', 1)[-1][:16]}",
+            "shared_behavior": "Shared exact behavior fingerprint cluster",
+        }[kind]
+        summary = {
+            "same_release": "Multiple candidate records refer to the exact same package release. This is deduplication, not a security verdict.",
+            "same_artifact": "Multiple candidate records cite the exact same SHA-256 artifact. This is deduplication, not a security verdict.",
+            "shared_behavior": "Candidates share an exact structural behavior fingerprint. This is a correlation lead, not campaign attribution.",
+        }[kind]
         with closing(soc_store.connect(db_path)) as connection:
-            connection.execute("INSERT INTO research_campaigns (campaign_id, title, status, confidence, attribution, summary, created_at, updated_at) VALUES (?, ?, 'candidate', ?, 'none', ?, ?, ?)", (campaign_id, f"Potential package campaign: {group_key.split(':', 1)[1]}", 40, "Candidates share a publisher field; this is not attribution.", now, now))
+            connection.execute("INSERT OR IGNORE INTO research_campaigns (campaign_id, title, status, confidence, attribution, summary, created_at, updated_at) VALUES (?, ?, 'candidate', 0, 'none', ?, ?, ?)", (campaign_id, title, summary, now, now))
             for item in items:
-                connection.execute("INSERT INTO research_campaign_links (campaign_id, left_type, left_id, right_type, right_id, relationship, confidence, evidence_json, algorithm_version, human_state, created_at) VALUES (?, 'campaign', ?, 'candidate', ?, 'shared_publisher', 40, ?, ?, 'unreviewed', ?)", (campaign_id, campaign_id, item["candidate_id"], _json({"publisher": _read_json(item.get("evidence_json"), {}).get("publisher", "")}), CORRELATION_VERSION, now))
+                connection.execute("INSERT OR IGNORE INTO research_campaign_links (campaign_id, left_type, left_id, right_type, right_id, relationship, confidence, evidence_json, algorithm_version, human_state, created_at) VALUES (?, 'campaign', ?, 'candidate', ?, ?, 0, ?, ?, 'unreviewed', ?)", (campaign_id, campaign_id, item["candidate_id"], kind, _json(evidence), CORRELATION_VERSION, now))
             connection.commit()
-        campaigns.append({"campaign_id": campaign_id, "candidate_ids": [item["candidate_id"] for item in items], "relationship": "shared_publisher", "confidence": 40})
+        campaigns.append({"campaign_id": campaign_id, "candidate_ids": list(candidate_ids), "relationship": kind, "confidence": 0, "attribution_inferred": False})
     return campaigns
 
 

@@ -17,9 +17,10 @@ from secopsai.research_operation_store import read_connection
 from secopsai.research_operation_store import append, canonical, digest, records, text, timestamp, transaction
 
 ASSESSMENTS = {"observation", "source_reported", "inference", "disputed", "unknown"}
-TECHNICAL_CHECKS = {"claims", "affected_versions", "reproduction", "alternatives", "detections", "mitigations", "attribution", "limitations"}
+TECHNICAL_CHECKS = {"claims", "affected_versions", "reproduction", "materiality", "alternatives", "detections", "mitigations", "attribution", "limitations"}
 EDITORIAL_CHECKS = {"privacy", "secrets", "sharing_rights", "licensing", "embargo", "vendor_coordination", "credits", "conflicts", "exposure_counts"}
 ROLES = {"author", "researcher", "technical_reviewer", "editor", "duty_editor", "backup", "operator"}
+IMPACT_INDICATORS = {"active_exploitation", "credential_theft", "harmful_install_time_behavior", "victim_exposure"}
 
 
 def register_person(payload: dict, *, actor: str, db_path=None) -> dict:
@@ -156,17 +157,46 @@ def assess_claim(case_id: str, payload: dict, *, actor: str, db_path=None) -> di
     malicious = payload.get("malicious_behavior", False)
     if not isinstance(malicious, bool):
         raise ValueError("malicious_behavior must be boolean")
+    impact_indicators = payload.get("impact_indicators", [])
+    if (not isinstance(impact_indicators, list) or len(impact_indicators) > len(IMPACT_INDICATORS)
+            or any(not isinstance(item, str) for item in impact_indicators)
+            or not set(impact_indicators) <= IMPACT_INDICATORS):
+        raise ValueError("impact_indicators must use the supported evidence-review categories")
+    if impact_indicators and (not malicious or assessment not in {"observation", "source_reported"}):
+        raise ValueError("urgent impact indicators require a reviewed observation or source-reported malicious behavior claim")
+    evidence_types = {item["evidence_type"] for item in checked}
+    required_types = {
+        "active_exploitation": {"source", "sandbox_analysis"},
+        # Static access to a credential file does not establish theft. This
+        # escalation requires a primary source report or a scoped experiment.
+        "credential_theft": {"source", "sandbox_analysis"},
+        "harmful_install_time_behavior": {"package_artifact", "static_analysis", "sandbox_analysis"},
+        "victim_exposure": {"source", "sandbox_analysis"},
+    }
+    for indicator in impact_indicators:
+        if not evidence_types & required_types[indicator]:
+            raise ValueError(f"{indicator} requires directly relevant active evidence references")
+    if "victim_exposure" in impact_indicators and assessment != "source_reported":
+        raise ValueError("victim exposure requires a primary-source-reported claim")
     contradictions = _string_list(payload.get("contradictions"), "contradictions")
     if contradictions and assessment not in {"disputed", "unknown"} and not payload.get("contradiction_resolution"):
         raise ValueError("contrary evidence requires an explicit resolution")
     result = {"statement": statement, "statement_hash": digest(statement), "assessment": assessment, "references": checked,
               "scope": scope, "confidence": confidence, "likelihood": probability, "malicious_behavior": malicious,
+              "impact_indicators": sorted(set(impact_indicators)),
               "rationale": text(payload.get("rationale"), "rationale"), "quality": text(payload.get("quality"), "evidence quality"),
               "alternatives": _string_list(payload.get("alternatives"), "alternatives", required=True), "contradictions": contradictions,
               "contradiction_resolution": text(payload.get("contradiction_resolution", ""), "contradiction resolution", required=False),
               "limitations": _string_list(payload.get("limitations"), "limitations"), "reviewer_id": actor,
               "reviewer_fingerprint": digest(person(actor, role="technical_reviewer", db_path=db_path))}
-    return append("claim_assessment", result, actor=actor, case_id=case_id, fingerprint=case_fingerprint(case), db_path=db_path)
+    record = append("claim_assessment", result, actor=actor, case_id=case_id, fingerprint=case_fingerprint(case), db_path=db_path)
+    urgent_alert = None
+    if result["impact_indicators"]:
+        from secopsai.research_routing import create_urgent_review_alert
+
+        current_case = _case(case_id, db_path)
+        urgent_alert = create_urgent_review_alert(current_case, {**result, "fingerprint": record["fingerprint"]}, db_path=db_path)
+    return {**record, "urgent_alert": urgent_alert} if urgent_alert else record
 
 
 def claim_assessments(case: dict, *, db_path=None) -> dict[str, dict]:

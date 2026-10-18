@@ -890,6 +890,9 @@ def get_case(case_id: str, *, db_path: Optional[str] = None, repair: bool = Fals
     result["sandbox_recommendation"] = recommend_dynamic_analysis(result)
     if include_reliability:
         result["research_reliability"] = get_reliability_workspace(case_id, db_path=db_path)
+    from secopsai.research_routing import route_case
+
+    result["routing"] = route_case(result, db_path=db_path)
     return result
 
 
@@ -1541,8 +1544,6 @@ def publication_readiness(case: Dict[str, Any]) -> Dict[str, Any]:
         blockers.append("at least two evidence records are required")
     if not source_evidence:
         blockers.append("at least one source or registry-metadata record with a locator is required")
-    if int(case.get("confidence") or 0) < 60:
-        blockers.append("confidence must be at least 60 before publication")
     if case.get("disclosure_status") not in {"not_required", "disclosed", "closed"}:
         blockers.append("responsible disclosure must be completed or marked not required")
     if case.get("status") not in {"ready_to_publish", "published"}:

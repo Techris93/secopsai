@@ -35,6 +35,10 @@ def _stub_modules(monkeypatch, *, fail_step=None, kwargs_by_name=None):
         stub("candidate_promotion"),
     )
     monkeypatch.setattr(
+        "secopsai.research_discovery.run_due_candidate_validations",
+        stub("candidate_evidence_validation"),
+    )
+    monkeypatch.setattr(
         "secopsai.artifact_fleet.run_cycle",
         stub("artifact_fleet_safe_cycle"),
     )
@@ -72,7 +76,7 @@ def test_daily_cycle_runs_all_steps_and_is_persisted(tmp_path, monkeypatch):
     result = daily_automation.run_cycle(db_path=db, trigger="test", force=True)
 
     assert result["status"] == "succeeded"
-    assert result["summary"]["completed_steps"] == 11
+    assert result["summary"]["completed_steps"] == 12
     assert result["summary"]["failed_steps"] == 0
     assert result["summary"]["ontology_quality"]["schema_version"] == "secopsai.ontology.v1"
     assert calls == [
@@ -80,6 +84,7 @@ def test_daily_cycle_runs_all_steps_and_is_persisted(tmp_path, monkeypatch):
         "intelligence_queue_recovery",
         "registry_surveillance",
         "candidate_promotion",
+        "candidate_evidence_validation",
         "artifact_fleet_safe_cycle",
         "alert_review_queue",
         "evidence_investigations",
@@ -89,7 +94,7 @@ def test_daily_cycle_runs_all_steps_and_is_persisted(tmp_path, monkeypatch):
         "operational_alert_delivery",
     ]
     stored = daily_automation.get_run(result["run_id"], db_path=db)
-    assert len(stored["steps"]) == 11
+    assert len(stored["steps"]) == 12
     assert stored["steps"][0]["status"] == "succeeded"
     status = daily_automation.status(db_path=db)
     assert status["summary"]["last_status"] == "succeeded"
@@ -107,6 +112,7 @@ def test_daily_cycle_passes_database_path_to_database_backed_callbacks(tmp_path,
         "intelligence_queue_recovery",
         "registry_surveillance",
         "candidate_promotion",
+        "candidate_evidence_validation",
         "artifact_fleet_safe_cycle",
         "alert_review_queue",
         "evidence_investigations",
@@ -116,6 +122,7 @@ def test_daily_cycle_passes_database_path_to_database_backed_callbacks(tmp_path,
         "operational_alert_delivery",
     ):
         assert callback_kwargs[step_name]["db_path"] == db
+    assert callback_kwargs["candidate_evidence_validation"]["limit"] == 5
 
 
 def test_daily_cycle_continues_after_step_failure_and_marks_degraded(tmp_path, monkeypatch):

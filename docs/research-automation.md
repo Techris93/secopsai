@@ -2,6 +2,12 @@
 
 SecOpsAI Research turns a watchlist lead into a defensible investigation without executing the investigated package. The dashboard buttons call the same typed Core workflow as the CLI; command-copy helpers are only a fallback.
 
+Read [Evidence-based research routing](research-routing.md) for the separate
+review-priority and publication-eligibility decisions. Name similarity and
+model scores do not create publication candidates; urgent escalation requires
+a qualified evidence-linked claim, and closure requires a documented
+disposition plus a passing regression test.
+
 Static artifact proposals are calibrated before model review. Read the
 [Artifact Signal Calibration](artifact-signal-calibration.md) guide for the
 distinction between priority, detection confidence, potential impact, local

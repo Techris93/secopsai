@@ -29,7 +29,7 @@ PRIORITIES = {"low", "normal", "high", "critical"}
 STATUSES = {"active", "paused", "archived", "new", "review", "dismissed", "promoted"}
 PROMOTION_MODES = {"review_only", "draft_case"}
 RESEARCH_ALERT_FINDING_SOURCE = "secopsai_research"
-OPERATIONAL_ALERT_TYPES = {"collector_degraded", "collector_retention_risk", "storage_capacity_warning"}
+OPERATIONAL_ALERT_TYPES = {"collector_degraded", "collector_retention_risk", "storage_capacity_warning", "candidate_detected"}
 ALERT_SYNC_BATCH_SIZE = 25
 MAX_ALERT_SYNC_BATCH_SIZE = 100
 
@@ -456,7 +456,7 @@ def _record_candidate(*, monitor: Dict[str, Any], watchlist: Dict[str, Any], met
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', NULL, ?, ?, ?, ?)
                 ON CONFLICT(ecosystem, package, version, reference_identifier) DO UPDATE SET score=excluded.score,
                 score_components_json=excluded.score_components_json, reason=excluded.reason, last_seen=excluded.last_seen""",
-                (candidate_id, event_id, watchlist["watchlist_id"], metadata.ecosystem, metadata.package, metadata.version, watchlist["identifier"], score["score"], _json(score["components"]), reason, _json({"metadata_url": metadata.metadata_url, "artifact_url": metadata.artifact_url, "publisher": metadata.publisher, "observed_value": observed_value, "watch_type": watchlist.get("watch_type")}), now, now, score["algorithm_version"]),
+                (candidate_id, event_id, watchlist["watchlist_id"], metadata.ecosystem, metadata.package, metadata.version, watchlist["identifier"], score["score"], _json(score["components"]), reason, _json({"metadata_url": metadata.metadata_url, "artifact_url": metadata.artifact_url, "publisher": metadata.publisher, "observed_value": observed_value, "watch_type": watchlist.get("watch_type"), "publisher_mismatch": publisher_mismatch, "expected_publishers": watchlist.get("known_publishers") or []}), now, now, score["algorithm_version"]),
                 )
             connection.commit()
             row = connection.execute("SELECT * FROM research_candidates WHERE ecosystem = ? AND package = ? AND version = ? AND reference_identifier = ?", (metadata.ecosystem, metadata.package, metadata.version, watchlist["identifier"])).fetchone()
@@ -465,8 +465,6 @@ def _record_candidate(*, monitor: Dict[str, Any], watchlist: Dict[str, Any], met
     item = dict(row)
     item["score_components"] = _decode(item.pop("score_components_json"), {})
     item["evidence"] = _decode(item.pop("evidence_json"), {})
-    if float(item.get("score") or 0) >= max(float(watchlist["threshold"]), 85.0):
-        create_candidate_alert(item, db_path=db_path)
     return {"matched": True, "candidate": item}
 
 
@@ -566,8 +564,21 @@ def list_candidates(*, status: Optional[str] = None, ecosystem: Optional[str] = 
     soc_store.init_db(db_path)
     limit = max(1, min(int(limit), 500))
     with closing(soc_store.connect(db_path)) as connection:
-        rows = connection.execute("SELECT * FROM research_candidates WHERE (? IS NULL OR status = ?) AND (? IS NULL OR ecosystem = ?) ORDER BY score DESC, last_seen DESC LIMIT ?", (status, status, ecosystem, ecosystem, limit)).fetchall()
-    return [{**dict(row), "score_components": _decode(row["score_components_json"], {}), "evidence": _decode(row["evidence_json"], {})} for row in rows]
+        # Return recent discovery signals first. Similarity remains useful for
+        # explaining why a lead was found, but it must not determine which
+        # findings enter the bounded review window.
+        rows = connection.execute("SELECT * FROM research_candidates WHERE (? IS NULL OR status = ?) AND (? IS NULL OR ecosystem = ?) ORDER BY last_seen DESC, candidate_id ASC LIMIT ?", (status, status, ecosystem, ecosystem, limit)).fetchall()
+    from secopsai.research_routing import route_candidate
+
+    output = []
+    for row in rows:
+        item = dict(row)
+        item["score_components"] = _decode(item.pop("score_components_json"), {})
+        item["evidence"] = _decode(item.pop("evidence_json"), {})
+        item["score_kind"] = "static_signal_score" if item["evidence"].get("source") == "npm_registry_proactive_static" else "name_similarity"
+        item["routing"] = route_candidate(item)
+        output.append(item)
+    return output
 
 
 def get_candidate(candidate_id: str, *, db_path: Optional[str] = None) -> Dict[str, Any]:
@@ -579,6 +590,10 @@ def get_candidate(candidate_id: str, *, db_path: Optional[str] = None) -> Dict[s
     item = dict(row)
     item["score_components"] = _decode(item.pop("score_components_json"), {})
     item["evidence"] = _decode(item.pop("evidence_json"), {})
+    item["score_kind"] = "static_signal_score" if item["evidence"].get("source") == "npm_registry_proactive_static" else "name_similarity"
+    from secopsai.research_routing import route_candidate
+
+    item["routing"] = route_candidate(item)
     return item
 
 
@@ -644,7 +659,8 @@ def run_promotion_policy(*, ecosystem: str = "all", apply: bool = False, actor: 
         if policy["require_publisher"] and not evidence.get("publisher"):
             reasons.append("publisher_missing")
         eligible = not reasons and bool(policy["enabled"])
-        decision = {"candidate_id": candidate["candidate_id"], "eligible": eligible, "score": candidate["score"], "evidence_count": len(evidence_values), "reasons": reasons or (["policy_disabled"] if not policy["enabled"] else ["eligible"]), "case_id": candidate.get("case_id")}
+        score_kind = "static_signal_score" if evidence.get("source") == "npm_registry_proactive_static" else "name_similarity"
+        decision = {"candidate_id": candidate["candidate_id"], "eligible": eligible, "score": candidate["score"], "score_kind": score_kind, "evidence_count": len(evidence_values), "reasons": reasons or (["policy_disabled"] if not policy["enabled"] else ["eligible"]), "case_id": candidate.get("case_id")}
         if apply and eligible and policy["mode"] == "draft_case" and not candidate.get("case_id"):
             case_id = f"RSC-{hashlib.sha256(candidate['candidate_id'].encode()).hexdigest()[:12].upper()}"
             subject_stable = "|".join((case_id, "package", str(candidate["ecosystem"]), str(candidate["package"]), str(candidate.get("version") or "")))
@@ -665,11 +681,11 @@ def run_promotion_policy(*, ecosystem: str = "all", apply: bool = False, actor: 
                     (case_id, title, summary, case_type, severity, confidence, status, owner, disclosure_status,
                      embargo_until, created_at, updated_at, closed_at, published_at, payload_json)
                     VALUES (?, ?, ?, 'typosquatting', 'medium', ?, 'draft', ?, 'not_started', NULL, ?, ?, NULL, NULL, ?)""",
-                    (case_id, f"Investigate {candidate['ecosystem']} package {candidate['package']}", f"Automatically promoted as a draft investigation after deterministic policy checks. Similarity score: {candidate['score']}. This is a lead, not a maliciousness verdict.", min(int(float(candidate["score"])), 80), actor, now, now, _json({"candidate_id": candidate["candidate_id"], "promotion_policy": policy})))
+                    (case_id, f"Investigate {candidate['ecosystem']} package {candidate['package']}", "Automatically promoted as a draft investigation after discovery-policy checks. The discovery signal is not confidence or maliciousness; neither has been assessed.", 0, actor, now, now, _json({"candidate_id": candidate["candidate_id"], "promotion_policy": policy, "discovery": {"score": candidate["score"], "score_kind": score_kind, "algorithm_version": candidate.get("algorithm_version"), "watchlist_identifier": candidate.get("reference_identifier")}})))
                 connection.execute("""INSERT OR IGNORE INTO research_subjects
                     (subject_id, case_id, subject_type, ecosystem, name, version, publisher, status, metadata_json, created_at)
                     VALUES (?, ?, 'package', ?, ?, ?, ?, 'active', ?, ?)""",
-                    (subject_id, case_id, candidate["ecosystem"], candidate["package"], candidate.get("version") or "", evidence.get("publisher") or "", _json({"candidate_id": candidate["candidate_id"], "reference_identifier": candidate.get("reference_identifier")}), now))
+                    (subject_id, case_id, candidate["ecosystem"], candidate["package"], candidate.get("version") or "", evidence.get("publisher") or "", _json({"candidate_id": candidate["candidate_id"], "watchlist_identifier": candidate.get("reference_identifier"), "discovery_score": {"value": candidate["score"], "kind": score_kind}, "comparison_reference_configured": False}), now))
                 if evidence.get("metadata_url"):
                     connection.execute("""INSERT OR IGNORE INTO research_evidence
                         (evidence_id, case_id, evidence_type, title, locator, sha256, provenance, notes, status, collected_at, created_at, metadata_json)
@@ -685,6 +701,54 @@ def run_promotion_policy(*, ecosystem: str = "all", apply: bool = False, actor: 
     return {"schema_version": "secopsai.research.promotion-policy.v1", "policy": policy, "apply": bool(apply), "evaluated": len(decisions), "eligible": sum(bool(item["eligible"]) for item in decisions), "promoted": sum(bool(item.get("applied")) for item in decisions), "decisions": decisions}
 
 
+def run_due_candidate_validations(*, db_path: Optional[str] = None, limit: int = 5) -> Dict[str, Any]:
+    """Run bounded safe intake for promoted discovery leads.
+
+    Similarity may select a lead for non-executing evidence acquisition, but it
+    never sets confidence, severity, human-review priority, or publication
+    eligibility. Cases already running, awaiting required input/review,
+    completed, failed, or canceled are left for their existing workflow or
+    operator action rather than restarted.
+    """
+    from secopsai.research_cases import get_case
+    from secopsai.research_pipeline import ACTIVE_PIPELINE_STATUSES, list_pipelines, start_investigation_pipeline
+
+    bound = max(1, min(int(limit), 25))
+    candidates = list_candidates(status="promoted", limit=500, db_path=db_path)
+    started: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    failed: list[dict[str, str]] = []
+    considered = 0
+    for candidate in candidates:
+        case_id = str(candidate.get("case_id") or "").strip()
+        if not case_id:
+            continue
+        if considered >= bound:
+            break
+        considered += 1
+        try:
+            case = get_case(case_id, db_path=db_path)
+            if case.get("status") == "closed":
+                skipped.append({"case_id": case_id, "reason": "case_closed"})
+                continue
+            existing = list_pipelines(case_id=case_id, limit=1, db_path=db_path)
+            if existing:
+                status = str(existing[0].get("status") or "unknown")
+                reason = "pipeline_active" if status in ACTIVE_PIPELINE_STATUSES else f"pipeline_already_recorded:{status}"
+                skipped.append({"case_id": case_id, "reason": reason})
+                continue
+            pipeline = start_investigation_pipeline(
+                case_id, actor="secopsai-candidate-validation", db_path=db_path, auto_enrich=True,
+            )
+            started.append({"case_id": case_id, "candidate_id": candidate["candidate_id"],
+                            "pipeline_id": pipeline.get("pipeline_id"), "status": pipeline.get("status"),
+                            "summary": pipeline.get("summary") or {}})
+        except Exception as exc:
+            failed.append({"case_id": case_id, "candidate_id": str(candidate.get("candidate_id") or ""), "error": str(exc)[:1000]})
+    return {"status": "completed_with_failures" if failed else "completed", "considered": considered,
+            "started": started, "skipped": skipped, "failed": failed, "limit": bound}
+
+
 def create_candidate_alert(
     candidate: Dict[str, Any],
     *,
@@ -694,7 +758,7 @@ def create_candidate_alert(
     dedupe_key: Optional[str] = None,
     reason_override: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Create a deduplicated alert for a high-confidence candidate.
+    """Create a deduplicated lead alert without treating similarity as confidence.
 
     External advisory feeds use the same canonical finding path but provide a
     stable source/version/hash dedupe key.  The defaults preserve the original
@@ -709,7 +773,11 @@ def create_candidate_alert(
     version_key = normalize_identifier(ecosystem, version)
     evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
     artifact_evidence = _has_artifact_evidence(evidence)
-    if alert_type == "external_advisory_match" and not artifact_evidence:
+    if alert_type == "candidate_detected":
+        # Similarity is a discovery signal. Keep this as a non-finding
+        # validation notice even when the match score or caller override is high.
+        severity = "info"
+    elif alert_type == "external_advisory_match" and not artifact_evidence:
         # A public advisory is a valuable lead, but it is not yet an
         # independently verified package compromise. Cap the initial lead at
         # high severity until artifact evidence exists.
@@ -761,7 +829,7 @@ def create_candidate_alert(
             )
             row = connection.execute("SELECT * FROM research_alerts WHERE dedupe_key = ?", (stable_dedupe_key,)).fetchone()
             finding_id = None
-            if row:
+            if row and alert_type != "candidate_detected":
                 finding_id = _upsert_research_alert_finding(connection, dict(row), candidate=candidate)
             connection.commit()
     result = dict(row) if row else {"alert_id": alert_id, "dedupe_key": stable_dedupe_key}
@@ -789,10 +857,15 @@ def _upsert_research_alert_finding(
     ecosystem = str((candidate or {}).get("ecosystem") or evidence.get("ecosystem") or "").strip().lower()
     version = str((candidate or {}).get("version") or evidence.get("version") or "").strip()
     score = (candidate or {}).get("score", evidence.get("score", 0))
+    score_kind = "static_signal_score" if evidence.get("source") == "npm_registry_proactive_static" else "discovery_score"
+    # Candidate and detector scores explain why a lead was surfaced. They are
+    # not an assessed probability or confidence and must never populate the
+    # canonical finding confidence field.
     try:
-        confidence = min(99, max(0, int(float(score or 0))))
+        evidence.setdefault("discovery_score", {"value": float(score or 0), "kind": score_kind})
     except (TypeError, ValueError):
-        confidence = 0
+        pass
+    confidence = 0
     if alert_type == "npm_proactive_anomaly":
         title = f"Proactive npm release requires verification: {ecosystem or 'npm'} {package or alert_id}{('@' + version) if version else ''}"
         rule_ids = ["RESEARCH-NPM-PROACTIVE-STATIC"]
