@@ -1,3 +1,5 @@
+import json
+
 import soc_store
 import pytest
 from secopsai.research_delivery_verification import verify_delivery
@@ -73,6 +75,28 @@ def test_delivery_entrypoint_recovers_registry_runs_from_restored_snapshot(monke
         ('automation', {'db_path': None, 'restored_snapshot': True}),
         ('registry', {'db_path': None, 'restored_snapshot': True}),
     ]
+
+
+def test_delivery_entrypoint_logs_safe_hosted_error_code(monkeypatch, capsys):
+    from secopsai import research_delivery_verification as delivery
+    from secopsai.core_edge_client import CoreEdgeHTTPError
+
+    def reject_projection(**kwargs):
+        raise CoreEdgeHTTPError('hosted Core rejected projection', status=422, error_code='invalid_projection')
+
+    monkeypatch.setenv('SECOPSAI_RESTORED_LEDGER_RECOVERY', '0')
+    monkeypatch.setenv('SECOPSAI_VERIFY_DELIVERY_SECONDS', '840')
+    monkeypatch.setenv('SECOPSAI_VERIFY_RETRY_SOURCES', '')
+    monkeypatch.setenv('SECOPSAI_VERIFY_RETRY_COLLECTORS', '')
+    monkeypatch.setattr(delivery, 'verify_delivery', reject_projection)
+    assert delivery.main() == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        'event': 'delivery_verification_failed',
+        'error_category': 'CoreEdgeHTTPError',
+        'http_status': 422,
+        'error_code': 'invalid_projection',
+    }
 
 
 def test_explicit_source_retry_only_attempts_selected_enabled_source(tmp_path, monkeypatch):

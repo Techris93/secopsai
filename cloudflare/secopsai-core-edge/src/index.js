@@ -176,7 +176,12 @@ export async function handleRequest(request, env) {
       requireBridge(request, env);
       const projection = await readJsonObject(request, 131072, "Research operation projection");
       if (projection.schema_version !== "secopsai.research.operation.v1" || !Array.isArray(projection.coverage?.sources) || !Array.isArray(projection.editions)) throw new HttpError(422, "invalid_projection", "Research operation projection contract is required");
-      const allowed = ["schema_version", "coverage", "editions", "assistant_teams", "requirements", "missing_requirements", "reviewed_daily_brief_streak", "fourteen_day_gate_met", "rpo_target_seconds", "rto_target_seconds", "recovery_targets_proven", "decision_mode", "clef_enabled"];
+      // Keep this producer/receiver contract aligned with
+      // secopsai.research_operation.hosted_projection. These two bounded
+      // summaries contain only explicitly public-source review items and
+      // machine dispatch status; private source records stay out of the
+      // hosted projection.
+      const allowed = ["schema_version", "coverage", "editions", "assistant_teams", "pending_source_reviews", "automation", "requirements", "missing_requirements", "reviewed_daily_brief_streak", "fourteen_day_gate_met", "rpo_target_seconds", "rto_target_seconds", "recovery_targets_proven", "decision_mode", "clef_enabled"];
       if (Object.keys(projection).some(key => !allowed.includes(key))) throw new HttpError(422, "invalid_projection", "Private research records cannot enter the operation projection");
       await env.DB.prepare("INSERT INTO research_operation_projections VALUES (?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET projection_json=excluded.projection_json,synced_at=excluded.synced_at").bind(clean(env.CORE_WORKSPACE_ID, 160) || "hosted", JSON.stringify(projection), nowIso()).run();
       return response(200, { status: "stored" }, requestId);
