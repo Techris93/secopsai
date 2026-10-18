@@ -10,7 +10,7 @@ from secopsai.research_operation_store import records
 
 READ_ACTIONS = {"status", "coverage", "people", "events", "editions", "queue", "audit", "metrics", "storage-assessment"}
 READ_ACTIONS.add("assistant-teams")
-WRITE_ACTIONS = {"person-register", "claim-assess", "prior-art", "experiment", "behavior", "case-review", "source-configure", "source-collect", "event-verify", "roster", "board", "brief-create", "brief-edit", "brief-approve", "brief-publish", "brief-correct", "submission", "disclosure-milestone", "requirement", "queue-claim", "queue-heartbeat", "queue-complete", "queue-fail", "outcome"}
+WRITE_ACTIONS = {"person-register", "claim-assess", "prior-art", "experiment", "behavior", "case-review", "case-disposition", "source-configure", "source-collect", "event-verify", "roster", "board", "brief-create", "brief-edit", "brief-approve", "brief-publish", "brief-correct", "submission", "disclosure-milestone", "requirement", "queue-claim", "queue-heartbeat", "queue-complete", "queue-fail", "outcome"}
 # Remote operator commands never accept local file paths or publish files from
 # an ephemeral worker. Publication uses the reviewed export and release path.
 WRITE_ACTIONS.add("recovery-drill")
@@ -94,6 +94,10 @@ def execute(action: str, payload: dict | None = None, *, actor: str = "", case_i
                  "submission": governance.submit_sample, "disclosure-milestone": governance.disclosure_milestone}
     if action in functions:
         return functions[action](case_id, payload, actor=actor, db_path=db_path)
+    if action == "case-disposition":
+        from secopsai.research_routing import record_case_disposition
+
+        return record_case_disposition(case_id, payload, actor=actor, db_path=db_path)
     if action == "source-configure":
         return intel.configure_source(payload, actor=actor, db_path=db_path)
     if action == "source-collect":

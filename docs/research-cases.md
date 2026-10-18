@@ -256,10 +256,15 @@ A case cannot create a blog draft until all deterministic gates pass:
 - at least one structured subject
 - at least two evidence records
 - at least one public source or registry record with a locator
-- confidence of 60 or greater
 - disclosure completed or explicitly marked not required
 - case status set to `ready_to_publish`
 - every attached active detection rule passes structural validation
+- current evidence-linked claim assessments, independent technical review, prior-art review, and editorial approval
+
+There is no universal confidence cutoff for publication readiness. The route
+decision uses the evidence, scope, review records, disclosure state, and
+publication blockers directly; confidence remains a separately reported
+assessment and is not a substitute for those gates.
 
 Missing IOCs or linked findings are warnings, not automatic blockers, because a
 valid investigation may produce no attacker infrastructure or local exposure.

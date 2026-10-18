@@ -74,8 +74,29 @@ def test_watchlist_monitor_creates_idempotent_candidate(tmp_path):
     assert len(candidates) == 1
     assert candidates[0]["package"] == "chalk-tempalte"
     assert get_candidate(candidates[0]["candidate_id"], db_path=db)["score"] >= 70
+    assert candidates[0]["score_kind"] == "name_similarity"
     assert list_monitors(db_path=db)[0]["coverage"] == {}
     assert list_alerts(db_path=db) == []
+
+
+def test_high_similarity_candidate_alert_is_not_a_canonical_finding(tmp_path):
+    from secopsai.research_discovery import create_candidate_alert
+
+    db = str(tmp_path / "research.db")
+    soc_store.init_db(db)
+    alert = create_candidate_alert({
+        "candidate_id": "CAN-SIMILARITY-ONLY",
+        "ecosystem": "npm",
+        "package": "universal-parcel-scraper",
+        "version": "0.359.0-main.1977",
+        "score": 100,
+        "reason": "The package name resembles a monitored identifier.",
+        "evidence": {"metadata_url": "https://registry.example/package"},
+    }, db_path=db, severity_override="critical")
+
+    assert alert["severity"] == "info"
+    assert alert["finding_id"] is None
+    assert list_alerts(db_path=db)[0]["status"] == "open"
 
 
 def test_due_monitor_runner_records_success_and_next_run(tmp_path):

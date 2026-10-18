@@ -5,8 +5,8 @@ from contextlib import contextmanager
 
 import soc_store
 
-from secopsai.research_delivery import deliver_pending_operational_alerts, send_email, send_research_alert
-from secopsai.research_discovery import create_candidate_alert, resolve_alert, sync_actionable_alert_findings
+from secopsai.research_delivery import deliver_pending_operational_alerts, deliver_urgent_review_alert, send_email, send_research_alert
+from secopsai.research_discovery import create_candidate_alert, sync_actionable_alert_findings
 from secopsai import research_discovery
 from secopsai.research_worker import _record_collector_degraded_alert
 
@@ -37,7 +37,7 @@ def test_research_alert_delivery_is_audited_without_exposing_raw_artifacts(tmp_p
     assert row["destination"] == "research@secopsai.dev"
 
 
-def test_candidate_alert_enters_canonical_agent_triage_without_local_dependency(tmp_path):
+def test_similarity_candidate_alert_does_not_create_canonical_finding(tmp_path):
     db = str(tmp_path / "research.db")
     alert = create_candidate_alert({
         "candidate_id": "CAN-GLOBAL-TEST",
@@ -50,19 +50,29 @@ def test_candidate_alert_enters_canonical_agent_triage_without_local_dependency(
         "last_seen": "2026-07-18T00:00:00Z",
     }, db_path=db)
 
+    assert alert["finding_id"] is None
+    assert soc_store.list_findings(db, source="secopsai_research") == []
+    with soc_store.connect(db) as connection:
+        row = connection.execute("SELECT severity, status FROM research_alerts WHERE alert_id=?", (alert["alert_id"],)).fetchone()
+    assert row["severity"] == "info"
+    assert row["status"] == "open"
+
+
+def test_registry_alert_score_is_not_finding_confidence(tmp_path):
+    db = str(tmp_path / "research.db")
+    alert = create_candidate_alert({
+        "candidate_id": "CAN-STATIC-SCORE",
+        "ecosystem": "npm",
+        "package": "example-package",
+        "version": "1.0.0",
+        "score": 97,
+        "reason": "Multiple static observations require validation.",
+        "evidence": {"source": "npm_registry_proactive_static", "score": 97, "artifact_sha256": "a" * 64},
+    }, db_path=db, alert_type="npm_proactive_anomaly")
     finding = soc_store.get_finding(alert["finding_id"], db)
     assert finding is not None
-    assert finding["source"] == "secopsai_research"
-    assert finding["platform"] == "supply_chain"
-    assert finding["package"] == "Brand.Security.Update"
-    assert finding["local_dependency_reference"] == "not_required_for_package_verification"
-    assert finding["status"] == "open"
-
-    resolved = resolve_alert(alert["alert_id"], db_path=db)
-    assert resolved["finding_id"] == alert["finding_id"]
-    finding = soc_store.get_finding(alert["finding_id"], db)
-    assert finding["status"] == "triaged"
-    assert finding["disposition"] == "needs_review"
+    assert finding["confidence"] == 0
+    assert finding["evidence"]["discovery_score"] == {"value": 97.0, "kind": "static_signal_score"}
 
 
 def test_historical_research_alerts_are_backfilled_but_collector_health_is_not(tmp_path):
@@ -338,6 +348,114 @@ def test_external_campaign_alerts_use_webhook_channel_without_email_flood(tmp_pa
     assert result["attempted"] == 1
     assert result["sent"] == 1
     assert len(captured) == 1
+
+
+def test_urgent_review_alert_uses_only_its_explicit_reviewer_channel(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    soc_store.init_db(db)
+    now = soc_store.utc_now()
+    with soc_store.connect(db) as connection:
+        connection.execute(
+            """INSERT INTO research_alerts
+               (alert_id, alert_type, severity, case_id, dedupe_key, reason, evidence_json,
+                status, owner, created_at, updated_at)
+               VALUES ('URGENT-1', 'urgent_case_review', 'high', 'RSC-1', 'urgent:1',
+                       'Qualified review requires immediate attention', ?, 'open', '', ?, ?)""",
+            (json.dumps({"route": "urgent_review", "evidence_ids": ["EVD-1"]}), now, now),
+        )
+        connection.commit()
+
+    captured = []
+    monkeypatch.setenv("SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS", "email")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_ALERT_EMAIL", "general@example.test")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_URGENT_ALERT_CHANNELS", "email")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_URGENT_REVIEWER_EMAIL", "duty@example.test")
+    monkeypatch.setattr(
+        "secopsai.research_delivery.send_email",
+        lambda **kwargs: (captured.append(kwargs) or {"status": "sent", "provider_id": "fixture"}),
+    )
+
+    result = deliver_urgent_review_alert("URGENT-1", db_path=db)
+    duplicate_attempt = deliver_urgent_review_alert("URGENT-1", db_path=db)
+
+    assert result == {"enabled": True, "channels": ["email"], "attempted": 1, "sent": 1, "failed": 0, "deferred": 0}
+    assert duplicate_attempt["deferred"] == 1
+    assert [item["recipient"] for item in captured] == ["duty@example.test"]
+    with soc_store.connect(db) as connection:
+        alert = connection.execute("SELECT status FROM research_alerts WHERE alert_id='URGENT-1'").fetchone()
+        delivery_count = connection.execute(
+            "SELECT COUNT(*) FROM research_notification_deliveries WHERE alert_id='URGENT-1'"
+        ).fetchone()[0]
+    assert alert["status"] == "open"
+    assert delivery_count == 1
+
+
+def test_urgent_alert_is_not_sent_through_general_channels_when_urgent_channel_is_unconfigured(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    soc_store.init_db(db)
+    now = soc_store.utc_now()
+    with soc_store.connect(db) as connection:
+        connection.execute(
+            """INSERT INTO research_alerts
+               (alert_id, alert_type, severity, case_id, dedupe_key, reason, evidence_json,
+                status, owner, created_at, updated_at)
+               VALUES ('URGENT-2', 'urgent_case_review', 'high', 'RSC-2', 'urgent:2',
+                       'Qualified review requires immediate attention', '{}', 'open', '', ?, ?)""",
+            (now, now),
+        )
+        connection.commit()
+    monkeypatch.setenv("SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS", "email")
+    monkeypatch.delenv("SECOPSAI_RESEARCH_URGENT_ALERT_CHANNELS", raising=False)
+    monkeypatch.setattr(
+        "secopsai.research_delivery.send_email",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("general email must not receive urgent review notices")),
+    )
+
+    immediate = deliver_urgent_review_alert("URGENT-2", db_path=db)
+    scheduled = deliver_pending_operational_alerts(db_path=db)
+
+    assert immediate["status"] == "not_configured"
+    assert scheduled["attempted"] == 0
+
+
+def test_failed_urgent_notification_is_audited_and_retried_with_backoff(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    db = str(tmp_path / "research.db")
+    soc_store.init_db(db)
+    now = datetime.now(timezone.utc)
+    with soc_store.connect(db) as connection:
+        connection.execute(
+            """INSERT INTO research_alerts
+               (alert_id, alert_type, severity, case_id, dedupe_key, reason, evidence_json,
+                status, owner, created_at, updated_at)
+               VALUES ('URGENT-3', 'urgent_case_review', 'critical', 'RSC-3', 'urgent:3',
+                       'Qualified review requires immediate attention', '{}', 'open', '', ?, ?)""",
+            (now.isoformat(), now.isoformat()),
+        )
+        connection.commit()
+    monkeypatch.setenv("SECOPSAI_RESEARCH_URGENT_ALERT_CHANNELS", "email")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_URGENT_REVIEWER_EMAIL", "duty@example.test")
+    monkeypatch.setattr(
+        "secopsai.research_delivery.send_email",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("temporary provider outage")),
+    )
+
+    first = deliver_urgent_review_alert("URGENT-3", db_path=db)
+    second = deliver_pending_operational_alerts(db_path=db, now=now + timedelta(seconds=10))
+    later = deliver_pending_operational_alerts(db_path=db, now=now + timedelta(minutes=2))
+
+    assert first["failed"] == 1
+    assert second["deferred"] == 1
+    assert later["failed"] == 1
+    with soc_store.connect(db) as connection:
+        deliveries = connection.execute(
+            "SELECT status, last_error FROM research_notification_deliveries WHERE alert_id='URGENT-3' ORDER BY created_at"
+        ).fetchall()
+        status = connection.execute("SELECT status FROM research_alerts WHERE alert_id='URGENT-3'").fetchone()["status"]
+    assert [item["status"] for item in deliveries] == ["failed", "failed"]
+    assert all("temporary provider outage" in item["last_error"] for item in deliveries)
+    assert status == "open"
 
 
 def test_signed_webhook_uses_timestamped_hmac_and_normalized_evidence(tmp_path, monkeypatch):

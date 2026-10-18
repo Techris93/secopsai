@@ -242,7 +242,11 @@ def send_research_alert(alert_id: str, *, channel: str = "email", db_path: str |
     if row is None:
         raise ValueError("research alert not found")
     alert = dict(row)
-    destination = os.environ.get("SECOPSAI_RESEARCH_ALERT_EMAIL", "research@secopsai.dev")
+    urgent = str(alert.get("alert_type") or "") == "urgent_case_review"
+    destination = (
+        os.environ.get("SECOPSAI_RESEARCH_URGENT_REVIEWER_EMAIL", "")
+        if urgent else os.environ.get("SECOPSAI_RESEARCH_ALERT_EMAIL", "research@secopsai.dev")
+    )
     attempts = 1
     try:
         event = {
@@ -257,9 +261,20 @@ def send_research_alert(alert_id: str, *, channel: str = "email", db_path: str |
             "occurred_at": alert.get("updated_at") or alert.get("created_at"),
         }
         if channel == "email":
+            if not destination:
+                raise RuntimeError("urgent reviewer email is not configured")
             sender = os.environ.get("SECOPSAI_RESEARCH_FROM_EMAIL", "research@secopsai.dev")
             result = send_email(recipient=destination, subject=f"SecOpsAI research alert: {alert.get('severity', 'review')}", body=json.dumps(event, indent=2), sender=sender)
         elif channel == "webhook":
+            if urgent:
+                endpoint = os.environ.get("SECOPSAI_RESEARCH_URGENT_REVIEWER_WEBHOOK_URL", "")
+                secret = os.environ.get("SECOPSAI_RESEARCH_URGENT_REVIEWER_WEBHOOK_SECRET", "")
+                if not endpoint or not secret:
+                    raise RuntimeError("urgent reviewer webhook configuration is incomplete")
+                destination = endpoint
+                result = send_signed_webhook(endpoint=endpoint, secret=secret, event=event)
+                delivery = _record_alert_delivery(alert_id, channel=channel, destination=destination, status="sent", attempts=attempts, provider_id=str(result.get("provider_id") or ""), db_path=db_path)
+                return {"ok": True, "delivery": {**result, **delivery}, "alert": alert}
             is_external = str(alert.get("alert_type") or "") in {
                 "external_advisory_match",
                 "external_advisory_feed_degraded",
@@ -330,13 +345,57 @@ def configured_external_alert_channels() -> List[str]:
     return channels
 
 
+def configured_urgent_alert_channels() -> List[str]:
+    """Return only the channels explicitly configured for urgent reviewers."""
+    raw = os.environ.get("SECOPSAI_RESEARCH_URGENT_ALERT_CHANNELS", "")
+    channels = []
+    for item in raw.split(","):
+        channel = item.strip().lower()
+        if channel in {"email", "webhook"} and channel not in channels:
+            channels.append(channel)
+    return channels
+
+
+def deliver_urgent_review_alert(alert_id: str, *, db_path: str | None = None) -> Dict[str, Any]:
+    """Attempt immediate delivery on dedicated urgent-review channels.
+
+    Missing configuration leaves the alert open in the console. Failed sends
+    are audited and retried by the bounded worker delivery loop.
+    """
+    import soc_store
+
+    channels = configured_urgent_alert_channels()
+    result = {"enabled": bool(channels), "channels": channels, "attempted": 0, "sent": 0, "failed": 0, "deferred": 0}
+    if not channels:
+        result["status"] = "not_configured"
+        return result
+    soc_store.init_db(db_path)
+    for channel in channels:
+        with soc_store.connect(db_path) as connection:
+            prior = connection.execute(
+                "SELECT status FROM research_notification_deliveries WHERE alert_id=? AND channel=? ORDER BY created_at DESC",
+                (alert_id, channel),
+            ).fetchall()
+        if any(item["status"] == "sent" for item in prior) or prior:
+            result["deferred"] += 1
+            continue
+        result["attempted"] += 1
+        delivery = send_research_alert(alert_id, channel=channel, db_path=db_path)
+        if delivery.get("ok"):
+            result["sent"] += 1
+        else:
+            result["failed"] += 1
+    return result
+
+
 def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datetime | None = None) -> Dict[str, Any]:
-    """Deliver undelivered collector-health alerts with bounded backoff."""
+    """Deliver explicitly configured research alerts with bounded backoff."""
     import soc_store
 
     operational_channels = configured_auto_alert_channels()
     external_channels = configured_external_alert_channels()
-    channels = list(dict.fromkeys(operational_channels + external_channels))
+    urgent_channels = configured_urgent_alert_channels()
+    channels = list(dict.fromkeys(operational_channels + external_channels + urgent_channels))
     if not channels:
         return {"enabled": False, "channels": [], "attempted": 0, "sent": 0, "failed": 0, "deferred": 0}
 
@@ -349,6 +408,7 @@ def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datet
         "registry_release_anomaly",
         "campaign_activity",
     }
+    urgent_types = {"urgent_case_review"}
     max_attempts = max(1, min(int(os.environ.get("SECOPSAI_RESEARCH_ALERT_MAX_ATTEMPTS", "5")), 10))
     current = now or datetime.now(timezone.utc)
     soc_store.init_db(db_path)
@@ -365,6 +425,8 @@ def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datet
             eligible_channels = operational_channels
         elif alert_type in external_types:
             eligible_channels = external_channels
+        elif alert_type in urgent_types:
+            eligible_channels = urgent_channels
         else:
             continue
         for channel in eligible_channels:

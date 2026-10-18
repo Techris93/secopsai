@@ -572,7 +572,7 @@ def run_cycle(
     from secopsai.intelligence_jobs import recover_transient_jobs
     from secopsai.research import build_preflight_report
     from secopsai.research_delivery import deliver_pending_operational_alerts
-    from secopsai.research_discovery import run_promotion_policy
+    from secopsai.research_discovery import run_due_candidate_validations, run_promotion_policy
     from secopsai.research_specialist_automation import run_cycle as run_specialist_research_cycle
     from secopsai.research_storage import archive_and_prune_history
     from secopsai.research_worker import run_worker_cycle
@@ -609,6 +609,13 @@ def run_cycle(
                 actor="secopsai-daily-automation",
                 limit=int(settings["max_candidate_cases"]),
                 db_path=db_path,
+            ),
+        ),
+        (
+            "candidate_evidence_validation",
+            lambda: run_due_candidate_validations(
+                db_path=db_path,
+                limit=min(int(settings["max_candidate_cases"]), int(settings["max_investigations"])),
             ),
         ),
         (
