@@ -47,6 +47,10 @@ def _matches(flags: Set[str], candidate: Candidate) -> bool:
     return required <= flags and (not small or bool(flags & set(SMALL_PACKAGE)))
 
 
+def _package_names(rows: Iterable[Dict[str, Any]]) -> Set[str]:
+    return {str(row.get("package") or "").strip() for row in rows if str(row.get("package") or "").strip()}
+
+
 def _existing(ecosystem: str) -> Set[Tuple[FrozenSet[str], bool]]:
     """Existing rules as candidates (single-flag groups only), so they are not re-proposed."""
     out = set()
@@ -61,15 +65,22 @@ def propose(rows: List[Dict[str, Any]], *, ecosystem: str, cutoff: str, max_rule
     clean = [r for r in rows if r["set"] == "clean" and r["ecosystem"] == ecosystem and r.get("status") == "scanned"]
     if not malicious or not clean:
         return []
-    train_misses = [set(r.get("features") or []) for r in malicious if not _caught(r) and str(r.get("discovered") or "") < cutoff]
+    train_rows = [r for r in malicious if str(r.get("discovered") or "") < cutoff]
     test_rows = [r for r in malicious if str(r.get("discovered") or "") >= cutoff]
+    train_misses = [r for r in train_rows if not _caught(r)]
+    test_misses = [r for r in test_rows if not _caught(r)]
     clean_flags = [set(r.get("features") or []) for r in clean]
     share = {flag: sum(flag in flags for flags in clean_flags) / len(clean_flags) for flags in clean_flags for flag in flags}
-    pool = sorted({flag for flags in train_misses for flag in flags if share.get(flag, 0) < NOISY_FLAG_SHARE and flag not in EXCLUDED_FLAGS})
+    pool = sorted({flag for row in train_misses for flag in (row.get("features") or [])
+                   if share.get(flag, 0) < NOISY_FLAG_SHARE and flag not in EXCLUDED_FLAGS})
     candidates: List[Candidate] = [(frozenset(combo), small) for size in (1, 2, 3) for combo in itertools.combinations(pool, size) for small in (False, True)]
     existing = _existing(ecosystem)
     chosen: List[Dict[str, Any]] = []
     remaining = list(train_misses)
+    remaining_test = list(test_misses)
+    training_packages = _package_names(train_rows)
+    credited_train_packages: Set[str] = set()
+    credited_test_packages: Set[str] = set()
     allowed_clean = int(FP_BUDGET * len(clean_flags))
     flagged_clean: Set[int] = set()
     for _ in range(max_rules):
@@ -83,7 +94,7 @@ def propose(rows: List[Dict[str, Any]], *, ecosystem: str, cutoff: str, max_rule
             fp = len(hits)
             if fp > MAX_CLEAN_HITS_PER_RULE or len(flagged_clean | hits) > allowed_clean:
                 continue
-            gain = sum(_matches(flags, candidate) for flags in remaining)
+            gain = sum(_matches(set(row.get("features") or []), candidate) for row in remaining)
             # Prefer more catches, then fewer false positives, then simpler rules.
             key = (gain, -fp, -len(candidate[0]) - int(candidate[1]))
             if gain >= MIN_TRAIN_GAIN and (best is None or key > (best[0], -best[1], -len(best[2][0]) - int(best[2][1]))):
@@ -92,11 +103,35 @@ def propose(rows: List[Dict[str, Any]], *, ecosystem: str, cutoff: str, max_rule
             break
         gain, fp, candidate = best
         flagged_clean |= {index for index, flags in enumerate(clean_flags) if _matches(flags, candidate)}
-        remaining = [flags for flags in remaining if not _matches(flags, candidate)]
-        test_misses = [set(r.get("features") or []) for r in test_rows if not _caught(r)]
-        chosen.append({"candidate": candidate, "flags": sorted(candidate[0]), "small_package": candidate[1], "ecosystem": ecosystem,
-                       "train_gain": gain, "clean_hits": fp, "test_gain": sum(_matches(flags, candidate) for flags in test_misses),
-                       "test_samples": len(test_rows)})
+        train_hits = [row for row in remaining if _matches(set(row.get("features") or []), candidate)]
+        test_hits = [row for row in remaining_test if _matches(set(row.get("features") or []), candidate)]
+        clean_hit_rows = [row for row in clean if _matches(set(row.get("features") or []), candidate)]
+        train_package_names = _package_names(train_hits)
+        test_package_names = _package_names(test_hits)
+        new_train_packages = train_package_names - credited_train_packages
+        new_test_packages = test_package_names - credited_test_packages
+        chosen.append({
+            "candidate": candidate,
+            "flags": sorted(candidate[0]),
+            "small_package": candidate[1],
+            "ecosystem": ecosystem,
+            "train_gain": gain,
+            "train_packages": len(new_train_packages),
+            "clean_hits": fp,
+            "clean_hit_packages": sorted(_package_names(clean_hit_rows)),
+            # Held-out figures are incremental in the same order as the
+            # train-selected rules, so their sample counts do not double-count.
+            "test_gain": len(test_hits),
+            "test_packages": len(new_test_packages),
+            "test_training_overlap_packages": len(new_test_packages & training_packages),
+            "test_samples": len(test_rows),
+        })
+        credited_train_packages.update(train_package_names)
+        credited_test_packages.update(test_package_names)
+        train_hit_ids = {id(row) for row in train_hits}
+        test_hit_ids = {id(row) for row in test_hits}
+        remaining = [row for row in remaining if id(row) not in train_hit_ids]
+        remaining_test = [row for row in remaining_test if id(row) not in test_hit_ids]
     return chosen
 
 
@@ -105,19 +140,31 @@ def as_code(proposals: Iterable[Dict[str, Any]], start: int = 1) -> str:
     for index, item in enumerate(proposals, start):
         name = f"BEH_LAB_{item['ecosystem'].upper().replace('-', '_')}_{index:02d}"
         groups = [f"(\"{flag}\",)" for flag in item["flags"]] + (["SMALL_PACKAGE"] if item["small_package"] else [])
-        lines.append(f"    # Rule lab: +{item['train_gain']} pre-cutoff misses, +{item['test_gain']} held-out, {item['clean_hits']} clean hit(s).")
+        lines.append(
+            f"    # Rule lab: +{item['train_gain']} pre-cutoff misses in {item['train_packages']} packages, "
+            f"+{item['test_gain']} incremental held-out misses in {item['test_packages']} packages, "
+            f"{item['clean_hits']} popular-clean hit(s)."
+        )
         lines.append(f"    (\"{name}\", (\"{item['ecosystem']}\",), ({', '.join(groups)},), 60),")
     return "\n".join(lines)
 
 
 def report(proposals: List[Dict[str, Any]], cutoff: str) -> str:
     out = ["## Rule lab proposals", "",
-           f"Chosen on samples discovered before {cutoff}; 'held-out' counts samples from {cutoff} on, which the search never saw.", ""]
+           f"Chosen using samples discovered before {cutoff}. Held-out samples from {cutoff} onward are not used for selection.",
+           "Held-out gains are incremental across the proposed rules. Package counts deduplicate versions; train-overlap packages are called out.",
+           "Clean hits identify packages in this benchmark sample; the clean set is not the whole registry.", ""]
     if not proposals:
-        return "\n".join(out + ["No candidate met the bar (at least {MIN_TRAIN_GAIN} new catches, at most {MAX_CLEAN_HITS_PER_RULE} popular package flagged)."])
-    out += ["| Ecosystem | Behaviours (all required) | Throwaway shape | New catches (train) | New catches (held-out) | Popular packages flagged |",
+        return "\n".join(out + [f"No candidate met the bar (at least {MIN_TRAIN_GAIN} new catches, at most {MAX_CLEAN_HITS_PER_RULE} popular package flagged)."])
+    out += ["| Ecosystem | Behaviours (all required) | Throwaway shape | Train gain (samples / packages) | Incremental held-out (samples / packages; train overlap) | Popular clean hits |",
             "| --- | --- | --- | --- | --- | --- |"]
-    out += [f"| {p['ecosystem']} | {' + '.join(p['flags'])} | {'yes' if p['small_package'] else 'no'} | {p['train_gain']} | {p['test_gain']} of {p['test_samples']} | {p['clean_hits']} |" for p in proposals]
+    out += [
+        f"| {p['ecosystem']} | {' + '.join(p['flags'])} | {'yes' if p['small_package'] else 'no'} "
+        f"| +{p['train_gain']} / {p['train_packages']} "
+        f"| +{p['test_gain']} / {p['test_packages']} ({p['test_training_overlap_packages']} overlap) of {p['test_samples']} samples "
+        f"| {p['clean_hits']}: {', '.join(p['clean_hit_packages']) or 'none'} |"
+        for p in proposals
+    ]
     return "\n".join(out)
 
 

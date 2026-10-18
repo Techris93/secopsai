@@ -170,6 +170,10 @@ KNOWN_BENIGN_SHAPES: Tuple[Tuple[str, ...], ...] = (
     ("system_info", "http_send", "home_dir", "child_process", "download_tool", "env_read"),  # bundled CLIs (backscan: @lotics/cli, @pollinations/cli)
     ("inflated_version", "child_process", "chmod_exec", "download_tool", "env_read", "install_hook"),  # npm chromedriver 155.0.0
     ("inflated_version", "chmod_exec", "env_read", "http_send", "py_subprocess", "setup_py", "setup_py_cmdclass", "setup_py_side_effects"),  # PyPI chromedriver-binary 157.x
+    ("child_process", "env_read", "install_hook", "tiny_package"),  # npm tinyexec 1.3.1 (Rule Lab run 38246310078)
+    ("anti_analysis", "base64_decode", "browser_data", "child_process", "chmod_exec", "credential_files", "dynamic_eval",
+     "env_read", "home_dir", "http_send", "install_hook", "long_base64", "py_subprocess", "system_info"),  # npm pnpm 12.11.2 (run 38246310078)
+    ("dns_lookup",),  # npm retry 0.13.1: DNS lookup is also a legitimate library behavior (run 38246310078)
 )
 
 # Behaviour rules: combinations of flags that are common in missed malware and
@@ -223,6 +227,11 @@ BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], 
     ("BEH_DIFF_NEW_OBFUSCATION", ("npm", "pypi"), (("new:js_obfuscator", "new:runner_memory"),), 60),
     # Infrastructure from investigated cases (rules/watchlists/actor-infrastructure.txt).
     ("BEH_KNOWN_ACTOR_INFRA", ("npm", "pypi", "open-vsx", "vscode-marketplace", "crates", "github-actions", "mcp-registry"), (("known_actor_infra",),), 80),
+    # Rule Lab issue #111, run 38246310078. These two signals added held-out
+    # detections across distinct packages and hit none of the 999 popular clean
+    # npm packages in that snapshot. The benchmark clean set is not the registry.
+    ("BEH_NPM_RAW_IP_URL", ("npm",), (("raw_ip_url",),), 60),  # +6 held-out samples / 5 packages
+    ("BEH_NPM_SMALL_HTTP_SEND", ("npm",), (("http_send",), SMALL_PACKAGE), 60),  # +19 held-out samples / 15 packages
 )
 
 
