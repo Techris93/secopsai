@@ -1,4 +1,5 @@
 import { requireModelAction, validateDecisionResult } from "./decision-contracts.js";
+import { intelligenceRecovery, ARTIFACT_REPAIR_VERSION } from "./job-recovery.js";
 const MAX_ALERT_BYTES = 64 * 1024;
 const SIGNATURE_MAX_AGE_SECONDS = 300;
 const ACCEPTED_ALERT_TYPES = new Set([
@@ -229,6 +230,10 @@ export async function handleRequest(request, env) {
     if (url.pathname === "/api/v1/intelligence/jobs" && request.method === "POST") {
       requireBearer(request, env.CORE_INTELLIGENCE_TOKEN);
       return response(200, await createIntelligenceJob(request, env, requestId), requestId);
+    }
+    if (url.pathname === "/api/v1/intelligence/jobs/recover" && request.method === "POST") {
+      requireBearer(request, env.CORE_INTELLIGENCE_TOKEN);
+      return response(200, await recoverIntelligenceJobs(request, env, requestId), requestId);
     }
     const jobMatch = url.pathname.match(/^\/api\/v1\/intelligence\/jobs\/([^/]+)(?:\/(cancel|heartbeat))?$/);
     if (jobMatch && request.method === "GET" && !jobMatch[2]) {
@@ -1455,6 +1460,9 @@ function decodeRowJson(row, column, fallback = {}) {
 function publicJob(row, { includeInput = true, includeResult = true, includeLease = false } = {}) {
   if (!row) return null;
   const output = { ...row, schema_version: INTELLIGENCE_JOB_SCHEMA_VERSION };
+  output.recovery = intelligenceRecovery(row);
+  if (row.failure_details_json) output.failure_details = parseJson(row.failure_details_json, {});
+  delete output.failure_details_json;
   delete output.idempotency_key;
   const rawInput = String(row.input_json || "{}");
   const rawResult = String(row.result_json || "{}");
@@ -1462,7 +1470,7 @@ function publicJob(row, { includeInput = true, includeResult = true, includeLeas
   output.result = includeResult ? parseJson(rawResult, {}) : {};
   if (!includeInput) {
     const input = parseJson(rawInput, {});
-    output.input = Object.fromEntries(["target_id", "selected_model", "pipeline_id", "agent_triage_run_id"].filter((key) => input?.[key] !== undefined).map((key) => [key, input[key]]));
+    output.input = Object.fromEntries(["target_id", "selected_model", "pipeline_id", "agent_triage_run_id", "recovery_of_job_id", "recovery_contract_version"].filter((key) => input?.[key] !== undefined).map((key) => [key, input[key]]));
     output.input_available = rawInput !== "{}";
     output.input_bytes = new TextEncoder().encode(rawInput).byteLength;
   }
@@ -1482,13 +1490,63 @@ function publicJob(row, { includeInput = true, includeResult = true, includeLeas
 async function listIntelligenceJobs(db, searchParams) {
   const limit = boundedLimit(searchParams.get("limit"), 50, 100);
   const status = clean(searchParams.get("status"), 40);
+  const projection = "SELECT j.*, (SELECT e.data_json FROM intelligence_job_events e WHERE e.job_id=j.job_id AND e.event_type='failed' ORDER BY e.event_id DESC LIMIT 1) AS failure_details_json FROM intelligence_jobs j";
   const query = status ?
-    "SELECT * FROM intelligence_jobs WHERE status = ? ORDER BY updated_at DESC, job_id DESC LIMIT ?" :
-    "SELECT * FROM intelligence_jobs ORDER BY updated_at DESC, job_id DESC LIMIT ?";
+    projection + " WHERE j.status = ? ORDER BY j.updated_at DESC, j.job_id DESC LIMIT ?" :
+    projection + " ORDER BY j.updated_at DESC, j.job_id DESC LIMIT ?";
   const statement = status ? db.prepare(query).bind(status, limit) : db.prepare(query).bind(limit);
   const rows = await statement.all();
   const counts = await db.prepare("SELECT status, COUNT(*) AS count FROM intelligence_jobs GROUP BY status").all();
-  return { jobs: (rows.results || []).map((row) => publicJob(row, { includeInput: false, includeResult: false })), counts: Object.fromEntries((counts.results || []).map((row) => [row.status, Number(row.count || 0)])) };
+  const current = await db.prepare("SELECT status,COUNT(*) AS count FROM (SELECT status,ROW_NUMBER() OVER (PARTITION BY action,target_id ORDER BY updated_at DESC,job_id DESC) AS position FROM intelligence_jobs) WHERE position=1 GROUP BY status").all();
+  return { jobs: (rows.results || []).map((row) => publicJob(row, { includeInput: false, includeResult: false })), counts: Object.fromEntries((counts.results || []).map((row) => [row.status, Number(row.count || 0)])),
+    current_counts: Object.fromEntries((current.results || []).map(row => [row.status, Number(row.count || 0)])) };
+}
+
+async function recoverIntelligenceJobs(request, env, requestId) {
+  const payload = await readJsonObject(request, MAX_INTELLIGENCE_BYTES, "Job recovery");
+  const ids = payload.job_ids;
+  if (ids !== undefined && (!Array.isArray(ids) || !ids.length || ids.length > 10 || ids.some(id => typeof id !== "string" || !/^AIJ-[A-F0-9]{16}$/.test(id)))) {
+    throw new HttpError(422, "invalid_job_ids", "Recovery accepts one to ten explicit job identities");
+  }
+  if (payload.repair_version && (payload.repair_version !== ARTIFACT_REPAIR_VERSION || !ids)) throw new HttpError(422, "repair_required", "Contract repair needs a supported repair version and explicit job IDs");
+  const limit = boundedLimit(payload.limit, 10, 10);
+  const rows = ids
+    ? await env.DB.prepare(`SELECT * FROM intelligence_jobs WHERE job_id IN (${ids.map(() => "?").join(",")}) ORDER BY updated_at,job_id`).bind(...ids).all()
+    : await env.DB.prepare("SELECT * FROM intelligence_jobs WHERE status='failed' AND error_code IN ('availability','rate_limit','timeout','bridge_timeout','bridge_failed') ORDER BY updated_at,job_id LIMIT 1000").all();
+  const queued = [], existing = [], eligible = [], skipped = [];
+  for (const row of rows.results || []) {
+    const recovery = intelligenceRecovery(row);
+    const repaired = payload.repair_version === ARTIFACT_REPAIR_VERSION && recovery.reason === "artifact_contract_repair";
+    if ((!recovery.eligible && !repaired) || eligible.length >= limit) {
+      skipped.push({ job_id: row.job_id, reason: recovery.reason });
+      continue;
+    }
+    const input = parseJson(row.input_json, {});
+    const depth = Number(input.recovery_depth || 0);
+    if (depth >= 3) { skipped.push({ job_id: row.job_id, reason: "recovery_depth_limit" }); continue; }
+    if (!input.selected_model) {
+      if (!clean(payload.selected_model, 200) || !Array.isArray(payload.fallback_models) || payload.fallback_models.some(item => typeof item !== "string" || !item.trim()) || payload.fallback_models.length > 8 || !["disabled", "quota_auth", "any_provider"].includes(payload.fallback_mode)) {
+        skipped.push({ job_id: row.job_id, reason: "legacy_job_requires_explicit_routing" }); continue;
+      }
+      input.selected_model = clean(payload.selected_model, 200);
+      input.fallback_models = payload.fallback_models;
+      input.fallback_mode = payload.fallback_mode;
+    } else if (payload.selected_model && payload.selected_model !== input.selected_model) {
+      skipped.push({ job_id: row.job_id, reason: "captured_model_mismatch" }); continue;
+    }
+    eligible.push(row.job_id);
+    if (payload.dry_run === true) continue;
+    const version = repaired ? ARTIFACT_REPAIR_VERSION : "transport-v1";
+    const result = await insertIntelligenceJob(env, requestId, {
+      action: row.action, target_id: row.target_id, requested_by: row.requested_by,
+      idempotency_key: `recovery:${row.job_id}:${version}`,
+      inputs: { ...input, recovery_of_job_id: row.job_id, recovery_contract_version: version, recovery_depth: depth + 1 },
+    });
+    if (result.created) await writeJobEvent(env.DB, row.job_id, "recovery_queued", "intelligence-operator", "Recovery created a successor; original failure retained.", { recovery_job_id: result.job.job_id, repair_version: version });
+    if (result.created) queued.push(result.job);
+    else existing.push(result.job);
+  }
+  return { status: payload.dry_run === true ? "dry_run" : "recovery_queued", count: queued.length, eligible, skipped, jobs: queued, existing };
 }
 
 async function getIntelligenceJob(db, jobId, includeResult = false) {
@@ -1544,10 +1602,14 @@ async function queueRunnerTriageJobs(request, env, requestId) {
 async function runnerTriageResults(db, searchParams) {
   const since = clean(searchParams.get("since"), 40) || "1970-01-01T00:00:00Z";
   const limit = boundedLimit(searchParams.get("limit"), 100, 200);
-  const rows = await db.prepare(`SELECT job_id, target_id, status, result_json, error_code, updated_at
+  const rows = await db.prepare(`SELECT job_id, target_id, status, result_json, error_code, updated_at,
+    json_extract(input_json,'$.recovery_of_job_id') AS recovery_of_job_id,
+    json_extract(input_json,'$.recovery_contract_version') AS recovery_contract_version
     FROM intelligence_jobs WHERE action='triage_artifact' AND requested_by=? AND status IN ('succeeded','failed','canceled') AND updated_at > ?
     ORDER BY updated_at, job_id LIMIT ?`).bind(RUNNER_TRIAGE_REQUESTER, since, limit).all();
-  const results = (rows.results || []).map((row) => ({ job_id: row.job_id, artifact_id: row.target_id, status: row.status, error_code: row.error_code || "", updated_at: row.updated_at, result: parseJson(row.result_json, {}) }));
+  const results = (rows.results || []).map((row) => ({ job_id: row.job_id, artifact_id: row.target_id, status: row.status, error_code: row.error_code || "", updated_at: row.updated_at,
+    recovery_of_job_id: row.recovery_of_job_id || null, recovery_contract_version: row.recovery_contract_version || null,
+    result: parseJson(row.result_json, {}) }));
   const pending = await db.prepare("SELECT COUNT(*) AS n FROM intelligence_jobs WHERE action='triage_artifact' AND requested_by=? AND status IN ('queued','running','awaiting_provider')").bind(RUNNER_TRIAGE_REQUESTER).first();
   return { results, pending: Number(pending?.n || 0) };
 }
@@ -1672,18 +1734,40 @@ async function claimIntelligenceJob(request, db, requestId) {
   const now = nowIso();
   const stale = new Date(Date.now() - 900 * 1000).toISOString();
   await db.prepare("UPDATE intelligence_jobs SET status='queued', provider='', worker_id='', started_at=NULL, lease_until=NULL, lease_token='', updated_at=?, error_code='worker_recovered', error_message='Recovered after the bridge stopped reporting.' WHERE status='running' AND (lease_until < ? OR (lease_until IS NULL AND updated_at < ?))").bind(now, now, stale).run();
+  const candidate = await db.prepare("SELECT * FROM intelligence_jobs WHERE status='queued' ORDER BY queued_at, job_id LIMIT 1").first();
+  if (!candidate) return { status: "idle", job: null, bridge_request: null };
+  const capturedInput = parseJson(candidate.input_json, {});
+  const captured = Boolean(clean(capturedInput.selected_model, 200));
+  if (!captured) {
+    const model = clean(payload.selected_model, 200);
+    const fallbacks = payload.fallback_models || [];
+    if (!model || !Array.isArray(fallbacks) || fallbacks.length > 8 || fallbacks.some(item => typeof item !== "string" || !item.trim()) || !["disabled", "quota_auth", "any_provider"].includes(payload.fallback_mode)) {
+      throw new HttpError(422, "routing_required", "An unbound job needs an explicit model and fallback snapshot before claim");
+    }
+    capturedInput.selected_model = model;
+    capturedInput.fallback_models = fallbacks;
+    capturedInput.fallback_mode = payload.fallback_mode;
+  }
+  try {
+    for (const model of [capturedInput.selected_model, ...(capturedInput.fallback_models || [])]) requireModelAction(model, candidate.action);
+  } catch { throw new HttpError(422, "unsupported_action", "Captured model does not support this job action"); }
+  const capturedJson = capturedInput.assistant_request ? assistantInputJson(capturedInput, candidate.action, candidate.target_id)
+    : boundedJson(capturedInput, MAX_INTELLIGENCE_BYTES, "Claim routing snapshot", candidate.action === "triage_artifact");
   const leaseToken = crypto.randomUUID().replace(/-/g, "");
   const updated = await db.prepare(`UPDATE intelligence_jobs SET status='running', provider='hosted_core_bridge', worker_id=?, attempt=attempt+1,
-    started_at=?, updated_at=?, lease_until=?, lease_generation=lease_generation+1, lease_token=?, error_code=NULL, error_message=NULL
-    WHERE job_id = (SELECT job_id FROM intelligence_jobs WHERE status='queued' ORDER BY queued_at, job_id LIMIT 1)
-      AND status='queued'`).bind(workerId, now, now, futureIso(1800), leaseToken).run();
+    started_at=?, updated_at=?, lease_until=?, lease_generation=lease_generation+1, lease_token=?, error_code=NULL, error_message=NULL, input_json=?
+    WHERE job_id=? AND status='queued'`).bind(workerId, now, now, futureIso(1800), leaseToken, capturedJson, candidate.job_id).run();
   if (!Number(updated?.meta?.changes || updated?.changes || 0)) {
     await writeAudit(db, { requestId, action: "intelligence.bridge.idle", actorRole: "intelligence_bridge", result: "success", sourceInstance: workerId, details: {}, createdAt: now });
     return { status: "idle", job: null, bridge_request: null };
   }
-  const row = await db.prepare("SELECT * FROM intelligence_jobs WHERE status='running' AND worker_id=? ORDER BY started_at DESC, job_id DESC LIMIT 1").bind(workerId).first();
+  const row = await db.prepare("SELECT * FROM intelligence_jobs WHERE job_id=? AND status='running' AND worker_id=?").bind(candidate.job_id, workerId).first();
   if (!row) return { status: "idle", job: null, bridge_request: null };
-  await writeJobEvent(db, row.job_id, "claimed", workerId, "Intelligence job claimed by bridge.", { provider: "hosted_core_bridge" });
+  await writeJobEvent(db, row.job_id, "claimed", workerId, "Intelligence job claimed by bridge.", {
+    provider: "hosted_core_bridge", selected_model: capturedInput.selected_model,
+    fallback_models: capturedInput.fallback_models || [], fallback_mode: capturedInput.fallback_mode || "disabled",
+    routing_captured_at_claim: !captured, bridge_build: clean(payload.bridge_build, 200),
+  });
   await writeAudit(db, { requestId, action: "intelligence.bridge.claimed", actorRole: "intelligence_bridge", result: "success", sourceInstance: workerId, details: { job_id: row.job_id, intelligence_action: row.action }, createdAt: now });
   const input = parseJson(row.input_json, {});
   if (row.target_id && input.target_id === undefined) input.target_id = row.target_id;
@@ -1718,7 +1802,7 @@ async function completeIntelligenceJob(request, db, jobId, requestId) {
   try {
     requireModelAction(clean(parseJson(row.input_json, {}).selected_model, 200), row.action);
     requireModelAction(clean(payload.model || parseJson(row.input_json, {}).selected_model, 200), row.action);
-    validateDecisionResult(row.action, result);
+    validateDecisionResult(row.action, result, parseJson(row.input_json, {}));
   } catch (error) { throw new HttpError(422, "invalid_result", error.message); }
   const assistant = Boolean(parseJson(row.input_json, {}).assistant_request);
   const safeResult = assistant ? sanitize(result, 0, true) : null;
@@ -1747,7 +1831,9 @@ async function failIntelligenceJob(request, db, jobId, requestId) {
   const errorMessage = clean(payload.error_message, 2000) || "Remote bridge failed";
   const updated = await db.prepare("UPDATE intelligence_jobs SET status='failed', error_code=?, error_message=?, completed_at=?, updated_at=?, lease_until=NULL, lease_token='' WHERE job_id=? AND status='running' AND worker_id=? AND lease_generation=? AND lease_token=? AND lease_until > ?").bind(errorCode, errorMessage, now, now, normalized, clean(payload.worker_id, 160), Number(payload.lease_generation), clean(payload.lease_token, 160), now).run();
   if (!changed(updated)) throw new HttpError(409, "lease_lost", "The intelligence job lease is no longer owned by this worker");
-  await writeJobEvent(db, normalized, "failed", clean(payload.worker_id, 160) || "bridge", errorMessage, { error_code: errorCode });
+  const details = payload.error_details && typeof payload.error_details === "object" && !Array.isArray(payload.error_details)
+    ? Object.fromEntries(["model", "provider", "category", "http_status", "loaded_source_fingerprint", "attempts"].filter(key => payload.error_details[key] !== undefined).map(key => [key, payload.error_details[key]])) : {};
+  await writeJobEvent(db, normalized, "failed", clean(payload.worker_id, 160) || "bridge", errorMessage, { error_code: errorCode, ...details });
   await writeAudit(db, { requestId, action: "intelligence.bridge.failed", actorRole: "intelligence_bridge", result: "failed", sourceInstance: clean(payload.worker_id, 160) || "bridge", details: { job_id: normalized, error_code: errorCode }, createdAt: now });
   return { status: "failed", job: await getIntelligenceJob(db, normalized, false) };
 }

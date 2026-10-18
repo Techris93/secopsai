@@ -248,7 +248,12 @@ def _apply_result(connection: Any, item: Dict[str, Any], now: str) -> Optional[s
     if not row:
         return None
     if item.get("job_id") and row["job_id"] and item["job_id"] != row["job_id"]:
-        return None  # A late result cannot replace a newer triage revision.
+        # A recovery is a new audited job tied to the exact failed revision.
+        # It cannot replace a successful decision or a later evidence revision.
+        if row["status"] != "failed" or item.get("recovery_of_job_id") != row["job_id"] or item.get("recovery_contract_version") not in {"artifact-choices-v3", "transport-v1"}:
+            return None
+        connection.execute("UPDATE research_ai_triage SET job_id=? WHERE artifact_key=? AND job_id=? AND status='failed'",
+                           (item["job_id"], key, row["job_id"]))
     result = item.get("result") if isinstance(item.get("result"), dict) else {}
     try:
         serialized = json.dumps(result, sort_keys=True, allow_nan=False)
@@ -268,10 +273,8 @@ def _apply_result(connection: Any, item: Dict[str, Any], now: str) -> Optional[s
             raise DecisionError("artifact decision cites evidence that was not supplied", category="safety")
         if result["finding_verdict"] == "needs_more_evidence":
             missing = result.get("missing_evidence")
-            allowed_missing = {
-                path for path in (context.get("missing_files") or [])
-                if isinstance(path, str) and path.strip()
-            }
+            from secopsai.decision_evidence import missing_file_identifiers
+            allowed_missing = set(missing_file_identifiers(context))
             if not isinstance(missing, list) or not missing or any(path not in allowed_missing for path in missing):
                 raise DecisionError("artifact abstention must name a supplied missing-file identifier", category="safety")
     except (DecisionError, TypeError, ValueError):

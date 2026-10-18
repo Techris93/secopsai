@@ -15,6 +15,7 @@ try {
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
 import { handleRequest } from "../src/index.js";
+import { intelligenceRecovery } from "../src/job-recovery.js";
 
 class Statement {
   constructor(db, sql) { this.db = db; this.sql = sql; this.values = []; }
@@ -852,4 +853,71 @@ test('versioned ontology receipts tolerate nested key order but reject changed f
   const changed=await send(reordered);
   assert.equal(changed.status,409);
   assert.equal((await changed.json()).error,'idempotency_conflict');
+});
+
+test('hosted recovery classifies recorded causes and refuses lost or permanent diagnostics', () => {
+  assert.equal(intelligenceRecovery({status:'failed',error_code:'safety',attempt:1,error_message:'DecisionError: decision: all configured bridge models failed'}).reason,'historical_cause_not_recorded');
+  assert.equal(intelligenceRecovery({status:'failed',error_code:'timeout',attempt:1,error_message:'DecisionError: decision: all configured bridge models failed'}).eligible,false);
+  assert.equal(intelligenceRecovery({status:'failed',error_code:'availability',attempt:1,error_message:'Connection reset'}).eligible,true);
+  assert.equal(intelligenceRecovery({status:'failed',error_code:'authentication',attempt:1}).eligible,false);
+  assert.equal(intelligenceRecovery({status:'failed',error_code:'rate_limit',attempt:3}).eligible,false);
+});
+
+test('hosted claims snapshot legacy routing and persistence rejects unsupplied evidence', {skip:!DatabaseSync}, async () => {
+  const {db,d1}=migratedSqliteD1();
+  const env={DB:d1,CORE_BRIDGE_TOKEN:'bridge-fixture',CORE_INTELLIGENCE_TOKEN:'operator-fixture'};
+  const call=(path,body,token=env.CORE_BRIDGE_TOKEN)=>handleRequest(new Request('https://core.example'+path,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify(body)}),env);
+  const evidence={findings:[{rule_id:'R1',file_path:'package/install.js'}],flagged_files:[{path:'package/install.js',complete:true}],missing_files:['package/install.js','package/payload.js']};
+  const queued=await(await call('/api/v1/research/triage/jobs',{jobs:[{artifact_id:'npm:repair@1',inputs:{artifact_triage:evidence}}]})).json();
+  const id=queued.queued[0].job_id;
+  assert.equal((await call('/api/v1/intelligence/bridge/claim',{worker_id:'repair-worker'})).status,422);
+  assert.equal(db.prepare('SELECT status FROM intelligence_jobs WHERE job_id=?').get(id).status,'queued');
+  const claimed=await(await call('/api/v1/intelligence/bridge/claim',{worker_id:'repair-worker',selected_model:'gpt-6-luna',fallback_mode:'disabled',fallback_models:[],bridge_build:'build-fixture'})).json();
+  assert.equal(claimed.job.input.selected_model,'gpt-6-luna');
+  const captured=JSON.parse(db.prepare('SELECT input_json FROM intelligence_jobs WHERE job_id=?').get(id).input_json);
+  assert.equal(captured.selected_model,'gpt-6-luna');
+  const event=JSON.parse(db.prepare("SELECT data_json FROM intelligence_job_events WHERE job_id=? AND event_type='claimed'").get(id).data_json);
+  assert.equal(event.bridge_build,'build-fixture');assert.equal(event.routing_captured_at_claim,true);
+  const lease={worker_id:'repair-worker',lease_generation:claimed.job.lease_generation,lease_token:claimed.job.lease_token,model:'gpt-6-luna'};
+  const result={summary:'Static lead',risk_assessment:'Review required',evidence:['install.js:1'],recommended_actions:['Review'],limitations:['Static only'],finding_verdict:'true_positive',finding_confidence:95,malicious_probability:90,disposition_recommendation:'true_positive',decision_evidence_refs:['package/install.js']};
+  const path=`/api/v1/intelligence/bridge/jobs/${id}/complete`;
+  assert.equal((await call(path,{...lease,result:{...result,decision_evidence_refs:['package/install.js:1']}})).status,422);
+  assert.equal((await call(path,{...lease,result:{...result,finding_verdict:'needs_more_evidence',disposition_recommendation:'needs_review',missing_evidence:['package/install.js']}})).status,422);
+  assert.equal((await call(path,{...lease,result})).status,200);
+  assert.equal((await call(path,{...lease,result:{}})).status,200);
+  db.close();
+});
+
+test('repair recovery is explicit, idempotent and preserves originals and research lineage', {skip:!DatabaseSync}, async () => {
+  const {db,d1}=migratedSqliteD1();
+  const env={DB:d1,CORE_BRIDGE_TOKEN:'bridge-fixture',CORE_INTELLIGENCE_TOKEN:'operator-fixture'};
+  const call=(path,body,token=env.CORE_INTELLIGENCE_TOKEN)=>handleRequest(new Request('https://core.example'+path,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify(body)}),env);
+  const evidence={artifact_triage:{findings:[{rule_id:'R1',file_path:'install.js'}]}};
+  const created=await(await call('/api/v1/research/triage/jobs',{jobs:[{artifact_id:'npm:repair@2',inputs:evidence}]},env.CORE_BRIDGE_TOKEN)).json();
+  const id=created.queued[0].job_id;
+  db.prepare("UPDATE intelligence_jobs SET status='failed',error_code='safety',error_message=?,attempt=1 WHERE job_id=?").run('DecisionError: decision: artifact result cites unsupplied evidence',id);
+  const request={job_ids:[id],repair_version:'artifact-choices-v3',selected_model:'gpt-6-luna',fallback_models:[],fallback_mode:'disabled'};
+  assert.equal((await call('/api/v1/intelligence/jobs/recover',request,env.CORE_BRIDGE_TOKEN)).status,401);
+  const automatic=await(await call('/api/v1/intelligence/jobs/recover',{...request,repair_version:undefined})).json();
+  assert.equal(automatic.count,0);
+  const dry=await(await call('/api/v1/intelligence/jobs/recover',{...request,dry_run:true})).json();
+  assert.deepEqual(dry.eligible,[id]);assert.equal(db.prepare('SELECT count(*) AS n FROM intelligence_jobs').get().n,1);
+  const recovered=await(await call('/api/v1/intelligence/jobs/recover',request)).json();
+  assert.equal(recovered.count,1);
+  const successor=recovered.jobs[0].job_id;
+  const row=db.prepare('SELECT * FROM intelligence_jobs WHERE job_id=?').get(successor);
+  const input=JSON.parse(row.input_json);
+  assert.equal(row.requested_by,'research-worker');assert.equal(input.recovery_of_job_id,id);
+  assert.deepEqual(input.artifact_triage,evidence.artifact_triage);
+  assert.equal(db.prepare('SELECT status FROM intelligence_jobs WHERE job_id=?').get(id).status,'failed');
+  const repeated=await(await call('/api/v1/intelligence/jobs/recover',request)).json();
+  assert.equal(repeated.count,0);assert.equal(repeated.existing[0].job_id,successor);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM intelligence_jobs').get().n,2);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM intelligence_job_events WHERE job_id=? AND event_type='recovery_queued'").get(id).n,1);
+  db.prepare("UPDATE intelligence_jobs SET status='succeeded',updated_at='2099-01-01T00:00:00Z' WHERE job_id=?").run(successor);
+  const response=await handleRequest(new Request('https://core.example/api/v1/research/triage/results?since=2098-01-01T00:00:00Z',{headers:{authorization:'Bearer '+env.CORE_BRIDGE_TOKEN}}),env);
+  const results=await response.json();
+  assert.equal(results.results[0].recovery_of_job_id,id);
+  assert.equal(results.results[0].recovery_contract_version,'artifact-choices-v3');
+  db.close();
 });

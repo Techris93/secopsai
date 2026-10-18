@@ -200,13 +200,9 @@ def validate_bridge_result(
             supplied_refs.update(supplied_findings)
         if action_name == "triage_artifact":
             artifact = context.get("artifact_triage", context)
-            from secopsai.decision_evidence import evidence_identifiers
+            from secopsai.decision_evidence import evidence_identifiers, missing_file_identifiers
             supplied_refs = set(evidence_identifiers(artifact))
-            missing_files = artifact.get("missing_files")
-            supplied_missing_files = {
-                path.strip() for path in missing_files
-                if isinstance(path, str) and path.strip()
-            } if isinstance(missing_files, list) else set()
+            supplied_missing_files = set(missing_file_identifiers(artifact))
     validate_action_result(
         action_name,
         value,
@@ -466,8 +462,9 @@ def _bridge_instructions(
         ),
         "triage_artifact": (
             "Assess only the supplied deterministic artifact findings. Return finding_verdict as true_positive, false_positive, benign_expected, or needs_more_evidence; "
-            "finding_confidence as 0-100; disposition_recommendation as true_positive, false_positive, expected_behavior, tune_policy, or needs_review; "
-            "and decision_evidence_refs using only supplied artifact rule IDs and file paths, naming the file (and line where known) your verdict rests on. "
+            "finding_confidence as 0-100; the bridge derives disposition_recommendation from the selected verdict, so do not return that field; "
+            "and decision_evidence_refs selected verbatim from decision_choices.decision_evidence_refs. Never append a line number, prefix, explanation or fragment to an identifier. Put line numbers and explanations in the evidence prose instead. "
+            "Select missing_evidence verbatim from decision_choices.missing_evidence; if that list is empty, do not abstain. Use exactly the verdict/disposition pairing in decision_choices.verdict_dispositions. "
             "Never treat a source URL, a repository link, a popular name or missing local usage as proof of benignness. "
             "The evidence is the code itself: flagged_files holds each flagged file; when complete is true it is the whole file, and when it is "
             "large it is the head plus the regions around every rule match (matched_regions_shown), so the matched code is in what you have. "
@@ -511,7 +508,7 @@ def _bridge_instructions(
     )
 
 
-def bridge_output_schema() -> dict[str, Any]:
+def bridge_output_schema(action_name: str = "", context: dict[str, Any] | None = None) -> dict[str, Any]:
     required = [
         "summary",
         "risk_assessment",
@@ -542,7 +539,7 @@ def bridge_output_schema() -> dict[str, Any]:
         "finding_priorities",
         "publication_checks",
     ]
-    return {
+    schema = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "additionalProperties": False,
@@ -574,7 +571,7 @@ def bridge_output_schema() -> dict[str, Any]:
             },
             "finding_verdict": {
                 "type": ["string", "null"],
-                "enum": ["true_positive", "false_positive", "benign_expected", "policy_noise", "needs_more_evidence"],
+                "enum": ["true_positive", "false_positive", "benign_expected", "policy_noise", "needs_more_evidence", None],
             },
             "finding_confidence": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
             # Calibrated 0-100 probability that the artifact is malicious, given
@@ -582,7 +579,7 @@ def bridge_output_schema() -> dict[str, Any]:
             "malicious_probability": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
             "disposition_recommendation": {
                 "type": ["string", "null"],
-                "enum": ["true_positive", "false_positive", "expected_behavior", "tune_policy", "needs_review"],
+                "enum": ["true_positive", "false_positive", "expected_behavior", "tune_policy", "needs_review", None],
             },
             "decision_evidence_refs": {
                 "type": "array",
@@ -651,9 +648,11 @@ def bridge_output_schema() -> dict[str, Any]:
             },
             "publication_checks": {
                 "type": "object", "additionalProperties": False,
+                "required": ["evidence", "privacy", "credential_leakage", "operational_safety", "legal_disclosure", "reproducibility"],
                 "properties": {
                     name: {
                         "type": "object", "additionalProperties": False,
+                        "required": ["status", "finding"],
                         "properties": {
                             "status": {"type": "string", "enum": ["clear", "concern", "unknown"]},
                             "finding": {"type": "string", "minLength": 1, "maxLength": 2000},
@@ -664,6 +663,36 @@ def bridge_output_schema() -> dict[str, Any]:
             },
         },
     }
+    props = schema["properties"]
+    if action_name and action_name != "review_publication_safety":
+        props["publication_checks"] = {"type": "object", "additionalProperties": False,
+                                       "properties": {}, "required": []}
+    if action_name and action_name != "analyze_research_case":
+        props["verdict_recommendation"]["enum"] = ["inconclusive"]
+        props["verdict_confidence"].update(minimum=0, maximum=0)
+        props["verdict_evidence_refs"]["maxItems"] = 0
+    if action_name == "triage_artifact":
+        from secopsai.decision_evidence import artifact_decision_choices
+        from secopsai.decision_contracts import DecisionError
+        artifact = (context or {}).get("artifact_triage", context or {})
+        choices = artifact_decision_choices(artifact)
+        if not choices["decision_evidence_refs"]:
+            raise DecisionError("artifact request has no supplied evidence identifiers", category="invalid_request")
+        props["decision_evidence_refs"].update(minItems=1, items={"type": "string", "enum": choices["decision_evidence_refs"]})
+        props["finding_verdict"] = {"type": "string", "enum": list(choices["verdict_dispositions"])}
+        # Disposition is a deterministic policy mapping of the model verdict,
+        # not a second independent model answer that can contradict it.
+        del props["disposition_recommendation"]
+        schema["required"].remove("disposition_recommendation")
+        props["decision_contract_version"] = {"type": "string", "enum": ["artifact-choices-v3"]}
+        schema["required"].append("decision_contract_version")
+        for key in ("finding_confidence", "malicious_probability"):
+            props[key]["type"] = "integer"
+        if choices["missing_evidence"]:
+            props["missing_evidence"]["items"] = {"type": "string", "enum": choices["missing_evidence"]}
+        else:
+            props["missing_evidence"]["maxItems"] = 0
+    return schema
 
 
 def _minimized_case(case: dict[str, Any]) -> dict[str, Any]:

@@ -5,7 +5,7 @@ export function requireModelAction(model, action) {
   }
 }
 
-export function validateDecisionResult(action, result) {
+export function validateDecisionResult(action, result, input = null) {
   const fail = message => { throw new Error(message); };
   for (const key of ['summary', 'risk_assessment']) {
     if (typeof result?.[key] !== 'string' || !result[key].trim()) fail(`Invalid ${key}`);
@@ -28,7 +28,27 @@ export function validateDecisionResult(action, result) {
       integer('malicious_probability');
       if (result.finding_verdict === 'needs_more_evidence' && (!Array.isArray(result.missing_evidence) || !result.missing_evidence.length || result.missing_evidence.some(path => typeof path !== 'string' || !path.trim() || path.includes('\n')))) fail('Artifact abstention requires a named missing file');
     }
-    if (!Array.isArray(result.decision_evidence_refs) || result.decision_evidence_refs.some(ref => typeof ref !== 'string' || !ref)) fail('Invalid decision_evidence_refs');
+    if (!Array.isArray(result.decision_evidence_refs) || !result.decision_evidence_refs.length || result.decision_evidence_refs.some(ref => typeof ref !== 'string' || !ref)) fail('Invalid decision_evidence_refs');
+    if (action === 'triage_artifact' && input?.artifact_triage) {
+      const artifact = input.artifact_triage;
+      const ids = [];
+      for (const category of ['matched_strings', 'flag_locations', 'findings', 'install_time_files', 'decoded_payloads', 'flagged_files', 'binaries', 'metadata_signals']) {
+        for (const item of artifact[category] || []) {
+          for (const key of ['rule_id', 'file_path', 'path', 'found_in']) {
+            const ref = item?.[key];
+            if (typeof ref === 'string' && ref && !ids.includes(ref)) ids.push(ref);
+          }
+        }
+      }
+      const supplied = new Set(ids.slice(0, 200));
+      if (result.decision_evidence_refs.some(ref => !supplied.has(ref))) fail('Artifact result cites unsupplied evidence');
+      if (result.finding_verdict === 'needs_more_evidence') {
+        const complete = new Set([...(artifact.flagged_files || []), ...(artifact.install_time_files || [])]
+          .filter(item => item && item.truncated !== true && item.complete !== false).map(item => item.path || item.file_path));
+        const missing = new Set([...new Set((artifact.missing_files || []).filter(path => typeof path === 'string' && path.trim() && !complete.has(path)))].slice(0, 200));
+        if (result.missing_evidence.some(path => !missing.has(path))) fail('Artifact abstention cites a file that was not identified as missing');
+      }
+    }
   }
   if (action === 'analyze_research_case') {
     if (!['credible', 'likely', 'inconclusive', 'not_substantiated', 'benign'].includes(result.verdict_recommendation)) fail('Invalid research verdict');

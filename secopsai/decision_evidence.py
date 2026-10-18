@@ -110,3 +110,31 @@ def evidence_identifiers(context: dict) -> list[str]:
                 if isinstance(value, str) and value and value not in ids:
                     ids.append(value)
     return ids[:200]
+
+
+def missing_file_identifiers(context: dict) -> list[str]:
+    """Exact absent-file choices; complete supplied files cannot be missing."""
+    supplied = {
+        item.get("path") or item.get("file_path")
+        for category in ("flagged_files", "install_time_files")
+        for item in context.get(category) or []
+        if isinstance(item, dict) and item.get("truncated") is not True and item.get("complete") is not False
+    }
+    missing = context.get("missing_files")
+    if not isinstance(missing, list):
+        return []
+    return list(dict.fromkeys(
+        path for path in missing
+        if isinstance(path, str) and path.strip() and path not in supplied
+    ))[:200]
+
+
+def artifact_decision_choices(context: dict) -> dict[str, Any]:
+    """One choice set shared by prompts, schemas, formatters and validators."""
+    dispositions = {"true_positive": "true_positive", "false_positive": "false_positive",
+                    "benign_expected": "expected_behavior"}
+    missing = missing_file_identifiers(context)
+    if missing:
+        dispositions["needs_more_evidence"] = "needs_review"
+    return {"decision_evidence_refs": evidence_identifiers(context), "missing_evidence": missing,
+            "verdict_dispositions": dispositions}

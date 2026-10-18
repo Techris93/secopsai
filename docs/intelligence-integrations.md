@@ -458,3 +458,15 @@ The current hosted Core is a single-tenant pilot deployment. Limit OAuth access 
 - Raw telemetry and artifact contents are removed before context construction.
 - Package metadata and finding text are treated as untrusted data, not model instructions.
 - Model output is advisory. It cannot resolve a finding, approve disclosure, submit a sandbox artifact, or publish research.
+
+## Hosted artifact failure recovery
+
+Artifact generation uses the `artifact-choices-v3` contract. Evidence references and missing-file requests are bounded to exact supplied identifiers. Line numbers belong in evidence prose, never appended to an identifier. The formatter derives the disposition from the selected verdict; absent confidence or probability answers remain invalid. Core revalidates evidence membership before persistence.
+
+The bridge records its loaded source fingerprint in health and failure diagnostics. A source change makes the managed bridge exit between jobs; the KeepAlive service then loads the new code. Updating a checkout alone does not prove that a previously running interpreter loaded it. Hosted claims capture the primary model and fallback policy before execution, including explicitly bound legacy jobs.
+
+`POST /api/v1/intelligence/jobs/recover` requires the operator intelligence credential. Transient recovery is limited to ten classified jobs per request. Contract repair requires explicit `job_ids` and `repair_version: artifact-choices-v3`, and accepts only the documented evidence-selection or verdict/disposition failures. Use `dry_run: true` to inspect eligibility without creating work. Legacy jobs without captured routing require an explicit primary model, fallback list, and fallback mode. Captured routing cannot be replaced by a recovery request.
+
+Recovery creates an idempotent successor and keeps the original failed job and events. Research result delivery carries `recovery_of_job_id` and the repair version; it can advance only the exact failed canonical revision, never a successful or newer decision. Maximum recovery depth is three. The dashboard separates historical failure counts from currently blocked targets and displays the recorded cause and backend recovery decision.
+
+Historical `all configured bridge models failed` records without detailed causes are excluded from automatic recovery. They cannot be retrospectively assigned a specific cause from their category alone. Preserve them for investigation rather than classifying them as transient. Invalid results leave alerts open; Clef enablement, observation mode, and human publication approval remain separate controls.
