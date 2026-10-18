@@ -76,10 +76,13 @@ jobs:
           import json, sys
           data = json.load(open(sys.argv[1])); branch = sys.argv[2]; run = sys.argv[3]
           print(f"The rule lab mined Recall Benchmark run {run} and proposes {len(data['proposals'])} behaviour rule(s).\n")
-          print(f"Chosen on samples discovered before {data['cutoff']}; held-out counts are samples from {data['cutoff']} on, which the search never saw.\n")
-          print("| Ecosystem | Behaviours | Throwaway shape | Train | Held-out | Popular flagged |\n| --- | --- | --- | --- | --- | --- |")
+          print(f"Chosen using samples discovered before {data['cutoff']}. Held-out samples from {data['cutoff']} onward are not used for selection.\n")
+          print("Held-out counts are incremental across proposed rules. Package counts deduplicate versions; overlap with pre-cutoff packages is shown. Clean hits list packages in the benchmark sample, not registry-wide false positives.\n")
+          print("| Ecosystem | Behaviours | Throwaway shape | Train gain (samples / packages) | Incremental held-out (samples / packages; train overlap) | Popular clean hits |\n| --- | --- | --- | --- | --- | --- |")
           for p in data["proposals"]:
-              print(f"| {p['ecosystem']} | {' + '.join(p['flags'])} | {'yes' if p['small_package'] else 'no'} | +{p['train_gain']} | +{p['test_gain']} of {p['test_samples']} | {p['clean_hits']} |")
+              clean = ", ".join(p.get("clean_hit_packages") or []) or "none"
+              clean = clean.replace("|", "\\|").replace("\n", " ")
+              print(f"| {p['ecosystem']} | {' + '.join(p['flags'])} | {'yes' if p['small_package'] else 'no'} | +{p['train_gain']} / {p['train_packages']} | +{p['test_gain']} / {p['test_packages']} ({p['test_training_overlap_packages']} overlap) of {p['test_samples']} samples | {p['clean_hits']}: {clean} |")
           print(f"\n**Review and open the pull request:** https://github.com/${{ github.repository }}/compare/main...{branch}?expand=1\n")
           print("Before merging: check each rule's held-out gain is real, and remember the clean set is 1,475 popular packages, not the whole registry.")
           PY

