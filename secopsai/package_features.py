@@ -232,6 +232,12 @@ BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], 
     # npm packages in that snapshot. The benchmark clean set is not the registry.
     ("BEH_NPM_RAW_IP_URL", ("npm",), (("raw_ip_url",),), 60),  # +6 held-out samples / 5 packages
     ("BEH_NPM_SMALL_HTTP_SEND", ("npm",), (("http_send",), SMALL_PACKAGE), 60),  # +19 held-out samples / 15 packages
+    # Rule lab: +26 pre-cutoff misses in 5 packages, +9 incremental held-out misses in 7 packages, 0 popular-clean hit(s).
+    ("BEH_LAB_NPM_01", ("npm",), (("telegram_bot",),), 60),
+    # Rule lab: +25 pre-cutoff misses in 23 packages, +8 incremental held-out misses in 6 packages, 0 popular-clean hit(s).
+    ("BEH_LAB_NPM_02", ("npm",), (("dns_lookup",), ("install_hook",),), 60),
+    # Rule lab: +18 pre-cutoff misses in 14 packages, +3 incremental held-out misses in 2 packages, 1 popular-clean hit(s).
+    ("BEH_LAB_NPM_03", ("npm",), (("exfil_service",), SMALL_PACKAGE,), 60),
 )
 
 
