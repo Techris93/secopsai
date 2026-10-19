@@ -46,6 +46,10 @@ from secopsai.ontology import materialize_recent
 from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 DEFAULT_CYCLE_INTERVAL_SECONDS = 60
+FAILED_COLLECTOR_RETRY_BASE_SECONDS = 300
+FAILED_COLLECTOR_RETRY_MAX_SECONDS = 1800
+TRANSIENT_COLLECTOR_RETRY_DELAY_SECONDS = 3
+MAX_TRANSIENT_COLLECTOR_RETRIES_PER_CYCLE = 2
 MAX_PAGES_PER_CYCLE = 25
 # Dense registries need a complete bounded pass before their durable cursor can
 # advance. These per-source budgets are measured below the collector hard cap.
@@ -324,11 +328,14 @@ def _apply_operator_enables(collectors: List[Dict[str, Any]], *, db_path: Option
 
 
 def due_collectors(*, db_path: Optional[str] = None, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
-    """Enabled collectors whose interval has elapsed since their last run.
+    """Enabled collectors due for routine polling or a bounded failure retry.
 
     Disabled collectors are reported as paused so operators can see the
-    surveillance hole instead of assuming coverage. The due computation is
-    read-only and survives restarts because it derives from run history.
+    surveillance hole instead of assuming coverage. Failed/interrupted runs
+    receive a short exponential retry schedule; they do not consume the full
+    normal polling interval as though they had successfully refreshed data.
+    The due computation is read-only and survives restarts because it derives
+    from run history.
     """
     collectors = ensure_collectors(db_path=db_path)
     collectors = _apply_operator_enables(collectors, db_path=db_path)
@@ -339,28 +346,67 @@ def due_collectors(*, db_path: Optional[str] = None, now: Optional[datetime] = N
         for collector in collectors:
             ecosystem = collector["ecosystem"]
             interval = schedules.get(ecosystem, 3600)
-            last_run = connection.execute(
-                """SELECT status, started_at FROM registry_ingestion_runs
-                WHERE collector_id = ? ORDER BY started_at DESC LIMIT 1""",
+            recent_runs = connection.execute(
+                """SELECT status, started_at, completed_at FROM registry_ingestion_runs
+                WHERE collector_id = ? ORDER BY started_at DESC LIMIT 8""",
                 (collector["collector_id"],),
-            ).fetchone()
+            ).fetchall()
+            last_run = recent_runs[0] if recent_runs else None
             last_started = _parse_started_at(last_run["started_at"]) if last_run else None
             elapsed = (now - last_started).total_seconds() if last_started else None
-            is_due = last_started is None or (elapsed is not None and elapsed >= interval)
+            failure_streak = 0
+            for recent in recent_runs:
+                if recent["status"] not in {"failed", "interrupted"}:
+                    break
+                failure_streak += 1
+            effective_interval = interval
+            retry_elapsed = elapsed
+            if failure_streak:
+                retry_interval = min(
+                    FAILED_COLLECTOR_RETRY_BASE_SECONDS * (2 ** min(failure_streak - 1, 3)),
+                    FAILED_COLLECTOR_RETRY_MAX_SECONDS,
+                )
+                effective_interval = min(interval, retry_interval)
+                retry_anchor = _parse_started_at(last_run["completed_at"] or last_run["started_at"])
+                retry_elapsed = (now - retry_anchor).total_seconds() if retry_anchor else None
+            is_due = last_started is None or (retry_elapsed is not None and retry_elapsed >= effective_interval)
             due.append(
                 {
                     "collector_id": collector["collector_id"],
                     "ecosystem": ecosystem,
                     "enabled": bool(collector["enabled"]),
                     "interval_seconds": interval,
+                    "effective_interval_seconds": effective_interval,
+                    "consecutive_failures": failure_streak,
                     "last_run_status": last_run["status"] if last_run else None,
                     "last_started_at": last_run["started_at"] if last_run else None,
-                    "seconds_since_last_run": elapsed,
+                    "seconds_since_last_run": retry_elapsed,
                     "due": is_due and bool(collector["enabled"]),
                     "paused": not bool(collector["enabled"]),
                 }
             )
     return due
+
+
+def _run_collector_with_transient_retry(
+    *, ecosystem: str, max_pages: int, db_path: Optional[str], fetcher: SafeFetcher,
+    retry_budget: int,
+) -> tuple[Dict[str, Any], int]:
+    """Retry only explicitly classified transport failures within a small cycle budget."""
+    outcome = run_registry_collector(ecosystem=ecosystem, max_pages=max_pages, db_path=db_path, fetcher=fetcher)
+    retry_history = []
+    retries_used = 0
+    while outcome.get("failure_category") == "transient_transport" and outcome.get("retryable") and retries_used < retry_budget:
+        retry_history.append({key: outcome.get(key) for key in ("run_id", "error", "transport_diagnostic")})
+        from secopsai.worker_control import check_shutdown
+        check_shutdown()
+        time.sleep(TRANSIENT_COLLECTOR_RETRY_DELAY_SECONDS)
+        outcome = run_registry_collector(ecosystem=ecosystem, max_pages=max_pages, db_path=db_path, fetcher=fetcher)
+        retries_used += 1
+    if retries_used:
+        outcome["retry_attempts"] = retries_used
+        outcome["retry_history"] = retry_history
+    return outcome, retries_used
 
 
 def _cycle_stage(stage: str) -> None:
@@ -432,18 +478,21 @@ def _run_worker_cycle_unlocked(
     results: List[Dict[str, Any]] = []
     due = due_collectors(db_path=db_path)
     _cycle_stage("registry_collection")
+    transient_retry_budget = MAX_TRANSIENT_COLLECTOR_RETRIES_PER_CYCLE
     for item in due:
         if not item["due"]:
             continue
         if selected and item["ecosystem"] not in selected:
             continue
         try:
-            outcome = run_registry_collector(
+            outcome, retries_used = _run_collector_with_transient_retry(
                 ecosystem=item["ecosystem"],
                 max_pages=collector_page_budget(item["ecosystem"], max_pages),
                 db_path=db_path,
                 fetcher=fetcher,
+                retry_budget=transient_retry_budget,
             )
+            transient_retry_budget -= retries_used
             results.append(
                 {
                     "ecosystem": item["ecosystem"],
@@ -452,6 +501,11 @@ def _run_worker_cycle_unlocked(
                     "events_stored": outcome.get("events_stored", 0),
                     "coverage": outcome.get("coverage"),
                     "error": outcome.get("error"),
+                    "failure_category": outcome.get("failure_category", ""),
+                    "retryable": bool(outcome.get("retryable", False)),
+                    "transport_diagnostic": outcome.get("transport_diagnostic", ""),
+                    "retry_attempts": outcome.get("retry_attempts", 0),
+                    "retry_history": outcome.get("retry_history", []),
                     "window_incomplete": bool(outcome.get("window_incomplete")),
                     "diff_truncated": bool(outcome.get("diff_truncated")),
                     "collector_id": item["collector_id"],

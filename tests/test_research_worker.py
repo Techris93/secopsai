@@ -7,6 +7,7 @@ from secopsai.research_worker import (
     _record_collector_degraded_alert,
     _record_npm_enrichment_alert,
     _record_storage_capacity_alert,
+    _run_collector_with_transient_retry,
     collector_schedules,
     collector_page_budget,
     due_collectors,
@@ -88,6 +89,72 @@ def test_due_collectors_respect_intervals_and_pause(tmp_path):
     assert due["rubygems"]["due"] is False
     assert due["rubygems"]["paused"] is True
     assert due["packagist"]["due"] is True  # never ran
+
+
+def test_failed_collector_gets_short_restart_safe_retry_interval(tmp_path):
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+    now = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+    started = (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    completed = (now - timedelta(minutes=4, seconds=30)).isoformat().replace("+00:00", "Z")
+    with soc_store.connect(db_path) as connection:
+        connection.execute(
+            """INSERT INTO registry_ingestion_runs
+            (run_id, collector_id, status, cursor_before, cursor_after, coverage_mode, started_at, completed_at)
+            VALUES ('RIR-FAILED-MAVEN', 'COL-MAVEN-SOLR', 'failed', '0', '0', 'event_feed', ?, ?)""",
+            (started, completed),
+        )
+        connection.commit()
+
+    before_backoff = {item["ecosystem"]: item for item in due_collectors(db_path=db_path, now=now)}["maven"]
+    assert before_backoff["last_run_status"] == "failed"
+    assert before_backoff["effective_interval_seconds"] == 300
+    assert before_backoff["consecutive_failures"] == 1
+    assert before_backoff["due"] is False
+
+    after_backoff = {item["ecosystem"]: item for item in due_collectors(db_path=db_path, now=now + timedelta(seconds=40))}["maven"]
+    assert after_backoff["due"] is True
+
+
+def test_collector_retry_is_bounded_to_transient_transport_failures(monkeypatch):
+    calls = []
+    outcomes = [
+        {"run_id": "failed-run", "status": "failed", "failure_category": "transient_transport",
+         "retryable": True, "error": "transport failed", "transport_diagnostic": "timeout"},
+        {"run_id": "recovered-run", "status": "completed", "failure_category": "",
+         "retryable": False, "events_stored": 2},
+    ]
+
+    def collect(**kwargs):
+        calls.append(kwargs["ecosystem"])
+        return outcomes.pop(0)
+
+    monkeypatch.setattr("secopsai.research_worker.run_registry_collector", collect)
+    monkeypatch.setattr("secopsai.research_worker.time.sleep", lambda _seconds: None)
+    result, retries = _run_collector_with_transient_retry(
+        ecosystem="maven", max_pages=25, db_path=None, fetcher=SafeFetcher(fetch=lambda *_: (200, {}, b"{}")), retry_budget=1
+    )
+    assert calls == ["maven", "maven"]
+    assert retries == result["retry_attempts"] == 1
+    assert result["status"] == "completed"
+    assert result["retry_history"] == [{"run_id": "failed-run", "error": "transport failed", "transport_diagnostic": "timeout"}]
+
+
+def test_non_transport_collector_failure_is_not_retried(monkeypatch):
+    calls = []
+
+    def collect(**kwargs):
+        calls.append(kwargs["ecosystem"])
+        return {"run_id": "rejected-run", "status": "failed", "failure_category": "source_error",
+                "retryable": False, "error": "invalid source response"}
+
+    monkeypatch.setattr("secopsai.research_worker.run_registry_collector", collect)
+    result, retries = _run_collector_with_transient_retry(
+        ecosystem="mcp-registry", max_pages=30, db_path=None, fetcher=SafeFetcher(fetch=lambda *_: (200, {}, b"{}")), retry_budget=1
+    )
+    assert calls == ["mcp-registry"]
+    assert retries == 0
+    assert result["status"] == "failed"
 
 
 def test_worker_cycle_isolates_collector_failures(tmp_path, monkeypatch):
