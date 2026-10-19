@@ -4,6 +4,7 @@ from __future__ import annotations
 import email.utils
 import hashlib
 import json
+import os
 import re
 import secrets
 from contextlib import closing
@@ -31,10 +32,18 @@ class IntakeBackpressureError(ValueError):
     """The source snapshot is durable, but queued work has reached its bound."""
 
 
-def source_headers(parser: str) -> dict:
+def source_headers(parser: str, *, url: str | None = None) -> dict:
     if parser in {"jfrog_index", "socket_index"}:
-        return {"Accept": "text/html"}
-    return {"Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8" if parser in {"rss", "msrc_rss"} else "application/json"}
+        headers = {"Accept": "text/html"}
+    else:
+        headers = {"Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8" if parser in {"rss", "msrc_rss"} else "application/json"}
+    parsed = urlparse(url or "")
+    token = os.environ.get("SECOPSAI_GITHUB_TOKEN", "").strip()
+    # A bearer token is sent only to the reviewed public GitHub API origin;
+    # a custom source URL can never receive the workflow credential.
+    if parser == "github_advisories" and parsed.scheme == "https" and parsed.hostname == "api.github.com" and token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 def _now() -> str:
@@ -345,7 +354,7 @@ def collect_due(*, db_path=None, fetcher=None, limit: int = 10, force_source_ids
                 if config["parser"] == "msrc_rss":
                     config = {**config, "msrc_lookback_start": msrc_window_start(last_success_at=source["last_success_at"])}
                 _, received_headers, content = fetch_source(config["url"], max_bytes=MAX_SOURCE_BYTES,
-                                                           headers=source_headers(config["parser"]), fetcher=fetcher)
+                                                           headers=source_headers(config["parser"], url=config["url"]), fetcher=fetcher)
             stage = "parse"
             results.append(acquire(config, content, db_path=db_path, transport=received_headers.get("secopsai-transport", "direct")))
         except Exception as exc:

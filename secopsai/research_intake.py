@@ -66,6 +66,33 @@ class IntakeError(ValueError):
     """A user-safe, non-secret intake failure."""
 
 
+class TransientTransportError(IntakeError):
+    """A bounded HTTP request exhausted retries on a transport failure."""
+
+    failure_category = "transient_transport"
+    retryable = True
+
+    def __init__(self, error: BaseException) -> None:
+        cause = getattr(error, "reason", None) or error
+        self.cause_type = type(cause).__name__
+        self.errno = getattr(cause, "errno", None)
+        lowered = self.cause_type.lower()
+        if "timeout" in lowered or "timedout" in lowered:
+            self.diagnostic = "timeout"
+        elif "gaierror" in lowered:
+            self.diagnostic = "dns_resolution"
+        elif "ssl" in lowered or "certificate" in lowered:
+            self.diagnostic = "tls_handshake"
+        elif "connection" in lowered:
+            self.diagnostic = "connection_failure"
+        else:
+            self.diagnostic = "network_io"
+        detail = f"{self.diagnostic}:{self.cause_type}"
+        if isinstance(self.errno, int):
+            detail += f":errno={self.errno}"
+        super().__init__(f"registry request failed ({detail})")
+
+
 @dataclass(frozen=True)
 class RegistryMetadata:
     ecosystem: str
@@ -171,7 +198,9 @@ class SafeFetcher:
                     method="POST" if data is not None and redirect_count == 0 else "GET",
                 )
                 opener = urllib.request.build_opener(_NoRedirectHandler())
-                max_retries = 3
+                # A fourth bounded attempt catches short DNS/connectivity
+                # interruptions without hiding a prolonged source outage.
+                max_retries = 4
                 for attempt in range(max_retries):
                     check_shutdown()
                     try:
@@ -180,22 +209,22 @@ class SafeFetcher:
                             headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
                             body = response.read(max_bytes + 1)
                         if status >= 500 and attempt < max_retries - 1:
-                            time.sleep(1.0 * (attempt + 1))
+                            time.sleep(min(2 ** attempt, 8))
                             continue
                         break
                     except urllib.error.HTTPError as exc:
                         status = int(exc.code)
                         headers = {str(key).lower(): str(value) for key, value in exc.headers.items()}
                         if status >= 500 and attempt < max_retries - 1:
-                            time.sleep(1.0 * (attempt + 1))
+                            time.sleep(min(2 ** attempt, 8))
                             continue
                         body = exc.read(max_bytes + 1)
                         break
                     except (urllib.error.URLError, TimeoutError, OSError) as exc:
                         if attempt < max_retries - 1:
-                            time.sleep(1.0 * (attempt + 1))
+                            time.sleep(min(2 ** attempt, 8))
                             continue
-                        raise IntakeError("registry request failed") from exc
+                        raise TransientTransportError(exc) from exc
             else:
                 status, headers, body = self._injected(current, max_bytes)
                 headers = {str(key).lower(): str(value) for key, value in headers.items()}

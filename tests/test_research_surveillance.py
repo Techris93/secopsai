@@ -1379,6 +1379,27 @@ def test_maven_page_failure_dead_letters_and_holds_cursor(tmp_path):
     assert letters[0]["item_kind"] == "page"
 
 
+def test_maven_transport_failure_is_marked_retryable_for_worker(tmp_path, monkeypatch):
+    import urllib.error
+
+    from secopsai import research_intake
+
+    class OfflineOpener:
+        def open(self, _request, timeout):
+            raise urllib.error.URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr(research_intake, "_validate_public_host", lambda _host: None)
+    monkeypatch.setattr(research_intake.urllib.request, "build_opener", lambda *_args: OfflineOpener())
+    monkeypatch.setattr(research_intake.time, "sleep", lambda _seconds: None)
+
+    result = run_registry_collector(ecosystem="maven", db_path=_db(tmp_path), fetcher=SafeFetcher())
+
+    assert result["status"] == "failed"
+    assert result["failure_category"] == "transient_transport"
+    assert result["retryable"] is True
+    assert result["transport_diagnostic"] == "timeout"
+
+
 def test_maven_caught_up_run_keeps_cursor(tmp_path):
     db_path = _db(tmp_path)
     ensure_collectors(db_path=db_path)

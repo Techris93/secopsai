@@ -189,6 +189,59 @@ def test_redirect_to_unapproved_host_is_rejected():
         SafeFetcher(fetch=fetch).get("https://registry.npmjs.org/demo", allowed_hosts=("registry.npmjs.org",), max_bytes=100)
 
 
+def test_safe_fetcher_retries_transient_transport_failures_and_keeps_them_identifiable(monkeypatch):
+    import urllib.error
+    import secopsai.research_intake as intake
+
+    attempts = []
+
+    class Response:
+        status = 200
+        headers = {"content-type": "application/json"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit):
+            return b"{}"
+
+    class Opener:
+        def open(self, _request, timeout):
+            attempts.append(timeout)
+            if len(attempts) < 4:
+                raise urllib.error.URLError(TimeoutError("timed out"))
+            return Response()
+
+    monkeypatch.setattr(intake, "_validate_public_host", lambda _host: None)
+    monkeypatch.setattr(intake.urllib.request, "build_opener", lambda *_args: Opener())
+    monkeypatch.setattr(intake.time, "sleep", lambda _seconds: None)
+    final_url, headers, body = SafeFetcher(timeout=2).get(
+        "https://registry.example/feed", allowed_hosts=("registry.example",), max_bytes=20
+    )
+    assert len(attempts) == 4
+    assert final_url == "https://registry.example/feed"
+    assert headers["content-type"] == "application/json"
+    assert body == b"{}"
+
+    attempts.clear()
+
+    class AlwaysDown:
+        def open(self, _request, timeout):
+            attempts.append(timeout)
+            raise urllib.error.URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr(intake.urllib.request, "build_opener", lambda *_args: AlwaysDown())
+    with pytest.raises(IntakeError) as error:
+        SafeFetcher(timeout=2).get("https://registry.example/feed", allowed_hosts=("registry.example",), max_bytes=20)
+    assert len(attempts) == 4
+    assert error.value.failure_category == "transient_transport"
+    assert error.value.retryable is True
+    assert error.value.diagnostic == "timeout"
+
+
 def test_archive_symlink_is_rejected():
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:

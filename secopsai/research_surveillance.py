@@ -819,6 +819,9 @@ def _close_run(
         "leaf_failures": outcome["leaf_failures"],
         "coverage": "gap" if gap else "complete",
         "error": error_message,
+        "failure_category": outcome.get("error_category", ""),
+        "retryable": bool(outcome.get("retryable", False)),
+        "transport_diagnostic": outcome.get("transport_diagnostic", ""),
         "algorithm_version": ALGORITHM_VERSION,
     }
 
@@ -832,11 +835,20 @@ def _empty_outcome(cursor_before: str) -> Dict[str, Any]:
         "events_stored": 0,
         "events_duplicate": 0,
         "leaf_failures": 0,
+        "error_category": "",
+        "retryable": False,
+        "transport_diagnostic": "",
         "anomalies": [],
         "diff_truncated": False,
         "window_incomplete": False,
         "error": None,
     }
+
+
+def _annotate_fetch_failure(outcome: Dict[str, Any], error: BaseException) -> None:
+    outcome["error_category"] = str(getattr(error, "failure_category", "source_error"))[:80]
+    outcome["retryable"] = bool(getattr(error, "retryable", False))
+    outcome["transport_diagnostic"] = str(getattr(error, "diagnostic", ""))[:120]
 
 
 def _ingest_nuget_catalog(
@@ -1542,6 +1554,7 @@ def _ingest_mcp_registry(
                 payload = _fetch_json(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_TIMEFRAME_PAGE_BYTES)
             except (IntakeError, CollectorError, ValueError) as exc:
                 outcome["error"] = f"MCP registry page fetch failed: {exc}"
+                _annotate_fetch_failure(outcome, exc)
                 with _write_transaction(connection, db_path):
                     _record_dead_letter(connection, collector_id=collector["collector_id"], run_id=run_id, url=page_url,
                                         item_kind="page", payload={"cursor": cursor_before}, error=str(exc))
@@ -1880,6 +1893,7 @@ def _ingest_maven_solr(
             payload, _url = _query("q=" + urllib.parse.quote("*:*") + "&rows=1")
         except (IntakeError, CollectorError) as exc:
             outcome["error"] = f"solr bootstrap fetch failed: {exc}"
+            _annotate_fetch_failure(outcome, exc)
             with closing(soc_store.connect(db_path)) as connection:
                 with _write_transaction(connection, db_path):
                     _record_dead_letter(
@@ -1923,6 +1937,7 @@ def _ingest_maven_solr(
                 payload = _fetch_json(fetcher, page_url, allowed_hosts=allowed_hosts, max_bytes=MAX_MAVEN_PAGE_BYTES)
             except (IntakeError, CollectorError) as exc:
                 outcome["error"] = f"solr page fetch failed: {exc}"
+                _annotate_fetch_failure(outcome, exc)
                 with _write_transaction(connection, db_path):
                     _record_dead_letter(
                         connection,
