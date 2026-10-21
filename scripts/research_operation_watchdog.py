@@ -51,6 +51,22 @@ def _parse_time(value):
         return None
 
 
+def worker_completion_timestamp(run: dict) -> str:
+    """Return the final timestamp exposed by GitHub's workflow-run API.
+
+    GitHub has returned ``completed_at: null`` for completed workflow runs.
+    In that case ``updated_at`` is usable only after the API also reports a
+    completed status and a conclusion; in-progress runs must never use it.
+    """
+    completed_at = run.get("completed_at")
+    if _parse_time(completed_at):
+        return str(completed_at)
+    if run.get("status") != "completed" or not run.get("conclusion"):
+        return ""
+    updated_at = run.get("updated_at")
+    return str(updated_at) if _parse_time(updated_at) else ""
+
+
 def _worker_snapshot_pending_reason(value, *, run_id, run_attempt, completed_at):
     runtime = value.get("runtime") or {}
     if str(runtime.get("worker_run_id") or "") != str(run_id):
