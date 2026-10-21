@@ -74,6 +74,22 @@ def test_pypi_adapter_falls_back_to_sdist_when_wheel_exceeds_cap():
     assert PyPiAdapter().resolve("homeassistant", "2026.10.1", fetcher).artifact_url.endswith("ha.tar.gz")
 
 
+def test_pypi_adapter_marks_release_with_only_oversized_artifacts_as_incomplete():
+    from secopsai.research_intake import ArtifactResourceLimitError, MAX_ARTIFACT_BYTES, PyPiAdapter
+
+    url = "https://pypi.org/pypi/libtpu/0.0.51/json"
+    fetcher = _Fetcher({url: {"info": {}, "urls": [
+        {"url": "https://files.pythonhosted.org/libtpu.whl", "packagetype": "bdist_wheel", "size": MAX_ARTIFACT_BYTES + 1},
+        {"url": "https://files.pythonhosted.org/libtpu.tar.gz", "packagetype": "sdist", "size": MAX_ARTIFACT_BYTES + 2},
+    ]}})
+
+    with pytest.raises(ArtifactResourceLimitError) as raised:
+        PyPiAdapter().resolve("libtpu", "0.0.51", fetcher)
+
+    assert raised.value.failure_category == "artifact_resource_limit"
+    assert "configured download limit" in str(raised.value)
+
+
 def test_large_npm_packument_uses_bounded_npm_limit_and_preserves_publish_times():
     from secopsai.research_intake import MAX_METADATA_BYTES, MAX_NPM_METADATA_BYTES, NpmAdapter, SafeFetcher
 

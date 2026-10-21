@@ -411,7 +411,13 @@ class PyPiAdapter(RegistryAdapter):
         # (large projects can ship a wheel above it alongside a smaller sdist).
         fitting = [item for item in files if int(item.get("size") or 0) <= MAX_ARTIFACT_BYTES]
         if not fitting:
-            raise IntakeError("every PyPI artifact for this version exceeds the safety limit")
+            # A known artifact-size bound is an incomplete analysis result,
+            # not an unexpected intake failure. Fast Lane records this as an
+            # explicit resource-limited item and keeps it available for review
+            # without manufacturing a clean verdict or failing the whole run.
+            raise ArtifactResourceLimitError(
+                "every PyPI artifact for this version exceeds the configured download limit"
+            )
         rank = {"bdist_wheel": 0, "sdist": 1}
         chosen = min(fitting, key=lambda item: rank.get(item.get("packagetype"), 2))
         return RegistryMetadata(self.ecosystem, package, version, url, str(chosen["url"]),
