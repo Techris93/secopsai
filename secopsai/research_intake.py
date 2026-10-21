@@ -37,6 +37,11 @@ from secopsai.research_signal_analysis import (
 
 
 MAX_METADATA_BYTES = 2 * 1024 * 1024
+# Keep other registry metadata on the smaller default bound. NPM packuments
+# include the full version map and publication timestamps; some large, valid
+# packages exceed 2 MiB. A 24 MiB cap covers the observed 17,092,889-byte
+# @pulumi/pulumi packument while keeping registry input strictly bounded.
+MAX_NPM_METADATA_BYTES = 24 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
 MAX_ARCHIVE_ENTRIES = 10_000
 MAX_EXPANDED_BYTES = 250 * 1024 * 1024
@@ -64,6 +69,13 @@ LIFECYCLE_NAMES = {
 
 class IntakeError(ValueError):
     """A user-safe, non-secret intake failure."""
+
+
+class IntakeResponseLimitError(IntakeError):
+    """A registry response exceeded the caller's explicit byte bound."""
+
+    failure_category = "response_size_limit"
+    retryable = False
 
 
 class ArtifactResourceLimitError(IntakeError):
@@ -254,7 +266,7 @@ class SafeFetcher:
                 status, headers, body = self._injected(current, max_bytes)
                 headers = {str(key).lower(): str(value) for key, value in headers.items()}
             if len(body) > max_bytes:
-                raise IntakeError("registry response exceeded the safety limit")
+                raise IntakeResponseLimitError("registry response exceeded the configured safety limit")
             if status in {301, 302, 303, 307, 308}:
                 location = headers.get("location", "")
                 if not location or redirect_count >= self.max_redirects:
@@ -276,6 +288,7 @@ class RegistryAdapter:
     ecosystem = ""
     metadata_hosts: Tuple[str, ...] = ()
     artifact_hosts: Tuple[str, ...] = ()
+    metadata_max_bytes = MAX_METADATA_BYTES
 
     def metadata_url(self, package: str) -> str:
         raise NotImplementedError
@@ -284,7 +297,7 @@ class RegistryAdapter:
         raise NotImplementedError
 
     def _json(self, url: str, fetcher: SafeFetcher) -> Tuple[str, Dict[str, Any]]:
-        final_url, headers, body = fetcher.get(url, allowed_hosts=self.metadata_hosts, max_bytes=MAX_METADATA_BYTES)
+        final_url, headers, body = fetcher.get(url, allowed_hosts=self.metadata_hosts, max_bytes=self.metadata_max_bytes)
         try:
             payload = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -310,6 +323,7 @@ class NpmAdapter(RegistryAdapter):
     ecosystem = "npm"
     metadata_hosts = ("registry.npmjs.org",)
     artifact_hosts = ("registry.npmjs.org",)
+    metadata_max_bytes = MAX_NPM_METADATA_BYTES
 
     def metadata_url(self, package: str) -> str:
         return "https://registry.npmjs.org/" + urllib.parse.quote(package, safe="@/")
