@@ -5,7 +5,7 @@
 // binding.  That lets the old Render worker upload its ledger without anyone
 // copying a credential between providers.
 import { bearer, handleLedgerRequest, json, timingSafeEqual } from "../../secopsai-research-runner/src/ledger.js";
-import { fastlaneTick } from "./fastlane.js";
+import { completeFastlaneTargets, fastlaneQueueStatus, fastlaneTick } from "./fastlane.js";
 
 const FASTLANE_CRON = "* * * * *";
 const WATCHLIST_CRON = "17 3 * * *";
@@ -164,6 +164,20 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/healthz") return json({ status: "ok", service: "secopsai-ledger-store", checkpoint_protocol: "ledger-checkpoint-v2", completion_retry_safe: true });
+    if (url.pathname === "/fastlane/complete") {
+      const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);
+      if (!isOwner) return json({ error: "unauthorized" }, 401);
+      if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+      const body = await request.text();
+      if (new TextEncoder().encode(body).byteLength > 64 * 1024) return json({ error: "completion batch too large" }, 413);
+      let value;
+      try { value = JSON.parse(body); } catch { return json({ error: "invalid json" }, 400); }
+      try {
+        return json(await completeFastlaneTargets(env.LEDGER, value.results, {runId: value.run_id || ""}));
+      } catch (error) {
+        return json({ error: String(error?.message || error).slice(0, 200) }, 422);
+      }
+    }
     const watchlistMatch = url.pathname.match(/^\/fastlane\/watchlist\/([a-z]+)$/);
     if (watchlistMatch || url.pathname === "/fastlane/status") {
       const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);
@@ -181,7 +195,8 @@ export default {
       if (url.pathname === "/fastlane/status") {
         const object = await env.LEDGER.get("fastlane/state.json");
         const state = object ? JSON.parse(await object.text()) : {};
-        return json({ npm_seq: state.npm_seq ?? null, dispatched_recently: Object.keys(state.dispatched || {}).length, pypi_seen: (state.pypi_seen || []).length });
+        return json({ npm_seq: state.npm_seq ?? null, pypi_seen: (state.pypi_seen || []).length,
+          queue: await fastlaneQueueStatus(env.LEDGER) });
       }
       return json({ error: "method not allowed" }, 405);
     }

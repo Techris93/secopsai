@@ -859,8 +859,19 @@ def run_worker_loop(
                 last_summary = dict(last_summary)
                 last_summary["campaigns"] = {"status": "degraded", "error": str(exc)[:500]}
             # One line per cycle so outcomes are visible in the run log.
+            primary = last_summary.get("primary_intel") if isinstance(last_summary.get("primary_intel"), dict) else {}
+            primary_results = primary.get("results") if isinstance(primary.get("results"), list) else []
+            primary_preparation = primary.get("preparation") if isinstance(primary.get("preparation"), dict) else {}
+            primary_diagnostics = {
+                "status": primary.get("status"),
+                "results": [{key: item.get(key) for key in ("source_id", "status", "error_category")}
+                            for item in primary_results[:10] if isinstance(item, dict)],
+                "preparation": {key: primary_preparation.get(key)
+                                for key in ("status", "prepared", "pending", "awaiting_human_review", "failed")},
+            }
             print(json.dumps({"component": "research-worker", "event": "cycle_summary",
-                              **{key: last_summary.get(key) for key in ("status", "content_funnel", "actions_watch", "retriage", "campaigns") if key in last_summary}},
+                              **{key: last_summary.get(key) for key in ("status", "content_funnel", "actions_watch", "retriage", "campaigns") if key in last_summary},
+                              "primary_intel": primary_diagnostics},
                              default=str)[:4000], flush=True)
             cycles += 1
             check_shutdown()

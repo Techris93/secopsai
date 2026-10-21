@@ -53,6 +53,31 @@ def test_delivery_verification_does_not_start_a_partial_final_request(tmp_path, 
     assert result['status'] == 'failed'
 
 
+def test_routine_delivery_accepts_fresh_pending_work_but_explicit_drain_requires_zero(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    monkeypatch.setattr('secopsai.ontology.materialize_recent', lambda **kwargs: {'snapshot': {}})
+    monkeypatch.setattr('secopsai.research_operation.hosted_projection', lambda **kwargs: {
+        'coverage': {'health': {'ontology_pending': 37, 'ontology_oldest_age_seconds': 300,
+                                'ontology_last_acknowledged_at': now, 'dead_letters': 0,
+                                'ontology_validation_failures': 0, 'ontology_authorization_failures': 0}}})
+
+    class Client:
+        enabled = True
+        def enqueue_ontology_snapshot(self, *args, **kwargs): return {'status': 'queued'}
+        def flush_ontology_outbox(self, **kwargs): raise AssertionError('one-second budget does not start a partial request')
+        def sync_research_operation(self, value): return {'status': 'stored'}
+
+    routine = verify_delivery(db_path=str(tmp_path / 'routine.db'), client=Client(), seconds=1)
+    assert routine['status'] == 'in_progress' and routine['pending'] == 37
+    assert routine['delivery_blockers'] == []
+
+    strict = verify_delivery(db_path=str(tmp_path / 'strict.db'), client=Client(), seconds=1, require_zero=True)
+    assert strict['status'] == 'failed'
+    assert strict['delivery_blockers'] == ['strict delivery verification requires zero pending chunks']
+
+
 def test_delivery_verification_rejects_budgets_above_workflow_limit():
     with pytest.raises(ValueError, match='1–2700 seconds'):
         verify_delivery(client=object(), seconds=2701)

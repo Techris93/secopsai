@@ -71,6 +71,57 @@ def test_pypi_adapter_falls_back_to_sdist_when_wheel_exceeds_cap():
     assert PyPiAdapter().resolve("homeassistant", "2026.10.1", fetcher).artifact_url.endswith("ha.tar.gz")
 
 
-def test_every_size_guard_message_is_a_skip():
-    for message in ("artifact contains too many files", "archive contains too many entries", "artifact exceeds the maximum size", "registry response exceeded the safety limit"):
-        assert any(marker in message for marker in fast_lane.SIZE_GUARD_MARKERS), message
+def test_resource_limit_is_explicit_incomplete_coverage_and_transient_http_is_retryable(tmp_path, monkeypatch):
+    import json
+    from secopsai.research_intake import ArtifactResourceLimitError, RegistryHTTPError
+
+    monkeypatch.setenv("FAST_LANE_TARGETS", json.dumps([{"ecosystem": "pypi", "package": "fixture", "version": "1.0", "_queue_id": "a" * 64}]))
+    monkeypatch.setenv("FAST_LANE_REPORT_PATH", str(tmp_path / "report.json"))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "summary.md"))
+    monkeypatch.setattr(fast_lane, "STALE_AFTER_SECONDS", 10**9)
+    monkeypatch.setattr(fast_lane, "resolve_release", lambda *_: {"version": "1.0", "published_at": "2026-10-18T00:00:00Z", "previous_version": "0.9"})
+    monkeypatch.setattr(fast_lane, "investigate", lambda *_: (_ for _ in ()).throw(ArtifactResourceLimitError("archive expanded-size limit exceeded")))
+    assert fast_lane.main() == 0, "bounded incomplete evidence is a recorded review outcome"
+    result = json.loads((tmp_path / "report.json").read_text())["results"][0]
+    assert result["status"] == "incomplete" and result["failure_category"] == "artifact_resource_limit"
+    assert "no clean verdict" in result["reasons"]
+
+    monkeypatch.setattr(fast_lane, "investigate", lambda *_: (_ for _ in ()).throw(RegistryHTTPError(503)))
+    assert fast_lane.main() == 0, "queue-backed transient failure is durably scheduled for retry"
+    result = json.loads((tmp_path / "report.json").read_text())["results"][0]
+    assert result["status"] == "retryable_failure" and result["http_status"] == 503
+
+
+def test_traversal_archive_is_reported_as_unsafe_incomplete_and_unqueued_retry_fails(tmp_path, monkeypatch):
+    import json
+    from secopsai.research_intake import RegistryHTTPError, UnsafeArchiveError
+
+    monkeypatch.setenv("FAST_LANE_TARGETS", json.dumps([{"ecosystem": "npm", "package": "fixture", "version": "1.0", "_queue_id": "b" * 64}]))
+    monkeypatch.setenv("FAST_LANE_REPORT_PATH", str(tmp_path / "report.json"))
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.setattr(fast_lane, "STALE_AFTER_SECONDS", 10**9)
+    monkeypatch.setattr(fast_lane, "resolve_release", lambda *_: {"version": "1.0", "published_at": "2026-10-18T00:00:00Z", "previous_version": "0.9"})
+    monkeypatch.setattr(fast_lane, "investigate", lambda *_: (_ for _ in ()).throw(UnsafeArchiveError("archive contains traversal path")))
+    assert fast_lane.main() == 0
+    result = json.loads((tmp_path / "report.json").read_text())["results"][0]
+    assert result["status"] == "incomplete" and result["failure_category"] == "unsafe_archive"
+
+    monkeypatch.setenv("FAST_LANE_TARGETS", json.dumps([{"ecosystem": "npm", "package": "fixture", "version": "1.0"}]))
+    monkeypatch.setattr(fast_lane, "investigate", lambda *_: (_ for _ in ()).throw(RegistryHTTPError(503)))
+    assert fast_lane.main() == 1, "without a durable queue id, transient work must not be reported as handled"
+
+
+def test_permanent_registry_http_failure_is_explicit_incomplete(tmp_path, monkeypatch):
+    import json
+    from secopsai.research_intake import RegistryHTTPError
+
+    monkeypatch.setenv("FAST_LANE_TARGETS", json.dumps([{"ecosystem": "npm", "package": "fixture", "version": "1.0", "_queue_id": "c" * 64}]))
+    monkeypatch.setenv("FAST_LANE_REPORT_PATH", str(tmp_path / "report.json"))
+    monkeypatch.setattr(fast_lane, "STALE_AFTER_SECONDS", 10**9)
+    monkeypatch.setattr(fast_lane, "resolve_release", lambda *_: {"version": "1.0", "published_at": "2026-10-18T00:00:00Z", "previous_version": "0.9"})
+    monkeypatch.setattr(fast_lane, "investigate", lambda *_: (_ for _ in ()).throw(RegistryHTTPError(403)))
+
+    assert fast_lane.main() == 0
+    result = json.loads((tmp_path / "report.json").read_text())["results"][0]
+    assert result["status"] == "incomplete" and result["http_status"] == 403
+    assert result["retryable"] is False and "no clean verdict" in result["reasons"]

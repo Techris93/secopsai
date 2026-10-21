@@ -171,7 +171,12 @@ def hosted_projection(*, db_path=None) -> dict:
     # agreements and confidential review notes are never sent to the hosted
     # read surface. Pending review contains only capped excerpts from sources
     # explicitly configured for public sharing, with archive hashes attached.
+    raw_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
+    runtime = {"worker_run_id": os.environ.get("GITHUB_RUN_ID") or os.environ.get("SECOPSAI_GITHUB_RUN_ID"),
+               "worker_run_attempt": int(raw_attempt) if raw_attempt.isdigit() else None,
+               "worker_revision": (os.environ.get("GITHUB_SHA") or os.environ.get("SECOPSAI_BUILD_REVISION") or "")[:80]}
     projection = minimize({"schema_version": "secopsai.research.operation.v1", "coverage": status["coverage"], "editions": editions, "assistant_teams": teams,
+                     "runtime": runtime,
                      "pending_source_reviews": pending_reviews,
                      "automation": {"assistant_team_autostart_enabled": os.environ.get("SECOPSAI_RESEARCH_ASSISTANT_AUTOSTART") == "1",
                                     "daily_brief_assembly_enabled": os.environ.get("SECOPSAI_PRIMARY_INTEL") == "1",

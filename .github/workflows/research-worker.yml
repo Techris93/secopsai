@@ -84,7 +84,9 @@ jobs:
       SECOPSAI_VERIFY_RETRY_SOURCES: ${{ inputs.retry_sources }}
       SECOPSAI_VERIFY_RETRY_COLLECTORS: ${{ inputs.retry_collectors }}
       SECOPSAI_VERIFY_DELIVERY_ONLY: ${{ inputs.delivery_only && '1' || '0' }}
+      SECOPSAI_VERIFY_REQUIRE_ZERO: ${{ inputs.delivery_only && '1' || '0' }}
       SECOPSAI_VERIFY_DELIVERY_SECONDS: ${{ inputs.delivery_seconds || 840 }}
+      SECOPSAI_WORKER_DIAGNOSTICS_DIR: reports/research
       SECOPSAI_WORKER_STAGE_LOGS: '1'
       SECOPSAI_LEDGER_CHECKPOINT_SECONDS: ${{ vars.RESEARCH_INCREMENTAL_CHECKPOINTS == 'true' && '60' || '3600' }}
       SECOPSAI_PRIMARY_INTEL: "1"  # source intake and draft assembly; never automatic publication
@@ -176,8 +178,25 @@ jobs:
       - name: Verify final checkpoint and hosted delivery health
         if: always()
         # This runs after the supervisor's final checkpoint and routine drain.
-        # Any durable chunk still pending keeps the delivery gate red.
-        run: python scripts/research_operation_watchdog.py --scope delivery --output reports/research/delivery-health.json
+        # Routine runs may pass a healthy in-progress backlog; explicit
+        # delivery-only runs retain the strict zero-pending production gate.
+        run: |
+          watchdog_args=(--scope delivery --output reports/research/delivery-health.json)
+          if [ "$SECOPSAI_VERIFY_DELIVERY_ONLY" != "1" ]; then
+            watchdog_args+=(--allow-pending)
+          fi
+          python scripts/research_operation_watchdog.py "${watchdog_args[@]}"
+
+      - name: Preserve worker and delivery diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: research-worker-diagnostics
+          path: |
+            reports/research/worker-runtime.json
+            reports/research/delivery-drain.json
+            reports/research/delivery-health.json
+          if-no-files-found: warn
 
       - name: Preserve delivery verification diagnostics
         if: always()

