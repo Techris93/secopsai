@@ -148,6 +148,7 @@ jobs:
         run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
 
       - name: Restore ledger, run worker cycles, checkpoint
+        id: worker
         # Routine bounded runs include an additional 14-minute durable delivery
         # drain; the job timeout reserves time for restore and checkpoints.
         # Exhausted retries still fail the run so an unsaved checkpoint is visible.
@@ -204,3 +205,10 @@ jobs:
         with:
           name: research-delivery-verification
           path: reports/research/delivery-health.json
+
+      - name: Publish final hosted operation projection
+        if: ${{ always() && steps.worker.outcome == 'success' }}
+        # The supervisor's drain and checkpoint happen after the worker's
+        # in-cycle projection. Publish once more as the last substantive step
+        # so the watchdog can correlate the projection with run completion.
+        run: python scripts/sync_research_operation_projection.py
