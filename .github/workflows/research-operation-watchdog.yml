@@ -48,7 +48,10 @@ jobs:
           if [[ -n "$upstream_id" ]]; then
             upstream=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${upstream_id}")
             echo "SECOPSAI_WATCHDOG_UPSTREAM_CONCLUSION=$(jq -r '.conclusion // empty' <<< "$upstream")" >> "$GITHUB_ENV"
-            echo "SECOPSAI_WATCHDOG_UPSTREAM_COMPLETED_AT=$(jq -r '.completed_at // empty' <<< "$upstream")" >> "$GITHUB_ENV"
+            # The Actions API can return completed_at=null even after a run is
+            # completed. Use updated_at only for completed runs with a conclusion.
+            completion_at=$(python -c 'import json,sys; from scripts.research_operation_watchdog import worker_completion_timestamp; print(worker_completion_timestamp(json.load(sys.stdin)))' <<< "$upstream")
+            echo "SECOPSAI_WATCHDOG_UPSTREAM_COMPLETED_AT=$completion_at" >> "$GITHUB_ENV"
             echo "SECOPSAI_WATCHDOG_UPSTREAM_STARTED_AT=$(jq -r '.run_started_at // empty' <<< "$upstream")" >> "$GITHUB_ENV"
             echo "SECOPSAI_WATCHDOG_UPSTREAM_RUN_ID=$(jq -r '.id' <<< "$upstream")" >> "$GITHUB_ENV"
             echo "SECOPSAI_WATCHDOG_UPSTREAM_RUN_ATTEMPT=$(jq -r '.run_attempt // empty' <<< "$upstream")" >> "$GITHUB_ENV"

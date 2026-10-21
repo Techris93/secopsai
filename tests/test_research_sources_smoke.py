@@ -277,3 +277,21 @@ def test_watchdog_waits_for_the_completed_workers_matching_operation_snapshot(mo
     assert len(operation_reads) == 2
     assert result["checks"]["research_operation"]["worker_snapshot_wait"]["status"] == "ready"
     assert result["checks"]["research_operation"]["worker_snapshot_wait"]["attempts"] == 2
+
+
+def test_watchdog_uses_updated_at_only_as_completed_run_timestamp_fallback():
+    from scripts.research_operation_watchdog import worker_completion_timestamp
+
+    updated_at = "2026-10-21T17:55:07Z"
+    assert worker_completion_timestamp({
+        "status": "completed", "conclusion": "success", "completed_at": None,
+        "updated_at": updated_at,
+    }) == updated_at
+    assert worker_completion_timestamp({
+        "status": "completed", "conclusion": "success", "completed_at": "2026-10-21T17:54:54Z",
+        "updated_at": updated_at,
+    }) == "2026-10-21T17:54:54Z"
+    assert worker_completion_timestamp({
+        "status": "in_progress", "conclusion": None, "completed_at": None,
+        "updated_at": updated_at,
+    }) == ""
