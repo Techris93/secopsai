@@ -51,6 +51,30 @@ def _parse_time(value):
         return None
 
 
+def active_worker_job_started_at(value):
+    """Return the real runner start time for an active worker job.
+
+    GitHub's workflow-run ``run_started_at`` can predate execution by a long
+    time when a run waits on the single-writer concurrency group. Provisional
+    health deadlines must start when the job actually begins, not when the
+    workflow was dispatched or queued.
+    """
+    jobs = value.get("jobs") if isinstance(value, dict) else value
+    if not isinstance(jobs, list):
+        return None
+    started = []
+    for job in jobs:
+        if not isinstance(job, dict) or job.get("status") != "in_progress":
+            continue
+        raw = job.get("started_at")
+        parsed = _parse_time(raw)
+        if parsed:
+            started.append(parsed)
+    if not started:
+        return None
+    return min(started).isoformat().replace("+00:00", "Z")
+
+
 def worker_completion_timestamp(run: dict) -> str:
     """Return the final timestamp exposed by GitHub's workflow-run API.
 

@@ -36,9 +36,22 @@ jobs:
             exit 1
           fi
           if (( active > 0 )); then
-            echo "SECOPSAI_WATCHDOG_WORKER_ACTIVE=1" >> "$GITHUB_ENV"
-            echo "SECOPSAI_WATCHDOG_ACTIVE_RUN_ID=$(jq -r '.workflow_runs[0].id' <<< "$active_json")" >> "$GITHUB_ENV"
-            echo "SECOPSAI_WATCHDOG_ACTIVE_STARTED_AT=$(jq -r '.workflow_runs[0].run_started_at // .workflow_runs[0].created_at // empty' <<< "$active_json")" >> "$GITHUB_ENV"
+            active_run_id=$(jq -r '.workflow_runs[0].id' <<< "$active_json")
+            active_jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${active_run_id}/jobs?per_page=100")
+            active_started_at=$(python -c 'import json,sys; from scripts.research_operation_watchdog import active_worker_job_started_at; print(active_worker_job_started_at(json.load(sys.stdin)) or "")' <<< "$active_jobs")
+            if [[ -n "$active_started_at" ]]; then
+              echo "SECOPSAI_WATCHDOG_WORKER_ACTIVE=1" >> "$GITHUB_ENV"
+              echo "SECOPSAI_WATCHDOG_ACTIVE_RUN_ID=$active_run_id" >> "$GITHUB_ENV"
+              echo "SECOPSAI_WATCHDOG_ACTIVE_STARTED_AT=$active_started_at" >> "$GITHUB_ENV"
+            else
+              # A workflow run can be pending in the concurrency queue before
+              # its writer job starts. It must not make the watchdog treat
+              # stale pre-run state as provisional or consume its 90-minute
+              # active-worker deadline.
+              echo "SECOPSAI_WATCHDOG_WORKER_ACTIVE=0" >> "$GITHUB_ENV"
+              echo "SECOPSAI_WATCHDOG_ACTIVE_RUN_ID=" >> "$GITHUB_ENV"
+              echo "SECOPSAI_WATCHDOG_ACTIVE_STARTED_AT=" >> "$GITHUB_ENV"
+            fi
           else
             echo "SECOPSAI_WATCHDOG_WORKER_ACTIVE=0" >> "$GITHUB_ENV"
             echo "SECOPSAI_WATCHDOG_ACTIVE_RUN_ID=" >> "$GITHUB_ENV"
