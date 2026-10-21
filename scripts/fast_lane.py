@@ -176,7 +176,12 @@ def main() -> int:
         raise ValueError(f"FAST_LANE_TARGETS must contain at most {MAX_TARGETS} targets")
     fetcher = SafeFetcher(timeout=60)
     rows: List[Dict[str, Any]] = []
-    from secopsai.research_intake import ArtifactResourceLimitError, RegistryHTTPError, TransientTransportError
+    from secopsai.research_intake import (
+        ArtifactResourceLimitError,
+        IntakeResponseLimitError,
+        RegistryHTTPError,
+        TransientTransportError,
+    )
 
     for target in targets:
         started = _now()
@@ -212,6 +217,9 @@ def main() -> int:
             if isinstance(exc, ArtifactResourceLimitError):
                 row.update(status="incomplete", failure_category=exc.failure_category,
                            reasons="Configured archive resource limit reached; no clean verdict was produced.")
+            elif isinstance(exc, IntakeResponseLimitError):
+                row.update(status="incomplete", failure_category=exc.failure_category,
+                           reasons="Registry response exceeded a configured size limit; no clean verdict was produced.")
             elif isinstance(exc, RegistryHTTPError) and (exc.retryable or exc.status == 404):
                 row.update(status="retryable_failure", failure_category=exc.failure_category,
                            http_status=exc.status, retryable=True,

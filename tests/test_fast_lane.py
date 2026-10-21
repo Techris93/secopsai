@@ -1,6 +1,9 @@
 import importlib.util
+import json
 from datetime import datetime, timezone
 from pathlib import Path
+
+import pytest
 
 spec = importlib.util.spec_from_file_location("fast_lane", Path(__file__).resolve().parents[1] / "scripts" / "fast_lane.py")
 fast_lane = importlib.util.module_from_spec(spec)
@@ -71,9 +74,55 @@ def test_pypi_adapter_falls_back_to_sdist_when_wheel_exceeds_cap():
     assert PyPiAdapter().resolve("homeassistant", "2026.10.1", fetcher).artifact_url.endswith("ha.tar.gz")
 
 
+def test_large_npm_packument_uses_bounded_npm_limit_and_preserves_publish_times():
+    from secopsai.research_intake import MAX_METADATA_BYTES, MAX_NPM_METADATA_BYTES, NpmAdapter, SafeFetcher
+
+    package_url = "https://registry.npmjs.org/@pulumi/pulumi"
+    publish_time = "2026-10-21T17:22:58.401Z"
+    document = {
+        "dist-tags": {"latest": "3.271.0"},
+        "time": {"3.270.0": "2026-10-20T12:00:00.000Z", "3.271.0": publish_time},
+        "versions": {
+            "3.270.0": {
+                "version": "3.270.0",
+                "dist": {"tarball": "https://registry.npmjs.org/@pulumi/pulumi/-/pulumi-3.270.0.tgz"},
+            },
+            "3.271.0": {
+                "version": "3.271.0",
+                "dist": {"tarball": "https://registry.npmjs.org/@pulumi/pulumi/-/pulumi-3.271.0.tgz"},
+            },
+        },
+        # Model the large full packument seen in production without storing a fixture file.
+        "readme": "x" * (MAX_METADATA_BYTES + 64),
+    }
+    body = json.dumps(document).encode()
+    assert len(body) > MAX_METADATA_BYTES
+    requested_bounds = []
+
+    def fetch(url, max_bytes):
+        assert url == package_url
+        requested_bounds.append(max_bytes)
+        return 200, {"content-type": "application/json"}, body
+
+    metadata = NpmAdapter().resolve("@pulumi/pulumi", "3.271.0", SafeFetcher(fetch=fetch))
+    assert requested_bounds == [MAX_NPM_METADATA_BYTES]
+    assert metadata.version == "3.271.0"
+    assert metadata.published_at == publish_time
+    assert metadata.artifact_url.endswith("pulumi-3.271.0.tgz")
+
+
+def test_safe_fetcher_reports_oversized_registry_response_as_typed_limit():
+    from secopsai.research_intake import IntakeResponseLimitError, SafeFetcher
+
+    fetcher = SafeFetcher(fetch=lambda *_: (200, {}, b"123456"))
+    with pytest.raises(IntakeResponseLimitError) as raised:
+        fetcher.get("https://registry.npmjs.org/fixture", allowed_hosts=("registry.npmjs.org",), max_bytes=5)
+    assert raised.value.failure_category == "response_size_limit"
+
+
 def test_resource_limit_is_explicit_incomplete_coverage_and_transient_http_is_retryable(tmp_path, monkeypatch):
     import json
-    from secopsai.research_intake import ArtifactResourceLimitError, RegistryHTTPError
+    from secopsai.research_intake import ArtifactResourceLimitError, IntakeResponseLimitError, RegistryHTTPError
 
     monkeypatch.setenv("FAST_LANE_TARGETS", json.dumps([{"ecosystem": "pypi", "package": "fixture", "version": "1.0", "_queue_id": "a" * 64}]))
     monkeypatch.setenv("FAST_LANE_REPORT_PATH", str(tmp_path / "report.json"))
@@ -84,6 +133,16 @@ def test_resource_limit_is_explicit_incomplete_coverage_and_transient_http_is_re
     assert fast_lane.main() == 0, "bounded incomplete evidence is a recorded review outcome"
     result = json.loads((tmp_path / "report.json").read_text())["results"][0]
     assert result["status"] == "incomplete" and result["failure_category"] == "artifact_resource_limit"
+    assert "no clean verdict" in result["reasons"]
+
+    monkeypatch.setattr(
+        fast_lane,
+        "investigate",
+        lambda *_: (_ for _ in ()).throw(IntakeResponseLimitError("response limit")),
+    )
+    assert fast_lane.main() == 0, "a bounded response limit is an explicit incomplete outcome"
+    result = json.loads((tmp_path / "report.json").read_text())["results"][0]
+    assert result["status"] == "incomplete" and result["failure_category"] == "response_size_limit"
     assert "no clean verdict" in result["reasons"]
 
     monkeypatch.setattr(fast_lane, "investigate", lambda *_: (_ for _ in ()).throw(RegistryHTTPError(503)))
