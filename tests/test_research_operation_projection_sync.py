@@ -64,4 +64,4 @@ def test_workflow_syncs_final_snapshot_after_diagnostics_and_only_after_worker_s
     assert sync_step > diagnostics
     assert "id: worker" in workflow
     assert "always() && steps.worker.outcome == 'success'" in workflow[sync_step:]
-    assert "python scripts/sync_research_operation_projection.py" in workflow[sync_step:]
+    assert "python -m scripts.sync_research_operation_projection" in workflow[sync_step:]

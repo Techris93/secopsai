@@ -211,4 +211,4 @@ jobs:
         # The supervisor's drain and checkpoint happen after the worker's
         # in-cycle projection. Publish once more as the last substantive step
         # so the watchdog can correlate the projection with run completion.
-        run: python scripts/sync_research_operation_projection.py
+        run: python -m scripts.sync_research_operation_projection
