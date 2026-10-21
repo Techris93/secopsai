@@ -51,15 +51,34 @@ def _parse_time(value):
         return None
 
 
+def _worker_snapshot_pending_reason(value, *, run_id, run_attempt, completed_at):
+    runtime = value.get("runtime") or {}
+    if str(runtime.get("worker_run_id") or "") != str(run_id):
+        return "waiting for the matching Research Worker run to appear in the operation snapshot"
+    if run_attempt is not None and runtime.get("worker_run_attempt") != run_attempt:
+        return "waiting for the matching Research Worker attempt to appear in the operation snapshot"
+    synced_at = _parse_time(value.get("synced_at"))
+    completed = _parse_time(completed_at)
+    if not synced_at or not completed:
+        return "waiting for a valid operation snapshot and worker completion timestamp"
+    if synced_at.timestamp() + 60 < completed.timestamp():
+        return "waiting for the operation snapshot to advance past Research Worker completion"
+    return ""
+
+
 def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
             upstream_worker_conclusion="", upstream_worker_completed_at="", upstream_worker_run_id="",
             upstream_worker_started_at="", upstream_worker_run_attempt=None,
             upstream_worker_cancelled_before_start=False, active_worker_run_id="", active_worker_started_at="",
-            allow_pending=False) -> dict:
+            allow_pending=False, projection_wait_seconds=0, projection_poll_interval_seconds=15) -> dict:
     if scope not in {"all", "delivery"}:
         raise ValueError("watchdog scope must be 'all' or 'delivery'")
     if allow_pending and scope != "delivery":
         raise ValueError("--allow-pending is valid only for delivery scope")
+    if not 0 <= projection_wait_seconds <= 600:
+        raise ValueError("projection wait must be between 0 and 600 seconds")
+    if not 1 <= projection_poll_interval_seconds <= 60:
+        raise ValueError("projection poll interval must be between 1 and 60 seconds")
     now = now or datetime.now(timezone.utc)
     if worker_active is None:
         worker_active = os.environ.get("SECOPSAI_WATCHDOG_WORKER_ACTIVE", "0").strip().lower() in {"1", "true", "yes"}
@@ -99,12 +118,49 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
     ):
         try:
             raw = reader(url, token)
+            worker_snapshot_wait = None
+            if name == "research_operation":
+                value = json.loads(raw)
+                if (upstream_worker_conclusion == "success" and upstream_worker_run_id and
+                        projection_wait_seconds > 0):
+                    wait_started = time.monotonic()
+                    wait_attempts = 1
+                    pending_reason = _worker_snapshot_pending_reason(
+                        value, run_id=upstream_worker_run_id,
+                        run_attempt=upstream_worker_run_attempt,
+                        completed_at=upstream_worker_completed_at,
+                    )
+                    while pending_reason:
+                        remaining = projection_wait_seconds - (time.monotonic() - wait_started)
+                        if remaining <= 0:
+                            worker_snapshot_wait = {
+                                "status": "timed_out", "attempts": wait_attempts,
+                                "waited_seconds": round(time.monotonic() - wait_started),
+                                "last_reason": pending_reason,
+                            }
+                            warnings.append("research operation snapshot did not become current before the bounded projection wait expired")
+                            break
+                        time.sleep(min(projection_poll_interval_seconds, remaining))
+                        raw = reader(url, token)
+                        value = json.loads(raw)
+                        wait_attempts += 1
+                        pending_reason = _worker_snapshot_pending_reason(
+                            value, run_id=upstream_worker_run_id,
+                            run_attempt=upstream_worker_run_attempt,
+                            completed_at=upstream_worker_completed_at,
+                        )
+                    if not pending_reason:
+                        worker_snapshot_wait = {
+                            "status": "ready", "attempts": wait_attempts,
+                            "waited_seconds": round(time.monotonic() - wait_started),
+                        }
             if name == "public_blog":
                 if b"<html" not in raw.lower() and b"<!doctype html" not in raw.lower():
                     raise ValueError("public blog did not return HTML")
                 checks[name] = {"available": True}
                 continue
-            value = json.loads(raw)
+            if name != "research_operation":
+                value = json.loads(raw)
             key = "uploaded_at" if name == "checkpoint" else "synced_at"
             observed = value.get(key)
             if not observed:
@@ -126,6 +182,8 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
                                     snapshot_age_within_300_seconds=capture_age is not None and 0 <= capture_age <= 300,
                                     rpo_limitation="Snapshot age is a freshness measurement; committed event loss requires a verified crash drill.")
             if name == "research_operation":
+                if worker_snapshot_wait is not None:
+                    checks[name]["worker_snapshot_wait"] = worker_snapshot_wait
                 health = value.get("coverage", {}).get("health", {})
                 freshness_gaps = health.get("freshness_gaps", [])
                 source_rows = value.get("coverage", {}).get("sources", [])
@@ -206,6 +264,8 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
                         synced_at = _parse_time(observed)
                         if not completed_at or not started_at or not synced_at or synced_at.timestamp() + 60 < started_at.timestamp():
                             blockers.append("Research Worker completion or matching operation snapshot timestamp is missing or invalid")
+                        elif synced_at.timestamp() + 60 < completed_at.timestamp():
+                            blockers.append("research operation snapshot predates the completed Research Worker run")
         except Exception as exc:
             # Never print endpoint bodies, credential-bearing errors or tokens.
             checks[name] = {"available": False, "error_category": type(exc).__name__}
@@ -234,6 +294,8 @@ def main():
     parser.add_argument("--upstream-worker-started-at", default="")
     parser.add_argument("--upstream-worker-run-attempt", type=int)
     parser.add_argument("--upstream-worker-cancelled-before-start", action="store_true")
+    parser.add_argument("--projection-wait-seconds", type=int, default=0,
+                        help="For a completed worker run, wait within this bound for its matching final operation snapshot")
     parser.add_argument("--active-worker-run-id", default="")
     parser.add_argument("--active-worker-started-at", default="")
     args = parser.parse_args()
@@ -246,7 +308,8 @@ def main():
                      upstream_worker_cancelled_before_start=args.upstream_worker_cancelled_before_start,
                      active_worker_run_id=args.active_worker_run_id,
                      active_worker_started_at=args.active_worker_started_at,
-                     allow_pending=args.allow_pending)
+                     allow_pending=args.allow_pending,
+                     projection_wait_seconds=args.projection_wait_seconds)
     path = Path(args.output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2))

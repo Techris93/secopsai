@@ -48,7 +48,7 @@ jobs:
           if [[ -n "$upstream_id" ]]; then
             upstream=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${upstream_id}")
             echo "SECOPSAI_WATCHDOG_UPSTREAM_CONCLUSION=$(jq -r '.conclusion // empty' <<< "$upstream")" >> "$GITHUB_ENV"
-            echo "SECOPSAI_WATCHDOG_UPSTREAM_COMPLETED_AT=$(jq -r '.updated_at // empty' <<< "$upstream")" >> "$GITHUB_ENV"
+            echo "SECOPSAI_WATCHDOG_UPSTREAM_COMPLETED_AT=$(jq -r '.completed_at // empty' <<< "$upstream")" >> "$GITHUB_ENV"
             echo "SECOPSAI_WATCHDOG_UPSTREAM_STARTED_AT=$(jq -r '.run_started_at // empty' <<< "$upstream")" >> "$GITHUB_ENV"
             echo "SECOPSAI_WATCHDOG_UPSTREAM_RUN_ID=$(jq -r '.id' <<< "$upstream")" >> "$GITHUB_ENV"
             echo "SECOPSAI_WATCHDOG_UPSTREAM_RUN_ATTEMPT=$(jq -r '.run_attempt // empty' <<< "$upstream")" >> "$GITHUB_ENV"
@@ -72,6 +72,7 @@ jobs:
           SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
         run: |
           args=()
+          [[ "$SECOPSAI_WATCHDOG_UPSTREAM_CONCLUSION" == "success" ]] && args+=(--projection-wait-seconds 300)
           [[ -n "$SECOPSAI_WATCHDOG_UPSTREAM_RUN_ATTEMPT" ]] && args+=(--upstream-worker-run-attempt "$SECOPSAI_WATCHDOG_UPSTREAM_RUN_ATTEMPT")
           [[ "$SECOPSAI_WATCHDOG_UPSTREAM_CANCELLED_BEFORE_START" == "1" ]] && args+=(--upstream-worker-cancelled-before-start)
           [[ "$SECOPSAI_WATCHDOG_WORKER_ACTIVE" == "1" ]] && args+=(--worker-active)

@@ -5,6 +5,7 @@ import { AuthenticationError, authenticationChallenge, requireScope } from "./au
 
 const limit = z.number().int().min(1).max(100).optional().describe("Maximum records to return; defaults to 50.");
 const optionalText = z.string().max(240).optional();
+const MAX_TOOL_INPUT_ELEMENTS = 128;
 
 const TOOLS = [
   {
@@ -82,7 +83,10 @@ const TOOLS = [
 ];
 
 export function createSecOpsMcpServer({ identity, coreClient, config }) {
-  const server = new McpServer({ name: "secopsai", version: "0.2.0" });
+  const server = new McpServer(
+    { name: "secopsai", version: "0.2.0" },
+    { maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS },
+  );
   for (const tool of TOOLS) {
     server.registerTool(
       tool.name,

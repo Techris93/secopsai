@@ -31,7 +31,7 @@ export function loadConfig(environment = process.env) {
     stdioClientId: clean(environment.SECOPSAI_MCP_STDIO_CLIENT_ID || "local-mcp-client"),
     stdioScopes: csv(environment.SECOPSAI_MCP_STDIO_SCOPES || SUPPORTED_SCOPES.join(",")),
     scopes: [...SUPPORTED_SCOPES],
-    maxRequestBytes: boundedInt(environment.SECOPSAI_MCP_MAX_REQUEST_BYTES, 1024 * 1024, 16 * 1024, 4 * 1024 * 1024),
+    maxRequestBytes: boundedInt(environment.SECOPSAI_MCP_MAX_REQUEST_BYTES, 256 * 1024, 16 * 1024, 1024 * 1024),
     coreTimeoutMs: boundedInt(environment.SECOPSAI_MCP_CORE_TIMEOUT_MS, 15000, 1000, 60000),
   };
   validateConfig(config);
