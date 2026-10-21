@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 import http.client
 import json
 import os
+import re
 import shutil
 import signal
 import sqlite3
@@ -58,8 +59,67 @@ class RebaseRequired(Exception):
     """A bounded full snapshot is preferable to a large sparse delta."""
 
 
+class LedgerRequestError(RuntimeError):
+    """Sanitized transport failure with enough metadata to diagnose a write."""
+
+    def __init__(self, method: str, operation: str, *, category: str, status: int | None = None,
+                 error_code: str = "", request_id: str = "", attempts: int = 1) -> None:
+        self.method = method
+        self.operation = operation
+        self.category = category
+        self.status = status
+        self.error_code = error_code
+        self.request_id = request_id
+        self.attempts = attempts
+        details = [f"category={category}"]
+        if status is not None:
+            details.append(f"HTTP {status}")
+        if error_code:
+            details.append(f"code={error_code}")
+        if request_id:
+            details.append(f"request_id={request_id}")
+        super().__init__(f"ledger {method} {operation} failed after {attempts} attempt(s) ({', '.join(details)})")
+
+
+def _provider_error_metadata(body: bytes, headers) -> tuple[str, str]:
+    """Extract only bounded, allowlisted identifiers from a provider error."""
+    code = ""
+    try:
+        parsed = json.loads(body[:8192])
+        if isinstance(parsed, dict):
+            candidate = parsed.get("code")
+            if not isinstance(candidate, str) and isinstance(parsed.get("error"), dict):
+                candidate = parsed["error"].get("code")
+            if isinstance(candidate, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", candidate):
+                code = candidate
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        pass
+    request_id = ""
+    for key in ("cf-ray", "x-request-id", "x-amz-request-id"):
+        candidate = str(headers.get(key, "") or "")[:100]
+        if candidate and re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", candidate):
+            request_id = candidate
+            break
+    return code, request_id
+
+
 def _log(event: str, **fields: object) -> None:
     print(json.dumps({"component": "research-runner", "event": event, **fields}, sort_keys=True), flush=True)
+
+
+def _write_runtime_report(path: Path, report: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(report, sort_keys=True, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _error_fields(exc: BaseException) -> dict:
+    fields = {"error_category": type(exc).__name__}
+    if isinstance(exc, LedgerRequestError):
+        fields.update(operation=exc.operation, http_status=exc.status, provider_code=exc.error_code or None,
+                      request_id=exc.request_id or None, attempts=exc.attempts)
+    return fields
 
 
 class LedgerStore:
@@ -74,6 +134,7 @@ class LedgerStore:
         if getattr(self, "checkpoint_scope", "production") == "drill" and path in {"/checkpoints", "/checkpoint-manifest"}:
             path = "/recovery-drill" + path
         attempts = REQUEST_ATTEMPTS if retry else 1
+        operation = path.split("/", 2)[1] if path.startswith("/") else "unknown"
         for attempt in range(attempts):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -93,19 +154,26 @@ class LedgerStore:
                     raise TimeoutError("ledger upload deadline exceeded")
                 return data
             except urllib.error.HTTPError as exc:
-                if exc.code not in RETRY_HTTP_STATUSES:
-                    raise
                 retry_after = exc.headers.get("Retry-After", "") if exc.headers else ""
+                error_code, request_id = _provider_error_metadata(exc.read(8192), exc.headers or {})
                 failure_category, failure_status = "http", exc.code
+                _log("ledger_request_failed", method=method, operation=operation,
+                     category=failure_category, http_status=failure_status, error_code=error_code or None,
+                     request_id=request_id or None, attempt=attempt + 1, request_bytes=len(body or b""))
                 exc.close()
+                if exc.code not in RETRY_HTTP_STATUSES:
+                    raise LedgerRequestError(method, operation, category=failure_category, status=exc.code,
+                                             error_code=error_code, request_id=request_id, attempts=attempt + 1) from exc
             except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
                 retry_after = ""
                 failure_category, failure_status = type(exc).__name__, None
-            _log("ledger_request_failed", method=method, operation=path.split("/")[1],
-                 category=failure_category, http_status=failure_status, request_bytes=len(body or b""))
+                error_code = request_id = ""
+                _log("ledger_request_failed", method=method, operation=operation,
+                     category=failure_category, http_status=None, attempt=attempt + 1,
+                     request_bytes=len(body or b""))
             if attempt + 1 == attempts:
-                # Do not log URLs, tokens, or provider response bodies.
-                raise ConnectionError(f"ledger {method} request failed after {attempts} attempt(s)")
+                raise LedgerRequestError(method, operation, category=failure_category, status=failure_status,
+                                         error_code=error_code, request_id=request_id, attempts=attempts)
             delay = 2 ** attempt
             if retry_after.isdigit():
                 delay = max(delay, int(retry_after))
@@ -123,6 +191,12 @@ class LedgerStore:
                 if error.code != 404:
                     raise
                 error.close()
+            except LedgerRequestError as error:
+                # `_request` sanitizes provider failures. A missing manifest
+                # is the supported first-run/legacy-ledger path; other errors
+                # must not silently downgrade to an older snapshot endpoint.
+                if error.status != 404:
+                    raise
             else:
                 return self.download_chunked(destination, manifest)
         request = urllib.request.Request(f"{self.base_url}/snapshot", method="GET")
@@ -472,7 +546,11 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str
     # own. Leave a bounded remainder for the sparse scan and object/manifest
     # uploads while keeping the checkpoint timestamp inside the watchdog's
     # five-minute freshness window.
-    capture_deadline = started + (600 if bootstrap else 300 if incremental else UPLOAD_TIMEOUT_SECONDS)
+    capture_budget = 600 if bootstrap else 300 if incremental else UPLOAD_TIMEOUT_SECONDS
+    capture_deadline = started + capture_budget
+    # Capture and upload have separate bounded phases. In the previous
+    # implementation a slow online backup consumed the upload allowance too.
+    upload_deadline = started + (capture_budget + UPLOAD_TIMEOUT_SECONDS if incremental else UPLOAD_TIMEOUT_SECONDS)
     _log("checkpoint_capture_started", phase="bootstrap" if bootstrap else "recurring", budget_seconds=round(capture_deadline-started))
     captured_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     with tempfile.TemporaryDirectory(dir=workdir) as temp_dir:
@@ -496,18 +574,17 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str
             delta_enabled = os.environ.get("SECOPSAI_PAGE_DELTA_CHECKPOINTS", "0") == "1"
             if delta_enabled and getattr(store, "baseline_path", None):
                 try:
-                    return store.upload_sparse(backup_path, captured_at=captured_at, deadline=capture_deadline)
+                    return store.upload_sparse(backup_path, captured_at=captured_at, deadline=upload_deadline)
                 except RebaseRequired as reason:
-                    capture_deadline = started + 600
-                    _log("checkpoint_rebase_required", reason=str(reason), budget_seconds=600)
-            key = store.upload_chunked(backup_path, captured_at=captured_at, deadline=capture_deadline)
+                    _log("checkpoint_rebase_required", reason=str(reason), remaining_seconds=round(upload_deadline-time.monotonic()))
+            key = store.upload_chunked(backup_path, captured_at=captured_at, deadline=upload_deadline)
             if delta_enabled:
                 # Keep the baseline outside the temporary capture directory.
                 frozen = workdir / ".checkpoint-base.db"
                 backup_path.replace(frozen)
                 os.chmod(frozen, 0o400)
                 store.baseline_path = frozen
-                store.index_baseline(deadline=capture_deadline)
+                store.index_baseline(deadline=upload_deadline)
             return key
         compressed = Path(temp_dir) / "ledger.db.gz"
         with backup_path.open("rb") as raw, gzip.open(compressed, "wb", compresslevel=6) as packed:
@@ -519,12 +596,9 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str
 
 
 def periodic_checkpoints(stopping, interval, capture):
-    """Schedule from capture start, without overlapping saves or spinning on errors."""
-    next_start = time.monotonic() + interval
-    while not stopping.wait(max(0, next_start - time.monotonic())):
-        started = time.monotonic()
+    """Wait a full interval after each bounded capture, including failed ones."""
+    while not stopping.wait(interval):
         capture()
-        next_start = started + interval
 
 
 GRACE_SECONDS = 180
@@ -547,13 +621,49 @@ def main(argv: Optional[list] = None) -> int:
 
     data_dir = Path(os.environ.get("SECOPS_FINDINGS_DIR", "/home/secops/research"))
     data_dir.mkdir(parents=True, exist_ok=True)
+    report_dir = Path(os.environ.get("SECOPSAI_WORKER_DIAGNOSTICS_DIR", str(data_dir / "reports" / "research")))
+    report_path = report_dir / "worker-runtime.json"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    (report_dir / "delivery-drain.json").unlink(missing_ok=True)
+    report = {"schema_version": "secopsai.research.worker-runtime.v1", "status": "starting",
+              "run_id": os.environ.get("GITHUB_RUN_ID") or None,
+              "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT") or None,
+              "revision": os.environ.get("GITHUB_SHA") or None,
+              "mode": "prepare_only" if getattr(args, "prepare_intel_only", False) else "delivery_only" if args.delivery_only else "cycles",
+              "started_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+              "checkpoints": [], "delivery": {"status": "not_started"}}
+    _write_runtime_report(report_path, report)
+
+    def save_checkpoint(reason: str) -> str | None:
+        started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        try:
+            key = checkpoint(db_path, store, data_dir)
+            item = {"reason": reason, "status": "uploaded", "key": key, "started_at": started_at,
+                    "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+        except Exception as exc:
+            item = {"reason": reason, "status": "failed", "started_at": started_at,
+                    "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), **_error_fields(exc)}
+            report["checkpoints"].append(item)
+            report["checkpoints"] = report["checkpoints"][-50:]
+            report["updated_at"] = item["completed_at"]
+            _write_runtime_report(report_path, report)
+            raise
+        report["checkpoints"].append(item)
+        report["checkpoints"] = report["checkpoints"][-50:]
+        report["last_checkpoint"] = item
+        report["updated_at"] = item["completed_at"]
+        _write_runtime_report(report_path, report)
+        return key
+
     db_path = data_dir / "openclaw_soc.db"
     store = LedgerStore(os.environ["LEDGER_STORE_URL"], os.environ["LEDGER_STORE_TOKEN"])
     interval = max(60, int(os.environ.get("SECOPSAI_LEDGER_CHECKPOINT_SECONDS", "3600")))
 
     if args.checkpoint_only:
-        key = checkpoint(db_path, store, data_dir)
+        key = save_checkpoint("migration")
         _log("migration_checkpoint", key=key)
+        report.update(status="succeeded", completed_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+        _write_runtime_report(report_path, report)
         return 0 if key else 1
 
     restored = False
@@ -563,6 +673,8 @@ def main(argv: Optional[list] = None) -> int:
             # Never silently start over: an empty ledger would later be
             # checkpointed as LATEST and hide the migrated research history.
             _log("ledger_missing", hint="migrate with --checkpoint-only or set SECOPSAI_LEDGER_ALLOW_EMPTY=true")
+            report.update(status="failed", failure_category="ledger_missing", completed_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+            _write_runtime_report(report_path, report)
             return 2
         _log("ledger_restored" if restored else "ledger_initialized", path=str(db_path))
 
@@ -582,14 +694,15 @@ def main(argv: Optional[list] = None) -> int:
     def safe_checkpoint(reason: str) -> None:
         with lock:
             try:
-                checkpoint(db_path, store, data_dir)
+                save_checkpoint(reason)
             except Exception as exc:  # keep the worker running; retry next interval
-                _log("checkpoint_failed", reason=reason, error=str(exc)[:500])
+                _log("checkpoint_failed", reason=reason, **_error_fields(exc))
 
     def periodic() -> None:
         periodic_checkpoints(stopping, interval, lambda: safe_checkpoint("interval"))
 
-    threading.Thread(target=periodic, daemon=True).start()
+    checkpoint_thread = threading.Thread(target=periodic, daemon=True)
+    checkpoint_thread.start()
 
     def handle_term(signum: int, _frame: object) -> None:
         _log("shutdown_requested", signal=signum)
@@ -627,15 +740,22 @@ def main(argv: Optional[list] = None) -> int:
     elif exit_code == -signal.SIGTERM and budget_stop.is_set():
         exit_code = 0
     stopping.set()
+    # Do not race the pre-drain/final checkpoint against an interval save.
+    # Each capture has a bounded upload deadline, so a completed worker waits
+    # for the single writer to finish before continuing the durability order.
+    checkpoint_thread.join(timeout=1200)
+    if checkpoint_thread.is_alive():
+        _log("checkpoint_coordinator_join_timeout", timeout_seconds=1200)
+        exit_code = 1
     if args.drain_after_cycles and exit_code == 0:
         # Persist the worker's complete queue before any acknowledgement can
         # remove rows locally. The next snapshot makes retries safe even if
         # the runner is interrupted during the bounded drain.
         with lock:
             try:
-                checkpoint(db_path, store, data_dir)
+                save_checkpoint("before_delivery_verification")
             except Exception as exc:
-                _log("checkpoint_failed", reason="before_delivery_verification", error=str(exc)[:500])
+                _log("checkpoint_failed", reason="before_delivery_verification", **_error_fields(exc))
                 exit_code = 1
     if args.drain_after_cycles and exit_code == 0:
         try:
@@ -646,6 +766,7 @@ def main(argv: Optional[list] = None) -> int:
         if not 1 <= delivery_seconds <= 2700:
             _log("delivery_verification_invalid_budget", seconds=delivery_seconds)
             exit_code = 1
+            report["delivery"] = {"status": "failed", "error_category": "invalid_budget"}
         else:
             drain = subprocess.Popen(
                 [sys.executable, "-u", "-m", "secopsai.research_delivery_verification"],
@@ -672,6 +793,15 @@ def main(argv: Optional[list] = None) -> int:
                     if stopping.is_set():
                         continue
             _log("delivery_verification_exited", exit_code=drain_code)
+            drain_report = {}
+            try:
+                drain_report = json.loads((report_dir / "delivery-drain.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                pass
+            report["delivery"] = {"status": drain_report.get("status", "succeeded" if drain_code == 0 else "failed"),
+                                  "exit_code": drain_code,
+                                  "pending": drain_report.get("pending"),
+                                  "delivery_blockers": drain_report.get("delivery_blockers", [])}
             if drain_code != 0:
                 exit_code = 1
             active_child[0] = worker
@@ -679,11 +809,16 @@ def main(argv: Optional[list] = None) -> int:
     # A failed final checkpoint fails the run so a lost update is visible.
     with lock:
         try:
-            checkpoint(db_path, store, data_dir)
+            save_checkpoint("shutdown")
         except Exception as exc:
-            _log("checkpoint_failed", reason="shutdown", error=str(exc)[:500])
+            _log("checkpoint_failed", reason="shutdown", **_error_fields(exc))
+            report.update(status="failed", failure_category="checkpoint_failed", completed_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+            _write_runtime_report(report_path, report)
             return 1
     _log("worker_exited", exit_code=exit_code)
+    report.update(status="succeeded" if exit_code == 0 else "failed", exit_code=exit_code,
+                  completed_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+    _write_runtime_report(report_path, report)
     return exit_code if exit_code is not None else 1
 
 

@@ -23,6 +23,7 @@ MAX_SOURCE_BYTES = 4 * 1024 * 1024
 MAX_EVENTS = 10000
 EVENT_BATCH_SIZE = 250
 MAX_PENDING = 10000
+PREPARE_BATCH_SIZE = 500
 MAX_ATTEMPTS = 8
 MSRC_INITIAL_LOOKBACK_DAYS = 7
 MSRC_OVERLAP_DAYS = 3
@@ -273,7 +274,10 @@ def acquire(config: dict, content: bytes, *, db_path=None, transport="direct") -
                 if int(current["next_index"]) > offset:
                     continue
                 raise ValueError("source ingest progress is not contiguous")
-            backlog = conn.execute("SELECT COUNT(*) FROM research_operation_queue WHERE state IN ('queued','running','retry')").fetchone()[0]
+            # Human review is an independent queue. Only unfinished machine
+            # preparation consumes intake capacity; otherwise a growing
+            # review backlog eventually prevents acquisition of new sources.
+            backlog = conn.execute("SELECT COUNT(*) FROM research_operation_queue WHERE kind='verify_intel' AND state IN ('queued','running','retry')").fetchone()[0]
             pending_ids = {"INT-" + digest([config["source_id"], item["external_id"], item])[:32] for item in batch}
             new_events = sum(not conn.execute("SELECT 1 FROM research_intel_events WHERE event_id=?", (identity,)).fetchone() for identity in pending_ids)
             if backlog + new_events > MAX_PENDING:
@@ -319,6 +323,7 @@ def collect_due(*, db_path=None, fetcher=None, limit: int = 10, force_source_ids
     # Explicit recovery selects only the named sources; normal calls retain
     # the existing due schedule and never bypass operator disablement.
     seed = seed_sources(db_path=db_path)
+    preparation_before = prepare_pending(db_path=db_path, limit=PREPARE_BATCH_SIZE)
     fetcher = fetcher or SafeFetcher(timeout=15)
     with read_connection(db_path) as conn:
         sources = [dict(r) for r in conn.execute("SELECT * FROM research_intel_sources ORDER BY COALESCE(last_attempt_at,'') ASC").fetchall()]
@@ -367,7 +372,93 @@ def collect_due(*, db_path=None, fetcher=None, limit: int = 10, force_source_ids
                 conn.execute("UPDATE research_intel_sources SET error_category=?,consecutive_failures=consecutive_failures+? WHERE source_id=?", (category, 0 if backpressure else 1, config["source_id"]))
             results.append({"source_id": config["source_id"], "status": "deferred" if backpressure else "failed", "error_category": category,
                             "snapshot_resumable": bool(progress) or backpressure})
-    return {"status": "degraded" if any(r["status"] in {"failed", "deferred"} for r in results) else "succeeded", "results": results, **seed}
+    preparation_after = prepare_pending(db_path=db_path, limit=PREPARE_BATCH_SIZE)
+    preparation = {"status": "succeeded", "prepared": preparation_before["prepared"] + preparation_after["prepared"],
+                   "pending": preparation_after["pending"], "awaiting_human_review": preparation_after["awaiting_human_review"],
+                   "failed": preparation_before["failed"] + preparation_after["failed"]}
+    return {"status": "degraded" if any(r["status"] in {"failed", "deferred"} for r in results) or preparation["failed"] else "succeeded", "results": results,
+            "preparation": preparation, **seed}
+
+
+def _prepare_intel_event(row: dict, *, now: str, verified_snapshots: dict[str, bool], connection) -> dict:
+    """Build a provenance-preserving review packet; this is not verification."""
+    event_id = row["event_id"]
+    event = json.loads(row["payload_json"])
+    config = json.loads(row["config_json"])
+    snapshot_id = row["snapshot_id"]
+    if snapshot_id not in verified_snapshots:
+        snapshot = connection.execute("SELECT content,sha256 FROM research_source_snapshots WHERE snapshot_id=?", (snapshot_id,)).fetchone()
+        verified_snapshots[snapshot_id] = bool(snapshot and hashlib.sha256(snapshot["content"]).hexdigest() == snapshot["sha256"] == row["sha256"])
+    if not verified_snapshots[snapshot_id]:
+        raise ValueError("source_snapshot_integrity")
+    duplicates = [r["event_id"] for r in connection.execute(
+        "SELECT event_id FROM research_intel_events WHERE root_source_key=? AND event_id<>? ORDER BY first_observed_at,event_id LIMIT 20",
+        (row["root_source_key"], event_id),
+    ).fetchall()]
+    return {
+        "schema_version": "secopsai.research.intel-preparation.v1",
+        "event_id": event_id,
+        "prepared_at": now,
+        "route": "routine_validation",
+        "assessment": "source_reported_unverified",
+        "source": {"source_id": row["source_id"], "name": config["name"], "source_class": config["source_class"],
+                   "sharing": config["sharing"], "url": event["url"]},
+        "observation": {"title": event["title"], "excerpt": event["excerpt"][:4000],
+                        "excerpt_truncated": bool(event.get("excerpt_truncated") or len(event["excerpt"]) > 4000),
+                        "published_at": row["published_at"], "collected_at": row["collected_at"],
+                        "first_observed_at": row["first_observed_at"]},
+        "provenance": {"snapshot_id": snapshot_id, "sha256": row["sha256"],
+                       "event_fingerprint": digest({"event_id": event_id, "snapshot_id": snapshot_id,
+                                                     "payload": event, "sha256": row["sha256"]})},
+        "related_event_ids": duplicates,
+        "review_requirements": ["independent primary-source corroboration", "scope and impact assessment", "prior-art review"],
+        "limitations": ["This packet records a publisher-reported item only.",
+                        "No independent verification, behavior reproduction, victim impact, or publication decision was performed."],
+        "human_review_required": True,
+    }
+
+
+def prepare_pending(*, db_path=None, limit: int = PREPARE_BATCH_SIZE, now=None) -> dict:
+    """Prepare source events for a human queue without making a verdict.
+
+    Work is committed as ``awaiting_review`` only after provenance is checked.
+    Invalid snapshots remain visible as dead letters and do not affect source
+    watermarks or human decisions.
+    """
+    if type(limit) is not int or not 1 <= limit <= 5000:
+        raise ValueError("preparation limit must be between 1 and 5000")
+    now = timestamp(now or _now())
+    prepared = failed = 0
+    verified_snapshots: dict[str, bool] = {}
+    with transaction(db_path) as conn:
+        conn.execute("UPDATE research_operation_queue SET state=CASE WHEN attempt>=? THEN 'dead_letter' ELSE 'retry' END,lease_token='',lease_until=NULL,retry_at=?,updated_at=?,error_category='lease_expired' WHERE kind='verify_intel' AND state='running' AND lease_until<=?",
+                     (MAX_ATTEMPTS, now, now, now))
+        rows = conn.execute("""SELECT q.job_id,q.event_id,q.state,e.source_id,e.root_source_key,e.snapshot_id,e.published_at,
+                    e.collected_at,e.first_observed_at,e.payload_json,s.config_json,p.sha256
+            FROM research_operation_queue q
+            JOIN research_intel_events e ON e.event_id=q.event_id
+            JOIN research_intel_sources s ON s.source_id=e.source_id
+            JOIN research_source_snapshots p ON p.snapshot_id=e.snapshot_id
+            WHERE q.kind='verify_intel' AND q.state IN ('queued','retry') AND q.retry_at<=?
+            ORDER BY q.created_at,q.job_id LIMIT ?""", (now, limit)).fetchall()
+        for raw in rows:
+            row = dict(raw)
+            try:
+                packet = _prepare_intel_event(row, now=now, verified_snapshots=verified_snapshots, connection=conn)
+            except ValueError:
+                conn.execute("UPDATE research_operation_queue SET state='dead_letter',error_category='source_snapshot_integrity',lease_token='',lease_until=NULL,updated_at=? WHERE job_id=? AND state IN ('queued','retry')",
+                             (now, row["job_id"]))
+                failed += 1
+                continue
+            encoded = canonical(packet)
+            changed = conn.execute("UPDATE research_operation_queue SET state='awaiting_review',result_json=?,error_category='',lease_token='',lease_until=NULL,updated_at=? WHERE job_id=? AND state IN ('queued','retry')",
+                                   (encoded, now, row["job_id"])).rowcount
+            prepared += int(changed > 0)
+    with read_connection(db_path) as conn:
+        pending = conn.execute("SELECT COUNT(*) FROM research_operation_queue WHERE kind='verify_intel' AND state IN ('queued','running','retry')").fetchone()[0]
+        awaiting = conn.execute("SELECT COUNT(*) FROM research_operation_queue WHERE kind='verify_intel' AND state='awaiting_review'").fetchone()[0]
+    return {"status": "degraded" if failed else "succeeded", "prepared": prepared, "failed": failed,
+            "pending": pending, "awaiting_human_review": awaiting, "limit": limit}
 
 
 def claim_job(*, worker_id: str, db_path=None, lease_seconds: int = 300, now=None) -> dict | None:
@@ -449,15 +540,16 @@ def pending_public_reviews(*, db_path=None, limit: int = 20) -> list[dict]:
             decisions[event_id] = record["payload"]
     with read_connection(db_path) as conn:
         rows = conn.execute("""SELECT e.event_id,e.source_id,e.root_source_key,e.snapshot_id,e.published_at,
-                e.collected_at,e.first_observed_at,e.payload_json,s.config_json,p.sha256
+                e.collected_at,e.first_observed_at,e.payload_json,s.config_json,p.sha256,q.state AS queue_state,q.result_json AS preparation_json
             FROM research_intel_events e JOIN research_intel_sources s USING(source_id)
             JOIN research_source_snapshots p USING(snapshot_id)
+            LEFT JOIN research_operation_queue q ON q.event_id=e.event_id AND q.kind='verify_intel'
             WHERE json_extract(s.config_json,'$.sharing')='public'
             ORDER BY e.first_observed_at DESC, e.event_id DESC LIMIT 500""").fetchall()
     pending = []
     verified_snapshots = {}
     for row in rows:
-        event = {key: row[key] for key in ("event_id", "source_id", "root_source_key", "snapshot_id", "published_at", "collected_at", "first_observed_at", "sha256")}
+        event = {key: row[key] for key in ("event_id", "source_id", "root_source_key", "snapshot_id", "published_at", "collected_at", "first_observed_at", "sha256", "queue_state", "preparation_json")}
         event["payload"] = json.loads(row["payload_json"])
         event["source"] = json.loads(row["config_json"])
         decision = decisions.get(event["event_id"])
@@ -480,7 +572,9 @@ def pending_public_reviews(*, db_path=None, limit: int = 20) -> list[dict]:
                         "excerpt_truncated": len(excerpt) > 800, "published_at": event["published_at"],
                         "collected_at": event["collected_at"], "first_observed_at": event["first_observed_at"],
                         "source_sha256": event["sha256"],
-                        "review_status": (decision or {}).get("decision", "pending_review") if current else "source_changed_review_required"})
+                        "review_status": (decision or {}).get("decision", "pending_review") if current else "source_changed_review_required",
+                        "preparation": json.loads(event["preparation_json"]) if event.get("preparation_json") else None,
+                        "preparation_state": event.get("queue_state") or "unprepared"})
         if len(pending) >= max(1, min(int(limit), 50)):
             break
     return pending

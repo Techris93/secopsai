@@ -51,8 +51,10 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
     sources = []
     with read_connection(db_path) as conn:
         for row in conn.execute("SELECT * FROM registry_collectors ORDER BY ecosystem").fetchall():
-            runs = conn.execute("SELECT * FROM registry_ingestion_runs WHERE collector_id=? ORDER BY started_at DESC LIMIT 20", (row["collector_id"],)).fetchall()
-            last = next((r["completed_at"] for r in runs if r["status"] == "completed"), None)
+            # Search the full indexed history for the true last successful
+            # completion; repeated failures must not hide older success.
+            last = conn.execute("SELECT max(completed_at) FROM registry_ingestion_runs WHERE collector_id=? AND status='completed'", (row["collector_id"],)).fetchone()[0]
+            latest_attempt = conn.execute("SELECT status,started_at,completed_at FROM registry_ingestion_runs WHERE collector_id=? ORDER BY started_at DESC,run_id DESC LIMIT 1", (row["collector_id"],)).fetchone()
             counters = conn.execute("SELECT count(*) AS observed,sum(CASE WHEN json_extract(metadata_json,'$.content_prescan.status') IN ('hit','clean') THEN 1 ELSE 0 END) AS scanned,min(CASE WHEN json_extract(metadata_json,'$.content_prescan') IS NULL THEN collected_at END) AS oldest FROM registry_feed_events WHERE collector_id=? AND collected_at>=?", (row["collector_id"], since)).fetchone()
             skips = conn.execute("SELECT COALESCE(json_extract(metadata_json,'$.content_prescan.reason'),'unspecified') AS reason,count(*) AS count FROM registry_feed_events WHERE collector_id=? AND collected_at>=? AND json_extract(metadata_json,'$.content_prescan.status') IN ('error','skipped') GROUP BY reason", (row["collector_id"], since)).fetchall()
             stages = {r["stage"]: r["count"] for r in conn.execute("SELECT stage,count(*) AS count FROM research_coverage_events WHERE source_id=? AND observed_at>=? GROUP BY stage", (row["collector_id"], since))}
@@ -64,7 +66,12 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
                             "observed_events": counters["observed"], "artifacts_acquired": stages.get("artifact_acquired"), "artifacts_analyzed": counters["scanned"] or 0,
                             "substantiated": stages.get("substantiated", 0), "published": stages.get("published", 0),
                             "scan_fraction_of_observed": (counters["scanned"] or 0) / counters["observed"] if counters["observed"] else None,
-                            "last_success_at": last, "delay_seconds": delay, "backlog_age_seconds": _age(counters["oldest"], now),
+                            "last_success_at": last, "delay_seconds": delay,
+                            "last_attempt_at": latest_attempt["started_at"] if latest_attempt else None,
+                            "last_attempt_status": latest_attempt["status"] if latest_attempt else None,
+                            "last_attempt_completed_at": latest_attempt["completed_at"] if latest_attempt else None,
+                            "interval_seconds": int(config.get("interval_seconds", 3600)),
+                            "backlog_age_seconds": _age(counters["oldest"], now),
                             "fresh": delay is not None and delay <= 2 * int(config.get("interval_seconds", 3600)), "skip_reasons": [dict(s) for s in skips],
                             "evidence_omitted": stages.get("evidence_omitted"), "evidence_truncated": stages.get("evidence_truncated"),
                             "evidence_coverage_reason": "null means not instrumented for this source/window"})
@@ -88,16 +95,38 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
                 source_collection["status"] = "completed"
             if ingest_progress:
                 source_collection = {**(source_collection or {}), "status": "resumable", **dict(ingest_progress)}
+            if row["last_attempt_at"] is None:
+                attempt_status = "never_attempted"
+            elif ingest_progress:
+                attempt_status = "resumable"
+            elif row["error_category"] == "intake_backpressure":
+                attempt_status = "deferred"
+            elif row["error_category"]:
+                attempt_status = "failed"
+            elif row["last_success_at"] and row["last_success_at"] >= row["last_attempt_at"]:
+                attempt_status = "acquired"
+            elif row["last_success_at"]:
+                attempt_status = "interrupted_or_unknown"
+            else:
+                attempt_status = "unknown"
             sources.append({"source_id": row["source_id"], "name": config["name"], "coverage_mode": "source_reporting", "enabled": config["enabled"],
                             "collection_scope": ("bounded_revision_overlap" if config["parser"] == "msrc_rss" else
                                                  "bounded_recent_index" if config["parser"] in {"github_advisories", "openvsx_index", "jfrog_index", "socket_index"} else "bounded_published_feed"),
-                            "eligible_events": None, "observed_events": observed, "last_success_at": row["last_success_at"], "delay_seconds": delay,
+                            "eligible_events": None, "observed_events": observed, "last_success_at": row["last_success_at"],
+                            "last_attempt_at": row["last_attempt_at"], "last_attempt_status": attempt_status,
+                            "interval_seconds": int(config["interval_seconds"]), "delay_seconds": delay,
                             "fresh": delay is not None and delay <= config["interval_seconds"] * 2, "error_category": row["error_category"],
                             "consecutive_failures": row["consecutive_failures"], "sharing": config["sharing"],
                             "last_collection": source_collection,
                             "evidence_truncated": stages.get("evidence_truncated", 0), "evidence_omitted": stages.get("evidence_omitted", 0)})
         queue = {r["state"]: r["count"] for r in conn.execute("SELECT state,count(*) AS count FROM research_operation_queue GROUP BY state")}
         oldest = conn.execute("SELECT min(created_at) FROM research_operation_queue WHERE state IN ('queued','retry','running')").fetchone()[0]
+        primary_preparation = conn.execute("""SELECT count(*) AS total,
+            min(created_at) AS oldest,
+            sum(CASE WHEN state='awaiting_review' THEN 1 ELSE 0 END) AS awaiting_review,
+            sum(CASE WHEN state='dead_letter' THEN 1 ELSE 0 END) AS dead_letter
+            FROM research_operation_queue WHERE kind='verify_intel'""").fetchone()
+        primary_preparation_pending = conn.execute("SELECT count(*) FROM research_operation_queue WHERE kind='verify_intel' AND state IN ('queued','retry','running')").fetchone()[0]
         editions = [dict(r) for r in conn.execute("SELECT edition_id,edition_date,state,author_id,published_url,updated_at FROM research_editorial_editions ORDER BY edition_date DESC LIMIT 90")]
         ontology_pending = conn.execute("SELECT count(*) FROM ontology_sync_outbox WHERE status='queued'").fetchone()[0]
         ontology_oldest = conn.execute("SELECT min(created_at) FROM ontology_sync_outbox WHERE status='queued'").fetchone()[0]
@@ -122,6 +151,10 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
             "artifact_backup": {"enabled": vault_enabled, "pending_registered_public": backup_pending,
                                 "coverage": "latest 1000 collected catalog entries; restricted and unregistered artifacts excluded"},
             "health": {"freshness_gaps": gaps, "collector_failures": failures, "dead_letters": queue.get("dead_letter", 0),
+                       "primary_intel_pending_preparation": primary_preparation_pending,
+                       "primary_intel_awaiting_human_review": primary_preparation["awaiting_review"] or 0,
+                       "primary_intel_preparation_dead_letters": primary_preparation["dead_letter"] or 0,
+                       "primary_intel_oldest_preparation_age_seconds": _age(primary_preparation["oldest"], now) if primary_preparation_pending else None,
                        "artifact_backup_pending": backup_pending if vault_enabled else None,
                        "ontology_pending": ontology_pending, "ontology_due_pending": ontology_due,
                        "ontology_oldest_age_seconds": _age(ontology_oldest, now),

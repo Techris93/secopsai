@@ -16,6 +16,7 @@ import gzip
 import json
 import zlib
 import re
+import ast
 from pathlib import PurePosixPath
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
@@ -23,6 +24,8 @@ MAX_TEXT_BYTES = 1024 * 1024
 TINY_CODE_BYTES = 50_000
 INSTALL_NETWORK_FLAGS = ("exfil_service", "discord_webhook", "telegram_bot", "raw_ip_url", "download_tool", "http_send")
 TEXT_SUFFIXES = {".rs", ".js", ".cjs", ".mjs", ".ts", ".py", ".pyw", ".json", ".sh", ".bat", ".cmd", ".ps1", ".cfg", ".toml", ".txt", ".yml", ".yaml", ""}
+NON_CODE_BASENAMES = {".gitignore", ".npmignore", ".dockerignore", ".gitattributes", ".editorconfig", ".npmrc", ".pypirc",
+                      ".env", "license", "notice", "changelog", "changes", "readme"}
 INSTALL_HOOKS = ("preinstall", "install", "postinstall", "prepare")
 
 # flag -> pattern over the text of code files (case-insensitive).
@@ -50,7 +53,9 @@ PATTERNS: Dict[str, str] = {
     "long_base64": r"[A-Za-z0-9+/]{300,}={0,2}",
     "hex_blob": r"(\\x[0-9a-fA-F]{2}){60,}",
     "js_obfuscator": r"_0x[0-9a-f]{4,6}\b.{0,200}_0x[0-9a-f]{4,6}\b",
-    "system_info": r"os\.hostname\s*\(|os\.userInfo\s*\(|os\.networkInterfaces|platform\.node\s*\(|getpass\.getuser|socket\.gethostname|\bwhoami\b",
+    # `whoami` is a common exported API name (e.g. authentication SDKs).
+    # Count it only when code invokes it as a process command.
+    "system_info": r"os\.hostname\s*\(|os\.userInfo\s*\(|os\.networkInterfaces|platform\.node\s*\(|getpass\.getuser|socket\.gethostname|(?:os\.system|subprocess\.(?:run|Popen|check_output)|exec(?:Sync)?|spawn(?:Sync)?|Command::new)\s*\(\s*(?:\[\s*)?['\"`]whoami\b",
     "download_tool": r"\bcurl\s+-|\bwget\s+|Invoke-WebRequest|urlretrieve\s*\(|DownloadFile|Command::new\(\s*\"(curl|wget)\"",
     "chmod_exec": r"chmod\s+\+?[0-7x]+|os\.chmod\s*\(|fs\.chmodSync",
     "persistence": r"crontab|LaunchAgents|CurrentVersion\\\\Run|\.bashrc|\.zshrc|systemctl\s+enable|schtasks",
@@ -84,7 +89,139 @@ COMPILED = {name: re.compile(pattern, re.IGNORECASE | re.DOTALL) for name, patte
 
 
 def _is_text_path(path: str) -> bool:
-    return PurePosixPath(path.lower()).suffix in TEXT_SUFFIXES
+    lowered = path.lower()
+    name = PurePosixPath(lowered).name
+    return name not in NON_CODE_BASENAMES and PurePosixPath(lowered).suffix in TEXT_SUFFIXES
+
+
+def _mask_ranges(text: str, ranges: List[Tuple[int, int]]) -> str:
+    """Replace byte ranges with spaces while preserving line/byte offsets."""
+    raw = bytearray(text.encode("utf-8"))
+    for start, end in ranges:
+        for index in range(max(0, start), min(len(raw), end)):
+            if raw[index] not in (10, 13):
+                raw[index] = 32
+    return raw.decode("utf-8", errors="ignore")
+
+
+def _python_without_docstrings(text: str) -> str:
+    """Mask Python module/class/function docstrings, preserving source offsets."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return text
+    lines = text.encode("utf-8").splitlines(keepends=True)
+    starts, offset = [], 0
+    for line in lines:
+        starts.append(offset)
+        offset += len(line)
+    ranges = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) or not node.body:
+            continue
+        first = node.body[0]
+        if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str) and hasattr(first, "end_lineno")):
+            ranges.append((starts[first.lineno - 1] + first.col_offset,
+                           starts[first.end_lineno - 1] + first.end_col_offset))
+    return _mask_ranges(text, ranges) if ranges else text
+
+
+_RUST_TEST_MODULE = re.compile(r"(?m)^\s*#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*(?:(?:pub(?:\([^)]*\))?)\s+)?mod\s+[A-Za-z_]\w*\s*\{")
+
+
+def _rust_without_test_modules(text: str) -> str:
+    """Mask inline `#[cfg(test)] mod ... {}` blocks, including nested braces."""
+    ranges = []
+    for match in _RUST_TEST_MODULE.finditer(text):
+        opening = match.end() - 1
+        depth, index, state, block_depth = 1, opening + 1, "code", 0
+        raw_hashes = 0
+        while index < len(text) and depth:
+            if state == "line_comment":
+                if text[index] == "\n":
+                    state = "code"
+                index += 1
+                continue
+            if state == "block_comment":
+                if text.startswith("/*", index):
+                    block_depth += 1
+                    index += 2
+                elif text.startswith("*/", index):
+                    block_depth -= 1
+                    index += 2
+                    if block_depth == 0:
+                        state = "code"
+                else:
+                    index += 1
+                continue
+            if state == "string":
+                if text[index] == "\\":
+                    index += 2
+                elif text[index] == '"':
+                    state = "code"
+                    index += 1
+                else:
+                    index += 1
+                continue
+            if state == "raw_string":
+                terminator = '"' + "#" * raw_hashes
+                if text.startswith(terminator, index):
+                    state = "code"
+                    index += len(terminator)
+                else:
+                    index += 1
+                continue
+            if text.startswith("//", index):
+                state = "line_comment"
+                index += 2
+            elif text.startswith("/*", index):
+                state, block_depth = "block_comment", 1
+                index += 2
+            elif text.startswith('r"', index) or text.startswith('r#', index) or text.startswith('br', index):
+                prefix = index + (2 if text.startswith("br", index) else 1)
+                cursor = prefix
+                while cursor < len(text) and text[cursor] == "#":
+                    cursor += 1
+                if cursor < len(text) and text[cursor] == '"':
+                    raw_hashes = cursor - prefix
+                    state = "raw_string"
+                    index = cursor + 1
+                else:
+                    index += 1
+            elif text[index] == '"':
+                state = "string"
+                index += 1
+            elif text.startswith('b"', index):
+                state = "string"
+                index += 2
+            elif text[index] == "'":
+                # Character literal, but not Rust lifetime syntax (`'a`).
+                closing = index + (2 if index + 1 < len(text) and text[index + 1] != "\\" else 3)
+                if closing < len(text) and text[closing] == "'":
+                    index = closing + 1
+                else:
+                    index += 1
+            elif text[index] == "{":
+                depth += 1
+                index += 1
+            elif text[index] == "}":
+                depth -= 1
+                index += 1
+            else:
+                index += 1
+        if depth == 0:
+            ranges.append((match.start(), index))
+    return _mask_ranges(text, ranges) if ranges else text
+
+
+def _runtime_text(path: str, text: str) -> str:
+    lowered = path.lower()
+    if lowered.endswith((".py", ".pyw")):
+        return _python_without_docstrings(text)
+    if lowered.endswith(".rs"):
+        return _rust_without_test_modules(text)
+    return text
 
 
 def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[str]:
@@ -95,6 +232,8 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
     root_depth = min((path.count("/") for path in manifest_paths), default=1)
     code_files = 0
     code_bytes = 0
+    has_test_members = False
+    has_type_declarations = False
     for path, data in files:
         lowered = path.lower()
         name = PurePosixPath(lowered).name
@@ -102,10 +241,14 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
             flags.add("native_binary")
             continue
         if lowered.endswith(".d.ts"):
+            has_type_declarations = True
             continue  # type declarations describe APIs; they do not run
+        if TEST_PATH.search(lowered):
+            has_test_members = True
+            continue  # test fixtures demonstrate behaviour; they are not shipped runtime behaviour
         if not _is_text_path(path) or lowered.endswith((".md", ".txt")) and name not in {"requirements.txt"}:
             continue
-        text = data[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore")
+        text = _runtime_text(path, data[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore"))
         if name == "package.json" and lowered.count("/") == root_depth:
             try:
                 manifest = json.loads(text)
@@ -137,17 +280,13 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
             continue
         code_files += 1
         code_bytes += len(data)
-        in_tests = bool(TEST_PATH.search(lowered))
         for flag, pattern in COMPILED.items():
-            # Injection strings in tests are defences being tested, not tool descriptions.
-            if flag == "prompt_injection" and in_tests:
-                continue
             if flag not in flags and pattern.search(text):
                 flags.add(flag)
     # Few files AND little code: bundlers pack whole CLIs into one large
     # dist/index.js (backscan: 69 of 79 recon false positives), while
     # throwaway malicious packages are a few kilobytes.
-    if code_files <= 2 and code_bytes < TINY_CODE_BYTES:
+    if code_files <= 2 and code_bytes < TINY_CODE_BYTES and (code_files > 0 or (has_type_declarations and not has_test_members)):
         flags.add("tiny_package")
     major = re.match(r"(\d+)", version or "")
     # Dependency-confusion packages publish 99.x / 100.x to win resolution.
@@ -274,9 +413,9 @@ def flag_evidence(members: Iterable[Tuple[str, bytes]], flag: str, *, window: in
         return {}
     for path, data in members:
         lowered = path.lower()
-        if lowered.endswith(".d.ts") or not _is_text_path(path) or (flag == "prompt_injection" and TEST_PATH.search(lowered)):
+        if lowered.endswith(".d.ts") or TEST_PATH.search(lowered) or not _is_text_path(path):
             continue
-        text = data[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore")
+        text = _runtime_text(path, data[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore"))
         match = pattern.search(text)
         if match:
             start = max(0, match.start() - window // 2)

@@ -22,7 +22,7 @@ from secopsai.research_editorial import (
 from secopsai.research_operation import execute, execute_hosted, hosted_projection
 from secopsai.research_operation_store import digest, records
 from secopsai.research_primary_intel import (
-    acquire, claim_job, complete_job, configure_source, fail_job, heartbeat, intel_event, parse_source, pending_public_reviews, verify_event,
+    acquire, claim_job, complete_job, configure_source, fail_job, heartbeat, intel_event, parse_source, pending_public_reviews, prepare_pending, verify_event,
 )
 from secopsai.research_reliability import _verify_statement
 
@@ -220,6 +220,35 @@ def test_human_source_review_queue_only_exposes_public_archived_events(db):
     pending = pending_public_reviews(db_path=db)
     assert [item["event_id"] for item in pending] == [public_event["event_id"]]
     assert pending[0]["excerpt"] == "A synthetic patch is available."
+
+
+def test_automatic_intel_preparation_moves_work_to_human_review_without_verifying(db):
+    value, _ = event(db)
+    result = prepare_pending(db_path=db, limit=10)
+    assert result["prepared"] == 1 and result["pending"] == 0 and result["awaiting_human_review"] == 1
+    with soc_store.connect(db) as conn:
+        queue = conn.execute("SELECT state,result_json FROM research_operation_queue WHERE event_id=?", (value["event_id"],)).fetchone()
+    packet = json.loads(queue["result_json"])
+    assert queue["state"] == "awaiting_review"
+    assert packet["assessment"] == "source_reported_unverified"
+    assert packet["human_review_required"] is True
+    assert packet["provenance"]["sha256"] == value["sha256"]
+    assert not records("intel_verification", db_path=db)
+    pending = pending_public_reviews(db_path=db)
+    assert pending[0]["preparation"]["event_id"] == value["event_id"]
+
+
+def test_human_review_backlog_does_not_consume_source_intake_capacity(db, monkeypatch):
+    config = source(db)
+    first = json.dumps({"events": [{"external_id": "first", "title": "First", "excerpt": "First item", "url": "https://vendor.example/first"}]}).encode()
+    acquire(config, first, db_path=db)
+    assert prepare_pending(db_path=db)["awaiting_human_review"] == 1
+    monkeypatch.setattr("secopsai.research_primary_intel.MAX_PENDING", 1)
+    second = json.dumps({"events": [{"external_id": "second", "title": "Second", "excerpt": "Second item", "url": "https://vendor.example/second"}]}).encode()
+    assert acquire(config, second, db_path=db)["inserted"] == 1
+    with soc_store.connect(db) as conn:
+        states = [row[0] for row in conn.execute("SELECT state FROM research_operation_queue ORDER BY created_at,event_id")]
+    assert states == ["awaiting_review", "queued"]
 
 
 def test_msrc_large_feed_uses_revision_window_and_accounts_for_historical_entries(db):
@@ -461,6 +490,17 @@ def test_unknown_coverage_denominators_remain_unknown_and_private_notes_are_not_
     assert projection["decision_mode"] == "observe" and projection["clef_enabled"] is False
 
 
+def test_primary_source_coverage_explains_stale_attempt_state(db):
+    config = source(db)
+    with soc_store.connect(db) as connection:
+        connection.execute("UPDATE research_intel_sources SET last_attempt_at='2026-10-21T10:00:00Z',error_category='source_http_403',consecutive_failures=2 WHERE source_id=?", (config["source_id"],))
+        connection.commit()
+    row = next(item for item in coverage_report(db_path=db)["sources"] if item["source_id"] == config["source_id"])
+    assert row["last_attempt_status"] == "failed"
+    assert row["error_category"] == "source_http_403"
+    assert row["interval_seconds"] == config["interval_seconds"]
+
+
 def test_hosted_duplicate_command_is_atomic_and_conflicting_delivery_rejected(db):
     payload = {"action": "source-configure", "actor": "operator.owner", "data": {"source_id": "second", "name": "Second source", "url": "https://vendor.example/second", "parser": "rss", "source_class": "vendor"}}
     first = execute_hosted("command-123", payload, db_path=db)
@@ -638,6 +678,40 @@ def test_delivery_watchdog_keeps_source_freshness_visible_without_failing_delive
     assert blocked_delivery["blockers"] == ["research delivery has dead-letter items requiring review"]
 
 
+def test_routine_delivery_scope_accepts_only_measurably_progressing_backlog():
+    from scripts.research_operation_watchdog import inspect
+
+    now = datetime(2026, 10, 21, 12, tzinfo=timezone.utc)
+
+    def reader_for(*, oldest=900, last_ack=now.isoformat()):
+        def reader(url, _token):
+            if url.endswith("/status"):
+                return json.dumps({"uploaded_at": now.isoformat(), "checkpoint_available": True,
+                                   "completion_retry_safe": True, "captured_at": now.isoformat()}).encode()
+            if "/research/operation" in url:
+                return json.dumps({"synced_at": now.isoformat(), "coverage": {"health": {
+                    "freshness_gaps": [], "dead_letters": 0, "artifact_backup_pending": 0,
+                    "ontology_pending": 37, "ontology_oldest_age_seconds": oldest,
+                    "ontology_last_acknowledged_at": last_ack,
+                    "ontology_validation_failures": 0, "ontology_authorization_failures": 0,
+                }}}).encode()
+            return b"<html>synthetic</html>"
+        return reader
+
+    routine = inspect(reader=reader_for(), now=now, scope="delivery", allow_pending=True)
+    assert routine["status"] == "in_progress" and routine["decision_final"] is False
+    assert routine["blockers"] == []
+    assert "37 durable chunk(s) pending" in routine["warnings"][0]
+
+    strict = inspect(reader=reader_for(), now=now, scope="delivery")
+    assert strict["status"] == "failed"
+    assert strict["blockers"] == ["semantic delivery has unacknowledged durable chunks"]
+
+    overdue = inspect(reader=reader_for(oldest=7201), now=now, scope="delivery", allow_pending=True)
+    assert overdue["status"] == "failed"
+    assert overdue["blockers"] == ["oldest semantic delivery exceeds the two-hour service window"]
+
+
 def test_watchdog_treats_a_superseded_worker_run_as_provisional_not_failed():
     from scripts.research_operation_watchdog import inspect
 
@@ -657,11 +731,19 @@ def test_watchdog_treats_a_superseded_worker_run_as_provisional_not_failed():
 
     # GitHub cancels a queued run when a newer dispatch replaces it: no blocker.
     superseded = inspect(reader=reader, now=now, worker_active=False,
-                         upstream_worker_conclusion="cancelled", upstream_worker_run_id="39048013659")
+                         upstream_worker_conclusion="cancelled", upstream_worker_run_id="39048013659",
+                         upstream_worker_cancelled_before_start=True)
     assert superseded["blockers"] == []
     assert superseded["status"] == "in_progress"
     assert superseded["decision_final"] is False
     assert any("superseded by a newer run" in item for item in superseded["warnings"])
+
+    # A cancellation after a worker started is a real incomplete run too.
+    cancelled_after_start = inspect(reader=reader, now=now, worker_active=False,
+                                    upstream_worker_conclusion="cancelled", upstream_worker_run_id="2",
+                                    upstream_worker_started_at="2026-10-17T16:30:00Z")
+    assert cancelled_after_start["status"] == "failed"
+    assert "Research Worker run 2 concluded cancelled" in cancelled_after_start["blockers"]
 
     # A run that actually failed or timed out still blocks.
     for conclusion in ("failure", "timed_out"):

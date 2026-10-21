@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -132,8 +133,15 @@ def main():
         result={'status':'failed','scope':'isolated_production_recovery_verification',
                 'production_modified':False,'model_jobs_created':0,
                 'phase':progress['phase'],'error_category':type(error).__name__}
-        if isinstance(getattr(error,'code',None),int):
-            result['http_status']=error.code
+        status = getattr(error, 'status', getattr(error, 'code', None))
+        if isinstance(status, int) and 100 <= status <= 599:
+            result['http_status'] = status
+        provider_code = getattr(error, 'error_code', '')
+        if isinstance(provider_code, str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,80}', provider_code):
+            result['provider_code'] = provider_code
+        request_id = getattr(error, 'request_id', '')
+        if isinstance(request_id, str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', request_id):
+            result['request_id'] = request_id
         if isinstance(error, sqlite3.DatabaseError):
             code=getattr(error,'sqlite_errorcode',None)
             name=getattr(error,'sqlite_errorname',None)

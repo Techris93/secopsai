@@ -4,6 +4,8 @@ on:
     workflows: ["Research Worker"]
     types: [completed]
   workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
 permissions:
   contents: read
   actions: read
@@ -27,15 +29,34 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          active=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/research-worker.yml/runs?status=in_progress&branch=main&per_page=100" --jq '.workflow_runs | length')
+          active_json=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/research-worker.yml/runs?status=in_progress&branch=main&per_page=100")
+          active=$(jq -r '.workflow_runs | length' <<< "$active_json")
           if ! [[ "$active" =~ ^[0-9]+$ ]]; then
             echo "Could not determine active Research Worker runs" >&2
             exit 1
           fi
           if (( active > 0 )); then
             echo "SECOPSAI_WATCHDOG_WORKER_ACTIVE=1" >> "$GITHUB_ENV"
+            echo "SECOPSAI_WATCHDOG_ACTIVE_RUN_ID=$(jq -r '.workflow_runs[0].id' <<< "$active_json")" >> "$GITHUB_ENV"
+            echo "SECOPSAI_WATCHDOG_ACTIVE_STARTED_AT=$(jq -r '.workflow_runs[0].run_started_at // .workflow_runs[0].created_at // empty' <<< "$active_json")" >> "$GITHUB_ENV"
           else
             echo "SECOPSAI_WATCHDOG_WORKER_ACTIVE=0" >> "$GITHUB_ENV"
+            echo "SECOPSAI_WATCHDOG_ACTIVE_RUN_ID=" >> "$GITHUB_ENV"
+            echo "SECOPSAI_WATCHDOG_ACTIVE_STARTED_AT=" >> "$GITHUB_ENV"
+          fi
+          upstream_id='${{ github.event.workflow_run.id }}'
+          if [[ -n "$upstream_id" ]]; then
+            upstream=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${upstream_id}")
+            echo "SECOPSAI_WATCHDOG_UPSTREAM_CONCLUSION=$(jq -r '.conclusion // empty' <<< "$upstream")" >> "$GITHUB_ENV"
+            echo "SECOPSAI_WATCHDOG_UPSTREAM_COMPLETED_AT=$(jq -r '.completed_at // empty' <<< "$upstream")" >> "$GITHUB_ENV"
+            echo "SECOPSAI_WATCHDOG_UPSTREAM_STARTED_AT=$(jq -r '.run_started_at // empty' <<< "$upstream")" >> "$GITHUB_ENV"
+            echo "SECOPSAI_WATCHDOG_UPSTREAM_RUN_ID=$(jq -r '.id' <<< "$upstream")" >> "$GITHUB_ENV"
+            echo "SECOPSAI_WATCHDOG_UPSTREAM_RUN_ATTEMPT=$(jq -r '.run_attempt // empty' <<< "$upstream")" >> "$GITHUB_ENV"
+            if [[ "$(jq -r '.conclusion // empty' <<< "$upstream")" == "cancelled" && -z "$(jq -r '.run_started_at // empty' <<< "$upstream")" ]]; then
+              echo "SECOPSAI_WATCHDOG_UPSTREAM_CANCELLED_BEFORE_START=1" >> "$GITHUB_ENV"
+            else
+              echo "SECOPSAI_WATCHDOG_UPSTREAM_CANCELLED_BEFORE_START=0" >> "$GITHUB_ENV"
+            fi
           fi
       - name: Verify public source transport and parsing independently
         env:
@@ -46,16 +67,23 @@ jobs:
       - name: Check checkpoint age, source coverage and public availability
         if: always()
         env:
+          GH_TOKEN: ${{ github.token }}
           LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
           SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
-          SECOPSAI_WATCHDOG_UPSTREAM_CONCLUSION: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion || '' }}
-          SECOPSAI_WATCHDOG_UPSTREAM_COMPLETED_AT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.completed_at || '' }}
-          SECOPSAI_WATCHDOG_UPSTREAM_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || '' }}
         run: |
+          args=()
+          [[ "$SECOPSAI_WATCHDOG_UPSTREAM_CONCLUSION" == "success" ]] && args+=(--projection-wait-seconds 300)
+          [[ -n "$SECOPSAI_WATCHDOG_UPSTREAM_RUN_ATTEMPT" ]] && args+=(--upstream-worker-run-attempt "$SECOPSAI_WATCHDOG_UPSTREAM_RUN_ATTEMPT")
+          [[ "$SECOPSAI_WATCHDOG_UPSTREAM_CANCELLED_BEFORE_START" == "1" ]] && args+=(--upstream-worker-cancelled-before-start)
+          [[ "$SECOPSAI_WATCHDOG_WORKER_ACTIVE" == "1" ]] && args+=(--worker-active)
           python scripts/research_operation_watchdog.py \
-            --upstream-worker-conclusion "$SECOPSAI_WATCHDOG_UPSTREAM_CONCLUSION" \
-            --upstream-worker-completed-at "$SECOPSAI_WATCHDOG_UPSTREAM_COMPLETED_AT" \
-            --upstream-worker-run-id "$SECOPSAI_WATCHDOG_UPSTREAM_RUN_ID" \
+            --upstream-worker-conclusion "${SECOPSAI_WATCHDOG_UPSTREAM_CONCLUSION:-}" \
+            --upstream-worker-completed-at "${SECOPSAI_WATCHDOG_UPSTREAM_COMPLETED_AT:-}" \
+            --upstream-worker-started-at "${SECOPSAI_WATCHDOG_UPSTREAM_STARTED_AT:-}" \
+            --upstream-worker-run-id "${SECOPSAI_WATCHDOG_UPSTREAM_RUN_ID:-}" \
+            --active-worker-run-id "${SECOPSAI_WATCHDOG_ACTIVE_RUN_ID:-}" \
+            --active-worker-started-at "${SECOPSAI_WATCHDOG_ACTIVE_STARTED_AT:-}" \
+            "${args[@]}" \
             --output reports/research/watchdog.json
       - name: Preserve diagnostics even after a failed check
         if: always()

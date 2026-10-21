@@ -35,7 +35,6 @@ MAX_TARGETS = 20
 STALE_AFTER_SECONDS = 3 * 3600
 EXEC_OR_EGRESS = {"network-endpoint", "outbound-network", "process-execution", "dynamic-eval", "dynamic-function-constructor", "credential-access", "credential-discovery", "encoded-payload"}
 INSTALL_HOOKS = {"preinstall", "install", "postinstall", "prepare"}
-SIZE_GUARD_MARKERS = ("safety limit", "too many", "maximum size")
 NOT_FOUND_RETRIES = 3
 NOT_FOUND_DELAY_SECONDS = 20
 
@@ -172,12 +171,17 @@ def alert_payload(target: Dict[str, Any], release: Dict[str, Any], decision: Dic
 
 
 def main() -> int:
-    targets = json.loads(os.environ.get("FAST_LANE_TARGETS") or "[]")[:MAX_TARGETS]
+    targets = json.loads(os.environ.get("FAST_LANE_TARGETS") or "[]")
+    if not isinstance(targets, list) or len(targets) > MAX_TARGETS:
+        raise ValueError(f"FAST_LANE_TARGETS must contain at most {MAX_TARGETS} targets")
     fetcher = SafeFetcher(timeout=60)
     rows: List[Dict[str, Any]] = []
+    from secopsai.research_intake import ArtifactResourceLimitError, RegistryHTTPError, TransientTransportError
+
     for target in targets:
         started = _now()
-        row: Dict[str, Any] = {"target": f"{target.get('ecosystem')}:{target.get('package')}", "status": "", "severity": "none"}
+        row: Dict[str, Any] = {"target": f"{target.get('ecosystem')}:{target.get('package')}", "queue_id": target.get("_queue_id"),
+                               "version": target.get("version"), "status": "", "severity": "none"}
         try:
             release = resolve_release(fetcher, target["ecosystem"], target["package"], target.get("version", ""))
             row.update(version=release["version"], previous=release.get("previous_version"), published_at=release["published_at"])
@@ -195,7 +199,7 @@ def main() -> int:
                         result = investigate(target, release, Path(tmp))
                     break
                 except Exception as exc:
-                    if "HTTP 404" not in str(exc) or attempt == NOT_FOUND_RETRIES:
+                    if not isinstance(exc, RegistryHTTPError) or exc.status != 404 or attempt == NOT_FOUND_RETRIES:
                         raise
                     time.sleep(NOT_FOUND_DELAY_SECONDS)
             decision = assess(result)
@@ -205,11 +209,23 @@ def main() -> int:
             if decision["severity"] != "none":
                 row["delivery"] = deliver(target, release, decision, detected)
         except Exception as exc:
-            # Size guards (archive-bomb limits) are a scope decision, and a
-            # release still missing after retries is not a fault either.
-            oversized = any(marker in str(exc) for marker in SIZE_GUARD_MARKERS)
-            missing = "HTTP 404" in str(exc)
-            row.update(status="skipped: exceeds scan limits" if oversized else "skipped: not available yet" if missing else "error", reasons=str(exc)[:300])
+            if isinstance(exc, ArtifactResourceLimitError):
+                row.update(status="incomplete", failure_category=exc.failure_category,
+                           reasons="Configured archive resource limit reached; no clean verdict was produced.")
+            elif isinstance(exc, RegistryHTTPError) and (exc.retryable or exc.status == 404):
+                row.update(status="retryable_failure", failure_category=exc.failure_category,
+                           http_status=exc.status, retryable=True,
+                           reasons=f"Registry request returned HTTP {exc.status}; target remains unresolved.")
+            elif isinstance(exc, RegistryHTTPError):
+                row.update(status="incomplete", failure_category=exc.failure_category,
+                           http_status=exc.status, retryable=False,
+                           reasons=f"Registry request returned permanent HTTP {exc.status}; no clean verdict was produced.")
+            elif isinstance(exc, TransientTransportError):
+                row.update(status="retryable_failure", failure_category=exc.failure_category,
+                           retryable=True, reasons=exc.diagnostic)
+            else:
+                row.update(status="error", failure_category=type(exc).__name__,
+                           reasons="Target could not be analyzed; inspect the sanitized failure category.")
         rows.append(row)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     lines = ["### Fast lane", "", "| Package | Version (previous) | Severity | Publish to verdict | Notes |", "| --- | --- | --- | --- | --- |"]
@@ -219,9 +235,21 @@ def main() -> int:
     report = "\n".join(lines)
     print(report)
     print(json.dumps(rows, default=str))
+    report_path = Path(os.environ.get("FAST_LANE_REPORT_PATH", "reports/fast-lane-results.json"))
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps({"schema_version": "secopsai.fast-lane.results.v1", "completed_at": _iso(_now()), "results": rows}, indent=2), encoding="utf-8")
     if summary:
         Path(summary).write_text(report + "\n", encoding="utf-8")
-    return 1 if any(row["status"] == "error" for row in rows) and not any(row["status"] == "analyzed" for row in rows) else 0
+    # A bounded but incomplete artifact is a recorded outcome, not an analyzer
+    # crash. Retryable registry failures are green only when a durable queue
+    # receipt can reschedule that target; otherwise the report needs operator
+    # attention and the workflow must remain red.
+    unhandled = any(
+        row["status"] == "error"
+        or (row["status"] == "retryable_failure" and not row.get("queue_id"))
+        for row in rows
+    )
+    return 1 if unhandled else 0
 
 
 def deliver(target: Dict[str, Any], release: Dict[str, Any], decision: Dict[str, Any], detected: datetime) -> Dict[str, Any]:

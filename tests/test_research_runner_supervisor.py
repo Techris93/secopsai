@@ -111,6 +111,42 @@ def test_checkpoint_only_uploads_existing_ledger(tmp_path, monkeypatch):
     assert server.latest is not None
 
 
+def test_missing_incremental_manifest_falls_back_to_legacy_snapshot(tmp_path, monkeypatch):
+    import gzip
+
+    monkeypatch.setenv("SECOPSAI_INCREMENTAL_CHECKPOINTS", "1")
+    calls = []
+
+    def opener(request, timeout=None):
+        path = request.full_url.replace("http://ledger.internal", "")
+        calls.append(path)
+        if path == "/checkpoint-manifest":
+            raise urllib.error.HTTPError(path, 404, "missing", {}, io.BytesIO(b'{"detail":"fixture"}'))
+        if path == "/snapshot":
+            return _Response(gzip.compress(b"legacy snapshot"))
+        raise AssertionError(path)
+
+    target = tmp_path / "restored.db"
+    client = supervisor.LedgerStore("http://ledger.internal", "tok", opener=opener)
+    assert client.download(target) is True
+    assert target.read_bytes() == b"legacy snapshot"
+    assert calls == ["/checkpoint-manifest", "/snapshot"]
+
+
+def test_ledger_http_error_keeps_only_safe_diagnostic_metadata():
+    def rejected(request, timeout=None):
+        raise urllib.error.HTTPError(request.full_url, 400, "bad request", {"x-request-id": "req-123"},
+                                     io.BytesIO(b'{"code":"invalid_manifest","message":"secret fixture text"}'))
+
+    client = supervisor.LedgerStore("http://ledger.internal", "tok", opener=rejected)
+    with pytest.raises(supervisor.LedgerRequestError) as failure:
+        client._request("POST", "/checkpoints", b"{}", deadline=supervisor.time.monotonic() + 10)
+    assert failure.value.status == 400
+    assert failure.value.error_code == "invalid_manifest"
+    assert failure.value.request_id == "req-123"
+    assert "secret fixture text" not in str(failure.value)
+
+
 def test_time_budget_stops_the_worker_and_still_checkpoints(tmp_path, monkeypatch):
     # Regression: a run that outlived the CI job timeout was killed before the
     # final checkpoint and lost all of its work.
@@ -181,8 +217,9 @@ def test_upload_retries_only_transient_http_errors(tmp_path, monkeypatch, status
     monkeypatch.setattr(supervisor.time, "sleep", sleeps.append)
     compressed = tmp_path / "snapshot.gz"
     compressed.write_bytes(b"snapshot")
-    with pytest.raises((urllib.error.HTTPError, ConnectionError)):
+    with pytest.raises(supervisor.LedgerRequestError) as failure:
         supervisor.LedgerStore("http://ledger.internal", "tok", opener=unavailable).upload(compressed)
+    assert failure.value.status == status and failure.value.attempts == attempts
     assert len(calls) == attempts
     assert sleeps == ([2, 2] if attempts == 3 else [])
 
@@ -230,8 +267,9 @@ def test_old_ledger_store_completion_is_not_blindly_repeated(tmp_path, monkeypat
     monkeypatch.setattr(supervisor.time, "sleep", lambda _seconds: None)
     compressed = tmp_path / "snapshot.gz"
     compressed.write_bytes(b"snapshot")
-    with pytest.raises(ConnectionError):
+    with pytest.raises(supervisor.LedgerRequestError) as failure:
         supervisor.LedgerStore("http://ledger.internal", "tok", opener=flaky).upload(compressed)
+    assert failure.value.category == "ConnectionResetError" and failure.value.attempts == 1
     assert len(calls) == 1
     assert server.latest is None
 
@@ -249,8 +287,9 @@ def test_exhausted_part_retries_preserve_previous_snapshot(tmp_path, monkeypatch
     monkeypatch.setattr(supervisor.time, "sleep", lambda _seconds: None)
     compressed = tmp_path / "snapshot.gz"
     compressed.write_bytes(b"new snapshot")
-    with pytest.raises(ConnectionError):
+    with pytest.raises(supervisor.LedgerRequestError) as failure:
         supervisor.LedgerStore("http://ledger.internal", "tok", opener=unavailable).upload(compressed)
+    assert failure.value.category == "ConnectionResetError" and failure.value.attempts == 3
     assert len(attempts) == 3
     assert server.latest == "previous"
     assert server.objects == {"previous": b"previous snapshot"}
@@ -483,7 +522,7 @@ def test_recurring_incremental_checkpoint_reserves_sparse_upload_time(tmp_path, 
 
     store = TimedStore()
     assert supervisor.checkpoint(db,store,tmp_path) == 'sparse-checkpoint'
-    assert store.upload_deadline == 300
+    assert store.upload_deadline == 900, "capture and upload have separate bounded phases"
 
 
 def test_checkpoint_pins_snapshot_while_wal_writer_keeps_committing(tmp_path, monkeypatch):
@@ -582,7 +621,7 @@ def test_first_full_transfer_has_separate_bounded_bootstrap_budget(tmp_path,monk
     supervisor.checkpoint(db,client,tmp_path)
     client.incremental_ready=True
     supervisor.checkpoint(db,client,tmp_path)
-    assert deadlines==[700,700,400]
+    assert deadlines==[1300,1300,1000]
 
 
 def test_sparse_checkpoint_preserves_distributed_edits_and_immutable_baseline(tmp_path, monkeypatch):
@@ -742,7 +781,7 @@ def test_checkpoint_schedule_uses_capture_start_and_never_overlaps(monkeypatch):
         clock[0] += 140
     monkeypatch.setattr(supervisor.time, 'monotonic', lambda: clock[0])
     supervisor.periodic_checkpoints(Stop(), 60, capture)
-    assert starts == [60, 200, 340]
+    assert starts == [60, 260, 460], "the next interval starts after the prior checkpoint has finished"
 
 
 def test_sparse_capture_reuses_verified_page_index_without_rereading_baseline(tmp_path, monkeypatch):

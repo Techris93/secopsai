@@ -26,6 +26,7 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       FAST_LANE_TARGETS: ${{ inputs.targets }}
+      FAST_LANE_REPORT_PATH: reports/fast-lane-results.json
       SECOPSAI_CORE_COORDINATOR_URL: https://core.secopsai.dev
       SECOPSAI_CORE_WORKER_ID: github-actions-fast-lane
       SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
@@ -58,3 +59,19 @@ jobs:
 
       - name: Diff and scan the new releases
         run: python -u scripts/fast_lane.py
+
+      - name: Preserve per-target outcomes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fast-lane-results
+          path: reports/fast-lane-results.json
+          if-no-files-found: warn
+
+      - name: Acknowledge per-target outcomes to the durable queue
+        if: always()
+        env:
+          FAST_LANE_REPORT_PATH: reports/fast-lane-results.json
+          LEDGER_STORE_URL: https://ledger.secopsai.dev
+          LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+        run: python scripts/fast_lane_complete.py

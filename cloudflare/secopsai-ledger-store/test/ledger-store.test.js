@@ -79,7 +79,7 @@ test("a new research worker run starts only after the previous one finishes", as
   assert.equal((await dispatchResearchWorker(env, gh.fetcher, NOW)).status, "dispatched");
 });
 
-import { fastlaneTick, parsePypiRss } from "../src/fastlane.js";
+import { completeFastlaneTargets, fastlaneQueueStatus, fastlaneTick, parsePypiRss } from "../src/fastlane.js";
 
 function memoryBucket(initial = {}) {
   const store = new Map(Object.entries(initial).map(([k, v]) => [k, JSON.stringify(v)]));
@@ -94,6 +94,11 @@ function memoryBucket(initial = {}) {
       store.set(key, value);
       etags.set(key, `e${version}`);
       return { etag: etags.get(key) };
+    },
+    delete: async (key) => { store.delete(key); etags.delete(key); },
+    list: async ({prefix = "", limit = 1000} = {}) => {
+      const objects = [...store.keys()].filter((key) => key.startsWith(prefix)).sort().slice(0, limit).map((key) => ({key}));
+      return {objects, truncated: [...store.keys()].filter((key) => key.startsWith(prefix)).length > limit};
     },
   };
 }
@@ -131,8 +136,8 @@ test("fast lane retries targets when the dispatch fails", async () => {
   let calls = 0;
   const env = { LEDGER: bucket };
   await fastlaneTick(env, { fetcher, now: 5_000_000, dispatch: async () => { calls += 1; return { status: "failed" }; } });
-  const state = JSON.parse(bucket.store.get("fastlane/state.json"));
-  assert.equal(Object.keys(state.dispatched).length, 0, "failed dispatch is forgotten for retry");
+  assert.equal((await fastlaneQueueStatus(bucket)).queued, 1, "failed dispatch remains durably queued");
+  assert.equal((await fastlaneQueueStatus(bucket)).dispatched, 0);
   assert.equal(calls, 1);
   await fastlaneTick(env, { fetcher, now: 5_060_000, dispatch: async () => { calls += 1; return { status: "dispatched" }; } });
   assert.equal(calls, 2, "the failed PyPI release is retried on the next tick");
@@ -155,6 +160,62 @@ test("overlapping fast lane ticks dispatch a release once", async () => {
   assert.equal(JSON.parse(bucket.store.get("fastlane/state.json")).lease_until, undefined, "lease released");
   await fastlaneTick(env, { fetcher, now: 9_060_000, dispatch });
   assert.equal(calls, 1, "the next tick sees the release as dispatched");
+});
+
+test("per-target Fast Lane queue keeps overflow, retries dispatch failures, and records completion", async () => {
+  const bucket = memoryBucket({
+    "fastlane/watchlist/npm.json": {names: []},
+    "fastlane/watchlist/pypi.json": {names: ["requests"]},
+  });
+  const fetcher = async () => new Response("<item><title>requests 5.0.0</title></item>");
+  const env = {LEDGER: bucket};
+  const noDispatch = await fastlaneTick(env, {fetcher, now: 10_000_000, dispatch: async () => ({status: "failed"})});
+  assert.equal(noDispatch.queued, 1);
+  assert.equal(noDispatch.targets, 0);
+  assert.equal((await fastlaneQueueStatus(bucket)).queued, 1);
+  let dispatched;
+  const success = await fastlaneTick(env, {fetcher, now: 10_000_001, dispatch: async (_workflow, inputs) => {
+    dispatched = JSON.parse(inputs.targets);
+    return {status: "dispatched"};
+  }});
+  assert.equal(success.targets, 1);
+  assert.equal((await fastlaneQueueStatus(bucket)).dispatched, 1);
+  const receipt = await completeFastlaneTargets(bucket, [{queue_id: dispatched[0]._queue_id, status: "retryable_failure", failure_category: "http_503", http_status: 503}], {now: 10_000_002, runId: "run-1"});
+  assert.equal(receipt.retried, 1);
+  assert.equal((await fastlaneQueueStatus(bucket)).queued, 1);
+  const due = await fastlaneTick(env, {fetcher, now: 10_100_000, dispatch: async (_workflow, inputs) => {
+    dispatched = JSON.parse(inputs.targets);
+    return {status: "dispatched"};
+  }});
+  assert.equal(due.targets, 1);
+  const done = await completeFastlaneTargets(bucket, [{queue_id: dispatched[0]._queue_id, status: "analyzed"}], {now: 10_100_001, runId: "run-2"});
+  assert.equal(done.completed, 1);
+  assert.equal((await fastlaneQueueStatus(bucket)).completed, 1);
+});
+
+test("retryable Fast Lane failures are bounded and become visible incomplete work", async () => {
+  const bucket = memoryBucket({
+    "fastlane/watchlist/npm.json": {names: []},
+    "fastlane/watchlist/pypi.json": {names: ["requests"]},
+  });
+  const fetcher = async () => new Response("<item><title>requests 6.0.0</title></item>");
+  const env = {LEDGER: bucket};
+  let now = 20_000_000;
+  let target;
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    const tick = await fastlaneTick(env, {fetcher, now, dispatch: async (_workflow, inputs) => {
+      target = JSON.parse(inputs.targets)[0];
+      return {status: "dispatched"};
+    }});
+    assert.equal(tick.targets, 1);
+    const receipt = await completeFastlaneTargets(bucket, [{queue_id: target._queue_id, status: "retryable_failure", failure_category: "http_404", http_status: 404}], {now: now + 1, runId: `attempt-${attempt}`});
+    if (attempt < 6) assert.equal(receipt.retried, 1);
+    else assert.equal(receipt.unresolved, 1);
+    now += 4_000_000;
+  }
+  const status = await fastlaneQueueStatus(bucket);
+  assert.equal(status.queued, 0);
+  assert.equal(status.incomplete, 1);
 });
 
 test("authenticated checkpoint status uses metadata without downloading the snapshot", async () => {

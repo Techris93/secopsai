@@ -68,6 +68,8 @@ test("local configuration has no implicit browser origin", () => {
   const config = loadConfig({});
   assert.deepEqual(config.allowedOrigins, []);
   assert.equal(config.stdioEnabled, false);
+  assert.equal(config.maxRequestBytes, 256 * 1024);
+  assert.equal(loadConfig({ SECOPSAI_MCP_MAX_REQUEST_BYTES: "4194304" }).maxRequestBytes, 1024 * 1024);
 });
 
 test("production requires audited origins, registered clients, and remote transport", () => {
@@ -271,6 +273,30 @@ test("MCP exposes only read-only tools and forwards normalized Core queries", as
   assert.equal(result.isError, undefined);
   assert.equal(result.structuredContent.result.read_only, true);
   assert.deepEqual(calls, [{ action: "list_findings", inputs: { severity: "high", limit: 10 } }]);
+});
+
+test("MCP rejects tool arguments with too many nested elements before calling Core", async (t) => {
+  const config = testConfig();
+  let coreCalls = 0;
+  const coreClient = auditedCoreClient(async () => {
+    coreCalls += 1;
+    throw new Error("Core must not be called for oversized tool input");
+  });
+  const identity = { subjectId: "a".repeat(64), sessionId: "b".repeat(64), clientId: "chatgpt-client", clientName: "ChatGPT", organizationId: "org-1", workspaceId: "workspace-1", transport: "streamable-http", scopes: new Set(config.scopes) };
+  const server = createHttpServer({ config, verifier: async () => identity, coreClient });
+  t.after(() => server.close());
+  const base = await listen(server);
+  const client = new Client({ name: "input-budget-test", version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+    requestInit: { headers: { authorization: "Bearer test-access-token" } },
+  });
+  t.after(async () => client.close());
+  await client.connect(transport);
+  const args = Object.fromEntries(Array.from({ length: 129 }, (_, index) => [`extra_${index}`, "x"]));
+  const result = await client.callTool({ name: "secopsai_list_findings", arguments: args });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /maximum of 128 elements/);
+  assert.equal(coreCalls, 0);
 });
 
 test("MCP returns an OAuth challenge when a tool scope is missing", async (t) => {

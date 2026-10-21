@@ -121,13 +121,23 @@ def test_watchdog_reports_active_worker_and_recent_delivery_as_in_progress():
             return json.dumps({"synced_at": (now - timedelta(hours=2)).isoformat(), "coverage": {"health": health}}).encode()
         return b"<html>synthetic</html>"
 
-    active = inspect(reader=reader, now=now, worker_active=True)
+    active = inspect(reader=reader, now=now, worker_active=True,
+                     active_worker_run_id="active-worker-run",
+                     active_worker_started_at=(now - timedelta(minutes=5)).isoformat())
     assert active["status"] == "in_progress" and active["decision_final"] is False
     assert active["blockers"] == []
     assert "provisional" in active["warnings"][0]
     assert active["checks"]["research_operation"]["source_freshness_status"] == "provisional"
 
-    current = inspect(reader=reader, now=now, worker_active=False)
+    def recent_reader(url, token):
+        raw = reader(url, token)
+        if "/research/operation" not in url:
+            return raw
+        value = json.loads(raw)
+        value["synced_at"] = (now - timedelta(minutes=2)).isoformat()
+        return json.dumps(value).encode()
+
+    current = inspect(reader=recent_reader, now=now, worker_active=False)
     assert current["status"] == "in_progress" and current["decision_final"] is False
     assert current["blockers"] == []
     assert any("delivery is in progress" in warning for warning in current["warnings"])
@@ -135,7 +145,7 @@ def test_watchdog_reports_active_worker_and_recent_delivery_as_in_progress():
     # A quiet period followed by a newly queued item is not evidence of a
     # stalled acknowledgement path; measure the age of the actual oldest item.
     def newly_queued_reader(url, token):
-        raw = reader(url, token)
+        raw = recent_reader(url, token)
         if "/research/operation" not in url:
             return raw
         value = json.loads(raw)
@@ -151,13 +161,13 @@ def test_watchdog_reports_active_worker_and_recent_delivery_as_in_progress():
     assert newly_queued["status"] == "in_progress"
     assert not any("stopped acknowledging" in blocker for blocker in newly_queued["blockers"])
 
-    strict = inspect(reader=reader, now=now, scope="delivery", worker_active=False)
+    strict = inspect(reader=recent_reader, now=now, scope="delivery", worker_active=False)
     assert strict["status"] == "failed"
     assert "semantic delivery has unacknowledged durable chunks" in strict["blockers"]
 
 
 def test_watchdog_defers_source_freshness_gate_until_worker_snapshot_is_final():
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     import json
     from scripts.research_operation_watchdog import inspect
 
@@ -170,10 +180,13 @@ def test_watchdog_defers_source_freshness_gate_until_worker_snapshot_is_final():
         if "/research/operation" in url:
             health = {"freshness_gaps": ["crates.io recently updated crates"],
                       "dead_letters": 0, "artifact_backup_pending": 0, "ontology_pending": 0}
-            return json.dumps({"synced_at": now.isoformat(), "coverage": {"health": health}}).encode()
+            return json.dumps({"synced_at": now.isoformat(), "coverage": {"health": health},
+                               "runtime": {"worker_run_id": "synthetic-worker-run", "worker_run_attempt": 1}}).encode()
         return b"<html>synthetic</html>"
 
-    provisional = inspect(reader=reader, now=now, scope="all", worker_active=True)
+    provisional = inspect(reader=reader, now=now, scope="all", worker_active=True,
+                          active_worker_run_id="active-worker-run",
+                          active_worker_started_at=(now - timedelta(minutes=5)).isoformat())
     assert provisional["status"] == "in_progress"
     assert provisional["decision_final"] is False
     assert provisional["blockers"] == []
@@ -185,7 +198,9 @@ def test_watchdog_defers_source_freshness_gate_until_worker_snapshot_is_final():
     final = inspect(reader=reader, now=now, scope="all", worker_active=False,
                     upstream_worker_conclusion="success",
                     upstream_worker_completed_at=now.isoformat(),
-                    upstream_worker_run_id="synthetic-worker-run")
+                    upstream_worker_run_id="synthetic-worker-run",
+                    upstream_worker_started_at=(now - timedelta(minutes=10)).isoformat(),
+                    upstream_worker_run_attempt=1)
     assert final["status"] == "failed"
     assert final["checks"]["research_operation"]["source_freshness_status"] == "degraded"
     assert final["blockers"] == ["enabled research sources are outside their freshness targets"]
@@ -208,7 +223,9 @@ def test_watchdog_fails_stalled_or_permanently_rejected_delivery_and_stale_post_
             return json.dumps({"uploaded_at": now.isoformat(), "checkpoint_available": True,
                                "completion_retry_safe": True, "captured_at": now.isoformat()}).encode()
         if "/research/operation" in url:
-            return json.dumps({"synced_at": (now - timedelta(minutes=3)).isoformat(), "coverage": {"health": health}}).encode()
+            return json.dumps({"synced_at": (now - timedelta(minutes=3)).isoformat(),
+                               "coverage": {"health": health},
+                               "runtime": {"worker_run_id": "fixture-run", "worker_run_attempt": 1}}).encode()
         return b"<html>synthetic</html>"
 
     stalled = inspect(reader=reader, now=now)
@@ -217,5 +234,46 @@ def test_watchdog_fails_stalled_or_permanently_rejected_delivery_and_stale_post_
     assert any("two-hour service window" in blocker for blocker in stalled["blockers"])
 
     stale = inspect(reader=reader, now=now, upstream_worker_conclusion="success",
-                     upstream_worker_completed_at=now.isoformat(), upstream_worker_run_id="fixture-run")
+                     upstream_worker_completed_at=now.isoformat(), upstream_worker_run_id="fixture-run",
+                     upstream_worker_started_at=(now - timedelta(minutes=15)).isoformat(),
+                     upstream_worker_run_attempt=1)
     assert "research operation snapshot predates the completed Research Worker run" in stale["blockers"]
+
+
+def test_watchdog_waits_for_the_completed_workers_matching_operation_snapshot(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    import json
+    import scripts.research_operation_watchdog as watchdog
+
+    now = datetime(2026, 10, 17, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(watchdog.time, "sleep", lambda _seconds: None)
+    operation_reads = []
+
+    def reader(url, _token):
+        if url.endswith("/status"):
+            return json.dumps({"uploaded_at": now.isoformat(), "checkpoint_available": True,
+                               "completion_retry_safe": True, "captured_at": now.isoformat()}).encode()
+        if "/research/operation" in url:
+            operation_reads.append(url)
+            if len(operation_reads) == 1:
+                return json.dumps({"synced_at": (now - timedelta(minutes=2)).isoformat(),
+                                   "runtime": {"worker_run_id": "prior-run", "worker_run_attempt": 1},
+                                   "coverage": {"health": {}}}).encode()
+            return json.dumps({"synced_at": now.isoformat(),
+                               "runtime": {"worker_run_id": "completed-run", "worker_run_attempt": 2},
+                               "coverage": {"health": {"freshness_gaps": [], "dead_letters": 0,
+                                                         "artifact_backup_pending": 0,
+                                                         "ontology_pending": 0}}}).encode()
+        return b"<html>synthetic</html>"
+
+    result = watchdog.inspect(
+        reader=reader, now=now, upstream_worker_conclusion="success",
+        upstream_worker_completed_at=now.isoformat(),
+        upstream_worker_started_at=(now - timedelta(minutes=10)).isoformat(),
+        upstream_worker_run_id="completed-run", upstream_worker_run_attempt=2,
+        projection_wait_seconds=30, projection_poll_interval_seconds=1,
+    )
+    assert result["status"] == "passed"
+    assert len(operation_reads) == 2
+    assert result["checks"]["research_operation"]["worker_snapshot_wait"]["status"] == "ready"
+    assert result["checks"]["research_operation"]["worker_snapshot_wait"]["attempts"] == 2

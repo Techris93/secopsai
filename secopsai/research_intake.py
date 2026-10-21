@@ -66,6 +66,31 @@ class IntakeError(ValueError):
     """A user-safe, non-secret intake failure."""
 
 
+class ArtifactResourceLimitError(IntakeError):
+    """The artifact was not fully analyzed because a configured bound was met."""
+
+    failure_category = "artifact_resource_limit"
+    retryable = False
+
+
+class UnsafeArchiveError(ArtifactResourceLimitError):
+    """Archive paths violate extraction safety and cannot produce a verdict."""
+
+    failure_category = "unsafe_archive"
+
+
+class RegistryHTTPError(IntakeError):
+    """A registry returned an HTTP error with an explicit retry policy."""
+
+    RETRYABLE_STATUSES = {408, 425, 429, 500, 502, 503, 504, 529}
+
+    def __init__(self, status: int) -> None:
+        self.status = int(status)
+        self.failure_category = f"http_{self.status}"
+        self.retryable = self.status in self.RETRYABLE_STATUSES
+        super().__init__(f"registry returned HTTP {self.status}")
+
+
 class TransientTransportError(IntakeError):
     """A bounded HTTP request exhausted retries on a transport failure."""
 
@@ -137,10 +162,10 @@ def _is_prerelease(value: str) -> bool:
 def _safe_member_name(name: str) -> str:
     normalized = str(name or "").replace("\\", "/")
     if not normalized or normalized.startswith("/") or "\x00" in normalized:
-        raise IntakeError("archive contains an unsafe member path")
+        raise UnsafeArchiveError("archive contains an unsafe member path")
     parts = [part for part in normalized.split("/") if part]
     if any(part in {".", ".."} for part in parts):
-        raise IntakeError("archive contains traversal path")
+        raise UnsafeArchiveError("archive contains traversal path")
     return "/".join(parts)
 
 
@@ -237,7 +262,7 @@ class SafeFetcher:
                 current = urllib.parse.urljoin(current, location)
                 continue
             if status < 200 or status >= 300:
-                raise IntakeError(f"registry returned HTTP {status}")
+                raise RegistryHTTPError(status)
             return current, headers, body
         raise IntakeError("registry redirect chain exceeded the safety limit")
 
@@ -584,7 +609,7 @@ def _static_indicators(files: Sequence[Tuple[str, str]]) -> List[Dict[str, Any]]
 
 def inspect_archive(data: bytes, filename: str) -> Dict[str, Any]:
     if len(data) > MAX_ARTIFACT_BYTES:
-        raise IntakeError("artifact exceeds the safety limit")
+        raise ArtifactResourceLimitError("artifact exceeds the configured scan size limit")
     members: List[Dict[str, Any]] = []
     seen_names: set[str] = set()
     text_files: List[Tuple[str, str]] = []
@@ -595,12 +620,12 @@ def inspect_archive(data: bytes, filename: str) -> Dict[str, Any]:
         nonlocal expanded
         safe_name = _safe_member_name(name)
         if len(members) >= MAX_ARCHIVE_ENTRIES:
-            raise IntakeError("archive contains too many entries")
+            raise ArtifactResourceLimitError("archive contains too many entries")
         if safe_name in seen_names:
             raise IntakeError("archive contains duplicate member paths")
         seen_names.add(safe_name)
         if size < 0 or size > MAX_EXPANDED_BYTES or expanded + size > MAX_EXPANDED_BYTES:
-            raise IntakeError("archive expanded-size limit exceeded")
+            raise ArtifactResourceLimitError("archive expanded-size limit exceeded")
         expanded += size
         members.append({"path": safe_name, "bytes": size, "kind": kind})
         if reader and len(text_files) < 1000:
@@ -619,7 +644,7 @@ def inspect_archive(data: bytes, filename: str) -> Dict[str, Any]:
                     add_member(info.filename, 0, "directory")
                 else:
                     if info.compress_size and info.file_size / info.compress_size > 200:
-                        raise IntakeError("archive compression ratio exceeds the safety limit")
+                        raise ArtifactResourceLimitError("archive compression ratio exceeds the configured scan limit")
                     add_member(info.filename, info.file_size, "file", lambda info=info: archive.read(info))
     else:
         try:

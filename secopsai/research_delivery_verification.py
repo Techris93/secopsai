@@ -7,6 +7,7 @@ import re
 import signal
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import soc_store
 from secopsai.core_edge_client import coordinator_client
@@ -14,7 +15,7 @@ from secopsai.research_operation_store import read_connection
 from secopsai.worker_control import WorkerShutdown, check_shutdown, request_shutdown
 
 
-def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_names=(), retry_collector_names=()):
+def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_names=(), retry_collector_names=(), require_zero=False):
     from secopsai.ontology import materialize_recent
     from secopsai.research_operation import hosted_projection
     from secopsai.research_primary_intel import collect_due
@@ -130,15 +131,46 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
             time.sleep(min(wait, 30))
     projection = hosted_projection(db_path=db_path)
     stored = client.sync_research_operation(projection)
-    accepted = delivery.get('pending') == 0 and stored.get('status') == 'stored'
+    health = projection.get('coverage', {}).get('health', {})
+    pending = delivery.get('pending')
+    if pending is None:
+        pending = health.get('ontology_pending')
+    acknowledged = pending == 0 and stored.get('status') == 'stored'
+    delivery_in_progress = False
+    delivery_blockers = []
+    if stored.get('status') != 'stored':
+        delivery_blockers.append('hosted operation projection was not durably stored')
+    if pending:
+        oldest_age = health.get('ontology_oldest_age_seconds')
+        last_ack = health.get('ontology_last_acknowledged_at')
+        last_ack_age = None
+        if last_ack:
+            parsed_ack = datetime.fromisoformat(str(last_ack).replace('Z', '+00:00'))
+            if parsed_ack.tzinfo:
+                last_ack_age = max(0, (datetime.now(timezone.utc) - parsed_ack).total_seconds())
+        if require_zero:
+            delivery_blockers.append('strict delivery verification requires zero pending chunks')
+        elif health.get('dead_letters'):
+            delivery_blockers.append('dead-letter delivery work requires review')
+        elif health.get('ontology_validation_failures') or health.get('ontology_authorization_failures'):
+            delivery_blockers.append('delivery contains rejected or unauthorized work')
+        elif oldest_age is None:
+            delivery_blockers.append('pending delivery age is not measurable')
+        elif oldest_age > 2 * 60 * 60:
+            delivery_blockers.append('oldest delivery exceeds the two-hour service window')
+        elif last_ack_age is not None and last_ack_age > 60 * 60:
+            delivery_blockers.append('delivery has stopped acknowledging work for over one hour')
+        elif stored.get('status') == 'stored':
+            delivery_in_progress = True
     sources_ok = all(item.get('status') == 'acquired' for item in source_results)
     collectors_ok = all(
         item.get('status') == 'completed' and item.get('coverage') == 'complete'
         for item in collector_results
     )
-    report = {'status': 'passed' if accepted and sources_ok and collectors_ok else 'failed', 'flushed_total': flushed_total,
-              'pending': delivery.get('pending'), 'projection_status': stored.get('status'),
-              'health': projection.get('coverage', {}).get('health', {}),
+    report = {'status': ('passed' if acknowledged else 'in_progress' if delivery_in_progress else 'failed')
+              if sources_ok and collectors_ok else 'failed', 'flushed_total': flushed_total,
+              'pending': pending, 'delivery_blockers': delivery_blockers, 'projection_status': stored.get('status'),
+              'health': health,
               'sources_retried': len(source_results), 'source_failures': sum(item.get('status') != 'acquired' for item in source_results),
               'registry_collectors_retried': len(collector_results),
               'registry_collector_failures': sum(
@@ -171,14 +203,27 @@ def main():
             seconds=seconds,
             retry_source_names=tuple(name.strip() for name in os.environ.get('SECOPSAI_VERIFY_RETRY_SOURCES', '').split(',') if name.strip()),
             retry_collector_names=tuple(name.strip() for name in os.environ.get('SECOPSAI_VERIFY_RETRY_COLLECTORS', '').split(',') if name.strip()),
+            require_zero=os.environ.get('SECOPSAI_VERIFY_REQUIRE_ZERO', '0') == '1',
         )
-        return 0 if report['status'] == 'passed' else 1
+        diagnostics = os.environ.get('SECOPSAI_WORKER_DIAGNOSTICS_DIR', '').strip()
+        if diagnostics:
+            path = Path(diagnostics) / 'delivery-drain.json'
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(report, indent=2), encoding='utf-8')
+        print(json.dumps({'event': 'delivery_verification_completed', **report}), flush=True)
+        return 0 if report['status'] in {'passed', 'in_progress'} else 1
     except (Exception, WorkerShutdown) as exc:
         error_code = getattr(exc, 'error_code', '')
         if not isinstance(error_code, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,99}', error_code):
             error_code = None
         print(json.dumps({'event': 'delivery_verification_failed', 'error_category': type(exc).__name__,
                           'http_status': getattr(exc, 'status', None), 'error_code': error_code}), flush=True)
+        diagnostics = os.environ.get('SECOPSAI_WORKER_DIAGNOSTICS_DIR', '').strip()
+        if diagnostics:
+            path = Path(diagnostics) / 'delivery-drain.json'
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({'status': 'failed', 'error_category': type(exc).__name__,
+                                        'http_status': getattr(exc, 'status', None), 'error_code': error_code}, indent=2), encoding='utf-8')
         return 1
 
 
