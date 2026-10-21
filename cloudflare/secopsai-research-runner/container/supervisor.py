@@ -17,6 +17,7 @@ Only the standard library is used so the production image is unchanged.
 
 from __future__ import annotations
 
+from collections import deque
 import gzip
 import hashlib
 import io
@@ -53,6 +54,8 @@ DELTA_MAGIC = b"SOCDLT1\0"
 DELTA_BLOCK_BYTES = 4096
 SPARSE_FRAME_RAW_LIMIT = 28 * 1024 * 1024
 SPARSE_UPLOAD_WORKERS = 4
+CHUNK_DOWNLOAD_WORKERS = 4
+CHECKPOINT_RESTORE_TIMEOUT_SECONDS = 3600
 
 
 class RebaseRequired(Exception):
@@ -214,29 +217,56 @@ class LedgerStore:
                 return False
             raise
 
-    def download_chunked(self, destination: Path, manifest: dict) -> bool:
+    def _download_verified_chunk(self, chunk: dict, *, deadline: float, expected_prefix: bytes = b"") -> bytes:
+        packed = self._request("GET", "/artifact-objects/" + chunk["sha256"], deadline=deadline)
+        if len(packed) != chunk["size_bytes"] or hashlib.sha256(packed).hexdigest() != chunk["sha256"]:
+            raise ValueError("checkpoint chunk checksum mismatch")
+        with gzip.GzipFile(fileobj=io.BytesIO(packed)) as reader:
+            raw = reader.read(chunk["raw_size_bytes"] + 1)
+        if len(raw) != chunk["raw_size_bytes"] or hashlib.sha256(raw).hexdigest() != chunk["raw_sha256"]:
+            raise ValueError("checkpoint decompressed chunk mismatch")
+        if expected_prefix and not raw.startswith(expected_prefix):
+            raise ValueError("checkpoint chunk has an invalid frame")
+        return raw
+
+    def _iter_verified_chunks(self, chunks: list[dict], *, deadline: float, expected_prefix: bytes = b""):
+        """Fetch a bounded window concurrently, yielding verified chunks in manifest order."""
+        if not chunks:
+            return
+        worker_count = min(CHUNK_DOWNLOAD_WORKERS, len(chunks))
+        pending = deque()
+        _log("checkpoint_restore_download_started", chunks=len(chunks), workers=worker_count)
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
+            next_index = 0
+            while next_index < worker_count:
+                pending.append(pool.submit(self._download_verified_chunk, chunks[next_index],
+                                           deadline=deadline, expected_prefix=expected_prefix))
+                next_index += 1
+            while pending:
+                # Results are consumed in manifest order so callers can preserve
+                # the full-file digest and sparse patch offset validation.
+                yield pending.popleft().result()
+                if next_index < len(chunks):
+                    pending.append(pool.submit(self._download_verified_chunk, chunks[next_index],
+                                               deadline=deadline, expected_prefix=expected_prefix))
+                    next_index += 1
+
+    def download_chunked(self, destination: Path, manifest: dict, *, deadline: float | None = None) -> bool:
         if not valid_manifest(manifest):
             raise ValueError("invalid incremental checkpoint manifest")
+        deadline = deadline or (time.monotonic() + CHECKPOINT_RESTORE_TIMEOUT_SECONDS)
         if manifest["version"] == 4 or os.environ.get("SECOPSAI_PAGE_DELTA_CHECKPOINTS", "0") == "1":
             footprint = max(manifest["size_bytes"], manifest.get("base", {}).get("size_bytes", 0))
             if shutil.disk_usage(destination.parent).free < footprint * 3 + 1024**3:
                 raise ValueError("insufficient capacity for checkpoint, immutable baseline and consistent capture")
         if manifest["version"] == 4:
-            return self.download_sparse(destination, manifest)
-        deadline = time.monotonic() + 3600
+            return self.download_sparse(destination, manifest, deadline=deadline)
         partial = destination.with_suffix(".restore")
         digest, total = hashlib.sha256(), 0
         try:
             with partial.open("xb") as output:
                 os.chmod(partial, 0o600)
-                for chunk in manifest["chunks"]:
-                    packed = self._request("GET", "/artifact-objects/" + chunk["sha256"], deadline=deadline)
-                    if len(packed) != chunk["size_bytes"] or hashlib.sha256(packed).hexdigest() != chunk["sha256"]:
-                        raise ValueError("checkpoint chunk checksum mismatch")
-                    with gzip.GzipFile(fileobj=io.BytesIO(packed)) as reader:
-                        raw = reader.read(chunk["raw_size_bytes"] + 1)
-                    if len(raw) != chunk["raw_size_bytes"] or hashlib.sha256(raw).hexdigest() != chunk["raw_sha256"]:
-                        raise ValueError("checkpoint decompressed chunk mismatch")
+                for raw in self._iter_verified_chunks(manifest["chunks"], deadline=deadline):
                     digest.update(raw)
                     total += len(raw)
                     output.write(raw)
@@ -295,32 +325,26 @@ class LedgerStore:
         stat = self.baseline_path.stat()
         self.baseline_identity = (stat.st_size, stat.st_mtime_ns, stat.st_ino, self.baseline_manifest["sha256"])
 
-    def download_sparse(self, destination, manifest):
+    def download_sparse(self, destination, manifest, *, deadline: float | None = None):
+        deadline = deadline or (time.monotonic() + CHECKPOINT_RESTORE_TIMEOUT_SECONDS)
         base = manifest["base"]
         if getattr(self, "baseline_manifest", None) != base or not getattr(self, "baseline_path", None) or not self.baseline_path.exists():
             with tempfile.TemporaryDirectory(dir=destination.parent) as directory:
                 restored = Path(directory) / "base.db"
-                self.download_chunked(restored, base)
+                self.download_chunked(restored, base, deadline=deadline)
                 if not getattr(self, "baseline_path", None) or getattr(self, "baseline_manifest", None) != base:
                     self.freeze_baseline(restored, base)
                 durable_base = destination.parent / ".checkpoint-base.db"
                 self.baseline_path.replace(durable_base)
                 self.baseline_path = durable_base
         partial = destination.with_suffix(".restore")
-        deadline = time.monotonic() + 3600
         last_offset = -1
         try:
             shutil.copyfile(self.baseline_path, partial)
             os.chmod(partial, 0o600)
             with partial.open("r+b") as output:
-                for entry in manifest["patches"]:
-                    packed = self._request("GET", "/artifact-objects/" + entry["sha256"], deadline=deadline)
-                    if len(packed) != entry["size_bytes"] or hashlib.sha256(packed).hexdigest() != entry["sha256"]:
-                        raise ValueError("sparse checkpoint chunk checksum mismatch")
-                    with gzip.GzipFile(fileobj=io.BytesIO(packed)) as reader:
-                        raw = reader.read(entry["raw_size_bytes"] + 1)
-                    if len(raw) != entry["raw_size_bytes"] or hashlib.sha256(raw).hexdigest() != entry["raw_sha256"] or not raw.startswith(DELTA_MAGIC):
-                        raise ValueError("sparse checkpoint frame checksum mismatch")
+                for raw in self._iter_verified_chunks(manifest["patches"], deadline=deadline,
+                                                      expected_prefix=DELTA_MAGIC):
                     cursor = len(DELTA_MAGIC)
                     while cursor < len(raw):
                         if len(raw) - cursor < 12:

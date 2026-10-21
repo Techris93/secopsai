@@ -404,6 +404,51 @@ def test_incremental_checkpoint_restores_and_reuses_verified_chunks(tmp_path, mo
     assert not destination.with_suffix('.restore').exists()
 
 
+def test_incremental_restore_fetches_bounded_chunks_in_manifest_order(tmp_path):
+    import gzip
+    import hashlib
+    import threading
+    import time
+
+    source = tmp_path / "source.db"
+    with sqlite3.connect(source) as conn:
+        conn.execute("CREATE TABLE payload (value BLOB)")
+        conn.execute("INSERT INTO payload VALUES (zeroblob(2 * 1024 * 1024))")
+    database = source.read_bytes()
+    piece_size = (len(database) + 7) // 8
+    pieces = [database[offset:offset + piece_size] for offset in range(0, len(database), piece_size)]
+    objects, chunks = {}, []
+    for raw in pieces:
+        packed = gzip.compress(raw, mtime=0)
+        key = hashlib.sha256(packed).hexdigest()
+        objects[key] = packed
+        chunks.append({"sha256": key, "size_bytes": len(packed), "raw_sha256": hashlib.sha256(raw).hexdigest(),
+                       "raw_size_bytes": len(raw)})
+    manifest = {"version": 3, "sha256": hashlib.sha256(database).hexdigest(), "size_bytes": len(database),
+                "captured_at": "2026-10-22T00:00:00Z", "chunks": chunks}
+    state_lock = threading.Lock()
+    active = maximum = 0
+
+    def opener(request, timeout=None):
+        nonlocal active, maximum
+        key = request.full_url.rsplit("/", 1)[1]
+        with state_lock:
+            active += 1
+            maximum = max(maximum, active)
+        try:
+            time.sleep(0.02)
+            return _Response(objects[key])
+        finally:
+            with state_lock:
+                active -= 1
+
+    restored = tmp_path / "restored.db"
+    client = supervisor.LedgerStore("http://ledger.internal", "tok", opener=opener)
+    assert client.download_chunked(restored, manifest)
+    assert restored.read_bytes() == database
+    assert 1 < maximum <= supervisor.CHUNK_DOWNLOAD_WORKERS
+
+
 def test_invalid_incremental_manifest_cannot_start_restoration(tmp_path):
     server = IncrementalServer()
     client = supervisor.LedgerStore('http://ledger.internal','tok',opener=server)
