@@ -109,15 +109,29 @@ export async function handleLedgerRequest(request, bucket) {
       const length = Number(request.headers.get("content-length"));
       if (!Number.isSafeInteger(length) || length <= 0) return json({error: "content_length_required"}, 411);
       if (length > 32 * 1024 * 1024) return json({error: "object_too_large"}, 413);
+      // Read the bounded body first so the three outcomes stay distinct: a
+      // complete body with the wrong content address is a permanent 400; a
+      // transfer cut short or a storage error is a retryable 503; an identical
+      // object already stored (a concurrent or retried upload) is success.
+      let bytes;
       try {
-        await bucket.put(objectKey, request.body, {sha256: hash,
+        bytes = new Uint8Array(await request.arrayBuffer());
+      } catch {
+        return json({error: "object_transfer_incomplete"}, 503);
+      }
+      if (bytes.byteLength !== length) return json({error: "object_transfer_incomplete"}, 503);
+      const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
+      if (digest !== hash) {
+        // Unchanged contract: a different body for a stored address is a
+        // conflict (409); otherwise the body is simply invalid (400).
+        const stored = await bucket.head(objectKey).catch(() => null);
+        return stored ? json({error: "object_integrity_failure"}, 409) : json({error: "object_write_or_integrity_failure"}, 400);
+      }
+      try {
+        await bucket.put(objectKey, bytes, {sha256: hash,
           onlyIf: new Headers({"If-None-Match": "*"}),
           httpMetadata: {contentType: "application/octet-stream"}, customMetadata: {sha256: hash}});
       } catch {
-        // Objects are content-addressed: if an identical object is already
-        // stored (for example a concurrent or retried upload won), the write
-        // succeeded.  Anything else is a storage or transfer failure the
-        // client may retry, so it is reported as 503, not a permanent 400.
         const existing = await bucket.head(objectKey).catch(() => null);
         if (existing && existing.size === length && existing.customMetadata?.sha256 === hash) {
           return json({sha256: hash, size_bytes: existing.size});
