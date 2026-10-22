@@ -628,6 +628,12 @@ def periodic_checkpoints(stopping, interval, capture):
 GRACE_SECONDS = 180
 
 
+def delivery_verification_timeout_seconds(delivery_seconds: int, refresh_seconds: int = 0) -> int:
+    if not 1 <= delivery_seconds <= 2700 or not 0 <= refresh_seconds <= 2700:
+        raise ValueError("delivery and refresh budgets are outside their permitted ranges")
+    return delivery_seconds + refresh_seconds + 30
+
+
 def main(argv: Optional[list] = None) -> int:
     import argparse
 
@@ -792,43 +798,64 @@ def main(argv: Optional[list] = None) -> int:
             exit_code = 1
             report["delivery"] = {"status": "failed", "error_category": "invalid_budget"}
         else:
-            drain = subprocess.Popen(
-                [sys.executable, "-u", "-m", "secopsai.research_delivery_verification"],
-                env={**os.environ, "SECOPS_FINDINGS_DIR": str(data_dir),
-                     "SECOPSAI_VERIFY_DELIVERY_SECONDS": str(delivery_seconds)},
-            )
-            active_child[0] = drain
-            drain_started = time.monotonic()
-            while True:
+            refresh_seconds = 0
+            if (os.environ.get("SECOPSAI_VERIFY_REFRESH_STALE_SOURCES", "0") == "1"
+                    and os.environ.get("SECOPSAI_VERIFY_DELIVERY_ONLY", "0") != "1"):
                 try:
-                    drain_code = drain.wait(timeout=1)
-                    break
-                except subprocess.TimeoutExpired:
-                    if time.monotonic() - drain_started > delivery_seconds + 30:
-                        _log("delivery_verification_timeout", seconds=delivery_seconds)
-                        drain.terminate()
-                        try:
-                            drain_code = drain.wait(timeout=GRACE_SECONDS)
-                        except subprocess.TimeoutExpired:
-                            drain.kill()
-                            drain_code = drain.wait()
-                        drain_code = drain_code or 1
+                    refresh_seconds = int(os.environ.get("SECOPSAI_VERIFY_REFRESH_SECONDS", "840"))
+                except ValueError:
+                    refresh_seconds = 0
+                if not 1 <= refresh_seconds <= 2700:
+                    _log("delivery_verification_invalid_refresh_budget", seconds=refresh_seconds)
+                    exit_code = 1
+                    report["delivery"] = {"status": "failed", "error_category": "invalid_refresh_budget"}
+                    refresh_seconds = 0
+            if exit_code != 0:
+                drain = None
+            else:
+                drain = subprocess.Popen(
+                    [sys.executable, "-u", "-m", "secopsai.research_delivery_verification"],
+                    env={**os.environ, "SECOPS_FINDINGS_DIR": str(data_dir),
+                         "SECOPSAI_VERIFY_DELIVERY_SECONDS": str(delivery_seconds)},
+                )
+            if drain is None:
+                drain_code = 1
+            else:
+                active_child[0] = drain
+                drain_started = time.monotonic()
+                drain_timeout_seconds = delivery_verification_timeout_seconds(delivery_seconds, refresh_seconds)
+                while True:
+                    try:
+                        drain_code = drain.wait(timeout=1)
                         break
-                    if stopping.is_set():
-                        continue
-            _log("delivery_verification_exited", exit_code=drain_code)
-            drain_report = {}
-            try:
-                drain_report = json.loads((report_dir / "delivery-drain.json").read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                pass
-            report["delivery"] = {"status": drain_report.get("status", "succeeded" if drain_code == 0 else "failed"),
-                                  "exit_code": drain_code,
-                                  "pending": drain_report.get("pending"),
-                                  "delivery_blockers": drain_report.get("delivery_blockers", [])}
-            if drain_code != 0:
-                exit_code = 1
-            active_child[0] = worker
+                    except subprocess.TimeoutExpired:
+                        if time.monotonic() - drain_started > drain_timeout_seconds:
+                            _log("delivery_verification_timeout", seconds=delivery_seconds,
+                                 refresh_seconds=refresh_seconds)
+                            drain.terminate()
+                            try:
+                                drain_code = drain.wait(timeout=GRACE_SECONDS)
+                            except subprocess.TimeoutExpired:
+                                drain.kill()
+                                drain_code = drain.wait()
+                            drain_code = drain_code or 1
+                            break
+                        if stopping.is_set():
+                            continue
+            if drain is not None:
+                _log("delivery_verification_exited", exit_code=drain_code)
+                drain_report = {}
+                try:
+                    drain_report = json.loads((report_dir / "delivery-drain.json").read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    pass
+                report["delivery"] = {"status": drain_report.get("status", "succeeded" if drain_code == 0 else "failed"),
+                                      "exit_code": drain_code,
+                                      "pending": drain_report.get("pending"),
+                                      "delivery_blockers": drain_report.get("delivery_blockers", [])}
+                if drain_code != 0:
+                    exit_code = 1
+                active_child[0] = worker
     # Final checkpoint after the worker released its write transactions.
     # A failed final checkpoint fails the run so a lost update is visible.
     with lock:

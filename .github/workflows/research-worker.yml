@@ -87,10 +87,13 @@ jobs:
       SECOPSAI_VERIFY_RETRY_SOURCES: ${{ inputs.retry_sources }}
       SECOPSAI_VERIFY_RETRY_COLLECTORS: ${{ inputs.retry_collectors }}
       SECOPSAI_VERIFY_DELIVERY_ONLY: ${{ inputs.delivery_only && '1' || '0' }}
-      # Routine runs refresh enabled sources that aged past their published
-      # freshness SLA after the worker's collection phase, before final health.
+      # After the outbox drain, refresh sources within five minutes of their
+      # strict two-interval freshness limit. This is before the supervisor's
+      # shutdown checkpoint, so acquired state is durable before publication.
       # Recovery-only runs deliberately keep their no-recollection contract.
       SECOPSAI_VERIFY_REFRESH_STALE_SOURCES: "1"
+      SECOPSAI_VERIFY_REFRESH_SECONDS: "840"
+      SECOPSAI_VERIFY_FRESHNESS_MARGIN_SECONDS: "300"
       SECOPSAI_VERIFY_REQUIRE_ZERO: ${{ inputs.delivery_only && '1' || '0' }}
       SECOPSAI_VERIFY_DELIVERY_SECONDS: ${{ inputs.delivery_seconds || 840 }}
       SECOPSAI_WORKER_DIAGNOSTICS_DIR: reports/research
@@ -195,6 +198,12 @@ jobs:
           fi
           python scripts/research_operation_watchdog.py "${watchdog_args[@]}"
 
+      - name: Publish final hosted operation projection
+        if: ${{ always() && steps.worker.outcome == 'success' }}
+        # Recompute and gate source freshness after the shutdown checkpoint;
+        # the Watchdog then reads this exact run's final projection.
+        run: python -m scripts.sync_research_operation_projection
+
       - name: Preserve worker and delivery diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -204,6 +213,7 @@ jobs:
             reports/research/worker-runtime.json
             reports/research/delivery-drain.json
             reports/research/delivery-health.json
+            reports/research/final-projection.json
           if-no-files-found: warn
 
       - name: Preserve delivery verification diagnostics
@@ -211,11 +221,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: research-delivery-verification
-          path: reports/research/delivery-health.json
-
-      - name: Publish final hosted operation projection
-        if: ${{ always() && steps.worker.outcome == 'success' }}
-        # The supervisor's drain and checkpoint happen after the worker's
-        # in-cycle projection. Publish once more as the last substantive step
-        # so the watchdog can correlate the projection with run completion.
-        run: python -m scripts.sync_research_operation_projection
+          path: |
+            reports/research/delivery-health.json
+            reports/research/final-projection.json
