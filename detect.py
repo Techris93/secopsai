@@ -2386,6 +2386,37 @@ def detect_nosql_injection(events: List[Dict]) -> List[str]:
     return detected
 
 
+def detect_php2shell(events: List[Dict]) -> List[str]:
+    """
+    RULE-311: PHP2Shell exploitation via PHP session upload progress
+    (CVE-2026-109618, CVE-2026-109619; disclosed 2026-10-21).
+    MITRE: T1190 (Exploit Public-Facing Application)
+
+    The confirmed trigger is a multipart POST carrying PHP's session
+    upload-progress field (default name PHP_SESSION_UPLOAD_PROGRESS), which
+    PHP processes before any application code runs.  Amazon observed attempts
+    from 2026-10-17, four days before disclosure.  Legitimate upload-progress
+    bars send the same field, so a hit is a lead to correlate with PHP
+    memory-exhaustion errors, unexpected child processes, new files under the
+    web root and the PHP version (patched: 8.2.35, 8.3.36, 8.4.27, 8.5.12).
+    """
+    marker = re.compile(r"PHP_SESSION_UPLOAD_PROGRESS", re.IGNORECASE)
+    detected = []
+    for event in events:
+        if event.get("event_type") != "http":
+            continue
+        method = str(event.get("method") or event.get("http_method") or "").upper()
+        request = str(event.get("request") or "")
+        if method and method != "POST":
+            continue
+        if not method and request and not request.upper().startswith("POST"):
+            continue
+        content = " ".join(str(event.get(key) or "") for key in ("url", "request", "body", "headers"))
+        if marker.search(content):
+            detected.append(event["event_id"])
+    return detected
+
+
 def detect_log4j(events: List[Dict]) -> List[str]:
     """
     RULE-310: Detects Log4j / JNDI Injection (CVE-2021-44228).
@@ -2469,6 +2500,7 @@ DETECTION_RULES = [
     {"id": "RULE-308", "name": "SSRF Attack",                  "mitre": "T1189", "fn": detect_ssrf},
     {"id": "RULE-309", "name": "NoSQL Injection",              "mitre": "T1190", "fn": detect_nosql_injection},
     {"id": "RULE-310", "name": "Log4j JNDI Injection",         "mitre": "T1190", "fn": detect_log4j},
+    {"id": "RULE-311", "name": "PHP2Shell Upload-Progress Abuse", "mitre": "T1190", "fn": detect_php2shell},
     {"id": "RULE-214", "name": "macOS AppleScript Loader",     "mitre": "T1059.002", "fn": detect_macos_applescript_loader},
 ]
 

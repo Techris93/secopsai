@@ -12,7 +12,7 @@ The detection pipeline includes rules organized by framework:
 | **OpenClaw** | RULE-101 to RULE-110 | OpenClaw-specific attacks      |
 | **Hermes Agent** | RULE-120 to RULE-122 | Hermes agent/tool telemetry abuse |
 | **macOS** | RULE-201 to RULE-214 | macOS host activity |
-| **Web/App** | RULE-301 to RULE-310 | HTTP exploit patterns |
+| **Web/App** | RULE-301 to RULE-311 | HTTP exploit patterns |
 
 ---
 
@@ -639,3 +639,18 @@ python evaluate_openclaw.py --labeled data/openclaw/replay/labeled/attack_mix.js
 ---
 
 **Next:** Review [Getting Started](getting-started.md) or [Deploy to Production](deployment-guide.md)
+
+### RULE-311: PHP2Shell Upload-Progress Abuse (T1190)
+
+Detects HTTP POST requests carrying PHP's session upload-progress field
+(`PHP_SESSION_UPLOAD_PROGRESS`), the confirmed trigger for PHP2Shell
+(CVE-2026-109618, CVE-2026-109619), a pre-authentication remote code execution
+in PHP disclosed on 2026-10-21 (fixed in PHP 8.2.35, 8.3.36, 8.4.27, 8.5.12).
+Exploitation attempts were observed from 2026-10-17.
+
+Legitimate upload-progress bars send the same field, so treat a hit as a lead:
+correlate with PHP memory-exhaustion errors, unexpected child processes of the
+web server, new files under the web root, and the server's PHP version.
+Source addresses Amazon reported (shared anonymisation infrastructure, so
+investigation leads, not block criteria): 103.216.220.92, 31.223.184.166,
+37.19.200.5, 134.209.159.64, 103.114.163.188, 95.217.98.37.
