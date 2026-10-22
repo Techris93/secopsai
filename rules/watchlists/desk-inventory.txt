@@ -1,0 +1,8 @@
+# What this SecOpsAI deployment itself runs.  Desk items affecting these get a
+# priority boost and an exposure note.  Names must match desk-technologies.txt.
+# Format: technology  # where it runs (versions are checked separately)
+Node.js  # GitHub Actions runners (node-version "22"), operator workstation
+PyPI / Python  # research worker, dashboard helper, CLI
+npm  # dashboard and Workers tooling
+GitHub  # Actions workflows, repositories
+Cloudflare  # Pages, Workers, R2, D1, Access

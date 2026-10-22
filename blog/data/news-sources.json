@@ -167,6 +167,39 @@
       "enabled": true,
       "default_tags": ["Security News", "Supply Chain", "Research"],
       "poll_frequency_hint": "hourly"
+    },
+    {
+      "name": "PHP Security Advisories",
+      "url": "https://www.php.net/",
+      "feed_url": "https://www.php.net/feed.atom",
+      "type": "rss",
+      "category": "Threat Intelligence",
+      "trust_level": "vendor",
+      "enabled": true,
+      "default_tags": ["Security News", "PHP", "Vulnerability"],
+      "poll_frequency_hint": "hourly"
+    },
+    {
+      "name": "Node.js Security Releases",
+      "url": "https://nodejs.org/en/blog/vulnerability",
+      "feed_url": "https://nodejs.org/en/feed/vulnerability.xml",
+      "type": "rss",
+      "category": "Threat Intelligence",
+      "trust_level": "vendor",
+      "enabled": true,
+      "default_tags": ["Security News", "Node.js", "Vulnerability"],
+      "poll_frequency_hint": "hourly"
+    },
+    {
+      "name": "GitLab Security Releases",
+      "url": "https://docs.gitlab.com/releases/patches/",
+      "feed_url": "https://docs.gitlab.com/releases/patch-releases.xml",
+      "type": "rss",
+      "category": "Threat Intelligence",
+      "trust_level": "vendor",
+      "enabled": true,
+      "default_tags": ["Security News", "GitLab", "Vulnerability"],
+      "poll_frequency_hint": "hourly"
     }
   ]
 }

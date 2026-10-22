@@ -20,6 +20,14 @@ BOARD_STATES = {"proposed", "verifying", "vendor_contact", "embargoed", "technic
 BRIEF_CHECKS = {"claims", "primary_sources", "affected_versions", "defensive_actions", "uncertainty", "privacy", "secrets", "sharing_rights", "licensing", "embargo", "credits", "conflicts"}
 
 
+def _solo_shift(entry: dict, db_path) -> bool:
+    """In accepted solo operation, one named human may hold every duty."""
+    from secopsai.research_governance import solo_operator
+
+    solo = solo_operator(db_path=db_path)
+    return bool(solo) and entry.get("author_id") == entry.get("editor_id") == entry.get("backup_id") == solo
+
+
 def configure_roster(payload: dict, *, actor: str, db_path=None) -> dict:
     person(actor, role="operator", db_path=db_path)
     days = payload.get("days")
@@ -29,7 +37,7 @@ def configure_roster(payload: dict, *, actor: str, db_path=None) -> dict:
         person(entry.get("author_id", ""), role="author", db_path=db_path)
         person(entry.get("editor_id", ""), role="editor", db_path=db_path)
         person(entry.get("backup_id", ""), role="editor", db_path=db_path)
-        if len({entry["author_id"], entry["editor_id"], entry["backup_id"]}) != 3:
+        if len({entry["author_id"], entry["editor_id"], entry["backup_id"]}) != 3 and not _solo_shift(entry, db_path):
             raise ValueError("each duty shift requires distinct author, editor and backup")
     return append("editorial_roster", {"days": days, "timezone": "Europe/Istanbul", "research_hours": "10:00–15:00", "brief_at": "16:00", "release_target": "17:00", "handoff_at": "18:00"}, actor=actor, db_path=db_path)
 

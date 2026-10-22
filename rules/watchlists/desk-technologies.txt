@@ -1,0 +1,27 @@
+# Technologies the vulnerability research desk ranks higher: what SecOpsAI
+# users and this deployment run.  Format: canonical name: keyword, keyword
+# (case-insensitive, matched on word boundaries in advisory titles/excerpts).
+PHP: php
+Node.js: node.js, nodejs
+GitLab: gitlab
+GitHub: github actions, github enterprise
+npm: npm
+PyPI / Python: pypi, python, pip
+OpenSSL: openssl
+OpenSSH: openssh
+nginx: nginx
+Apache HTTP Server: apache http server, httpd
+Cloudflare: cloudflare
+Docker: docker
+Kubernetes: kubernetes
+WordPress: wordpress
+Chrome / Chromium: chrome, chromium
+Linux kernel: linux kernel
+Windows: microsoft windows, windows server
+Exchange: exchange server
+Fortinet: fortinet, fortigate, fortios
+Ivanti: ivanti
+Citrix: citrix, netscaler
+VMware: vmware, esxi, vcenter
+Unbound / DNS resolvers: unbound, bind 9, dns resolver
+Certificate authorities: certificate authority, intermediate ca, root ca

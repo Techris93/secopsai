@@ -756,11 +756,15 @@ def test_watchdog_treats_a_superseded_worker_run_as_provisional_not_failed():
 def test_real_source_catalog_seeds_supported_parsers_and_explicit_omissions(db):
     from secopsai.research_primary_intel import seed_sources
     seeded = seed_sources(db_path=db)
-    assert len(seeded["sources"]) == 15 and not seeded["unsupported_sources"]
+    assert len(seeded["sources"]) == 18 and not seeded["unsupported_sources"]
     with soc_store.connect(db) as conn:
         sources = [json.loads(r[0]) for r in conn.execute("SELECT config_json FROM research_intel_sources")]
     assert any(s["name"] == "OpenSSF Blog" and s["source_class"] == "project" for s in sources)
     assert any(s["parser"] == "cisa_kev" for s in sources)
+    # Vendor advisories the research desk needs as primary sources.
+    vendor_feeds = {s["name"]: s for s in sources if s["source_class"] == "vendor"}
+    for name in ("PHP Security Advisories", "Node.js Security Releases", "GitLab Security Releases"):
+        assert vendor_feeds[name]["parser"] == "rss" and vendor_feeds[name]["interval_seconds"] == 3600
 
 
 def test_catalog_repairs_preserve_history_and_operator_overrides(db):
