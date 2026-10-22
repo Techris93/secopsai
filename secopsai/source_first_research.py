@@ -551,7 +551,10 @@ def investigate_package(
         "research": {"research_id": "RSR-" + hashlib.sha256(key.encode()).hexdigest()[:16].upper(), "case_id": resolved_case_id, "research_type": research_type, "ecosystem": ecosystem, "package_or_artifact": package, "namespace": namespace, "version": version, "source_repository": source_repository_value, "source_reference": source_reference, "comparison_subject": {"ecosystem": compare_ecosystem, "package": compare_package, "version": compare_version} if compare_package else None},
         "metadata": metadata,
         "artifact": {"path": (intake.get("quarantine") or {}).get("path", ""), "url": artifact_url, "sha256": digest, "artifact_id": scan.get("artifact_id"), "size": metadata.get("artifact_bytes"), "format": artifact_format, "execution_performed": False},
-        "scan": {key: scan.get(key) for key in ("artifact_id", "status", "sha256", "findings", "iocs", "execution_performed", "duration_ms")},
+        # "yara" carries the scan level the Fast Lane grades severity from, and
+        # "coverage" says whether the archive was read in full; dropping either
+        # silently disables YARA-based severity or hides a partial scan.
+        "scan": {key: scan.get(key) for key in ("artifact_id", "status", "sha256", "findings", "iocs", "execution_performed", "duration_ms", "yara", "coverage")},
         "comparison": comparison_result,
         "validated_iocs": validated_iocs, "rejected_iocs": rejected_iocs, "local_usage": local_usage,
         "source_references": [value for value in [source_reference, source_repository_value, metadata.get("metadata_url")] if value],

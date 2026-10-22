@@ -18,6 +18,7 @@ others compete on.
 from __future__ import annotations
 
 import json
+import re
 import os
 import sys
 import tempfile
@@ -211,6 +212,17 @@ def main() -> int:
             detected = _now()
             row.update(status="analyzed", severity=decision["severity"], reasons="; ".join(decision["reasons"]) or "no risky delta",
                        latency_seconds=round((detected - published).total_seconds()) if published else None)
+            coverage = (result.get("scan") or {}).get("coverage") or {}
+            if coverage.get("partial"):
+                # Large archives are read within a budget (install-time and
+                # manifest files first).  The verdict covers only what was
+                # read and must never be presented as a complete clean scan.
+                row.update(coverage="partial", coverage_detail={key: coverage.get(key) for key in (
+                    "reason", "members_total", "members_read", "members_skipped", "bytes_declared", "bytes_read")})
+                row["reasons"] = (f"partial scan ({coverage.get('members_read')} of {coverage.get('members_total')} files read; "
+                                  f"{coverage.get('reason')}); " + row["reasons"])
+            else:
+                row["coverage"] = "complete"
             if decision["severity"] != "none":
                 row["delivery"] = deliver(target, release, decision, detected)
         except Exception as exc:
@@ -232,8 +244,12 @@ def main() -> int:
                 row.update(status="retryable_failure", failure_category=exc.failure_category,
                            retryable=True, reasons=exc.diagnostic)
             else:
-                row.update(status="error", failure_category=type(exc).__name__,
-                           reasons="Target could not be analyzed; inspect the sanitized failure category.")
+                # Our own exception messages name the failing check; keep a
+                # short, control-character-free copy so the cause is visible
+                # in the run log without reproducing it.
+                detail = re.sub(r"[\x00-\x1f\x7f]", " ", str(exc))[:200]
+                row.update(status="error", failure_category=type(exc).__name__, failure_detail=detail,
+                           reasons=f"Target could not be analyzed: {type(exc).__name__}: {detail}")
         rows.append(row)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     lines = ["### Fast lane", "", "| Package | Version (previous) | Severity | Publish to verdict | Notes |", "| --- | --- | --- | --- | --- |"]

@@ -908,3 +908,81 @@ def test_complete_original_release_is_possible_and_material_changes_block_reuse(
     update_case(value["case_id"], summary=STATEMENT + " Different scope.", db_path=db)
     with pytest.raises(ValueError):
         blog.publish(draft["draft_path"], confirm=True, paths=paths, db_path=db)
+
+
+def _watchdog_reader(now, *, synced_at=None, sources=(), gaps=()):
+    synced = (synced_at or now).isoformat()
+
+    def reader(url, _token):
+        if url.endswith("/status"):
+            return json.dumps({"uploaded_at": now.isoformat(), "checkpoint_available": True,
+                               "completion_retry_safe": True, "captured_at": now.isoformat()}).encode()
+        if "/research/operation" in url:
+            return json.dumps({"synced_at": synced, "runtime": {"worker_run_id": "older-run"},
+                               "coverage": {"sources": list(sources), "health": {
+                                   "freshness_gaps": list(gaps), "dead_letters": 0,
+                                   "artifact_backup_pending": 0, "ontology_pending": 0}}}).encode()
+        return b"<html>synthetic</html>"
+    return reader
+
+
+def test_watchdog_isolated_worker_failure_is_provisional_and_repeats_block_with_one_root_cause():
+    """Runs 39729582527/39746678323: one checkpoint failure turned 2-3 blockers red."""
+    from scripts.research_operation_watchdog import inspect
+
+    now = datetime(2026, 10, 22, 8, 28, tzinfo=timezone.utc)
+    reader = _watchdog_reader(now, synced_at=datetime(2026, 10, 22, 7, 31, tzinfo=timezone.utc))
+    common = dict(reader=reader, now=now, worker_active=False, upstream_worker_conclusion="failure",
+                  upstream_worker_run_id="39746678323", upstream_worker_started_at="2026-10-22T08:17:50Z",
+                  upstream_worker_completed_at="2026-10-22T08:27:47Z")
+
+    isolated = inspect(previous_worker_conclusion="success", **common)
+    assert isolated["blockers"] == [] and isolated["status"] == "in_progress"
+    assert any("the next run decides health" in item for item in isolated["warnings"])
+
+    repeated = inspect(previous_worker_conclusion="failure", **common)
+    assert repeated["status"] == "failed"
+    assert repeated["blockers"] == ["Research Worker run 39746678323 concluded failure"]
+    assert repeated["root_cause"] == "Research Worker run 39746678323 concluded failure"
+    assert repeated["consequences"], "derived snapshot blockers are reported as consequences"
+
+
+def test_watchdog_freshness_blocks_only_when_a_source_is_three_intervals_stale():
+    from scripts.research_operation_watchdog import inspect
+
+    now = datetime(2026, 10, 22, 12, tzinfo=timezone.utc)
+
+    def source(delay_hours):
+        return {"source_id": "ghsa", "name": "GitHub Security Advisories", "enabled": True, "fresh": False,
+                "interval_seconds": 3600, "delay_seconds": delay_hours * 3600}
+
+    slightly = inspect(reader=_watchdog_reader(now, sources=[source(2.5)], gaps=["GitHub Security Advisories"]),
+                       now=now, worker_active=False)
+    assert slightly["blockers"] == []
+    assert "enabled source freshness needs review: GitHub Security Advisories" in slightly["warnings"]
+
+    severely = inspect(reader=_watchdog_reader(now, sources=[source(3.5)], gaps=["GitHub Security Advisories"]),
+                       now=now, worker_active=False)
+    assert severely["blockers"] == ["enabled research sources are outside their freshness targets "
+                                    "(more than three collection intervals): GitHub Security Advisories"]
+
+
+def test_pipeline_health_classifies_real_failure_signatures():
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("pipeline_health_report", Path(__file__).resolve().parents[1] / "scripts" / "pipeline_health_report.py")
+    report = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(report)
+    cases = {
+        "ValueError: checkpoint chunk checksum mismatch": "ledger_restore_chunk_corrupt",
+        'ledger PUT artifact-objects failed after 1 attempt(s) (http 400)': "ledger_request_failed",
+        "ModuleNotFoundError: No module named 'secopsai'": "module_import_error",
+        '[{"target": "pypi:duckdb", "queue_id": "x", "status": "error", "failure_category": "ValueError"}]': "fast_lane_unanalyzed_target",
+        '{"status": "failed", "blockers": ["Research Worker run 1 concluded failure", "research operation snapshot predates"]}': "watchdog_worker_failed",
+        '{"status": "failed", "root_cause": "enabled research sources are outside their freshness targets"}': "watchdog_sources_stale",
+        "##[error]Process completed with exit code 1.": "unclassified",
+    }
+    for log, category in cases.items():
+        assert report.classify(log)[0] == category, log
+    assert report.classify('[{"target": "pypi:duckdb", "queue_id": "x", "status": "error"}]')[1] == "pypi:duckdb"

@@ -1,0 +1,43 @@
+name: Pipeline Health
+
+# Counts research-pipeline failures (Research Worker, Research Operation
+# Watchdog, Fast Lane) over the last 48 hours by root-cause category, from the
+# failed jobs' logs.  A fix to the pipeline is accepted only when the category
+# it targets falls to zero here.  Read-only: it never changes pipeline state.
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: Window in hours
+        default: "48"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: pipeline-health
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+      - name: Classify failures by root cause
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/pipeline_health_report.py --hours "${{ inputs.hours || '48' }}" --output reports/research/pipeline-health.json
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pipeline-health
+          path: reports/research/pipeline-health.json
+          retention-days: 30

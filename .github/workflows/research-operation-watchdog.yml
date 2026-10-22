@@ -68,6 +68,10 @@ jobs:
             echo "SECOPSAI_WATCHDOG_UPSTREAM_STARTED_AT=$(jq -r '.run_started_at // empty' <<< "$upstream")" >> "$GITHUB_ENV"
             echo "SECOPSAI_WATCHDOG_UPSTREAM_RUN_ID=$(jq -r '.id' <<< "$upstream")" >> "$GITHUB_ENV"
             echo "SECOPSAI_WATCHDOG_UPSTREAM_RUN_ATTEMPT=$(jq -r '.run_attempt // empty' <<< "$upstream")" >> "$GITHUB_ENV"
+            # The completed run before this one tells an isolated failure from a repeated one.
+            previous=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/research-worker.yml/runs?status=completed&branch=main&per_page=10" \
+              | jq -r --argjson id "$upstream_id" '[.workflow_runs[] | select(.id < $id and .conclusion != "cancelled")][0].conclusion // empty')
+            echo "SECOPSAI_WATCHDOG_PREVIOUS_WORKER_CONCLUSION=$previous" >> "$GITHUB_ENV"
             if [[ "$(jq -r '.conclusion // empty' <<< "$upstream")" == "cancelled" && -z "$(jq -r '.run_started_at // empty' <<< "$upstream")" ]]; then
               echo "SECOPSAI_WATCHDOG_UPSTREAM_CANCELLED_BEFORE_START=1" >> "$GITHUB_ENV"
             else
@@ -97,6 +101,7 @@ jobs:
             --upstream-worker-completed-at "${SECOPSAI_WATCHDOG_UPSTREAM_COMPLETED_AT:-}" \
             --upstream-worker-started-at "${SECOPSAI_WATCHDOG_UPSTREAM_STARTED_AT:-}" \
             --upstream-worker-run-id "${SECOPSAI_WATCHDOG_UPSTREAM_RUN_ID:-}" \
+            --previous-worker-conclusion "${SECOPSAI_WATCHDOG_PREVIOUS_WORKER_CONCLUSION:-}" \
             --active-worker-run-id "${SECOPSAI_WATCHDOG_ACTIVE_RUN_ID:-}" \
             --active-worker-started-at "${SECOPSAI_WATCHDOG_ACTIVE_STARTED_AT:-}" \
             "${args[@]}" \

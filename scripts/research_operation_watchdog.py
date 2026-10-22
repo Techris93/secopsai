@@ -13,6 +13,9 @@ from urllib.parse import urlparse
 DELIVERY_SERVICE_WINDOW_SECONDS = 2 * 60 * 60
 DELIVERY_STALL_WINDOW_SECONDS = 60 * 60
 PROVISIONAL_MAX_SECONDS = 90 * 60
+SEVERE_STALENESS_INTERVALS = 3
+CONSEQUENCE_PREFIXES = ("research operation snapshot", "Research Worker completion or matching",
+                        "enabled research sources are", "semantic delivery has stopped", "oldest semantic delivery")
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -110,7 +113,8 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
             upstream_worker_conclusion="", upstream_worker_completed_at="", upstream_worker_run_id="",
             upstream_worker_started_at="", upstream_worker_run_attempt=None,
             upstream_worker_cancelled_before_start=False, active_worker_run_id="", active_worker_started_at="",
-            allow_pending=False, projection_wait_seconds=0, projection_poll_interval_seconds=15) -> dict:
+            allow_pending=False, projection_wait_seconds=0, projection_poll_interval_seconds=15,
+            previous_worker_conclusion="") -> dict:
     if scope not in {"all", "delivery"}:
         raise ValueError("watchdog scope must be 'all' or 'delivery'")
     if allow_pending and scope != "delivery":
@@ -148,9 +152,18 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
     superseded = upstream_worker_conclusion == "cancelled" and upstream_worker_cancelled_before_start is True
     if superseded:
         warnings.append(f"Research Worker run {upstream_worker_run_id or 'unknown'} was superseded by a newer run; the next run decides health")
-    elif upstream_worker_conclusion and upstream_worker_conclusion != "success":
+    # One failed run after a successful one is treated as transient: the next
+    # run restores the last good checkpoint and redoes the work, and this
+    # watchdog runs again after it.  The failure is visible as a warning and the
+    # assessment is provisional; two failed runs in a row are a blocker.
+    isolated_failure = (upstream_worker_conclusion in {"failure", "timed_out"}
+                        and previous_worker_conclusion == "success")
+    if isolated_failure:
+        warnings.append(f"Research Worker run {upstream_worker_run_id or 'unknown'} concluded {upstream_worker_conclusion} "
+                        "after a successful run; the next run decides health (two failures in a row are a blocker)")
+    elif upstream_worker_conclusion and upstream_worker_conclusion != "success" and not superseded:
         blockers.append(f"Research Worker run {upstream_worker_run_id or 'unknown'} concluded {upstream_worker_conclusion}")
-    provisional = worker_active or superseded
+    provisional = worker_active or superseded or isolated_failure
     for name, url, token in (
         ("checkpoint", os.environ.get("LEDGER_STORE_URL", "https://ledger.secopsai.dev") + "/status", os.environ.get("LEDGER_STORE_TOKEN", "")),
         ("research_operation", os.environ.get("SECOPSAI_CORE_COORDINATOR_URL", "https://core.secopsai.dev") + "/api/v1/research/operation", os.environ.get("SECOPSAI_CORE_BRIDGE_TOKEN", "")),
@@ -248,7 +261,18 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
                 if health.get("dead_letters"):
                     blockers.append("research delivery has dead-letter items requiring review")
                 if freshness_gaps and scope == "all" and not (provisional or stale_projection):
-                    blockers.append("enabled research sources are outside their freshness targets")
+                    # The SLA is two collection intervals.  One lost worker run
+                    # can push an hourly source just past it; that is a warning
+                    # (already recorded above).  A source more than three
+                    # intervals stale means collection itself is not working.
+                    severe = [row["name"] for row in checks[name]["stale_sources"]
+                              if row.get("delay_seconds") is None or not row.get("interval_seconds")
+                              or row["delay_seconds"] > SEVERE_STALENESS_INTERVALS * row["interval_seconds"]]
+                    if not checks[name]["stale_sources"]:
+                        blockers.append("enabled research sources are outside their freshness targets")
+                    elif severe:
+                        blockers.append("enabled research sources are outside their freshness targets "
+                                        "(more than three collection intervals): " + ", ".join(severe))
                 if health.get("artifact_backup_pending"):
                     blockers.append("registered public artifacts lack completed durable backups")
                 for key in ("primary_intel_pending_preparation", "primary_intel_awaiting_human_review",
@@ -310,13 +334,21 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
             # Never print endpoint bodies, credential-bearing errors or tokens.
             checks[name] = {"available": False, "error_category": type(exc).__name__}
             blockers.append(f"{name} availability/freshness check failed")
+    # Report one root cause.  When the worker run itself failed, the stale
+    # snapshot, correlation and freshness blockers are consequences of that
+    # failure, not separate problems.
+    consequences = []
+    if any(item.startswith("Research Worker run ") for item in blockers):
+        consequences = [item for item in blockers if item.startswith(CONSEQUENCE_PREFIXES)]
+        blockers = [item for item in blockers if item not in consequences]
     in_progress = provisional or stale_projection or ((scope == "all" or allow_pending) and any("semantic delivery is in progress" in item for item in warnings))
     status = "failed" if blockers else "in_progress" if in_progress else "passed"
     operational_status = "degraded" if blockers else "in_progress" if in_progress else "degraded" if warnings else "healthy"
     return {"as_of": now.isoformat(), "scope": scope, "status": status,
             "operational_status": operational_status, "checks": checks,
             "decision_final": status != "in_progress", "provisional_expires_at": provisional_expires_at,
-            "warnings": warnings, "blockers": blockers}
+            "warnings": warnings, "blockers": blockers, "consequences": consequences,
+            "root_cause": blockers[0] if blockers else ""}
 
 
 def main():
@@ -336,6 +368,8 @@ def main():
     parser.add_argument("--upstream-worker-cancelled-before-start", action="store_true")
     parser.add_argument("--projection-wait-seconds", type=int, default=0,
                         help="For a completed worker run, wait within this bound for its matching final operation snapshot")
+    parser.add_argument("--previous-worker-conclusion", default="",
+                        help="Conclusion of the Research Worker run before the upstream one (isolated vs repeated failure)")
     parser.add_argument("--active-worker-run-id", default="")
     parser.add_argument("--active-worker-started-at", default="")
     args = parser.parse_args()
@@ -349,12 +383,14 @@ def main():
                      active_worker_run_id=args.active_worker_run_id,
                      active_worker_started_at=args.active_worker_started_at,
                      allow_pending=args.allow_pending,
-                     projection_wait_seconds=args.projection_wait_seconds)
+                     projection_wait_seconds=args.projection_wait_seconds,
+                     previous_worker_conclusion=args.previous_worker_conclusion)
     path = Path(args.output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2))
     print(json.dumps({"status": report["status"], "operational_status": report["operational_status"],
-                      "warnings": report["warnings"], "blockers": report["blockers"]}))
+                      "root_cause": report["root_cause"], "warnings": report["warnings"],
+                      "blockers": report["blockers"], "consequences": report["consequences"]}))
     if report["status"] == "passed":
         return 0
     if report["status"] == "in_progress" and (args.scope == "all" or args.allow_pending):
