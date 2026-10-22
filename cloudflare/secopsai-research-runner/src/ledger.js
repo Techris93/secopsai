@@ -114,7 +114,15 @@ export async function handleLedgerRequest(request, bucket) {
           onlyIf: new Headers({"If-None-Match": "*"}),
           httpMetadata: {contentType: "application/octet-stream"}, customMetadata: {sha256: hash}});
       } catch {
-        return json({error: "object_write_or_integrity_failure"}, 400);
+        // Objects are content-addressed: if an identical object is already
+        // stored (for example a concurrent or retried upload won), the write
+        // succeeded.  Anything else is a storage or transfer failure the
+        // client may retry, so it is reported as 503, not a permanent 400.
+        const existing = await bucket.head(objectKey).catch(() => null);
+        if (existing && existing.size === length && existing.customMetadata?.sha256 === hash) {
+          return json({sha256: hash, size_bytes: existing.size});
+        }
+        return json({error: "object_write_unavailable"}, 503);
       }
       const object = await bucket.head(objectKey);
       if (!object || object.size !== length || object.customMetadata?.sha256 !== hash) return json({error: "object_integrity_failure"}, 409);
