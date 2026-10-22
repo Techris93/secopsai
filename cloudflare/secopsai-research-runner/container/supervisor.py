@@ -55,6 +55,8 @@ DELTA_BLOCK_BYTES = 4096
 SPARSE_FRAME_RAW_LIMIT = 28 * 1024 * 1024
 SPARSE_UPLOAD_WORKERS = 4
 CHUNK_DOWNLOAD_WORKERS = 4
+# A chunk that fails verification is downloaded again this many times in total.
+CHUNK_VERIFY_ATTEMPTS = 3
 CHECKPOINT_RESTORE_TIMEOUT_SECONDS = 3600
 
 
@@ -218,16 +220,37 @@ class LedgerStore:
             raise
 
     def _download_verified_chunk(self, chunk: dict, *, deadline: float, expected_prefix: bytes = b"") -> bytes:
-        packed = self._request("GET", "/artifact-objects/" + chunk["sha256"], deadline=deadline)
-        if len(packed) != chunk["size_bytes"] or hashlib.sha256(packed).hexdigest() != chunk["sha256"]:
-            raise ValueError("checkpoint chunk checksum mismatch")
-        with gzip.GzipFile(fileobj=io.BytesIO(packed)) as reader:
-            raw = reader.read(chunk["raw_size_bytes"] + 1)
-        if len(raw) != chunk["raw_size_bytes"] or hashlib.sha256(raw).hexdigest() != chunk["raw_sha256"]:
-            raise ValueError("checkpoint decompressed chunk mismatch")
-        if expected_prefix and not raw.startswith(expected_prefix):
-            raise ValueError("checkpoint chunk has an invalid frame")
-        return raw
+        # Stored chunks are immutable and content-addressed, so a body that
+        # fails verification was damaged or cut short in transit: download it
+        # again.  Only a chunk that stays wrong after every attempt fails the
+        # restore (and the existing database is left untouched).
+        for attempt in range(CHUNK_VERIFY_ATTEMPTS):
+            packed = self._request("GET", "/artifact-objects/" + chunk["sha256"], deadline=deadline)
+            problem = ""
+            raw = b""
+            if len(packed) != chunk["size_bytes"] or hashlib.sha256(packed).hexdigest() != chunk["sha256"]:
+                problem = "checkpoint chunk checksum mismatch"
+            else:
+                try:
+                    with gzip.GzipFile(fileobj=io.BytesIO(packed)) as reader:
+                        raw = reader.read(chunk["raw_size_bytes"] + 1)
+                except (OSError, EOFError):
+                    problem = "checkpoint decompressed chunk mismatch"
+                if not problem and (len(raw) != chunk["raw_size_bytes"] or hashlib.sha256(raw).hexdigest() != chunk["raw_sha256"]):
+                    problem = "checkpoint decompressed chunk mismatch"
+            if not problem:
+                if expected_prefix and not raw.startswith(expected_prefix):
+                    raise ValueError("checkpoint chunk has an invalid frame")
+                return raw
+            if attempt + 1 == CHUNK_VERIFY_ATTEMPTS:
+                raise ValueError(problem)
+            delay = 2 ** attempt
+            if delay >= deadline - time.monotonic():
+                raise ValueError(problem)
+            _log("checkpoint_chunk_retry", reason=problem, attempt=attempt + 2, received_bytes=len(packed),
+                 expected_bytes=chunk["size_bytes"])
+            time.sleep(delay)
+        raise AssertionError("unreachable")
 
     def _iter_verified_chunks(self, chunks: list[dict], *, deadline: float, expected_prefix: bytes = b""):
         """Fetch a bounded window concurrently, yielding verified chunks in manifest order."""

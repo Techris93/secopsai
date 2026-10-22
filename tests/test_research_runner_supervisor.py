@@ -967,3 +967,54 @@ def test_bounded_research_run_drains_delivery_before_final_checkpoint(tmp_path, 
     assert commands[0][-2:] == ['--max-cycles', '1']
     assert 'secopsai.research_delivery_verification' in commands[1]
     assert server.latest is not None
+
+
+def test_restore_redownloads_a_chunk_damaged_in_transit(tmp_path, monkeypatch):
+    """Run 39746678323 died on one corrupted chunk download; a retry recovers it."""
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS', '1')
+    monkeypatch.setattr(supervisor.time, 'sleep', lambda _seconds: None)
+    db = tmp_path / 'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE data(id INTEGER PRIMARY KEY, value BLOB)')
+        conn.execute('INSERT INTO data VALUES(1,zeroblob(3000000))')
+    server = IncrementalServer()
+    client = supervisor.LedgerStore('http://ledger.internal', 'tok', opener=server)
+    supervisor.checkpoint(db, client, tmp_path)
+    first = server.manifest['chunks'][0]['sha256']
+    damaged = {'remaining': 1}
+
+    def flaky(request, timeout=None):
+        if request.full_url.endswith(first) and damaged['remaining']:
+            damaged['remaining'] -= 1
+            return _Response(server.objects[first][:-10])  # truncated in transit
+        return server(request, timeout)
+
+    restored = tmp_path / 'restored.db'
+    retrying = supervisor.LedgerStore('http://ledger.internal', 'tok', opener=flaky)
+    assert retrying.download(restored)
+    with sqlite3.connect(restored) as conn:
+        assert conn.execute('SELECT length(value) FROM data').fetchone()[0] == 3000000
+    assert damaged['remaining'] == 0
+
+
+def test_artifact_upload_retries_a_transient_storage_failure(tmp_path, monkeypatch):
+    """Run 39729582527 died on one failed artifact write; 503 is now retried."""
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS', '1')
+    monkeypatch.setattr(supervisor.time, 'sleep', lambda _seconds: None)
+    db = tmp_path / 'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE data(id INTEGER PRIMARY KEY, value BLOB)')
+        conn.execute('INSERT INTO data VALUES(1,zeroblob(3000000))')
+    server = IncrementalServer()
+    failures = {'remaining': 1}
+
+    def flaky(request, timeout=None):
+        if '/artifact-objects/' in request.full_url and request.get_method() == 'PUT' and failures['remaining']:
+            failures['remaining'] -= 1
+            raise urllib.error.HTTPError(request.full_url, 503, 'unavailable', {}, io.BytesIO(b'{"error":"object_write_unavailable"}'))
+        return server(request, timeout)
+
+    client = supervisor.LedgerStore('http://ledger.internal', 'tok', opener=flaky)
+    supervisor.checkpoint(db, client, tmp_path)
+    assert failures['remaining'] == 0
+    assert server.manifest is not None

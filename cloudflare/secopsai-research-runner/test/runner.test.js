@@ -150,3 +150,21 @@ test("admin routes need the runner token; cron is a no-op until enabled", async 
   await worker.scheduled({}, { RUNNER_ENABLED: "false", RESEARCH_RUNNER: { getByName: () => { called = true; } } }, { waitUntil() {} });
   assert.equal(called, false);
 });
+
+test("artifact upload failures are idempotent or retryable, never a permanent 400", async () => {
+  const hash = "a".repeat(64);
+  const put = () => new Request(`https://ledger.example/artifact-objects/${hash}`, { method: "PUT", headers: { "content-length": "5" }, body: "hello" });
+  // A concurrent or retried upload already stored the identical object.
+  const stored = {
+    async put() { throw new Error("PreconditionFailed"); },
+    async head() { return { size: 5, customMetadata: { sha256: hash } }; },
+  };
+  const ok = await handleLedgerRequest(put(), stored);
+  assert.equal(ok.status, 200);
+  assert.deepEqual(await ok.json(), { sha256: hash, size_bytes: 5 });
+  // A transient storage failure: the client retries 503 with backoff.
+  const failing = { async put() { throw new Error("InternalError"); }, async head() { return null; } };
+  const retry = await handleLedgerRequest(put(), failing);
+  assert.equal(retry.status, 503);
+  assert.equal((await retry.json()).error, "object_write_unavailable");
+});
