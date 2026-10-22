@@ -20,6 +20,7 @@ look at first and pre-checks the facts they need.
 """
 from __future__ import annotations
 
+import html
 import json
 import re
 from collections import defaultdict
@@ -33,7 +34,13 @@ ROOT = Path(__file__).resolve().parents[1]
 TECHNOLOGIES = ROOT / "rules" / "watchlists" / "desk-technologies.txt"
 INVENTORY = ROOT / "rules" / "watchlists" / "desk-inventory.txt"
 CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
-CVSS_RE = re.compile(r"CVSS(?:\s*(?:v?[234](?:\.\d)?|score|base score|rating))*\s*(?:of|:|=|is)?\s*(\d{1,2}(?:\.\d)?)\b", re.IGNORECASE)
+# The score must not be followed by "/": "CVSS:3.1/AV:N/..." is a vector
+# string whose 3.1 is the CVSS version, not a score.
+CVSS_RE = re.compile(r"CVSS(?:\s*(?:v?[234](?:\.\d)?|score|base score|rating))*\s*(?:of|:|=|is)?\s*(\d{1,2}(?:\.\d)?)\b(?![./\d])", re.IGNORECASE)
+TAG_RE = re.compile(r"<[^>]{0,500}>")
+# An entry with none of these is a release or listing, not an advisory
+# (e.g. an Open VSX extension described as handling "critical" data).
+SECURITY_RE = re.compile(r"vulnerab|exploit|security|advisor|\bCVSS\b|\bCVE-|\bGHSA-|remote code execution|\bRCE\b|malicious|malware|compromise|backdoor|patch", re.IGNORECASE)
 EXPLOITED_RE = re.compile(r"actively exploited|exploited in the wild|under active exploitation|in-the-wild exploitation|"
                           r"exploit(?:ation)? attempts|(?:tried|attempts?|attempting) to exploit|being exploited|"
                           r"exploitation (?:activity|has been) (?:observed|detected)|zero-day|0-day|known exploited", re.IGNORECASE)
@@ -104,7 +111,8 @@ def dependencies(root: Path = ROOT) -> set[tuple[str, str]]:
 
 def signals(title: str, excerpt: str, *, techs: Optional[dict[str, re.Pattern]] = None) -> dict[str, Any]:
     """Facts a source states about an advisory; reported, not verified."""
-    text = f"{title}\n{excerpt}"
+    # Vendor feeds are HTML: "<strong>CVSS</strong> 10.0" hides the score.
+    text = html.unescape(TAG_RE.sub(" ", f"{title}\n{excerpt}"))
     scores = [float(match) for match in CVSS_RE.findall(text) if 0 < float(match) <= 10]
     techs = techs if techs is not None else technologies()
     severity = SEVERITY_RE.search(text)
@@ -257,7 +265,10 @@ def clusters(*, db_path=None, now: Optional[datetime] = None, window_days: int =
     stories: dict[str, dict[str, Any]] = {}
     for event in _events(db_path, since=since):
         payload = event["payload"]
-        found = signals(str(payload.get("title") or ""), str(payload.get("excerpt") or ""), techs=techs)
+        title, excerpt = str(payload.get("title") or ""), str(payload.get("excerpt") or "")
+        if not SECURITY_RE.search(f"{title}\n{excerpt}\n{payload.get('external_id') or ''}"):
+            continue
+        found = signals(title, excerpt, techs=techs)
         if event["source"].get("source_class") == "vendor":
             # A vendor's own feed is about its technology even when an entry
             # title is just "Security Releases".
