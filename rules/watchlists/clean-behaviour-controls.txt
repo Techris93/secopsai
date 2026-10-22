@@ -1,0 +1,23 @@
+# Legitimate packages that use behaviours malware also uses.  Every Recall
+# Benchmark scans them as clean controls, so the rule lab (and the weekly
+# false-positive gate) sees a rule that would flag them.  The popular-package
+# clean set alone missed these: each line records the proposal it would have
+# blocked.  Format: ecosystem:package  # reason
+#
+# Telegram Bot API clients (BEH_LAB_NPM_01, telegram_bot alone, issue #144)
+npm:telegraf  # Telegram bot framework
+npm:node-telegram-bot-api  # Telegram bot client
+npm:grammy  # Telegram bot framework
+npm:telegram-bot-api  # Telegram bot client
+npm:telegram-notify  # Telegram notification helper (tiny package)
+npm:telegram-send-message  # Telegram notification helper (tiny package)
+# DNS lookups in packages with install hooks (BEH_LAB_NPM_02, issue #144)
+npm:got  # HTTP client
+npm:cacheable-lookup  # DNS cache for HTTP clients
+npm:dnscache  # DNS cache
+# Known data-collection service names in small packages (BEH_LAB_NPM_03, issue #144)
+npm:core-js  # postinstall message mentions a funding service
+npm:pastebin-api  # Pastebin API client
+npm:ngrok  # tunnelling client, downloads a binary at install
+npm:@ngrok/ngrok  # tunnelling client
+npm:localtunnel  # tunnelling client

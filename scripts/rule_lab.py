@@ -70,6 +70,9 @@ def propose(rows: List[Dict[str, Any]], *, ecosystem: str, cutoff: str, max_rule
     train_misses = [r for r in train_rows if not _caught(r)]
     test_misses = [r for r in test_rows if not _caught(r)]
     clean_flags = [set(r.get("features") or []) for r in clean]
+    # Reviewed legitimate packages that use malware-like behaviours
+    # (rules/watchlists/clean-behaviour-controls.txt): a rule may flag none.
+    control_flags = [set(r.get("features") or []) for r in clean if r.get("category") == "behaviour-control"]
     share = {flag: sum(flag in flags for flags in clean_flags) / len(clean_flags) for flags in clean_flags for flag in flags}
     pool = sorted({flag for row in train_misses for flag in (row.get("features") or [])
                    if share.get(flag, 0) < NOISY_FLAG_SHARE and flag not in EXCLUDED_FLAGS})
@@ -90,6 +93,8 @@ def propose(rows: List[Dict[str, Any]], *, ecosystem: str, cutoff: str, max_rule
                 continue
             if any(_matches(set(shape), candidate) for shape in KNOWN_BENIGN_SHAPES):
                 continue  # would re-create a false positive we already fixed
+            if any(_matches(flags, candidate) for flags in control_flags):
+                continue  # flags a reviewed legitimate behaviour control
             hits = {index for index, flags in enumerate(clean_flags) if _matches(flags, candidate)}
             fp = len(hits)
             if fp > MAX_CLEAN_HITS_PER_RULE or len(flagged_clean | hits) > allowed_clean:
