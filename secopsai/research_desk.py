@@ -519,3 +519,55 @@ def projection(*, db_path=None, now: Optional[datetime] = None, limit: int = 10)
                       "needs_attention": [claim for check in claims for claim in check["needs_attention"]],
                       "official_description": next((check["official_description"] for check in claims if check.get("official_description")), "")})
     return {"schema_version": "secopsai.research.desk.v1", "window_days": WINDOW_DAYS, "items": items}
+
+
+RULES_REGISTRY = ROOT / "docs" / "rules-registry.md"
+_RULE_HEADING = re.compile(r"^### (RULE-\d+): (.+)$", re.M)
+
+
+def detection_rules() -> list[dict[str, Any]]:
+    """SecOpsAI rules with the CVEs and title words their registry entry names."""
+    try:
+        registry = RULES_REGISTRY.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    headings = list(_RULE_HEADING.finditer(registry))
+    rules = []
+    for index, match in enumerate(headings):
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(registry)
+        section = registry[match.start():end]
+        rules.append({"rule_id": match.group(1), "title": match.group(2).strip(),
+                      "cves": sorted(set(re.findall(r"CVE-\d{4}-\d{4,}", section)))})
+    return rules
+
+
+def detections_for(item: dict[str, Any]) -> list[dict[str, Any]]:
+    cves, names = set(item.get("cves") or []), {name.lower() for name in item.get("names") or []}
+    return [rule for rule in detection_rules()
+            if cves & set(rule["cves"]) or any(name in rule["title"].lower() for name in names)]
+
+
+def research_note(event_id: str, *, db_path=None, now: Optional[datetime] = None,
+                  ranked: Optional[list[dict[str, Any]]] = None) -> list[str]:
+    """Markdown lines for a verified brief item: claim checks, detections, exposure.
+
+    Empty when the event is not part of a ranked desk item.
+    """
+    if ranked is None:
+        ranked = shortlist(db_path=db_path, now=now, limit=50, minimum_score=0)
+    item = next((entry for entry in ranked
+                 if event_id in entry["event_ids"]), None)
+    if item is None:
+        return []
+    lines = []
+    claims = [claim for check in item.get("claims") or [] for claim in check["claims"]]
+    if claims:
+        lines += ["", "| Claim | Check | Source |", "| --- | --- | --- |"]
+        lines += [f"| {claim['claim']} | {claim['status'].replace('_', ' ')} | {claim.get('source') or claim.get('detail') or ''} |"
+                  for claim in claims]
+    rules = detections_for(item)
+    lines.append("SecOpsAI detection: " + ("; ".join(f"{rule['rule_id']} ({rule['title']})" for rule in rules)
+                                           if rules else "no SecOpsAI rule covers this yet."))
+    if item["deployment_exposure"]:
+        lines.append("SecOpsAI deployment exposure: " + ", ".join(item["deployment_exposure"]) + ".")
+    return lines
