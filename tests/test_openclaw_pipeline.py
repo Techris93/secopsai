@@ -103,7 +103,10 @@ class OpenClawEvaluationTests(unittest.TestCase):
         self.assertGreaterEqual(len(result["rule_results"].get("RULE-110", [])), 1)
 
     def test_openclaw_current_replay_avoids_known_policy_and_exfil_noise(self):
-        current_path = REPO_ROOT / "data" / "openclaw" / "replay" / "labeled" / "current.json"
+        # The committed fixture is the reviewed replay this regression guards.
+        # data/openclaw/replay/labeled/current.json is local runtime output
+        # (CI only copies this fixture there), so a clean checkout lacks it.
+        current_path = REPO_ROOT / "data" / "fixtures" / "openclaw" / "current_replay.json"
         self.assertTrue(current_path.exists())
         current_events = json.loads(current_path.read_text(encoding="utf-8"))
 
