@@ -3726,7 +3726,8 @@ def _render_post_html(post: Dict[str, Any]) -> str:
 """
 
 
-def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPaths] = None, db_path: Optional[str] = None) -> Dict[str, Any]:
+def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPaths] = None, db_path: Optional[str] = None,
+            editorial_release: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     paths = paths or BlogPaths()
     candidate = Path(draft_or_slug)
     draft_path = candidate if candidate.exists() else _draft_path(draft_or_slug.removesuffix(".json"), paths)
@@ -3753,9 +3754,16 @@ def publish(draft_or_slug: str, *, confirm: bool = False, paths: Optional[BlogPa
         if not state["ready"] or not gate["ready"] or not reviews or reviews[0]["status"] != "approved":
             raise ValueError("research publication requires current evidence, technical review, editorial approval and safety gates for this exact draft")
     if post.get("editorial_edition_id"):
-        from secopsai.research_editorial import validate_release
+        from secopsai.research_editorial import RELEASE_FIELDS, validate_release, verify_release_bundle
 
-        validate_release(str(post["editorial_edition_id"]), post, db_path=db_path)
+        if editorial_release is None:
+            validate_release(str(post["editorial_edition_id"]), post, db_path=db_path)
+        else:
+            # Publish job without the ledger: the worker validated the release
+            # and exported the approved draft with its fingerprint.
+            approved = verify_release_bundle(editorial_release)
+            if any(post.get(key) != approved.get(key) for key in RELEASE_FIELDS):
+                raise ValueError("publication content changed after editorial approval")
     if "Original Research" in (post.get("categories") or []) and not post.get("research_case_id"):
         raise ValueError("original research publication requires a reviewed research case")
     blockers = external_news_publish_blockers(post)

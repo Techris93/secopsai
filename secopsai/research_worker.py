@@ -460,6 +460,17 @@ def _run_worker_cycle_unlocked(
         except Exception as exc:
             capture_exception(exc, context={"component": "research_primary_intel"})
             primary_intel = {"status": "degraded", "error_category": type(exc).__name__}
+        # Approved editions become "published" only once the publish job's
+        # page is live with the approved text.
+        try:
+            from secopsai.research_editorial import confirm_live_publications
+
+            live_fetcher = fetcher or SafeFetcher(timeout=20)
+            editorial = {**editorial, "publications": confirm_live_publications(
+                lambda url: live_fetcher.get(url, allowed_hosts={"blog.secopsai.dev"}, max_bytes=4 << 20)[2], db_path=db_path)}
+        except Exception as exc:
+            capture_exception(exc, context={"component": "research_editorial_publications"})
+            editorial = {**editorial, "publications": {"status": "degraded", "error_category": type(exc).__name__}}
         # Research desk: check the claims of the highest-ranked advisories
         # against cve.org and NVD.  Failure leaves the ranking usable.
         try:

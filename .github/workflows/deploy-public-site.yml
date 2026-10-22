@@ -27,7 +27,7 @@ jobs:
       - name: Set up Node.js 22
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "22"
+          node-version: "22.23.4"
 
       # Cloudflare Pages Git integration builds `www/` for this project too.
       # Deploy the same directory so concurrent deploys can never publish a

@@ -350,6 +350,67 @@ def publish_edition(edition_id: str, *, actor: str, db_path=None, paths=None) ->
     return {"edition_id": edition_id, **result}
 
 
+RELEASE_FIELDS = ("title", "summary", "body_markdown", "author", "sources", "references", "slug")
+
+
+def release_bundles(*, db_path=None) -> list[dict]:
+    """Approved editions whose release still validates, for the publish job.
+
+    The publish job has no ledger; it trusts a bundle only when the draft's
+    digest equals the approved fingerprint recorded here.
+    """
+    soc_store.init_db(db_path)
+    with read_connection(db_path) as conn:
+        ids = [r[0] for r in conn.execute("SELECT edition_id FROM research_editorial_editions WHERE state='approved' ORDER BY updated_at")]
+    bundles = []
+    for edition_id in ids:
+        try:
+            edition = validate_release(edition_id, _edition(edition_id, db_path=db_path)["draft"], db_path=db_path)
+        except ValueError:
+            continue
+        approval = next(r for r in records("edition_approval", db_path=db_path) if r["payload"]["edition_id"] == edition_id)
+        bundles.append({"edition_id": edition_id, "fingerprint": edition["fingerprint"], "editor_id": approval["actor"],
+                        "draft": edition["draft"]})
+    return bundles
+
+
+def verify_release_bundle(bundle: dict) -> dict:
+    draft = bundle.get("draft")
+    if not isinstance(draft, dict) or digest(draft) != bundle.get("fingerprint") or draft.get("editorial_edition_id") != bundle.get("edition_id"):
+        raise ValueError("release bundle does not match its approved fingerprint")
+    return draft
+
+
+def confirm_live_publications(fetch, *, db_path=None) -> dict:
+    """Mark approved editions published once their page is live with the approved text.
+
+    ``fetch(url)`` returns the response bytes or raises.  Nothing changes until
+    the public post JSON exists and carries the approved title, summary and slug.
+    """
+    from secopsai import blog
+
+    confirmed, waiting = [], []
+    for bundle in release_bundles(db_path=db_path):
+        draft = bundle["draft"]
+        url = blog._post_url(draft["slug"])
+        try:
+            live = json.loads(fetch(url.removesuffix(".html") + ".json"))
+        except Exception:
+            waiting.append(bundle["edition_id"])
+            continue
+        if any(live.get(key) != draft.get(key) for key in ("title", "summary", "slug")):
+            waiting.append(bundle["edition_id"])
+            continue
+        with transaction(db_path) as conn:
+            state = {"correction": "corrected", "retraction": "retracted"}.get(draft.get("correction_action"), "published")
+            conn.execute("UPDATE research_editorial_editions SET state=?,published_url=?,updated_at=? WHERE edition_id=? AND state='approved'",
+                         (state, url, soc_store.utc_now(), bundle["edition_id"]))
+            append("edition_published", {"edition_id": bundle["edition_id"], "url": url, "fingerprint": bundle["fingerprint"],
+                   "confirmed_live": True}, actor=bundle["editor_id"], connection=conn)
+        confirmed.append(bundle["edition_id"])
+    return {"confirmed": confirmed, "waiting": waiting}
+
+
 def correct_edition(edition_id: str, payload: dict, *, actor: str, db_path=None) -> dict:
     person(actor, role="editor", db_path=db_path)
     edition = _edition(edition_id, db_path=db_path)

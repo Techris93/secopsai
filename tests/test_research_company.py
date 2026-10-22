@@ -1018,3 +1018,34 @@ def test_watchdog_accepts_the_runs_own_final_snapshot_despite_late_github_comple
     assert final["blockers"] == [] and final["status"] == "passed"
     unmarked = inspect(reader=reader_for(None), **common)
     assert unmarked["blockers"] == ["research operation snapshot predates the completed Research Worker run"]
+
+
+def test_approved_edition_publishes_through_release_bundle_and_live_confirmation(db, tmp_path):
+    from secopsai.research_editorial import confirm_live_publications, release_bundles
+    from scripts.publish_editorial_releases import publish_all
+
+    roster(db)
+    value, _ = event(db)
+    verify(value, db)
+    local_date = datetime.fromisoformat(value["first_observed_at"].replace("Z", "+00:00")).astimezone(ZoneInfo("Europe/Istanbul")).date().isoformat()
+    edition = create_daily_brief(date=local_date, db_path=db)
+    assert release_bundles(db_path=db) == [], "unapproved editions are never exported"
+    approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
+    bundles = release_bundles(db_path=db)
+    assert [b["edition_id"] for b in bundles] == [edition["edition_id"]] and bundles[0]["editor_id"] == "carol"
+
+    tampered = {**bundles[0], "draft": {**bundles[0]["draft"], "title": "Changed"}}
+    with pytest.raises(ValueError, match="approved fingerprint"):
+        publish_all([tampered], blog.BlogPaths(root=tmp_path / "blog"))
+    paths = blog.BlogPaths(root=tmp_path / "blog")
+    [result] = publish_all(bundles, paths)
+    live = (paths.posts / (bundles[0]["draft"]["slug"] + ".json")).read_bytes()
+
+    def offline(url):
+        raise ValueError("HTTP 404")
+    assert confirm_live_publications(offline, db_path=db) == {"confirmed": [], "waiting": [edition["edition_id"]]}
+    assert hosted_projection(db_path=db)["editions"][0]["state"] == "approved", "nothing is published until the page is live"
+    assert confirm_live_publications(lambda url: live, db_path=db) == {"confirmed": [edition["edition_id"]], "waiting": []}
+    assert hosted_projection(db_path=db)["editions"][0]["state"] == "published"
+    assert release_bundles(db_path=db) == [], "published editions are not exported again"
+    assert result["url"].endswith(bundles[0]["draft"]["slug"] + ".html")
