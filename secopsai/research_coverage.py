@@ -42,6 +42,53 @@ def _age(value: str | None, now: datetime) -> float | None:
     return max(0, (now - datetime.fromisoformat(timestamp(value).replace("Z", "+00:00"))).total_seconds())
 
 
+def _fresh(delay: float | None, interval_seconds: int) -> bool:
+    return delay is not None and delay <= 2 * interval_seconds
+
+
+def stale_enabled_sources(*, db_path=None, now=None) -> dict[str, list[dict]]:
+    """Return enabled registry and primary-intel sources beyond their freshness SLA.
+
+    Keep the same two-interval threshold used by :func:`coverage_report` so
+    end-of-run recovery and the published coverage view agree on what is stale.
+    """
+    soc_store.init_db(db_path)
+    now = now or datetime.now(timezone.utc)
+    result: dict[str, list[dict]] = {"registry_collectors": [], "intel_sources": []}
+    with read_connection(db_path) as conn:
+        for row in conn.execute(
+            "SELECT collector_id,name,ecosystem,config_json FROM registry_collectors WHERE enabled=1 ORDER BY ecosystem"
+        ).fetchall():
+            config = json.loads(row["config_json"])
+            last = conn.execute(
+                "SELECT max(completed_at) FROM registry_ingestion_runs WHERE collector_id=? AND status='completed'",
+                (row["collector_id"],),
+            ).fetchone()[0]
+            interval = int(config.get("interval_seconds", 3600))
+            delay = _age(last, now)
+            if not _fresh(delay, interval):
+                result["registry_collectors"].append({
+                    "source_id": row["collector_id"], "name": row["name"],
+                    "ecosystem": row["ecosystem"], "last_success_at": last,
+                    "interval_seconds": interval, "delay_seconds": delay,
+                })
+        for row in conn.execute(
+            "SELECT source_id,config_json,last_success_at FROM research_intel_sources"
+        ).fetchall():
+            config = json.loads(row["config_json"])
+            if not config.get("enabled"):
+                continue
+            interval = int(config.get("interval_seconds", 3600))
+            delay = _age(row["last_success_at"], now)
+            if not _fresh(delay, interval):
+                result["intel_sources"].append({
+                    "source_id": row["source_id"], "name": config["name"],
+                    "last_success_at": row["last_success_at"],
+                    "interval_seconds": interval, "delay_seconds": delay,
+                })
+    return result
+
+
 def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
     if not 1 <= window_hours <= 720:
         raise ValueError("coverage window must be 1–720 hours")
@@ -72,7 +119,7 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
                             "last_attempt_completed_at": latest_attempt["completed_at"] if latest_attempt else None,
                             "interval_seconds": int(config.get("interval_seconds", 3600)),
                             "backlog_age_seconds": _age(counters["oldest"], now),
-                            "fresh": delay is not None and delay <= 2 * int(config.get("interval_seconds", 3600)), "skip_reasons": [dict(s) for s in skips],
+                            "fresh": _fresh(delay, int(config.get("interval_seconds", 3600))), "skip_reasons": [dict(s) for s in skips],
                             "evidence_omitted": stages.get("evidence_omitted"), "evidence_truncated": stages.get("evidence_truncated"),
                             "evidence_coverage_reason": "null means not instrumented for this source/window"})
         for row in conn.execute("SELECT * FROM research_intel_sources").fetchall():
@@ -115,7 +162,7 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
                             "eligible_events": None, "observed_events": observed, "last_success_at": row["last_success_at"],
                             "last_attempt_at": row["last_attempt_at"], "last_attempt_status": attempt_status,
                             "interval_seconds": int(config["interval_seconds"]), "delay_seconds": delay,
-                            "fresh": delay is not None and delay <= config["interval_seconds"] * 2, "error_category": row["error_category"],
+                            "fresh": _fresh(delay, int(config["interval_seconds"])), "error_category": row["error_category"],
                             "consecutive_failures": row["consecutive_failures"], "sharing": config["sharing"],
                             "last_collection": source_collection,
                             "evidence_truncated": stages.get("evidence_truncated", 0), "evidence_omitted": stages.get("evidence_omitted", 0)})
