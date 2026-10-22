@@ -151,9 +151,12 @@ test("admin routes need the runner token; cron is a no-op until enabled", async 
   assert.equal(called, false);
 });
 
-test("artifact upload failures are idempotent or retryable, never a permanent 400", async () => {
-  const hash = "a".repeat(64);
-  const put = () => new Request(`https://ledger.example/artifact-objects/${hash}`, { method: "PUT", headers: { "content-length": "5" }, body: "hello" });
+test("artifact uploads: wrong content is a permanent 400; storage failures are idempotent or retryable", async () => {
+  const body = new TextEncoder().encode("hello");
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", body)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const put = (key = hash) => new Request(`https://ledger.example/artifact-objects/${key}`, { method: "PUT", headers: { "content-length": "5" }, body: "hello" });
+  const never = { async put() { throw new Error("must not store"); }, async head() { return null; } };
+  assert.equal((await handleLedgerRequest(put("a".repeat(64)), never)).status, 400);
   // A concurrent or retried upload already stored the identical object.
   const stored = {
     async put() { throw new Error("PreconditionFailed"); },

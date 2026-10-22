@@ -258,12 +258,9 @@ test('private artifact objects validate checksum, bounds and immutable retries',
   assert.equal((await worker.fetch(put(bytes,33*1024*1024),env)).status,413);
   assert.equal((await worker.fetch(put(Buffer.from('changed')),env)).status,409);
   const bad = new Request('https://ls.example/artifact-objects/'+ 'a'.repeat(64),{method:'PUT',headers:{authorization:'Bearer secret','content-length':'3'},body:'bad'});
-  // Bytes that do not match their content address are never stored. The
-  // uploader hashed the bytes it holds, so a mismatch means corruption in
-  // transit: the answer is a retryable 503, not a permanent 400.
-  const rejected = await worker.fetch(bad,env);
-  assert.equal(rejected.status,503);
-  assert.equal((await rejected.json()).error,'object_write_unavailable');
+  // Bytes that do not match their content address are a permanent 400 and
+  // are never stored.
+  assert.equal((await worker.fetch(bad,env)).status,400);
   assert.equal(objects.size,1);
   assert.equal((await worker.fetch(new Request(url,{method:'DELETE',headers:{authorization:'Bearer secret'}}),env)).status,405);
 });
