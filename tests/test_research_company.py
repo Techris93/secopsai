@@ -987,3 +987,30 @@ def test_pipeline_health_classifies_real_failure_signatures():
     for log, category in cases.items():
         assert report.classify(log)[0] == category, log
     assert report.classify('[{"target": "pypi:duckdb", "queue_id": "x", "status": "error"}]')[1] == "pypi:duckdb"
+
+
+def test_watchdog_accepts_the_runs_own_final_snapshot_despite_late_github_completion():
+    """Run 39799391019: snapshot stored 14:49:29, GitHub marked the run complete 14:51:28."""
+    from scripts.research_operation_watchdog import inspect
+
+    now = datetime(2026, 10, 22, 14, 52, tzinfo=timezone.utc)
+
+    def reader_for(phase):
+        def reader(url, _token):
+            if url.endswith("/status"):
+                return json.dumps({"uploaded_at": now.isoformat(), "checkpoint_available": True,
+                                   "completion_retry_safe": True, "captured_at": now.isoformat()}).encode()
+            if "/research/operation" in url:
+                runtime = {"worker_run_id": "39791513248", "worker_run_attempt": 1, **({"projection_phase": phase} if phase else {})}
+                return json.dumps({"synced_at": "2026-10-22T14:49:29.060Z", "runtime": runtime, "coverage": {"sources": [], "health": {
+                    "freshness_gaps": [], "dead_letters": 0, "artifact_backup_pending": 0, "ontology_pending": 0}}}).encode()
+            return b"<html>synthetic</html>"
+        return reader
+
+    common = dict(now=now, worker_active=False, upstream_worker_conclusion="success", upstream_worker_run_id="39791513248",
+                  upstream_worker_run_attempt=1, upstream_worker_started_at="2026-10-22T13:57:55Z",
+                  upstream_worker_completed_at="2026-10-22T14:51:28Z")
+    final = inspect(reader=reader_for("final"), **common)
+    assert final["blockers"] == [] and final["status"] == "passed"
+    unmarked = inspect(reader=reader_for(None), **common)
+    assert unmarked["blockers"] == ["research operation snapshot predates the completed Research Worker run"]

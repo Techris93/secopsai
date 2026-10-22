@@ -100,6 +100,11 @@ def _worker_snapshot_pending_reason(value, *, run_id, run_attempt, completed_at)
         return "waiting for the matching Research Worker run to appear in the operation snapshot"
     if run_attempt is not None and runtime.get("worker_run_attempt") != run_attempt:
         return "waiting for the matching Research Worker attempt to appear in the operation snapshot"
+    if runtime.get("projection_phase") == "final":
+        # The worker's last step stamps its own final snapshot.  GitHub's run
+        # completion time can trail that step by minutes of bookkeeping, so it
+        # is not a reliable freshness reference once the snapshot says final.
+        return ""
     synced_at = _parse_time(value.get("synced_at"))
     completed = _parse_time(completed_at)
     if not synced_at or not completed:
@@ -322,6 +327,8 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
                         blockers.append("research operation snapshot is not correlated to the completed Research Worker run")
                     elif expected_attempt is not None and runtime.get("worker_run_attempt") != expected_attempt:
                         blockers.append("research operation snapshot belongs to a different Research Worker attempt")
+                    elif runtime.get("projection_phase") == "final":
+                        pass  # the run's own final snapshot (see _worker_snapshot_pending_reason)
                     else:
                         completed_at = _parse_time(upstream_worker_completed_at)
                         started_at = _parse_time(upstream_worker_started_at)
