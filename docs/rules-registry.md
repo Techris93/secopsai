@@ -640,17 +640,30 @@ python evaluate_openclaw.py --labeled data/openclaw/replay/labeled/attack_mix.js
 
 **Next:** Review [Getting Started](getting-started.md) or [Deploy to Production](deployment-guide.md)
 
-### RULE-311: PHP2Shell Upload-Progress Abuse (T1190)
+### RULE-311: PHP2Shell Exploitation Indicators (T1190)
 
-Detects HTTP POST requests carrying PHP's session upload-progress field
-(`PHP_SESSION_UPLOAD_PROGRESS`), the confirmed trigger for PHP2Shell
-(CVE-2026-109618, CVE-2026-109619), a pre-authentication remote code execution
-in PHP disclosed on 2026-10-21 (fixed in PHP 8.2.35, 8.3.36, 8.4.27, 8.5.12).
-Exploitation attempts were observed from 2026-10-17.
+PHP2Shell (CVE-2026-109618, CVE-2026-109619) is a pre-authentication remote
+code execution in PHP disclosed on 2026-10-21 and fixed in PHP 8.2.35, 8.3.36,
+8.4.27 and 8.5.12; exploitation attempts were observed from 2026-10-17.
 
-Legitimate upload-progress bars send the same field, so treat a hit as a lead:
-correlate with PHP memory-exhaustion errors, unexpected child processes of the
-web server, new files under the web root, and the server's PHP version.
-Source addresses Amazon reported (shared anonymisation infrastructure, so
-investigation leads, not block criteria): 103.216.220.92, 31.223.184.166,
-37.19.200.5, 134.209.159.64, 103.114.163.188, 95.217.98.37.
+Indicators are reimplemented from Corelight's open-source Zeek package
+([corelight/php2shell-detect](https://github.com/corelight/php2shell-detect),
+BSD-3-Clause) for SecOpsAI HTTP events:
+
+- **Trigger, then crash sequence:** a POST whose multipart body carries the
+  session upload-progress field `name="PHP_SESSION_UPLOAD_PROGRESS"` (exact,
+  case-sensitive) followed within 60 seconds by another request in the same PHP
+  session (`PHPSESSID` cookie; same source IP when there is no cookie). A lone
+  upload-progress POST is not reported, because legitimate progress bars send it.
+- **Multipart header flood:** 128 or more repeated `X: Y` MIME headers.
+- **Oversized form-field name:** 64 KiB or more.
+- **Serialized-data patterns:** integer overflow (20+ digit integer keys),
+  integer and string hash collisions, a 600000-entry duplicate array, and
+  repeated objects.
+
+Indicators can match benign traffic. Correlate with PHP memory-exhaustion
+errors, unexpected child processes of the web server, new files under the web
+root and the server's PHP version. Source addresses Amazon reported (shared
+anonymisation infrastructure, so investigation leads, not block criteria):
+103.216.220.92, 31.223.184.166, 37.19.200.5, 134.209.159.64, 103.114.163.188,
+95.217.98.37.
