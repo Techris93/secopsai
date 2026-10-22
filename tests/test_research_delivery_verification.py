@@ -238,7 +238,8 @@ def test_stale_enabled_sources_uses_the_coverage_freshness_threshold(tmp_path):
     collectors = ensure_collectors(db_path=db)
     with soc_store.connect(db) as connection:
         for collector in collectors:
-            completed = now - timedelta(seconds=1801 if collector['ecosystem'] == 'crates' else 60)
+            age = 1801 if collector['ecosystem'] == 'crates' else 1600 if collector['ecosystem'] == 'nuget' else 60
+            completed = now - timedelta(seconds=age)
             connection.execute(
                 """INSERT INTO registry_ingestion_runs
                    (run_id,collector_id,status,cursor_before,cursor_after,coverage_mode,started_at,completed_at)
@@ -253,6 +254,10 @@ def test_stale_enabled_sources_uses_the_coverage_freshness_threshold(tmp_path):
         ('COL-CRATES-RECENT', 1801.0),
     ]
     assert stale['intel_sources'] == []
+    near_expiry = stale_enabled_sources(db_path=db, now=now, safety_margin_seconds=300)
+    assert {item['source_id'] for item in near_expiry['registry_collectors']} == {
+        'COL-CRATES-RECENT', 'COL-NUGET-CATALOG',
+    }
     coverage_sources = {item['source_id']: item for item in coverage_report(db_path=db, now=now)['sources']}
     assert coverage_sources['COL-CRATES-RECENT']['fresh'] is False
     assert coverage_sources['COL-NUGET-CATALOG']['fresh'] is True
@@ -261,34 +266,50 @@ def test_stale_enabled_sources_uses_the_coverage_freshness_threshold(tmp_path):
 def test_routine_final_verification_refreshes_stale_sources_before_projection(tmp_path, monkeypatch):
     db = str(tmp_path / 'final-source-refresh.db')
     calls = []
-    monkeypatch.setattr(
-        'secopsai.research_coverage.stale_enabled_sources',
-        lambda **kwargs: {'intel_sources': [], 'registry_collectors': [{
+    order = []
+    scans = []
+
+    def find_stale(**kwargs):
+        order.append('freshness scan')
+        scans.append(kwargs)
+        return {'intel_sources': [], 'registry_collectors': [{
             'source_id': 'COL-NUGET-CATALOG',
             'name': 'NuGet V3 Catalog', 'ecosystem': 'nuget',
-        }]},
-    )
+        }]}
+
+    monkeypatch.setattr('secopsai.research_coverage.stale_enabled_sources', find_stale)
     monkeypatch.setattr('secopsai.research_surveillance.run_registry_collector', lambda **kwargs:
-                        calls.append(kwargs) or {'status': 'completed', 'coverage': 'complete',
+                        calls.append(kwargs) or order.append('source refresh') or {'status': 'completed', 'coverage': 'complete',
                                                  'pages_selected': 1, 'pages_processed': 1,
                                                  'events_stored': 2})
-    monkeypatch.setattr('secopsai.ontology.materialize_recent', lambda **kwargs: {'snapshot': {}})
+    monkeypatch.setattr('secopsai.ontology.materialize_recent', lambda **kwargs:
+                        order.append('materialize') or {'snapshot': {}})
     monkeypatch.setattr('secopsai.research_operation.hosted_projection', lambda **kwargs: {
-        'coverage': {'health': {'freshness_gaps': [], 'ontology_pending': 0}},
+        'coverage': order.append('projection') or {'health': {'freshness_gaps': [], 'ontology_pending': 0}},
     })
 
     class Client:
         enabled = True
-        def enqueue_ontology_snapshot(self, *args, **kwargs): return {'status': 'queued'}
-        def flush_ontology_outbox(self, **kwargs): return {'pending': 0, 'flushed': 0}
-        def sync_research_operation(self, value): return {'status': 'stored'}
+        def enqueue_ontology_snapshot(self, *args, **kwargs):
+            order.append('enqueue')
+            return {'status': 'queued'}
+        def flush_ontology_outbox(self, **kwargs):
+            order.append('flush')
+            return {'pending': 0, 'flushed': 0}
+        def sync_research_operation(self, value):
+            order.append('sync')
+            return {'status': 'stored'}
 
     result = verify_delivery(db_path=db, client=Client(), refresh_stale_sources=True)
     assert [call['ecosystem'] for call in calls] == ['nuget']
+    assert order.index('flush') < order.index('freshness scan') < order.index('source refresh')
+    assert order.index('source refresh') < order.index('projection') < order.index('sync')
+    assert scans[0]['safety_margin_seconds'] == 300
     assert result['status'] == 'passed'
     assert result['registry_collectors_refreshed'] == 1
     assert result['registry_collector_refresh_failures'] == 0
     assert result['source_freshness_gaps'] == []
+    assert result['freshness_safety_margin_seconds'] == 300
 
 
 def test_final_source_refresh_fails_closed_when_freshness_gaps_remain(tmp_path, monkeypatch):

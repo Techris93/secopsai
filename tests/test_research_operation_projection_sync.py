@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.sync_research_operation_projection import sync_final_projection
+from scripts.sync_research_operation_projection import FinalProjectionError, sync_final_projection
 
 
 class Client:
@@ -21,6 +21,16 @@ class Client:
 
 def _projection(run_id="12345", attempt=2):
     return {"runtime": {"worker_run_id": run_id, "worker_run_attempt": attempt}}
+
+
+def _fresh_projection(run_id="12345", attempt=2):
+    return {
+        **_projection(run_id, attempt),
+        "coverage": {
+            "health": {"freshness_gaps": []},
+            "sources": [{"source_id": "COL-TEST", "name": "test collector", "enabled": True, "fresh": True}],
+        },
+    }
 
 
 def test_final_projection_is_durably_stored_for_current_run():
@@ -57,11 +67,62 @@ def test_final_projection_requires_core_durable_acknowledgement():
         )
 
 
-def test_workflow_syncs_final_snapshot_after_diagnostics_and_only_after_worker_success():
+def test_final_projection_fails_closed_on_stale_source_rows_before_sync():
+    client = Client()
+    projection = _fresh_projection()
+    # Catch inconsistent coverage where the summary omits a stale enabled row.
+    projection["coverage"]["sources"][0]["fresh"] = False
+
+    with pytest.raises(FinalProjectionError, match="test collector"):
+        sync_final_projection(
+            client,
+            projection_builder=lambda: projection,
+            environment={"GITHUB_RUN_ID": "12345", "GITHUB_RUN_ATTEMPT": "2"},
+            require_fresh_sources=True,
+        )
+
+    assert client.projection is None
+
+
+def test_final_projection_requires_source_health_data_when_freshness_is_gated():
+    client = Client()
+    with pytest.raises(FinalProjectionError, match="no source coverage rows"):
+        sync_final_projection(
+            client,
+            projection_builder=_projection,
+            environment={"GITHUB_RUN_ID": "12345", "GITHUB_RUN_ATTEMPT": "2"},
+            require_fresh_sources=True,
+        )
+
+    assert client.projection is None
+
+
+def test_final_projection_rejects_missing_freshness_gap_summary():
+    client = Client()
+    projection = _fresh_projection()
+    del projection["coverage"]["health"]["freshness_gaps"]
+
+    with pytest.raises(FinalProjectionError, match="no freshness-gap result"):
+        sync_final_projection(
+            client,
+            projection_builder=lambda: projection,
+            environment={"GITHUB_RUN_ID": "12345", "GITHUB_RUN_ATTEMPT": "2"},
+            require_fresh_sources=True,
+        )
+
+    assert client.projection is None
+
+
+def test_workflow_publishes_final_snapshot_after_health_check_and_before_artifacts():
     workflow = (Path(__file__).parents[1] / ".github/workflows/research-worker.yml").read_text()
     sync_step = workflow.index("- name: Publish final hosted operation projection")
-    diagnostics = workflow.index("- name: Preserve delivery verification diagnostics")
-    assert sync_step > diagnostics
+    health_check = workflow.index("- name: Verify final checkpoint and hosted delivery health")
+    diagnostics = workflow.index("- name: Preserve worker and delivery diagnostics")
+    assert sync_step > health_check
+    assert sync_step < diagnostics
     assert "id: worker" in workflow
     assert "always() && steps.worker.outcome == 'success'" in workflow[sync_step:]
     assert "python -m scripts.sync_research_operation_projection" in workflow[sync_step:]
+    assert 'SECOPSAI_VERIFY_REFRESH_STALE_SOURCES: "1"' in workflow
+    assert 'SECOPSAI_VERIFY_FRESHNESS_MARGIN_SECONDS: "300"' in workflow
+    assert "reports/research/final-projection.json" in workflow[diagnostics:]

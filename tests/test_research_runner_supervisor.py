@@ -932,6 +932,13 @@ def test_delivery_only_supervisor_uses_verifier_and_preserves_final_checkpoint(t
     assert server.latest is not None
 
 
+def test_delivery_verification_timeout_includes_final_source_refresh_budget():
+    assert supervisor.delivery_verification_timeout_seconds(840, 840) == 1710
+    assert supervisor.delivery_verification_timeout_seconds(840, 0) == 870
+    with pytest.raises(ValueError, match="permitted ranges"):
+        supervisor.delivery_verification_timeout_seconds(0, 840)
+
+
 def test_bounded_research_run_drains_delivery_before_final_checkpoint(tmp_path, monkeypatch):
     import subprocess as real_subprocess
     server = FakeLedgerServer()
@@ -943,6 +950,8 @@ def test_bounded_research_run_drains_delivery_before_final_checkpoint(tmp_path, 
     monkeypatch.setenv('LEDGER_STORE_URL', 'http://ledger.internal')
     monkeypatch.setenv('LEDGER_STORE_TOKEN', 'tok')
     monkeypatch.setenv('SECOPSAI_VERIFY_DELIVERY_SECONDS', '10')
+    monkeypatch.setenv('SECOPSAI_VERIFY_REFRESH_STALE_SOURCES', '1')
+    monkeypatch.setenv('SECOPSAI_VERIFY_REFRESH_SECONDS', '20')
     monkeypatch.setattr(supervisor.LedgerStore, '__init__', lambda self, url, token: (setattr(self, 'base_url', url), setattr(self, 'token', token), setattr(self, '_open', server)) and None)
     original_popen = real_subprocess.Popen
     commands = []

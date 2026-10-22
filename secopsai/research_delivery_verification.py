@@ -15,11 +15,11 @@ from secopsai.research_operation_store import read_connection
 from secopsai.worker_control import WorkerShutdown, check_shutdown, request_shutdown
 
 
-def _refresh_stale_enabled_sources(*, db_path, deadline):
-    """Refresh stale enabled feeds once before the final hosted projection."""
+def _refresh_stale_enabled_sources(*, db_path, deadline, safety_margin_seconds=0):
+    """Refresh stale or near-expiry enabled feeds before the shutdown checkpoint."""
     from secopsai.research_coverage import stale_enabled_sources
 
-    stale = stale_enabled_sources(db_path=db_path)
+    stale = stale_enabled_sources(db_path=db_path, safety_margin_seconds=safety_margin_seconds)
     source_results = []
     collector_results = []
     primary = stale["intel_sources"]
@@ -72,13 +72,18 @@ def _refresh_stale_enabled_sources(*, db_path, deadline):
 
 
 def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_names=(), retry_collector_names=(), require_zero=False,
-                    refresh_stale_sources=False):
+                    refresh_stale_sources=False, refresh_seconds=840, freshness_safety_margin_seconds=300):
     from secopsai.ontology import materialize_recent
     from secopsai.research_operation import hosted_projection
     from secopsai.research_primary_intel import collect_due
 
     if not 1 <= seconds <= 2700:
         raise ValueError("delivery verification budget must be 1–2700 seconds")
+    if refresh_stale_sources and not 1 <= refresh_seconds <= 2700:
+        raise ValueError("stale-source refresh budget must be 1–2700 seconds")
+    if (not isinstance(freshness_safety_margin_seconds, int)
+            or not 0 <= freshness_safety_margin_seconds <= 3600):
+        raise ValueError("freshness safety margin must be 0–3600 seconds")
     deadline = time.monotonic() + seconds
     client = client or coordinator_client()
     if not client.enabled:
@@ -86,10 +91,6 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
     soc_store.init_db(db_path)
     stale_source_results = []
     stale_collector_results = []
-    if refresh_stale_sources:
-        stale_source_results, stale_collector_results = _refresh_stale_enabled_sources(
-            db_path=db_path, deadline=deadline,
-        )
     source_results = []
     if retry_source_names:
         requested = {name.strip().casefold() for name in retry_source_names if name.strip()}
@@ -192,6 +193,15 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
             if time.monotonic() + wait >= deadline:
                 break
             time.sleep(min(wait, 30))
+    # Refresh after the potentially long delivery drain, immediately before
+    # the projection. The supervisor's shutdown checkpoint then persists any
+    # newly acquired source state before the workflow publishes its final view.
+    if refresh_stale_sources:
+        stale_source_results, stale_collector_results = _refresh_stale_enabled_sources(
+            db_path=db_path,
+            deadline=deadline + refresh_seconds,
+            safety_margin_seconds=freshness_safety_margin_seconds,
+        )
     projection = hosted_projection(db_path=db_path)
     stored = client.sync_research_operation(projection)
     health = projection.get('coverage', {}).get('health', {})
@@ -248,6 +258,7 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
               'stale_sources_refreshed': len(stale_source_results),
               'stale_source_refresh_failures': sum(item.get('status') != 'acquired' for item in stale_source_results),
               'stale_source_refresh_results': stale_source_results,
+              'freshness_safety_margin_seconds': freshness_safety_margin_seconds if refresh_stale_sources else 0,
               'registry_collectors_retried': len(collector_results),
               'registry_collector_failures': sum(
                   not (item.get('status') == 'completed' and item.get('coverage') == 'complete')
@@ -288,6 +299,8 @@ def main():
             require_zero=os.environ.get('SECOPSAI_VERIFY_REQUIRE_ZERO', '0') == '1',
             refresh_stale_sources=(os.environ.get('SECOPSAI_VERIFY_REFRESH_STALE_SOURCES', '0') == '1'
                                   and os.environ.get('SECOPSAI_VERIFY_DELIVERY_ONLY', '0') != '1'),
+            refresh_seconds=int(os.environ.get('SECOPSAI_VERIFY_REFRESH_SECONDS', '840')),
+            freshness_safety_margin_seconds=int(os.environ.get('SECOPSAI_VERIFY_FRESHNESS_MARGIN_SECONDS', '300')),
         )
         diagnostics = os.environ.get('SECOPSAI_WORKER_DIAGNOSTICS_DIR', '').strip()
         if diagnostics:

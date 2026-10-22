@@ -46,12 +46,15 @@ def _fresh(delay: float | None, interval_seconds: int) -> bool:
     return delay is not None and delay <= 2 * interval_seconds
 
 
-def stale_enabled_sources(*, db_path=None, now=None) -> dict[str, list[dict]]:
-    """Return enabled registry and primary-intel sources beyond their freshness SLA.
+def stale_enabled_sources(*, db_path=None, now=None, safety_margin_seconds: int = 0) -> dict[str, list[dict]]:
+    """Return enabled sources stale or close to their freshness SLA.
 
-    Keep the same two-interval threshold used by :func:`coverage_report` so
-    end-of-run recovery and the published coverage view agree on what is stale.
+    A safety margin lets end-of-run recovery refresh before a source crosses
+    the strict two-interval SLA during the final checkpoint. Coverage status
+    itself continues to use the unmodified threshold in :func:`coverage_report`.
     """
+    if not isinstance(safety_margin_seconds, int) or safety_margin_seconds < 0:
+        raise ValueError("freshness safety margin must be a non-negative integer")
     soc_store.init_db(db_path)
     now = now or datetime.now(timezone.utc)
     result: dict[str, list[dict]] = {"registry_collectors": [], "intel_sources": []}
@@ -66,7 +69,8 @@ def stale_enabled_sources(*, db_path=None, now=None) -> dict[str, list[dict]]:
             ).fetchone()[0]
             interval = int(config.get("interval_seconds", 3600))
             delay = _age(last, now)
-            if not _fresh(delay, interval):
+            refresh_after = max(0, 2 * interval - safety_margin_seconds)
+            if delay is None or delay > refresh_after:
                 result["registry_collectors"].append({
                     "source_id": row["collector_id"], "name": row["name"],
                     "ecosystem": row["ecosystem"], "last_success_at": last,
@@ -80,7 +84,8 @@ def stale_enabled_sources(*, db_path=None, now=None) -> dict[str, list[dict]]:
                 continue
             interval = int(config.get("interval_seconds", 3600))
             delay = _age(row["last_success_at"], now)
-            if not _fresh(delay, interval):
+            refresh_after = max(0, 2 * interval - safety_margin_seconds)
+            if delay is None or delay > refresh_after:
                 result["intel_sources"].append({
                     "source_id": row["source_id"], "name": config["name"],
                     "last_success_at": row["last_success_at"],
