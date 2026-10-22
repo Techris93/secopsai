@@ -200,3 +200,77 @@ def test_permanent_registry_http_failure_is_explicit_incomplete(tmp_path, monkey
     result = json.loads((tmp_path / "report.json").read_text())["results"][0]
     assert result["status"] == "incomplete" and result["http_status"] == 403
     assert result["retryable"] is False and "no clean verdict" in result["reasons"]
+
+
+def _run_one(tmp_path, monkeypatch, investigate):
+    monkeypatch.setenv("FAST_LANE_TARGETS", json.dumps([{"ecosystem": "pypi", "package": "fixture", "version": "1.0", "_queue_id": "b" * 64}]))
+    monkeypatch.setenv("FAST_LANE_REPORT_PATH", str(tmp_path / "report.json"))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "summary.md"))
+    monkeypatch.setattr(fast_lane, "STALE_AFTER_SECONDS", 10**9)
+    monkeypatch.setattr(fast_lane, "resolve_release", lambda *_: {"version": "1.0", "published_at": "2026-10-22T00:00:00Z", "previous_version": "0.9"})
+    monkeypatch.setattr(fast_lane, "investigate", investigate)
+    code = fast_lane.main()
+    return code, json.loads((tmp_path / "report.json").read_text())["results"][0]
+
+
+def test_partial_scan_is_analyzed_but_never_reported_as_complete(tmp_path, monkeypatch):
+    result = _result()
+    result["scan"]["coverage"] = {"partial": True, "reason": "file-count budget reached", "members_total": 9000,
+                                  "members_read": 5000, "members_skipped": 4000, "bytes_declared": 1, "bytes_read": 1}
+    code, row = _run_one(tmp_path, monkeypatch, lambda *_: result)
+    assert code == 0
+    assert row["status"] == "analyzed" and row["coverage"] == "partial"
+    assert row["reasons"].startswith("partial scan (5000 of 9000 files read; file-count budget reached)")
+
+
+def test_unknown_errors_name_the_failing_check_in_the_report(tmp_path, monkeypatch):
+    code, row = _run_one(tmp_path, monkeypatch, lambda *_: (_ for _ in ()).throw(ValueError("artifact contains\nan odd entry")))
+    assert code == 1, "a genuinely unknown analyzer failure still fails the run"
+    assert row["failure_detail"] == "artifact contains an odd entry"
+    assert "ValueError: artifact contains an odd entry" in row["reasons"]
+
+
+def _completion_module():
+    spec = importlib.util.spec_from_file_location("fast_lane_complete", Path(__file__).resolve().parents[1] / "scripts" / "fast_lane_complete.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_completion_acknowledgement_retries_transient_failures(tmp_path, monkeypatch):
+    """Run 39658957559 failed on one unacknowledged completion; resends are idempotent."""
+    import io
+    import urllib.error
+
+    complete = _completion_module()
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps({"schema_version": "secopsai.fast-lane.results.v1", "results": [{"queue_id": "c" * 64, "status": "analyzed"}]}))
+    monkeypatch.setenv("FAST_LANE_REPORT_PATH", str(report))
+    monkeypatch.setenv("LEDGER_STORE_TOKEN", "tok")
+    monkeypatch.setattr(complete.time, "sleep", lambda _s: None)
+    calls = []
+
+    class Ok(io.BytesIO):
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+
+    def urlopen(request, timeout=None):
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            raise urllib.error.URLError("timed out")
+        if len(calls) == 2:
+            raise urllib.error.HTTPError(request.full_url, 503, "busy", {}, io.BytesIO(b""))
+        return Ok(b'{"status":"stored","completed":1,"retried":0,"unresolved":0}')
+
+    monkeypatch.setattr(complete.urllib.request, "urlopen", urlopen)
+    assert complete.main() == 0
+    assert len(calls) == 3
+
+    calls.clear()
+    def rejected(request, timeout=None):
+        calls.append(request.full_url)
+        raise urllib.error.HTTPError(request.full_url, 400, "bad", {}, io.BytesIO(b""))
+    monkeypatch.setattr(complete.urllib.request, "urlopen", rejected)
+    assert complete.main() == 1
+    assert len(calls) == 1, "a rejected batch is not retried"

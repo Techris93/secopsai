@@ -376,78 +376,142 @@ def list_artifacts(*, status: str = "", limit: int = 100, db_path: str | Path | 
     return [dict(row) for row in rows]
 
 
-def _safe_archive_files(path: Path, raw_members: list[tuple[str, bytes]] | None = None) -> tuple[dict[str, str], list[dict[str, Any]], str]:
+# Files read first when a large archive cannot be read in full: what runs at
+# install or import time, and package manifests.
+_INSTALL_RELEVANT_NAMES = {
+    "package.json", "setup.py", "setup.cfg", "pyproject.toml", "build.rs", "cargo.toml",
+    "__init__.py", "binding.gyp", "makefile", "install.js", "preinstall.js", "postinstall.js",
+}
+_TEXT_SUFFIXES = {".js", ".cjs", ".mjs", ".ts", ".py", ".pyw", ".sh", ".ps1", ".bat", ".cmd", ".json", ".toml",
+                  ".cfg", ".rs", ".rb", ".php", ".pl", ".lua", ".yml", ".yaml", ".txt", ".md"}
+
+
+def _read_priority(name: str, index: int) -> tuple[int, int, int]:
+    lowered = name.lower()
+    base = lowered.rsplit("/", 1)[-1]
+    if base in _INSTALL_RELEVANT_NAMES or base.endswith(".pth") or "install" in base:
+        tier = 0
+    elif Path(base).suffix in _TEXT_SUFFIXES:
+        tier = 1
+    else:
+        tier = 2
+    return tier, lowered.count("/"), index
+
+
+def _safe_archive_files(path: Path, raw_members: list[tuple[str, bytes]] | None = None, *,
+                        coverage: dict[str, Any] | None = None) -> tuple[dict[str, str], list[dict[str, Any]], str]:
     """Read a package archive safely.
 
     Returns decoded text files, per-member metadata and the archive digest.
     When ``raw_members`` is given, every member's bytes (binaries included)
     are appended to it for byte-level scanning; text decoding alone used to
     drop compiled payloads such as bundled implants.
+
+    Without ``coverage`` the file-count and expanded-size bounds are hard
+    limits (``ArtifactResourceLimitError``).  With a ``coverage`` dict they are
+    a reading budget instead: install-time and manifest files are read first,
+    then other text, then the rest, each capped at ``MAX_FILE_BYTES``; members
+    past the budget are listed but not read, and ``coverage`` records exactly
+    what was read so the result is never mistaken for a complete scan.  Unsafe
+    paths and links always stop the scan.
     """
+    from secopsai.research_intake import ArtifactResourceLimitError, UnsafeArchiveError
+
     raw = path.read_bytes()
     digest = hashlib.sha256(raw).hexdigest()
     if len(raw) > MAX_ARCHIVE_BYTES:
-        raise ValueError("artifact exceeds the maximum size")
+        raise ArtifactResourceLimitError("artifact exceeds the maximum size")
     files: dict[str, str] = {}
     metadata: list[dict[str, Any]] = []
+    budgeted = coverage is not None
+    stats = {"partial": False, "members_total": 0, "members_read": 0, "bytes_declared": 0, "bytes_read": 0,
+             "members_skipped": 0, "skipped_examples": [], "reason": ""}
+
+    def collect(name: str, data: bytes, size: int) -> None:
+        metadata.append({"path": name, "size": size, "sha256": hashlib.sha256(data).hexdigest(),
+                         **({"truncated": True} if size > len(data) else {})})
+        if raw_members is not None:
+            raw_members.append((name, data))
+        try:
+            files[name] = data.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+
+    def plan(entries: list[tuple[str, int, Any]]) -> list[tuple[str, int, Any]]:
+        stats["members_total"] = len(entries)
+        stats["bytes_declared"] = sum(size for _, size, _ in entries)
+        if not budgeted:
+            if len(entries) > MAX_ARCHIVE_FILES:
+                raise ArtifactResourceLimitError("artifact contains too many files")
+            if stats["bytes_declared"] > MAX_ARCHIVE_BYTES:
+                raise ArtifactResourceLimitError("expanded artifact exceeds the safety limit")
+            return entries
+        order = sorted(range(len(entries)), key=lambda i: _read_priority(entries[i][0], i))
+        chosen, spent = [], 0
+        for i in order:
+            name, size, handle = entries[i]
+            cost = min(size, MAX_FILE_BYTES)
+            if len(chosen) < MAX_ARCHIVE_FILES and spent + cost <= MAX_ARCHIVE_BYTES:
+                chosen.append(entries[i])
+                spent += cost
+            else:
+                stats["members_skipped"] += 1
+                if len(stats["skipped_examples"]) < 20:
+                    stats["skipped_examples"].append(name[:300])
+                metadata.append({"path": name, "size": size, "sha256": None, "skipped": True})
+        if stats["members_skipped"]:
+            stats["partial"] = True
+            stats["reason"] = ("file-count budget reached" if len(chosen) >= MAX_ARCHIVE_FILES
+                               else "expanded-size budget reached")
+        if any(size > MAX_FILE_BYTES for _, size, _ in chosen):
+            stats["partial"] = True
+            stats["reason"] = stats["reason"] or "large members read up to the per-file limit"
+        return chosen
+
     if zipfile.is_zipfile(io.BytesIO(raw)):
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-            members = archive.infolist()
-            if len(members) > MAX_ARCHIVE_FILES:
-                raise ValueError("artifact contains too many files")
-            total = 0
-            for member in members:
+            entries = []
+            for member in archive.infolist():
                 name = member.filename.replace("\\", "/")
                 if member.is_dir() and not name.startswith("/") and ".." not in Path(name).parts:
                     continue  # directory entries carry no content
                 if name.startswith("/") or ".." in Path(name).parts or member.is_dir() or member.external_attr >> 16 & 0o170000 == 0o120000:
-                    raise ValueError("artifact contains an unsafe path or link")
-                total += member.file_size
-                if total > MAX_ARCHIVE_BYTES:
-                    raise ValueError("expanded artifact exceeds the safety limit")
-                data = archive.read(member)
-                metadata.append({"path": name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()})
-                if raw_members is not None:
-                    raw_members.append((name, data[:MAX_FILE_BYTES]))
-                if len(data) <= MAX_FILE_BYTES:
-                    try:
-                        files[name] = data.decode("utf-8")
-                    except UnicodeDecodeError:
-                        pass
+                    raise UnsafeArchiveError("artifact contains an unsafe path or link")
+                entries.append((name, member.file_size, member))
+            for name, size, member in plan(entries):
+                with archive.open(member) as handle:
+                    data = handle.read(MAX_FILE_BYTES + 1)[:MAX_FILE_BYTES]
+                stats["members_read"] += 1
+                stats["bytes_read"] += len(data)
+                collect(name, data, size)
     elif tarfile.is_tarfile(path):
         with tarfile.open(path) as archive:
-            members = archive.getmembers()
-            if len(members) > MAX_ARCHIVE_FILES:
-                raise ValueError("artifact contains too many files")
-            total = 0
-            for member in members:
+            entries = []
+            for member in archive.getmembers():
                 name = member.name.replace("\\", "/")
                 if member.isdir() and not name.startswith("/") and ".." not in Path(name).parts:
                     continue  # tar and npm-style archives may list directories
                 if name.startswith("/") or ".." in Path(name).parts or member.issym() or member.islnk() or not member.isfile():
-                    raise ValueError("artifact contains an unsafe path or link")
-                total += member.size
-                if total > MAX_ARCHIVE_BYTES:
-                    raise ValueError("expanded artifact exceeds the safety limit")
+                    raise UnsafeArchiveError("artifact contains an unsafe path or link")
+                entries.append((name, member.size, member))
+            for name, size, member in plan(entries):
                 handle = archive.extractfile(member)
-                data = handle.read(MAX_FILE_BYTES + 1) if handle else b""
-                if len(data) > MAX_FILE_BYTES:
-                    data = data[:MAX_FILE_BYTES]
-                metadata.append({"path": name, "size": member.size, "sha256": hashlib.sha256(data).hexdigest()})
-                if raw_members is not None:
-                    raw_members.append((name, data))
-                try:
-                    files[name] = data.decode("utf-8")
-                except UnicodeDecodeError:
-                    pass
+                data = handle.read(MAX_FILE_BYTES + 1)[:MAX_FILE_BYTES] if handle else b""
+                stats["members_read"] += 1
+                stats["bytes_read"] += len(data)
+                collect(name, data, size)
     else:
         data = raw[:MAX_FILE_BYTES]
+        stats.update(members_total=1, members_read=1, bytes_declared=len(raw), bytes_read=len(data),
+                     partial=len(raw) > len(data), reason="large file read up to the per-file limit" if len(raw) > len(data) else "")
         if raw_members is not None:
             raw_members.append((path.name, data))
         try:
             files[path.name] = data.decode("utf-8")
         except UnicodeDecodeError:
             metadata.append({"path": path.name, "size": len(raw), "sha256": digest, "format": _binary_format(raw)})
+    if coverage is not None:
+        coverage.update(stats)
     return files, metadata, digest
 
 
@@ -557,7 +621,8 @@ def scan_artifact(*, ecosystem: str, package: str, version: str, artifact: str |
     if not path.is_file():
         raise FileNotFoundError(str(path))
     raw_members: list[tuple[str, bytes]] = []
-    files, file_metadata, digest = _safe_archive_files(path, raw_members)
+    coverage: dict[str, Any] = {}
+    files, file_metadata, digest = _safe_archive_files(path, raw_members, coverage=coverage)
     deterministic = analyze_ecosystem_files(ecosystem, files)
     findings = _rule_pack_findings(files)
     from secopsai import yara_engine
@@ -572,7 +637,9 @@ def scan_artifact(*, ecosystem: str, package: str, version: str, artifact: str |
     artifact_id = _artifact_id(ecosystem, package, version, digest)
     for item in findings:
         item.update({"artifact_id": artifact_id, "ecosystem": ecosystem, "package": package, "version": version, "sha256": digest, "source_reference": source_reference})
-    result = {"artifact_id": artifact_id, "ecosystem": ecosystem, "package": package, "version": version, "sha256": digest, "status": "flagged" if findings else "clean", "findings": findings, "iocs": _extract_iocs(files), "files": file_metadata[:MAX_ARCHIVE_FILES], "source_reference": source_reference, "execution_performed": False, "yara": {key: yara_result.get(key) for key in ("available", "score", "level", "rules_matched", "reason")}, "duration_ms": round((time.perf_counter() - started) * 1000, 2)}
+    result = {"artifact_id": artifact_id, "ecosystem": ecosystem, "package": package, "version": version, "sha256": digest, "status": "flagged" if findings else "clean", "findings": findings, "iocs": _extract_iocs(files), "files": file_metadata[:MAX_ARCHIVE_FILES], "source_reference": source_reference, "execution_performed": False, "yara": {key: yara_result.get(key) for key in ("available", "score", "level", "rules_matched", "reason")}, "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+              # A partial read is never a complete clean verdict.
+              "coverage": coverage}
     now = _now()
     with _connect(target) as conn:
         conn.execute("INSERT OR IGNORE INTO artifact_metadata(artifact_id, ecosystem, package, version, publisher, published_at, dist_url, source_url, source_ref, source_revision, advisory_ids_json, size_bytes, sha256, trust, status, indexed_at) VALUES (?, ?, ?, ?, '', '', '', '', ?, ?, '[]', ?, ?, 'local-artifact', ?, ?)", (artifact_id, ecosystem, package, version, source_reference, "", path.stat().st_size, digest, result["status"], now))

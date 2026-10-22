@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import time
 import os
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+COMPLETION_ATTEMPTS = 3
+COMPLETION_BACKOFF_SECONDS = 10
 
 
 def main() -> int:
@@ -36,15 +40,29 @@ def main() -> int:
         print("Fast Lane completion endpoint is not configured.", file=sys.stderr)
         return 1
     body = json.dumps({"run_id": os.environ.get("GITHUB_RUN_ID", ""), "results": results}, separators=(",", ":")).encode()
-    request = urllib.request.Request(base + "/fastlane/complete", data=body, method="POST",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json",
-                  "User-Agent": "SecOpsAI-Fast-Lane/1"})
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            if response.status != 200:
-                raise ValueError("completion endpoint rejected target results")
-            receipt = json.loads(response.read(8192))
-    except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError):
+    # The Ledger Store treats a resend of the same run's outcomes as already
+    # completed, so transient network and server failures are retried.
+    receipt = None
+    for attempt in range(COMPLETION_ATTEMPTS):
+        request = urllib.request.Request(base + "/fastlane/complete", data=body, method="POST",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                      "User-Agent": "SecOpsAI-Fast-Lane/1"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                if response.status != 200:
+                    raise ValueError("completion endpoint rejected target results")
+                receipt = json.loads(response.read(8192))
+            break
+        except urllib.error.HTTPError as error:
+            retryable = error.code == 429 or error.code >= 500
+            error.close()
+            if not retryable:
+                break
+        except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError):
+            pass
+        if attempt + 1 < COMPLETION_ATTEMPTS:
+            time.sleep(COMPLETION_BACKOFF_SECONDS * (attempt + 1))
+    if receipt is None:
         print("Fast Lane target completion could not be acknowledged; dispatch leases remain recoverable.", file=sys.stderr)
         return 1
     print(json.dumps({key: receipt.get(key) for key in ("status", "completed", "retried", "unresolved")}))
