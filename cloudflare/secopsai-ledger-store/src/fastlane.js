@@ -154,17 +154,22 @@ async function dispatchQueued(bucket, dispatch, now) {
   return {status: result.status, targets, recovered};
 }
 
+// A completion the queue must refuse (bad batch, unknown target, wrong state).
+// Anything else thrown while completing is a storage failure: the client may
+// resend the whole batch, which is idempotent for targets already completed.
+export class FastlaneCompletionError extends Error {}
+
 export async function completeFastlaneTargets(bucket, results, {now = Date.now(), runId = ""} = {}) {
-  if (!Array.isArray(results) || results.length > MAX_TARGETS_PER_TICK) throw new Error("invalid fast-lane completion batch");
+  if (!Array.isArray(results) || results.length > MAX_TARGETS_PER_TICK) throw new FastlaneCompletionError("invalid fast-lane completion batch");
   const accepted = new Set(["analyzed", "incomplete", "retryable_failure", "error", "skipped: not a fresh release"]);
   let completed = 0, retried = 0, unresolved = 0;
   for (const result of results) {
     if (!result || typeof result.queue_id !== "string" || !/^[a-f0-9]{64}$/.test(result.queue_id) || !accepted.has(result.status)) {
-      throw new Error("invalid fast-lane target completion");
+      throw new FastlaneCompletionError("invalid fast-lane target completion");
     }
     const key = `${TARGET_PREFIX}${result.queue_id}.json`;
     const object = await bucket.get(key);
-    if (!object) throw new Error("unknown fast-lane target");
+    if (!object) throw new FastlaneCompletionError("unknown fast-lane target");
     const item = JSON.parse(await object.text());
     const outcome = {status: result.status, failure_category: String(result.failure_category || "").slice(0, 100),
       http_status: Number.isInteger(result.http_status) ? result.http_status : null,
@@ -174,7 +179,7 @@ export async function completeFastlaneTargets(bucket, results, {now = Date.now()
       completed += 1;
       continue;
     }
-    if (item.state !== "dispatched") throw new Error("fast-lane target is not awaiting a dispatch receipt");
+    if (item.state !== "dispatched") throw new FastlaneCompletionError("fast-lane target is not awaiting a dispatch receipt");
     await bucket.delete(queueIndex("dispatched", item));
     item.last_outcome = outcome;
     item.dispatch_lease_until = null;

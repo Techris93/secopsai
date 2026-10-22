@@ -981,6 +981,7 @@ def test_pipeline_health_classifies_real_failure_signatures():
         '[{"target": "pypi:duckdb", "queue_id": "x", "status": "error", "failure_category": "ValueError"}]': "fast_lane_unanalyzed_target",
         '{"status": "failed", "blockers": ["Research Worker run 1 concluded failure", "research operation snapshot predates"]}': "watchdog_worker_failed",
         '{"status": "failed", "root_cause": "enabled research sources are outside their freshness targets"}': "watchdog_sources_stale",
+        "Fast Lane target completion could not be acknowledged; dispatch leases remain recoverable.": "fast_lane_completion_unacknowledged",
         "##[error]Process completed with exit code 1.": "unclassified",
     }
     for log, category in cases.items():

@@ -14,6 +14,16 @@ COMPLETION_ATTEMPTS = 3
 COMPLETION_BACKOFF_SECONDS = 10
 
 
+def _server_error(error: urllib.error.HTTPError) -> str:
+    """The Ledger Store's own JSON error message (never contains secrets)."""
+    try:
+        payload = json.loads(error.read(4096) or b"{}")
+    except (OSError, ValueError):
+        return "unreadable response"
+    text = " ".join(str(payload.get(key) or "") for key in ("error", "detail")).strip()
+    return "".join(ch if ch.isprintable() else " " for ch in text)[:200] or "no error message"
+
+
 def main() -> int:
     path = Path(os.environ.get("FAST_LANE_REPORT_PATH", "reports/fast-lane-results.json"))
     if not path.is_file():
@@ -43,6 +53,7 @@ def main() -> int:
     # The Ledger Store treats a resend of the same run's outcomes as already
     # completed, so transient network and server failures are retried.
     receipt = None
+    failures = []
     for attempt in range(COMPLETION_ATTEMPTS):
         request = urllib.request.Request(base + "/fastlane/complete", data=body, method="POST",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json",
@@ -55,15 +66,17 @@ def main() -> int:
             break
         except urllib.error.HTTPError as error:
             retryable = error.code == 429 or error.code >= 500
+            failures.append(f"HTTP {error.code}: {_server_error(error)}")
             error.close()
             if not retryable:
                 break
-        except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError):
-            pass
+        except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError) as error:
+            failures.append(type(error).__name__)
         if attempt + 1 < COMPLETION_ATTEMPTS:
             time.sleep(COMPLETION_BACKOFF_SECONDS * (attempt + 1))
     if receipt is None:
-        print("Fast Lane target completion could not be acknowledged; dispatch leases remain recoverable.", file=sys.stderr)
+        print("Fast Lane target completion could not be acknowledged; dispatch leases remain recoverable. "
+              "Attempts: " + "; ".join(failures), file=sys.stderr)
         return 1
     print(json.dumps({key: receipt.get(key) for key in ("status", "completed", "retried", "unresolved")}))
     return 0

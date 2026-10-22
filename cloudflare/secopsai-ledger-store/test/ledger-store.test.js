@@ -350,3 +350,36 @@ test('sparse checkpoints require a complete pinned baseline and patch objects be
   const status=await(await handleLedgerRequest(new Request('https://ls.example/status'),bucket)).json();
   assert.equal(status.protocol,'ledger-checkpoint-v4');
 });
+
+test("fast-lane completion: refused batches are 422, storage failures are retryable 503 and resends are idempotent", async () => {
+  // Run 39791764061: the batch completed two targets, then a storage write
+  // failed on the third and the Worker answered 422, which the client treats
+  // as permanent.  The third target stayed dispatched and the run went red.
+  const ids = ["a", "b", "c"].map((c) => c.repeat(64));
+  const items = Object.fromEntries(ids.map((id) => [`fastlane/targets/${id}.json`, {
+    queue_id: id, target: { ecosystem: "npm", package: id[0], version: "1.0.0" }, state: "dispatched", attempt: 1,
+    created_at: "2026-10-22T13:58:21.081Z", dispatch_lease_until: Date.now() + 60_000, last_outcome: null }]));
+  const bucket = memoryBucket(items);
+  const put = bucket.put;
+  let failOn = `fastlane/targets/${ids[2]}.json`;
+  bucket.put = async (key, value, options) => {
+    if (key === failOn) { failOn = ""; throw new Error("We encountered an internal error. Please try again."); }
+    return put(key, value, options);
+  };
+  bucket.delete = async (key) => { bucket.store.delete(key); };
+  const env = { LEDGER_STORE_TOKEN: "secret", LEDGER: bucket };
+  const body = JSON.stringify({ run_id: "39791764061", results: ids.map((queue_id) => ({ queue_id, status: "analyzed" })) });
+  const post = (payload = body) => worker.fetch(new Request("https://ls.example/fastlane/complete",
+    { method: "POST", headers: { authorization: "Bearer secret" }, body: payload }), env);
+
+  const first = await post();
+  assert.equal(first.status, 503, "a storage failure is retryable");
+  assert.equal((await first.json()).error, "completion_storage_unavailable");
+  const resend = await post();
+  assert.equal(resend.status, 200);
+  assert.equal((await resend.json()).completed, 3, "already completed targets are acknowledged, the failed one completes");
+
+  const refused = await post(JSON.stringify({ run_id: "1", results: [{ queue_id: "d".repeat(64), status: "analyzed" }] }));
+  assert.equal(refused.status, 422);
+  assert.equal((await refused.json()).error, "unknown fast-lane target");
+});

@@ -31,6 +31,7 @@ SIGNATURES = (
     ("ledger_restore_chunk_corrupt", r"checkpoint (decompressed )?chunk (checksum )?mismatch"),
     ("ledger_request_failed", r'"event": "checkpoint_failed"|ledger \w+ [\w-]+ failed after'),
     ("module_import_error", r"ModuleNotFoundError|ImportError"),
+    ("fast_lane_completion_unacknowledged", r"completion could not be acknowledged"),
     ("fast_lane_unanalyzed_target", r'"status": "error"'),
     # The watchdog prints "root_cause" (and, in older runs, only "blockers");
     # the first blocker is the root cause.

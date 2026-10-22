@@ -274,3 +274,21 @@ def test_completion_acknowledgement_retries_transient_failures(tmp_path, monkeyp
     monkeypatch.setattr(complete.urllib.request, "urlopen", rejected)
     assert complete.main() == 1
     assert len(calls) == 1, "a rejected batch is not retried"
+
+
+def test_completion_failure_names_the_server_reason(tmp_path, monkeypatch, capsys):
+    import io
+    import urllib.error
+
+    complete = _completion_module()
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps({"schema_version": "secopsai.fast-lane.results.v1", "results": [{"queue_id": "c" * 64, "status": "analyzed"}]}))
+    monkeypatch.setenv("FAST_LANE_REPORT_PATH", str(report))
+    monkeypatch.setenv("LEDGER_STORE_TOKEN", "tok")
+
+    def refused(request, timeout=None):
+        raise urllib.error.HTTPError(request.full_url, 422, "refused", {}, io.BytesIO(b'{"error":"unknown fast-lane target"}'))
+
+    monkeypatch.setattr(complete.urllib.request, "urlopen", refused)
+    assert complete.main() == 1
+    assert "HTTP 422: unknown fast-lane target" in capsys.readouterr().err
