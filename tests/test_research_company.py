@@ -1049,3 +1049,19 @@ def test_approved_edition_publishes_through_release_bundle_and_live_confirmation
     assert hosted_projection(db_path=db)["editions"][0]["state"] == "published"
     assert release_bundles(db_path=db) == [], "published editions are not exported again"
     assert result["url"].endswith(bundles[0]["draft"]["slug"] + ".html")
+
+
+def test_hosted_actions_report_outcome_and_people_without_qualifications(db):
+    from secopsai.research_operation import execute_hosted
+
+    roster(db)
+    with pytest.raises(ValueError):
+        execute_hosted("cmd-refused", {"action": "roster", "actor": "nobody.here", "data": {"days": {}}}, db_path=db)
+    execute_hosted("cmd-ok", {"action": "person-register", "actor": "operator.owner",
+                              "data": {"person_id": "dave.new", "display_name": "Dave", "roles": ["author"], "qualification": "private detail"}}, db_path=db)
+    desk = hosted_projection(db_path=db)["research_desk"]
+    outcomes = {(a["action"], a["status"]) for a in desk["recent_actions"]}
+    assert ("roster", "refused") in outcomes and ("person-register", "recorded") in outcomes
+    assert any(a["error"] for a in desk["recent_actions"] if a["status"] == "refused")
+    people = {p["person_id"]: p for p in desk["people"]}
+    assert people["dave.new"]["roles"] == ["author"] and "qualification" not in people["dave.new"]

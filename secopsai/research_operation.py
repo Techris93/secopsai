@@ -151,6 +151,10 @@ def hosted_projection(*, db_path=None) -> dict:
     except Exception as exc:  # the desk must never block the operation snapshot
         desk = {"schema_version": "secopsai.research.desk.v1", "items": [], "error_category": type(exc).__name__}
     desk["solo_operation"] = status.get("solo_operation") or {"active": False}
+    # Who is registered and what happened to recent dashboard actions; no
+    # qualifications or other personal detail beyond the public display name.
+    desk["people"] = registered_people(db_path=db_path)
+    desk["recent_actions"] = recent_actions(db_path=db_path)
     desk_event_ids = [event_id for item in desk["items"] for event_id in (item.get("primary_event_ids") or item.get("event_ids") or [])[:2]]
     pending_reviews = pending_public_reviews(db_path=db_path, limit=10, event_ids=desk_event_ids)
     dispatches = records("assistant_team_automation_dispatch", db_path=db_path, limit=1)
@@ -222,13 +226,41 @@ def execute_hosted(command_id: str, payload: dict, *, db_path=None) -> dict:
     fingerprint = digest(payload)
     # Apply and receipt commit together. A lost hosted acknowledgement can
     # redeliver the command without duplicating a correction or an approval.
-    with transaction(db_path) as conn:
-        receipt = conn.execute("SELECT fingerprint,payload_json FROM research_operation_records WHERE record_id=?", ("CMD-" + command_id,)).fetchone()
-        if receipt:
-            if receipt["fingerprint"] != fingerprint:
-                raise ValueError("conflicting research command delivery")
-            return json.loads(receipt["payload_json"])["result"]
-        result = execute(action, payload.get("data", {}), actor=payload.get("actor", ""), case_id=payload.get("case_id", ""), identity=payload.get("id", ""), db_path=db_path)
-        receipt = append("hosted_command", {"result": result}, actor=payload["actor"], fingerprint=fingerprint, connection=conn)
-        conn.execute("UPDATE research_operation_records SET record_id=? WHERE record_id=?", ("CMD-" + command_id, receipt["record_id"]))
+    try:
+        with transaction(db_path) as conn:
+            receipt = conn.execute("SELECT fingerprint,payload_json FROM research_operation_records WHERE record_id=?", ("CMD-" + command_id,)).fetchone()
+            if receipt:
+                if receipt["fingerprint"] != fingerprint:
+                    raise ValueError("conflicting research command delivery")
+                return json.loads(receipt["payload_json"])["result"]
+            result = execute(action, payload.get("data", {}), actor=payload.get("actor", ""), case_id=payload.get("case_id", ""), identity=payload.get("id", ""), db_path=db_path)
+            receipt = append("hosted_command", {"action": action, "result": result}, actor=payload["actor"], fingerprint=fingerprint, connection=conn)
+            conn.execute("UPDATE research_operation_records SET record_id=? WHERE record_id=?", ("CMD-" + command_id, receipt["record_id"]))
+    except Exception as exc:
+        # The dashboard only sees the ledger: record why an operator's action
+        # was refused so it is not silently lost.
+        append("hosted_command_failed", {"action": action, "command_id": command_id, "error": str(exc)[:500]},
+               actor=str(payload.get("actor") or "unknown")[:160], db_path=db_path)
+        raise
     return result
+
+
+def recent_actions(*, db_path=None, limit: int = 10) -> list[dict]:
+    """Latest hosted operator actions and their outcome, for the dashboard."""
+    rows = [{"action": r["payload"].get("action") or "", "actor": r["actor"], "status": "recorded", "error": "", "at": r["created_at"]}
+            for r in records("hosted_command", db_path=db_path, limit=limit)]
+    rows += [{"action": r["payload"].get("action") or "", "actor": r["actor"], "status": "refused", "error": r["payload"].get("error", ""), "at": r["created_at"]}
+             for r in records("hosted_command_failed", db_path=db_path, limit=limit)]
+    return sorted(rows, key=lambda row: row["at"], reverse=True)[:limit]
+
+
+def registered_people(*, db_path=None) -> list[dict]:
+    import soc_store
+    from secopsai.research_operation_store import read_connection
+
+    soc_store.init_db(db_path)
+    with read_connection(db_path) as conn:
+        rows = conn.execute("SELECT person_id,display_name,roles_json,active FROM research_people ORDER BY person_id LIMIT 50").fetchall()
+    return [{"person_id": r["person_id"], "display_name": r["display_name"], "roles": json.loads(r["roles_json"]), "active": bool(r["active"])} for r in rows]
+
+
