@@ -69,3 +69,34 @@ def test_rule_lab_reports_disjoint_heldout_gains_and_package_overlap():
     summary = rule_lab.report(proposals, "2026-01-01")
     assert "incremental" in summary.lower()
     assert "popular-clean-a" in summary
+
+
+def test_behaviour_controls_are_always_scanned_as_clean():
+    """Issue #144: the popular clean set missed Telegram clients, got and core-js."""
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("recall_benchmark", Path(__file__).resolve().parents[1] / "scripts" / "recall_benchmark.py")
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+    controls = {(item["ecosystem"], item["package"]) for item in bench.behaviour_controls()}
+    for expected in [("npm", "telegraf"), ("npm", "node-telegram-bot-api"), ("npm", "grammy"), ("npm", "got"), ("npm", "core-js")]:
+        assert expected in controls
+    targets = bench.clean_targets(0, 0)
+    assert {(t["ecosystem"], t["package"]) for t in targets} == controls
+    assert len(targets) == len(controls), "controls are not duplicated"
+
+
+@pytest.mark.parametrize("control", [False, True])
+def test_a_single_hit_on_a_behaviour_control_rejects_the_rule(monkeypatch, control):
+    """Issue #144: one popular-clean hit (core-js, got) was tolerated."""
+    monkeypatch.setattr(rule_lab, "NOISY_FLAG_SHARE", 2.0)
+    monkeypatch.setattr(rule_lab, "FP_BUDGET", 2.0)
+    monkeypatch.setattr(rule_lab, "MIN_TRAIN_GAIN", 2)
+    features = ["dns_lookup", "install_hook"]
+    rows = [{"set": "malicious", "ecosystem": "npm", "status": "scanned", "discovered": "2025-01-01",
+             "level": "none", "package": f"train-{index}", "features": features} for index in range(3)]
+    rows.append({"set": "clean", "ecosystem": "npm", "status": "scanned", "package": "got", "features": features,
+                 "category": "behaviour-control" if control else "popular"})
+    proposals = rule_lab.propose(rows, ecosystem="npm", cutoff="2026-01-01")
+    assert bool(proposals) is (not control), "one popular hit is tolerated; a control hit never is"

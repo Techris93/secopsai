@@ -142,11 +142,32 @@ def clean_targets(npm_count: int, pypi_count: int) -> List[Dict[str, Any]]:
     from build_watchlists import npm_watchlist, pypi_watchlist
 
     targets = [{"ecosystem": "npm", "package": name} for name in npm_watchlist()[:npm_count]]
-    return targets + [{"ecosystem": "pypi", "package": name} for name in pypi_watchlist()[:pypi_count]]
+    targets += [{"ecosystem": "pypi", "package": name} for name in pypi_watchlist()[:pypi_count]]
+    # Legitimate packages that share behaviours with malware: always scanned,
+    # so a proposed rule that would flag them counts as a clean hit.
+    seen = {(item["ecosystem"], item["package"]) for item in targets}
+    return targets + [item for item in behaviour_controls() if (item["ecosystem"], item["package"]) not in seen]
+
+
+CLEAN_CONTROLS = ROOT / "rules" / "watchlists" / "clean-behaviour-controls.txt"
+
+
+def behaviour_controls(path: Path = CLEAN_CONTROLS) -> List[Dict[str, Any]]:
+    """Reviewed legitimate packages that exercise malware-like behaviours."""
+    items = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        entry = line.split("#", 1)[0].strip()
+        if not entry:
+            continue
+        ecosystem, _, package = entry.partition(":")
+        if ecosystem not in {"npm", "pypi"} or not package:
+            raise ValueError(f"invalid clean control: {entry!r}")
+        items.append({"ecosystem": ecosystem, "package": package, "category": "behaviour-control"})
+    return items
 
 
 def scan_clean(target: Dict[str, Any], fetcher: SafeFetcher) -> Dict[str, Any]:
-    row: Dict[str, Any] = {"set": "clean", "ecosystem": target["ecosystem"], "category": "popular", "package": target["package"]}
+    row: Dict[str, Any] = {"set": "clean", "ecosystem": target["ecosystem"], "category": target.get("category", "popular"), "package": target["package"]}
     try:
         if target["ecosystem"] == "npm":
             _u, _h, body = fetcher.get(f"https://registry.npmjs.org/{target['package'].replace('/', '%2F')}/latest", allowed_hosts=("registry.npmjs.org",), max_bytes=4 * 1024 * 1024)
