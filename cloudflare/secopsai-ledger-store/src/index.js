@@ -69,7 +69,8 @@ export async function researchWorkerDispatchDecision(env, now = Date.now(), fetc
         "x-github-api-version": "2022-11-28",
       },
     });
-    if (response.status !== 200) return { dispatch: true, reason: `run check returned HTTP ${response.status}` };
+    // Fail closed: starting a run we cannot see queues it behind an active one.
+    if (response.status !== 200) return { dispatch: false, reason: `run check returned HTTP ${response.status}` };
     const runs = (await response.json()).workflow_runs || [];
     const active = runs.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
     if (active) return { dispatch: false, reason: `run ${active.id} is ${active.status}` };
@@ -79,7 +80,7 @@ export async function researchWorkerDispatchDecision(env, now = Date.now(), fetc
     }
     return { dispatch: true, reason: "previous run finished" };
   } catch (error) {
-    return { dispatch: true, reason: `run check failed: ${String(error).slice(0, 120)}` };
+    return { dispatch: false, reason: `run check failed: ${String(error).slice(0, 120)}` };
   }
 }
 
@@ -95,6 +96,7 @@ export async function dispatchResearchWorker(env, fetcher = fetch, now = Date.no
     console.log(JSON.stringify({ component: "workflow-dispatch", workflow: env.RESEARCH_WORKER_WORKFLOW || "research-worker.yml", ...result }));
     return result;
   }
+  console.log(JSON.stringify({ component: "workflow-dispatch-decision", reason: decision.reason }));
   return dispatchWorkflow(env, env.RESEARCH_WORKER_WORKFLOW || "research-worker.yml", { trigger: "cloudflare-cron" }, fetcher);
 }
 

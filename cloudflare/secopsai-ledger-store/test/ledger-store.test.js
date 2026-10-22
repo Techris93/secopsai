@@ -73,10 +73,13 @@ test("a new research worker run starts only after the previous one finishes", as
   // The interval is configurable.
   gh = githubFake([{ id: 10, status: "completed", created_at: "2026-10-17T16:45:00Z" }]);
   assert.equal((await dispatchResearchWorker({ ...env, RESEARCH_WORKER_MIN_INTERVAL_MINUTES: "10" }, gh.fetcher, NOW)).status, "dispatched");
-  // If GitHub cannot be asked, fall back to dispatching; the concurrency group
-  // still guarantees a single ledger writer.
+  // If GitHub cannot be asked, do not dispatch: a blind dispatch queued runs
+  // behind an active one in production (2026-10-22).
   gh = githubFake([], { listStatus: 503 });
-  assert.equal((await dispatchResearchWorker(env, gh.fetcher, NOW)).status, "dispatched");
+  const blind = await dispatchResearchWorker(env, gh.fetcher, NOW);
+  assert.equal(blind.status, "skipped");
+  assert.match(blind.reason, /HTTP 503/);
+  assert.equal(gh.dispatches().length, 0);
 });
 
 import { completeFastlaneTargets, fastlaneQueueStatus, fastlaneTick, parsePypiRss } from "../src/fastlane.js";
