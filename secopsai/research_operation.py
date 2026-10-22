@@ -143,7 +143,16 @@ def hosted_projection(*, db_path=None) -> dict:
     from secopsai.research_assistant_team import list_teams
     teams = [{key: team.get(key) for key in ("team_id", "case_id", "status", "completed_stages", "runs", "reason", "human_review_required", "publication_approved")}
              for team in list_teams(db_path=db_path, limit=20)["teams"]]
-    pending_reviews = pending_public_reviews(db_path=db_path, limit=10)
+    # The research desk decides what the reviewer sees first: primary sources
+    # of the highest-ranked advisories, then the newest remaining items.
+    from secopsai import research_desk
+    try:
+        desk = research_desk.projection(db_path=db_path, limit=12)
+    except Exception as exc:  # the desk must never block the operation snapshot
+        desk = {"schema_version": "secopsai.research.desk.v1", "items": [], "error_category": type(exc).__name__}
+    desk["solo_operation"] = status.get("solo_operation") or {"active": False}
+    desk_event_ids = [event_id for item in desk["items"] for event_id in (item.get("primary_event_ids") or item.get("event_ids") or [])[:2]]
+    pending_reviews = pending_public_reviews(db_path=db_path, limit=10, event_ids=desk_event_ids)
     dispatches = records("assistant_team_automation_dispatch", db_path=db_path, limit=1)
     auto_cycles = records("assistant_team_automation_cycle", db_path=db_path, limit=1)
     editions = []
@@ -178,6 +187,7 @@ def hosted_projection(*, db_path=None) -> dict:
     projection = minimize({"schema_version": "secopsai.research.operation.v1", "coverage": status["coverage"], "editions": editions, "assistant_teams": teams,
                      "runtime": runtime,
                      "pending_source_reviews": pending_reviews,
+                     "research_desk": desk,
                      "automation": {"assistant_team_autostart_enabled": os.environ.get("SECOPSAI_RESEARCH_ASSISTANT_AUTOSTART") == "1",
                                     "daily_brief_assembly_enabled": os.environ.get("SECOPSAI_PRIMARY_INTEL") == "1",
                                     "team_dispatch": dispatches[0]["payload"] if dispatches else None,

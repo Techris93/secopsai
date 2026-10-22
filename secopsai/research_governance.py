@@ -57,7 +57,7 @@ def disclosure_milestone(case_id: str, payload: dict, *, actor: str, db_path=Non
 def operational_requirement(payload: dict, *, actor: str, db_path=None) -> dict:
     person(actor, role="operator", db_path=db_path)
     kind = payload.get("kind")
-    if kind not in {"legal_signoff", "partner_agreement", "research_sensor_authorization", "commercial_conflict", "research_quality_evaluation"}:
+    if kind not in {"legal_signoff", "partner_agreement", "research_sensor_authorization", "commercial_conflict", "research_quality_evaluation", "solo_operation"}:
         raise ValueError("unsupported operational requirement")
     status = payload.get("status")
     if status not in {"accepted", "pending", "revoked"}:
@@ -66,6 +66,14 @@ def operational_requirement(payload: dict, *, actor: str, db_path=None) -> dict:
              "scope": text(payload.get("scope"), "scope"), "reference": text(payload.get("reference"), "supporting agreement or report reference"),
              "recorded_at": timestamp(payload.get("recorded_at", "")), "expires_at": timestamp(payload["expires_at"]) if payload.get("expires_at") else None,
              "limitations": text(payload.get("limitations"), "limitations")}
+    if kind == "solo_operation":
+        # One accountable human runs the desk: they hold the author, editor
+        # and backup duties.  Drafts come from the automated desk, so the
+        # editor is still distinct from the author of what they release.
+        solo = text(payload.get("operator_id"), "solo operator", limit=160)
+        for role in ("author", "editor", "technical_reviewer"):
+            person(solo, role=role, db_path=db_path)
+        value["operator_id"] = solo
     if kind == "research_quality_evaluation":
         metrics = payload.get("metrics")
         if not isinstance(metrics, dict) or not all(k in metrics for k in ("corpus_sha256", "independent_labels", "held_out", "malicious_false_closures", "false_escalations", "abstention_rate", "disagreement_rate", "evidence_coverage", "latency", "cost", "acceptance_criteria", "uncertainty")):
@@ -74,6 +82,13 @@ def operational_requirement(payload: dict, *, actor: str, db_path=None) -> dict:
             raise ValueError("evaluation labels and test split must be independent")
         value["metrics"] = metrics
     return append(kind, value, actor=actor, db_path=db_path)
+
+
+def solo_operator(*, db_path=None) -> str:
+    """The accepted solo operator's identity, or "" when the desk is staffed."""
+    if not accepted_requirement("solo_operation", db_path=db_path):
+        return ""
+    return str(records("solo_operation", db_path=db_path)[0]["payload"].get("operator_id") or "")
 
 
 def accepted_requirement(kind: str, *, db_path=None) -> bool:

@@ -460,6 +460,17 @@ def _run_worker_cycle_unlocked(
         except Exception as exc:
             capture_exception(exc, context={"component": "research_primary_intel"})
             primary_intel = {"status": "degraded", "error_category": type(exc).__name__}
+        # Research desk: check the claims of the highest-ranked advisories
+        # against cve.org and NVD.  Failure leaves the ranking usable.
+        try:
+            from secopsai.research_desk import CLAIM_SOURCE_HOSTS, run_claim_checks
+
+            desk_fetcher = fetcher or SafeFetcher(timeout=20)
+            primary_intel = {**primary_intel, "desk_claim_checks": run_claim_checks(
+                lambda url: desk_fetcher.get(url, allowed_hosts=CLAIM_SOURCE_HOSTS, max_bytes=4 << 20)[2], db_path=db_path)}
+        except Exception as exc:
+            capture_exception(exc, context={"component": "research_desk"})
+            primary_intel = {**primary_intel, "desk_claim_checks": {"status": "degraded", "error_category": type(exc).__name__}}
     _cycle_stage("external_intelligence")
     try:
         # External threat-intel is a separate signal from registry telemetry.

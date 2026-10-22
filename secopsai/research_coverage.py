@@ -243,6 +243,14 @@ def readiness_report(*, db_path=None) -> dict:
         "recovery_drill": bool(records("recovery_drill", db_path=db_path)),
         "held_out_quality_evaluation": accepted_requirement("research_quality_evaluation", db_path=db_path),
     }
+    from secopsai.research_governance import solo_operator
+
+    solo = solo_operator(db_path=db_path)
+    not_applicable = set()
+    if solo:
+        # Partner telemetry supports claims about incidents in partners'
+        # environments; vulnerability research notes do not make them.
+        not_applicable.add("partner_telemetry_access")
     published_days = sorted({e["edition_date"] for e in report["editions"] if e["state"] == "published"})
     longest, current, prior = 0, 0, None
     for day in published_days:
@@ -250,7 +258,10 @@ def readiness_report(*, db_path=None) -> dict:
         current = current + 1 if prior and (parsed - prior).days == 1 else 1
         longest = max(longest, current)
         prior = parsed
-    return {"coverage": report, "requirements": requirements, "missing_requirements": [k for k, v in requirements.items() if not v],
+    return {"coverage": report, "requirements": requirements,
+            "missing_requirements": [k for k, v in requirements.items() if not v and k not in not_applicable],
+            "solo_operation": {"active": bool(solo), "operator_id": solo,
+                               "not_applicable": sorted(not_applicable)} if solo else {"active": False},
             "reviewed_daily_brief_streak": longest, "fourteen_day_gate_met": longest >= 14,
             "rpo_target_seconds": 300, "rto_target_seconds": 3600,
             "recovery_targets_proven": False, "decision_mode": policy_status()["mode"], "clef_enabled": clef_enabled(),

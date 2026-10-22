@@ -529,8 +529,12 @@ def intel_event(event_id: str, *, db_path=None) -> dict:
     return result
 
 
-def pending_public_reviews(*, db_path=None, limit: int = 20) -> list[dict]:
-    """Return a bounded, privacy-safe queue for the independent human reviewer."""
+def pending_public_reviews(*, db_path=None, limit: int = 20, event_ids: list[str] | None = None) -> list[dict]:
+    """Return a bounded, privacy-safe queue for the independent human reviewer.
+
+    ``event_ids`` returns those events first, in that order (the research
+    desk's ranking), followed by the newest remaining events.
+    """
     from secopsai.research_operation_store import records
 
     decisions = {}
@@ -546,6 +550,17 @@ def pending_public_reviews(*, db_path=None, limit: int = 20) -> list[dict]:
             LEFT JOIN research_operation_queue q ON q.event_id=e.event_id AND q.kind='verify_intel'
             WHERE json_extract(s.config_json,'$.sharing')='public'
             ORDER BY e.first_observed_at DESC, e.event_id DESC LIMIT 500""").fetchall()
+        if event_ids:
+            wanted = list(dict.fromkeys(event_ids))[:200]
+            marks = ",".join("?" * len(wanted))
+            ranked = {row["event_id"]: row for row in conn.execute(f"""SELECT e.event_id,e.source_id,e.root_source_key,e.snapshot_id,e.published_at,
+                    e.collected_at,e.first_observed_at,e.payload_json,s.config_json,p.sha256,q.state AS queue_state,q.result_json AS preparation_json
+                FROM research_intel_events e JOIN research_intel_sources s USING(source_id)
+                JOIN research_source_snapshots p USING(snapshot_id)
+                LEFT JOIN research_operation_queue q ON q.event_id=e.event_id AND q.kind='verify_intel'
+                WHERE json_extract(s.config_json,'$.sharing')='public' AND e.event_id IN ({marks})""", wanted).fetchall()}
+            first = [ranked[event_id] for event_id in wanted if event_id in ranked]
+            rows = first + [row for row in rows if row["event_id"] not in ranked]
     pending = []
     verified_snapshots = {}
     for row in rows:
