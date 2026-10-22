@@ -176,6 +176,11 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
             break
     from secopsai.research_coverage import coverage_report
     coverage = coverage_report(db_path=db_path)
+    from secopsai import research_desk
+    try:
+        ranked = research_desk.shortlist(db_path=db_path, limit=50, minimum_score=0) if items else []
+    except Exception:  # the desk enriches the brief; it never blocks it
+        ranked = []
     lines = [f"# SecOpsAI Daily Intelligence Brief — {date}", "", "This brief distinguishes source reporting from SecOpsAI's original observations."]
     if not items:
         lines.extend(["", "No new items passed technical verification for this edition. Collection gaps and unresolved leads remain visible to the editor."])
@@ -184,6 +189,7 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
                       item["summary"],
                       f"Defensive action: {item['defensive_action']}", f"Limitations: {item['limitations']}",
                       f"Published: {item['published_at'] or 'not supplied'}; first observed: {item['first_observed_at']}."])
+        lines.extend(research_desk.research_note(item["event_id"], ranked=ranked, db_path=db_path))
     lines.extend(["", "## Collection scope", "", coverage["public_summary"], "", "## Credits and corrections", "", f"Prepared by {author['display_name']}. Technical verification and final release require recorded human review. Corrections will retain the previous edition and explain material changes."])
     draft = {"title": f"SecOpsAI Daily Intelligence Brief — {date}", "slug": f"daily-intelligence-{date}", "summary": f"Verified intelligence and defensive updates for {date}.",
              "body_markdown": "\n\n".join(lines), "author": author["display_name"], "author_id": author["person_id"], "items": items,
