@@ -5,7 +5,7 @@
 // binding.  That lets the old Render worker upload its ledger without anyone
 // copying a credential between providers.
 import { bearer, handleLedgerRequest, json, timingSafeEqual } from "../../secopsai-research-runner/src/ledger.js";
-import { completeFastlaneTargets, fastlaneQueueStatus, fastlaneTick } from "./fastlane.js";
+import { FastlaneCompletionError, completeFastlaneTargets, fastlaneQueueStatus, fastlaneTick } from "./fastlane.js";
 
 const FASTLANE_CRON = "* * * * *";
 const WATCHLIST_CRON = "17 3 * * *";
@@ -175,7 +175,10 @@ export default {
       try {
         return json(await completeFastlaneTargets(env.LEDGER, value.results, {runId: value.run_id || ""}));
       } catch (error) {
-        return json({ error: String(error?.message || error).slice(0, 200) }, 422);
+        const message = String(error?.message || error).slice(0, 200);
+        if (error instanceof FastlaneCompletionError) return json({ error: message }, 422);
+        console.log(JSON.stringify({ component: "fastlane-complete", error: message }));
+        return json({ error: "completion_storage_unavailable", detail: message }, 503);
       }
     }
     const watchlistMatch = url.pathname.match(/^\/fastlane\/watchlist\/([a-z]+)$/);
