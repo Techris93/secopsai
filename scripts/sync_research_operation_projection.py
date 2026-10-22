@@ -84,6 +84,9 @@ def sync_final_projection(
             report.update(status="failed", blockers=[blocker])
             raise FinalProjectionError(blocker, report)
 
+    # Mark this as the run's final snapshot so the watchdog can tell it from a
+    # mid-run snapshot without comparing against GitHub's completion time.
+    projection["runtime"] = {**runtime, "projection_phase": "final"}
     result = client.sync_research_operation(projection)
     if not isinstance(result, dict) or result.get("status") != "stored":
         raise RuntimeError("Core did not confirm durable storage of the final operation projection")

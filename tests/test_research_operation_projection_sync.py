@@ -42,7 +42,9 @@ def test_final_projection_is_durably_stored_for_current_run():
     )
 
     assert result == {"status": "stored", "worker_run_id": "12345", "worker_run_attempt": 2}
-    assert client.projection == _projection()
+    expected = _projection()
+    expected["runtime"]["projection_phase"] = "final"
+    assert client.projection == expected
 
 
 @pytest.mark.parametrize(
