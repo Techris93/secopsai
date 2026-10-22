@@ -15,7 +15,64 @@ from secopsai.research_operation_store import read_connection
 from secopsai.worker_control import WorkerShutdown, check_shutdown, request_shutdown
 
 
-def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_names=(), retry_collector_names=(), require_zero=False):
+def _refresh_stale_enabled_sources(*, db_path, deadline):
+    """Refresh stale enabled feeds once before the final hosted projection."""
+    from secopsai.research_coverage import stale_enabled_sources
+
+    stale = stale_enabled_sources(db_path=db_path)
+    source_results = []
+    collector_results = []
+    primary = stale["intel_sources"]
+    if primary:
+        from secopsai.research_primary_intel import collect_due
+
+        for offset in range(0, len(primary), 10):
+            batch = primary[offset:offset + 10]
+            if time.monotonic() >= deadline:
+                source_results.extend({"source_id": item["source_id"], "status": "deferred_budget"}
+                                      for item in primary[offset:])
+                break
+            outcome = collect_due(
+                db_path=db_path,
+                limit=len(batch),
+                force_source_ids=tuple(item["source_id"] for item in batch),
+            )
+            completed = outcome.get("results", [])
+            source_results.extend(completed)
+            returned_ids = {item.get("source_id") for item in completed}
+            source_results.extend({"source_id": item["source_id"], "status": "not_attempted"}
+                                  for item in batch if item["source_id"] not in returned_ids)
+
+    registry = stale["registry_collectors"]
+    if registry:
+        from secopsai.research_surveillance import run_registry_collector
+        from secopsai.research_worker import MAX_PAGES_PER_CYCLE, collector_page_budget
+
+        for index, item in enumerate(registry):
+            if time.monotonic() >= deadline:
+                collector_results.extend({"name": pending["name"], "ecosystem": pending["ecosystem"],
+                                          "status": "deferred_budget", "coverage": None}
+                                         for pending in registry[index:])
+                break
+            result = run_registry_collector(
+                ecosystem=item["ecosystem"],
+                max_pages=collector_page_budget(item["ecosystem"], MAX_PAGES_PER_CYCLE),
+                db_path=db_path,
+            )
+            collector_results.append({
+                "name": item["name"], "ecosystem": item["ecosystem"],
+                "status": result.get("status"), "coverage": result.get("coverage"),
+                "pages_selected": result.get("pages_selected", 0),
+                "pages_processed": result.get("pages_processed", 0),
+                "events_stored": result.get("events_stored", 0),
+                "error_category": "collector_error" if result.get("error") else None,
+            })
+            print(json.dumps({"event": "stale_registry_collector_refresh", **collector_results[-1]}), flush=True)
+    return source_results, collector_results
+
+
+def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_names=(), retry_collector_names=(), require_zero=False,
+                    refresh_stale_sources=False):
     from secopsai.ontology import materialize_recent
     from secopsai.research_operation import hosted_projection
     from secopsai.research_primary_intel import collect_due
@@ -27,6 +84,12 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
     if not client.enabled:
         raise ValueError("Core delivery is not configured")
     soc_store.init_db(db_path)
+    stale_source_results = []
+    stale_collector_results = []
+    if refresh_stale_sources:
+        stale_source_results, stale_collector_results = _refresh_stale_enabled_sources(
+            db_path=db_path, deadline=deadline,
+        )
     source_results = []
     if retry_source_names:
         requested = {name.strip().casefold() for name in retry_source_names if name.strip()}
@@ -132,6 +195,7 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
     projection = hosted_projection(db_path=db_path)
     stored = client.sync_research_operation(projection)
     health = projection.get('coverage', {}).get('health', {})
+    source_freshness_gaps = health.get('freshness_gaps') or []
     pending = delivery.get('pending')
     if pending is None:
         pending = health.get('ontology_pending')
@@ -165,20 +229,38 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
     sources_ok = all(item.get('status') == 'acquired' for item in source_results)
     collectors_ok = all(
         item.get('status') == 'completed' and item.get('coverage') == 'complete'
-        for item in collector_results
+        for item in [*collector_results, *stale_collector_results]
     )
+    stale_sources_ok = all(item.get('status') == 'acquired' for item in stale_source_results)
+    source_freshness_ok = not refresh_stale_sources or not source_freshness_gaps
+    if refresh_stale_sources and source_freshness_gaps:
+        delivery_blockers.append('enabled sources remain outside freshness targets: ' + ', '.join(source_freshness_gaps))
+    if not stale_sources_ok:
+        delivery_blockers.append('one or more stale primary sources could not be refreshed')
+    if any(not (item.get('status') == 'completed' and item.get('coverage') == 'complete')
+           for item in stale_collector_results):
+        delivery_blockers.append('one or more stale registry collectors did not complete fully')
     report = {'status': ('passed' if acknowledged else 'in_progress' if delivery_in_progress else 'failed')
-              if sources_ok and collectors_ok else 'failed', 'flushed_total': flushed_total,
+              if sources_ok and collectors_ok and stale_sources_ok and source_freshness_ok else 'failed', 'flushed_total': flushed_total,
               'pending': pending, 'delivery_blockers': delivery_blockers, 'projection_status': stored.get('status'),
               'health': health,
               'sources_retried': len(source_results), 'source_failures': sum(item.get('status') != 'acquired' for item in source_results),
+              'stale_sources_refreshed': len(stale_source_results),
+              'stale_source_refresh_failures': sum(item.get('status') != 'acquired' for item in stale_source_results),
+              'stale_source_refresh_results': stale_source_results,
               'registry_collectors_retried': len(collector_results),
               'registry_collector_failures': sum(
                   not (item.get('status') == 'completed' and item.get('coverage') == 'complete')
                   for item in collector_results
               ),
-              'registry_collectors': collector_results,
-              'registry_scans_performed': bool(collector_results), 'analysis_performed': False, 'model_jobs_created': 0,
+              'registry_collectors_refreshed': len(stale_collector_results),
+              'registry_collector_refresh_failures': sum(
+                  not (item.get('status') == 'completed' and item.get('coverage') == 'complete')
+                  for item in stale_collector_results
+              ),
+              'registry_collectors': [*collector_results, *stale_collector_results],
+              'source_freshness_gaps': source_freshness_gaps,
+              'registry_scans_performed': bool(collector_results or stale_collector_results), 'analysis_performed': False, 'model_jobs_created': 0,
               'clef_enabled': projection.get('clef_enabled'), 'decision_mode': projection.get('decision_mode')}
     print(json.dumps({'event': 'delivery_verification_completed', **report}), flush=True)
     return report
@@ -204,6 +286,8 @@ def main():
             retry_source_names=tuple(name.strip() for name in os.environ.get('SECOPSAI_VERIFY_RETRY_SOURCES', '').split(',') if name.strip()),
             retry_collector_names=tuple(name.strip() for name in os.environ.get('SECOPSAI_VERIFY_RETRY_COLLECTORS', '').split(',') if name.strip()),
             require_zero=os.environ.get('SECOPSAI_VERIFY_REQUIRE_ZERO', '0') == '1',
+            refresh_stale_sources=(os.environ.get('SECOPSAI_VERIFY_REFRESH_STALE_SOURCES', '0') == '1'
+                                  and os.environ.get('SECOPSAI_VERIFY_DELIVERY_ONLY', '0') != '1'),
         )
         diagnostics = os.environ.get('SECOPSAI_WORKER_DIAGNOSTICS_DIR', '').strip()
         if diagnostics:

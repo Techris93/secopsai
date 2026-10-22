@@ -87,6 +87,10 @@ jobs:
       SECOPSAI_VERIFY_RETRY_SOURCES: ${{ inputs.retry_sources }}
       SECOPSAI_VERIFY_RETRY_COLLECTORS: ${{ inputs.retry_collectors }}
       SECOPSAI_VERIFY_DELIVERY_ONLY: ${{ inputs.delivery_only && '1' || '0' }}
+      # Routine runs refresh enabled sources that aged past their published
+      # freshness SLA after the worker's collection phase, before final health.
+      # Recovery-only runs deliberately keep their no-recollection contract.
+      SECOPSAI_VERIFY_REFRESH_STALE_SOURCES: "1"
       SECOPSAI_VERIFY_REQUIRE_ZERO: ${{ inputs.delivery_only && '1' || '0' }}
       SECOPSAI_VERIFY_DELIVERY_SECONDS: ${{ inputs.delivery_seconds || 840 }}
       SECOPSAI_WORKER_DIAGNOSTICS_DIR: reports/research
