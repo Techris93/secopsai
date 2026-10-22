@@ -2386,6 +2386,78 @@ def detect_nosql_injection(events: List[Dict]) -> List[str]:
     return detected
 
 
+# PHP2Shell request indicators, reimplemented from Corelight's php2shell-detect
+# Zeek package (BSD-3-Clause, https://github.com/corelight/php2shell-detect).
+PHP2SHELL_UPLOAD_PROGRESS = re.compile(
+    r'(?:^|;)[ \t]*name=(?:"PHP_SESSION_UPLOAD_PROGRESS"|PHP_SESSION_UPLOAD_PROGRESS)(?:[ \t]*;|[ \t]*\r?$)', re.MULTILINE)
+PHP2SHELL_BODY_MARKERS = (
+    re.compile(r"i:-?[1-9][0-9]{19,};"),                                        # serialized integer overflow
+    re.compile(r"i:0;N;i:4294967296;N;i:8589934592;N;"),                         # serialized integer collisions
+    re.compile(r'(?:s:34:"(?:Aa|B@){17}";(?:N;|S:1:"x";)){3}'),                  # serialized string collisions
+    re.compile(r"a:600000:\{(?:i:0;N;){4}"),                                     # serialized duplicate array
+    re.compile(r'(?:i:[0-9]+;O:1:"X":0:\{\}){4}'),                                # serialized object repetition
+)
+PHP2SHELL_MULTIPART_HEADER_THRESHOLD = 128   # repeated "X: Y" MIME headers
+PHP2SHELL_LARGE_FORM_KEY_BYTES = 65536
+PHP2SHELL_CORRELATION_SECONDS = 60
+
+
+def _php2shell_session(event: Dict) -> str:
+    headers = event.get("headers") or {}
+    cookie = headers.get("Cookie") or headers.get("cookie") if isinstance(headers, dict) else str(headers)
+    match = re.search(r"PHPSESSID=([^;\s]+)", str(cookie or ""))
+    return f"session:{match.group(1)}" if match else f"ip:{event.get('src_ip') or ''}"
+
+
+def _php2shell_time(value: Any) -> Optional[datetime]:
+    try:
+        return parse_timestamp(str(value)) if value else None
+    except ValueError:
+        return None
+
+
+def detect_php2shell(events: List[Dict]) -> List[str]:
+    """
+    RULE-311: PHP2Shell (CVE-2026-109618, CVE-2026-109619; disclosed
+    2026-10-21, fixed in PHP 8.2.35, 8.3.36, 8.4.27, 8.5.12).
+    MITRE: T1190 (Exploit Public-Facing Application)
+
+    Request indicators from Corelight's detection package: a flood of
+    repeated "X: Y" MIME headers, an oversized form-field name, and five
+    serialized-data patterns.  A POST carrying PHP's session upload-progress
+    field (the confirmed trigger, also sent by legitimate progress bars) is
+    reported only when another request in the same PHP session, or from the
+    same source without a session cookie, follows within a minute: the
+    trigger-then-crash sequence.  Indicators can match benign traffic.
+    """
+    detected: List[str] = []
+    triggers: Dict[str, List[Dict]] = defaultdict(list)
+    http = [e for e in events if e.get("event_type") == "http"]
+    for event in sorted(http, key=lambda e: str(e.get("timestamp") or "")):
+        method = str(event.get("method") or event.get("http_method") or "").upper()
+        request = str(event.get("request") or "")
+        is_post = method == "POST" or (not method and request.upper().startswith("POST"))
+        body = str(event.get("body") or "")
+        session = _php2shell_session(event)
+        when = _php2shell_time(event.get("timestamp"))
+        for trigger in triggers.get(session, []):
+            trigger_time = _php2shell_time(trigger.get("timestamp"))
+            if when and trigger_time and 0 <= (when - trigger_time).total_seconds() <= PHP2SHELL_CORRELATION_SECONDS:
+                detected.extend(item for item in (trigger["event_id"], event["event_id"]) if item not in detected)
+        if not is_post:
+            continue
+        indicator = (
+            body.count("\nX: Y") + body.startswith("X: Y") >= PHP2SHELL_MULTIPART_HEADER_THRESHOLD
+            or any(marker.search(body) for marker in PHP2SHELL_BODY_MARKERS)
+            or len(body.split("&", 1)[0].split("=", 1)[0].encode()) >= PHP2SHELL_LARGE_FORM_KEY_BYTES
+        )
+        if indicator and event["event_id"] not in detected:
+            detected.append(event["event_id"])
+        if PHP2SHELL_UPLOAD_PROGRESS.search(body):
+            triggers[session].append(event)
+    return detected
+
+
 def detect_log4j(events: List[Dict]) -> List[str]:
     """
     RULE-310: Detects Log4j / JNDI Injection (CVE-2021-44228).
@@ -2469,6 +2541,7 @@ DETECTION_RULES = [
     {"id": "RULE-308", "name": "SSRF Attack",                  "mitre": "T1189", "fn": detect_ssrf},
     {"id": "RULE-309", "name": "NoSQL Injection",              "mitre": "T1190", "fn": detect_nosql_injection},
     {"id": "RULE-310", "name": "Log4j JNDI Injection",         "mitre": "T1190", "fn": detect_log4j},
+    {"id": "RULE-311", "name": "PHP2Shell Exploitation Indicators", "mitre": "T1190", "fn": detect_php2shell},
     {"id": "RULE-214", "name": "macOS AppleScript Loader",     "mitre": "T1059.002", "fn": detect_macos_applescript_loader},
 ]
 
