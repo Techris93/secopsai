@@ -191,3 +191,15 @@ def test_research_note_maps_detections_claims_and_exposure(db):
     node = "\n".join(desk.research_note("node-rel", db_path=db, now=NOW))
     assert "no SecOpsAI rule covers this yet" in node and "SecOpsAI deployment exposure: Node.js." in node
     assert desk.research_note("not-an-event", db_path=db, now=NOW) == []
+
+
+def test_html_scores_vectors_and_non_advisories(db):
+    gitlab = desk.signals("GitLab Patch Release: 19.5.1",
+                          '<strong>CVSS</strong> 10.0 (<a href="x#explain=CVSS:3.1/AV:N/AC:L">'
+                          "<code>CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H</code></a>)")
+    assert gitlab["reported_cvss"] == 10.0, "the vector's version is not a score"
+    assert desk.signals("x", "CVSS:3.1/AV:N/AC:L/PR:N")["reported_cvss"] is None
+    assert desk.signals("x", "rated CVSS v3.1 9.8 by NVD")["reported_cvss"] == 9.8
+    add(db, "ovsx-gemdb", "ghsa", "gemtalksystems/gemdb 1.8.0",
+        "Python with built-in transactional persistence. When you have critical, complex data, use GemDB.")
+    assert not [item for item in desk.clusters(db_path=db, now=NOW) if "ovsx-gemdb" in item["event_ids"]], "a release listing is not an advisory"
