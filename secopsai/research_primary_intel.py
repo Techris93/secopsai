@@ -592,6 +592,7 @@ def pending_public_reviews(*, db_path=None, limit: int = 20, event_ids: list[str
                         "collected_at": event["collected_at"], "first_observed_at": event["first_observed_at"],
                         "source_sha256": event["sha256"],
                         "review_status": "pending_review" if not decision else decision.get("decision", "pending_review") if current else "source_changed_review_required",
+                        "decision_reason": str((decision or {}).get("rationale") or "")[:500] if current else "",
                         "preparation": json.loads(event["preparation_json"]) if event.get("preparation_json") else None,
                         "preparation_state": event.get("queue_state") or "unprepared"})
         if len(pending) >= max(1, min(int(limit), 50)):
