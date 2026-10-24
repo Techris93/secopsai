@@ -18,6 +18,7 @@ WRITE_ACTIONS.add("compare-releases")
 WRITE_ACTIONS.add("assistant-team-start")
 WRITE_ACTIONS.add("assistant-team-cancel")
 WRITE_ACTIONS.update({"artifact-backup", "artifact-restore"})
+WRITE_ACTIONS.add("resolution-configure")
 HOSTED_WRITE_ACTIONS = WRITE_ACTIONS - {"submission", "brief-publish", "source-collect", "queue-claim", "queue-heartbeat", "queue-complete", "queue-fail", "recovery-drill", "artifact-backup", "artifact-restore"}
 
 
@@ -118,6 +119,17 @@ def execute(action: str, payload: dict | None = None, *, actor: str = "", case_i
         return editorial.correct_edition(identity, payload, actor=actor, db_path=db_path)
     if action == "requirement":
         return governance.operational_requirement(payload, actor=actor, db_path=db_path)
+    if action == "resolution-configure":
+        # The guarded case-resolution policy lives in the research ledger, so
+        # the hosted console changes it here; only a registered operator may.
+        from secopsai.research_assurance import person
+        from secopsai.research_resolution import update_settings
+
+        person(actor, role="operator", db_path=db_path)
+        retract = payload.get("auto_retract_rules")
+        return update_settings(mode=payload.get("mode"), min_confidence=payload.get("min_confidence"),
+                               min_evidence_refs=payload.get("min_evidence_refs"), max_cases_per_cycle=payload.get("max_cases_per_cycle"),
+                               auto_retract_rules=None if retract is None else bool(retract), actor=actor, db_path=db_path)
     if action == "outcome":
         from secopsai.research_metrics import record_outcome
 
@@ -130,6 +142,16 @@ def execute(action: str, payload: dict | None = None, *, actor: str = "", case_i
     if action == "queue-complete":
         return intel.complete_job(identity, payload.get("lease_token", ""), payload.get("result", {}), db_path=db_path)
     return intel.fail_job(identity, payload.get("lease_token", ""), category=payload.get("category", "unknown"), retryable=payload.get("retryable") is True, db_path=db_path)
+
+
+def _resolution_view(*, db_path=None) -> dict:
+    """Current guarded case-resolution policy, for the hosted console."""
+    try:
+        from secopsai.research_resolution import get_settings
+        settings = get_settings(db_path=db_path)
+    except Exception as exc:  # status must never block the operation snapshot
+        return {"error_category": type(exc).__name__}
+    return {key: settings.get(key) for key in ("mode", "min_confidence", "min_evidence_refs", "max_cases_per_cycle", "auto_retract_rules", "updated_at", "updated_by")}
 
 
 def _daily_automation_view(*, db_path=None) -> dict:
@@ -225,7 +247,8 @@ def hosted_projection(*, db_path=None) -> dict:
                                     "daily_brief_assembly_enabled": os.environ.get("SECOPSAI_PRIMARY_INTEL") == "1",
                                     "team_dispatch": dispatches[0]["payload"] if dispatches else None,
                                     "team_cycle": auto_cycles[0]["payload"] if auto_cycles else None,
-                                    "daily": _daily_automation_view(db_path=db_path)},
+                                    "daily": _daily_automation_view(db_path=db_path),
+                                    "resolution": _resolution_view(db_path=db_path)},
                      "requirements": status["requirements"], "missing_requirements": status["missing_requirements"],
                      "reviewed_daily_brief_streak": status["reviewed_daily_brief_streak"], "fourteen_day_gate_met": status["fourteen_day_gate_met"],
                      "rpo_target_seconds": status["rpo_target_seconds"], "rto_target_seconds": status["rto_target_seconds"],
