@@ -570,7 +570,9 @@ def pending_public_reviews(*, db_path=None, limit: int = 20, event_ids: list[str
         event["payload"] = json.loads(row["payload_json"])
         event["source"] = json.loads(row["config_json"])
         decision = decisions.get(event["event_id"])
-        current = bool(decision and decision.get("event_fingerprint") == digest(event))
+        # Decisions fingerprint the canonical intel_event record; this row has
+        # queue columns as well, so compare against the same shape.
+        current = bool(decision and decision.get("event_fingerprint") == digest(intel_event(event["event_id"], db_path=db_path)))
         if current and decision.get("decision") in {"verified", "rejected"}:
             continue
         if event["snapshot_id"] not in verified_snapshots:
@@ -589,7 +591,7 @@ def pending_public_reviews(*, db_path=None, limit: int = 20, event_ids: list[str
                         "excerpt_truncated": len(excerpt) > 800, "published_at": event["published_at"],
                         "collected_at": event["collected_at"], "first_observed_at": event["first_observed_at"],
                         "source_sha256": event["sha256"],
-                        "review_status": (decision or {}).get("decision", "pending_review") if current else "source_changed_review_required",
+                        "review_status": "pending_review" if not decision else decision.get("decision", "pending_review") if current else "source_changed_review_required",
                         "preparation": json.loads(event["preparation_json"]) if event.get("preparation_json") else None,
                         "preparation_state": event.get("queue_state") or "unprepared"})
         if len(pending) >= max(1, min(int(limit), 50)):
@@ -597,7 +599,7 @@ def pending_public_reviews(*, db_path=None, limit: int = 20, event_ids: list[str
     return pending
 
 
-def verify_event(event_id: str, payload: dict, *, actor: str, db_path=None) -> dict:
+def verify_event(event_id: str, payload: dict, *, actor: str, db_path=None, automation: dict | None = None) -> dict:
     from secopsai.research_assurance import person
     reviewer = person(actor, role="technical_reviewer", db_path=db_path)
     event = intel_event(event_id, db_path=db_path)
@@ -622,6 +624,14 @@ def verify_event(event_id: str, payload: dict, *, actor: str, db_path=None) -> d
              "limitations": text(payload.get("limitations"), "limitations"), "primary_url": payload.get("primary_url", ""),
              "primary_event_id": payload.get("primary_event_id") or event_id, "attribution": "source_reported",
              "event_fingerprint": digest(event), "reviewer_id": actor, "reviewer_fingerprint": digest(reviewer)}
+    if automation:
+        # Decided by rules under the reviewer's recorded delegation, not read
+        # by them; the policy record and passed checks are kept with it.
+        from secopsai.research_auto_verify import policy
+        delegation = policy(db_path=db_path)
+        if not delegation or delegation["operator_id"] != actor or automation.get("policy_record_id") != delegation["record_id"]:
+            raise ValueError("automated verification requires the reviewer's current delegation")
+        value["automation"] = automation
     with transaction(db_path) as conn:
         record = append("intel_verification", value, actor=actor, fingerprint=digest(event), connection=conn)
         conn.execute("UPDATE research_operation_queue SET state=?, result_json=?, lease_token='', lease_until=NULL, updated_at=? WHERE kind='verify_intel' AND event_id=?",
