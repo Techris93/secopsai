@@ -102,8 +102,8 @@ def test_routine_items_are_decided_and_disputes_stay_with_the_human(db):
     assert got["php-adv"]["automation"]["checks"]["CVE-2026-109618"][0] == "confirmed"
     assert got["php-info"]["decision"] == "verified" and "session.upload_progress.enabled=0" in got["php-info"]["defensive_action"]
     assert got["php-rel"]["decision"] == "rejected", "release note for an already verified advisory"
-    assert got["gl-1"]["decision"] == "verified" and got["gl-2"]["decision"] == "rejected"
-    assert "duplicate of gl-1" in got["gl-2"]["rationale"]
+    assert got["gl-2"]["decision"] == "verified" and got["gl-1"]["decision"] == "rejected", "the newest copy is kept"
+    assert "duplicate of gl-2" in got["gl-1"]["rationale"]
     assert got["kev-ivanti"]["decision"] == "verified" and "discontinue use" in got["kev-ivanti"]["defensive_action"]
     assert got["thn-brick"]["decision"] == "needs_review", "news reports never verified automatically"
     assert got["php-fake"]["decision"] == "needs_review" and "not found" in got["php-fake"]["rationale"]
@@ -157,3 +157,20 @@ def test_unranked_registry_items_are_left_alone_and_earlier_auto_verifications_w
     assert outcome["withdrawn"] == 1
     assert decisions(db)["ghsa-noise"]["decision"] == "needs_review", "unranked item withdrawn from the brief"
     assert decisions(db)["php-adv"]["decision"] == "verified", "ranked items are still handled"
+
+
+def test_the_newest_copy_with_the_corrected_citation_is_kept(db):
+    old = "Informational advisory: Session upload progress"
+    text = ("We suggest you set session.upload_progress.enabled=0 until the next regular bugfix release, to fully protect from an "
+            "unlikely RCE vector. This setting was already listed as a mitigation in the advisory for CVE-2026-109619.")
+    queue(db)
+    with transaction(db) as conn:
+        conn.execute("DELETE FROM research_intel_events WHERE event_id='php-info'")
+    add(db, "php-info-old", "php", old, text, url="https://www.php.net/index.php", observed="2026-10-24T09:00:00Z")
+    add(db, "php-info-new", "php", old, text, url="https://www.php.net/index.php#2026-10-23-1", observed="2026-10-24T11:00:00Z")
+    delegate(db)
+    auto.run(cve_fetch, db_path=db)
+    got = decisions(db)
+    assert got["php-info-new"]["decision"] == "verified", got["php-info-new"]["rationale"]
+    assert got["php-info-new"]["primary_url"].endswith("#2026-10-23-1")
+    assert got["php-info-old"]["decision"] == "rejected" and "duplicate of php-info-new" in got["php-info-old"]["rationale"]

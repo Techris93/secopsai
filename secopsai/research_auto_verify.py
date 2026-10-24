@@ -212,8 +212,12 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
     ranked = ranked_event_ids(db_path=db_path)
     outcome["withdrawn"] = _withdraw_unranked(ranked, delegation, db_path=db_path)
     # Primary sources first, so a later repeat or release note is matched to them.
+    # Within one title the newest copy goes first: a re-collected entry carries
+    # the corrected citation (e.g. php.net's per-advisory link), so the older
+    # copy is the one rejected as its duplicate.
     queue = sorted((item for item in pending_public_reviews(db_path=db_path, limit=50, event_ids=list(ranked)) if item["event_id"] in ranked),
-                   key=lambda item: ("advisory" not in item["title"].casefold(), item["first_observed_at"]))
+                   key=lambda item: item["first_observed_at"], reverse=True)
+    queue.sort(key=lambda item: "advisory" not in item["title"].casefold())
     for item in queue[:limit]:
         if item["review_status"] not in {"pending_review", "source_changed_review_required"}:
             continue
