@@ -61,7 +61,7 @@ const INTELLIGENCE_ACTIONS = new Set([
   "recommend_remediation", "triage_artifact", "execute_specialist_work", "review_specialist_work",
 ]);
 const COORDINATOR_COMMANDS = new Set(["daily-run", "autopilot-run-now", "autopilot-rollback", "autopilot-rollback-tuning", "research-operation"]);
-const RESEARCH_OPERATION_ACTIONS = new Set(["person-register", "claim-assess", "prior-art", "experiment", "behavior", "case-review", "source-configure", "event-verify", "roster", "board", "brief-create", "brief-edit", "brief-approve", "brief-correct", "disclosure-milestone", "requirement", "outcome", "compare-releases", "assistant-team-start", "assistant-team-cancel"]);
+const RESEARCH_OPERATION_ACTIONS = new Set(["person-register", "claim-assess", "prior-art", "experiment", "behavior", "case-review", "source-configure", "event-verify", "roster", "board", "brief-create", "brief-edit", "brief-approve", "brief-correct", "disclosure-milestone", "requirement", "outcome", "compare-releases", "assistant-team-start", "assistant-team-cancel", "resolution-configure"]);
 
 export default {
   async fetch(request, env) {

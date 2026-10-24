@@ -1103,3 +1103,17 @@ def test_projection_carries_the_scheduled_daily_workflow_state(db):
     daily = hosted_projection(db_path=db)["automation"]["daily"]
     assert daily["latest_run"]["trigger"] == "research-worker" and daily["latest_run"]["steps"]
     assert daily["settings"]["last_run_at"] and daily["summary"]["last_run_at"]
+
+
+def test_hosted_console_can_set_the_case_resolution_policy(db):
+    from secopsai.research_operation import HOSTED_WRITE_ACTIONS, execute_hosted
+    from secopsai.research_resolution import get_settings
+
+    assert "resolution-configure" in HOSTED_WRITE_ACTIONS
+    execute_hosted("cmd-res", {"action": "resolution-configure", "actor": "operator.owner",
+                               "data": {"mode": "guarded", "min_confidence": 90, "min_evidence_refs": 4}}, db_path=db)
+    assert get_settings(db_path=db)["mode"] == "guarded"
+    with pytest.raises(ValueError):
+        execute_hosted("cmd-res-2", {"action": "resolution-configure", "actor": "bob", "data": {"mode": "off"}}, db_path=db)
+    assert get_settings(db_path=db)["mode"] == "guarded", "only an operator can change it"
+    assert hosted_projection(db_path=db)["automation"]["resolution"]["mode"] == "guarded"
