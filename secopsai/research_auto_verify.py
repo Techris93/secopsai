@@ -135,6 +135,52 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str]) -> di
             "cves": cves, "checks": {cve: [c["status"] for c in checks[cve]["claims"]] for cve in cves}}
 
 
+def ranked_event_ids(*, db_path=None) -> dict[str, None]:
+    """Events of the research desk's shortlist, in rank order (primary sources first)."""
+    from secopsai.research_desk import shortlist
+
+    ranked: dict[str, None] = {}
+    for item in shortlist(db_path=db_path, limit=50):
+        for event_id in [*(item.get("primary_event_ids") or []), *(item.get("event_ids") or [])]:
+            ranked.setdefault(event_id, None)
+    return ranked
+
+
+def _withdraw_unranked(ranked: dict[str, None], delegation: dict, *, db_path=None) -> list[str]:
+    """Undo this policy's own recent verifications of items the desk does not rank.
+
+    Items already in an approved or published brief are left as they are.
+    """
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    from secopsai.research_operation_store import read_connection
+    from secopsai.research_primary_intel import verify_event, intel_event
+
+    since = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat().replace("+00:00", "Z")
+    with read_connection(db_path) as conn:
+        released = {item["event_id"] for row in conn.execute(
+            "SELECT draft_json FROM research_editorial_editions WHERE state IN ('approved','published','corrected','retracted')")
+            for item in json.loads(row["draft_json"]).get("items", [])}
+    latest: dict[str, dict] = {}
+    for record in records("intel_verification", db_path=db_path, limit=10000):
+        latest.setdefault(record["payload"]["event_id"], record)
+    withdrawn = []
+    for event_id, record in latest.items():
+        value = record["payload"]
+        if (value.get("decision") != "verified" or not value.get("automation") or event_id in ranked
+                or event_id in released or record["created_at"] < since):
+            continue
+        event = intel_event(event_id, db_path=db_path)
+        reason = "not ranked by the research desk; routine registry item kept out of the brief"
+        verify_event(event_id, {"decision": "needs_review", "rationale": "Automated verification withdrawn: " + reason,
+                                "limitations": reason, "primary_url": event["payload"]["url"], "attribution": "source_reported"},
+                     actor=delegation["operator_id"], db_path=db_path,
+                     automation={"policy_record_id": delegation["record_id"], "rule": reason, "checks": {}})
+        withdrawn.append(event_id)
+    return withdrawn
+
+
 def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: int = 20) -> dict[str, Any]:
     """Decide pending public source items under the operator's policy."""
     from secopsai.research_desk import CLAIMS_KIND, check_claims, latest_claim_checks, signals
@@ -160,9 +206,13 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
             cves = signals(_text(prior["payload"].get("title")), _text(prior["payload"].get("excerpt")))["cves"][:8]
             if cves:
                 decided.setdefault(f"cves:{prior['source']['name']}:{','.join(cves)}", value["event_id"])
-    outcome = {"verified": [], "rejected": [], "needs_review": [], "waiting": [], "claim_checks": 0}
+    outcome = {"verified": [], "rejected": [], "needs_review": [], "waiting": [], "claim_checks": 0, "withdrawn": []}
+    # Only what the research desk ranks: the newest collected items are
+    # mostly routine registry advisories that do not belong in a brief.
+    ranked = ranked_event_ids(db_path=db_path)
+    outcome["withdrawn"] = _withdraw_unranked(ranked, delegation, db_path=db_path)
     # Primary sources first, so a later repeat or release note is matched to them.
-    queue = sorted(pending_public_reviews(db_path=db_path, limit=50),
+    queue = sorted((item for item in pending_public_reviews(db_path=db_path, limit=50, event_ids=list(ranked)) if item["event_id"] in ranked),
                    key=lambda item: ("advisory" not in item["title"].casefold(), item["first_observed_at"]))
     for item in queue[:limit]:
         if item["review_status"] not in {"pending_review", "source_changed_review_required"}:
