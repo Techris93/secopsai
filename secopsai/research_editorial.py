@@ -15,6 +15,7 @@ from secopsai.research_primary_intel import intel_event
 
 TIMEZONE = ZoneInfo("Europe/Istanbul")
 AUTOMATED_BRIEF_AUTHOR_ID = "secopsai-automated-research-desk"
+CARRY_OVER_DAYS = 3
 PRODUCTS = {"daily_brief", "technical_advisory", "research_report"}
 BOARD_STATES = {"proposed", "verifying", "vendor_contact", "embargoed", "technical_review", "approved", "published", "updating", "corrected", "retracted"}
 BRIEF_CHECKS = {"claims", "primary_sources", "affected_versions", "defensive_actions", "uncertainty", "privacy", "secrets", "sharing_rights", "licensing", "embargo", "credits", "conflicts"}
@@ -161,8 +162,11 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
         for row in conn.execute("SELECT edition_id,draft_json FROM research_editorial_editions WHERE state IN ('approved','published','corrected','retracted')"):
             if row["edition_id"] != identity:
                 released.update(item["event_id"] for item in json.loads(row["draft_json"]).get("items", []))
+    # Items verified today, plus recent verifications that missed their day's
+    # last assembly (e.g. verified just before midnight) and were never released.
+    carry_from = (start - timedelta(days=CARRY_OVER_DAYS)).astimezone(ZoneInfo("UTC")).isoformat().replace("+00:00", "Z")
     verified_today = [r["payload"]["event_id"] for r in records("intel_verification", db_path=db_path, limit=10000)
-                      if start_utc <= r["created_at"] < end_utc]
+                      if carry_from <= r["created_at"] < end_utc and r["payload"].get("decision") == "verified"]
     ids = [event_id for event_id in dict.fromkeys(verified_today + ids) if event_id not in released]
     items, roots = [], set()
     for event_id in ids:
