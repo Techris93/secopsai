@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -1065,3 +1065,22 @@ def test_hosted_actions_report_outcome_and_people_without_qualifications(db):
     assert any(a["error"] for a in desk["recent_actions"] if a["status"] == "refused")
     people = {p["person_id"]: p for p in desk["people"]}
     assert people["dave.new"]["roles"] == ["author"] and "qualification" not in people["dave.new"]
+
+
+def test_item_verified_today_joins_todays_brief_once(db):
+    from secopsai.research_primary_intel import source_url
+
+    roster(db)
+    value, _ = event(db)
+    with soc_store.connect(db) as conn:  # collected two days before review
+        conn.execute("UPDATE research_intel_events SET first_observed_at='2026-01-01T09:00:00Z' WHERE event_id=?", (value["event_id"],))
+    value = intel_event(value["event_id"], db_path=db)
+    verify(value, db)
+    today = datetime.now(ZoneInfo("Europe/Istanbul")).date().isoformat()
+    edition = create_daily_brief(date=today, db_path=db)
+    assert [item["event_id"] for item in edition["draft"]["items"]] == [value["event_id"]]
+    approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
+    other_day = (datetime.now(ZoneInfo("Europe/Istanbul")).date() + timedelta(days=1)).isoformat()
+    assert create_daily_brief(date=other_day, db_path=db)["draft"]["items"] == [], "an approved item is never published twice"
+    assert source_url("https://www.php.net/index.php#2026-10-23-1", reference=True).endswith("#2026-10-23-1")
+    assert source_url("https://www.php.net/feed.atom#x") == "https://www.php.net/feed.atom"

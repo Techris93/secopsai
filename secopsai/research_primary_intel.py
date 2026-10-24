@@ -62,7 +62,9 @@ def source_url(value: str, *, reference: bool = False) -> str:
     port = 443 if parsed.scheme == "https" else 80
     if parsed.scheme not in allowed_schemes or not parsed.hostname or parsed.username or parsed.password or parsed.port not in {None, port}:
         raise ValueError("source reference must be credential-free HTTP(S)" if reference else "source URL must be credential-free HTTPS")
-    return urlunparse((parsed.scheme, parsed.netloc.lower(), parsed.path or "/", "", parsed.query, ""))
+    # A publisher citation keeps its fragment: feeds such as php.net
+    # identify each advisory only by it (index.php#2026-10-23-1).
+    return urlunparse((parsed.scheme, parsed.netloc.lower(), parsed.path or "/", "", parsed.query, parsed.fragment if reference else ""))
 
 
 def configure_source(config: dict, *, actor: str, db_path=None) -> dict:

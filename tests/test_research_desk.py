@@ -203,3 +203,14 @@ def test_html_scores_vectors_and_non_advisories(db):
     add(db, "ovsx-gemdb", "ghsa", "gemtalksystems/gemdb 1.8.0",
         "Python with built-in transactional persistence. When you have critical, complex data, use GemDB.")
     assert not [item for item in desk.clusters(db_path=db, now=NOW) if "ovsx-gemdb" in item["event_ids"]], "a release listing is not an advisory"
+
+
+def test_release_headline_cvss_is_not_a_mismatch_for_its_other_cves():
+    def check(cve, status):
+        claims = [{"claim": f"{cve} exists", "status": "confirmed", "detail": "", "source": ""},
+                  {"claim": "CVSS 10.0", "status": status, "detail": "official score(s): 6.5" if status == "mismatch" else "", "source": ""}]
+        return {"cve": cve, "claims": claims, "needs_attention": [c for c in claims if c["status"] == "mismatch"]}
+    adjusted = desk._report_level_cvss([check("CVE-1", "confirmed"), check("CVE-2", "mismatch")])
+    assert adjusted[1]["claims"][1]["status"] == "lower_score" and adjusted[1]["needs_attention"] == []
+    still = desk._report_level_cvss([check("CVE-1", "mismatch"), check("CVE-2", "mismatch")])
+    assert all(c["needs_attention"] for c in still), "no CVE carries the reported score: a real mismatch"
