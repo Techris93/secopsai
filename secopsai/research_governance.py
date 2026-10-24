@@ -57,7 +57,7 @@ def disclosure_milestone(case_id: str, payload: dict, *, actor: str, db_path=Non
 def operational_requirement(payload: dict, *, actor: str, db_path=None) -> dict:
     person(actor, role="operator", db_path=db_path)
     kind = payload.get("kind")
-    if kind not in {"legal_signoff", "partner_agreement", "research_sensor_authorization", "commercial_conflict", "research_quality_evaluation", "solo_operation"}:
+    if kind not in {"legal_signoff", "partner_agreement", "research_sensor_authorization", "commercial_conflict", "research_quality_evaluation", "solo_operation", "automated_verification"}:
         raise ValueError("unsupported operational requirement")
     status = payload.get("status")
     if status not in {"accepted", "pending", "revoked"}:
@@ -74,6 +74,14 @@ def operational_requirement(payload: dict, *, actor: str, db_path=None) -> dict:
         for role in ("author", "editor", "technical_reviewer"):
             person(solo, role=role, db_path=db_path)
         value["operator_id"] = solo
+    if kind == "automated_verification":
+        # The reviewer delegates routine source verification to the
+        # deterministic rules in research_auto_verify; they stay accountable.
+        delegate = text(payload.get("operator_id"), "delegating reviewer", limit=160)
+        if delegate != actor:
+            raise ValueError("only the reviewer themselves can delegate their verification")
+        person(delegate, role="technical_reviewer", db_path=db_path)
+        value["operator_id"] = delegate
     if kind == "research_quality_evaluation":
         metrics = payload.get("metrics")
         if not isinstance(metrics, dict) or not all(k in metrics for k in ("corpus_sha256", "independent_labels", "held_out", "malicious_false_closures", "false_escalations", "abstention_rate", "disagreement_rate", "evidence_coverage", "latency", "cost", "acceptance_criteria", "uncertainty")):

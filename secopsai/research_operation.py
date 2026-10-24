@@ -154,6 +154,13 @@ def hosted_projection(*, db_path=None) -> dict:
     # Who is registered and what happened to recent dashboard actions; no
     # qualifications or other personal detail beyond the public display name.
     desk["people"] = registered_people(db_path=db_path)
+    from secopsai.research_auto_verify import policy as verification_policy
+    delegation = verification_policy(db_path=db_path)
+    automated = [r for r in records("intel_verification", db_path=db_path, limit=500) if r["payload"].get("automation")]
+    desk["automated_verification"] = {"active": bool(delegation), "operator_id": (delegation or {}).get("operator_id", ""),
+                                      "decisions": [{"event_id": r["payload"]["event_id"], "decision": r["payload"]["decision"],
+                                                     "reason": r["payload"]["automation"].get("rule", ""), "at": r["created_at"]}
+                                                    for r in automated[:20]]}
     desk["recent_actions"] = recent_actions(db_path=db_path)
     desk_event_ids = [event_id for item in desk["items"] for event_id in (item.get("primary_event_ids") or item.get("event_ids") or [])[:2]]
     pending_reviews = pending_public_reviews(db_path=db_path, limit=10, event_ids=desk_event_ids)

@@ -1084,3 +1084,12 @@ def test_item_verified_today_joins_todays_brief_once(db):
     assert create_daily_brief(date=other_day, db_path=db)["draft"]["items"] == [], "an approved item is never published twice"
     assert source_url("https://www.php.net/index.php#2026-10-23-1", reference=True).endswith("#2026-10-23-1")
     assert source_url("https://www.php.net/feed.atom#x") == "https://www.php.net/feed.atom"
+
+
+def test_a_verified_item_leaves_the_review_queue(db):
+    from secopsai.research_primary_intel import pending_public_reviews
+
+    value, _ = event(db)
+    assert [item["review_status"] for item in pending_public_reviews(db_path=db)] == ["pending_review"]
+    verify(value, db)
+    assert pending_public_reviews(db_path=db) == [], "a current decision must not read as 'source changed'"
