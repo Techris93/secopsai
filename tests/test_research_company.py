@@ -1117,3 +1117,17 @@ def test_hosted_console_can_set_the_case_resolution_policy(db):
         execute_hosted("cmd-res-2", {"action": "resolution-configure", "actor": "bob", "data": {"mode": "off"}}, db_path=db)
     assert get_settings(db_path=db)["mode"] == "guarded", "only an operator can change it"
     assert hosted_projection(db_path=db)["automation"]["resolution"]["mode"] == "guarded"
+
+
+def test_item_verified_yesterday_reaches_the_next_brief_if_never_released(db):
+    roster(db)
+    value, _ = event(db)
+    with soc_store.connect(db) as conn:
+        conn.execute("UPDATE research_intel_events SET first_observed_at='2026-01-01T09:00:00Z' WHERE event_id=?", (value["event_id"],))
+    value = intel_event(value["event_id"], db_path=db)
+    verify(value, db)
+    with soc_store.connect(db) as conn:  # verified late yesterday; yesterday's brief was already final
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat().replace("+00:00", "Z")
+        conn.execute("UPDATE research_operation_records SET created_at=? WHERE kind='intel_verification'", (yesterday,))
+    today = datetime.now(ZoneInfo("Europe/Istanbul")).date().isoformat()
+    assert [item["event_id"] for item in create_daily_brief(date=today, db_path=db)["draft"]["items"]] == [value["event_id"]]
