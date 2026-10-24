@@ -132,6 +132,28 @@ def execute(action: str, payload: dict | None = None, *, actor: str = "", case_i
     return intel.fail_job(identity, payload.get("lease_token", ""), category=payload.get("category", "unknown"), retryable=payload.get("retryable") is True, db_path=db_path)
 
 
+def _daily_automation_view(*, db_path=None) -> dict:
+    """Latest scheduled daily-workflow state.
+
+    Core records daily runs only when the dashboard starts one, so the
+    worker's own six-hourly runs reach the hosted console through this
+    snapshot instead.
+    """
+    try:
+        from secopsai.daily_automation import status as daily_status
+        value = daily_status(db_path=db_path, limit=1)
+    except Exception as exc:  # status must never block the operation snapshot
+        return {"error_category": type(exc).__name__}
+    latest = (value.get("runs") or [None])[0]
+    settings = {key: value["settings"].get(key) for key in ("enabled", "interval_seconds", "last_run_at", "next_run_at",
+                                                             "max_alert_reviews", "max_investigations", "max_candidate_cases",
+                                                             "auto_promote_candidates", "run_learning")}
+    return {"settings": settings, "summary": value.get("summary") or {},
+            "latest_run": {key: latest.get(key) for key in ("run_id", "trigger", "status", "started_at", "completed_at")}
+            | {"steps": [{"step_name": step.get("step_name"), "status": step.get("status")} for step in (latest.get("steps") or [])[:16]]}
+            if latest else None}
+
+
 def hosted_projection(*, db_path=None) -> dict:
     import os
     from secopsai.intelligence import minimize
@@ -202,7 +224,8 @@ def hosted_projection(*, db_path=None) -> dict:
                      "automation": {"assistant_team_autostart_enabled": os.environ.get("SECOPSAI_RESEARCH_ASSISTANT_AUTOSTART") == "1",
                                     "daily_brief_assembly_enabled": os.environ.get("SECOPSAI_PRIMARY_INTEL") == "1",
                                     "team_dispatch": dispatches[0]["payload"] if dispatches else None,
-                                    "team_cycle": auto_cycles[0]["payload"] if auto_cycles else None},
+                                    "team_cycle": auto_cycles[0]["payload"] if auto_cycles else None,
+                                    "daily": _daily_automation_view(db_path=db_path)},
                      "requirements": status["requirements"], "missing_requirements": status["missing_requirements"],
                      "reviewed_daily_brief_streak": status["reviewed_daily_brief_streak"], "fourteen_day_gate_met": status["fourteen_day_gate_met"],
                      "rpo_target_seconds": status["rpo_target_seconds"], "rto_target_seconds": status["rto_target_seconds"],
