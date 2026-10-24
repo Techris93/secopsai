@@ -1093,3 +1093,13 @@ def test_a_verified_item_leaves_the_review_queue(db):
     assert [item["review_status"] for item in pending_public_reviews(db_path=db)] == ["pending_review"]
     verify(value, db)
     assert pending_public_reviews(db_path=db) == [], "a current decision must not read as 'source changed'"
+
+
+def test_projection_carries_the_scheduled_daily_workflow_state(db):
+    from secopsai.daily_automation import run_cycle
+
+    assert hosted_projection(db_path=db)["automation"]["daily"]["latest_run"] is None
+    run_cycle(db_path=db, trigger="research-worker", force=True, surveillance_already_completed=True)
+    daily = hosted_projection(db_path=db)["automation"]["daily"]
+    assert daily["latest_run"]["trigger"] == "research-worker" and daily["latest_run"]["steps"]
+    assert daily["settings"]["last_run_at"] and daily["summary"]["last_run_at"]
