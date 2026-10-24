@@ -321,7 +321,10 @@ def approve_edition(edition_id: str, payload: dict, *, actor: str, db_path=None)
         raise ValueError("only a current verifying draft can be approved; published editions require the correction workflow")
     duty = edition["draft"].get("duty") or {}
     assigned_editors = {duty.get("editor_id"), duty.get("backup_id")} - {"", None}
-    if actor == edition["author_id"] or (assigned_editors and actor not in assigned_editors):
+    # In accepted solo operation the one named operator holds every duty, so
+    # the editor may also be the listed author; otherwise they must differ.
+    solo = actor == edition["author_id"] and _solo_shift(duty, db_path) and duty.get("editor_id") == actor
+    if (actor == edition["author_id"] and not solo) or (assigned_editors and actor not in assigned_editors):
         raise ValueError("release requires the assigned duty editor or backup, distinct from the author")
     checks = payload.get("checks")
     if payload.get("expected_fingerprint") != edition["fingerprint"]:
