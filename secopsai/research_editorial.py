@@ -151,8 +151,19 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
     decisions = _event_decisions(db_path=db_path)
     start = datetime.combine(day, datetime.min.time(), TIMEZONE)
     end = start + timedelta(days=1)
+    start_utc = start.astimezone(ZoneInfo("UTC")).isoformat().replace("+00:00", "Z")
+    end_utc = end.astimezone(ZoneInfo("UTC")).isoformat().replace("+00:00", "Z")
     with read_connection(db_path) as conn:
-        ids = [r["event_id"] for r in conn.execute("SELECT event_id FROM research_intel_events WHERE first_observed_at>=? AND first_observed_at<? ORDER BY first_observed_at DESC LIMIT 1000", (start.astimezone(ZoneInfo("UTC")).isoformat().replace("+00:00", "Z"), end.astimezone(ZoneInfo("UTC")).isoformat().replace("+00:00", "Z")))]
+        ids = [r["event_id"] for r in conn.execute("SELECT event_id FROM research_intel_events WHERE first_observed_at>=? AND first_observed_at<? ORDER BY first_observed_at DESC LIMIT 1000", (start_utc, end_utc))]
+        # An item verified today belongs in today's edition even when it was
+        # collected earlier; otherwise a late review could never be published.
+        released = set()
+        for row in conn.execute("SELECT edition_id,draft_json FROM research_editorial_editions WHERE state IN ('approved','published','corrected','retracted')"):
+            if row["edition_id"] != identity:
+                released.update(item["event_id"] for item in json.loads(row["draft_json"]).get("items", []))
+    verified_today = [r["payload"]["event_id"] for r in records("intel_verification", db_path=db_path, limit=10000)
+                      if start_utc <= r["created_at"] < end_utc]
+    ids = [event_id for event_id in dict.fromkeys(verified_today + ids) if event_id not in released]
     items, roots = [], set()
     for event_id in ids:
         decision = decisions.get(event_id, {})

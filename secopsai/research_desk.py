@@ -396,8 +396,26 @@ def shortlist(*, db_path=None, now: Optional[datetime] = None, limit: int = 10, 
     checks = latest_claim_checks(db_path=db_path)
     items = [item for item in clusters(db_path=db_path, now=now) if item["score"] >= minimum_score][:max(1, min(limit, 50))]
     for item in items:
-        item["claims"] = [checks[cve] for cve in item["cves"] if cve in checks]
+        item["claims"] = _report_level_cvss([checks[cve] for cve in item["cves"] if cve in checks])
     return items
+
+
+def _report_level_cvss(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A release's headline CVSS belongs to its worst CVE, not to every CVE it lists.
+
+    When one CVE in the report confirms the reported score, the others' lower
+    official scores are expected, not a mismatch needing attention.
+    """
+    if len(checks) < 2 or not any(c["status"] == "confirmed" and c["claim"].startswith("CVSS ")
+                                  for check in checks for c in check["claims"]):
+        return checks
+    adjusted = []
+    for check in checks:
+        claims = [{**c, "status": "lower_score", "detail": "the reported score belongs to another CVE in this report; " + c["detail"]}
+                  if c["status"] == "mismatch" and c["claim"].startswith("CVSS ") else c for c in check["claims"]]
+        adjusted.append({**check, "claims": claims,
+                         "needs_attention": [c for c in claims if c["status"] in {"not_found", "not_published", "mismatch"}]})
+    return adjusted
 
 
 # ---------------------------------------------------------------- claims check
