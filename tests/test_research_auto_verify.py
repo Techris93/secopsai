@@ -26,7 +26,7 @@ def db(tmp_path):
     soc_store.init_db(path)
     with transaction(path) as conn:
         for key, (name, source_class) in SOURCES.items():
-            config = {"source_id": key, "name": name, "url": f"https://{key}.example/feed", "parser": "rss",
+            config = {"source_id": key, "name": name, "url": f"https://{key}.example/feed", "parser": "cisa_kev" if key == "kev" else "rss",
                       "source_class": source_class, "sharing": "public", "license": "unknown", "interval_seconds": 3600, "enabled": True}
             conn.execute("INSERT INTO research_intel_sources(source_id,config_json) VALUES (?,?)", (key, json.dumps(config)))
             conn.execute("INSERT INTO research_source_snapshots VALUES (?,?,?,?,?,?,?)",
@@ -50,16 +50,17 @@ def queue(db):
     add(db, "php-rel", "php", "PHP 8.5.12 Released!",
         "This is a security release fixing two critical vulnerabilities (CVE-2026-109618, CVE-2026-109619).", url="https://www.php.net/archive/2026.php#2026-10-21-4")
     add(db, "php-info", "php", "Informational advisory: Session upload progress",
-        "We suggest you set <code>session.upload_progress.enabled=0</code> until the next regular bugfix release, to fully protect from an unlikely RCE vector.",
+        "We suggest you set <code>session.upload_progress.enabled=0</code> until the next regular bugfix release, to fully protect from an unlikely RCE vector."
+        " This setting was already listed as a mitigation in the advisory for CVE-2026-109619.",
         url="https://www.php.net/archive/2026.php#2026-10-23-1")
     gitlab = "https://docs.gitlab.com/releases/patches/patch-release-gitlab-19-5-1-released/"
     add(db, "gl-1", "gitlab", "GitLab Critical Patch Release: 19.5.1, 19.4.3, 19.3.6", "Fixes CVE-2026-110264.", url=gitlab)
     add(db, "gl-2", "gitlab", "GitLab Critical Patch Release: 19.5.1, 19.4.3, 19.3.6", "Fixes CVE-2026-110264.", url=gitlab, observed="2026-10-24T11:00:00Z")
     add(db, "kev-ivanti", "kev", "CVE-2026-104935: Ivanti Connect Secure Authentication Bypass",
-        "Ivanti Connect Secure contains an authentication bypass.", required_action="Apply mitigations per vendor instructions or discontinue use.")
+        "Ivanti Connect Secure contains an authentication bypass.", catalog_added_at="2026-10-23T00:00:00Z", required_action="Apply mitigations per vendor instructions or discontinue use.")
     add(db, "thn-brick", "thn", "Attackers Exploit CVSS 10.0 Bricksforge WordPress Flaw", "CVE-2026-85097 exploited.")
-    add(db, "php-fake", "php", "Security advisory: session handler", "CVE-2026-115560 is fixed in 8.5.13.")
-    add(db, "php-nofix", "php", "Security advisory: heads-up", "A vulnerability CVE-2026-109619 is being investigated.")
+    add(db, "php-fake", "php", "Security advisory: session handler", "CVE-2026-115560 (CVSS 9.2) allows remote code execution and is fixed in 8.5.13.")
+    add(db, "php-nofix", "php", "Security advisory: heads-up", "A remote code execution vulnerability CVE-2026-109619 (CVSS 9.2) is being investigated.")
 
 
 def cve_fetch(url):
@@ -141,3 +142,18 @@ def test_only_the_reviewer_can_delegate_and_a_revoked_policy_stops_automation(db
     operational_requirement({"kind": "automated_verification", "status": "revoked", "operator_id": OPERATOR, "responsible_person": "Owner",
                              "scope": "x", "reference": "x", "recorded_at": "2026-10-24T13:00:00Z", "limitations": "x"}, actor=OPERATOR, db_path=db)
     assert auto.run(cve_fetch, db_path=db)["status"] == "disabled"
+
+
+def test_unranked_registry_items_are_left_alone_and_earlier_auto_verifications_withdrawn(db):
+    queue(db)
+    add(db, "ghsa-noise", "php", "Some library: minor issue", "A minor issue fixed in 1.2.3.", url="https://php.example/noise")
+    delegate(db)
+    from secopsai.research_primary_intel import verify_event
+    delegation = auto.policy(db_path=db)
+    verify_event("ghsa-noise", {"decision": "verified", "rationale": "Automated verification: old rule", "summary": "x", "defensive_action": "Upgrade to 1.2.3.",
+                                "limitations": "x", "primary_url": "https://php.example/noise", "primary_event_id": "ghsa-noise", "attribution": "source_reported"},
+                 actor=OPERATOR, db_path=db, automation={"policy_record_id": delegation["record_id"], "rule": "old", "checks": {}})
+    outcome = auto.run(cve_fetch, db_path=db)
+    assert outcome["withdrawn"] == 1
+    assert decisions(db)["ghsa-noise"]["decision"] == "needs_review", "unranked item withdrawn from the brief"
+    assert decisions(db)["php-adv"]["decision"] == "verified", "ranked items are still handled"
