@@ -282,6 +282,14 @@ def _set_run(run_id: str, *, status: str, stage: str, db_path: Optional[str],
              retryable: bool = True, evidence: Optional[Dict[str, Any]] = None,
              decision: Optional[Dict[str, Any]] = None, completed: bool = False) -> None:
     now = soc_store.utc_now()
+    # ``updated_at`` measures progress. A re-check that leaves the status and
+    # stage unchanged keeps it, so a stalled run can age out and release its
+    # slot (reconcile_due_runs) instead of looking fresh every worker cycle.
+    with closing(soc_store.read_connect(db_path)) as connection:
+        previous = connection.execute(
+            "SELECT status, current_stage, updated_at FROM investigation_autopilot_runs WHERE run_id=?", (run_id,)
+        ).fetchone()
+    progressed_at = previous["updated_at"] if previous and previous["status"] == status and previous["current_stage"] == stage and previous["updated_at"] else now
     with sqlite_writer_lock(db_path):
         with closing(soc_store.connect(db_path)) as connection:
             connection.execute(
@@ -295,7 +303,7 @@ def _set_run(run_id: str, *, status: str, stage: str, db_path: Optional[str],
                 (
                     status, stage, status, stage, case_id, pipeline_id, blocker_code,
                     blocker_message, int(retryable), _json(evidence) if evidence is not None else None,
-                    _json(decision) if decision is not None else None, now, int(completed), now, now, run_id,
+                    _json(decision) if decision is not None else None, now, int(completed), now, progressed_at, run_id,
                 ),
             )
             connection.commit()

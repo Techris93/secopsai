@@ -301,3 +301,29 @@ def test_reconcile_due_runs_releases_review_ready_and_stale_slots(tmp_path, monk
     assert current["status"] == "evidence_gap"
     assert current["blocker_code"] == "stale_active_investigation"
     assert current["retryable"] is True
+
+
+def test_a_stalled_model_wait_ages_out_across_worker_cycles(tmp_path, monkeypatch):
+    """Re-checking an unchanged run must not refresh its age (ghost occupancy)."""
+    db = str(tmp_path / "soc.db")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(tmp_path / "quarantine"))
+    soc_store.persist_findings([_finding()], source="secopsai-supply-chain", db_path=db)
+    real_start = start_investigation_pipeline
+    monkeypatch.setattr(
+        investigation_autopilot, "start_investigation_pipeline",
+        lambda case_id, **kwargs: real_start(case_id, **kwargs, fetcher=_fetcher()),
+    )
+    investigation_autopilot.enqueue_finding("SCM-AUTOPILOT-1", db_path=db)
+    run = investigation_autopilot.run_due(db_path=db)["runs"][0]
+    assert run["status"] == "awaiting_model"
+    stalled_since = "2020-01-01T00:00:00Z"
+    with soc_store.connect(db) as connection:
+        connection.execute("UPDATE investigation_autopilot_runs SET updated_at=? WHERE run_id=?", (stalled_since, run["run_id"]))
+        connection.commit()
+    # One worker cycle re-checks the pipeline; nothing changed.
+    investigation_autopilot.reconcile_pipeline(run["pipeline_id"], db_path=db)
+    assert investigation_autopilot.get_run(run["run_id"], db_path=db)["updated_at"] == stalled_since
+    # The next cycle sees six-plus hours without progress and releases the slot.
+    released = investigation_autopilot.reconcile_due_runs(db_path=db)
+    assert run["run_id"] in released["stale"]
+    assert investigation_autopilot.get_run(run["run_id"], db_path=db)["status"] == "evidence_gap"
