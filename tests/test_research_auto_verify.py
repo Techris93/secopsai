@@ -192,3 +192,55 @@ def test_cisa_entries_sharing_the_catalog_url_are_not_duplicates_and_wrong_rejec
     got = decisions(db)
     assert got["kev-a"]["decision"] == "verified"
     assert got["kev-b"]["decision"] == "verified", "the URL-only rejection is decided again"
+
+
+def test_an_item_is_never_a_duplicate_of_itself_and_the_redo_settles(db):
+    feed = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    queue(db)
+    add(db, "kev-x", "kev", "CVE-2026-110936: Vendor product remote code execution", "CVE-2026-110936 allows remote code execution.", url=feed,
+        catalog_added_at="2026-10-23T00:00:00Z", required_action="Apply mitigations per vendor instructions or discontinue use.")
+    delegate(db)
+    from secopsai.research_primary_intel import verify_event
+    delegation = auto.policy(db_path=db)
+    common = {"limitations": "x", "primary_url": feed, "primary_event_id": "kev-x", "attribution": "source_reported"}
+    verify_event("kev-x", {"decision": "verified", "rationale": "Automated verification: ok", "summary": "s", "defensive_action": "Apply.", **common},
+                 actor=OPERATOR, db_path=db, automation={"policy_record_id": delegation["record_id"], "rule": "ok", "checks": {}})
+    verify_event("kev-x", {"decision": "rejected", "rationale": "Automated verification: duplicate of kev-x (same citation)", **common},
+                 actor=OPERATOR, db_path=db, automation={"policy_record_id": delegation["record_id"], "rule": "duplicate of kev-x (same citation)", "checks": {}})
+    auto.run(cve_fetch, db_path=db)
+    assert decisions(db)["kev-x"]["decision"] == "verified", decisions(db)["kev-x"]["rationale"]
+    count = len(records("intel_verification", db_path=db, limit=1000))
+    auto.run(cve_fetch, db_path=db)
+    assert len(records("intel_verification", db_path=db, limit=1000)) == count, "no decision churn on the next run"
+
+
+def test_a_release_headline_score_does_not_block_its_other_cves(db):
+    queue(db)
+    add(db, "gl-multi", "gitlab", "GitLab Critical Patch Release: 19.5.1, 19.4.3",
+        "We released 19.5.1 and 19.4.3. CVE-2026-110264 (CVSS 10.0) and CVE-2026-105711 are fixed in these versions.")
+    delegate(db)
+
+    def fetch(url):
+        score = 10.0 if "110264" in url else 6.5
+        if "cveawg" in url:
+            return json.dumps({"cveMetadata": {"state": "PUBLISHED"}, "containers": {"cna": {"metrics": [{"cvssV3_1": {"baseScore": score}}]}}}).encode()
+        return json.dumps({"vulnerabilities": []}).encode()
+
+    auto.run(fetch, db_path=db)
+    assert decisions(db)["gl-multi"]["decision"] == "verified", decisions(db)["gl-multi"]["rationale"]
+
+
+def test_an_old_cvss_mismatch_decision_is_decided_again_once(db):
+    queue(db)
+    delegate(db)
+    from secopsai.research_primary_intel import verify_event
+    delegation = auto.policy(db_path=db)
+    rule = "official records disagree: CVSS 9.2: mismatch"
+    verify_event("php-adv", {"decision": "needs_review", "rationale": "Automated verification: " + rule, "limitations": rule,
+                             "primary_url": "https://www.php.net/archive/2026.php#2026-10-21-5", "attribution": "source_reported"},
+                 actor=OPERATOR, db_path=db, automation={"policy_record_id": delegation["record_id"], "rule": rule, "checks": {}})
+    auto.run(cve_fetch, db_path=db)
+    assert decisions(db)["php-adv"]["decision"] == "verified"
+    count = len(records("intel_verification", db_path=db, limit=1000))
+    auto.run(cve_fetch, db_path=db)
+    assert len(records("intel_verification", db_path=db, limit=1000)) == count
