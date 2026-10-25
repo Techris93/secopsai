@@ -88,16 +88,23 @@ def _defensive_action(title: str, excerpt: str, payload: dict, rules: list[dict]
     return " ".join(parts)
 
 
+def citation_key(event: dict) -> str:
+    """Citation plus the item's own identifier: feeds such as CISA KEV cite one
+    catalog URL for every entry, so the URL alone does not identify an item."""
+    payload = event["payload"]
+    return f"{payload.get('url') or ''}|{event.get('external_id') or payload.get('external_id') or event['event_id']}"
+
+
 def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str]) -> dict[str, Any]:
     from secopsai.research_desk import detections_for, signals
 
     payload, source = event["payload"], event["source"]
     title, excerpt = _text(payload.get("title")), _text(payload.get("excerpt"))
-    citation_key = str(payload.get("url") or "")
+    cited = citation_key(event)
     title_key = f"{event['source_id']}|{title.casefold()}"
-    for key in (citation_key, title_key):
+    for key in (cited, title_key):
         if key and key in decided:
-            return {"decision": "rejected", "reason": f"duplicate of {decided[key]} (same {'citation' if key == citation_key else 'title'})"}
+            return {"decision": "rejected", "reason": f"duplicate of {decided[key]} (same {'citation' if key == cited else 'title'})"}
     if source.get("source_class") not in AUTOMATED_SOURCE_CLASSES:
         return {"decision": "needs_review", "reason": "news report: verify against its primary source before it can be cited"}
     found = signals(title, excerpt)
@@ -192,15 +199,23 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
     operator = delegation["operator_id"]
     checks = latest_claim_checks(db_path=db_path)
     decided: dict[str, str] = {}
+    redo: list[str] = []
+    latest_seen: set[str] = set()
     for record in records("intel_verification", db_path=db_path, limit=10000):
         value = record["payload"]
+        first = value["event_id"] not in latest_seen
+        latest_seen.add(value["event_id"])
+        if (first and value.get("decision") == "rejected" and value.get("automation")
+                and "(same citation)" in str((value.get("automation") or {}).get("rule", ""))):
+            redo.append(value["event_id"])  # decided under the URL-only rule; decide again
+            continue
         if value.get("decision") not in {"verified", "rejected"}:
             continue
         try:
             prior = intel_event(value["event_id"], db_path=db_path)
         except ValueError:
             continue
-        decided.setdefault(str(prior["payload"].get("url") or ""), value["event_id"])
+        decided.setdefault(citation_key(prior), value["event_id"])
         decided.setdefault(f"{prior['source_id']}|{_text(prior['payload'].get('title')).casefold()}", value["event_id"])
         if value.get("decision") == "verified":
             cves = signals(_text(prior["payload"].get("title")), _text(prior["payload"].get("excerpt")))["cves"][:8]
@@ -218,7 +233,8 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
     queue = sorted((item for item in pending_public_reviews(db_path=db_path, limit=50, event_ids=list(ranked)) if item["event_id"] in ranked),
                    key=lambda item: item["first_observed_at"], reverse=True)
     queue.sort(key=lambda item: "advisory" not in item["title"].casefold())
-    for item in queue[:limit]:
+    redo_items = [{"event_id": event_id, "review_status": "pending_review"} for event_id in redo if event_id in ranked]
+    for item in redo_items + queue[:limit]:
         if item["review_status"] not in {"pending_review", "source_changed_review_required"}:
             continue
         event = intel_event(item["event_id"], db_path=db_path)
@@ -243,7 +259,7 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
         verify_event(event["event_id"], payload, actor=operator, automation=automation, db_path=db_path)
         outcome[result["decision"]].append(event["event_id"])
         if result["decision"] in {"verified", "rejected"}:
-            decided.setdefault(str(event["payload"].get("url") or ""), event["event_id"])
+            decided.setdefault(citation_key(event), event["event_id"])
             decided.setdefault(f"{event['source_id']}|{_text(event['payload'].get('title')).casefold()}", event["event_id"])
             if result["decision"] == "verified" and result.get("cves"):
                 decided.setdefault(f"cves:{event['source']['name']}:{','.join(result['cves'])}", event["event_id"])
