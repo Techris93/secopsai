@@ -745,6 +745,19 @@ def _open_run(*, collector: Dict[str, Any], cursor_before: str, db_path: Optiona
     return run_id, None
 
 
+def _mark_run_interrupted(run_id: str, reason: str, *, db_path: Optional[str]) -> None:
+    try:
+        with sqlite_writer_lock(db_path):
+            with closing(soc_store.connect(db_path)) as connection:
+                with _write_transaction(connection, db_path):
+                    connection.execute(
+                        "UPDATE registry_ingestion_runs SET status = 'interrupted', completed_at = ?, error_message = ? WHERE run_id = ? AND status = 'running'",
+                        (_format_ts(_utcnow()), reason[:500], run_id),
+                    )
+    except Exception:
+        pass  # the restored-snapshot recovery remains the backstop
+
+
 def _close_run(
     *,
     collector: Dict[str, Any],
@@ -2517,106 +2530,115 @@ def _run_registry_collector_unlocked(
     if rejection is not None:
         return rejection
 
-    if collector["ecosystem"] == "packagist":
-        outcome = _ingest_packagist_changes(
-            collector=collector,
-            cursor_before=cursor_before,
-            fetcher=fetcher,
-            run_id=run_id,
-            db_path=db_path,
-        )
-    elif collector["ecosystem"] == "pypi":
-        outcome = _ingest_pypi_index(
-            collector=collector,
-            cursor_before=cursor_before,
-            fetcher=fetcher,
-            run_id=run_id,
-            db_path=db_path,
-            max_diff_events=max(1, int(max_diff_events)),
-        )
-    elif collector["ecosystem"] == "rubygems":
-        outcome = _ingest_rubygems_timeframe(
-            collector=collector,
-            cursor_before=cursor_before,
-            max_pages=max_pages,
-            fetcher=fetcher,
-            run_id=run_id,
-            db_path=db_path,
-        )
-    elif collector["ecosystem"] == "mcp-registry":
-        outcome = _ingest_mcp_registry(
-            collector=collector,
-            cursor_before=cursor_before,
-            max_pages=max_pages,
-            fetcher=fetcher,
-            run_id=run_id,
-            db_path=db_path,
-        )
-    elif collector["ecosystem"] == "vscode-marketplace":
-        outcome = _ingest_vscode_recent(
-            collector=collector,
-            cursor_before=cursor_before,
-            max_pages=max_pages,
-            fetcher=fetcher,
-            run_id=run_id,
-            db_path=db_path,
-        )
-    elif collector["ecosystem"] == "crates":
-        outcome = _ingest_crates_recent(
-            collector=collector,
-            cursor_before=cursor_before,
-            max_pages=max_pages,
-            fetcher=fetcher,
-            run_id=run_id,
-            db_path=db_path,
-        )
-    elif collector["ecosystem"] == "npm":
-        outcome = _ingest_npm_changes(
-            collector=collector,
-            cursor_before=cursor_before,
-            max_pages=max_pages,
-            fetcher=fetcher,
-            run_id=run_id,
-            db_path=db_path,
-        )
-    elif collector["ecosystem"] == "go":
-        outcome = _ingest_go_index(
-            collector=collector,
-            cursor_before=cursor_before,
-            max_pages=max_pages,
-            fetcher=fetcher,
-            run_id=run_id,
-            db_path=db_path,
-        )
-    elif collector["ecosystem"] == "maven":
-        outcome = _ingest_maven_solr(
-            collector=collector,
-            cursor_before=cursor_before,
-            max_pages=max_pages,
-            fetcher=fetcher,
-            run_id=run_id,
-            db_path=db_path,
-        )
-    elif collector["ecosystem"] == "open-vsx":
-        outcome = _ingest_openvsx_search(
-            collector=collector,
-            cursor_before=cursor_before,
-            max_pages=max_pages,
-            fetcher=fetcher,
-            run_id=run_id,
-            db_path=db_path,
-            max_diff_events=max(1, int(max_diff_events)),
-        )
-    else:
-        outcome = _ingest_nuget_catalog(
-            collector=collector,
-            cursor_before=cursor_before,
-            max_pages=max_pages,
-            fetch_leaves=fetch_leaves,
-            fetcher=fetcher,
-            run_id=run_id,
-            db_path=db_path,
-        )
+    # A worker time budget (WorkerShutdown, a BaseException) or an unexpected
+    # error can stop ingestion mid-run. Close the run as interrupted so it
+    # never holds the collector's single 'running' slot; otherwise every later
+    # attempt in the same worker run is rejected and the source goes stale.
+    try:
+        if collector["ecosystem"] == "packagist":
+            outcome = _ingest_packagist_changes(
+                collector=collector,
+                cursor_before=cursor_before,
+                fetcher=fetcher,
+                run_id=run_id,
+                db_path=db_path,
+            )
+        elif collector["ecosystem"] == "pypi":
+            outcome = _ingest_pypi_index(
+                collector=collector,
+                cursor_before=cursor_before,
+                fetcher=fetcher,
+                run_id=run_id,
+                db_path=db_path,
+                max_diff_events=max(1, int(max_diff_events)),
+            )
+        elif collector["ecosystem"] == "rubygems":
+            outcome = _ingest_rubygems_timeframe(
+                collector=collector,
+                cursor_before=cursor_before,
+                max_pages=max_pages,
+                fetcher=fetcher,
+                run_id=run_id,
+                db_path=db_path,
+            )
+        elif collector["ecosystem"] == "mcp-registry":
+            outcome = _ingest_mcp_registry(
+                collector=collector,
+                cursor_before=cursor_before,
+                max_pages=max_pages,
+                fetcher=fetcher,
+                run_id=run_id,
+                db_path=db_path,
+            )
+        elif collector["ecosystem"] == "vscode-marketplace":
+            outcome = _ingest_vscode_recent(
+                collector=collector,
+                cursor_before=cursor_before,
+                max_pages=max_pages,
+                fetcher=fetcher,
+                run_id=run_id,
+                db_path=db_path,
+            )
+        elif collector["ecosystem"] == "crates":
+            outcome = _ingest_crates_recent(
+                collector=collector,
+                cursor_before=cursor_before,
+                max_pages=max_pages,
+                fetcher=fetcher,
+                run_id=run_id,
+                db_path=db_path,
+            )
+        elif collector["ecosystem"] == "npm":
+            outcome = _ingest_npm_changes(
+                collector=collector,
+                cursor_before=cursor_before,
+                max_pages=max_pages,
+                fetcher=fetcher,
+                run_id=run_id,
+                db_path=db_path,
+            )
+        elif collector["ecosystem"] == "go":
+            outcome = _ingest_go_index(
+                collector=collector,
+                cursor_before=cursor_before,
+                max_pages=max_pages,
+                fetcher=fetcher,
+                run_id=run_id,
+                db_path=db_path,
+            )
+        elif collector["ecosystem"] == "maven":
+            outcome = _ingest_maven_solr(
+                collector=collector,
+                cursor_before=cursor_before,
+                max_pages=max_pages,
+                fetcher=fetcher,
+                run_id=run_id,
+                db_path=db_path,
+            )
+        elif collector["ecosystem"] == "open-vsx":
+            outcome = _ingest_openvsx_search(
+                collector=collector,
+                cursor_before=cursor_before,
+                max_pages=max_pages,
+                fetcher=fetcher,
+                run_id=run_id,
+                db_path=db_path,
+                max_diff_events=max(1, int(max_diff_events)),
+            )
+        else:
+            outcome = _ingest_nuget_catalog(
+                collector=collector,
+                cursor_before=cursor_before,
+                max_pages=max_pages,
+                fetch_leaves=fetch_leaves,
+                fetcher=fetcher,
+                run_id=run_id,
+                db_path=db_path,
+            )
+
+    except BaseException as exc:
+        _mark_run_interrupted(run_id, f"ingestion stopped: {type(exc).__name__}", db_path=db_path)
+        raise
 
     result = _close_run(collector=collector, run_id=run_id, cursor_before=cursor_before, outcome=outcome, db_path=db_path)
     if outcome.get("anomalies"):
