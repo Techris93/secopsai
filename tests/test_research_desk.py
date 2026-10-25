@@ -214,3 +214,22 @@ def test_release_headline_cvss_is_not_a_mismatch_for_its_other_cves():
     assert adjusted[1]["claims"][1]["status"] == "lower_score" and adjusted[1]["needs_attention"] == []
     still = desk._report_level_cvss([check("CVE-1", "mismatch"), check("CVE-2", "mismatch")])
     assert all(c["needs_attention"] for c in still), "no CVE carries the reported score: a real mismatch"
+
+
+def test_solo_operator_can_approve_a_brief_they_are_listed_as_author_of(db):
+    from secopsai.research_editorial import BRIEF_CHECKS, approve_edition, configure_roster, create_daily_brief
+    from secopsai.research_governance import operational_requirement
+
+    register_person({"person_id": "operator.owner", "display_name": "Owner", "roles": ["operator", "author", "editor", "technical_reviewer"],
+                     "qualification": "Synthetic solo operator"}, actor="operator.owner", db_path=db)
+    operational_requirement({"kind": "solo_operation", "status": "accepted", "operator_id": "operator.owner", "responsible_person": "Owner",
+                             "scope": "briefs", "reference": "test", "recorded_at": "2026-10-22T12:00:00Z", "limitations": "single reviewer"},
+                            actor="operator.owner", db_path=db)
+    configure_roster({"days": {str(d): {"author_id": "operator.owner", "editor_id": "operator.owner", "backup_id": "operator.owner"} for d in range(7)}},
+                     actor="operator.owner", db_path=db)
+    edition = create_daily_brief(date="2026-10-24", db_path=db)
+    assert edition["author_id"] == "operator.owner"
+    approved = approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked",
+                                                       "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]},
+                               actor="operator.owner", db_path=db)
+    assert approved["state"] == "approved"
