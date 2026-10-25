@@ -388,6 +388,56 @@ def due_collectors(*, db_path: Optional[str] = None, now: Optional[datetime] = N
     return due
 
 
+COLLECTOR_TIME_MARGIN_SECONDS = 30
+COLLECTOR_DEFAULT_SECONDS = 60
+
+
+def seconds_left() -> Optional[float]:
+    """Seconds until the supervisor's time budget stops this worker, if bounded."""
+    raw = os.environ.get("SECOPSAI_WORKER_DEADLINE_EPOCH", "")
+    try:
+        return float(raw) - time.time() if raw else None
+    except ValueError:
+        return None
+
+
+def collector_time_needed(collector_id: str, *, db_path: Optional[str] = None) -> float:
+    """Typical duration of this collector's recent completed runs, plus a margin.
+
+    Uses the slowest of the last five completed runs so a long walk (Open VSX
+    enumerates hundreds of pages) is not started with seconds to spare.
+    """
+    with closing(soc_store.read_connect(db_path)) as connection:
+        rows = connection.execute(
+            """SELECT started_at, completed_at FROM registry_ingestion_runs
+               WHERE collector_id = ? AND status = 'completed' AND completed_at IS NOT NULL
+               ORDER BY started_at DESC LIMIT 5""",
+            (collector_id,),
+        ).fetchall()
+    durations = []
+    for row in rows:
+        started, completed = _parse_started_at(row["started_at"]), _parse_started_at(row["completed_at"])
+        if started and completed and completed >= started:
+            durations.append((completed - started).total_seconds())
+    return (max(durations) if durations else COLLECTOR_DEFAULT_SECONDS) + COLLECTOR_TIME_MARGIN_SECONDS
+
+
+def budget_deferral(item: Dict[str, Any], *, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """A deferral result when the collector cannot finish before the time budget.
+
+    Starting it anyway would be cut off mid-run; deferred, it stays due and
+    runs at the start of a later cycle or run.
+    """
+    left = seconds_left()
+    if left is None:
+        return None
+    needed = collector_time_needed(item["collector_id"], db_path=db_path)
+    if left >= needed:
+        return None
+    return {"ecosystem": item["ecosystem"], "status": "deferred_budget", "collector_id": item["collector_id"],
+            "seconds_left": round(left), "seconds_needed": round(needed)}
+
+
 def _run_collector_with_transient_retry(
     *, ecosystem: str, max_pages: int, db_path: Optional[str], fetcher: SafeFetcher,
     retry_budget: int,
@@ -518,6 +568,10 @@ def _run_worker_cycle_unlocked(
         if not item["due"]:
             continue
         if selected and item["ecosystem"] not in selected:
+            continue
+        deferral = budget_deferral(item, db_path=db_path)
+        if deferral:
+            results.append(deferral)
             continue
         try:
             outcome, retries_used = _run_collector_with_transient_retry(
