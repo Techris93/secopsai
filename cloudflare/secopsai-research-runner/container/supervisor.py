@@ -736,8 +736,11 @@ def main(argv: Optional[list] = None) -> int:
         command = [sys.executable, "-u", "-m", "secopsai.research_delivery_verification"]
     elif args.cycles > 0:
         command += ["--max-cycles", str(args.cycles)]
+    # The worker sees its own deadline so it does not start a long collector
+    # it cannot finish before the time budget stops it.
+    budget_env = {"SECOPSAI_WORKER_DEADLINE_EPOCH": str(time.time() + args.max_seconds)} if args.max_seconds > 0 else {}
     worker = subprocess.Popen(command, env={**os.environ, "SECOPS_FINDINGS_DIR": str(data_dir),
-                                               "SECOPSAI_RESTORED_LEDGER_RECOVERY": "1" if restored else "0"})
+                                               "SECOPSAI_RESTORED_LEDGER_RECOVERY": "1" if restored else "0", **budget_env})
     active_child = [worker]
     stopping = threading.Event()
     forced = threading.Event()

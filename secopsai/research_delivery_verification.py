@@ -54,6 +54,15 @@ def _refresh_stale_enabled_sources(*, db_path, deadline, safety_margin_seconds=0
                                           "status": "deferred_budget", "coverage": None}
                                          for pending in registry[index:])
                 break
+            from secopsai.research_surveillance import COLLECTOR_DEFINITIONS
+            from secopsai.research_worker import collector_time_needed
+
+            collector_id = COLLECTOR_DEFINITIONS.get(item["ecosystem"], {}).get("collector_id", "")
+            if collector_id and deadline - time.monotonic() < collector_time_needed(collector_id, db_path=db_path):
+                # Not enough refresh time left to finish this collector cleanly.
+                collector_results.append({"name": item["name"], "ecosystem": item["ecosystem"], "status": "deferred_budget", "coverage": None})
+                print(json.dumps({"event": "stale_registry_collector_refresh", **collector_results[-1]}), flush=True)
+                continue
             result = run_registry_collector(
                 ecosystem=item["ecosystem"],
                 max_pages=collector_page_budget(item["ecosystem"], MAX_PAGES_PER_CYCLE),
