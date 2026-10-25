@@ -174,3 +174,21 @@ def test_the_newest_copy_with_the_corrected_citation_is_kept(db):
     assert got["php-info-new"]["decision"] == "verified", got["php-info-new"]["rationale"]
     assert got["php-info-new"]["primary_url"].endswith("#2026-10-23-1")
     assert got["php-info-old"]["decision"] == "rejected" and "duplicate of php-info-new" in got["php-info-old"]["rationale"]
+
+
+def test_cisa_entries_sharing_the_catalog_url_are_not_duplicates_and_wrong_rejections_are_redone(db):
+    feed = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    queue(db)
+    for event_id, cve in (("kev-a", "CVE-2026-110936"), ("kev-b", "CVE-2026-110447")):
+        add(db, event_id, "kev", f"{cve}: Vendor product remote code execution", f"{cve} allows remote code execution.", url=feed,
+            catalog_added_at="2026-10-23T00:00:00Z", required_action="Apply mitigations per vendor instructions or discontinue use.")
+    delegate(db)
+    from secopsai.research_primary_intel import verify_event
+    delegation = auto.policy(db_path=db)
+    verify_event("kev-b", {"decision": "rejected", "rationale": "Automated verification: duplicate of kev-a (same citation)", "limitations": "x",
+                           "primary_url": feed, "primary_event_id": "kev-b", "attribution": "source_reported"}, actor=OPERATOR, db_path=db,
+                 automation={"policy_record_id": delegation["record_id"], "rule": "duplicate of kev-a (same citation)", "checks": {}})
+    auto.run(cve_fetch, db_path=db)
+    got = decisions(db)
+    assert got["kev-a"]["decision"] == "verified"
+    assert got["kev-b"]["decision"] == "verified", "the URL-only rejection is decided again"
