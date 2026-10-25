@@ -1578,3 +1578,30 @@ def test_paused_collector_refuses_runs_and_keeps_cursor(tmp_path):
     assert resumed["enabled"] is True
     result = run_registry_collector(ecosystem="nuget", since=SINCE_ALL, db_path=db_path, fetcher=_fetcher())
     assert result["status"] == "completed"
+
+
+def test_shutdown_mid_ingest_releases_the_collector_for_a_later_attempt(tmp_path, monkeypatch):
+    """Production 2026-10-25: the time budget stopped Open VSX mid-run, the run
+    stayed 'running', and the end-of-run refresh was rejected as already active."""
+    import pytest
+    import soc_store
+    from secopsai import research_surveillance as surveillance
+    from secopsai.worker_control import WorkerShutdown
+
+    db = str(tmp_path / "soc.db")
+    soc_store.init_db(db)
+
+    def stopped(**kwargs):
+        raise WorkerShutdown()
+
+    monkeypatch.setattr(surveillance, "_ingest_openvsx_search", stopped)
+    with pytest.raises(WorkerShutdown):
+        surveillance.run_registry_collector(ecosystem="open-vsx", max_pages=1, db_path=db)
+    with soc_store.connect(db) as connection:
+        statuses = [row[0] for row in connection.execute(
+            "SELECT status FROM registry_ingestion_runs WHERE collector_id='COL-OPENVSX-SEARCH'")]
+    assert statuses == ["interrupted"]
+
+    collector = next(c for c in surveillance.ensure_collectors(db_path=db) if c["ecosystem"] == "open-vsx")
+    run_id, rejection = surveillance._open_run(collector=collector, cursor_before="x", db_path=db)
+    assert rejection is None and run_id, "a later attempt can start"
