@@ -32,6 +32,7 @@ FIX_WORDS = re.compile(r"\b(fix(?:es|ed)?|patch(?:es|ed)?|upgrade|update|release
 MITIGATION_RE = re.compile(r"\bset\s+(?:<[^>]+>)?\s*([\w.\-]+\s*=\s*[\w.\-]+)", re.IGNORECASE)
 RELEASE_TITLE_RE = re.compile(r"\breleased?\b|\bavailable\b", re.IGNORECASE)
 TAG_RE = re.compile(r"<[^>]{0,500}>")
+OLD_CVSS_RULE = re.compile(r"\bCVSS \d+(?:\.\d)?: mismatch")
 
 
 def policy(*, db_path=None) -> Optional[dict[str, Any]]:
@@ -103,7 +104,7 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str]) -> di
     cited = citation_key(event)
     title_key = f"{event['source_id']}|{title.casefold()}"
     for key in (cited, title_key):
-        if key and key in decided:
+        if key and key in decided and decided[key] != event["event_id"]:
             return {"decision": "rejected", "reason": f"duplicate of {decided[key]} (same {'citation' if key == cited else 'title'})"}
     if source.get("source_class") not in AUTOMATED_SOURCE_CLASSES:
         return {"decision": "needs_review", "reason": "news report: verify against its primary source before it can be cited"}
@@ -112,8 +113,16 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str]) -> di
     missing = [cve for cve in cves if cve not in checks]
     if missing:
         return {"decision": None, "reason": "claim checks pending for " + ", ".join(missing), "unchecked": missing}
+    # Identifier claims come from the cached per-CVE checks. The score is
+    # judged for this item: its reported CVSS must match the official score of
+    # at least one CVE it lists (a release's headline score belongs to its
+    # worst CVE). Cached CVSS claims reflect whichever report was checked first.
     concerns = [f"{claim['claim']}: {claim['status'].replace('_', ' ')}" for cve in cves for claim in checks[cve]["claims"]
-                if claim["status"] in {"not_found", "not_published", "mismatch", "unavailable"}]
+                if not claim["claim"].startswith("CVSS ") and claim["status"] in {"not_found", "not_published", "mismatch", "unavailable"}]
+    reported = found.get("reported_cvss")
+    official = sorted({score for cve in cves for score in (checks[cve].get("official_cvss") or [])})
+    if reported is not None and official and not any(abs(score - reported) < 0.05 for score in official):
+        concerns.append(f"reported CVSS {reported:g} matches no listed CVE (official: {', '.join(f'{s:g}' for s in official)})")
     if concerns:
         return {"decision": "needs_review", "reason": "official records disagree: " + "; ".join(concerns)}
     if RELEASE_TITLE_RE.search(title) and cves and any(f"cves:{source['name']}:{','.join(cves)}" == key for key in decided):
@@ -205,10 +214,16 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
         value = record["payload"]
         first = value["event_id"] not in latest_seen
         latest_seen.add(value["event_id"])
-        if (first and value.get("decision") == "rejected" and value.get("automation")
-                and "(same citation)" in str((value.get("automation") or {}).get("rule", ""))):
-            redo.append(value["event_id"])  # decided under the URL-only rule; decide again
+        rule = str((value.get("automation") or {}).get("rule", ""))
+        if first and value.get("automation") and (
+                (value.get("decision") == "rejected" and "(same citation)" in rule)
+                or (value.get("decision") == "needs_review" and OLD_CVSS_RULE.search(rule))):
+            # Decided under a superseded rule (URL-only citation key, or cached
+            # per-CVE scores); decide again under the current one.
+            redo.append(value["event_id"])
             continue
+        if not first:
+            continue  # only an item's latest decision counts
         if value.get("decision") not in {"verified", "rejected"}:
             continue
         try:
