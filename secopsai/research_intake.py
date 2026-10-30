@@ -67,6 +67,9 @@ LIFECYCLE_NAMES = {
 }
 
 
+PACKAGE_VERSION_NOT_FOUND = "requested package version was not found"
+
+
 class IntakeError(ValueError):
     """A user-safe, non-secret intake failure."""
 
@@ -311,7 +314,7 @@ class RegistryAdapter:
         requested = _version(requested)
         if requested:
             if requested not in versions:
-                raise IntakeError("requested package version was not found")
+                raise IntakeError(PACKAGE_VERSION_NOT_FOUND)
             return requested
         if not versions:
             raise IntakeError("registry returned no package versions")

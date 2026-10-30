@@ -16,7 +16,8 @@ from typing import Any, Dict, Optional
 
 import soc_store
 from secopsai.intelligence import minimize
-from secopsai.research_cases import add_evidence, add_subject, create_case, get_case, link_finding
+from secopsai.research_cases import add_evidence, add_subject, create_case, get_case, link_finding, update_case
+from secopsai.research_intake import PACKAGE_VERSION_NOT_FOUND
 from secopsai.research_pipeline import get_pipeline, start_investigation_pipeline
 from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
@@ -400,6 +401,7 @@ def recover_due_runs(*, db_path: Optional[str] = None, limit: int = 25) -> Dict[
                 """SELECT run_id, status, attempt, retryable, updated_at
                    FROM investigation_autopilot_runs
                    WHERE status IN ('failed', 'evidence_gap', 'canceled')
+                     AND COALESCE(blocker_code, '') != 'package_version_removed'
                    ORDER BY updated_at ASC LIMIT ?""",
                 (max(1, min(int(limit), 200)),),
             ).fetchall()
@@ -476,6 +478,31 @@ def reconcile_due_runs(*, db_path: Optional[str] = None) -> Dict[str, Any]:
     return {"count": len(reconciled) + len(stale), "reconciled": reconciled, "stale": stale}
 
 
+def _close_removed_version(run_id: str, *, case: Dict[str, Any], finding: Dict[str, Any], pipeline: Dict[str, Any], db_path: Optional[str]) -> None:
+    """Finish a run whose suspect version the registry no longer lists.
+
+    Retrying cannot bring the version back and would keep taking investigation
+    slots. The removal is recorded on the case as a signal, not a verdict: a
+    takedown and an author's own unpublish look the same from the registry.
+    """
+    label = f"{_clean(finding.get('ecosystem'), 80)}:{_clean(finding.get('package'), 512)}@{_clean(finding.get('new_version') or finding.get('version'), 160)}"
+    add_evidence(
+        case["case_id"], evidence_type="source", title=f"Registry no longer lists {label}",
+        provenance="secopsai-investigation-autopilot",
+        notes="The version could not be collected, so its contents were not analyzed. Removal may be a takedown or the author's own unpublish.",
+        metadata={"signal": "registry_removal", "pipeline_id": pipeline["pipeline_id"]},
+        actor="secopsai-investigation-autopilot", db_path=db_path,
+    )
+    update_case(case["case_id"], status="closed", actor="secopsai-investigation-autopilot", db_path=db_path)
+    _set_run(
+        run_id, status="evidence_gap", stage=pipeline.get("current_step") or "pipeline",
+        case_id=case["case_id"], pipeline_id=pipeline["pipeline_id"],
+        blocker_code="package_version_removed", blocker_message=f"The registry no longer lists {label}.",
+        retryable=False, completed=True, evidence={"pipeline": pipeline.get("summary") or {}, "case_id": case["case_id"]},
+        db_path=db_path,
+    )
+
+
 def _run_unlocked(run_id: str, *, db_path: Optional[str]) -> Dict[str, Any]:
     run = get_run(run_id, db_path=db_path)
     finding = soc_store.get_finding(run["finding_id"], db_path)
@@ -500,6 +527,15 @@ def _run_unlocked(run_id: str, *, db_path: Optional[str]) -> Dict[str, Any]:
             reference_package=reference_package, reference_version=reference_version,
             actor="secopsai-investigation-autopilot", db_path=db_path, auto_enrich=True,
         )
+        # Only the suspect version counts: a missing comparison version says
+        # nothing about the package under investigation.
+        if (
+            pipeline["status"] == "failed"
+            and pipeline.get("current_step") == "collect_subject"
+            and pipeline.get("error_message") == PACKAGE_VERSION_NOT_FOUND
+        ):
+            _close_removed_version(run_id, case=case, finding=finding, pipeline=pipeline, db_path=db_path)
+            return get_run(run_id, db_path=db_path)
         next_status = "awaiting_model" if pipeline["status"] == "awaiting_ai" else pipeline["status"]
         blocker = None
         blocker_code = None

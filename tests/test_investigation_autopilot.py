@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import tarfile
+from contextlib import closing
 
 import soc_store
 from secopsai import investigation_autopilot
@@ -83,6 +84,48 @@ def test_high_priority_finding_creates_one_enriched_investigation(tmp_path, monk
     assert all(item["status"] == "pending" for item in case["ioc_candidates"])
     assert case["disclosure_status"] == "not_started"
     assert case["status"] == "investigating"
+
+
+def _run_with_fetcher(tmp_path, monkeypatch, finding):
+    db = str(tmp_path / "soc.db")
+    monkeypatch.setenv("SECOPSAI_RESEARCH_QUARANTINE", str(tmp_path / "quarantine"))
+    soc_store.persist_findings([finding], source="secopsai-supply-chain", db_path=db)
+    real_start = start_investigation_pipeline
+    monkeypatch.setattr(
+        investigation_autopilot, "start_investigation_pipeline",
+        lambda case_id, **kwargs: real_start(case_id, **kwargs, fetcher=_fetcher()),
+    )
+    queued = investigation_autopilot.enqueue_finding(finding["finding_id"], db_path=db)
+    investigation_autopilot.run_due(db_path=db)
+    return db, investigation_autopilot.get_run(queued["run_id"], db_path=db)
+
+
+def test_removed_suspect_version_closes_the_case_and_is_not_retried(tmp_path, monkeypatch):
+    finding = {**_finding(), "new_version": "9.9.9"}
+    db, run = _run_with_fetcher(tmp_path, monkeypatch, finding)
+
+    assert run["status"] == "evidence_gap"
+    assert run["blocker_code"] == "package_version_removed"
+    assert run["completed_at"]
+    assert not run["retryable"]
+    case = get_case(run["case_id"], db_path=db)
+    assert case["status"] == "closed"
+    signals = [item for item in case["evidence"] if item["title"] == "Registry no longer lists npm:suspect-pkg@9.9.9"]
+    assert len(signals) == 1
+
+    with closing(soc_store.connect(db)) as connection:
+        connection.execute("UPDATE investigation_autopilot_runs SET updated_at='2020-01-01T00:00:00Z'")
+        connection.commit()
+    assert investigation_autopilot.recover_due_runs(db_path=db)["count"] == 0
+
+
+def test_missing_comparison_version_does_not_close_the_case(tmp_path, monkeypatch):
+    finding = {**_finding(), "old_version": "0.9.0"}
+    db, run = _run_with_fetcher(tmp_path, monkeypatch, finding)
+
+    assert run["blocker_code"] != "package_version_removed"
+    assert run["retryable"]
+    assert get_case(run["case_id"], db_path=db)["status"] != "closed"
 
 
 def test_lower_priority_finding_skips_expensive_investigation_by_default(tmp_path):
