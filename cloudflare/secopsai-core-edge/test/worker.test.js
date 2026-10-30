@@ -879,6 +879,21 @@ test('an investigation job takes the bridge routing at claim, survives a resend 
 });
 
 
+test('recorded safety failures can be repaired on request and a catalog failure can be retried by job id', () => {
+  const details = code => JSON.stringify({error_code:code,category:code});
+  for (const error_message of ['DecisionError: decision: artifact result cites unsupplied evidence','DecisionError: decision: all configured bridge models failed']) {
+    const recovery = intelligenceRecovery({status:'failed',action:'triage_artifact',error_code:'safety',attempt:1,error_message,failure_details_json:details('safety')});
+    assert.equal(recovery.reason,'artifact_contract_repair');
+    assert.equal(recovery.eligible,false,'a repair is never automatic');
+  }
+  assert.equal(intelligenceRecovery({status:'failed',action:'triage_artifact',error_code:'safety',attempt:1,error_message:'DecisionError: decision: something else',failure_details_json:details('safety')}).reason,'safety');
+  const catalog = {status:'failed',action:'triage_artifact',error_code:'provider_failure',attempt:1,error_message:'DecisionError: codex_chatgpt_subscription: Error: failed to parse model_catalog_json path',failure_details_json:details('provider_failure')};
+  assert.equal(intelligenceRecovery(catalog).reason,'bridge_configuration_failure');
+  assert.equal(intelligenceRecovery(catalog).eligible,true);
+  assert.equal(intelligenceRecovery({...catalog,attempt:3}).reason,'attempt_limit');
+});
+
+
 test('versioned ontology receipts tolerate nested key order but reject changed facts', async () => {
   const env={DB:new MockD1(),CORE_BRIDGE_TOKEN:'b'.repeat(44)};
   const key='ontology-v2:'+'a'.repeat(64);

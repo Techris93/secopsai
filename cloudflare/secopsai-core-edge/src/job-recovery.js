@@ -4,6 +4,8 @@ const repairedMessages = new Set([
   "DecisionError: decision: artifact result cites unsupplied evidence",
   "DecisionError: decision: artifact abstention must select a supplied missing-file identifier",
   "DecisionError: decision: finding verdict contradicts its disposition",
+  // The chain's last error during the same contract failures; the cause was not recorded.
+  "DecisionError: decision: all configured bridge models failed",
 ]);
 
 const transientFailureCodes = new Set(["availability", "rate_limit", "timeout", "bridge_timeout"]);
@@ -32,11 +34,21 @@ export function intelligenceRecovery(job, { maxAttempts = 3 } = {}) {
   const hasStructuredTransientCause = !hasPermanentDetail && (detailCodes.some(code => transientFailureCodes.has(code))
     || (detailCodes.includes("bridge_failed") && bridgeTransportMarkers.test(message) && !invalidBridgeOutputMarkers.test(message)));
   const hasKnownTransientMarker = bridgeTransportMarkers.test(message) && !invalidBridgeOutputMarkers.test(message);
+  // These rows record a safety detail code, so this comes first or a repair could never apply.
+  // A repair stays explicit, and its new result is validated like any other.
+  if (job.action === "triage_artifact" && job.error_code === "safety" && !detailCodes.some(code => transientFailureCodes.has(code)) && repairedMessages.has(String(job.error_message || ""))) {
+    return { eligible: false, action: "Re-evaluate with repaired artifact contract", reason: "artifact_contract_repair", repair_version: ARTIFACT_REPAIR_VERSION };
+  }
   if (hasPermanentDetail) return { eligible: false, action: "Inspect permanent or safety failure", reason: detailCodes.find(code => permanentFailureCodes.has(code)) };
   if (wrappedBridgeFailure && !hasStructuredTransientCause && !hasKnownTransientMarker) {
     return { eligible: false, action: "Investigate missing failure detail", reason: "historical_cause_not_recorded" };
   }
   if (Number(job.attempt || 0) >= maxAttempts) return { eligible: false, action: "Review exhausted attempts", reason: "attempt_limit" };
+  // The bridge's model catalog could not be parsed, so no model ran. Explicit job IDs only:
+  // the automatic pass selects by recoverable error code, and this one is not among them.
+  if (/failed to parse model_catalog_json/.test(String(job.error_message || ""))) {
+    return { eligible: true, action: "Recover bridge configuration failure", reason: "bridge_configuration_failure" };
+  }
   const errorCode = detailCodes.find(code => transientFailureCodes.has(code) || code === "bridge_failed") || String(job.error_code || "").trim().toLowerCase();
   if (transientFailureCodes.has(errorCode)
       || (errorCode === "bridge_failed" && bridgeTransportMarkers.test(message) && !invalidBridgeOutputMarkers.test(message))) {
