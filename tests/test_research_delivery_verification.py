@@ -408,3 +408,15 @@ def test_later_entity_delivery_can_repair_an_older_relationship(tmp_path, monkey
         def sync_research_operation(self, value): return {'status': 'stored'}
     result = verify_delivery(db_path=db, client=Client())
     assert result['status'] == 'passed' and result['flushed_total'] == 2
+
+
+def test_a_failed_drain_records_a_masked_message_and_location():
+    from secopsai.research_delivery_verification import _failure_detail
+
+    try:
+        raise ValueError("research operation projection exceeds budget; Bearer abc123 token=xyz")
+    except ValueError as exc:
+        detail = _failure_detail(exc)
+    assert detail["error_message"].startswith("research operation projection exceeds budget")
+    assert "abc123" not in detail["error_message"] and "xyz" not in detail["error_message"]
+    assert detail["error_location"].startswith("test_research_delivery_verification.py:")
