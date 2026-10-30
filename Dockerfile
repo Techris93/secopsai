@@ -1,4 +1,4 @@
-ARG PYTHON_IMAGE=python:3.13-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+ARG PYTHON_IMAGE=python:3.13-alpine@sha256:7984cf56ceaddebe4fefeb75d64000b9f45d8b77b11a09b24524da6cdc3af0c8
 
 FROM ${PYTHON_IMAGE} AS builder
 
@@ -55,7 +55,7 @@ RUN rm -rf \
       /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.13 \
       /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.13 && \
     python -c "import importlib.util as u; assert u.find_spec('pip') is None; assert u.find_spec('setuptools') is None; assert u.find_spec('wheel') is None" && \
-    python -c "import sys; from detect import run_detection; assert sys.version_info >= (3, 13, 16), sys.version; print('runtime-import-ok')" && \
+    python -c "import sys; from detect import run_detection; assert sys.version_info >= (3, 13, 18), sys.version; print('runtime-import-ok')" && \
     chmod 0755 /opt/secopsai/scripts/container-entrypoint.sh
 
 # Switch to non-root user
