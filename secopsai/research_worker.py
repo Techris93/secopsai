@@ -438,6 +438,14 @@ def budget_deferral(item: Dict[str, Any], *, db_path: Optional[str] = None) -> O
             "seconds_left": round(left), "seconds_needed": round(needed)}
 
 
+def investigations_per_cycle() -> int:
+    """Investigations a cycle may start (SECOPSAI_INVESTIGATIONS_PER_CYCLE, 1-10, default 3)."""
+    try:
+        return max(1, min(10, int(os.environ.get("SECOPSAI_INVESTIGATIONS_PER_CYCLE", "3"))))
+    except ValueError:
+        return 3
+
+
 def _run_collector_with_transient_retry(
     *, ecosystem: str, max_pages: int, db_path: Optional[str], fetcher: SafeFetcher,
     retry_budget: int,
@@ -671,7 +679,9 @@ def _run_worker_cycle_unlocked(
             # The research worker is the durable 24/7 control loop. Keep evidence
             # investigations on the same bounded cadence as registry collection so
             # queued supply-chain alerts do not depend on a dashboard click.
-            investigations = run_due_investigations(db_path=db_path)
+            # Start as many as there are free slots (run_due caps at capacity);
+            # one per cycle left two of three slots idle and 700+ queued.
+            investigations = run_due_investigations(db_path=db_path, limit=investigations_per_cycle())
         except Exception as exc:  # investigation work must not stop surveillance
             capture_exception(exc, context={"component": "research_investigation_autopilot"})
             investigations = {"status": "degraded", "processed": 0, "error": str(exc)[:500]}
