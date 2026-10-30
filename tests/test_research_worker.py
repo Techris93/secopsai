@@ -556,3 +556,20 @@ def test_fresh_restore_recovers_dead_daily_owners_once(tmp_path, monkeypatch):
     worker.run_worker_loop(db_path=db, max_cycles=1)
     worker.run_worker_loop(db_path=db, max_cycles=1)
     assert calls == [{'db_path': db, 'restored_snapshot': True}]
+
+
+def test_cycle_outcomes_report_age_out_and_investigation_blockers_in_a_short_line():
+    from secopsai.research_worker import _cycle_outcomes
+
+    outcomes = _cycle_outcomes({
+        "editorial": {"age_out": {"status": "report_only", "would_archive": 12},
+                      "automated_verification": {"verified": 1, "needs_review_ids": ["x"] * 500}},
+        "investigations": {"processed": 3, "queue": {"queued_before_backfill": 700},
+                           "runs": [{"blocker_code": "package_version_removed", "evidence_summary": "y" * 9000},
+                                    {"blocker_code": "package_version_removed"}, {"blocker_code": None}]},
+    })
+    assert outcomes["age_out"]["would_archive"] == 12
+    assert outcomes["automated_verification"] == {"verified": 1}
+    assert outcomes["investigations"] == {"processed": 3, "blockers": {"package_version_removed": 2, "none": 1}, "queued_before_backfill": 700}
+    assert len(json.dumps(outcomes)) < 1000
+    assert _cycle_outcomes({})["age_out"] is None
