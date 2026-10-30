@@ -18,6 +18,8 @@ MAX_JOBS = 10  # Core's results call takes ten job ids
 MAX_PAYLOAD_BYTES = 60000
 PERMANENT_HTTP = {409, 413, 422}
 ROUTING_FIELDS = ("selected_model", "fallback_models", "fallback_mode")
+# (longest list, longest string) tried in turn until the request fits.
+CONTEXT_LIMITS = ((100, 4000), (50, 2000), (25, 1000), (10, 500), (5, 250))
 
 
 def sync_hosted(client, *, db_path=None) -> dict:
@@ -38,6 +40,7 @@ def sync_hosted(client, *, db_path=None) -> dict:
                 AND a.status IN ('collecting','analyzing','awaiting_model','running'))))
           ORDER BY j.queued_at,j.job_id LIMIT {MAX_JOBS}""", AI_STEPS)]
     delivered, applied, failed, canceled = 0, 0, 0, 0
+    reasons: dict[str, int] = {}
     pending = {}
     for job in rows:
         receipt = records("investigation_job_delivery", case_id=job["job_id"], db_path=db_path, limit=1)
@@ -54,6 +57,7 @@ def sync_hosted(client, *, db_path=None) -> dict:
                 if len(canonical(payload).encode()) > MAX_PAYLOAD_BYTES:
                     _fail(job, "investigation_context_exceeds_budget", db_path=db_path)
                     failed += 1
+                    reasons["context_exceeds_budget"] = reasons.get("context_exceeds_budget", 0) + 1
                     continue
                 # Persist before sending: a lost response must retry the same request.
                 outbox = [append("investigation_job_outbox", payload, actor=ACTOR, case_id=job["job_id"], db_path=db_path)]
@@ -64,6 +68,8 @@ def sync_hosted(client, *, db_path=None) -> dict:
                     raise
                 _fail(job, "investigation_delivery_rejected", db_path=db_path)
                 failed += 1
+                reason = f"http_{error.status}_{error.error_code}"
+                reasons[reason] = reasons.get(reason, 0) + 1
                 continue
             remote_id = (response.get("job") or {}).get("job_id")
             if not isinstance(remote_id, str) or not re.fullmatch(r"AIJ-[A-F0-9]{16}", remote_id):
@@ -84,7 +90,29 @@ def sync_hosted(client, *, db_path=None) -> dict:
                 if item["status"] != "succeeded":
                     _fail(job, "hosted_bridge_failed", db_path=db_path)
                 failed += 1
-    return {"status": "ok", "delivered": delivered, "applied": applied, "failed": failed, "canceled": canceled, "waiting": len(pending)}
+                reason = "invalid_answer" if item["status"] == "succeeded" else "bridge_" + item["status"]
+                reasons[reason] = reasons.get(reason, 0) + 1
+    return {"status": "ok", "delivered": delivered, "applied": applied, "failed": failed, "canceled": canceled, "waiting": len(pending), "reasons": reasons}
+
+
+def _bounded(value, longest_list: int, longest_string: int):
+    if isinstance(value, dict):
+        return {key: _bounded(item, longest_list, longest_string) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_bounded(item, longest_list, longest_string) for item in value[:longest_list]]
+    return value[:longest_string] if isinstance(value, str) else value
+
+
+def _fit(payload: dict) -> dict:
+    """Shrink a request's evidence until it fits Core's limit, and say that it did."""
+    request = payload["inputs"]["assistant_request"]
+    full = request["context"]
+    for longest_list, longest_string in CONTEXT_LIMITS:
+        if len(canonical(payload).encode()) <= MAX_PAYLOAD_BYTES:
+            break
+        request["context"] = {**_bounded(full, longest_list, longest_string), "evidence_coverage": {
+            "complete": False, "reason": "transport limits shortened the supplied context; name what is missing rather than assuming it"}}
+    return payload
 
 
 def _payload(job: dict, *, db_path=None) -> dict:
@@ -97,8 +125,8 @@ def _payload(job: dict, *, db_path=None) -> dict:
     if not inputs.get("selected_model"):
         # Unbound: the bridge applies the operator's current routing at claim.
         inputs = {key: value for key, value in inputs.items() if key not in ROUTING_FIELDS}
-    return {"action": job["action"], "target_id": job["target_id"], "idempotency_key": "assistant:pipeline:" + job["job_id"],
-            "inputs": {**inputs, "assistant_request": request}}
+    return _fit({"action": job["action"], "target_id": job["target_id"], "idempotency_key": "assistant:pipeline:" + job["job_id"],
+                 "inputs": {**inputs, "assistant_request": request}})
 
 
 def _mark_running(job_id: str, *, db_path=None) -> None:
