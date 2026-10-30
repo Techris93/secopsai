@@ -6,7 +6,7 @@ from contextlib import closing
 import soc_store
 from secopsai.core_edge_client import CoreEdgeHTTPError
 from secopsai.intelligence_jobs import cancel_job, list_jobs
-from secopsai.investigation_autopilot import get_run, reconcile_pipeline
+from secopsai.investigation_autopilot import get_run, reconcile_pipeline, recover_due_runs
 from secopsai.research_pipeline import get_pipeline, start_investigation_pipeline
 from secopsai.research_pipeline_transport import sync_hosted
 from tests.test_research_pipeline import _bridge_result, _case, _fetcher
@@ -126,3 +126,31 @@ def test_a_canceled_job_is_canceled_at_core_once(tmp_path, monkeypatch):
     assert len(core.canceled) == 1
     sync_hosted(core, db_path=db)
     assert len(core.canceled) == 1
+
+
+def test_agent_mode_finishes_the_investigation_without_publishing_anything(tmp_path, monkeypatch):
+    db, pipeline = _pipeline(tmp_path, monkeypatch)
+    monkeypatch.setenv("SECOPSAI_RESEARCH_AUTONOMY_MODE", "agent_review")
+    core = Core()
+    sync_hosted(core, db_path=db)
+    core.bridge_answers()
+    assert sync_hosted(core, db_path=db)["applied"] == 3
+
+    finished = get_pipeline(pipeline["pipeline_id"], db_path=db)
+    assert finished["status"] == "succeeded" and finished["summary"]["verdict_recorded"] is True
+    assert finished["summary"]["published"] is False and finished["summary"]["disclosure_sent"] is False
+    assert finished["summary"]["sandbox_submitted"] is False
+    assert get_run("IAR-0000000000000001", db_path=db)["status"] == "escalated", "the fixture's answer is a likely verdict"
+
+
+def _gap(db, code):
+    with closing(soc_store.connect(db)) as connection:
+        connection.execute("UPDATE investigation_autopilot_runs SET status='evidence_gap', blocker_code=?, attempt=1, updated_at='2026-01-01T00:00:00Z'", (code,))
+        connection.commit()
+    return recover_due_runs(db_path=db)["count"]
+
+
+def test_an_inconclusive_finished_analysis_spends_no_more_model_jobs(tmp_path, monkeypatch):
+    db, _ = _pipeline(tmp_path, monkeypatch)
+    assert _gap(db, "evidence_incomplete") == 0
+    assert _gap(db, "artifact_unavailable") == 1, "a temporary evidence gap is still retried"
