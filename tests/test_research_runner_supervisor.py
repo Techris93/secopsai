@@ -1018,3 +1018,43 @@ def test_artifact_upload_retries_a_transient_storage_failure(tmp_path, monkeypat
     supervisor.checkpoint(db, client, tmp_path)
     assert failures['remaining'] == 0
     assert server.manifest is not None
+
+
+def test_planned_rebase_is_due_only_when_the_restored_drift_is_large(monkeypatch):
+    class Store:
+        restored_size_bytes = 22_900_000_000
+    store = Store()
+    monkeypatch.setenv('SECOPSAI_PAGE_DELTA_CHECKPOINTS', '1')
+    store.restored_delta_bytes = 5_351_000_000  # production 2026-10-30: 23% drift
+    assert supervisor.planned_rebase_due(store)
+    store.restored_delta_bytes = 1_000_000_000
+    assert not supervisor.planned_rebase_due(store), "below 10% the sparse path stays"
+    monkeypatch.setenv('SECOPSAI_PAGE_DELTA_CHECKPOINTS', '0')
+    store.restored_delta_bytes = 5_351_000_000
+    assert not supervisor.planned_rebase_due(store), "only for sparse checkpoints"
+
+
+def test_forced_rebase_skips_the_sparse_diff_and_gets_its_own_upload_budget(tmp_path, monkeypatch):
+    monkeypatch.setenv('SECOPSAI_INCREMENTAL_CHECKPOINTS', '1')
+    monkeypatch.setenv('SECOPSAI_PAGE_DELTA_CHECKPOINTS', '1')
+    db = tmp_path/'live.db'
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE data(value TEXT)')
+        conn.execute("INSERT INTO data VALUES('committed')")
+
+    class Store:
+        incremental_ready = True
+        baseline_path = tmp_path/'baseline.db'
+        def upload_sparse(self, backup, *, captured_at, deadline):
+            raise AssertionError('a planned rebase must not diff against the old baseline')
+        def upload_chunked(self, backup, *, captured_at, deadline):
+            self.deadline = deadline
+            return 'full-checkpoint'
+        def index_baseline(self, *, deadline=None):
+            self.indexed = True
+
+    monkeypatch.setattr(supervisor.time, 'monotonic', lambda: 0)
+    store = Store()
+    assert supervisor.checkpoint(db, store, tmp_path, force_rebase=True) == 'full-checkpoint'
+    assert store.deadline == 300 + supervisor.PLANNED_REBASE_UPLOAD_SECONDS
+    assert store.baseline_path == tmp_path/'.checkpoint-base.db' and store.indexed, "the upload becomes the new baseline"
