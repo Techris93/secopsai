@@ -24,6 +24,7 @@ MAX_EVENTS = 10000
 EVENT_BATCH_SIZE = 250
 MAX_PENDING = 10000
 PREPARE_BATCH_SIZE = 500
+AGE_OUT_DAYS = 14
 MAX_ATTEMPTS = 8
 MSRC_INITIAL_LOOKBACK_DAYS = 7
 MSRC_OVERLAP_DAYS = 3
@@ -531,6 +532,57 @@ def intel_event(event_id: str, *, db_path=None) -> dict:
     return result
 
 
+def age_out_reviews(*, keep: set[str] | frozenset[str] = frozenset(), enforce: bool = False, now: str | None = None, db_path=None) -> dict:
+    """Move old review items with no exploitation signal out of the queue.
+
+    Reports what it would move unless ``enforce`` is set. Nothing is deleted or
+    decided: the row becomes ``archived`` and returns if the desk ranks it later.
+    ``keep`` is the desk's ranked events; an item a person marked for further
+    review stays too.
+    """
+    from secopsai.research_desk import EXPLOITED_RE
+    from secopsai.research_operation_store import records
+
+    now = timestamp(now or _now())
+    cutoff = (datetime.fromisoformat(now.replace("Z", "+00:00")) - timedelta(days=AGE_OUT_DAYS)).isoformat().replace("+00:00", "Z")
+    held = set()
+    for record in records("intel_verification", db_path=db_path, limit=10000):
+        if not record["payload"].get("automation"):
+            held.add(record["payload"]["event_id"])
+    candidates, by_source, kept_recent, kept_exploited, kept_ranked, oldest = [], {}, 0, 0, 0, ""
+    with read_connection(db_path) as conn:
+        rows = conn.execute("""SELECT q.job_id,q.event_id,e.published_at,e.first_observed_at,e.payload_json,s.config_json
+            FROM research_operation_queue q JOIN research_intel_events e ON e.event_id=q.event_id
+            JOIN research_intel_sources s ON s.source_id=e.source_id
+            WHERE q.kind='verify_intel' AND q.state='awaiting_review'""").fetchall()
+        restore = [row["job_id"] for row in conn.execute(
+            "SELECT job_id,event_id FROM research_operation_queue WHERE kind='verify_intel' AND state='archived'") if row["event_id"] in keep]
+    for row in rows:
+        payload, source = json.loads(row["payload_json"]), json.loads(row["config_json"])
+        dated = str(payload.get("published_at") or row["published_at"] or payload.get("catalog_added_at") or row["first_observed_at"] or "")
+        if not dated or dated >= cutoff:
+            kept_recent += 1
+        elif row["event_id"] in keep or row["event_id"] in held:
+            kept_ranked += 1
+        elif source.get("parser") == "cisa_kev" or EXPLOITED_RE.search(f"{payload.get('title') or ''}\n{payload.get('excerpt') or ''}"):
+            kept_exploited += 1
+        else:
+            candidates.append(row["job_id"])
+            name = str(source.get("name") or row["event_id"])
+            by_source[name] = by_source.get(name, 0) + 1
+            oldest = min(oldest or dated, dated)
+    result = {"status": "enforced" if enforce else "report_only", "older_than_days": AGE_OUT_DAYS, "would_archive": len(candidates),
+              "kept_recent": kept_recent, "kept_exploited": kept_exploited, "kept_ranked_or_held": kept_ranked, "oldest": oldest,
+              "by_source": dict(sorted(by_source.items(), key=lambda item: -item[1])[:10]), "restored": 0, "archived": 0}
+    if enforce:
+        with transaction(db_path) as conn:
+            for job_id in candidates:
+                result["archived"] += conn.execute("UPDATE research_operation_queue SET state='archived',error_category='aged_out',updated_at=? WHERE job_id=? AND state='awaiting_review'", (now, job_id)).rowcount
+            for job_id in restore:
+                result["restored"] += conn.execute("UPDATE research_operation_queue SET state='awaiting_review',error_category='',updated_at=? WHERE job_id=? AND state='archived'", (now, job_id)).rowcount
+    return result
+
+
 def pending_public_reviews(*, db_path=None, limit: int = 20, event_ids: list[str] | None = None) -> list[dict]:
     """Return a bounded, privacy-safe queue for the independent human reviewer.
 
@@ -572,6 +624,8 @@ def pending_public_reviews(*, db_path=None, limit: int = 20, event_ids: list[str
         decision = decisions.get(event["event_id"])
         # Decisions fingerprint the canonical intel_event record; this row has
         # queue columns as well, so compare against the same shape.
+        if event.get("queue_state") == "archived":
+            continue
         current = bool(decision and decision.get("event_fingerprint") == digest(intel_event(event["event_id"], db_path=db_path)))
         if current and decision.get("decision") in {"verified", "rejected"}:
             continue

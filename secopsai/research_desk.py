@@ -577,10 +577,11 @@ def detections_for(item: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def research_note(event_id: str, *, db_path=None, now: Optional[datetime] = None,
-                  ranked: Optional[list[dict[str, Any]]] = None) -> list[str]:
+                  ranked: Optional[list[dict[str, Any]]] = None, cves: Optional[list[str]] = None) -> list[str]:
     """Markdown lines for a verified brief item: claim checks, detections, exposure.
 
-    Empty when the event is not part of a ranked desk item.
+    Empty when the event is not part of a ranked desk item. ``cves`` names what
+    the item itself is about; without it, the whole ranked cluster is reported.
     """
     if ranked is None:
         ranked = shortlist(db_path=db_path, now=now, limit=50, minimum_score=0)
@@ -589,12 +590,18 @@ def research_note(event_id: str, *, db_path=None, now: Optional[datetime] = None
     if item is None:
         return []
     lines = []
-    claims = [claim for check in item.get("claims") or [] for claim in check["claims"]]
+    if cves is None:
+        claims = [claim for check in item.get("claims") or [] for claim in check["claims"]]
+    else:
+        # Clusters group by shared CVE or name, so a cluster's checks and rules
+        # can belong to a neighbouring item. Report this item's own.
+        latest = latest_claim_checks(db_path=db_path)
+        claims = [claim for cve in cves for claim in (latest.get(cve) or {}).get("claims", [])]
     if claims:
         lines += ["", "| Claim | Check | Source |", "| --- | --- | --- |"]
         lines += [f"| {claim['claim']} | {claim['status'].replace('_', ' ')} | {claim.get('source') or claim.get('detail') or ''} |"
                   for claim in claims]
-    rules = detections_for(item)
+    rules = detections_for(item if cves is None else {"cves": cves})
     lines.append("SecOpsAI detection: " + ("; ".join(f"{rule['rule_id']} ({rule['title']})" for rule in rules)
                                            if rules else "no SecOpsAI rule covers this yet."))
     if item["deployment_exposure"]:

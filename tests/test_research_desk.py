@@ -179,6 +179,18 @@ def test_solo_operation_lets_one_named_human_hold_every_duty(db):
         configure_roster({"days": {str(d): dict(mixed) for d in range(7)}}, actor="operator.owner", db_path=db)
 
 
+def test_research_note_reports_the_items_own_cves_not_its_clusters(db):
+    week(db)
+    record = {"cveMetadata": {"state": "PUBLISHED"}, "containers": {"cna": {"metrics": [{"cvssV3_1": {"baseScore": 9.2}}]}}}
+    desk.run_claim_checks(lambda url: json.dumps(record if "cveawg" in url else {"vulnerabilities": []}).encode(), db_path=db, now=NOW)
+    note = "\n".join(desk.research_note("php-adv", db_path=db, now=NOW, cves=[]))
+    assert "CVE-2026-109618" not in note
+    assert "SecOpsAI detection: no SecOpsAI rule covers this yet." in note
+    own = "\n".join(desk.research_note("php-adv", db_path=db, now=NOW, cves=["CVE-2026-109618"]))
+    assert "| CVE-2026-109618 exists | confirmed |" in own
+    assert "SecOpsAI detection: RULE-311" in own
+
+
 def test_research_note_maps_detections_claims_and_exposure(db):
     week(db)
     assert [r["rule_id"] for r in desk.detections_for({"cves": ["CVE-2026-109618"], "names": []})] == ["RULE-311"]

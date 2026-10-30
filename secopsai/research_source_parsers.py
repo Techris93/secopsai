@@ -59,7 +59,8 @@ def parse_index(config, content):
             items.append({"external_id": row["ghsa_id"], "url": row["html_url"], "title": row["summary"],
                           "excerpt": row.get("description") or row["summary"], "published_at": row.get("published_at"),
                           "source_updated_at": row.get("updated_at"), "affected_versions": row.get("vulnerabilities", []),
-                          "withdrawn_at": row.get("withdrawn_at"), "collection_scope": "bounded_recent_advisory_index"})
+                          "withdrawn_at": row.get("withdrawn_at"), "collection_scope": "bounded_recent_advisory_index",
+                          **({"cve_id": row["cve_id"]} if row.get("cve_id") else {})})
     elif parser == "openvsx_index":
         body = json.loads(content)
         if not isinstance(body, dict) or not isinstance(body.get("extensions"), list) or not body["extensions"]:

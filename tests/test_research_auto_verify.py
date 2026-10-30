@@ -1,6 +1,6 @@
 """Automated verification under the operator's policy, on items shaped like the 2026-10-24 queue."""
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -36,11 +36,14 @@ def db(tmp_path):
     return path
 
 
+RECENT = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def add(db, event_id, source, title, excerpt, *, url=None, observed="2026-10-24T10:00:00Z", **payload):
-    body = {"title": title, "excerpt": excerpt, "url": url or f"https://{source}.example/{event_id}", "published_at": "2026-10-21T10:00:00Z", **payload}
+    body = {"title": title, "excerpt": excerpt, "url": url or f"https://{source}.example/{event_id}", "published_at": RECENT, **payload}
     with transaction(db) as conn:
         conn.execute("INSERT INTO research_intel_events VALUES (?,?,?,?,?,?,?,?)",
-                     (event_id, source, event_id, f"snap-{source}", "2026-10-21T10:00:00Z", observed, observed, json.dumps(body)))
+                     (event_id, source, event_id, f"snap-{source}", body["published_at"], observed, observed, json.dumps(body)))
 
 
 def queue(db):
@@ -244,3 +247,84 @@ def test_an_old_cvss_mismatch_decision_is_decided_again_once(db):
     count = len(records("intel_verification", db_path=db, limit=1000))
     auto.run(cve_fetch, db_path=db)
     assert len(records("intel_verification", db_path=db, limit=1000)) == count
+
+
+def test_a_mentioned_cve_is_not_described_as_the_items_own():
+    event = {"event_id": "kev", "source_id": "kev", "source": {"name": "CISA Known Exploited Vulnerabilities", "source_class": "government"},
+             "payload": {"title": "CVE-2026-46300: Linux Kernel Missing Initialization", "published_at": None, "required_action": "Apply mitigations.",
+                         "excerpt": "Linux Kernel flaw. Can be chained with CVE-2026-109618 and CVE-2026-109619."}}
+    checks = {cve: {"cve": cve, "official_cvss": [7.8, 9.2], "official_description": f"Official text of {cve}.", "claims": []}
+              for cve in ("CVE-2026-46300", "CVE-2026-109618", "CVE-2026-109619")}
+    result = auto._decide(event, checks, {})
+    assert result["cves"] == ["CVE-2026-46300"]
+    assert "Official text of CVE-2026-46300" in result["summary"]
+    assert "Official text of CVE-2026-109618" not in result["summary"]
+    assert "also mentions CVE-2026-109618, CVE-2026-109619" in result["summary"]
+    assert "official CVSS 7.8 and 9.2" in result["summary"]
+
+
+def test_a_github_advisory_is_about_its_own_cve_not_the_prior_art_it_cites():
+    source = {"name": "GitHub Security Advisories", "source_class": "vendor"}
+    excerpt = "Similar to CVE-2018-1193 and CVE-2025-41235. Fixed in echo 4.16.0."
+    event = {"event_id": "ghsa", "source_id": "gh", "source": source,
+             "payload": {"title": "Echo: HTTPS Redirect Bypass", "excerpt": excerpt, "external_id": "GHSA-2ffq-g2xg-c22p", "cve_id": "CVE-2026-118657",
+                         "affected_versions": [{"package": {"name": "echo"}, "first_patched_version": "4.16.0"}], "published_at": RECENT}}
+    assert auto._decide(event, {}, {})["unchecked"] == ["CVE-2026-118657"]
+    without = {**event, "payload": {key: value for key, value in event["payload"].items() if key != "cve_id"}}
+    result = auto._decide(without, {}, {})
+    assert result["cves"] == [] and "CVE-2018-1193" not in result["summary"].split("also mentions")[0]
+
+
+def test_an_old_advisory_is_not_news_unless_it_is_being_exploited():
+    source = {"name": "GitHub Security Advisories", "source_class": "vendor"}
+    old = {"event_id": "old", "source_id": "gh", "source": source,
+           "payload": {"title": "LangChain Experimental code execution", "excerpt": "Fixed in 0.0.52.", "external_id": "GHSA-v8vj-cv27-hjv8",
+                       "published_at": "2024-02-26T18:30:31Z", "source_updated_at": RECENT}}
+    assert auto._decide(old, {}, {})["decision"] == "rejected"
+    exploited = {**old, "payload": {**old["payload"], "excerpt": "Actively exploited in the wild. Upgrade to fixed release 0.0.52."}}
+    assert auto._decide(exploited, {}, {})["decision"] != "rejected"
+    listed = {**old, "payload": {**old["payload"], "catalog_added_at": RECENT}}
+    assert auto._decide(listed, {}, {})["decision"] != "rejected"
+
+
+def test_an_earlier_automated_verification_is_decided_again_once(db):
+    queue(db)
+    delegate(db)
+    auto.run(cve_fetch, db_path=db)
+    from secopsai.research_primary_intel import verify_event
+    delegation = auto.policy(db_path=db)
+    current = decisions(db)["kev-ivanti"]
+    verify_event("kev-ivanti", {"decision": "verified", "rationale": "old rule", "summary": "Text from the old rule.",
+                                "defensive_action": current["defensive_action"], "limitations": current["limitations"],
+                                "primary_url": current["primary_url"], "attribution": "source_reported"},
+                 actor=OPERATOR, db_path=db, automation={"policy_record_id": delegation["record_id"], "rule": "old", "checks": {}})
+    auto.run(cve_fetch, db_path=db)
+    assert "Text from the old rule." not in decisions(db)["kev-ivanti"]["summary"]
+    count = len(records("intel_verification", db_path=db, limit=1000))
+    auto.run(cve_fetch, db_path=db)
+    assert len(records("intel_verification", db_path=db, limit=1000)) == count
+
+
+def test_age_out_reports_first_then_archives_and_brings_back_what_the_desk_ranks(db):
+    from secopsai.research_primary_intel import age_out_reviews, pending_public_reviews
+
+    add(db, "old-quiet", "gitlab", "Old advisory", "Fixed in 1.2.3.", published_at="2024-01-01T00:00:00Z")
+    add(db, "old-hot", "gitlab", "Old but hot", "Actively exploited in the wild.", published_at="2024-01-01T00:00:00Z")
+    add(db, "old-kev", "kev", "CVE-2020-1234: Old KEV", "Listed.", published_at=None, catalog_added_at="2024-01-01T00:00:00Z")
+    add(db, "old-ranked", "gitlab", "Old ranked", "Fixed in 1.2.3.", published_at="2024-01-01T00:00:00Z")
+    add(db, "new", "gitlab", "New advisory", "Fixed in 1.2.3.")
+    with transaction(db) as conn:
+        for event_id in ("old-quiet", "old-hot", "old-kev", "old-ranked", "new"):
+            conn.execute("INSERT INTO research_operation_queue(job_id,kind,event_id,payload_json,state,retry_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                         (f"Q-{event_id}", "verify_intel", event_id, "{}", "awaiting_review", RECENT, RECENT, RECENT))
+
+    report = age_out_reviews(keep={"old-ranked"}, db_path=db)
+    assert (report["status"], report["would_archive"], report["archived"]) == ("report_only", 1, 0)
+    assert (report["kept_exploited"], report["kept_ranked_or_held"], report["kept_recent"]) == (2, 1, 1)
+    assert report["by_source"] == {"GitLab Security Releases": 1}
+    assert "old-quiet" in {item["event_id"] for item in pending_public_reviews(db_path=db, limit=50)}
+
+    assert age_out_reviews(keep={"old-ranked"}, enforce=True, db_path=db)["archived"] == 1
+    assert "old-quiet" not in {item["event_id"] for item in pending_public_reviews(db_path=db, limit=50)}
+    assert age_out_reviews(keep={"old-quiet", "old-ranked"}, enforce=True, db_path=db)["restored"] == 1
+    assert "old-quiet" in {item["event_id"] for item in pending_public_reviews(db_path=db, limit=50)}
