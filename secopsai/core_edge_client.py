@@ -38,6 +38,8 @@ ONTOLOGY_CHUNK_TARGET_BYTES = MAX_REQUEST_BYTES - 4096
 ONTOLOGY_CHUNK_READ_BUDGET = 48
 MAX_RESPONSE_BYTES = 512 * 1024
 MAX_COMMAND_RESULT_BYTES = 28 * 1024
+MAX_COMMANDS_PER_CYCLE = 10
+COMMAND_DRAIN_SECONDS = 120
 DEFAULT_URL = "https://core.secopsai.dev"
 
 
@@ -1145,11 +1147,17 @@ class CoreEdgeClient:
             self.last_error = _clean(exc, 500)
             return {"status": "degraded", "error": self.last_error}
 
-    def process_commands(self, db_path: Optional[str] = None, *, max_commands: int = 2) -> list[dict[str, Any]]:
+    def process_commands(self, db_path: Optional[str] = None, *, max_commands: int = MAX_COMMANDS_PER_CYCLE,
+                         budget_seconds: float = COMMAND_DRAIN_SECONDS) -> list[dict[str, Any]]:
         if not self.enabled:
             return []
         completed: list[dict[str, Any]] = []
-        for _ in range(max(1, min(int(max_commands), 5))):
+        started = time.monotonic()
+        for _ in range(max(1, min(int(max_commands), MAX_COMMANDS_PER_CYCLE))):
+            # Operator decisions take moments, so several can clear in a cycle.
+            # A slow command (a daily run) ends the drain, not the cycle.
+            if completed and time.monotonic() - started >= budget_seconds:
+                break
             try:
                 claimed = self.claim_command()
             except Exception as exc:
