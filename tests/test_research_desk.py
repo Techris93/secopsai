@@ -191,6 +191,18 @@ def test_research_note_reports_the_items_own_cves_not_its_clusters(db):
     assert "SecOpsAI detection: RULE-311" in own
 
 
+def test_research_note_leaves_out_rows_nothing_checked(db, monkeypatch):
+    week(db)
+    monkeypatch.setattr(desk, "latest_claim_checks", lambda **kw: {"CVE-2026-115560": {"claims": [
+        {"claim": "CVE-2026-115560 exists", "status": "not_found", "source": "https://www.cve.org/"},
+        {"claim": "CVSS 9.2", "status": "unverified", "source": "https://nvd.example/"},
+        {"claim": "exploited in the wild", "status": "reported", "detail": "reported by a neighbouring item's sources"},
+    ]}})
+    note = "\n".join(desk.research_note("php-adv", db_path=db, now=NOW, cves=["CVE-2026-115560"]))
+    assert "| CVE-2026-115560 exists | not found |" in note
+    assert "exploited in the wild" not in note and "CVSS 9.2" not in note
+
+
 def test_research_note_maps_detections_claims_and_exposure(db):
     week(db)
     assert [r["rule_id"] for r in desk.detections_for({"cves": ["CVE-2026-109618"], "names": []})] == ["RULE-311"]
