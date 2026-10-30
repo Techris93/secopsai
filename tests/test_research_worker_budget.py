@@ -47,3 +47,12 @@ def test_a_long_collector_is_deferred_near_the_deadline_and_runs_with_time_to_sp
     assert research_worker.budget_deferral(item, db_path=db) is None
     monkeypatch.delenv("SECOPSAI_WORKER_DEADLINE_EPOCH")
     assert research_worker.budget_deferral(item, db_path=db) is None, "no deadline, no deferral"
+
+
+def test_investigations_per_cycle_defaults_to_filling_free_slots(monkeypatch):
+    monkeypatch.delenv("SECOPSAI_INVESTIGATIONS_PER_CYCLE", raising=False)
+    assert research_worker.investigations_per_cycle() == 3
+    monkeypatch.setenv("SECOPSAI_INVESTIGATIONS_PER_CYCLE", "50")
+    assert research_worker.investigations_per_cycle() == 10
+    monkeypatch.setenv("SECOPSAI_INVESTIGATIONS_PER_CYCLE", "x")
+    assert research_worker.investigations_per_cycle() == 3
