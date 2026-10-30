@@ -1957,6 +1957,30 @@ async function configureDailyAutomation(request, db, requestId) {
   return settings;
 }
 
+// Research operations carry operator-written text that the worker verifies
+// byte for byte (an editor approves the exact draft). Telemetry sanitization
+// collapses line breaks and cuts strings at 2,000 characters, so every brief
+// approval failed with "requires the complete current draft text". Store the
+// command verbatim within the request limit, and refuse secret-shaped keys
+// instead of silently dropping them.
+function researchCommandJson(payload) {
+  const secretKey = /(?:^|_)(?:token|secret|password|credential|private_key|api_key)(?:_|$)/i;
+  const visit = (value, depth) => {
+    if (depth > 8) throw new HttpError(422, "invalid_command", "Research command is nested too deeply");
+    if (Array.isArray(value)) { value.forEach((item) => visit(item, depth + 1)); return; }
+    if (value && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) {
+        if (secretKey.test(key)) throw new HttpError(422, "invalid_command", "Research commands cannot carry credentials");
+        visit(item, depth + 1);
+      }
+    }
+  };
+  visit(payload, 0);
+  const encoded = JSON.stringify(payload);
+  if (new TextEncoder().encode(encoded).byteLength > MAX_INTELLIGENCE_BYTES) throw new HttpError(413, "payload_too_large", "Research command exceeds the size limit");
+  return encoded;
+}
+
 async function queueCoordinatorCommand(request, db, requestId, commandType, fixedPayload) {
   if (!COORDINATOR_COMMANDS.has(commandType)) throw new HttpError(422, "invalid_command", "Unsupported coordinator command");
   const body = await readJsonObject(request, MAX_INTELLIGENCE_BYTES, "Coordinator command");
@@ -1979,7 +2003,8 @@ async function queueCoordinatorCommand(request, db, requestId, commandType, fixe
     (command_id, command_type, status, requested_by, idempotency_key, payload_json, result_json, worker_id,
      queued_at, started_at, completed_at, updated_at, lease_until, error_message)
     VALUES (?, ?, 'queued', ?, ?, ?, '{}', '', ?, NULL, NULL, ?, NULL, NULL)`)
-    .bind(commandId, commandType, requestedBy, idempotencyKey, boundedJson(payload, MAX_SUMMARY_BYTES, "Coordinator command"), now, now).run();
+    .bind(commandId, commandType, requestedBy, idempotencyKey,
+      commandType === "research-operation" ? researchCommandJson(payload) : boundedJson(payload, MAX_SUMMARY_BYTES, "Coordinator command"), now, now).run();
   await writeAudit(db, { requestId, action: `intelligence.coordinator.${commandType}`, actorRole: "intelligence_operator", result: "queued", sourceInstance: "secopsai-core-edge", details: { command_id: commandId }, createdAt: now });
   return { command_id: commandId, command_type: commandType, status: "queued", queued_at: now };
 }

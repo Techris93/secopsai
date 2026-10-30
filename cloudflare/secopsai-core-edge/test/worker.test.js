@@ -1004,3 +1004,19 @@ test('triage results stay under the runner response limit and report where to re
   assert.equal(body.next_since, body.results[body.results.length-1].updated_at);
   db.close();
 });
+
+test('research commands keep operator text exactly (brief approval carries the whole draft)', {skip:!DatabaseSync}, async () => {
+  const {db,d1}=migratedSqliteD1();
+  const env={DB:d1,CORE_INTELLIGENCE_TOKEN:'operator-fixture'};
+  const post=(payload)=>handleRequest(new Request('https://core.example/api/v1/research/operation',{method:'POST',
+    headers:{authorization:'Bearer '+env.CORE_INTELLIGENCE_TOKEN,'content-type':'application/json'},
+    body:JSON.stringify({payload,requested_by:'editor',idempotency_key:'k-'+Math.random()})}),env);
+  const draft='# SecOpsAI Daily Intelligence Brief\n\n'+Array.from({length:60},(_,i)=>`## Item ${i}\n\nLine with | table | cells and a long sentence that keeps going ${'x'.repeat(40)}.`).join('\n\n');
+  assert.ok(draft.length>5000 && draft.includes('\n'));
+  const queued=await(await post({action:'brief-approve',actor:'operator.owner',id:'BRIEF-2026-10-24',data:{reviewed_draft:draft,expected_fingerprint:'f'.repeat(64),checks:{a:'passed'},rationale:'checked'}})).json();
+  const row=db.prepare('SELECT payload_json FROM coordinator_commands WHERE command_id=?').get(queued.command_id);
+  assert.equal(JSON.parse(row.payload_json).data.reviewed_draft, draft, 'draft stored byte for byte');
+  const refused=await post({action:'brief-approve',actor:'operator.owner',data:{api_key:'nope'}});
+  assert.equal(refused.status,422);
+  db.close();
+});
