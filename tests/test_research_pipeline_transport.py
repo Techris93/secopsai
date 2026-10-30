@@ -71,7 +71,7 @@ def test_jobs_reach_core_without_routing_and_the_answers_finish_the_pipeline(tmp
     assert sync_hosted(core, db_path=db)["applied"] == 3
     assert get_pipeline(pipeline["pipeline_id"], db_path=db)["status"] == "awaiting_review"
     assert get_run("IAR-0000000000000001", db_path=db)["status"] == "ready_for_decision", "the slot is free for the next run"
-    assert sync_hosted(core, db_path=db) == {"status": "ok", "delivered": 0, "applied": 0, "failed": 0, "canceled": 0, "waiting": 0}
+    assert sync_hosted(core, db_path=db) == {"status": "ok", "delivered": 0, "applied": 0, "failed": 0, "canceled": 0, "waiting": 0, "reasons": {}}
 
 
 def test_a_job_without_a_live_investigation_spends_no_model_quota(tmp_path, monkeypatch):
@@ -154,3 +154,32 @@ def test_an_inconclusive_finished_analysis_spends_no_more_model_jobs(tmp_path, m
     db, _ = _pipeline(tmp_path, monkeypatch)
     assert _gap(db, "evidence_incomplete") == 0
     assert _gap(db, "artifact_unavailable") == 1, "a temporary evidence gap is still retried"
+
+
+def test_a_large_case_is_shortened_to_fit_and_says_so():
+    from secopsai.research_operation_store import canonical
+    from secopsai.research_pipeline_transport import MAX_PAYLOAD_BYTES, _fit
+
+    context = {"case": {"case_id": "RSC-0123456789AB", "title": "t"},
+               "evidence_matrix": {"rows": [{"evidence_id": f"EVD-{index}", "notes": "x" * 3000} for index in range(90)]}}
+    payload = {"action": "generate_analyst_brief", "target_id": "RSC-0123456789AB",
+               "inputs": {"assistant_request": {"context": context, "instructions": "i"}}}
+    request = _fit(payload)["inputs"]["assistant_request"]
+    assert len(canonical(payload).encode()) <= MAX_PAYLOAD_BYTES
+    assert request["context"]["case"]["case_id"] == "RSC-0123456789AB"
+    assert request["context"]["evidence_coverage"]["complete"] is False
+    assert request["context"]["evidence_matrix"]["rows"][0]["evidence_id"] == "EVD-0"
+
+    small = {"action": "a", "target_id": "t", "inputs": {"assistant_request": {"context": {"case": {"case_id": "t"}}}}}
+    assert "evidence_coverage" not in _fit(small)["inputs"]["assistant_request"]["context"]
+
+
+def test_a_refusal_from_core_is_counted_by_its_reason(tmp_path, monkeypatch):
+    db, _ = _pipeline(tmp_path, monkeypatch)
+
+    class Refuses(Core):
+        def queue_assistant_job(self, payload):
+            raise CoreEdgeHTTPError("refused", status=422, error_code="invalid_assistant_contract")
+
+    outcome = sync_hosted(Refuses(), db_path=db)
+    assert outcome["failed"] == 3 and outcome["reasons"] == {"http_422_invalid_assistant_contract": 3}
