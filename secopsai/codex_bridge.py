@@ -1870,10 +1870,10 @@ def _invoke_with_model_fallback(
                 raise DecisionError("evaluation deadline exhausted", category="timeout")
             raw = _invoke_codex(request, replace(settings, timeout_seconds=remaining), runner, model=model_name)
             if action_name == "triage_artifact":
-                from secopsai.decision_evidence import build_evidence, evidence_identifiers, missing_file_identifiers
+                from secopsai.decision_evidence import context_coverage, evidence_identifiers, missing_file_identifiers
                 context = request.get("context", {})
                 artifact = context.get("artifact_triage", context)
-                _, coverage = build_evidence(artifact)
+                coverage = context_coverage(artifact)
                 refs = raw.get("decision_evidence_refs", [])
                 if not isinstance(refs, list) or any(ref not in evidence_identifiers(artifact) for ref in refs):
                     raise DecisionError("artifact result cites unsupplied evidence", category="safety")

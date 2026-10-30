@@ -5,6 +5,9 @@ from typing import Any
 
 CATEGORIES = ("matched_strings", "flag_locations", "findings", "install_time_files", "decoded_payloads", "flagged_files", "binaries", "metadata_signals")
 MAX_STATE_CHARS = 32_000
+# Contexts built before this contract carry no exact region counts, so they
+# can never count as complete.
+COVERAGE_CONTRACT = "context-v1"
 
 
 def build_evidence(context: dict[str, Any], limit: int = MAX_STATE_CHARS) -> tuple[str, dict[str, Any]]:
@@ -97,6 +100,61 @@ def build_evidence(context: dict[str, Any], limit: int = MAX_STATE_CHARS) -> tup
     if len(encoded) > limit:
         raise ValueError("evidence coverage metadata exceeds budget")
     return encoded, coverage
+
+
+def context_coverage(context: dict[str, Any]) -> dict[str, Any]:
+    """Coverage for a model handed the whole context, as bridge models are.
+
+    ``build_evidence`` measures Clef's smaller serialized state, so it reports
+    cuts a bridge model never had. Complete here means every rule match can be
+    read in what was supplied. A flagged file too large to send whole still
+    counts when every matched region is in its excerpt: the rules scanned the
+    rest. Anything the model cannot read is a gap, and a gap blocks closure.
+    """
+    gaps: list[str] = []
+    if context.get("coverage_contract") != COVERAGE_CONTRACT:
+        gaps.append("context_predates_coverage_contract")
+    if context.get("evidence_truncated"):
+        gaps.extend(f"omitted:{item}" for item in context.get("evidence_omissions") or ["evidence_truncated"])
+    findings = [item for item in context.get("findings") or [] if isinstance(item, dict)]
+    if not findings:
+        gaps.append("no_findings")
+    supplied: set[str] = set()
+    for item in context.get("flagged_files") or []:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "")
+        cut = item.get("truncated") is True or item.get("complete") is False
+        found, shown = item.get("regions_found"), item.get("regions_shown")
+        supplied.add(path)
+        if item.get("binary") or "content" not in item:
+            gaps.append(f"flagged_file_not_readable:{path}")
+        elif item.get("regions_trimmed") or (cut and not (isinstance(found, int) and found > 0 and shown == found)):
+            gaps.append(f"flagged_file_regions:{path}")
+    for item in context.get("install_time_files") or []:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "")
+        supplied.add(path)
+        if item.get("truncated") is True or item.get("complete") is False:
+            gaps.append(f"install_time_file:{path}")
+    gaps.extend(f"decoded_payload:{item.get('found_in')}" for item in context.get("decoded_payloads") or [] if isinstance(item, dict) and item.get("truncated") is True)
+    gaps.extend(f"binary_not_inspected:{item.get('path')}" for item in context.get("binaries") or [] if isinstance(item, dict))
+    for item in findings:
+        paths = [item.get("file_path")] + [found.get("file_path") for found in item.get("evidence_locations") or [] if isinstance(found, dict)]
+        gaps.extend(f"finding_file_not_supplied:{path}" for path in paths if isinstance(path, str) and path and path not in supplied)
+    gaps = list(dict.fromkeys(gaps))
+    return {"contract": COVERAGE_CONTRACT, "complete": not gaps, "gaps": gaps[:50], "gap_count": len(gaps),
+            "included_categories": sorted(key for key in CATEGORIES if context.get(key)), "omitted_categories": [],
+            "truncated_records": gaps[:50], "source_truncated": bool(context.get("evidence_truncated"))}
+
+
+def coverage_for_result(context: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    """Recheck a stored result with the measure that produced it."""
+    reported = result.get("evidence_coverage")
+    if isinstance(reported, dict) and reported.get("contract") == COVERAGE_CONTRACT:
+        return context_coverage(context)
+    return build_evidence(context)[1]
 
 
 def evidence_identifiers(context: dict) -> list[str]:
