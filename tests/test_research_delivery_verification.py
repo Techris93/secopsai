@@ -121,6 +121,8 @@ def test_delivery_entrypoint_logs_safe_hosted_error_code(monkeypatch, capsys):
         'error_category': 'CoreEdgeHTTPError',
         'http_status': 422,
         'error_code': 'invalid_projection',
+        'error_message': 'hosted Core rejected projection',
+        'error_location': 'test_research_delivery_verification.py:110 in reject_projection',
     }
 
 
