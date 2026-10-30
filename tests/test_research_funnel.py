@@ -283,3 +283,34 @@ def test_fit_context_trims_flagged_files_last():
     assert fitted["context_bytes"] <= research_ai_triage.MAX_CONTEXT_BYTES
     assert len(fitted["flagged_files"][0]["content"]) == 16000  # untouched: cheaper evidence went first
     assert all(len(f["safe_context"]) <= 700 for f in fitted["findings"])
+
+
+def test_oversized_result_pages_shrink_instead_of_jamming_the_cursor(tmp_path):
+    """Production 2026-10-28/29: 100 results were ~1 MB, over the 512 KB client
+    limit, so every cycle failed and the cursor never advanced."""
+    from secopsai import research_ai_triage
+
+    db = str(tmp_path / "research.db")
+    soc_store.init_db(db)
+    stored = [{"artifact_id": f"npm:pkg{i}@1.0.0", "status": "succeeded", "updated_at": f"2026-10-29T00:{i:02d}:00Z",
+               "job_id": f"AIJ-{i}", "result": _decision("false_positive", 92, 4)} for i in range(60)]
+
+    class _JammedCore(_FakeCore):
+        def __init__(self):
+            super().__init__()
+            self.limits = []
+
+        def triage_results(self, *, since="", limit=100):
+            self.limits.append(limit)
+            if limit > 10:
+                raise RuntimeError("hosted Core response exceeds the local limit")
+            rows = [row for row in stored if row["updated_at"] > (since or "")][:limit]
+            return {"results": rows, "pending": 0}
+
+    core = _JammedCore()
+    summary = research_ai_triage.sync(core, db_path=db)
+    assert summary["status"] == "ok" and summary["results"] == 60
+    assert max(limit for limit in core.limits if limit <= 10) <= 10 and core.limits[0] == research_ai_triage.RESULTS_PAGE_LIMIT
+    with soc_store.connect(db) as connection:
+        cursor = connection.execute("SELECT value FROM core_sync_cursors WHERE name=?", (research_ai_triage.CURSOR_KEY,)).fetchone()[0]
+    assert cursor == "2026-10-29T00:59:00Z", "cursor reaches the newest result"

@@ -22,6 +22,7 @@ const INTELLIGENCE_JOB_SCHEMA_VERSION = "secopsai.intelligence.job.v1";
 const MAX_INTELLIGENCE_BYTES = 64 * 1024;
 const MAX_INTELLIGENCE_RESULT_BYTES = 512 * 1024;
 const MAX_SUMMARY_BYTES = 32 * 1024;
+const TRIAGE_RESULTS_MAX_BYTES = 384 * 1024;
 const ONTOLOGY_SCHEMA_VERSION = "secopsai.ontology.v1";
 // Keep one request below the lowest D1 plan limits.  The paid plan permits
 // more reads/batch statements, but accepting a larger request here would make
@@ -1627,11 +1628,23 @@ async function runnerTriageResults(db, searchParams) {
     json_extract(input_json,'$.recovery_contract_version') AS recovery_contract_version
     FROM intelligence_jobs WHERE action='triage_artifact' AND requested_by=? AND status IN ('succeeded','failed','canceled') AND updated_at > ?
     ORDER BY updated_at, job_id LIMIT ?`).bind(RUNNER_TRIAGE_REQUESTER, since, limit).all();
-  const results = (rows.results || []).map((row) => ({ job_id: row.job_id, artifact_id: row.target_id, status: row.status, error_code: row.error_code || "", updated_at: row.updated_at,
-    recovery_of_job_id: row.recovery_of_job_id || null, recovery_contract_version: row.recovery_contract_version || null,
-    result: parseJson(row.result_json, {}) }));
+  // Stop before the runner's response limit (512 KB): model outputs grew to
+  // ~10 KB each and 100 rows reached ~1 MB, which the runner rejected every
+  // cycle without advancing its cursor. At least one row is always returned.
+  const results = [];
+  let bytes = 0;
+  let truncated = false;
+  for (const row of rows.results || []) {
+    const item = { job_id: row.job_id, artifact_id: row.target_id, status: row.status, error_code: row.error_code || "", updated_at: row.updated_at,
+      recovery_of_job_id: row.recovery_of_job_id || null, recovery_contract_version: row.recovery_contract_version || null,
+      result: parseJson(row.result_json, {}) };
+    const size = new TextEncoder().encode(JSON.stringify(item)).byteLength;
+    if (results.length && bytes + size > TRIAGE_RESULTS_MAX_BYTES) { truncated = true; break; }
+    results.push(item);
+    bytes += size;
+  }
   const pending = await db.prepare("SELECT COUNT(*) AS n FROM intelligence_jobs WHERE action='triage_artifact' AND requested_by=? AND status IN ('queued','running','awaiting_provider')").bind(RUNNER_TRIAGE_REQUESTER).first();
-  return { results, pending: Number(pending?.n || 0) };
+  return { results, pending: Number(pending?.n || 0), truncated, next_since: results.length ? results[results.length - 1].updated_at : since };
 }
 
 const ASSISTANT_REQUESTER = "research-assistant-worker";
