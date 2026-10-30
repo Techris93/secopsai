@@ -226,3 +226,34 @@ def test_triage_evidence_uses_yara_match_offsets_for_large_files():
     item = package_features.triage_evidence([("package/x.ps1", data)], [finding], [])["flagged_files"][0]
     assert item["truncated"] is True and item["complete"] is False and item["matched_regions_shown"] is True
     assert "DownloadString('http://203.0.113.9/a')" in item["content"]
+
+
+def _flagged(text: str, offsets: list[int]) -> dict:
+    finding = {"file_path": "package/x.js", "match_offsets": offsets, "safe_context": ""}
+    return package_features.triage_evidence([("package/x.js", text.encode())], [finding], [])["flagged_files"][0]
+
+
+def test_excerpt_counts_every_region_it_shows_and_stays_under_core_string_limit():
+    text = "".join(f"marker{index:02d}" + "x" * 3000 for index in range(10))
+    item = _flagged(text, [text.index(f"marker{index:02d}") for index in range(10)])
+    assert item["regions_found"] == item["regions_shown"] == 10 and item["matched_regions_shown"] is True
+    assert all(f"marker{index:02d}" in item["content"] for index in range(10))
+    assert len(item["content"]) < 16_000
+
+
+def test_excerpt_does_not_claim_regions_past_its_cap():
+    text = "".join(f"marker{index:02d}" + "x" * 3000 for index in range(20))
+    item = _flagged(text, [text.index(f"marker{index:02d}") for index in range(20)])
+    assert item["regions_found"] == 20 and item["regions_shown"] < 20 and item["matched_regions_shown"] is False
+
+
+def test_excerpt_does_not_claim_a_match_beyond_the_scanned_text():
+    text = "a" * (package_features.MAX_TEXT_BYTES + 5000)
+    item = _flagged(text, [100, package_features.MAX_TEXT_BYTES + 100])
+    assert item["regions_found"] == 2 and item["regions_shown"] == 1 and item["matched_regions_shown"] is False
+
+
+def test_nearby_matches_share_one_window():
+    text = "x" * 40_000 + "".join(f"m{index} " for index in range(50)) + "x" * 40_000
+    item = _flagged(text, [text.index(f"m{index} ") for index in range(50)])
+    assert item["regions_shown"] == 50 and item["matched_regions_shown"] is True

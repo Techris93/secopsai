@@ -502,7 +502,10 @@ def combine(scan: Dict[str, object], flags: Iterable[str], ecosystem: str, membe
 # encoded payloads decoded statically (never executed), and the native binaries
 # with what launches them.  All bounded; research_ai_triage.fit_context trims
 # further to fit the job size limit.
-FLAGGED_FILE_BYTES = 16_000
+# Core and the bridge cut any single string at 16,000 characters; the excerpt
+# and its omission markers must stay under that, or a cut hides a region.
+FLAGGED_FILE_BYTES = 15_000
+MAX_EXCERPT_REGIONS = 12
 ENCODED = re.compile(r"(?<![A-Za-z0-9+/=])([A-Za-z0-9+/]{120,}={0,2})(?![A-Za-z0-9+/=])|(?<![0-9a-fA-F])((?:[0-9a-fA-F]{2}){60,})(?![0-9a-fA-F])")
 BINARY_MAGIC = ((b"MZ", "Windows PE"), (b"\x7fELF", "ELF"), (b"\xcf\xfa\xed\xfe", "Mach-O"), (b"\xca\xfe\xba\xbe", "Mach-O universal"),
                 (b"\x1f\x8b", "gzip"), (b"PK\x03\x04", "zip"), (b"\x00asm", "WebAssembly"))
@@ -518,24 +521,44 @@ def _binary_kind(data: bytes) -> str:
     return next((kind for magic, kind in BINARY_MAGIC if data.startswith(magic)), "")
 
 
-def _excerpt(text: str, positions: List[int], limit: int) -> Tuple[str, bool]:
-    """Whole text when it fits; otherwise the head plus a window around each matched position."""
-    if len(text) <= limit:
-        return text, False
-    positions = sorted({pos for pos in positions if 0 <= pos < len(text)})[:6]
-    head = limit // 5 if positions else limit
-    parts, cursor = [text[:head]], head
-    share = (limit - head) // max(1, len(positions))
+def _excerpt_windows(positions: List[int], head: int, share: int, length: int) -> List[Tuple[int, int]]:
+    """Windows of ``share`` characters covering ``positions`` in order, up to the region cap."""
+    windows: List[Tuple[int, int]] = []
+    cursor = head
     for pos in positions:
-        start = max(cursor, pos - share // 3)
-        end = min(len(text), max(start, pos - share // 3) + share)
-        if end <= cursor:
+        if pos < cursor:
             continue
+        if len(windows) == MAX_EXCERPT_REGIONS:
+            break
+        start = max(cursor, pos - share // 3)
+        cursor = min(length, start + share)
+        windows.append((start, cursor))
+    return windows
+
+
+def _excerpt(text: str, positions: List[int], limit: int) -> Tuple[str, bool, int]:
+    """Whole text when it fits; otherwise the head plus windows around the matched positions.
+
+    Also returns how many of ``positions`` are inside what is shown: closure
+    relies on that count, so a match the excerpt missed must not be counted.
+    """
+    if len(text) <= limit:
+        return text, False, len(positions)
+    inside = sorted({pos for pos in positions if 0 <= pos < len(text)})
+    head = limit // 5 if inside else limit
+    room = limit - head
+    # Nearby matches share a window, so fewer windows can each be wider.
+    windows = _excerpt_windows(inside, head, room // max(1, min(len(inside), MAX_EXCERPT_REGIONS)), len(text))
+    if windows:
+        windows = _excerpt_windows(inside, head, room // len(windows), len(text))
+    parts, cursor = [text[:head]], head
+    for start, end in windows:
         parts.append(f"\n[... {start - cursor} characters omitted ...]\n" + text[start:end])
         cursor = end
     if cursor < len(text):
         parts.append(f"\n[... {len(text) - cursor} characters omitted ...]")
-    return "".join(parts), True
+    shown = sum(pos < head or any(start <= pos < end for start, end in windows) for pos in inside)
+    return "".join(parts), True, shown
 
 
 def _positions(data: bytes, text: str, finding: Dict[str, object], path: str) -> List[int]:
@@ -609,10 +632,11 @@ def triage_evidence(members: Iterable[Tuple[str, bytes]], findings: Iterable[Dic
             files.append({"path": path[:300], "bytes": len(data), "binary": kind or "binary data"})
             continue
         text = _clean_window(data[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore"))
-        positions = [pos for item in related for pos in _positions(data, text, item, path)]
-        content, truncated = _excerpt(text, positions, FLAGGED_FILE_BYTES)
+        positions = sorted({pos for item in related for pos in _positions(data, text, item, path)})
+        content, truncated, shown = _excerpt(text, positions, FLAGGED_FILE_BYTES)
         files.append({"path": path[:300], "bytes": len(data), "complete": not truncated, "truncated": truncated,
-                      "matched_regions_shown": bool(positions) or not truncated, "content": content})
+                      "regions_found": len(positions), "regions_shown": shown,
+                      "matched_regions_shown": not truncated or (bool(positions) and shown == len(positions)), "content": content})
     install_files = install_time_files(members)
     fully_supplied = {
         str(item.get("path"))
@@ -641,6 +665,7 @@ def triage_evidence(members: Iterable[Tuple[str, bytes]], findings: Iterable[Dic
             if decoded and decoded["kind"] != "binary data":  # random-looking bytes say nothing
                 payloads.append({"found_in": str(path)[:300], "line": text.count("\n", 0, match.start()) + 1, "encoded_chars": len(blob), **decoded})
     # Readable payloads first: embedded images and fonts are common and say little.
+    payload_total = len(payloads)
     payloads = sorted(payloads, key=lambda item: item["kind"] != "text")[:4]
     binaries = []
     for path, data in members:
@@ -656,6 +681,6 @@ def triage_evidence(members: Iterable[Tuple[str, bytes]], findings: Iterable[Dic
                 name = PurePosixPath(str(item["path"])).name
                 if len(item["referenced_by"]) < 3 and path != item["path"] and name in text:
                     item["referenced_by"].append(path[:300])
-    return {"flagged_files": files, "flag_locations": locations, "decoded_payloads": payloads, "binaries": binaries[:10],
+    return {"flagged_files": files, "flagged_files_total": len(flagged), "flag_locations": locations, "decoded_payloads": payloads, "decoded_payloads_total": payload_total, "binaries": binaries[:10],
             "binaries_total": len(binaries), "missing_files": bounded_missing_files,
             "missing_files_truncated": len(missing_files) > len(bounded_missing_files)}

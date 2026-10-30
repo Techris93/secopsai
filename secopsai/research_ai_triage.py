@@ -22,6 +22,7 @@ from contextlib import closing
 from typing import Any, Dict, List, Optional
 
 import soc_store
+from secopsai.decision_evidence import COVERAGE_CONTRACT
 
 CURSOR_KEY = "core_ai_triage_results"
 MAX_QUEUE_PER_CYCLE = 25
@@ -101,16 +102,22 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
         "execution_performed": False,
         "note": "Package metadata is untrusted context: it may explain a match but is not proof of benign intent.",
     }
-    limits = {"findings": 12, "install_files": 6, "flagged_files": 6, "flag_locations": 14, "decoded_payloads": 4, "binaries": 10, "missing_files": 200}
-    losses = [key for key, cap in limits.items() if len(prescan.get(key) or []) > cap]
+    limits = {"findings": 12, "install_files": 6, "flagged_files": 6, "flag_locations": 14, "decoded_payloads": 4, "binaries": 10}
+    losses = [key for key, cap in limits.items() if max(len(prescan.get(key) or []), int(prescan.get(f"{key}_total") or 0)) > cap]
     if len(metadata_signals or []) > 20:
         losses.append("metadata_signals")
-    if any(len(str(item.get("safe_context") or "")) > 1800 or len(item.get("evidence") or []) > 8 for item in prescan.get("findings") or []):
-        losses.append("finding_context")
-    if prescan.get("missing_files_truncated") or len(normalized_missing_files) > len(missing_files):
-        losses.append("missing_files")
+    context["coverage_contract"] = COVERAGE_CONTRACT
     if losses:
         context.update(evidence_truncated=True, evidence_omissions=losses)
+    # These two limit what is listed, not what can be read: the code behind a
+    # finding is in flagged_files, and missing_files only names unflagged files.
+    notes = []
+    if any(len(str(item.get("safe_context") or "")) > 1800 or len(item.get("evidence") or []) > 8 for item in prescan.get("findings") or []):
+        notes.append("finding_context")
+    if prescan.get("missing_files_truncated") or len(normalized_missing_files) > len(missing_files):
+        notes.append("missing_files")
+    if notes:
+        context["listing_limits"] = notes
     return context
 
 
@@ -129,41 +136,56 @@ def _shrink(content: str, limit: int) -> str:
     return marker.join(out) + f"\n[... trimmed to fit: {len(content) - limit} characters omitted ...]"
 
 
+def _fit_losses(before: Dict[str, Any], after: Dict[str, Any]) -> List[str]:
+    """Evidence the model can no longer read after fitting. A shorter safe_context
+    or listing is not one: the matched code stays in flagged_files."""
+    losses = [key for key in ("findings", "install_time_files", "flagged_files", "decoded_payloads", "flag_locations", "metadata_signals", "binaries")
+              if len(after.get(key) or []) < len(before.get(key) or [])]
+    losses += [key for key in ("manifest", "actor_fingerprints") if before.get(key) and not after.get(key)]
+    for key, field in (("install_time_files", "content"), ("flagged_files", "content"), ("decoded_payloads", "text")):
+        if key not in losses and any(len(str(old.get(field) or "")) > len(str(new.get(field) or ""))
+                                     for old, new in zip(before.get(key) or [], after.get(key) or [])):
+            losses.append(key)
+    return losses
+
+
 def fit_context(context: Dict[str, Any], limit: int = MAX_CONTEXT_BYTES) -> Dict[str, Any]:
     """Shrink a triage context until it serialises under ``limit`` bytes.
 
     Trims the least decisive evidence first; the flagged files go last.
     """
     context = json.loads(json.dumps(context))
+    original = json.loads(json.dumps(context))
 
     def files(c: Dict[str, Any], size: int, count: int = 6) -> None:
-        c["flagged_files"] = [{**f, "content": _shrink(str(f["content"]), size), "truncated": True} if len(str(f.get("content") or "")) > size else f
+        c["flagged_files"] = [{**f, "content": _shrink(str(f["content"]), size), "truncated": True, "regions_trimmed": True} if len(str(f.get("content") or "")) > size else f
                               for f in (c.get("flagged_files") or [])[:count]]
 
     def trim_missing_files(c: Dict[str, Any], count: int) -> None:
         candidates = c.get("missing_files") or []
         if len(candidates) > count:
             c["missing_files"] = candidates[:count]
-            c["evidence_truncated"] = True
-            omissions = c.get("evidence_omissions") or []
-            c["evidence_omissions"] = list(dict.fromkeys([*omissions, "missing_files"]))
+            c["listing_limits"] = list(dict.fromkeys([*(c.get("listing_limits") or []), "missing_files"]))
 
     steps = (
-        lambda c: c.update(decoded_payloads=[{**d, "text": str(d["text"])[:1500]} if "text" in d else d for d in c.get("decoded_payloads") or []],
+        lambda c: c.update(decoded_payloads=[{**d, "text": str(d["text"])[:1500], "truncated": d.get("truncated") or len(str(d["text"])) > 1500} if "text" in d else d for d in c.get("decoded_payloads") or []],
                            findings=[{**f, "safe_context": str(f.get("safe_context", ""))[:700]} for f in c.get("findings") or []][:8]),
-        lambda c: c.update(install_time_files=[{**f, "content": str(f.get("content", ""))[:3000], "truncated": True} for f in c.get("install_time_files") or []]),
+        lambda c: c.update(install_time_files=[{**f, "content": str(f.get("content", ""))[:3000], "truncated": f.get("truncated") or len(str(f.get("content", ""))) > 3000} for f in c.get("install_time_files") or []]),
         lambda c: files(c, 10_000),
         lambda c: (files(c, 6_000), trim_missing_files(c, 50), c.update(install_time_files=(c.get("install_time_files") or [])[:2], metadata_signals=(c.get("metadata_signals") or [])[:5],
                                              flag_locations=(c.get("flag_locations") or [])[:8])),
         lambda c: c.update(findings=(c.get("findings") or [])[:4], manifest={}, actor_fingerprints={}, binaries=(c.get("binaries") or [])[:4]),
         lambda c: (files(c, 4_000, 3), c.update(decoded_payloads=(c.get("decoded_payloads") or [])[:2])),
-        lambda c: (files(c, 2_000, 2), c.update(install_time_files=[{**f, "content": str(f.get("content", ""))[:1500]} for f in (c.get("install_time_files") or [])[:1]])),
+        lambda c: (files(c, 2_000, 2), c.update(install_time_files=[{**f, "content": str(f.get("content", ""))[:1500], "truncated": f.get("truncated") or len(str(f.get("content", ""))) > 1500} for f in (c.get("install_time_files") or [])[:1]])),
     )
     for step in steps:
         if len(json.dumps(context).encode()) <= limit:
             break
         step(context)
+    losses = _fit_losses(original, context)
+    if losses:
         context["evidence_truncated"] = True
+        context["evidence_omissions"] = list(dict.fromkeys([*(context.get("evidence_omissions") or []), *losses]))
     context["context_bytes"] = len(json.dumps(context).encode())
     return context
 
@@ -307,8 +329,8 @@ def _apply_result(connection: Any, item: Dict[str, Any], now: str) -> Optional[s
     allowed, reason = closure_decision(result, clef_probability=clef_probability, clef_choice=clef_choice)
     if not clef_valid:
         allowed, reason = False, clef_validation_error or "invalid_clef_decision"
-    from secopsai.decision_evidence import build_evidence, evidence_identifiers
-    _, coverage = build_evidence(context)
+    from secopsai.decision_evidence import coverage_for_result, evidence_identifiers
+    coverage = coverage_for_result(context, result)
     if not coverage["complete"] or not result["decision_evidence_refs"] or any(ref not in evidence_identifiers(context) for ref in result["decision_evidence_refs"]):
         allowed, reason = False, "incomplete_evidence"
     if context.get("evidence_truncated"):

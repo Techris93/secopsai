@@ -132,7 +132,7 @@ def scan_members(fetcher: Optional[SafeFetcher], ecosystem: str, package: str, v
             "install_files": package_features.install_time_files(members) if level in HIT_LEVELS else [],
             **(package_features.triage_evidence(members, findings, flags) if level in HIT_LEVELS else {}),
             "status": "hit" if level in HIT_LEVELS else "clean", "score": int(scanned.get("score") or 0), "level": level,
-            "rules_matched": scanned.get("rules_matched") or [], "findings": findings[:20], "features": flags, "files": len(members), "bytes": archive_bytes, "diff": diff}
+            "rules_matched": scanned.get("rules_matched") or [], "findings": findings[:20], "findings_total": len(findings), "features": flags, "files": len(members), "bytes": archive_bytes, "diff": diff}
 
 
 def scan_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: str, *, rules_ecosystem: str = "") -> Dict[str, Any]:
