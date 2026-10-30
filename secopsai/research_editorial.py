@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,6 +17,10 @@ from secopsai.research_primary_intel import intel_event
 TIMEZONE = ZoneInfo("Europe/Istanbul")
 AUTOMATED_BRIEF_AUTHOR_ID = "secopsai-automated-research-desk"
 CARRY_OVER_DAYS = 3
+MAX_BRIEF_ITEMS = 15
+CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
+# The Socket blog index links a whole card: "Latest <title> <categories> <date>".
+SOCKET_CARD_RE = re.compile(r"^(?:Latest\s+)?(.+?)(?:\s+(?:Threat Research|Security News|Research|News|Product|Engineering))*\s+[A-Z][a-z]{2} \d{1,2}, \d{4}$")
 PRODUCTS = {"daily_brief", "technical_advisory", "research_report"}
 BOARD_STATES = {"proposed", "verifying", "vendor_contact", "embargoed", "technical_review", "approved", "published", "updating", "corrected", "retracted"}
 BRIEF_CHECKS = {"claims", "primary_sources", "affected_versions", "defensive_actions", "uncertainty", "privacy", "secrets", "sharing_rights", "licensing", "embargo", "credits", "conflicts"}
@@ -183,14 +188,13 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
             continue
         roots.add(primary["root_source_key"])
         items.append({"event_id": event_id, "event_fingerprint": digest(event), "primary_event_id": primary["event_id"],
-                      "primary_fingerprint": digest(primary), "source": primary["source"]["name"], "title": event["payload"]["title"],
+                      "primary_fingerprint": digest(primary), "source": primary["source"]["name"], "title": _display_title(event["payload"]["title"], primary["source"]["name"]),
                       "url": decision["primary_url"], "attribution": "source_reported", "summary": decision["summary"], "verification_fingerprint": digest(decision), "defensive_action": decision["defensive_action"],
                       "limitations": decision["limitations"], "published_at": event["published_at"], "first_observed_at": event["first_observed_at"],
                       "collected_at": event["collected_at"], "source_sha256": primary["sha256"],
                       "verification": "automated" if decision.get("automation") else "human",
-                      **({"cves": list(decision["automation"].get("checks") or {})} if decision.get("automation") else {})})
-        if len(items) == 15:
-            break
+                      "cves": _item_cves(decision)})
+    items = _brief_selection(items)
     from secopsai.research_coverage import coverage_report
     coverage = coverage_report(db_path=db_path)
     from secopsai import research_desk
@@ -207,7 +211,8 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
                       f"Defensive action: {item['defensive_action']}", f"Limitations: {item['limitations']}",
                       f"Published: {item['published_at'] or 'not supplied'}; first observed: {item['first_observed_at']}."])
         if item.get("verification") == "automated":
-            lines.append("Verified automatically by SecOpsAI rules (identifiers and scores checked against cve.org and NVD) under the editor's recorded policy.")
+            checked = "identifiers and scores checked against cve.org and NVD" if item.get("cves") else "primary source with a stated fix; no CVE recorded to check"
+            lines.append(f"Verified automatically by SecOpsAI rules ({checked}) under the editor's recorded policy.")
         lines.extend(research_desk.research_note(item["event_id"], ranked=ranked, db_path=db_path, cves=item.get("cves")))
     lines.extend(["", "## Collection scope", "", coverage["public_summary"], "", "## Credits and corrections", "", f"Prepared by {author['display_name']}. Technical verification and final release require recorded human review. Corrections will retain the previous edition and explain material changes."])
     draft = {"title": f"SecOpsAI Daily Intelligence Brief — {date}", "slug": f"daily-intelligence-{date}", "summary": f"Verified intelligence and defensive updates for {date}.",
@@ -503,6 +508,25 @@ def update_board(case_id: str, payload: dict, *, actor: str, db_path=None) -> di
     if value["channel"] not in {"continuous_monitoring", "planned_investigation", "partner_submission"}:
         raise ValueError("invalid discovery channel")
     return append("editorial_board", value, actor=actor, case_id=case_id, db_path=db_path)
+
+
+def _display_title(title: str, source: str) -> str:
+    match = SOCKET_CARD_RE.match(title) if source == "Socket Blog" else None
+    return match.group(1) if match else title
+
+
+def _item_cves(decision: dict) -> list[str]:
+    """The CVEs an item is about: those the rules checked, or the reviewer named."""
+    if decision.get("automation"):
+        return list(decision["automation"].get("checks") or {})
+    return list(dict.fromkeys(cve.upper() for cve in CVE_RE.findall(decision["summary"])))
+
+
+def _brief_selection(items: list[dict]) -> list[dict]:
+    """Reviewer decisions, then what is being exploited, then the newest."""
+    items = sorted(items, key=lambda item: item["first_observed_at"] or "", reverse=True)
+    items.sort(key=lambda item: (item["verification"] != "human", "known exploited" not in item["source"].casefold()))
+    return items[:MAX_BRIEF_ITEMS]
 
 
 def scheduled_brief(*, db_path=None, now=None) -> dict:

@@ -328,3 +328,41 @@ def test_age_out_reports_first_then_archives_and_brings_back_what_the_desk_ranks
     assert "old-quiet" not in {item["event_id"] for item in pending_public_reviews(db_path=db, limit=50)}
     assert age_out_reviews(keep={"old-quiet", "old-ranked"}, enforce=True, db_path=db)["restored"] == 1
     assert "old-quiet" in {item["event_id"] for item in pending_public_reviews(db_path=db, limit=50)}
+
+
+def test_a_full_brief_keeps_reviewer_items_and_exploited_flaws_over_older_routine_ones():
+    from secopsai.research_editorial import MAX_BRIEF_ITEMS, _brief_selection
+
+    def item(name, source, day, verification="automated"):
+        return {"title": name, "source": source, "first_observed_at": f"2026-10-{day}T00:00:00Z", "verification": verification}
+
+    routine = [item(f"advisory-{day}", "GitHub Security Advisories", day) for day in range(10, 25)]
+    chosen = [entry["title"] for entry in _brief_selection(routine + [
+        item("late-kev", "CISA Known Exploited Vulnerabilities", 9),
+        item("reviewed", "Socket Blog", 8, verification="human"),
+    ])]
+    assert len(chosen) == MAX_BRIEF_ITEMS
+    assert chosen[:3] == ["reviewed", "late-kev", "advisory-24"]
+    assert "advisory-10" not in chosen, "the oldest routine item gives way"
+
+
+def test_a_reviewer_item_reports_the_cves_it_names_not_its_clusters():
+    from secopsai.research_editorial import _item_cves
+
+    assert _item_cves({"summary": "Tracked as cve-2026-115560 and CVE-2026-115560."}) == ["CVE-2026-115560"]
+    assert _item_cves({"summary": "No identifier yet."}) == []
+    assert _item_cves({"summary": "Mentions CVE-2026-1111.", "automation": {"checks": {"CVE-2026-2222": ["confirmed"]}}}) == ["CVE-2026-2222"]
+
+
+def test_only_a_socket_card_title_is_shortened():
+    from secopsai.research_editorial import _display_title
+
+    card = "Latest Cursor Removes Malicious Extension From Its Marketplace Threat Research Security News Oct 30, 2026"
+    assert _display_title(card, "Socket Blog") == "Cursor Removes Malicious Extension From Its Marketplace"
+    assert _display_title("Latest Thing", "Socket Blog") == "Latest Thing", "no date, not a card"
+    assert _display_title(card, "The Hacker News") == card
+
+
+def test_cisa_action_loses_the_pointer_to_notes_the_brief_does_not_carry():
+    action = auto._defensive_action("t", "", {"required_action": "Follow BOD 26-04 (see URL in Notes) guidance and triage (see URL in Notes)."}, [])
+    assert action == "Follow BOD 26-04 guidance and triage."

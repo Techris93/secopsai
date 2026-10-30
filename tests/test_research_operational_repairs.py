@@ -79,7 +79,7 @@ def test_interrupted_advisory_processing_cannot_starve_backups_or_primary_intake
     monkeypatch.setattr(research_worker,'_record_storage_capacity_alert',lambda *a,**kw:None)
     monkeypatch.setattr('secopsai.research_artifact_vault.backup_public_artifacts',lambda **kw:events.append('backup') or {'status':'succeeded'})
     monkeypatch.setattr('secopsai.research_primary_intel.collect_due',lambda **kw:events.append('primary') or {'status':'succeeded'})
-    monkeypatch.setattr('secopsai.research_editorial.scheduled_brief',lambda **kw:{'status':'blocked'})
+    monkeypatch.setattr('secopsai.research_editorial.scheduled_brief',lambda **kw:events.append('brief') or {'status':'blocked'})
     def expensive(**kw):
         events.append('external')
         assert kw['sync_limit']==100

@@ -510,11 +510,10 @@ def _run_worker_cycle_unlocked(
     if os.environ.get("SECOPSAI_PRIMARY_INTEL", "0") == "1":
         _cycle_stage("primary_intelligence")
         from secopsai.research_primary_intel import collect_due
-        from secopsai.research_editorial import scheduled_brief
 
+        editorial = {"status": "pending"}
         try:
             primary_intel = collect_due(db_path=db_path, fetcher=fetcher)
-            editorial = scheduled_brief(db_path=db_path)
         except Exception as exc:
             capture_exception(exc, context={"component": "research_primary_intel"})
             primary_intel = {"status": "degraded", "error_category": type(exc).__name__}
@@ -707,6 +706,17 @@ def _run_worker_cycle_unlocked(
             deliveries = {"enabled": True, "attempted": 0, "sent": 0, "failed": 1, "error": "operational alert delivery failed"}
     else:
         deliveries = {"status": "skipped", "reason": "coordinated_by_daily_automation"}
+    # Last, so the draft carries this cycle's verifications and a collection
+    # statement taken after the collectors ran.
+    if os.environ.get("SECOPSAI_PRIMARY_INTEL", "0") == "1":
+        _cycle_stage("daily_brief")
+        try:
+            from secopsai.research_editorial import scheduled_brief
+
+            editorial = {**editorial, **scheduled_brief(db_path=db_path)}
+        except Exception as exc:
+            capture_exception(exc, context={"component": "research_editorial"})
+            editorial = {**editorial, "status": "degraded", "error_category": type(exc).__name__}
     if include_automation:
         _cycle_stage("daily_automation")
         try:

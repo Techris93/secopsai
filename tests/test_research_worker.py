@@ -606,3 +606,18 @@ def test_operator_commands_run_before_the_cycle_can_use_up_its_time(tmp_path, mo
     result = run_worker_loop(db_path=_db(tmp_path), fetcher=_fail_fetcher(), interval_seconds=15, max_cycles=1)
     assert order == ["commands", "cycle", "commands"]
     assert result["last_cycle"]["hosted_coordinator"]["commands"][0]["command_id"] == "CMD-1"
+
+
+def test_the_daily_brief_is_assembled_after_collection_and_verification(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setenv("SECOPSAI_PRIMARY_INTEL", "1")
+    monkeypatch.setattr("secopsai.research_primary_intel.collect_due", lambda **kw: calls.append("primary") or {"status": "succeeded"})
+    monkeypatch.setattr("secopsai.research_auto_verify.run", lambda *a, **kw: calls.append("verify") or {"status": "disabled"})
+    monkeypatch.setattr("secopsai.research_editorial.scheduled_brief", lambda **kw: calls.append("brief") or {"status": "waiting"})
+    monkeypatch.setattr("secopsai.research_worker.refresh_and_sync", lambda **kw: calls.append("external") or {"status": "succeeded"})
+
+    result = run_worker_cycle(db_path=str(tmp_path / "worker.db"), fetcher=_fail_fetcher())
+
+    assert calls.index("brief") > calls.index("verify") > calls.index("primary")
+    assert calls.index("brief") > calls.index("external")
+    assert result["editorial"]["status"] == "waiting" and "automated_verification" in result["editorial"]

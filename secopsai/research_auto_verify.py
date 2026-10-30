@@ -34,7 +34,7 @@ CLAIMS_PER_RUN = 10
 STALE_ADVISORY_DAYS = 14
 # Raised when a change makes earlier automated verifications wrong. Unreleased
 # recent ones are decided again, so a draft never carries the old text.
-DECISION_REVISION = 2
+DECISION_REVISION = 3
 REDECIDE_WINDOW_DAYS = 3
 CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
 VERSION_RE = re.compile(r"\b\d+\.\d+(?:\.\d+)+\b")
@@ -93,7 +93,8 @@ def _defensive_action(title: str, excerpt: str, payload: dict, rules: list[dict]
     for setting in mitigations(excerpt):
         parts.append(f"Until upgraded, set {setting} as the source advises.")
     if payload.get("required_action"):
-        parts.append(_text(payload["required_action"]))
+        # CISA's "Notes" field is not part of the item, so the pointer leads nowhere.
+        parts.append(re.sub(r"\s*\(see URL in Notes\)", "", _text(payload["required_action"])))
     if parts and rules:
         parts.append("SecOpsAI users can enable " + "; ".join(f"{rule['rule_id']} ({rule['title']})" for rule in rules) + ".")
     return " ".join(parts)
@@ -198,7 +199,7 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: 
     elif found["reported_exploited"]:
         limitations.append("Exploitation is reported but not confirmed by CISA KEV.")
     if not cves:
-        limitations.append("The source names no CVE identifier.")
+        limitations.append("SecOpsAI recorded no CVE identifier for this advisory.")
     return {"decision": "verified", "reason": "primary source; identifiers and scores match official records; fix or mitigation stated",
             "summary": " ".join(summary_parts)[:4000], "defensive_action": action[:4000], "limitations": " ".join(limitations),
             "cves": cves, "checks": {cve: [c["status"] for c in checks[cve]["claims"]] for cve in cves}}
