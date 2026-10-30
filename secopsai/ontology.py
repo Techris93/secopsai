@@ -1250,6 +1250,12 @@ def record_event(item: dict[str, Any], *, db_path: str | None = None) -> dict[st
     return {"event_id": event_id, "entity_id": entity_id, "event_type": event_type, "occurred_at": occurred_at}
 
 
+MAX_SYNC_ENTITIES = 1000
+MAX_SYNC_RELATIONSHIPS = 2000
+MAX_SYNC_EVENTS = 2000
+MAX_SYNC_EVIDENCE_REFS = 1000
+
+
 def sync_payload(payload: dict[str, Any], *, db_path: str | None = None) -> dict[str, Any]:
     """Apply a bounded bridge snapshot atomically and idempotently."""
     if not isinstance(payload, dict):
@@ -1260,7 +1266,8 @@ def sync_payload(payload: dict[str, Any], *, db_path: str | None = None) -> dict
     evidence_refs = payload.get("evidence_refs") or []
     if not all(isinstance(value, list) for value in (entities, relationships, events, evidence_refs)):
         raise ValueError("entities, relationships, events, and evidence_refs must be arrays")
-    if len(entities) > 1000 or len(relationships) > 2000 or len(events) > 2000 or len(evidence_refs) > 1000:
+    if (len(entities) > MAX_SYNC_ENTITIES or len(relationships) > MAX_SYNC_RELATIONSHIPS
+            or len(events) > MAX_SYNC_EVENTS or len(evidence_refs) > MAX_SYNC_EVIDENCE_REFS):
         raise ValueError("ontology sync batch exceeds its bounded limit")
     schema_version = _text(payload.get("schema_version") or SCHEMA_VERSION, 80) or SCHEMA_VERSION
     if schema_version != SCHEMA_VERSION:
@@ -2181,9 +2188,14 @@ def materialize_recent(*, db_path: str | None = None, limit: int = 100) -> dict[
         item = dict(item)
         item.setdefault("relationship_id", "rel:" + hashlib.sha256(f"{relation}|{item['from_entity_id']}|{item['to_entity_id']}|{item.get('source')}|{item.get('source_record_id')}".encode()).hexdigest()[:40])
         unique_relationships[item["relationship_id"]] = item
-    existing_ids = set(unique_entities)
-    filtered_relationships = [item for item in unique_relationships.values() if item["from_entity_id"] in existing_ids and item["to_entity_id"] in existing_ids]
-    unique_events = {str(item.get("event_id")): item for item in events if item.get("event_id") and item.get("entity_id") in existing_ids}
+    # A busy window can outgrow one batch, and an oversized batch would stop
+    # delivery verification. This is a recent view; backfill_existing covers
+    # complete history.
+    existing_ids = set(list(unique_entities)[:MAX_SYNC_ENTITIES])
+    unique_entities = {key: value for key, value in unique_entities.items() if key in existing_ids}
+    filtered_relationships = [item for item in unique_relationships.values() if item["from_entity_id"] in existing_ids and item["to_entity_id"] in existing_ids][:MAX_SYNC_RELATIONSHIPS]
+    unique_events = dict(list({str(item.get("event_id")): item for item in events if item.get("event_id") and item.get("entity_id") in existing_ids}.items())[:MAX_SYNC_EVENTS])
+    evidence_refs = evidence_refs[:MAX_SYNC_EVIDENCE_REFS]
     return sync_payload({"schema_version": SCHEMA_VERSION, "source_instance": "research-worker", "entities": list(unique_entities.values()), "relationships": filtered_relationships, "evidence_refs": evidence_refs, "events": list(unique_events.values())}, db_path=db_path) | {"snapshot": export_snapshot(db_path=db_path, limit=bound)}
 
 

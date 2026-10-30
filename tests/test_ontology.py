@@ -417,6 +417,23 @@ def test_materialize_recent_keeps_registry_release_context_and_evidence_refs(db_
     assert all("token" not in json.dumps(item) for item in snapshot["evidence_refs"])
 
 
+def test_materialize_recent_stays_within_the_sync_limits_on_a_busy_window(db_path: str, monkeypatch):
+    from secopsai import ontology
+    from secopsai.research_cases import create_case
+
+    for index in range(4):
+        create_case(title=f"Busy window case {index}", summary="A case in a window larger than one sync batch allows.", case_type="malicious_package", db_path=db_path)
+    monkeypatch.setattr(ontology, "MAX_SYNC_ENTITIES", 2)
+    monkeypatch.setattr(ontology, "MAX_SYNC_EVENTS", 1)
+    monkeypatch.setattr(ontology, "MAX_SYNC_RELATIONSHIPS", 1)
+
+    result = materialize_recent(db_path=db_path, limit=50)
+
+    assert result["counts"]["entities"] <= 2 and result["counts"]["events"] <= 1 and result["counts"]["relationships"] <= 1
+    with pytest.raises(ValueError, match="bounded limit"):
+        ontology.sync_payload({"entities": [{"entity_id": str(index)} for index in range(3)]}, db_path=db_path)
+
+
 def test_upsert_entities_does_not_drop_large_batches_or_cross_type_identities(db_path: str):
     batch = [_entity("asset", "fixture", f"asset-{index}") for index in range(1001)]
     result = upsert_entities(batch, db_path=db_path)
