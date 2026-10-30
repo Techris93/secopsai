@@ -187,7 +187,8 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
                       "url": decision["primary_url"], "attribution": "source_reported", "summary": decision["summary"], "verification_fingerprint": digest(decision), "defensive_action": decision["defensive_action"],
                       "limitations": decision["limitations"], "published_at": event["published_at"], "first_observed_at": event["first_observed_at"],
                       "collected_at": event["collected_at"], "source_sha256": primary["sha256"],
-                      "verification": "automated" if decision.get("automation") else "human"})
+                      "verification": "automated" if decision.get("automation") else "human",
+                      **({"cves": list(decision["automation"].get("checks") or {})} if decision.get("automation") else {})})
         if len(items) == 15:
             break
     from secopsai.research_coverage import coverage_report
@@ -207,7 +208,7 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
                       f"Published: {item['published_at'] or 'not supplied'}; first observed: {item['first_observed_at']}."])
         if item.get("verification") == "automated":
             lines.append("Verified automatically by SecOpsAI rules (identifiers and scores checked against cve.org and NVD) under the editor's recorded policy.")
-        lines.extend(research_desk.research_note(item["event_id"], ranked=ranked, db_path=db_path))
+        lines.extend(research_desk.research_note(item["event_id"], ranked=ranked, db_path=db_path, cves=item.get("cves")))
     lines.extend(["", "## Collection scope", "", coverage["public_summary"], "", "## Credits and corrections", "", f"Prepared by {author['display_name']}. Technical verification and final release require recorded human review. Corrections will retain the previous edition and explain material changes."])
     draft = {"title": f"SecOpsAI Daily Intelligence Brief — {date}", "slug": f"daily-intelligence-{date}", "summary": f"Verified intelligence and defensive updates for {date}.",
              "body_markdown": "\n\n".join(lines), "author": author["display_name"], "author_id": author["person_id"], "items": items,

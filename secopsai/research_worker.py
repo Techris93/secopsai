@@ -542,6 +542,17 @@ def _run_worker_cycle_unlocked(
         except Exception as exc:
             capture_exception(exc, context={"component": "research_auto_verify"})
             editorial = {**editorial, "automated_verification": {"status": "degraded", "error_category": type(exc).__name__}}
+        # Old review items with no exploitation signal; reports the counts
+        # until SECOPSAI_INTEL_AGE_OUT=enforce.
+        try:
+            from secopsai.research_auto_verify import ranked_event_ids
+            from secopsai.research_primary_intel import age_out_reviews
+
+            editorial = {**editorial, "age_out": age_out_reviews(
+                keep=set(ranked_event_ids(db_path=db_path)), enforce=os.environ.get("SECOPSAI_INTEL_AGE_OUT") == "enforce", db_path=db_path)}
+        except Exception as exc:
+            capture_exception(exc, context={"component": "research_age_out"})
+            editorial = {**editorial, "age_out": {"status": "degraded", "error_category": type(exc).__name__}}
         # Research desk: check the claims of the highest-ranked advisories
         # against cve.org and NVD.  Failure leaves the ranking usable.
         try:
