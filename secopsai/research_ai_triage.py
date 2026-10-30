@@ -455,6 +455,10 @@ def clef_prescreen(*, db_path: Optional[str] = None, classify: Optional[Any] = N
     return stats
 
 
+RESULTS_PAGE_LIMIT = 25
+RESULTS_PAGES_PER_CYCLE = 12
+
+
 def sync(client: Any, *, db_path: Optional[str] = None) -> Dict[str, Any]:
     """Pre-screen with Clef, queue the rest, apply finished verdicts.  Safe to call every cycle."""
     if not getattr(client, "enabled", False):
@@ -466,24 +470,42 @@ def sync(client: Any, *, db_path: Optional[str] = None) -> Dict[str, Any]:
         row = connection.execute("SELECT value FROM core_sync_cursors WHERE name=?", (CURSOR_KEY,)).fetchone()
         connection.commit()
     since = str(row["value"]) if row else ""
-    response = client.triage_results(since=since)
-    results = response.get("results") or []
     outcomes = {"resolved": 0, "deprioritized": 0, "escalated": 0}
-    now = soc_store.utc_now()
-    with closing(soc_store.connect(db_path)) as connection:
-        for item in results:
-            outcome = _apply_result(connection, item, now)
-            if outcome:
-                outcomes[outcome] += 1
-        if results:
-            last = str(results[-1].get("updated_at") or since)
+    applied, pending, pages, limit = 0, None, 0, RESULTS_PAGE_LIMIT
+    # Page through finished results. A page Core cannot fit under the client's
+    # response limit is retried at half the size, so one large model output
+    # can never jam the cursor (2026-10-28: replies of ~1 MB were rejected
+    # every cycle and the cursor never advanced).
+    while pages < RESULTS_PAGES_PER_CYCLE:
+        try:
+            response = client.triage_results(since=since, limit=limit)
+        except RuntimeError as exc:
+            if "exceeds the local limit" not in str(exc) or limit == 1:
+                raise
+            limit = max(1, limit // 2)
+            continue
+        pages += 1
+        pending = response.get("pending")
+        results = response.get("results") or []
+        if not results:
+            break
+        now = soc_store.utc_now()
+        with closing(soc_store.connect(db_path)) as connection:
+            for item in results:
+                outcome = _apply_result(connection, item, now)
+                if outcome:
+                    outcomes[outcome] += 1
+            since = str(response.get("next_since") or results[-1].get("updated_at") or since)
             connection.execute(
                 "INSERT INTO core_sync_cursors (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-                (CURSOR_KEY, last, now),
+                (CURSOR_KEY, since, now),
             )
-        connection.commit()
+            connection.commit()
+        applied += len(results)
+        if len(results) < limit and not response.get("truncated"):
+            break
     health = rule_health(db_path=db_path)
-    return {"status": "ok", "clef": prescreen, **queued, "results": len(results), "pending_at_bridge": response.get("pending"), **outcomes, "rule_health": health}
+    return {"status": "ok", "clef": prescreen, **queued, "results": applied, "result_pages": pages, "pending_at_bridge": pending, **outcomes, "rule_health": health}
 
 
 RETRIAGE_ECOSYSTEMS = {"npm", "pypi", "crates", "open-vsx", "vscode-marketplace"}

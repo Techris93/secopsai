@@ -986,3 +986,21 @@ test('transient recovery uses saved provider diagnostics, legacy routing, age an
   assert.equal(db.prepare('SELECT status FROM intelligence_jobs WHERE job_id=?').get(wrappedTimeout).status,'failed');
   db.close();
 });
+
+test('triage results stay under the runner response limit and report where to resume', {skip:!DatabaseSync}, async () => {
+  const {db,d1}=migratedSqliteD1();
+  const env={DB:d1,CORE_BRIDGE_TOKEN:'bridge-fixture'};
+  const big=JSON.stringify({summary:'x'.repeat(10000),risk_assessment:'r',evidence:[],recommended_actions:[],limitations:[]});
+  for (let i=0;i<100;i++) {
+    const stamp=`2026-10-29T00:${String(Math.floor(i/60)).padStart(2,'0')}:${String(i%60).padStart(2,'0')}.000Z`;
+    db.prepare("INSERT INTO intelligence_jobs (job_id,action,target_id,status,requested_by,idempotency_key,attempt,queued_at,updated_at,input_json,result_json) VALUES (?,?,?,'succeeded',?,?,1,?,?,'{}',?)")
+      .run(`AIJ-${String(i).padStart(16,'0')}`,'triage_artifact',`npm:p${i}@1`,'research-worker',`k${i}`,stamp,stamp,big);
+  }
+  const response=await handleRequest(new Request('https://core.example/api/v1/research/triage/results?since=2026-10-28T00:00:00Z&limit=100',{headers:{authorization:'Bearer '+env.CORE_BRIDGE_TOKEN}}),env);
+  const text=await response.text();
+  const body=JSON.parse(text);
+  assert.ok(new TextEncoder().encode(text).byteLength < 512*1024, 'fits the runner limit');
+  assert.ok(body.results.length > 0 && body.results.length < 100 && body.truncated === true);
+  assert.equal(body.next_since, body.results[body.results.length-1].updated_at);
+  db.close();
+});
