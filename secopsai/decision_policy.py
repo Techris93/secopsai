@@ -22,7 +22,9 @@ def policy_status() -> dict:
         return {"mode": "observe", "closure_enabled": False, "reason": "calibration_not_approved", "policy_version": POLICY_VERSION}
 
 
-def closure_decision(result: dict, *, clef_probability=None, clef_choice=None) -> tuple[bool, str]:
+def closure_candidate(result: dict, *, clef_probability=None, clef_choice=None,
+                      max_probability: int = 10, min_confidence: int = 85) -> tuple[bool, str]:
+    """Every closure check except whether enforcement and calibration are approved."""
     if result.get("assessment_version") != POLICY_VERSION:
         return False, "uncalibrated_assessment_version"
     try:
@@ -35,7 +37,7 @@ def closure_decision(result: dict, *, clef_probability=None, clef_choice=None) -
         benign = False
     if result.get("disposition_recommendation") not in {None, "false_positive", "expected_behavior"}:
         benign = False
-    if not benign or p > 10 or confidence < 85:
+    if not benign or p > max_probability or confidence < min_confidence:
         return False, "review_required"
     coverage = result.get("evidence_coverage")
     if result.get("automatic_closure_eligible") is not True or not isinstance(coverage, dict) or coverage.get("complete") is not True:
@@ -49,6 +51,13 @@ def closure_decision(result: dict, *, clef_probability=None, clef_choice=None) -
             return False, "models_disagree"
     if clef_choice is not None and clef_choice != "benign":
         return False, "models_disagree"
+    return True, "candidate"
+
+
+def closure_decision(result: dict, *, clef_probability=None, clef_choice=None) -> tuple[bool, str]:
+    candidate, reason = closure_candidate(result, clef_probability=clef_probability, clef_choice=clef_choice)
+    if not candidate:
+        return False, reason
     status = policy_status()
     if not status["closure_enabled"]:
         return False, status["reason"]

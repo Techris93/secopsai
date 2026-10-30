@@ -1,0 +1,112 @@
+name: Closure Evaluation
+
+# Builds the labelled corpus, or runs one partition of it through the operator's
+# model bridge and reports what automated closure would have done. Samples are
+# decrypted and scanned in memory on this disposable runner, never executed.
+# Closure stays off whatever this reports.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: build (no model calls), tune, or held_out
+        type: choice
+        options: [build, tune, held_out]
+        default: build
+      build_run:
+        description: Run id of the build (tune and held_out)
+        default: ""
+      max_probability:
+        description: Closure threshold for the report
+        default: "10"
+      min_confidence:
+        description: Closure threshold for the report
+        default: "85"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: closure-evaluation
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      DATASET_COMMIT: 805fcd72db525244cae8dd32056efbd50b8b0e19
+      SECOPSAI_CORE_COORDINATOR_URL: https://core.secopsai.dev
+      SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
+      SECOPSAI_CORE_COORDINATOR_TIMEOUT_SECONDS: "60"
+      GH_TOKEN: ${{ github.token }}
+      MODE: ${{ inputs.mode }}
+      BUILD_RUN: ${{ inputs.build_run }}
+      MAX_PROBABILITY: ${{ inputs.max_probability }}
+      MIN_CONFIDENCE: ${{ inputs.min_confidence }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Fetch pinned YARA rule packs
+        if: inputs.mode == 'build'
+        run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
+
+      - name: Clone the dataset index (blobless, pinned)
+        if: inputs.mode == 'build'
+        run: |
+          git clone --quiet --filter=blob:none --no-checkout --sparse \
+            https://github.com/DataDog/malicious-software-packages-dataset.git "$RUNNER_TEMP/malware-dataset"
+          git -C "$RUNNER_TEMP/malware-dataset" checkout --quiet --detach "$DATASET_COMMIT"
+
+      - name: Build the corpus
+        if: inputs.mode == 'build'
+        run: python -I scripts/closure_evaluation.py build --dataset "$RUNNER_TEMP/malware-dataset" --corpus "$RUNNER_TEMP/corpus.json.gz"
+
+      - name: Fetch the corpus
+        if: inputs.mode != 'build'
+        run: gh run download "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --name closure-corpus --dir "$RUNNER_TEMP"
+
+      - name: Run the partition
+        if: inputs.mode != 'build'
+        run: python -I scripts/closure_evaluation.py run --corpus "$RUNNER_TEMP/corpus.json.gz" --partition "$MODE" --results "$RUNNER_TEMP/results.json"
+
+      - name: Report
+        if: inputs.mode != 'build'
+        run: >
+          python -I scripts/closure_evaluation.py report --corpus "$RUNNER_TEMP/corpus.json.gz" --partition "$MODE"
+          --results "$RUNNER_TEMP/results.json" --max-probability "$MAX_PROBABILITY" --min-confidence "$MIN_CONFIDENCE"
+          --out "$RUNNER_TEMP/report.json"
+
+      - name: Upload the corpus
+        if: inputs.mode == 'build'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: closure-corpus
+          path: ${{ runner.temp }}/corpus.json.gz
+          retention-days: 90
+
+      - name: Upload results
+        if: always() && inputs.mode != 'build'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: closure-${{ inputs.mode }}
+          path: |
+            ${{ runner.temp }}/results.json
+            ${{ runner.temp }}/report.json
+          retention-days: 90
+
+      - name: Remove samples
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/malware-dataset"
