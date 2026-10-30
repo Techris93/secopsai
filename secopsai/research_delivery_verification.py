@@ -80,6 +80,19 @@ def _refresh_stale_enabled_sources(*, db_path, deadline, safety_margin_seconds=0
     return source_results, collector_results
 
 
+_SECRET_LIKE = re.compile(r"(?i)(bearer\s+\S+|(?:token|secret|password|api[_-]?key)\s*[=:]\s*\S+)")
+
+
+def _failure_detail(exc: BaseException) -> dict:
+    """Bounded message and raising location of a failed drain, with secret-like fragments masked."""
+    import traceback
+
+    frames = traceback.extract_tb(exc.__traceback__)
+    where = f"{Path(frames[-1].filename).name}:{frames[-1].lineno} in {frames[-1].name}" if frames else ""
+    message = _SECRET_LIKE.sub("[redacted]", str(exc))[:500]
+    return {"error_message": message, "error_location": where}
+
+
 def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_names=(), retry_collector_names=(), require_zero=False,
                     refresh_stale_sources=False, refresh_seconds=840, freshness_safety_margin_seconds=300):
     from secopsai.ontology import materialize_recent
@@ -322,14 +335,18 @@ def main():
         error_code = getattr(exc, 'error_code', '')
         if not isinstance(error_code, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,99}', error_code):
             error_code = None
+        # The message is an internal validation or transport description
+        # (credentials never appear in it); without it a failed drain cannot be
+        # diagnosed. Bounded, and the traceback location is kept as well.
+        detail = _failure_detail(exc)
         print(json.dumps({'event': 'delivery_verification_failed', 'error_category': type(exc).__name__,
-                          'http_status': getattr(exc, 'status', None), 'error_code': error_code}), flush=True)
+                          'http_status': getattr(exc, 'status', None), 'error_code': error_code, **detail}), flush=True)
         diagnostics = os.environ.get('SECOPSAI_WORKER_DIAGNOSTICS_DIR', '').strip()
         if diagnostics:
             path = Path(diagnostics) / 'delivery-drain.json'
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps({'status': 'failed', 'error_category': type(exc).__name__,
-                                        'http_status': getattr(exc, 'status', None), 'error_code': error_code}, indent=2), encoding='utf-8')
+                                        'http_status': getattr(exc, 'status', None), 'error_code': error_code, **detail}, indent=2), encoding='utf-8')
         return 1
 
 
