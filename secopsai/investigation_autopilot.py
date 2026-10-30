@@ -391,6 +391,9 @@ def recover_due_runs(*, db_path: Optional[str] = None, limit: int = 25) -> Dict[
     amplify an outage. The persisted attempt count and backoff keep this
     path bounded; once the configured limit is reached the run remains
     visible for an explicit operator decision.
+
+    A finished analysis that stayed inconclusive is not retried: the same
+    evidence would spend the same model jobs for the same answer.
     """
     settings = get_settings(db_path=db_path)
     max_attempts = int(settings.get("max_attempts") or DEFAULTS["max_attempts"])
@@ -401,7 +404,7 @@ def recover_due_runs(*, db_path: Optional[str] = None, limit: int = 25) -> Dict[
                 """SELECT run_id, status, attempt, retryable, updated_at
                    FROM investigation_autopilot_runs
                    WHERE status IN ('failed', 'evidence_gap', 'canceled')
-                     AND COALESCE(blocker_code, '') != 'package_version_removed'
+                     AND COALESCE(blocker_code, '') NOT IN ('package_version_removed', 'evidence_incomplete')
                    ORDER BY updated_at ASC LIMIT ?""",
                 (max(1, min(int(limit), 200)),),
             ).fetchall()
