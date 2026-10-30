@@ -574,3 +574,35 @@ def test_cycle_outcomes_report_age_out_and_investigation_blockers_in_a_short_lin
     assert outcomes["investigations"] == {"processed": 3, "blockers": {"package_version_removed": 2, "none": 1}, "queued_before_backfill": 700}
     assert len(json.dumps(outcomes)) < 1000
     assert _cycle_outcomes({})["age_out"] is None
+
+
+def test_operator_commands_run_before_the_cycle_can_use_up_its_time(tmp_path, monkeypatch):
+    import secopsai.core_edge_client as client_module
+
+    order = []
+
+    class Coordinator:
+        enabled = True
+
+        def pull_and_apply_settings(self, **kwargs):
+            return {}
+
+        def sync_state(self, *args, **kwargs):
+            return {"status": "accepted", "runner": {"status": "healthy"}}
+
+        def sync_ontology(self, *args, **kwargs):
+            return {"status": "accepted"}
+
+        def process_commands(self, **kwargs):
+            order.append("commands")
+            return [{"command_id": "CMD-1", "status": "succeeded"}] if len(order) == 1 else []
+
+    def cycle(**kwargs):
+        order.append("cycle")
+        return {"status": "succeeded", "completed_at": "2026-10-30T00:00:00Z"}
+
+    monkeypatch.setattr(client_module, "coordinator_client", Coordinator)
+    monkeypatch.setattr("secopsai.research_worker.run_worker_cycle", cycle)
+    result = run_worker_loop(db_path=_db(tmp_path), fetcher=_fail_fetcher(), interval_seconds=15, max_cycles=1)
+    assert order == ["commands", "cycle", "commands"]
+    assert result["last_cycle"]["hosted_coordinator"]["commands"][0]["command_id"] == "CMD-1"

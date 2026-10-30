@@ -866,6 +866,7 @@ def run_worker_loop(
             print(json.dumps({"component": "research-worker", "event": "restored_run_recovery",
                               "automation_runs": automation_recovered, "registry_runs": registry_recovered}), flush=True)
         while not stop["requested"]:
+            early_commands: list[dict[str, Any]] = []
             if core_edge.enabled:
                 try:
                     flush_outbox = getattr(core_edge, "flush_ontology_outbox", None)
@@ -879,6 +880,12 @@ def run_worker_loop(
                     core_edge.pull_and_apply_settings(db_path=db_path)
                 except Exception as exc:  # coordinator outages must not stop surveillance
                     capture_exception(exc, context={"component": "research_coordinator_settings"})
+                # Operator decisions go first: a cycle can use its whole time
+                # budget, and this cycle's draft should already reflect them.
+                try:
+                    early_commands = core_edge.process_commands(db_path=db_path)
+                except Exception as exc:
+                    capture_exception(exc, context={"component": "research_coordinator_commands"})
             try:
                 last_summary = run_worker_cycle(db_path=db_path, fetcher=fetcher)
             except ResearchStorageCapacityError as exc:
@@ -1066,10 +1073,10 @@ def run_worker_loop(
                     except Exception as exc:
                         last_summary["research_operation_sync"] = {"status": "degraded", "error": str(exc)[:500]}
                 try:
-                    commands = core_edge.process_commands(db_path=db_path)
+                    commands = early_commands + core_edge.process_commands(db_path=db_path)
                 except Exception as exc:  # command polling is optional control-plane work
                     capture_exception(exc, context={"component": "research_coordinator_commands"})
-                    commands = []
+                    commands = early_commands
                 if commands:
                     last_summary = dict(last_summary)
                     last_summary["hosted_coordinator"] = {
