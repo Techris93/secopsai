@@ -396,6 +396,10 @@ class LedgerStore:
             partial.replace(destination)
             self.incremental_ready = True
             self.chunk_cache.update(entry["sha256"] for entry in manifest["patches"])
+            # How far the ledger has drifted from its baseline; a large drift
+            # makes every checkpoint and restore slower (see planned_rebase_due).
+            self.restored_delta_bytes = sum(int(entry.get("raw_size_bytes") or 0) for entry in manifest["patches"])
+            self.restored_size_bytes = int(manifest["size_bytes"])
             _log("sparse_restore_verified", bytes=manifest["size_bytes"], patches=len(manifest["patches"]), sha256=manifest["sha256"])
             return True
         finally:
@@ -582,7 +586,27 @@ def valid_manifest(m):
     return sum(c["raw_size_bytes"] for c in chunks) == m["size_bytes"]
 
 
-def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str]:
+PLANNED_REBASE_FRACTION = 0.10
+PLANNED_REBASE_UPLOAD_SECONDS = 2400
+
+
+def planned_rebase_due(store) -> bool:
+    """True when the restored ledger has drifted far enough from its baseline.
+
+    Sparse checkpoints are diffs against a fixed baseline, so they grow every
+    run (2026-10-29: ~5.3 GB of a 22.9 GB ledger, +40 MB per run) until a
+    forced full upload at 25% - inside an ordinary checkpoint budget, where it
+    times out. Rebasing at 10%, before the worker starts, keeps checkpoints and
+    restores small and gives the full upload its own budget.
+    """
+    if os.environ.get("SECOPSAI_PAGE_DELTA_CHECKPOINTS", "0") != "1":
+        return False
+    delta = int(getattr(store, "restored_delta_bytes", 0) or 0)
+    size = int(getattr(store, "restored_size_bytes", 0) or 0)
+    return size > 0 and delta > size * PLANNED_REBASE_FRACTION
+
+
+def checkpoint(db_path: Path, store: LedgerStore, workdir: Path, *, force_rebase: bool = False) -> Optional[str]:
     """Upload a consistent snapshot of a live WAL database."""
     if not db_path.exists():
         return None
@@ -598,6 +622,8 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str
     # Capture and upload have separate bounded phases. In the previous
     # implementation a slow online backup consumed the upload allowance too.
     upload_deadline = started + (capture_budget + UPLOAD_TIMEOUT_SECONDS if incremental else UPLOAD_TIMEOUT_SECONDS)
+    if force_rebase:
+        upload_deadline = started + capture_budget + PLANNED_REBASE_UPLOAD_SECONDS
     _log("checkpoint_capture_started", phase="bootstrap" if bootstrap else "recurring", budget_seconds=round(capture_deadline-started))
     captured_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     with tempfile.TemporaryDirectory(dir=workdir) as temp_dir:
@@ -619,7 +645,7 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path) -> Optional[str
         _log("checkpoint_captured", bytes=backup_path.stat().st_size, seconds=round(time.monotonic()-started,1))
         if incremental:
             delta_enabled = os.environ.get("SECOPSAI_PAGE_DELTA_CHECKPOINTS", "0") == "1"
-            if delta_enabled and getattr(store, "baseline_path", None):
+            if delta_enabled and getattr(store, "baseline_path", None) and not force_rebase:
                 try:
                     return store.upload_sparse(backup_path, captured_at=captured_at, deadline=upload_deadline)
                 except RebaseRequired as reason:
@@ -687,10 +713,10 @@ def main(argv: Optional[list] = None) -> int:
               "checkpoints": [], "delivery": {"status": "not_started"}}
     _write_runtime_report(report_path, report)
 
-    def save_checkpoint(reason: str) -> str | None:
+    def save_checkpoint(reason: str, *, force_rebase: bool = False) -> str | None:
         started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         try:
-            key = checkpoint(db_path, store, data_dir)
+            key = checkpoint(db_path, store, data_dir, force_rebase=force_rebase)
             item = {"reason": reason, "status": "uploaded", "key": key, "started_at": started_at,
                     "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
         except Exception as exc:
@@ -730,6 +756,14 @@ def main(argv: Optional[list] = None) -> int:
             _write_runtime_report(report_path, report)
             return 2
         _log("ledger_restored" if restored else "ledger_initialized", path=str(db_path))
+        if restored and planned_rebase_due(store):
+            # No worker is writing yet, so the capture is quick and consistent.
+            _log("planned_rebase_started", delta_bytes=store.restored_delta_bytes, size_bytes=store.restored_size_bytes)
+            try:
+                save_checkpoint("planned_rebase", force_rebase=True)
+                _log("planned_rebase_completed")
+            except Exception as exc:  # the run continues on the existing baseline
+                _log("planned_rebase_failed", **_error_fields(exc))
 
     command = [sys.executable, "-u", "-m", "secopsai.cli", "research", "worker", "run", "--interval", os.environ.get("SECOPSAI_WORKER_INTERVAL", "60")]
     if args.delivery_only:
