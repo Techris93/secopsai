@@ -1652,36 +1652,49 @@ function assistantCanonical(value) {
   const ordered = item => Array.isArray(item) ? item.map(ordered) : item && typeof item === "object" ? Object.fromEntries(Object.keys(item).sort().map(key => [key, ordered(item[key])])) : item;
   return JSON.stringify(ordered(value));
 }
+const ASSISTANT_PIPELINE_ACTIONS = new Set(["analyze_research_case", "generate_analyst_brief", "review_publication_safety"]);
 function assistantInputJson(input, action, targetId) {
   const prepared = input.assistant_request;
-  if (!["execute_specialist_work", "review_specialist_work"].includes(action) || !/^SOR-[A-F0-9]{16}$/.test(targetId)
-      || typeof input.selected_model !== "string" || !input.selected_model.trim()
-      || !Array.isArray(input.fallback_models) || input.fallback_models.length > 8
-      || input.fallback_models.some(model => typeof model !== "string" || !model.trim())
-      || !["disabled", "quota_auth", "any_provider"].includes(input.fallback_mode)
-      || !prepared || prepared.action?.name !== action || prepared.context?.specialist_run_id !== targetId
+  const pipeline = ASSISTANT_PIPELINE_ACTIONS.has(action);
+  const identified = pipeline
+    ? /^RSC-[A-Z0-9-]{4,64}$/.test(targetId) && prepared?.context?.case?.case_id === targetId
+    : ["execute_specialist_work", "review_specialist_work"].includes(action) && /^SOR-[A-F0-9]{16}$/.test(targetId) && prepared?.context?.specialist_run_id === targetId;
+  // An investigation job may leave its model to the bridge's routing at claim.
+  const routed = (pipeline && input.selected_model === undefined)
+    || (typeof input.selected_model === "string" && input.selected_model.trim()
+      && Array.isArray(input.fallback_models) && input.fallback_models.length <= 8
+      && !input.fallback_models.some(model => typeof model !== "string" || !model.trim())
+      && ["disabled", "quota_auth", "any_provider"].includes(input.fallback_mode));
+  if (!identified || !routed || prepared.action?.name !== action
       || prepared.safety?.read_only !== true || prepared.safety?.human_review_required !== true
       || typeof prepared.instructions !== "string" || !prepared.instructions.trim()) {
     throw new HttpError(422, "invalid_assistant_contract", "A bounded read-only specialist request is required");
   }
   const safe = sanitize(input, 0, true);
-  if (JSON.stringify(safe) !== JSON.stringify(input)) throw new HttpError(422, "unsafe_assistant_context", "Assistant context would be modified by privacy or size limits");
+  // Specialist evidence must arrive whole; a case summary may pass through the privacy filter.
+  if (!pipeline && JSON.stringify(safe) !== JSON.stringify(input)) throw new HttpError(422, "unsafe_assistant_context", "Assistant context would be modified by privacy or size limits");
   const encoded = assistantCanonical(safe);
   if (new TextEncoder().encode(encoded).byteLength > MAX_INTELLIGENCE_BYTES) throw new HttpError(413, "payload_too_large", "Assistant context exceeds its transport budget");
   return encoded;
+}
+// The claim adds the bridge's routing to an investigation job; a resend of the same job must still match.
+function assistantRequestOnly(inputJson, action) {
+  if (!ASSISTANT_PIPELINE_ACTIONS.has(action)) return inputJson;
+  const { selected_model, fallback_models, fallback_mode, ...request } = parseJson(inputJson, {});
+  return assistantCanonical(request);
 }
 async function runnerAssistantCommand(request, env, requestId, command) {
   const payload = await readJsonObject(request, MAX_INTELLIGENCE_BYTES, "Assistant transport");
   if (command === "jobs") {
     assistantInputJson(payload.inputs || {}, payload.action, payload.target_id);
-    for (const model of [payload.inputs.selected_model, ...(payload.inputs.fallback_models || [])]) {
+    for (const model of [payload.inputs.selected_model, ...(payload.inputs.fallback_models || [])].filter(model => model !== undefined)) {
       try { requireModelAction(clean(model, 200), payload.action); }
       catch { throw new HttpError(422, "unsupported_action", "Assistant model does not support this action"); }
     }
     const key = clean(payload.idempotency_key, 256);
     if (!key.startsWith("assistant:")) throw new HttpError(422, "invalid_idempotency_key", "Stable assistant job identity is required");
     const prior = await env.DB.prepare("SELECT * FROM intelligence_jobs WHERE idempotency_key=?").bind(key).first();
-    if (prior && (prior.action !== payload.action || prior.target_id !== payload.target_id || prior.input_json !== assistantInputJson(payload.inputs, payload.action, payload.target_id))) throw new HttpError(409, "idempotency_conflict", "Assistant job identity belongs to different evidence");
+    if (prior && (prior.action !== payload.action || prior.target_id !== payload.target_id || assistantRequestOnly(prior.input_json, payload.action) !== assistantRequestOnly(assistantInputJson(payload.inputs, payload.action, payload.target_id), payload.action))) throw new HttpError(409, "idempotency_conflict", "Assistant job identity belongs to different evidence");
     return insertIntelligenceJob(env, requestId, { ...payload, requested_by: ASSISTANT_REQUESTER });
   }
   if (!["results", "cancel"].includes(command)) throw new HttpError(404, "not_found", "Unknown assistant transport action");
