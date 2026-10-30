@@ -596,7 +596,10 @@ def research_note(event_id: str, *, db_path=None, now: Optional[datetime] = None
         # Clusters group by shared CVE or name, so a cluster's checks and rules
         # can belong to a neighbouring item. Report this item's own.
         latest = latest_claim_checks(db_path=db_path)
-        claims = [claim for cve in cves for claim in (latest.get(cve) or {}).get("claims", [])]
+        # "reported" and "unverified" rows repeat what the cluster's sources say
+        # and were not checked, so they would read as findings about this item.
+        claims = [claim for cve in cves for claim in (latest.get(cve) or {}).get("claims", [])
+                  if claim["status"] not in {"reported", "unverified"}]
     if claims:
         lines += ["", "| Claim | Check | Source |", "| --- | --- | --- |"]
         lines += [f"| {claim['claim']} | {claim['status'].replace('_', ' ')} | {claim.get('source') or claim.get('detail') or ''} |"
