@@ -948,6 +948,14 @@ def run_worker_loop(
                 except Exception as exc:
                     capture_exception(exc, context={"component": "research_assistant_transport"})
                     last_summary["assistant_teams"] = {"status": "degraded", "error_category": type(exc).__name__}
+                try:
+                    from secopsai.research_pipeline_transport import sync_hosted as sync_investigation_jobs
+
+                    last_summary["investigation_jobs"] = sync_investigation_jobs(core_edge, db_path=db_path)
+                    print(json.dumps({"component": "research-worker", "event": "investigation_jobs", **last_summary["investigation_jobs"]}), flush=True)
+                except Exception as exc:
+                    capture_exception(exc, context={"component": "research_pipeline_transport"})
+                    last_summary["investigation_jobs"] = {"status": "degraded", "error_category": type(exc).__name__}
             # Content scanning for PyPI and Open VSX (npm has its own funnel in
             # enrichment); a failure is retried from the same events next cycle.
             try:
