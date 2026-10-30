@@ -808,6 +808,23 @@ def run_worker_cycle(
     )
 
 
+def _cycle_outcomes(summary: dict[str, Any]) -> dict[str, Any]:
+    """Results an operator acts on, kept short so the log line is never cut off."""
+    editorial = summary.get("editorial") if isinstance(summary.get("editorial"), dict) else {}
+    verification = editorial.get("automated_verification") if isinstance(editorial.get("automated_verification"), dict) else {}
+    investigations = summary.get("investigations") if isinstance(summary.get("investigations"), dict) else {}
+    blockers: dict[str, int] = {}
+    for run in investigations.get("runs") or []:
+        code = str(run.get("blocker_code") or "none") if isinstance(run, dict) else "none"
+        blockers[code] = blockers.get(code, 0) + 1
+    return {
+        "age_out": editorial.get("age_out"),
+        "automated_verification": {key: value for key, value in verification.items() if key != "needs_review_ids"},
+        "investigations": {"processed": investigations.get("processed"), "blockers": blockers,
+                           "queued_before_backfill": (investigations.get("queue") or {}).get("queued_before_backfill")},
+    }
+
+
 def run_worker_loop(
     *,
     db_path: Optional[str] = None,
@@ -968,6 +985,7 @@ def run_worker_loop(
                 capture_exception(exc, context={"component": "campaigns"})
                 last_summary = dict(last_summary)
                 last_summary["campaigns"] = {"status": "degraded", "error": str(exc)[:500]}
+            print(json.dumps({"component": "research-worker", "event": "cycle_outcomes", **_cycle_outcomes(last_summary)}, default=str)[:4000], flush=True)
             # One line per cycle so outcomes are visible in the run log.
             primary = last_summary.get("primary_intel") if isinstance(last_summary.get("primary_intel"), dict) else {}
             primary_results = primary.get("results") if isinstance(primary.get("results"), list) else []
