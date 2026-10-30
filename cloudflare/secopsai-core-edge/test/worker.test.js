@@ -853,6 +853,32 @@ test('hosted assistant transport preserves captured evidence, scopes jobs and fe
 });
 
 
+test('an investigation job takes the bridge routing at claim, survives a resend and reports its result', {skip: !DatabaseSync}, async () => {
+  const {d1} = migratedSqliteD1();
+  const env = {DB:d1, CORE_BRIDGE_TOKEN:'b'.repeat(44), CORE_INTELLIGENCE_TOKEN:'i'.repeat(44)};
+  const call = (path, body) => handleRequest(new Request('https://core.example'+path, {method:'POST',headers:{authorization:`Bearer ${env.CORE_BRIDGE_TOKEN}`,'content-type':'application/json'},body:JSON.stringify(body)}),env);
+  const target = 'RSC-0123456789ABCDEF';
+  const request = {action:{name:'generate_analyst_brief'},context:{case:{case_id:target,title:'Package review'},evidence_matrix:{claims:[]}},instructions:'Bounded supplied evidence only',safety:{read_only:true,human_review_required:true}};
+  const payload = {action:'generate_analyst_brief',target_id:target,idempotency_key:'assistant:pipeline:AIJ-1',inputs:{case_id:target,pipeline_id:'RPL-1',pipeline_revision:1,target_id:target,assistant_request:request}};
+  const wrongCase = structuredClone(payload);wrongCase.idempotency_key='assistant:pipeline:AIJ-2';wrongCase.inputs.assistant_request.context.case.case_id='RSC-FEDCBA9876543210';
+  assert.equal((await call('/api/v1/research/assistant/jobs',wrongCase)).status,422);
+  const first = await (await call('/api/v1/research/assistant/jobs',payload)).json();
+  assert.equal(first.created,true);
+  const claim = await (await call('/api/v1/intelligence/bridge/claim',{worker_id:'bridge-fixture',selected_model:'opencodex/test-research',fallback_models:[],fallback_mode:'disabled'})).json();
+  assert.equal(claim.job.selected_model,'opencodex/test-research');
+  assert.deepEqual(claim.bridge_request,request);
+  assert.equal((await (await call('/api/v1/research/assistant/jobs',payload)).json()).created,false,'a resend after the claim is the same job');
+  const changed = structuredClone(payload);changed.inputs.assistant_request.context.case.title='Different evidence';
+  assert.equal((await call('/api/v1/research/assistant/jobs',changed)).status,409);
+  const result = {summary:'Draft',risk_assessment:'Human review required',evidence:['E1'],recommended_actions:['Verify'],limitations:['Synthetic'],article_outline:['Finding']};
+  assert.equal((await call(`/api/v1/intelligence/bridge/jobs/${first.job.job_id}/complete`,{result,model:'opencodex/test-research',worker_id:'bridge-fixture',lease_generation:claim.job.lease_generation,lease_token:claim.job.lease_token})).status,200);
+  const results = await (await call('/api/v1/research/assistant/results',{job_ids:[first.job.job_id]})).json();
+  assert.equal(results.results[0].status,'succeeded');
+  assert.equal(results.results[0].result.summary,'Draft');
+  assert.equal(results.results[0].target_id,target);
+});
+
+
 test('versioned ontology receipts tolerate nested key order but reject changed facts', async () => {
   const env={DB:new MockD1(),CORE_BRIDGE_TOKEN:'b'.repeat(44)};
   const key='ontology-v2:'+'a'.repeat(64);
