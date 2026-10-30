@@ -646,3 +646,32 @@ def test_operation_projection_does_not_retry_auth_or_contract_errors(monkeypatch
         with pytest.raises(edge.CoreEdgeHTTPError):
             client.sync_research_operation({})
         assert len(calls) == 1
+
+
+def _command_client(monkeypatch, *, pending: int, run_seconds: float = 0.0):
+    client = CoreEdgeClient(_settings())
+    queue = [{"command_id": f"CMD-{index}", "command_type": "research-operation", "payload": {}} for index in range(pending)]
+    finished = []
+    monkeypatch.setattr(client, "claim_command", lambda: {"command": queue.pop(0) if queue else None})
+    monkeypatch.setattr(client, "complete_command", lambda command_id, *args, **kwargs: finished.append(command_id))
+
+    def execute(command_id, payload, db_path=None):
+        clock["now"] += run_seconds
+        return {"status": "succeeded"}
+
+    clock = {"now": 0.0}
+    monkeypatch.setattr("secopsai.research_operation.execute_hosted", execute)
+    monkeypatch.setattr("secopsai.core_edge_client.time.monotonic", lambda: clock["now"])
+    return client, queue, finished
+
+
+def test_a_cycle_clears_up_to_ten_operator_commands(monkeypatch):
+    client, queue, finished = _command_client(monkeypatch, pending=12)
+    assert len(client.process_commands()) == 10
+    assert len(finished) == 10 and len(queue) == 2
+
+
+def test_a_slow_command_ends_the_drain_and_leaves_the_rest_queued(monkeypatch):
+    client, queue, finished = _command_client(monkeypatch, pending=5, run_seconds=200.0)
+    assert len(client.process_commands()) == 1
+    assert finished == ["CMD-0"] and len(queue) == 4
