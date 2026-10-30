@@ -2,12 +2,17 @@
 from __future__ import annotations
 
 import json
+import sys
 from contextlib import closing
+from typing import Any
 
 import soc_store
 from secopsai.research_operation_store import read_connection
 from secopsai.research_operation_store import records
 
+# Core rejects a snapshot over 131072 bytes.
+PROJECTION_BUDGET_BYTES = 125000
+PROJECTION_MINIMUM_ENTRIES = 3
 READ_ACTIONS = {"status", "coverage", "people", "events", "editions", "queue", "audit", "metrics", "storage-assessment"}
 READ_ACTIONS.add("assistant-teams")
 WRITE_ACTIONS = {"person-register", "claim-assess", "prior-art", "experiment", "behavior", "case-review", "case-disposition", "source-configure", "source-collect", "event-verify", "roster", "board", "brief-create", "brief-edit", "brief-approve", "brief-publish", "brief-correct", "submission", "disclosure-milestone", "requirement", "queue-claim", "queue-heartbeat", "queue-complete", "queue-fail", "outcome"}
@@ -257,15 +262,61 @@ def hosted_projection(*, db_path=None) -> dict:
         if "draft" in original and projected.get("draft") != original["draft"]:
             projected.pop("draft", None)
             projected["draft_omitted"] = "Complete draft cannot be shown after privacy minimization; review it in the ledger"
-    # Remove whole oldest previews before transport, never silently cut text.
-    for projected in reversed(projection["editions"]):
-        if len(json.dumps(projection).encode()) <= 125000:
+    return fit_projection_budget(projection)
+
+
+def _projection_size(value: Any) -> int:
+    return len(json.dumps(value).encode())
+
+
+def fit_projection_budget(projection: dict, *, budget: int = PROJECTION_BUDGET_BYTES) -> dict:
+    """Bring the snapshot under Core's limit by dropping whole entries, least useful first.
+
+    Today's draft goes last: it is the only copy a reviewer can approve from.
+    Text is never cut, and what was dropped is counted on the desk.
+    """
+    editions = projection.get("editions") or []
+    desk = projection.get("research_desk") if isinstance(projection.get("research_desk"), dict) else {}
+    items, reviews = desk.get("items") or [], projection.get("pending_source_reviews") or []
+    trimmed = {"older_drafts": 0, "update_details": 0, "desk_items": 0, "source_reviews": 0, "todays_draft": 0}
+
+    def over() -> bool:
+        return _projection_size(projection) > budget
+
+    def drop_draft(edition: dict) -> None:
+        edition.pop("draft")
+        edition["draft_omitted"] = "Complete draft exceeds hosted transport budget; review it in the ledger"
+
+    for edition in reversed(editions[1:]):
+        if not over():
             break
-        if "draft" in projected:
-            projected.pop("draft")
-            projected["draft_omitted"] = "Complete draft exceeds hosted transport budget; review it in the ledger"
-    if len(json.dumps(projection).encode()) > 125000:
-        raise ValueError("research operation projection exceeds budget; hosted data was not silently truncated")
+        if "draft" in edition:
+            drop_draft(edition)
+            trimmed["older_drafts"] += 1
+    for edition in reversed(editions):
+        if not over():
+            break
+        update = edition.get("pending_update")
+        if isinstance(update, dict) and (update.get("new_items") or update.get("removed_items")):
+            update["new_items"], update["removed_items"] = [], []
+            trimmed["update_details"] += 1
+    while over() and (len(items) > PROJECTION_MINIMUM_ENTRIES or len(reviews) > PROJECTION_MINIMUM_ENTRIES):
+        if len(items) >= len(reviews):
+            items.pop()
+            trimmed["desk_items"] += 1
+        else:
+            reviews.pop()
+            trimmed["source_reviews"] += 1
+    if over() and editions and "draft" in editions[0]:
+        drop_draft(editions[0])
+        trimmed["todays_draft"] += 1
+    if over():
+        sizes = {key: _projection_size(value) for key, value in projection.items()}
+        raise ValueError(f"research operation projection exceeds budget ({sizes}); hosted data was not silently truncated")
+    if any(trimmed.values()):
+        desk["projection_trimmed"] = trimmed
+        print(json.dumps({"component": "research-operation", "event": "projection_trimmed", "trimmed": trimmed,
+                          "sizes": {key: _projection_size(value) for key, value in projection.items()}}), file=sys.stderr, flush=True)
     return projection
 
 
