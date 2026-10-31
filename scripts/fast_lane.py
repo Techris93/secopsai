@@ -60,6 +60,12 @@ def _get_json(fetcher: SafeFetcher, url: str, hosts: Tuple[str, ...]) -> Dict[st
     return json.loads(body.decode("utf-8"))
 
 
+class PublishTimePending(RuntimeError):
+    """The registry lists a release but not yet its publish time."""
+
+    failure_category = "publish_time_pending"
+
+
 def resolve_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: str = "") -> Dict[str, Any]:
     """Target version, its publish time, and the version published before it."""
     if ecosystem == "npm":
@@ -83,8 +89,11 @@ def resolve_release(fetcher: SafeFetcher, ecosystem: str, package: str, version:
         stamps = [item.get("upload_time_iso_8601") for item in release_doc.get("urls") or [] if item.get("upload_time_iso_8601")]
         if stamps:
             times[version] = min(stamps)
+    if not version:
+        raise ValueError(f"{package} has no current version")
     if version not in times:
-        raise ValueError(f"{package}@{version} has no publish time")
+        # npm's document can lag a fresh release; failed Fast Lane twice (2026-10-28, 2026-10-30).
+        raise PublishTimePending(f"{package}@{version} has no publish time yet")
     published = times[version]
     earlier = sorted((stamp, name) for name, stamp in times.items() if stamp < published)
     return {"version": version, "published_at": published, "previous_version": earlier[-1][1] if earlier else ""}
@@ -189,7 +198,14 @@ def main() -> int:
         row: Dict[str, Any] = {"target": f"{target.get('ecosystem')}:{target.get('package')}", "queue_id": target.get("_queue_id"),
                                "version": target.get("version"), "status": "", "severity": "none"}
         try:
-            release = resolve_release(fetcher, target["ecosystem"], target["package"], target.get("version", ""))
+            for attempt in range(NOT_FOUND_RETRIES + 1):
+                try:
+                    release = resolve_release(fetcher, target["ecosystem"], target["package"], target.get("version", ""))
+                    break
+                except PublishTimePending:
+                    if attempt == NOT_FOUND_RETRIES:
+                        raise
+                    time.sleep(NOT_FOUND_DELAY_SECONDS)
             row.update(version=release["version"], previous=release.get("previous_version"), published_at=release["published_at"])
             published = _parse(release["published_at"])
             if published and (started - published).total_seconds() > STALE_AFTER_SECONDS and not target.get("force"):
@@ -243,6 +259,9 @@ def main() -> int:
             elif isinstance(exc, TransientTransportError):
                 row.update(status="retryable_failure", failure_category=exc.failure_category,
                            retryable=True, reasons=exc.diagnostic)
+            elif isinstance(exc, PublishTimePending):
+                row.update(status="retryable_failure", failure_category=exc.failure_category,
+                           retryable=True, reasons=f"{exc}; target remains unresolved.")
             else:
                 # Our own exception messages name the failing check; keep a
                 # short, control-character-free copy so the cause is visible

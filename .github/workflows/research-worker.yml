@@ -89,13 +89,14 @@ jobs:
       SECOPSAI_VERIFY_RETRY_SOURCES: ${{ inputs.retry_sources }}
       SECOPSAI_VERIFY_RETRY_COLLECTORS: ${{ inputs.retry_collectors }}
       SECOPSAI_VERIFY_DELIVERY_ONLY: ${{ inputs.delivery_only && '1' || '0' }}
-      # After the outbox drain, refresh sources within five minutes of their
-      # strict two-interval freshness limit. This is before the supervisor's
-      # shutdown checkpoint, so acquired state is durable before publication.
+      # After the outbox drain, refresh sources within ten minutes of their
+      # strict two-interval freshness limit, about twice the longest shutdown
+      # checkpoint seen (5m19s). This is before that checkpoint, so acquired
+      # state is durable before publication.
       # Recovery-only runs deliberately keep their no-recollection contract.
       SECOPSAI_VERIFY_REFRESH_STALE_SOURCES: "1"
       SECOPSAI_VERIFY_REFRESH_SECONDS: "840"
-      SECOPSAI_VERIFY_FRESHNESS_MARGIN_SECONDS: "300"
+      SECOPSAI_VERIFY_FRESHNESS_MARGIN_SECONDS: "600"
       SECOPSAI_VERIFY_REQUIRE_ZERO: ${{ inputs.delivery_only && '1' || '0' }}
       SECOPSAI_VERIFY_DELIVERY_SECONDS: ${{ inputs.delivery_seconds || 840 }}
       SECOPSAI_WORKER_DIAGNOSTICS_DIR: reports/research
