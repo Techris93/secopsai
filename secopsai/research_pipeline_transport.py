@@ -15,6 +15,7 @@ from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 ACTOR = "hosted-pipeline-transport"
 MAX_JOBS = 10  # Core's results call takes ten job ids
+MAX_ROWS = 60  # enough for every slot's three jobs in one pass, with room for retries
 MAX_PAYLOAD_BYTES = 60000
 PERMANENT_HTTP = {409, 413, 422}
 ROUTING_FIELDS = ("selected_model", "fallback_models", "fallback_mode")
@@ -38,7 +39,7 @@ def sync_hosted(client, *, db_path=None) -> dict:
             OR ((j.status='queued' OR (j.status='running' AND j.provider='hosted_core_bridge')) AND EXISTS (
               SELECT 1 FROM investigation_autopilot_runs a WHERE a.pipeline_id=json_extract(j.input_json,'$.pipeline_id')
                 AND a.status IN ('collecting','analyzing','awaiting_model','running'))))
-          ORDER BY j.queued_at,j.job_id LIMIT {MAX_JOBS}""", AI_STEPS)]
+          ORDER BY j.queued_at,j.job_id LIMIT {MAX_ROWS}""", AI_STEPS)]
     delivered, applied, failed, canceled = 0, 0, 0, 0
     reasons: dict[str, int] = {}
     pending = {}
@@ -78,8 +79,9 @@ def sync_hosted(client, *, db_path=None) -> dict:
                               actor=ACTOR, case_id=job["job_id"], db_path=db_path)]
             delivered += 1
         pending[receipt[0]["payload"]["remote_job_id"]] = job
-    if pending:
-        for item in client.assistant_results(list(pending)).get("results", []):
+    remote_ids = list(pending)
+    for start in range(0, len(remote_ids), MAX_JOBS):
+        for item in client.assistant_results(remote_ids[start:start + MAX_JOBS]).get("results", []):
             job = pending.get(item.get("job_id")) if isinstance(item, dict) else None
             if job is None or item.get("status") not in {"succeeded", "failed", "canceled"}:
                 continue

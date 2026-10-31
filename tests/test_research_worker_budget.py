@@ -56,3 +56,44 @@ def test_investigations_per_cycle_defaults_to_filling_free_slots(monkeypatch):
     assert research_worker.investigations_per_cycle() == 10
     monkeypatch.setenv("SECOPSAI_INVESTIGATIONS_PER_CYCLE", "x")
     assert research_worker.investigations_per_cycle() == 3
+
+
+def test_finished_investigations_are_applied_before_the_cycle_reconciles_them(tmp_path, monkeypatch):
+    from secopsai import core_edge_client
+    from secopsai.worker_control import request_shutdown
+
+    class Core:
+        enabled = True
+
+        def pull_and_apply_settings(self, **kw):
+            return None
+
+        def process_commands(self, **kw):
+            return []
+
+    order = []
+
+    def cycle(**kw):
+        order.append("cycle")
+        request_shutdown()
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(core_edge_client, "coordinator_client", lambda: Core())
+    monkeypatch.setattr(research_worker, "_sync_investigation_jobs", lambda *a, **kw: order.append("sync") or {"status": "ok"})
+    monkeypatch.setattr(research_worker, "run_worker_cycle", cycle)
+    research_worker.run_worker_loop(db_path=str(tmp_path / "research.db"), max_cycles=1)
+    assert order[:2] == ["sync", "cycle"]
+
+
+def test_deployment_can_raise_investigation_slots_within_bounds(monkeypatch):
+    from secopsai.investigation_autopilot import max_active_runs
+
+    monkeypatch.delenv("SECOPSAI_INVESTIGATION_MAX_ACTIVE_RUNS", raising=False)
+    assert max_active_runs({"max_active_runs": 3}) == 3
+    monkeypatch.setenv("SECOPSAI_INVESTIGATION_MAX_ACTIVE_RUNS", "10")
+    assert max_active_runs({"max_active_runs": 3}) == 10
+    monkeypatch.setenv("SECOPSAI_INVESTIGATION_MAX_ACTIVE_RUNS", "500")
+    assert max_active_runs({"max_active_runs": 3}) == 20
+    monkeypatch.setenv("SECOPSAI_INVESTIGATION_MAX_ACTIVE_RUNS", "x")
+    assert max_active_runs({"max_active_runs": 3}) == 3
+
