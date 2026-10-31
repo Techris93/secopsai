@@ -232,3 +232,52 @@ def test_refit_caps_listings_and_starts_a_new_corpus_version(tmp_path, monkeypat
     assert stored["built_at"] != "old"
     assert len(stored["rows"][0]["context"]["missing_files"]) == 100 and stored["rows"][0]["context"]["listing_limits"] == ["missing_files"]
     assert stored["rows"][1]["context"] == rows[1]["context"]
+
+
+def test_triage_evidence_shows_flags_outside_the_rule_matched_file():
+    from secopsai.package_features import triage_evidence
+    members = [("package/test/parse.test.js", b"const fixture = 'stratum+tcp://server:port';\n"),
+               ("package/bin/run.js", b"// helper\nconst { spawn } = require('child_process');\nspawn('sh', ['-c', 'id']);\n")]
+    evidence = triage_evidence(members, [{"rule_id": "YARA:CoinMiner", "file_path": "package/test/parse.test.js"}], ["child_process"])
+    assert [item["path"] for item in evidence["flagged_files"]] == ["package/test/parse.test.js"]
+    assert [item["path"] for item in evidence["flag_regions"]] == ["package/bin/run.js"]
+    assert "spawn" in evidence["flag_regions"][0]["content"] and evidence["flag_regions"][0]["flags"] == ["child_process"]
+
+
+def test_fitting_flag_regions_is_recorded_as_lost_evidence():
+    big = {"path": "package/x.js", "content": "x" * 3000, "complete": True}
+    context = research_ai_triage.fit_context({"coverage_contract": COVERAGE_CONTRACT, "findings": [], "flag_regions": [dict(big, path=f"package/{n}.js") for n in range(14)]}, limit=20_000)
+    assert context["evidence_truncated"] is True and "flag_regions" in context["evidence_omissions"]
+
+
+def test_rebuild_keeps_samples_and_labels_and_drops_what_cannot_be_checked(tmp_path, monkeypatch):
+    rows = [{"artifact": "npm:m@1", "set": "malware", "label": "malware", "label_source": "independent_review", "partition": "tune", "ecosystem": "npm", "package": "m", "version": "1", "context": {"old": 1}},
+            {"artifact": "npm:a@1", "set": "adversarial", "label": "malware", "label_source": "independent_review", "partition": "held_out", "ecosystem": "npm", "package": "a", "version": "1", "context": {"old": 1}},
+            {"artifact": "npm:c@1", "set": "production", "label": "benign", "label_source": "production_aged", "partition": "tune", "ecosystem": "npm", "package": "c", "version": "1", "context": {"old": 1}},
+            {"artifact": "npm:gone@1", "set": "production", "label": "benign", "label_source": "production_aged", "partition": "tune", "ecosystem": "npm", "package": "gone", "version": "1", "context": {"old": 1}}]
+    corpus = tmp_path / "corpus.json.gz"
+    with gzip.open(corpus, "wt", encoding="utf-8") as handle:
+        json.dump({"built_at": "old", "seed": 1, "model": ce.MODEL, "rows": rows}, handle)
+    from secopsai import research_content_funnel, yara_engine
+    import triage_replay
+    monkeypatch.setattr(yara_engine, "load", lambda: {"available": True})
+    monkeypatch.setattr(ce, "malware_rows", lambda *_: [{"artifact": "npm:m@1", "context": {"new": "m"}}, {"artifact": "npm:a@1", "context": {"new": "a", "findings": []}}])
+    monkeypatch.setattr(ce, "inject", lambda context, text: {**context, "injected": True})
+    monkeypatch.setattr(ce, "has_malicious_advisory", lambda *_: False)
+
+    def fetch(_fetcher, _eco, package, _version):
+        if package == "gone":
+            raise RuntimeError("gone")
+        return [], 0
+
+    monkeypatch.setattr(research_content_funnel, "fetch_release", fetch)
+    monkeypatch.setattr(triage_replay, "build", lambda *_: {"context": {"new": "c"}})
+    monkeypatch.setattr(sys, "argv", ["closure_evaluation.py", "rebuild", "--corpus", str(corpus), "--dataset", str(tmp_path)])
+    assert ce.main() == 0
+    stored = ce.load_corpus(corpus)
+    assert stored["built_at"] != "old"
+    by_artifact = {row["artifact"]: row for row in stored["rows"]}
+    assert set(by_artifact) == {"npm:m@1", "npm:a@1", "npm:c@1"}
+    assert by_artifact["npm:m@1"]["context"] == {"new": "m"} and by_artifact["npm:a@1"]["context"]["injected"] is True
+    assert by_artifact["npm:c@1"]["label_source"] == "production_aged" and by_artifact["npm:c@1"]["context"] == {"new": "c"}
+

@@ -124,3 +124,26 @@ def test_bridge_reports_coverage_of_the_context_the_model_received(monkeypatch):
     assert result["evidence_coverage"]["contract"] == COVERAGE_CONTRACT
     assert result["evidence_coverage"]["complete"] is True and result["automatic_closure_eligible"] is True
     assert result["assessment_version"] == "decision-v2"
+
+
+def _flag_context(**regions):
+    from secopsai.decision_evidence import COVERAGE_CONTRACT
+    return {"coverage_contract": COVERAGE_CONTRACT, "findings": [{"rule_id": "R1", "file_path": "package/test.js"}],
+            "flagged_files": [{"path": "package/test.js", "content": "fixture", "complete": True}],
+            "flag_locations": [{"flag": "child_process", "file_path": "package/bin/run.js", "line": 3, "context": "spawn()"}], **regions}
+
+
+def test_a_flag_in_an_unsupplied_file_blocks_closure():
+    from secopsai.decision_evidence import context_coverage
+    coverage = context_coverage(_flag_context())
+    assert not coverage["complete"] and "flag_file_not_supplied:package/bin/run.js" in coverage["gaps"]
+
+
+def test_a_flag_whose_region_is_supplied_counts_as_read():
+    from secopsai.decision_evidence import context_coverage
+    region = {"path": "package/bin/run.js", "flags": ["child_process"], "content": "spawn()", "complete": False, "truncated": True, "regions_found": 1, "regions_shown": 1}
+    assert context_coverage(_flag_context(flag_regions=[region]))["complete"]
+    for changed in ({"regions_trimmed": True}, {"regions_shown": 0}):
+        coverage = context_coverage(_flag_context(flag_regions=[{**region, **changed}]))
+        assert not coverage["complete"] and "flag_region:package/bin/run.js" in coverage["gaps"]
+

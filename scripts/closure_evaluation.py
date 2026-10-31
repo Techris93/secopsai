@@ -280,6 +280,45 @@ def command_extend(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_rebuild(args: argparse.Namespace) -> int:
+    """Rebuild every context from its package with the current evidence; same samples and labels."""
+    from secopsai import research_content_funnel, yara_engine
+    from secopsai.research_intake import SafeFetcher
+    from triage_replay import build
+
+    if not yara_engine.load().get("available"):
+        raise SystemExit("YARA rules unavailable")
+    corpus = load_corpus(args.corpus)
+    seed = corpus["seed"]
+    from_dataset = {row["artifact"]: row["context"] for row in malware_rows(args.dataset, args.malware_sampled, seed)}
+    fetcher = SafeFetcher(timeout=60)
+
+    def one(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            if row["set"] in {"malware", "adversarial"}:
+                context = from_dataset.get(row["artifact"])
+                if context and row["set"] == "adversarial":
+                    context = inject(context, random.Random(f"{seed}:{row['artifact']}").choice(INJECTIONS))
+            else:
+                members, _size = research_content_funnel.fetch_release(fetcher, row["ecosystem"], row["package"], row["version"])
+                built = build(fetcher, row["ecosystem"], row["package"], row["version"], members)
+                # A lookup failure drops the package: an unchecked release is not vetted.
+                context = built["context"] if built and not has_malicious_advisory(row["ecosystem"], row["package"], row["version"]) else None
+        except Exception:
+            return None
+        return {**row, "context": context} if context else None
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        rebuilt = [row for row in pool.map(one, corpus["rows"]) if row]
+    print(f"{len(rebuilt)} of {len(corpus['rows'])} samples rebuilt", flush=True)
+    corpus["rows"] = rebuilt
+    corpus["built_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    with gzip.open(args.corpus, "wt", encoding="utf-8") as handle:
+        json.dump(corpus, handle)
+    print(json.dumps(corpus_summary(rebuilt), indent=1))
+    return 0
+
+
 def command_refit(args: argparse.Namespace) -> int:
     """Apply the current listing limits to a stored corpus; no network or model calls."""
     from secopsai.research_ai_triage import bound_listings
@@ -452,6 +491,10 @@ def main() -> int:
     extend.add_argument("--corpus", type=Path, required=True)
     extend.add_argument("--clean-tune", type=int, default=100)
     extend.add_argument("--clean-held-out", type=int, default=200)
+    rebuild = commands.add_parser("rebuild")
+    rebuild.add_argument("--corpus", type=Path, required=True)
+    rebuild.add_argument("--dataset", type=Path, required=True)
+    rebuild.add_argument("--malware-sampled", type=int, default=900, help="The tune and held-out malware the corpus was built with")
     refit = commands.add_parser("refit")
     refit.add_argument("--corpus", type=Path, required=True)
     run = commands.add_parser("run")
@@ -467,7 +510,7 @@ def main() -> int:
     report.add_argument("--min-confidence", type=int, default=85)
     report.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    return {"build": command_build, "extend": command_extend, "refit": command_refit, "run": command_run, "report": command_report}[args.command](args)
+    return {"build": command_build, "extend": command_extend, "rebuild": command_rebuild, "refit": command_refit, "run": command_run, "report": command_report}[args.command](args)
 
 
 if __name__ == "__main__":
