@@ -168,3 +168,51 @@ def test_run_feeds_within_room_and_sends_every_job_once(tmp_path):
     finally:
         client_module.CoreEdgeClient, ce.time.sleep = original, sleep
     assert len(sent) == len(set(sent)) == 12 and len(json.loads(results.read_text())) == 12
+
+
+def test_production_targets_take_each_package_once_and_skip_evaluation_jobs():
+    class Client:
+        pages = [[{"artifact_id": "npm:a@1.0.0"}, {"artifact_id": "npm:a@2.0.0"}, {"artifact_id": "npm:@scope/b@3.0.0-rc.1"}],
+                 [{"artifact_id": "pypi:c@1"}, {"artifact_id": "crates:d@1"}, {"artifact_id": "npm:e@1#cabc"}, {"artifact_id": ""}]]
+
+        def triage_results(self, *, since, limit):
+            page = self.pages.pop(0) if self.pages else []
+            return {"results": page, "next_since": since + "x" if page else since}
+
+    assert ce.production_targets(Client()) == [{"ecosystem": "npm", "package": "a", "version": "1.0.0"},
+                                               {"ecosystem": "npm", "package": "@scope/b", "version": "3.0.0-rc.1"},
+                                               {"ecosystem": "pypi", "package": "c", "version": "1"}]
+
+
+def test_production_samples_need_age_a_flag_and_a_clean_advisory_lookup(monkeypatch):
+    import sys as system
+    import types
+
+    now = dt.datetime.now(dt.timezone.utc)
+    stamps = {"old": (now - dt.timedelta(days=ce.PRODUCTION_MIN_AGE_DAYS + 1)).isoformat(), "new": (now - dt.timedelta(days=ce.PRODUCTION_MIN_AGE_DAYS - 1)).isoformat()}
+    monkeypatch.setattr(ce, "_release_times", lambda fetcher, ecosystem, package: {"1": stamps["new" if package == "recent" else "old"]})
+    def advisory(ecosystem, package, version):
+        if package == "lookup-fails":
+            raise OSError("unreachable")
+        return package == "advised"
+
+    monkeypatch.setattr(ce, "has_malicious_advisory", advisory)
+    monkeypatch.setitem(system.modules, "triage_replay", types.SimpleNamespace(build=lambda fetcher, ecosystem, package, version, members: None if package == "unflagged" else {"context": {"package": package}}))
+    from secopsai import research_content_funnel
+    monkeypatch.setattr(research_content_funnel, "fetch_release", lambda fetcher, ecosystem, package, version: ([], 0))
+
+    names = ["kept", "recent", "unflagged", "advised", "lookup-fails"]
+    rows = ce.production_rows(None, [{"ecosystem": "npm", "package": name, "version": "1"} for name in names], 1)
+    assert [row["package"] for row in rows] == ["kept"]
+    assert rows[0]["label"] == "benign" and rows[0]["label_source"] == "production_aged" and rows[0]["set"] == "production"
+
+
+def test_production_label_is_reported_apart_and_never_allowed_for_malware():
+    def record(number, label, source, decision="review"):
+        return {"artifact_id": f"a{number}", "label": label, "label_source": source, "partition": "held_out", "decision": decision, "provider": "p", "model_version": "m",
+                "verdict": "benign_expected", "valid": True, "evidence_complete": True}
+
+    with pytest.raises(ValueError):
+        evaluate_records([record(1, "malware", "production_aged")], held_out=True)
+    report = evaluate_records([record(1, "malware", "independent_review"), record(2, "benign", "production_aged", "escalate"), record(3, "benign", "registry_vetted", "close")], held_out=True)
+    assert report["benign_by_label_source"] == {"production_aged": {"escalated": 1, "closed": 0}, "registry_vetted": {"escalated": 0, "closed": 1}}
