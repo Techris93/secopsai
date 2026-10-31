@@ -1708,7 +1708,8 @@ async function runnerAssistantCommand(request, env, requestId, command) {
     return { canceled: (rows.results || []).map(row => row.job_id) };
   }
   return { results: (rows.results || []).map(row => ({ job_id: row.job_id, target_id: row.target_id, action: row.action, status: row.status, provider: row.provider,
-    model: clean(parseJson(row.model_json, {}).model, 200), result: parseJson(row.result_json, {}), error_code: row.error_code || "" })) };
+    // A job that failed has no completed event, and JSON.parse(null) is null.
+    model: clean(parseJson(row.model_json, {})?.model, 200), result: parseJson(row.result_json, {}), error_code: row.error_code || "" })) };
 }
 
 async function insertIntelligenceJob(env, requestId, payload) {

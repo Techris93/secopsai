@@ -955,7 +955,7 @@ def run_worker_loop(
                     print(json.dumps({"component": "research-worker", "event": "investigation_jobs", **last_summary["investigation_jobs"]}), flush=True)
                 except Exception as exc:
                     capture_exception(exc, context={"component": "research_pipeline_transport"})
-                    last_summary["investigation_jobs"] = {"status": "degraded", "error_category": type(exc).__name__}
+                    last_summary["investigation_jobs"] = {"status": "degraded", "error_category": type(exc).__name__, "http_status": getattr(exc, "status", None)}
             # Content scanning for PyPI and Open VSX (npm has its own funnel in
             # enrichment); a failure is retried from the same events next cycle.
             try:
