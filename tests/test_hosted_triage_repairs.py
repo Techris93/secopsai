@@ -188,3 +188,24 @@ def test_terminal_provider_rejection_outranks_abandoned_websocket_warning(messag
     assert failure.category == category
     assert codex_bridge.provider_failure_allows_fallback("quota_auth", failure)
     assert not codex_bridge.provider_failure_allows_fallback("disabled", failure)
+
+
+@pytest.mark.parametrize("action", ["explain_finding", "analyze_research_case", "generate_analyst_brief", "review_publication_safety", "prioritize_findings"])
+def test_actions_do_not_compile_decision_fields_they_never_return(action):
+    props = bridge_output_schema(action, artifact_context())["properties"]
+
+    for key in ("finding_verdict", "finding_confidence", "malicious_probability", "disposition_recommendation"):
+        assert props[key] == {"type": "null"}
+    assert props["rule_tuning_proposals"] == {"type": "array", "maxItems": 0, "items": {"type": "string"}}
+    assert props["decision_evidence_refs"] == {"type": "array", "maxItems": 0, "items": {"type": "string"}}
+    if action != "prioritize_findings":
+        assert props["finding_priorities"] == {"type": "array", "maxItems": 0, "items": {"type": "string"}}
+
+
+def test_triage_keeps_the_fields_it_decides_with():
+    finding = bridge_output_schema("triage_finding", artifact_context())["properties"]
+    assert finding["finding_verdict"]["enum"]
+    assert finding["rule_tuning_proposals"]["items"]["type"] == "object"
+    artifact = bridge_output_schema("triage_artifact", artifact_context())["properties"]
+    assert artifact["decision_evidence_refs"]["minItems"] == 1
+    assert bridge_output_schema("prioritize_findings", artifact_context())["properties"]["finding_priorities"]["items"]["type"] == "object"
