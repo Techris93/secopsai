@@ -2459,6 +2459,8 @@ function sanitize(value, depth = 0, preserveText = false) {
     const blocked = new Set(["artifact", "artifact_bytes", "artifact_content", "authorization", "password", "raw_content", "raw_package", "raw_output", "raw_scan", "packet_capture", "pcap", "secret", "token", "access_token", "api_key", "credential", "private_key", "cookie"]);
     return Object.fromEntries(Object.entries(value).filter(([key]) => {
       const normalizedKey = key.toLowerCase();
+      // A publication review must report this check; the name holds a finding, not a credential.
+      if (normalizedKey === "credential_leakage") return true;
       return !blocked.has(normalizedKey) && !/(?:^|_)(?:token|secret|password|credential|private_key|api_key)(?:_|$)/.test(normalizedKey);
     }).map(([key, item]) => [key.slice(0, 128), /(?:^|_)(?:url|uri|locator)$/i.test(key) && typeof item === "string" ? ontologySafeLocatorSync(item) : sanitize(item, depth + 1, preserveText)]));
   }

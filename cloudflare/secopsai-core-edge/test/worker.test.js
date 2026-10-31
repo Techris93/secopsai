@@ -853,6 +853,24 @@ test('hosted assistant transport preserves captured evidence, scopes jobs and fe
 });
 
 
+test('a publication review keeps its credential leakage check and is accepted', {skip: !DatabaseSync}, async () => {
+  const {d1} = migratedSqliteD1();
+  const env = {DB:d1, CORE_BRIDGE_TOKEN:'b'.repeat(44), CORE_INTELLIGENCE_TOKEN:'i'.repeat(44)};
+  const call = (path, body) => handleRequest(new Request('https://core.example'+path, {method:'POST',headers:{authorization:`Bearer ${env.CORE_BRIDGE_TOKEN}`,'content-type':'application/json'},body:JSON.stringify(body)}),env);
+  const target = 'RSC-0123456789ABCDEF';
+  const request = {action:{name:'review_publication_safety'},context:{case:{case_id:target}},instructions:'Bounded supplied evidence only',safety:{read_only:true,human_review_required:true}};
+  const job = await (await call('/api/v1/research/assistant/jobs',{action:'review_publication_safety',target_id:target,idempotency_key:'assistant:pipeline:AIJ-R',inputs:{case_id:target,pipeline_id:'RPL-1',pipeline_revision:1,target_id:target,assistant_request:request}})).json();
+  const claim = await (await call('/api/v1/intelligence/bridge/claim',{worker_id:'bridge-fixture',selected_model:'opencodex/test-research',fallback_models:[],fallback_mode:'disabled'})).json();
+  const checks = Object.fromEntries(['evidence','privacy','credential_leakage','operational_safety','legal_disclosure','reproducibility'].map(name => [name,{status:'unknown',finding:`${name} needs review`}]));
+  const result = {summary:'Review',risk_assessment:'Human review required',evidence:[],recommended_actions:['Verify'],limitations:[],publication_risks:Object.values(checks).map(check => check.finding),publication_checks:checks,disclosure_draft:'Review-only draft'};
+  const lease = {model:'opencodex/test-research',worker_id:'bridge-fixture',lease_generation:claim.job.lease_generation,lease_token:claim.job.lease_token};
+  const secret = structuredClone(result);secret.publication_checks.evidence.api_key='hidden';
+  assert.equal((await call(`/api/v1/intelligence/bridge/jobs/${job.job.job_id}/complete`,{result:secret,...lease})).status,422,'other sensitive fields are still refused');
+  assert.equal((await call(`/api/v1/intelligence/bridge/jobs/${job.job.job_id}/complete`,{result,...lease})).status,200);
+  const results = await (await call('/api/v1/research/assistant/results',{job_ids:[job.job.job_id]})).json();
+  assert.deepEqual(results.results[0].result.publication_checks.credential_leakage,checks.credential_leakage);
+});
+
 test('an investigation job takes the bridge routing at claim, survives a resend and reports its result', {skip: !DatabaseSync}, async () => {
   const {d1} = migratedSqliteD1();
   const env = {DB:d1, CORE_BRIDGE_TOKEN:'b'.repeat(44), CORE_INTELLIGENCE_TOKEN:'i'.repeat(44)};
