@@ -598,8 +598,11 @@ def research_note(event_id: str, *, db_path=None, now: Optional[datetime] = None
         latest = latest_claim_checks(db_path=db_path)
         # "reported" and "unverified" rows repeat what the cluster's sources say
         # and were not checked, so they would read as findings about this item.
+        # A cached CVSS mismatch is about whichever report was checked first: this
+        # item's own score was judged at verification and its text states the official one.
         claims = [claim for cve in cves for claim in (latest.get(cve) or {}).get("claims", [])
-                  if claim["status"] not in {"reported", "unverified"}]
+                  if claim["status"] not in {"reported", "unverified"}
+                  and not (claim["status"] == "mismatch" and claim["claim"].startswith("CVSS "))]
     if claims:
         lines += ["", "| Claim | Check | Source |", "| --- | --- | --- |"]
         lines += [f"| {claim['claim']} | {claim['status'].replace('_', ' ')} | {claim.get('source') or claim.get('detail') or ''} |"
