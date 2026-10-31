@@ -467,7 +467,7 @@ def main() -> int:
     report.add_argument("--min-confidence", type=int, default=85)
     report.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    return {"build": command_build, "extend": command_extend, "run": command_run, "report": command_report}[args.command](args)
+    return {"build": command_build, "extend": command_extend, "refit": command_refit, "run": command_run, "report": command_report}[args.command](args)
 
 
 if __name__ == "__main__":
