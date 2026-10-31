@@ -203,6 +203,18 @@ def test_research_note_leaves_out_rows_nothing_checked(db, monkeypatch):
     assert "exploited in the wild" not in note and "CVSS 9.2" not in note
 
 
+def test_research_note_leaves_out_a_cvss_mismatch_cached_from_another_report(db, monkeypatch):
+    week(db)
+    monkeypatch.setattr(desk, "latest_claim_checks", lambda **kw: {"CVE-2026-111357": {"claims": [
+        {"claim": "CVE-2026-111357 exists", "status": "confirmed", "source": "https://www.cve.org/"},
+        {"claim": "CVSS 8.8", "status": "mismatch", "source": "https://nvd.example/"},
+        {"claim": "CVSS 7.0", "status": "confirmed", "source": "https://nvd.example/"},
+    ]}})
+    note = "\n".join(desk.research_note("php-adv", db_path=db, now=NOW, cves=["CVE-2026-111357"]))
+    assert "| CVE-2026-111357 exists | confirmed |" in note and "| CVSS 7.0 | confirmed |" in note
+    assert "CVSS 8.8" not in note
+
+
 def test_research_note_maps_detections_claims_and_exposure(db):
     week(db)
     assert [r["rule_id"] for r in desk.detections_for({"cves": ["CVE-2026-109618"], "names": []})] == ["RULE-311"]
