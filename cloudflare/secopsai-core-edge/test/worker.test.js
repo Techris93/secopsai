@@ -876,6 +876,17 @@ test('an investigation job takes the bridge routing at claim, survives a resend 
   assert.equal(results.results[0].status,'succeeded');
   assert.equal(results.results[0].result.summary,'Draft');
   assert.equal(results.results[0].target_id,target);
+  const failing = structuredClone(payload);failing.idempotency_key='assistant:pipeline:AIJ-3';failing.inputs.pipeline_id='RPL-2';
+  const queued = await (await call('/api/v1/research/assistant/jobs',failing)).json();
+  const lease = await (await call('/api/v1/intelligence/bridge/claim',{worker_id:'bridge-fixture',selected_model:'opencodex/test-research',fallback_models:[],fallback_mode:'disabled'})).json();
+  assert.equal((await call(`/api/v1/intelligence/bridge/jobs/${queued.job.job_id}/fail`,{worker_id:'bridge-fixture',lease_generation:lease.job.lease_generation,lease_token:lease.job.lease_token,error_code:'invalid_request',error_message:'HTTP 400'})).status,200);
+  const mixed = await call('/api/v1/research/assistant/results',{job_ids:[first.job.job_id,queued.job.job_id]});
+  assert.equal(mixed.status,200,'a failed job must not hide the results of the batch');
+  const byId = Object.fromEntries((await mixed.json()).results.map(item => [item.job_id,item]));
+  assert.equal(byId[first.job.job_id].status,'succeeded');
+  assert.equal(byId[queued.job.job_id].status,'failed');
+  assert.equal(byId[queued.job.job_id].model,'');
+  assert.equal(byId[queued.job.job_id].error_code,'invalid_request');
 });
 
 

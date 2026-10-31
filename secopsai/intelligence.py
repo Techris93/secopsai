@@ -671,6 +671,17 @@ def bridge_output_schema(action_name: str = "", context: dict[str, Any] | None =
         props["verdict_recommendation"]["enum"] = ["inconclusive"]
         props["verdict_confidence"].update(minimum=0, maximum=0)
         props["verdict_evidence_refs"]["maxItems"] = 0
+    # Providers reject a strict schema whose compiled grammar is too large, and an
+    # empty array still compiles its item shape, so fields an action never returns
+    # must carry none of it. Removing any one of them was enough to fit (2026-10-31).
+    if action_name:
+        if action_name not in {"triage_artifact", "triage_finding"}:
+            for key in ("finding_verdict", "finding_confidence", "malicious_probability", "disposition_recommendation"):
+                props[key] = {"type": "null"}
+            props["decision_evidence_refs"] = {"type": "array", "maxItems": 0, "items": {"type": "string"}}
+            props["rule_tuning_proposals"] = {"type": "array", "maxItems": 0, "items": {"type": "string"}}
+        if action_name != "prioritize_findings":
+            props["finding_priorities"] = {"type": "array", "maxItems": 0, "items": {"type": "string"}}
     if action_name == "triage_artifact":
         from secopsai.decision_evidence import artifact_decision_choices
         from secopsai.decision_contracts import DecisionError
