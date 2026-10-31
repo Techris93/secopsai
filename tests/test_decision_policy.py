@@ -30,13 +30,16 @@ def test_observation_and_clef_pause_are_defaults(monkeypatch):
 
 
 def test_enforcement_requires_reviewed_heldout_calibration(tmp_path, monkeypatch):
-    report = evaluate_records(records(), held_out=True)
+    report = {**evaluate_records(records(), held_out=True), 'ecosystems': {'npm': 400, 'pypi': 200}}
     assert evaluation_passes(report)
     manifest = tmp_path / 'policy.json'
     manifest.write_text(json.dumps({'approved': True, 'policy_version': 'decision-v2', 'evaluations': {'typesafe:jev-fixed': report}}))
     monkeypatch.setenv('SECOPSAI_DECISION_MODE', 'enforce')
     monkeypatch.setenv('SECOPSAI_DECISION_POLICY_FILE', str(manifest))
-    assert closure_decision(decision()) == (True, 'calibrated_benign')
+    assert closure_decision(decision(), ecosystem='npm') == (True, 'calibrated_benign')
+    assert closure_decision(decision(), ecosystem='pypi') == (True, 'calibrated_benign')
+    assert closure_decision(decision(), ecosystem='vscode') == (False, 'ecosystem_not_evaluated')
+    assert closure_decision(decision()) == (False, 'ecosystem_not_evaluated')
     assert closure_decision(decision(), clef_probability=93) == (False, 'models_disagree')
     assert closure_decision(decision(), clef_probability=40, clef_choice='malicious') == (False, 'models_disagree')
     assert not closure_decision(decision(choice='needs_review'))[0]

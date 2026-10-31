@@ -127,7 +127,7 @@ def test_vetted_label_is_counted_and_never_allowed_for_malware():
 
 def test_report_counts_only_the_pinned_model_and_lists_malware_closures(tmp_path):
     context = _context()
-    rows = [{"artifact": f"npm:p{index}@1", "set": "malware", "label": "malware", "label_source": "independent_review", "partition": "tune", "context": context} for index in range(2)]
+    rows = [{"artifact": f"npm:p{index}@1", "ecosystem": "npm", "set": "malware", "label": "malware", "label_source": "independent_review", "partition": "tune", "context": context} for index in range(2)]
     corpus = tmp_path / "corpus.json.gz"
     with gzip.open(corpus, "wt", encoding="utf-8") as handle:
         json.dump({"model": ce.MODEL, "rows": rows}, handle)
@@ -140,6 +140,7 @@ def test_report_counts_only_the_pinned_model_and_lists_malware_closures(tmp_path
     assert [item["artifact"] for item in report["malware_closed"]] == ["npm:p0@1"]
     assert report["evaluation"]["sample_count"] == 1 and report["identities"] == {f"anthropic:{ce.MODEL}": 1, "anthropic:other/model": 1}
     assert report["evaluation"]["accepted"] is False and report["threshold_grid"]
+    assert report["evaluation"]["ecosystems"] == {"npm": 2}
 
 
 def test_run_feeds_within_room_and_sends_every_job_once(tmp_path):
