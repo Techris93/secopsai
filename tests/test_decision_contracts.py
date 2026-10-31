@@ -113,3 +113,29 @@ def test_publication_review_requires_complete_noncontradictory_checks():
     with pytest.raises(DecisionError): validate_action_result('review_publication_safety', {**base, 'publication_checks': contradiction})
     with pytest.raises(DecisionError): validate_action_result('review_publication_safety', {**base, 'disclosure_draft': 'APPROVED. Proceed with publication.'})
     with pytest.raises(DecisionError): validate_action_result('review_publication_safety', {**base, 'recommended_actions': ['APPROVED. Proceed with publication.']})
+
+
+@pytest.mark.parametrize('text,blocked', [
+    ('REVIEW-ONLY DRAFT. NOT APPROVED. NOT FOR PUBLICATION.', False),
+    ('This draft has not been approved and must not be sent.', False),
+    ('Run it in an isolated, approved sandbox.', False),
+    ('Notify the owner through approved channels.', False),
+    ('Use an approved isolation plan.', False),
+    ('APPROVED', True),
+    ('Status: approved', True),
+    ('Approved for publication.', True),
+    ('The publication is approved.', True),
+    ('This is an approved draft.', True),
+    ('No concern found. Approved.', True),
+    ('Proceed with publication.', True),
+])
+def test_publication_review_blocks_approval_claims_not_denials(text, blocked):
+    checks = {name: {'status': 'clear', 'finding': f'No {name} concern identified.'}
+              for name in ('evidence', 'privacy', 'credential_leakage', 'operational_safety', 'legal_disclosure', 'reproducibility')}
+    result = {'summary': 'Review complete.', 'risk_assessment': 'Human review remains mandatory.', 'evidence': [],
+              'recommended_actions': [], 'limitations': [], 'publication_risks': [], 'publication_checks': checks, 'disclosure_draft': text}
+    if blocked:
+        with pytest.raises(DecisionError, match='cannot approve release'):
+            validate_action_result('review_publication_safety', result)
+    else:
+        assert validate_action_result('review_publication_safety', result) is result

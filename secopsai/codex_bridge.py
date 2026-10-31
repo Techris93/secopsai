@@ -24,7 +24,7 @@ import requests
 import soc_store
 from secopsai.decision_policy import policy_status
 
-from secopsai.intelligence import bridge_output_schema, prepare_bridge_request, validate_bridge_result
+from secopsai.intelligence import bridge_output_schema, prepare_bridge_request, resolve_claim_refs, validate_bridge_result
 from secopsai.intelligence_jobs import (
     claim_next_job,
     complete_job,
@@ -1887,6 +1887,8 @@ def _invoke_with_model_fallback(
                 raw.setdefault("model_version", model_name)
                 raw["assessment_version"] = "decision-v2"
             context = request.get("context") if isinstance(request.get("context"), dict) else None
+            if action_name == "analyze_research_case":
+                raw["verdict_evidence_refs"] = resolve_claim_refs(raw.get("verdict_evidence_refs"), context)
             validate_bridge_result(action_name, raw, context=context)
             return raw, model_name
         except Exception as exc:
@@ -2273,6 +2275,14 @@ def _normalize_bridge_result(payload: dict[str, Any], *, action_name: str = "") 
         result["finding_priorities"] = []
     if not isinstance(result.get("publication_checks"), dict):
         result["publication_checks"] = {}
+    if action_name == "review_publication_safety":
+        # Models reword a finding when asked to copy it (0 of 6 on Haiku, 2026-10-31),
+        # so the checks are the record and the risks are derived from them.
+        result["publication_risks"] = [
+            check["finding"].strip()
+            for check in result["publication_checks"].values()
+            if isinstance(check, dict) and check.get("status") != "clear" and isinstance(check.get("finding"), str) and check["finding"].strip()
+        ]
     return result
 
 
