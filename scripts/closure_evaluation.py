@@ -5,6 +5,12 @@
 scanner and context builder, and writes the corpus. It calls no model, so it
 also shows how much evidence would count as complete.
 
+``extend`` adds packages production flagged whose release is still on the
+registry after PRODUCTION_MIN_AGE_DAYS with no malware advisory. Few popular
+packages get flagged, and these are what closure would actually act on. Some may
+be undetected malware, which can only inflate benign escalation; malware closure
+is measured on the malware sets alone. The two benign sources report separately.
+
 ``run --partition tune|held_out`` sends one partition to the operator's bridge,
 pinned to one model, without starving production triage. A second dispatch
 resumes: idempotency keys stop duplicates and results are read back from Core.
@@ -26,6 +32,7 @@ import gzip
 import hashlib
 import json
 import random
+import re
 import sys
 import time
 import urllib.request
@@ -45,6 +52,7 @@ from secopsai.decision_policy import closure_candidate  # noqa: E402
 MODEL = "anthropic/claude-haiku-5-5"
 TUNE_SHARE = 4  # one package in four goes to tuning
 MIN_AGE_DAYS = 30
+PRODUCTION_MIN_AGE_DAYS = 14
 OUTSTANDING = 30  # pending triage jobs allowed, production included
 GRID_PROBABILITY = (5, 10, 15, 20, 30)
 GRID_CONFIDENCE = (60, 70, 75, 80, 85)
@@ -111,20 +119,26 @@ def malware_rows(dataset: Path, wanted: int, seed: int) -> List[Dict[str, Any]]:
         return [row for row in pool.map(one, paths) if row]
 
 
+PRODUCTION_ARTIFACT = re.compile(r"^(npm|pypi):([^#\s]+)@([^@#\s]+)$")
+
+
 def _age_days(stamp: str, now: dt.datetime) -> float:
     return (now - dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))).total_seconds() / 86400
 
 
-def aged_release(fetcher: Any, ecosystem: str, package: str, now: dt.datetime) -> Optional[str]:
-    """The newest stable release at least MIN_AGE_DAYS old: a recent compromise has not had time to be caught."""
+def _release_times(fetcher: Any, ecosystem: str, package: str) -> Dict[str, str]:
     if ecosystem == "npm":
         data = json.loads(fetcher.get(f"https://registry.npmjs.org/{package.replace('/', '%2F')}", allowed_hosts=("registry.npmjs.org",), max_bytes=128 << 20)[2])
-        times = {version: stamp for version, stamp in (data.get("time") or {}).items() if version in (data.get("versions") or {}) and "-" not in version}
-    else:
-        data = json.loads(fetcher.get(f"https://pypi.org/pypi/{package}/json", allowed_hosts=("pypi.org",), max_bytes=64 << 20)[2])
-        times = {version: files[0]["upload_time_iso_8601"] for version, files in (data.get("releases") or {}).items()
-                 if files and not any(ch.isalpha() for ch in version) and not files[0].get("yanked")}
-    old = [(stamp, version) for version, stamp in times.items() if _age_days(stamp, now) >= MIN_AGE_DAYS]
+        return {version: stamp for version, stamp in (data.get("time") or {}).items() if version in (data.get("versions") or {})}
+    data = json.loads(fetcher.get(f"https://pypi.org/pypi/{package}/json", allowed_hosts=("pypi.org",), max_bytes=64 << 20)[2])
+    return {version: files[0]["upload_time_iso_8601"] for version, files in (data.get("releases") or {}).items() if files and not files[0].get("yanked")}
+
+
+def aged_release(fetcher: Any, ecosystem: str, package: str, now: dt.datetime) -> Optional[str]:
+    """The newest stable release at least MIN_AGE_DAYS old: a recent compromise has not had time to be caught."""
+    stable = {version: stamp for version, stamp in _release_times(fetcher, ecosystem, package).items()
+              if "-" not in version and (ecosystem == "npm" or not any(ch.isalpha() for ch in version))}
+    old = [(stamp, version) for version, stamp in stable.items() if _age_days(stamp, now) >= MIN_AGE_DAYS]
     return max(old)[1] if old else None
 
 
@@ -160,6 +174,49 @@ def clean_rows(fetcher: Any, seed: int) -> List[Dict[str, Any]]:
 
     with ThreadPoolExecutor(max_workers=16) as pool:
         return [row for row in pool.map(one, clean_targets(3000, 1500)) if row]
+
+
+def production_targets(client: Any) -> List[Dict[str, str]]:
+    """Each npm or PyPI package production has sent to triage, at its oldest flagged version."""
+    targets: Dict[tuple, Dict[str, str]] = {}
+    cursor = "1970-01-01T00:00:00Z"
+    while True:
+        response = client.triage_results(since=cursor, limit=100)
+        page = response.get("results") or []
+        for item in page:
+            match = PRODUCTION_ARTIFACT.match(str(item.get("artifact_id") or ""))
+            if match:
+                targets.setdefault(match.group(1, 2), {"ecosystem": match.group(1), "package": match.group(2), "version": match.group(3)})
+        next_cursor = response.get("next_since") or cursor
+        if not page or next_cursor == cursor:
+            return list(targets.values())
+        cursor = next_cursor
+
+
+def production_rows(fetcher: Any, targets: List[Dict[str, str]], seed: int) -> List[Dict[str, Any]]:
+    from secopsai import research_content_funnel
+    from triage_replay import build
+
+    now = dt.datetime.now(dt.timezone.utc)
+
+    def one(target: Dict[str, str]) -> Optional[Dict[str, Any]]:
+        ecosystem, package, version = target["ecosystem"], target["package"], target["version"]
+        try:
+            stamp = _release_times(fetcher, ecosystem, package).get(version)
+            if not stamp or _age_days(stamp, now) < PRODUCTION_MIN_AGE_DAYS:
+                return None
+            members, _size = research_content_funnel.fetch_release(fetcher, ecosystem, package, version)
+            built = build(fetcher, ecosystem, package, version, members)
+            # A lookup failure drops the package: an unchecked release is not vetted.
+            if not built or has_malicious_advisory(ecosystem, package, version):
+                return None
+        except Exception:
+            return None
+        return {"set": "production", "label": "benign", "label_source": "production_aged", "ecosystem": ecosystem, "package": package, "version": version,
+                "artifact": f"{ecosystem}:{package}@{version}", "partition": partition_of(ecosystem, package, seed), "context": built["context"]}
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        return [row for row in pool.map(one, targets) if row]
 
 
 def corpus_summary(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
@@ -198,6 +255,28 @@ def command_build(args: argparse.Namespace) -> int:
     with gzip.open(args.corpus, "wt", encoding="utf-8") as handle:
         json.dump(corpus, handle)
     print(json.dumps(corpus_summary(rows), indent=1))
+    return 0
+
+
+def command_extend(args: argparse.Namespace) -> int:
+    from secopsai import yara_engine
+    from secopsai.core_edge_client import CoreEdgeClient
+    from secopsai.research_intake import SafeFetcher
+
+    if not yara_engine.load().get("available"):
+        raise SystemExit("YARA rules unavailable")
+    corpus = load_corpus(args.corpus)
+    known = {(row["ecosystem"], row["package"]) for row in corpus["rows"]}
+    targets = [target for target in production_targets(CoreEdgeClient()) if (target["ecosystem"], target["package"]) not in known]
+    print(f"{len(targets)} production packages to check", flush=True)
+    found = production_rows(SafeFetcher(timeout=60), targets, corpus["seed"])
+    print(f"{len(found)} still flagged, aged and without a malware advisory", flush=True)
+    corpus["rows"] += spread(found, {"tune": args.clean_tune, "held_out": args.clean_held_out}, corpus["seed"])
+    corpus["built_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    corpus["production_min_age_days"] = PRODUCTION_MIN_AGE_DAYS
+    with gzip.open(args.corpus, "wt", encoding="utf-8") as handle:
+        json.dump(corpus, handle)
+    print(json.dumps(corpus_summary(corpus["rows"]), indent=1))
     return 0
 
 
@@ -348,6 +427,10 @@ def main() -> int:
     build.add_argument("--adversarial", type=int, default=100)
     build.add_argument("--clean-tune", type=int, default=100)
     build.add_argument("--clean-held-out", type=int, default=200)
+    extend = commands.add_parser("extend")
+    extend.add_argument("--corpus", type=Path, required=True)
+    extend.add_argument("--clean-tune", type=int, default=100)
+    extend.add_argument("--clean-held-out", type=int, default=200)
     run = commands.add_parser("run")
     run.add_argument("--corpus", type=Path, required=True)
     run.add_argument("--partition", choices=("tune", "held_out"), required=True)
@@ -361,7 +444,7 @@ def main() -> int:
     report.add_argument("--min-confidence", type=int, default=85)
     report.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    return {"build": command_build, "run": command_run, "report": command_report}[args.command](args)
+    return {"build": command_build, "extend": command_extend, "run": command_run, "report": command_report}[args.command](args)
 
 
 if __name__ == "__main__":

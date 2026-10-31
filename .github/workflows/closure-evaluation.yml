@@ -9,12 +9,12 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: build (no model calls), tune, or held_out
+        description: build or extend (no model calls), tune, or held_out
         type: choice
-        options: [build, tune, held_out]
+        options: [build, extend, tune, held_out]
         default: build
       build_run:
-        description: Run id of the build (tune and held_out)
+        description: Run id of the corpus to use (all modes except build)
         default: ""
       max_probability:
         description: Closure threshold for the report
@@ -60,7 +60,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Fetch pinned YARA rule packs
-        if: inputs.mode == 'build'
+        if: inputs.mode == 'build' || inputs.mode == 'extend'
         run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
 
       - name: Clone the dataset index (blobless, pinned)
@@ -78,19 +78,23 @@ jobs:
         if: inputs.mode != 'build'
         run: gh run download "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --name closure-corpus --dir "$RUNNER_TEMP"
 
+      - name: Add packages production flagged
+        if: inputs.mode == 'extend'
+        run: python -I scripts/closure_evaluation.py extend --corpus "$RUNNER_TEMP/corpus.json.gz"
+
       - name: Run the partition
-        if: inputs.mode != 'build'
+        if: inputs.mode == 'tune' || inputs.mode == 'held_out'
         run: python -I scripts/closure_evaluation.py run --corpus "$RUNNER_TEMP/corpus.json.gz" --partition "$MODE" --results "$RUNNER_TEMP/results.json"
 
       - name: Report
-        if: inputs.mode != 'build'
+        if: inputs.mode == 'tune' || inputs.mode == 'held_out'
         run: >
           python -I scripts/closure_evaluation.py report --corpus "$RUNNER_TEMP/corpus.json.gz" --partition "$MODE"
           --results "$RUNNER_TEMP/results.json" --max-probability "$MAX_PROBABILITY" --min-confidence "$MIN_CONFIDENCE"
           --out "$RUNNER_TEMP/report.json"
 
       - name: Upload the corpus
-        if: inputs.mode == 'build'
+        if: inputs.mode == 'build' || inputs.mode == 'extend'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: closure-corpus
@@ -98,7 +102,7 @@ jobs:
           retention-days: 90
 
       - name: Upload results
-        if: always() && inputs.mode != 'build'
+        if: always() && (inputs.mode == 'tune' || inputs.mode == 'held_out')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: closure-${{ inputs.mode }}
