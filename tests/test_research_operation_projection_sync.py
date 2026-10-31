@@ -126,5 +126,5 @@ def test_workflow_publishes_final_snapshot_after_health_check_and_before_artifac
     assert "always() && steps.worker.outcome == 'success'" in workflow[sync_step:]
     assert "python -m scripts.sync_research_operation_projection" in workflow[sync_step:]
     assert 'SECOPSAI_VERIFY_REFRESH_STALE_SOURCES: "1"' in workflow
-    assert 'SECOPSAI_VERIFY_FRESHNESS_MARGIN_SECONDS: "300"' in workflow
+    assert 'SECOPSAI_VERIFY_FRESHNESS_MARGIN_SECONDS: "600"' in workflow
     assert "reports/research/final-projection.json" in workflow[diagnostics:]

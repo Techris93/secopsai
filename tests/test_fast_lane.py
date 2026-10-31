@@ -292,3 +292,49 @@ def test_completion_failure_names_the_server_reason(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(complete.urllib.request, "urlopen", refused)
     assert complete.main() == 1
     assert "HTTP 422: unknown fast-lane target" in capsys.readouterr().err
+
+
+def test_a_release_without_a_publish_time_yet_is_retried_and_stays_queued(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAST_LANE_TARGETS", json.dumps([{"ecosystem": "npm", "package": "fixture", "version": "1.0", "_queue_id": "d" * 64}]))
+    monkeypatch.setenv("FAST_LANE_REPORT_PATH", str(tmp_path / "report.json"))
+    monkeypatch.setattr(fast_lane, "NOT_FOUND_DELAY_SECONDS", 0)
+    calls = []
+
+    def lagging(*_):
+        calls.append(1)
+        raise fast_lane.PublishTimePending("fixture@1.0 has no publish time yet")
+
+    monkeypatch.setattr(fast_lane, "resolve_release", lagging)
+    assert fast_lane.main() == 0
+    result = json.loads((tmp_path / "report.json").read_text())["results"][0]
+    assert len(calls) == fast_lane.NOT_FOUND_RETRIES + 1
+    assert result["status"] == "retryable_failure" and result["retryable"] is True
+    assert result["failure_category"] == "publish_time_pending"
+
+
+def test_a_lagging_publish_time_is_picked_up_on_a_later_attempt(tmp_path, monkeypatch):
+    from secopsai.research_intake import RegistryHTTPError
+
+    monkeypatch.setenv("FAST_LANE_TARGETS", json.dumps([{"ecosystem": "npm", "package": "fixture", "version": "1.0", "_queue_id": "e" * 64}]))
+    monkeypatch.setenv("FAST_LANE_REPORT_PATH", str(tmp_path / "report.json"))
+    monkeypatch.setattr(fast_lane, "NOT_FOUND_DELAY_SECONDS", 0)
+    monkeypatch.setattr(fast_lane, "STALE_AFTER_SECONDS", 10**9)
+    answers = [fast_lane.PublishTimePending("fixture@1.0 has no publish time yet"), {"version": "1.0", "published_at": "2026-10-18T00:00:00Z", "previous_version": "0.9"}]
+
+    def lagging(*_):
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(fast_lane, "resolve_release", lagging)
+    monkeypatch.setattr(fast_lane, "investigate", lambda *_: (_ for _ in ()).throw(RegistryHTTPError(403)))
+    assert fast_lane.main() == 0
+    assert json.loads((tmp_path / "report.json").read_text())["results"][0]["http_status"] == 403
+
+
+def test_npm_release_missing_from_the_time_map_is_pending():
+    fetcher = _Fetcher({"https://registry.npmjs.org/fixture": {"dist-tags": {"latest": "1.0"}, "time": {"0.9": "2026-10-01T00:00:00Z"}}})
+    with pytest.raises(fast_lane.PublishTimePending):
+        fast_lane.resolve_release(fetcher, "npm", "fixture", "1.0")
+
