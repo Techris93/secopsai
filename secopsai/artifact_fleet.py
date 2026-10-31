@@ -669,7 +669,7 @@ def build_triage_context(result: dict[str, Any]) -> dict[str, Any]:
         and item.get("complete") is True and item.get("truncated") is not True
     }
     missing_files = [path for path in paths if path not in supplied_complete]
-    bounded_missing_files = [path for path in missing_files if len(path) <= 300][:200]
+    bounded_missing_files = [path for path in missing_files if len(path) <= 300][:100]
     return {"artifact_id": result.get("artifact_id"), "ecosystem": result.get("ecosystem"), "package": result.get("package"), "version": result.get("version"), "sha256": result.get("sha256"), "source_reference": result.get("source_reference"), "findings": [{key: item.get(key) for key in ("rule_id", "severity", "confidence", "file_path", "matched_indicator", "matched_patterns", "matched_strings", "safe_context", "recommended_mitigation")} for item in findings], "iocs": result.get("iocs") or {}, "missing_files": bounded_missing_files, "missing_files_truncated": len(missing_files) > len(bounded_missing_files), "execution_performed": False, "evidence_truncated": True, "evidence_omissions": ["full_artifact_files_not_supplied"]}
 
 

@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: build or extend (no model calls), tune, or held_out
+        description: build, extend or refit (no model calls), tune, or held_out
         type: choice
-        options: [build, extend, tune, held_out]
+        options: [build, extend, refit, tune, held_out]
         default: build
       build_run:
         description: Run id of the corpus to use (all modes except build)
@@ -82,6 +82,10 @@ jobs:
         if: inputs.mode == 'extend'
         run: python -I scripts/closure_evaluation.py extend --corpus "$RUNNER_TEMP/corpus.json.gz"
 
+      - name: Apply current listing limits
+        if: inputs.mode == 'refit'
+        run: python -I scripts/closure_evaluation.py refit --corpus "$RUNNER_TEMP/corpus.json.gz"
+
       - name: Run the partition
         if: inputs.mode == 'tune' || inputs.mode == 'held_out'
         run: python -I scripts/closure_evaluation.py run --corpus "$RUNNER_TEMP/corpus.json.gz" --partition "$MODE" --results "$RUNNER_TEMP/results.json"
@@ -94,7 +98,7 @@ jobs:
           --out "$RUNNER_TEMP/report.json"
 
       - name: Upload the corpus
-        if: inputs.mode == 'build' || inputs.mode == 'extend'
+        if: inputs.mode == 'build' || inputs.mode == 'extend' || inputs.mode == 'refit'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: closure-corpus

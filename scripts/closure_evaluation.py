@@ -280,6 +280,23 @@ def command_extend(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_refit(args: argparse.Namespace) -> int:
+    """Apply the current listing limits to a stored corpus; no network or model calls."""
+    from secopsai.research_ai_triage import bound_listings
+
+    corpus = load_corpus(args.corpus)
+    before = [json.dumps(row["context"], sort_keys=True) for row in corpus["rows"]]
+    for row in corpus["rows"]:
+        bound_listings(row["context"])
+    changed = sum(old != json.dumps(row["context"], sort_keys=True) for old, row in zip(before, corpus["rows"]))
+    print(f"{changed} of {len(before)} contexts changed", flush=True)
+    corpus["built_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    with gzip.open(args.corpus, "wt", encoding="utf-8") as handle:
+        json.dump(corpus, handle)
+    print(json.dumps(corpus_summary(corpus["rows"]), indent=1))
+    return 0
+
+
 def load_corpus(path: Path) -> Dict[str, Any]:
     with gzip.open(path, "rt", encoding="utf-8") as handle:
         return json.load(handle)
@@ -289,10 +306,12 @@ def job_id(row: Dict[str, Any]) -> str:
     return f"{row['artifact']}#c{hashlib.sha256(row['artifact'].encode()).hexdigest()[:10]}"
 
 
-def job_payload(row: Dict[str, Any]) -> Dict[str, Any]:
+def job_payload(row: Dict[str, Any], built_at: str) -> Dict[str, Any]:
     artifact = job_id(row)
     context = {**row["context"], "artifact_id": artifact}
-    return {"artifact_id": artifact, "idempotency_key": f"closure-eval:{artifact}",
+    # Each corpus version is new work: results are only read from after it was built.
+    key = hashlib.sha256(f"{built_at}:{artifact}".encode()).hexdigest()[:32]
+    return {"artifact_id": artifact, "idempotency_key": f"closure-eval:{key}",
             "inputs": {"artifact_triage": context, "selected_model": MODEL, "fallback_models": [], "fallback_mode": "disabled"}}
 
 
@@ -331,7 +350,7 @@ def command_run(args: argparse.Namespace) -> int:
             # Re-sent jobs still queued return their existing job, so resuming is safe.
             batch = [row for row in rows if job_id(row) not in results and job_id(row) not in sent][:min(5, max(0, room))]
             if batch:
-                client.queue_triage_jobs([job_payload(row) for row in batch])
+                client.queue_triage_jobs([job_payload(row, corpus["built_at"]) for row in batch])
                 sent.update(job_id(row) for row in batch)
         except Exception as exc:  # keep what we have, retry on the next pass
             print(f"pass failed: {type(exc).__name__}", flush=True)
@@ -433,6 +452,8 @@ def main() -> int:
     extend.add_argument("--corpus", type=Path, required=True)
     extend.add_argument("--clean-tune", type=int, default=100)
     extend.add_argument("--clean-held-out", type=int, default=200)
+    refit = commands.add_parser("refit")
+    refit.add_argument("--corpus", type=Path, required=True)
     run = commands.add_parser("run")
     run.add_argument("--corpus", type=Path, required=True)
     run.add_argument("--partition", choices=("tune", "held_out"), required=True)
