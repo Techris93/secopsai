@@ -220,13 +220,14 @@ def test_production_label_is_reported_apart_and_never_allowed_for_malware():
     assert report["benign_by_label_source"] == {"production_aged": {"escalated": 1, "closed": 0}, "registry_vetted": {"escalated": 0, "closed": 1}}
 
 
-def test_refit_caps_listings_and_starts_a_new_corpus_version(tmp_path):
+def test_refit_caps_listings_and_starts_a_new_corpus_version(tmp_path, monkeypatch):
     long_list = {"missing_files": [f"package/f{index}.js" for index in range(150)], "findings": []}
     rows = [{"artifact": "npm:a@1", "context": long_list}, {"artifact": "npm:b@1", "context": {"missing_files": ["package/x.js"], "findings": []}}]
     corpus = tmp_path / "corpus.json.gz"
     with gzip.open(corpus, "wt", encoding="utf-8") as handle:
         json.dump({"built_at": "old", "rows": [{**row, "set": "clean", "partition": "tune"} for row in rows]}, handle)
-    assert ce.command_refit(type("Args", (), {"corpus": corpus})) == 0
+    monkeypatch.setattr(sys, "argv", ["closure_evaluation.py", "refit", "--corpus", str(corpus)])
+    assert ce.main() == 0
     stored = ce.load_corpus(corpus)
     assert stored["built_at"] != "old"
     assert len(stored["rows"][0]["context"]["missing_files"]) == 100 and stored["rows"][0]["context"]["listing_limits"] == ["missing_files"]
