@@ -216,7 +216,7 @@ jobs:
           git config user.name "secopsai-blog-ops[bot]"
           git config user.email "115749095+Techris93@users.noreply.github.com"
 
-          git add blog/posts blog/assets/social blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml blog/sitemap.xml blog/robots.txt blog/.well-known
+          git add blog/posts blog/assets/social blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml blog/404.html blog/sitemap.xml blog/robots.txt blog/.well-known
           git add blog/data/published-posts.json 2>/dev/null || true
           if [ -d blog/assets/posts ]; then
             git add blog/assets/posts
@@ -277,7 +277,7 @@ jobs:
             git add -A blog/drafts
             git add -f blog/drafts/*.json 2>/dev/null || true
           fi
-          git add blog/posts blog/assets/social blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml blog/sitemap.xml blog/robots.txt blog/.well-known
+          git add blog/posts blog/assets/social blog/index.html blog/json-feed.html blog/feed.json blog/feed.xml blog/404.html blog/sitemap.xml blog/robots.txt blog/.well-known
           if [ -d blog/assets/posts ]; then
             git add blog/assets/posts
           fi

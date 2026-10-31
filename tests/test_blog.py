@@ -697,7 +697,7 @@ class BlogPublishingTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = blog.BlogPaths(Path(temp_dir) / "blog")
-            paths.root.mkdir(parents=True)
+            paths.posts.mkdir(parents=True)
             blog.rebuild(paths=paths)
             written = {str(path.relative_to(paths.root.parent)) for path in paths.root.rglob("*") if path.is_file()}
         self.assertIn("blog/sitemap.xml", written)
