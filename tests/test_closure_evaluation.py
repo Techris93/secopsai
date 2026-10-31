@@ -98,9 +98,10 @@ def test_injection_reaches_what_the_model_reads_without_touching_the_original():
 
 def test_jobs_are_pinned_and_carry_no_label():
     row = {"artifact": "npm:a@1", "label": "malware", "set": "malware", "context": _context()}
-    payload = ce.job_payload(row)
+    payload = ce.job_payload(row, "2026-10-31T00:00:00Z")
     assert payload["inputs"]["selected_model"] == ce.MODEL and payload["inputs"]["fallback_models"] == [] and payload["inputs"]["fallback_mode"] == "disabled"
-    assert ce.job_payload(row)["idempotency_key"] == payload["idempotency_key"]
+    assert ce.job_payload(row, "2026-10-31T00:00:00Z")["idempotency_key"] == payload["idempotency_key"]
+    assert ce.job_payload(row, "2026-10-31T09:00:00Z")["idempotency_key"] != payload["idempotency_key"]
     assert "malware" not in json.dumps(payload).lower()
 
 
@@ -217,3 +218,16 @@ def test_production_label_is_reported_apart_and_never_allowed_for_malware():
         evaluate_records([record(1, "malware", "production_aged")], held_out=True)
     report = evaluate_records([record(1, "malware", "independent_review"), record(2, "benign", "production_aged", "escalate"), record(3, "benign", "registry_vetted", "close")], held_out=True)
     assert report["benign_by_label_source"] == {"production_aged": {"escalated": 1, "closed": 0}, "registry_vetted": {"escalated": 0, "closed": 1}}
+
+
+def test_refit_caps_listings_and_starts_a_new_corpus_version(tmp_path):
+    long_list = {"missing_files": [f"package/f{index}.js" for index in range(150)], "findings": []}
+    rows = [{"artifact": "npm:a@1", "context": long_list}, {"artifact": "npm:b@1", "context": {"missing_files": ["package/x.js"], "findings": []}}]
+    corpus = tmp_path / "corpus.json.gz"
+    with gzip.open(corpus, "wt", encoding="utf-8") as handle:
+        json.dump({"built_at": "old", "rows": [{**row, "set": "clean", "partition": "tune"} for row in rows]}, handle)
+    assert ce.command_refit(type("Args", (), {"corpus": corpus})) == 0
+    stored = ce.load_corpus(corpus)
+    assert stored["built_at"] != "old"
+    assert len(stored["rows"][0]["context"]["missing_files"]) == 100 and stored["rows"][0]["context"]["listing_limits"] == ["missing_files"]
+    assert stored["rows"][1]["context"] == rows[1]["context"]

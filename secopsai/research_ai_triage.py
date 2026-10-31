@@ -62,6 +62,26 @@ def artifact_key(ecosystem: str, package: str, version: str) -> str:
     return f"{ecosystem}:{package}@{version}"[:240]
 
 
+def bound_listings(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Cap lists that only name things, so transport leaves the context whole.
+
+    Core and the bridge cut lists at 100 and mark any cut context truncated, which
+    blocked closure for packages with many files though no evidence was lost.
+    """
+    notes = list(context.get("listing_limits") or [])
+    missing = context.get("missing_files")
+    if isinstance(missing, list) and len(missing) > LISTING_LIMIT:
+        context["missing_files"] = missing[:LISTING_LIMIT]
+        notes.append("missing_files")
+    prints = context.get("actor_fingerprints")
+    if isinstance(prints, dict) and isinstance(prints.get("infra"), list) and len(prints["infra"]) > LISTING_LIMIT:
+        context["actor_fingerprints"] = {**prints, "infra": prints["infra"][:LISTING_LIMIT]}
+        notes.append("actor_fingerprints")
+    if notes:
+        context["listing_limits"] = list(dict.fromkeys(notes))
+    return context
+
+
 def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[str, Any], metadata_signals: Optional[List[Dict[str, Any]]] = None, previous_version: str = "") -> Dict[str, Any]:
     """Minimized triage context: findings with their code, install-time files, fingerprints."""
     raw_missing_files = prescan.get("missing_files")
@@ -118,11 +138,12 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
         notes.append("missing_files")
     if notes:
         context["listing_limits"] = notes
-    return context
+    return bound_listings(context)
 
 
 # Core rejects a triage job whose input exceeds 64 KB; stay well below it.
 MAX_CONTEXT_BYTES = 56 * 1024
+LISTING_LIMIT = 100
 
 
 def _shrink(content: str, limit: int) -> str:

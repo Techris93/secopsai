@@ -238,3 +238,16 @@ def test_claim_references_become_the_evidence_they_rest_on():
     assert resolve_claim_refs(["EVD-2", "CLM-1", "CLM-2", "step", "CLM-9"], context) == ["EVD-2", "EVD-1", "step", "CLM-9"]
     assert resolve_claim_refs(None, context) is None
     assert resolve_claim_refs(["CLM-1"], {}) == ["CLM-1"]
+
+
+def test_long_listings_do_not_mark_evidence_truncated_in_transit():
+    from secopsai.decision_evidence import context_coverage
+    from secopsai.intelligence import minimize
+    from secopsai.research_ai_triage import build_context
+    prescan = {"missing_files": [f"package/f{index}.js" for index in range(180)], "fingerprints": {"infra": [f"host:h{index}.example" for index in range(130)]},
+               "findings": [{"rule_id": "R1", "file_path": "package/a.js"}], "flagged_files": [{"path": "package/a.js", "content": "code", "complete": True}]}
+    context = build_context(ecosystem="npm", package="p", version="1.0.0", prescan=prescan)
+    assert set(context["listing_limits"]) == {"missing_files", "actor_fingerprints"}
+    assert minimize(context, string_limit=16000, allow_artifact_code=True) == context
+    assert not context.get("evidence_truncated")
+    assert "omitted:evidence_truncated" not in context_coverage(context)["gaps"]
