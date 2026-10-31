@@ -7,6 +7,28 @@
       "affected_packages": [],
       "authors": [
         {
+          "name": "Onyedika Christopher Agada"
+        }
+      ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-10-31.png",
+      "date_modified": "2026-10-31T22:23:33Z",
+      "date_published": "2026-10-31T22:23:33Z",
+      "id": "https://blog.secopsai.dev/posts/daily-intelligence-2026-10-31.html",
+      "image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-10-31.png",
+      "images": [],
+      "reading_time_minutes": 12,
+      "severity": "info",
+      "summary": "Verified intelligence and defensive updates for 2026-10-31.",
+      "tags": [
+        "Threat Intelligence"
+      ],
+      "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-10-31",
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-10-31.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
           "name": "SecOpsAI Threat Research"
         }
       ],
