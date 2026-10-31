@@ -21,7 +21,7 @@ on:
         default: "10"
       min_confidence:
         description: Closure threshold for the report
-        default: "85"
+        default: "70"
 
 permissions:
   contents: read

@@ -42,6 +42,13 @@ def test_candidate_does_not_enable_closure(monkeypatch):
     assert _decide(_context(), _outcome())["decision"] == "close"
 
 
+def test_policy_defaults_are_the_frozen_thresholds():
+    result = _outcome(finding_confidence=70, malicious_probability=10)["result"]
+    assert closure_candidate(result) == (True, "candidate")
+    assert closure_candidate({**result, "finding_confidence": 69}) == (False, "review_required")
+    assert closure_candidate({**result, "malicious_probability": 11}) == (False, "review_required")
+
+
 def test_decisions_follow_production_checks():
     context = _context()
     assert _decide(context, _outcome(malicious_probability=11))["decision"] == "review"

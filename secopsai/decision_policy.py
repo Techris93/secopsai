@@ -23,8 +23,11 @@ def policy_status() -> dict:
 
 
 def closure_candidate(result: dict, *, clef_probability=None, clef_choice=None,
-                      max_probability: int = 10, min_confidence: int = 85) -> tuple[bool, str]:
-    """Every closure check except whether enforcement and calibration are approved."""
+                      max_probability: int = 10, min_confidence: int = 70) -> tuple[bool, str]:
+    """Every closure check except whether enforcement and calibration are approved.
+
+    Thresholds were frozen from the tune partition before the held-out run (2026-10-31).
+    """
     if result.get("assessment_version") != POLICY_VERSION:
         return False, "uncalibrated_assessment_version"
     try:
