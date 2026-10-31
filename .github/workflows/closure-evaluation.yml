@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: build, extend or refit (no model calls), tune, or held_out
+        description: build, extend, refit or rebuild (no model calls), tune, or held_out
         type: choice
-        options: [build, extend, refit, tune, held_out]
+        options: [build, extend, refit, rebuild, tune, held_out]
         default: build
       build_run:
         description: Run id of the corpus to use (all modes except build)
@@ -60,11 +60,11 @@ jobs:
           pip install -r requirements.txt
 
       - name: Fetch pinned YARA rule packs
-        if: inputs.mode == 'build' || inputs.mode == 'extend'
+        if: inputs.mode == 'build' || inputs.mode == 'extend' || inputs.mode == 'rebuild'
         run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
 
       - name: Clone the dataset index (blobless, pinned)
-        if: inputs.mode == 'build'
+        if: inputs.mode == 'build' || inputs.mode == 'rebuild'
         run: |
           git clone --quiet --filter=blob:none --no-checkout --sparse \
             https://github.com/DataDog/malicious-software-packages-dataset.git "$RUNNER_TEMP/malware-dataset"
@@ -82,6 +82,10 @@ jobs:
         if: inputs.mode == 'extend'
         run: python -I scripts/closure_evaluation.py extend --corpus "$RUNNER_TEMP/corpus.json.gz"
 
+      - name: Rebuild every context from its package
+        if: inputs.mode == 'rebuild'
+        run: python -I scripts/closure_evaluation.py rebuild --dataset "$RUNNER_TEMP/malware-dataset" --corpus "$RUNNER_TEMP/corpus.json.gz"
+
       - name: Apply current listing limits
         if: inputs.mode == 'refit'
         run: python -I scripts/closure_evaluation.py refit --corpus "$RUNNER_TEMP/corpus.json.gz"
@@ -98,7 +102,7 @@ jobs:
           --out "$RUNNER_TEMP/report.json"
 
       - name: Upload the corpus
-        if: inputs.mode == 'build' || inputs.mode == 'extend' || inputs.mode == 'refit'
+        if: inputs.mode == 'build' || inputs.mode == 'extend' || inputs.mode == 'refit' || inputs.mode == 'rebuild'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: closure-corpus

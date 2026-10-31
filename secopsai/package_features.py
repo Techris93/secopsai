@@ -505,6 +505,8 @@ def combine(scan: Dict[str, object], flags: Iterable[str], ecosystem: str, membe
 # Core and the bridge cut any single string at 16,000 characters; the excerpt
 # and its omission markers must stay under that, or a cut hides a region.
 FLAGGED_FILE_BYTES = 15_000
+# Around a behaviour flag in a file no rule matched; enough to judge the call, small enough for 14.
+FLAG_REGION_BYTES = 3_000
 MAX_EXCERPT_REGIONS = 12
 ENCODED = re.compile(r"(?<![A-Za-z0-9+/=])([A-Za-z0-9+/]{120,}={0,2})(?![A-Za-z0-9+/=])|(?<![0-9a-fA-F])((?:[0-9a-fA-F]{2}){60,})(?![0-9a-fA-F])")
 BINARY_MAGIC = ((b"MZ", "Windows PE"), (b"\x7fELF", "ELF"), (b"\xcf\xfa\xed\xfe", "Mach-O"), (b"\xca\xfe\xba\xbe", "Mach-O universal"),
@@ -651,6 +653,21 @@ def triage_evidence(members: Iterable[Tuple[str, bytes]], findings: Iterable[Dic
     bounded_missing_files = [path for path in missing_files if len(path) <= 300][:200]
     flag_set = {flag.removeprefix("new:") for flag in flags}
     locations = [found for found in (flag_evidence(members, flag, window=240) for flag in RISKY_FLAGS if flag in flag_set) if found][:14]
+    # A rule hit on a harmless file must not hide real behaviour elsewhere: a Datadog
+    # malware sample was called a false positive that way (axios-fingerprint, 2026-10-31).
+    shown_paths = {str(item.get("path")) for item in [*files, *install_files] if isinstance(item, dict)}
+    flagged_lines: Dict[str, List[Dict[str, object]]] = {}
+    for found in locations:
+        if str(found.get("file_path")) in by_path and str(found.get("file_path")) not in shown_paths:
+            flagged_lines.setdefault(str(found["file_path"]), []).append(found)
+    flag_regions: List[Dict[str, object]] = []
+    for path, found in flagged_lines.items():
+        data = by_path[path]
+        text = _clean_window(data[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore"))
+        positions = sorted(set(_positions(data, text, {"evidence": found}, path)))
+        content, truncated, shown = _excerpt(text, positions, FLAG_REGION_BYTES)
+        flag_regions.append({"path": path[:300], "bytes": len(data), "flags": [str(item.get("flag")) for item in found], "complete": not truncated,
+                             "truncated": truncated, "regions_found": len(positions), "regions_shown": shown, "content": content})
     payloads: List[Dict[str, object]] = []
     seen: Set[str] = set()
     sources = [(item["path"], str(item.get("content") or "")) for item in files] + [(path, by_path[path].decode("utf-8", errors="ignore"))
@@ -681,6 +698,6 @@ def triage_evidence(members: Iterable[Tuple[str, bytes]], findings: Iterable[Dic
                 name = PurePosixPath(str(item["path"])).name
                 if len(item["referenced_by"]) < 3 and path != item["path"] and name in text:
                     item["referenced_by"].append(path[:300])
-    return {"flagged_files": files, "flagged_files_total": len(flagged), "flag_locations": locations, "decoded_payloads": payloads, "decoded_payloads_total": payload_total, "binaries": binaries[:10],
+    return {"flagged_files": files, "flagged_files_total": len(flagged), "flag_locations": locations, "flag_regions": flag_regions, "decoded_payloads": payloads, "decoded_payloads_total": payload_total, "binaries": binaries[:10],
             "binaries_total": len(binaries), "missing_files": bounded_missing_files,
             "missing_files_truncated": len(missing_files) > len(bounded_missing_files)}

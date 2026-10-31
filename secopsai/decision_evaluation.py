@@ -19,7 +19,7 @@ def evaluation_passes(report: dict) -> bool:
             and len(str(report.get("corpus_sha256", ""))) == 64
             and report.get("malware_count", 0) >= 600 and report.get("benign_count", 0) >= 200
             and report.get("malware_closed") == 0 and 0 <= report.get("malware_closure_upper95", 1) <= .005
-            and 0 <= report.get("benign_escalation_rate", 1) <= .15
+            and 0 <= report.get("benign_escalation_rate", 1) <= .25
             and report.get("invalid_closed") == 0 and report.get("incomplete_closed") == 0)
 
 

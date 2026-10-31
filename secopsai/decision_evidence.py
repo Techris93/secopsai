@@ -7,7 +7,7 @@ CATEGORIES = ("matched_strings", "flag_locations", "findings", "install_time_fil
 MAX_STATE_CHARS = 32_000
 # Contexts built before this contract carry no exact region counts, so they
 # can never count as complete.
-COVERAGE_CONTRACT = "context-v1"
+COVERAGE_CONTRACT = "context-v2"
 
 
 def build_evidence(context: dict[str, Any], limit: int = MAX_STATE_CHARS) -> tuple[str, dict[str, Any]]:
@@ -107,9 +107,10 @@ def context_coverage(context: dict[str, Any]) -> dict[str, Any]:
 
     ``build_evidence`` measures Clef's smaller serialized state, so it reports
     cuts a bridge model never had. Complete here means every rule match can be
-    read in what was supplied. A flagged file too large to send whole still
-    counts when every matched region is in its excerpt: the rules scanned the
-    rest. Anything the model cannot read is a gap, and a gap blocks closure.
+    read in what was supplied, and every located behaviour flag is in a file or
+    region the model has. A flagged file too large to send whole still counts
+    when every matched region is in its excerpt: the rules scanned the rest.
+    Anything the model cannot read is a gap, and a gap blocks closure.
     """
     gaps: list[str] = []
     if context.get("coverage_contract") != COVERAGE_CONTRACT:
@@ -138,6 +139,19 @@ def context_coverage(context: dict[str, Any]) -> dict[str, Any]:
         supplied.add(path)
         if item.get("truncated") is True or item.get("complete") is False:
             gaps.append(f"install_time_file:{path}")
+    # A flag outside what was supplied is behaviour nobody read, whatever the rules matched.
+    for item in context.get("flag_regions") or []:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "")
+        cut = item.get("truncated") is True or item.get("complete") is False
+        found, shown = item.get("regions_found"), item.get("regions_shown")
+        if not item.get("regions_trimmed") and not (cut and not (isinstance(found, int) and found > 0 and shown == found)):
+            supplied.add(path)
+        else:
+            gaps.append(f"flag_region:{path}")
+    gaps.extend(f"flag_file_not_supplied:{item.get('file_path')}" for item in context.get("flag_locations") or []
+                if isinstance(item, dict) and item.get("file_path") and item.get("file_path") not in supplied)
     gaps.extend(f"decoded_payload:{item.get('found_in')}" for item in context.get("decoded_payloads") or [] if isinstance(item, dict) and item.get("truncated") is True)
     gaps.extend(f"binary_not_inspected:{item.get('path')}" for item in context.get("binaries") or [] if isinstance(item, dict))
     for item in findings:
