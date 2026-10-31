@@ -54,7 +54,7 @@ def closure_candidate(result: dict, *, clef_probability=None, clef_choice=None,
     return True, "candidate"
 
 
-def closure_decision(result: dict, *, clef_probability=None, clef_choice=None) -> tuple[bool, str]:
+def closure_decision(result: dict, *, ecosystem=None, clef_probability=None, clef_choice=None) -> tuple[bool, str]:
     candidate, reason = closure_candidate(result, clef_probability=clef_probability, clef_choice=clef_choice)
     if not candidate:
         return False, reason
@@ -68,4 +68,9 @@ def closure_decision(result: dict, *, clef_probability=None, clef_choice=None) -
         passed = evaluation_passes(evaluation) and evaluation.get("provider") + ":" + evaluation.get("model_version") == identity
     except (ValueError, TypeError, AttributeError, KeyError):
         passed = False
-    return (True, "calibrated_benign") if passed else (False, "calibration_not_approved")
+    if not passed:
+        return False, "calibration_not_approved"
+    # An evaluation says nothing about ecosystems it had no malware samples for.
+    if ecosystem not in evaluation.get("ecosystems", {}):
+        return False, "ecosystem_not_evaluated"
+    return True, "calibrated_benign"

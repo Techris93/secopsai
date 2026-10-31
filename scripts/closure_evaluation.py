@@ -401,6 +401,8 @@ def command_report(args: argparse.Namespace) -> int:
     # A failed job cannot have closed; it still has to be accounted for.
     evaluation = evaluate_records([{**record, "provider": provider, "model_version": corpus["model"]} for record in records],
                                   held_out=args.partition == "held_out") if provider else {"accepted": False}
+    # Closure stays off for any ecosystem this does not list (decision_policy.closure_decision).
+    evaluation["ecosystems"] = dict(Counter(row["ecosystem"] for row in rows if row["label"] == "malware"))
     summary = {"partition": args.partition, "thresholds": {"max_probability": args.max_probability, "min_confidence": args.min_confidence},
                "samples": len(rows), "finished": len(records), "identities": dict(identities),
                "invalid": sum(not record["valid"] for record in records), "reasons": dict(Counter(record["reason"] for record in records).most_common()),

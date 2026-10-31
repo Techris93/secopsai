@@ -739,7 +739,7 @@ def record_model_result(artifact_id: str, response: dict[str, Any], *, model: st
     confidence = response["finding_confidence"]
     if response["malicious_probability"] >= 70:
         verdict = "suspicious"
-    allowed, reason = closure_decision(response)
+    allowed, reason = closure_decision(response, ecosystem=context.get("ecosystem"))
     from secopsai.decision_evidence import build_evidence
     _, coverage = build_evidence(context)
     if not coverage["complete"] or not response["decision_evidence_refs"] or any(ref not in evidence_identifiers(context) for ref in response["decision_evidence_refs"]):

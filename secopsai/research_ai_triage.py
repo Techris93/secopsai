@@ -326,7 +326,7 @@ def _apply_result(connection: Any, item: Dict[str, Any], now: str) -> Optional[s
         or (verdict in {"benign", "likely_benign"} and clef_choice in {"malicious", "needs_review"})
         or (verdict == "suspicious" and clef_choice == "benign")
     )
-    allowed, reason = closure_decision(result, clef_probability=clef_probability, clef_choice=clef_choice)
+    allowed, reason = closure_decision(result, ecosystem=context.get("ecosystem"), clef_probability=clef_probability, clef_choice=clef_choice)
     if not clef_valid:
         allowed, reason = False, clef_validation_error or "invalid_clef_decision"
     from secopsai.decision_evidence import coverage_for_result, evidence_identifiers
@@ -453,7 +453,7 @@ def clef_prescreen(*, db_path: Optional[str] = None, classify: Optional[Any] = N
             _, coverage = build_evidence(original)
             result = {**result, "malicious_probability": result["probability"], "finding_confidence": result["confidence"],
                       "evidence_coverage": coverage, "automatic_closure_eligible": coverage["complete"]}
-            allowed, reason = closure_decision(result)
+            allowed, reason = closure_decision(result, ecosystem=original.get("ecosystem"))
             clef = {**result, "at": now, "closure_eligible": allowed, "policy_reason": reason}
             context = {**original, "clef": clef}
             if context.get("evidence_truncated"):
