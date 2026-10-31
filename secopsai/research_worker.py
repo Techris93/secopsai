@@ -446,6 +446,19 @@ def investigations_per_cycle() -> int:
         return 3
 
 
+def _sync_investigation_jobs(core_edge: Any, *, db_path: Optional[str]) -> dict[str, Any]:
+    """Deliver queued investigation jobs to Core and apply finished results."""
+    try:
+        from secopsai.research_pipeline_transport import sync_hosted as sync_investigation_jobs
+
+        summary = sync_investigation_jobs(core_edge, db_path=db_path)
+        print(json.dumps({"component": "research-worker", "event": "investigation_jobs", **summary}), flush=True)
+        return summary
+    except Exception as exc:
+        capture_exception(exc, context={"component": "research_pipeline_transport"})
+        return {"status": "degraded", "error_category": type(exc).__name__, "http_status": getattr(exc, "status", None)}
+
+
 def _run_collector_with_transient_retry(
     *, ecosystem: str, max_pages: int, db_path: Optional[str], fetcher: SafeFetcher,
     retry_budget: int,
@@ -896,6 +909,9 @@ def run_worker_loop(
                     early_commands = core_edge.process_commands(db_path=db_path)
                 except Exception as exc:
                     capture_exception(exc, context={"component": "research_coordinator_commands"})
+                # Results first: a finished investigation applied after the cycle holds
+                # its slot through another worker run, an hour of idle capacity.
+                _sync_investigation_jobs(core_edge, db_path=db_path)
             try:
                 last_summary = run_worker_cycle(db_path=db_path, fetcher=fetcher)
             except ResearchStorageCapacityError as exc:
@@ -948,14 +964,7 @@ def run_worker_loop(
                 except Exception as exc:
                     capture_exception(exc, context={"component": "research_assistant_transport"})
                     last_summary["assistant_teams"] = {"status": "degraded", "error_category": type(exc).__name__}
-                try:
-                    from secopsai.research_pipeline_transport import sync_hosted as sync_investigation_jobs
-
-                    last_summary["investigation_jobs"] = sync_investigation_jobs(core_edge, db_path=db_path)
-                    print(json.dumps({"component": "research-worker", "event": "investigation_jobs", **last_summary["investigation_jobs"]}), flush=True)
-                except Exception as exc:
-                    capture_exception(exc, context={"component": "research_pipeline_transport"})
-                    last_summary["investigation_jobs"] = {"status": "degraded", "error_category": type(exc).__name__, "http_status": getattr(exc, "status", None)}
+                last_summary["investigation_jobs"] = _sync_investigation_jobs(core_edge, db_path=db_path)
             # Content scanning for PyPI and Open VSX (npm has its own funnel in
             # enrichment); a failure is retried from the same events next cycle.
             try:

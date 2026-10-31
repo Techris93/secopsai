@@ -102,6 +102,10 @@ jobs:
       SECOPSAI_WORKER_DIAGNOSTICS_DIR: reports/research
       SECOPSAI_WORKER_STAGE_LOGS: '1'
       SECOPSAI_LEDGER_CHECKPOINT_SECONDS: ${{ vars.RESEARCH_INCREMENTAL_CHECKPOINTS == 'true' && '60' || '3600' }}
+      # Ten investigations an hour, three model jobs each. Three slots drained 1.5 an
+      # hour, about what arrives, so the backlog of 700+ never shrank.
+      SECOPSAI_INVESTIGATION_MAX_ACTIVE_RUNS: "10"
+      SECOPSAI_INVESTIGATIONS_PER_CYCLE: "10"
       SECOPSAI_PRIMARY_INTEL: "1"  # source intake and draft assembly; never automatic publication
       SECOPSAI_RESEARCH_AUTONOMY_MODE: agent_review  # the agent records bounded verdicts; publication, disclosure and sandbox stay human
       SECOPSAI_INTEL_AGE_OUT: enforce  # archives old items with no exploitation signal; a later ranking restores them

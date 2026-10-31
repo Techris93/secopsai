@@ -183,3 +183,24 @@ def test_a_refusal_from_core_is_counted_by_its_reason(tmp_path, monkeypatch):
 
     outcome = sync_hosted(Refuses(), db_path=db)
     assert outcome["failed"] == 3 and outcome["reasons"] == {"http_422_invalid_assistant_contract": 3}
+
+
+def test_results_are_read_in_the_batches_core_accepts(tmp_path, monkeypatch):
+    db, _pipeline_row = _pipeline(tmp_path, monkeypatch)
+    monkeypatch.setattr("secopsai.research_pipeline_transport.MAX_JOBS", 1)
+    core = Core()
+    first = sync_hosted(core, db_path=db)
+    assert first["delivered"] > 1
+    asked = []
+    answer = core.assistant_results
+
+    def one_at_a_time(job_ids):
+        asked.append(list(job_ids))
+        assert len(job_ids) == 1
+        return answer(job_ids)
+
+    core.assistant_results = one_at_a_time
+    core.bridge_answers()
+    second = sync_hosted(core, db_path=db)
+    assert second["applied"] == first["delivered"] and len(asked) == first["delivered"]
+

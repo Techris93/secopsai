@@ -310,14 +310,23 @@ def _set_run(run_id: str, *, status: str, stage: str, db_path: Optional[str],
             connection.commit()
 
 
+def max_active_runs(settings: Dict[str, Any]) -> int:
+    """The stored limit, unless the deployment sets SECOPSAI_INVESTIGATION_MAX_ACTIVE_RUNS (1-20)."""
+    try:
+        return max(1, min(20, int(os.environ["SECOPSAI_INVESTIGATION_MAX_ACTIVE_RUNS"])))
+    except (KeyError, ValueError):
+        return int(settings["max_active_runs"])
+
+
 def run_due(*, db_path: Optional[str] = None, limit: int = 1) -> Dict[str, Any]:
     settings = get_settings(db_path=db_path)
     if settings["mode"] == "off":
         return {"status": "off", "processed": 0, "runs": []}
+    slots = max_active_runs(settings)
     reconciled = reconcile_due_runs(db_path=db_path)
     recovered = recover_due_runs(
         db_path=db_path,
-        limit=max(25, int(settings["max_active_runs"]) * 2),
+        limit=max(25, slots * 2),
     )
     with closing(soc_store.read_connect(db_path)) as connection:
         active_count = int(connection.execute(
@@ -326,15 +335,15 @@ def run_due(*, db_path: Optional[str] = None, limit: int = 1) -> Dict[str, Any]:
         queued_count = int(connection.execute(
             "SELECT COUNT(*) FROM investigation_autopilot_runs WHERE status='queued'"
         ).fetchone()[0])
-        capacity = max(0, int(settings["max_active_runs"]) - active_count)
+        capacity = max(0, slots - active_count)
     # Keep the queue bounded relative to worker capacity. Existing queued rows
     # are durable and remain visible; this only prevents a cycle from adding
     # another unbounded batch while providers or artifacts are unavailable.
-    queue_budget = max(0, int(settings["max_active_runs"]) * 2 - queued_count)
+    queue_budget = max(0, slots * 2 - queued_count)
     if queue_budget:
         backfill = enqueue_due_findings(
             db_path=db_path,
-            limit=min(max(10, int(settings["max_active_runs"])), queue_budget),
+            limit=min(max(10, slots), queue_budget),
         )
     else:
         backfill = {
