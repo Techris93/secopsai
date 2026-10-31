@@ -7,6 +7,11 @@ from secopsai.decision_policy import POLICY_VERSION
 from secopsai.decision_contracts import number
 
 
+# A popular, aged release with no malicious-package advisory is not a reviewed
+# label, so the report counts these and whoever approves the manifest sees them.
+BENIGN_ONLY_LABEL_SOURCES = {"registry_vetted"}
+
+
 def evaluation_passes(report: dict) -> bool:
     return (report.get("policy_version") == POLICY_VERSION and report.get("held_out") is True
             and isinstance(report.get("provider"), str) and bool(report["provider"])
@@ -27,7 +32,8 @@ def evaluate_records(records: list[dict], *, held_out: bool = False) -> dict:
     for row in records:
         if row.get("decision") not in {"close", "review", "escalate"}:
             raise ValueError("unknown captured policy decision")
-        if row.get("label") not in {"malware", "benign", "ambiguous"} or row.get("label_source") != "independent_review":
+        allowed_sources = {"independent_review"} | (BENIGN_ONLY_LABEL_SOURCES if row.get("label") == "benign" else set())
+        if row.get("label") not in {"malware", "benign", "ambiguous"} or row.get("label_source") not in allowed_sources:
             raise ValueError("evaluation requires independently reviewed labels")
         if row.get("partition") != "held_out" and held_out:
             raise ValueError("all samples must be held out")
@@ -49,6 +55,8 @@ def evaluate_records(records: list[dict], *, held_out: bool = False) -> dict:
               "incomplete_closed": sum(closed(r) and r.get("evidence_complete") is not True for r in records),
               "malware_closure_upper95": 1 - math.pow(.05, 1 / len(malware)) if malware and not any(closed(r) for r in malware) else 1,
               "benign_escalation_rate": sum(r.get("decision") == "escalate" for r in benign) / len(benign) if benign else 1,
+              "benign_close_rate": sum(closed(r) for r in benign) / len(benign) if benign else 0,
+              "benign_label_sources": {source: sum(r["label_source"] == source for r in benign) for source in sorted({r["label_source"] for r in benign})},
               "abstention_rate": sum(r.get("decision") == "review" for r in records) / len(records) if records else 0,
               "disagreement_rate": sum(r.get("models_disagree") is True for r in records) / len(records) if records else 0,
               "evidence_coverage_rate": sum(r.get("evidence_complete") is True for r in records) / len(records) if records else 0,
