@@ -224,6 +224,23 @@ def validate_bridge_result(
     return _envelope(action, cleaned, provider=provider_name)
 
 
+def resolve_claim_refs(refs: Any, context: Any) -> Any:
+    """Replace claim ids with the evidence each claim rests on.
+
+    Models cite supplied claims as well as evidence, and the review step only
+    links evidence and steps. Other unknown references stay for the validator.
+    """
+    matrix = context.get("evidence_matrix") if isinstance(context, dict) else None
+    claims = matrix.get("claims") if isinstance(matrix, dict) else None
+    if not isinstance(refs, list) or not isinstance(claims, list):
+        return refs
+    supporting = {str(row.get("claim_id")): row.get("supporting_evidence") or [] for row in claims if isinstance(row, dict) and row.get("claim_id")}
+    resolved: list[Any] = []
+    for ref in refs:
+        resolved.extend(supporting[ref] if isinstance(ref, str) and ref in supporting else [ref])
+    return list(dict.fromkeys(resolved))
+
+
 def minimize(value: Any, *, depth: int = 0, string_limit: int = MAX_STRING_LENGTH, allow_artifact_code: bool = False) -> Any:
     if depth > 8:
         return "[depth limit]"
@@ -431,7 +448,7 @@ def _bridge_instructions(
             "A confirmed fact must cite supplied normalized evidence; otherwise classify it as an inference or unsupported claim. "
             "Return prioritized recommended_actions that would close the most important evidence gaps, including static, registry, IOC, comparison, or sandbox steps as applicable. "
             "Return verdict_recommendation as credible, likely, inconclusive, not_substantiated, or benign; "
-            "verdict_confidence as 0-100; verdict_rationale; and verdict_evidence_refs using only supplied evidence or pipeline step identifiers. "
+            "verdict_confidence as 0-100; verdict_rationale; and verdict_evidence_refs using only evidence_id and step_key values from the context, never claim or pipeline identifiers. "
             "Use not_substantiated only when the supplied investigation evidence does not prove the malicious claim; this does not mean the package is benign. "
             "Use benign only when affirmative, independently reviewed evidence supports harmless behavior. "
             "Never downgrade a package merely because local exposure was not observed. "
@@ -443,9 +460,9 @@ def _bridge_instructions(
         "review_publication_safety": (
             "Assess evidentiary, attribution, privacy, credential leakage, operational, legal, disclosure, and reproducibility risks. "
             "Return publication_checks with exactly evidence, privacy, credential_leakage, operational_safety, legal_disclosure, and reproducibility. "
-            "Each check must contain status clear, concern, or unknown and a concise finding. Mirror every concern/unknown finding exactly in publication_risks; clear checks must not appear there. "
+            "Each check must contain status clear, concern, or unknown and a concise finding; cover attribution under legal_disclosure. Leave publication_risks empty: it is filled from these checks. "
             "When any check is concern or unknown, provide corrective recommended_actions. Return a detailed disclosure_draft as review-only text. "
-            "Never write APPROVED or Proceed with publication, and do not approve or send anything. "
+            "Do not use the word approved in any field, even negated or in a phrase such as approved method; write not cleared or authorized instead. Never write Proceed with publication, and do not approve or send anything. "
         ),
         "triage_finding": (
             "Act as a senior defensive triage reviewer. Decide whether the supplied finding is a true positive, false positive, benign expected behavior, policy noise, or needs more evidence. "
@@ -682,6 +699,8 @@ def bridge_output_schema(action_name: str = "", context: dict[str, Any] | None =
             props["rule_tuning_proposals"] = {"type": "array", "maxItems": 0, "items": {"type": "string"}}
         if action_name != "prioritize_findings":
             props["finding_priorities"] = {"type": "array", "maxItems": 0, "items": {"type": "string"}}
+        if action_name == "review_publication_safety":
+            props["publication_risks"] = {"type": "array", "maxItems": 0, "items": {"type": "string"}}
     if action_name == "triage_artifact":
         from secopsai.decision_evidence import artifact_decision_choices
         from secopsai.decision_contracts import DecisionError

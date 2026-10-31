@@ -12,6 +12,26 @@ class DecisionError(ValueError):
         super().__init__(f"{provider}: {message}")
 
 
+# Reviews deny approval ("NOT APPROVED") and name approved procedures in nearly every
+# answer (8 of 8 on Haiku, 2026-10-31). Every other use of the word still blocks.
+_APPROVED = re.compile(r"\bapproved\b", re.IGNORECASE)
+_DENIED = re.compile(r"(?:\b(?:not|never|no)|n't)(?:\s+\w+){0,2}\s+$", re.IGNORECASE)
+_PROCEDURE = re.compile(
+    r"\s+(?:\w+\s+)?(?:methods?|procedures?|process(?:es)?|plans?|sandbox(?:es)?|actions?|channels?|tools?|environments?|mechanisms?|workflows?)\b",
+    re.IGNORECASE,
+)
+_PROCEED = re.compile(r"\bproceed\s+with\s+publication\b", re.IGNORECASE)
+
+
+def _claims_approval(text: str) -> bool:
+    if _PROCEED.search(text):
+        return True
+    return any(
+        not _DENIED.search(text[:match.start()]) and not _PROCEDURE.match(text, match.end())
+        for match in _APPROVED.finditer(text)
+    )
+
+
 def number(value: Any, low: float, high: float, name: str, *, integer: bool = False) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise DecisionError(f"{name} must be a finite number")
@@ -180,7 +200,7 @@ def validate_action_result(
         review_text.extend(value.get("recommended_actions") or [])
         review_text.extend(risks)
         review_text.extend(check["finding"] for check in checks.values())
-        if re.search(r"\bapproved\b|\bproceed\s+with\s+publication\b", "\n".join(review_text), re.IGNORECASE):
+        if _claims_approval("\n".join(review_text)):
             raise DecisionError("publication review cannot approve release", category="safety")
         if value.get("publication_approved") is True or value.get("approved") is True:
             raise DecisionError("publication review cannot authorize publication", category="safety")

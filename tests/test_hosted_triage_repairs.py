@@ -9,7 +9,8 @@ from jsonschema import Draft202012Validator, ValidationError
 from secopsai import codex_bridge
 from secopsai.decision_contracts import DecisionError
 from secopsai.decision_evidence import artifact_decision_choices
-from secopsai.intelligence import bridge_output_schema
+from secopsai.codex_bridge import _normalize_bridge_result
+from secopsai.intelligence import bridge_output_schema, resolve_claim_refs
 
 
 def artifact_context():
@@ -209,3 +210,31 @@ def test_triage_keeps_the_fields_it_decides_with():
     artifact = bridge_output_schema("triage_artifact", artifact_context())["properties"]
     assert artifact["decision_evidence_refs"]["minItems"] == 1
     assert bridge_output_schema("prioritize_findings", artifact_context())["properties"]["finding_priorities"]["items"]["type"] == "object"
+
+
+def test_publication_risks_come_from_the_checks_not_the_model():
+    checks = {
+        "evidence": {"status": "concern", "finding": " Static evidence only. "},
+        "privacy": {"status": "unknown", "finding": "Contact details were truncated."},
+        "reproducibility": {"status": "clear", "finding": "Reproducible from the supplied files."},
+    }
+    result = _normalize_bridge_result(
+        {"publication_checks": checks, "publication_risks": ["A reworded risk."]},
+        action_name="review_publication_safety",
+    )
+    assert result["publication_risks"] == ["Static evidence only.", "Contact details were truncated."]
+
+
+def test_review_schema_leaves_risks_to_the_checks():
+    assert bridge_output_schema("review_publication_safety")["properties"]["publication_risks"]["maxItems"] == 0
+    assert bridge_output_schema("analyze_research_case")["properties"]["publication_risks"]["maxItems"] == 50
+
+
+def test_claim_references_become_the_evidence_they_rest_on():
+    context = {"evidence_matrix": {"claims": [
+        {"claim_id": "CLM-1", "supporting_evidence": ["EVD-1", "EVD-2"]},
+        {"claim_id": "CLM-2", "supporting_evidence": []},
+    ]}}
+    assert resolve_claim_refs(["EVD-2", "CLM-1", "CLM-2", "step", "CLM-9"], context) == ["EVD-2", "EVD-1", "step", "CLM-9"]
+    assert resolve_claim_refs(None, context) is None
+    assert resolve_claim_refs(["CLM-1"], {}) == ["CLM-1"]
