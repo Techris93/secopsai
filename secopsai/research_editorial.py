@@ -230,12 +230,15 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
                         "pending_update_fingerprint": update["draft_fingerprint"]}
             return {**existing_edition, "reused": True}
         previous_coverage = existing_edition["draft"].get("coverage") or {}
-        if (existing_edition["draft"].get("items") == draft.get("items")
-                and previous_coverage.get("public_summary") == coverage.get("public_summary")
-                and existing_edition["draft"].get("duty") == duty):
-            return {**existing_edition, "reused": True}
+        same_content = (existing_edition["draft"].get("items") == draft.get("items")
+                        and previous_coverage.get("public_summary") == coverage.get("public_summary")
+                        and existing_edition["draft"].get("duty") == duty)
         revisions = [row for row in records("edition_revision", db_path=db_path, limit=10000)
                      if row["payload"].get("edition_id") == identity]
+        # An unedited draft also follows changes in how the same items render, or a
+        # rendering fix would miss every draft already waiting for review.
+        if same_content and (revisions or existing_edition["draft"].get("body_markdown") == draft.get("body_markdown")):
+            return {**existing_edition, "reused": True}
         if revisions:
             update = _record_edition_update(existing_edition, draft, db_path=db_path)
             return {**existing_edition, "reused": True, "updates_waiting_for_editor": True,

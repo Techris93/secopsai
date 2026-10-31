@@ -380,6 +380,28 @@ def test_daily_workflow_requires_real_roster_and_duty_editor(db, tmp_path):
         approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "repeat approval", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
 
 
+def test_unedited_draft_follows_a_rendering_change_and_an_edited_one_keeps_its_text(db, monkeypatch):
+    from secopsai import research_desk
+
+    value, _ = event(db)
+    local_date = datetime.fromisoformat(value["first_observed_at"].replace("Z", "+00:00")).astimezone(ZoneInfo("Europe/Istanbul")).date().isoformat()
+    roster(db)
+    verify(value, db)
+    first = create_daily_brief(date=local_date, db_path=db)
+    assert create_daily_brief(date=local_date, db_path=db)["reused"] is True
+    monkeypatch.setattr(research_desk, "research_note", lambda *a, **kw: ["Rendered differently."])
+    refreshed = create_daily_brief(date=local_date, db_path=db)
+    assert "Rendered differently." in refreshed["draft"]["body_markdown"] and refreshed["fingerprint"] != first["fingerprint"]
+    assert refreshed["draft"]["items"] == first["draft"]["items"] and refreshed["state"] == "verifying"
+    assert create_daily_brief(date=local_date, db_path=db)["reused"] is True
+
+    edited = refreshed["draft"]["body_markdown"] + "\n\nHuman editorial note."
+    edit_edition(refreshed["edition_id"], {"body_markdown": edited}, actor="alice", db_path=db)
+    monkeypatch.setattr(research_desk, "research_note", lambda *a, **kw: ["Rendered differently again."])
+    kept = create_daily_brief(date=local_date, db_path=db)
+    assert kept["reused"] is True and kept["draft"]["body_markdown"] == edited and not kept.get("updates_waiting_for_editor")
+
+
 def test_automated_brief_picks_up_late_roster_and_preserves_human_edits(db):
     from secopsai.research_editorial import AUTOMATED_BRIEF_AUTHOR_ID
 
