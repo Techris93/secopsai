@@ -692,6 +692,26 @@ class BlogPublishingTests(unittest.TestCase):
         self.assertIn("git add blog/posts blog/assets/social", deployed_commit)
         self.assertIn("git add blog/assets/posts", deployed_commit)
 
+    def test_workflows_commit_every_file_a_publish_regenerates(self):
+        # An unstaged sitemap made the rebase refuse, so the first approved edition never reached main.
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = blog.BlogPaths(Path(temp_dir) / "blog")
+            paths.posts.mkdir(parents=True)
+            blog.rebuild(paths=paths)
+            written = {str(path.relative_to(paths.root.parent)) for path in paths.root.rglob("*") if path.is_file()}
+        self.assertIn("blog/sitemap.xml", written)
+        worker = (root / ".github/workflows/research-worker.yml").read_text(encoding="utf-8")
+        ops = (root / ".github/workflows/blog-ops.yml").read_text(encoding="utf-8")
+        steps = [worker.split("- name: Commit and deploy", 1)[1], ops.split("- name: Commit deployed draft state", 1)[1],
+                 ops.split("- name: Commit intentional Blog Ops changes", 1)[1]]
+        for step in steps:
+            staged = next(line for line in step.splitlines() if "git add blog/posts" in line).split()[2:]
+            uncovered = [name for name in written if not any(name == item or name.startswith(item + "/") for item in staged)
+                         and not name.startswith(("blog/data/", "blog/drafts/", "blog/assets/posts/"))]
+            self.assertEqual(uncovered, [])
+        self.assertNotIn("git rebase origin/main", worker + ops)
+
     def test_publish_with_approved_media_renders_hero_and_og_image(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = blog.BlogPaths(Path(temp_dir) / "blog")
