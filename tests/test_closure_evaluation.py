@@ -19,7 +19,8 @@ from secopsai.decision_policy import closure_candidate, closure_decision, policy
 def _context():
     flagged = {"path": "package/a.js", "bytes": 10, "complete": True, "truncated": False, "regions_found": 1, "regions_shown": 1, "matched_regions_shown": True, "content": "code"}
     finding = {"rule_id": "R1", "severity": "high", "score": 80, "file_path": "package/a.js", "safe_context": "code", "evidence": []}
-    prescan = {"score": 80, "level": "high", "findings": [finding], "flagged_files": [flagged], "manifest": {"name": "a"}}
+    prescan = {"score": 80, "level": "high", "findings": [finding], "flagged_files": [flagged], "manifest": {"name": "a"}, "root_manifests": ["package/package.json"],
+               "install_files": [{"path": "package/package.json", "truncated": False, "content": '{"name":"a"}'}]}
     return research_ai_triage.triage_context(ecosystem="npm", package="a", version="1.0.0", prescan=prescan)
 
 

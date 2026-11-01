@@ -257,3 +257,21 @@ def test_nearby_matches_share_one_window():
     text = "x" * 40_000 + "".join(f"m{index} " for index in range(50)) + "x" * 40_000
     item = _flagged(text, [text.index(f"m{index} ") for index in range(50)])
     assert item["regions_shown"] == 50 and item["matched_regions_shown"] is True
+
+
+def test_root_manifests_are_supplied_whole_with_or_without_install_hooks():
+    manifest = b'{"name": "a", "dependencies": {"b": "1"}, "scripts": {"test": "x"}}'
+    members = [("package/package.json", manifest), ("package/index.js", b"1"), ("package/vendor/c/package.json", b"{}"), ("package/x.tgz!/package/package.json", b"{}")]
+    assert package_features.root_manifests(members) == ["package/package.json"]
+    files = package_features.install_time_files(members)
+    assert [item["path"] for item in files] == ["package/package.json"] and '"dependencies"' in files[0]["content"]
+    sdist = [("a-1.0/setup.py", b"setup()"), ("a-1.0/pyproject.toml", b"[build-system]"), ("a-1.0/a/__init__.py", b"")]
+    assert package_features.root_manifests(sdist) == ["a-1.0/setup.py", "a-1.0/pyproject.toml"]
+    assert {item["path"] for item in package_features.install_time_files(sdist)} == set(package_features.root_manifests(sdist))
+    assert package_features.root_manifests([("a/b.py", b"")]) == []
+
+
+def test_manifests_come_before_hook_files_in_the_size_budget():
+    manifest = b'{"scripts": {"postinstall": "node run.js"}}'
+    files = package_features.install_time_files([("package/run.js", b"x" * 40_000), ("package/package.json", manifest)])
+    assert files[0]["path"] == "package/package.json" and files[0]["truncated"] is False
