@@ -27,6 +27,7 @@ TEXT_SUFFIXES = {".rs", ".js", ".cjs", ".mjs", ".ts", ".py", ".pyw", ".json", ".
 NON_CODE_BASENAMES = {".gitignore", ".npmignore", ".dockerignore", ".gitattributes", ".editorconfig", ".npmrc", ".pypirc",
                       ".env", "license", "notice", "changelog", "changes", "readme"}
 INSTALL_HOOKS = ("preinstall", "install", "postinstall", "prepare")
+ROOT_MANIFESTS = {"package.json", "setup.py", "pyproject.toml", "setup.cfg"}
 
 # flag -> pattern over the text of code files (case-insensitive).
 PATTERNS: Dict[str, str] = {
@@ -424,48 +425,51 @@ def flag_evidence(members: Iterable[Tuple[str, bytes]], flag: str, *, window: in
     return {}
 
 
+def root_manifests(members: Iterable[Tuple[str, bytes]]) -> List[str]:
+    """The manifests that decide what runs at install, at the package root."""
+    paths = [path for path, _ in members if PurePosixPath(path.lower()).name in ROOT_MANIFESTS]
+    depth = min((path.count("/") for path in paths), default=0)
+    return [path[:300] for path in paths if path.count("/") == depth]
+
+
 def install_time_files(members: Iterable[Tuple[str, bytes]], *, per_file: int = 12000, total: int = 24000) -> List[Dict[str, object]]:
-    """Full text of what runs at install or build time, for triage: package.json
-    scripts and the files they call, setup.py, build.rs. Bounded in size."""
+    """Full text of what runs at install or build time, for triage: the root
+    manifests, the files package.json hooks call, build.rs. Bounded in size."""
     members = list(members)
     by_path = {path: data for path, data in members}
     wanted: List[str] = []
+    called: List[str] = []
     # The package root is the shallowest folder holding a manifest; archives
     # nest it at different depths (npm: package/, sdists: name-1.0/, sample
     # archives one level deeper still).
-    manifests = [path for path, _ in members if PurePosixPath(path.lower()).name in {"package.json", "setup.py", "build.rs", "pyproject.toml"}]
+    manifests = [path for path, _ in members if PurePosixPath(path.lower()).name in {*ROOT_MANIFESTS, "build.rs"}]
     root_depth = min((path.count("/") for path in manifests), default=1)
     for path, data in members:
         name = PurePosixPath(path.lower()).name
         if path.count("/") != root_depth:
             continue
-        if name in {"setup.py", "build.rs"}:
+        if name in {*ROOT_MANIFESTS, "build.rs"}:
             wanted.append(path)
-        elif name == "package.json":
+        if name == "package.json":
             try:
                 scripts = (json.loads(data.decode("utf-8", errors="ignore")).get("scripts") or {})
             except ValueError:
                 scripts = {}
             hooks = {hook: str(scripts[hook]) for hook in INSTALL_HOOKS if hook in scripts}
             if hooks:
-                wanted.append(path)
                 root = path.rsplit("/", 1)[0] + "/" if "/" in path else ""
                 for command in hooks.values():
                     for token in re.findall(r"[\w./-]+\.(?:js|cjs|mjs|sh|py)", command):
                         candidate = root + token.lstrip("./")
                         if candidate in by_path:
-                            wanted.append(candidate)
+                            called.append(candidate)
     out: List[Dict[str, object]] = []
     budget = total
-    for path in dict.fromkeys(wanted):
+    # Manifests first: closure is blocked if the size budget leaves one out.
+    for path in dict.fromkeys([*wanted, *called]):
         if budget <= 0:
             break
         text = by_path[path].decode("utf-8", errors="ignore")
-        if PurePosixPath(path.lower()).name == "package.json":
-            try:
-                text = json.dumps({"scripts": json.loads(text).get("scripts")}, indent=1)
-            except ValueError:
-                pass
         clipped = _clean_window(text[:min(per_file, budget)])
         budget -= len(clipped)
         out.append({"path": path[:300], "truncated": len(text) > len(clipped), "content": clipped})
@@ -699,5 +703,5 @@ def triage_evidence(members: Iterable[Tuple[str, bytes]], findings: Iterable[Dic
                 if len(item["referenced_by"]) < 3 and path != item["path"] and name in text:
                     item["referenced_by"].append(path[:300])
     return {"flagged_files": files, "flagged_files_total": len(flagged), "flag_locations": locations, "flag_regions": flag_regions, "decoded_payloads": payloads, "decoded_payloads_total": payload_total, "binaries": binaries[:10],
-            "binaries_total": len(binaries), "missing_files": bounded_missing_files,
+            "binaries_total": len(binaries), "missing_files": bounded_missing_files, "root_manifests": root_manifests(members),
             "missing_files_truncated": len(missing_files) > len(bounded_missing_files)}

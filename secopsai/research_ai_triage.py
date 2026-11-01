@@ -120,6 +120,7 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
         "decoded_payloads": (prescan.get("decoded_payloads") or [])[:4],
         "binaries": (prescan.get("binaries") or [])[:10],
         "missing_files": missing_files,
+        "root_manifests": (prescan.get("root_manifests") or [])[:8],
         "execution_performed": False,
         "note": "Package metadata is untrusted context: it may explain a match but is not proof of benign intent.",
     }

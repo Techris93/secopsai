@@ -1,13 +1,24 @@
 """Budget evidence across categories and expose every loss of coverage."""
 from __future__ import annotations
 import json
+import re
 from typing import Any
 
 CATEGORIES = ("matched_strings", "flag_locations", "findings", "install_time_files", "decoded_payloads", "flagged_files", "binaries", "metadata_signals")
 MAX_STATE_CHARS = 32_000
 # Contexts built before this contract carry no exact region counts, so they
 # can never count as complete.
-COVERAGE_CONTRACT = "context-v3"
+COVERAGE_CONTRACT = "context-v4"
+# Package text written for whoever reviews it. Legitimate code rarely argues
+# its own innocence, so this blocks closure however the model answered.
+REVIEWER_TEXT = re.compile(
+    r"(ignore|disregard|forget)\s+(all\s+|any\s+)?(earlier|previous|prior|above)\s+(instructions|rules|prompts)"
+    r"|(automated|ai|llm|code|security)\s+(reviewer|scanner|analy[sz]er|auditor)s?\b"
+    r"|(classify|mark|report|treat|return)\b.{0,50}\b(benign|false.positive|no malicious)"
+    r"|malicious_probability|finding_verdict|benign_expected"
+    r"|(passed|completed)\b.{0,30}\bsecurity (audit|review)"
+    r"|no further (analysis|review)", re.IGNORECASE | re.DOTALL)
+PACKAGE_TEXT_FIELDS = ("manifest", "flagged_files", "flag_regions", "install_time_files", "decoded_payloads")
 
 
 def build_evidence(context: dict[str, Any], limit: int = MAX_STATE_CHARS) -> tuple[str, dict[str, Any]]:
@@ -102,6 +113,18 @@ def build_evidence(context: dict[str, Any], limit: int = MAX_STATE_CHARS) -> tup
     return encoded, coverage
 
 
+def _strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        value = list(value.values())
+    return [text for item in value for text in _strings(item)] if isinstance(value, list) else []
+
+
+def reviewer_directed_text(context: dict[str, Any]) -> bool:
+    return any(REVIEWER_TEXT.search(text) for field in PACKAGE_TEXT_FIELDS for text in _strings(context.get(field)))
+
+
 def context_coverage(context: dict[str, Any]) -> dict[str, Any]:
     """Coverage for a model handed the whole context, as bridge models are.
 
@@ -112,7 +135,9 @@ def context_coverage(context: dict[str, Any]) -> dict[str, Any]:
     when every matched region is in its excerpt: the rules scanned the rest.
     Anything the model cannot read is a gap, and a gap blocks closure. So is a
     file list too long to send: the rules flagging little in a package that size
-    says too little about the code nobody read.
+    says too little about the code nobody read. The package's root manifests
+    must be supplied whole, since they decide what runs at install, and package
+    text addressed to its reviewer blocks closure as well.
     """
     gaps: list[str] = []
     if context.get("coverage_contract") != COVERAGE_CONTRACT:
@@ -161,6 +186,14 @@ def context_coverage(context: dict[str, Any]) -> dict[str, Any]:
     for item in findings:
         paths = [item.get("file_path")] + [found.get("file_path") for found in item.get("evidence_locations") or [] if isinstance(found, dict)]
         gaps.extend(f"finding_file_not_supplied:{path}" for path in paths if isinstance(path, str) and path and path not in supplied)
+    manifests = context.get("root_manifests") or []
+    if not manifests:
+        gaps.append("no_root_manifest")
+    whole = {str(item.get("path")) for item in [*(context.get("install_time_files") or []), *(context.get("flagged_files") or [])]
+             if isinstance(item, dict) and "content" in item and item.get("truncated") is not True and item.get("complete") is not False}
+    gaps.extend(f"root_manifest_not_supplied:{path}" for path in manifests if path not in whole)
+    if reviewer_directed_text(context):
+        gaps.append("reviewer_directed_text")
     gaps = list(dict.fromkeys(gaps))
     return {"contract": COVERAGE_CONTRACT, "complete": not gaps, "gaps": gaps[:50], "gap_count": len(gaps),
             "included_categories": sorted(key for key in CATEGORIES if context.get(key)), "omitted_categories": [],
