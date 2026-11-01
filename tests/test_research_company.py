@@ -19,6 +19,7 @@ from secopsai.research_editorial import (
     BRIEF_CHECKS, approve_edition, configure_roster, correct_edition, create_daily_brief,
     edit_edition, publish_edition, validate_release,
 )
+from secopsai.research_intake import IntakeError
 from secopsai.research_operation import execute, execute_hosted, hosted_projection
 from secopsai.research_operation_store import digest, records
 from secopsai.research_primary_intel import (
