@@ -306,7 +306,7 @@ def test_an_earlier_automated_verification_is_decided_again_once(db):
 
 
 def test_age_out_reports_first_then_archives_and_brings_back_what_the_desk_ranks(db):
-    from secopsai.research_primary_intel import age_out_reviews, pending_public_reviews
+    from secopsai.research_primary_intel import age_out_reviews, pending_public_reviews, reviews_needing_decision
 
     add(db, "old-quiet", "gitlab", "Old advisory", "Fixed in 1.2.3.", published_at="2024-01-01T00:00:00Z")
     add(db, "old-hot", "gitlab", "Old but hot", "Actively exploited in the wild.", published_at="2024-01-01T00:00:00Z")
@@ -319,15 +319,20 @@ def test_age_out_reports_first_then_archives_and_brings_back_what_the_desk_ranks
                          (f"Q-{event_id}", "verify_intel", event_id, "{}", "awaiting_review", RECENT, RECENT, RECENT))
 
     report = age_out_reviews(keep={"old-ranked"}, db_path=db)
-    assert (report["status"], report["would_archive"], report["archived"]) == ("report_only", 1, 0)
-    assert (report["kept_exploited"], report["kept_ranked_or_held"], report["kept_recent"]) == (2, 1, 1)
-    assert report["by_source"] == {"GitLab Security Releases": 1}
+    assert (report["status"], report["would_archive"], report["archived"]) == ("report_only", 3, 0)
+    assert (report["kept_ranked_or_held"], report["kept_recent"]) == (1, 1)
+    assert report["by_source"] == {"GitLab Security Releases": 2, "CISA Known Exploited Vulnerabilities": 1}
+    assert reviews_needing_decision({"old-ranked", "new", "not-queued"}, db_path=db) == 2
     assert "old-quiet" in {item["event_id"] for item in pending_public_reviews(db_path=db, limit=50)}
 
-    assert age_out_reviews(keep={"old-ranked"}, enforce=True, db_path=db)["archived"] == 1
+    assert age_out_reviews(keep={"old-ranked"}, enforce=True, db_path=db)["archived"] == 3
+    assert "old-kev" not in {item["event_id"] for item in pending_public_reviews(db_path=db, limit=50)}
     assert "old-quiet" not in {item["event_id"] for item in pending_public_reviews(db_path=db, limit=50)}
     assert age_out_reviews(keep={"old-quiet", "old-ranked"}, enforce=True, db_path=db)["restored"] == 1
     assert "old-quiet" in {item["event_id"] for item in pending_public_reviews(db_path=db, limit=50)}
+    from secopsai.research_operation import hosted_projection
+
+    assert hosted_projection(db_path=db)["coverage"]["health"]["primary_intel_needs_decision"] == 0
 
 
 def test_a_full_brief_keeps_reviewer_items_and_exploited_flaws_over_older_routine_ones():

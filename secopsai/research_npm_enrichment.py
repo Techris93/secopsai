@@ -19,6 +19,7 @@ import math
 import os
 import re
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -40,7 +41,8 @@ MAX_PACKUMENT_BYTES = max(1, int(os.environ.get("SECOPSAI_NPM_MAX_PACKUMENT_BYTE
 MAX_PACKUMENT_VERSIONS = 5000
 MAX_SNAPSHOT_SUMMARIES = 256
 MAX_SNAPSHOT_VERSION_NAMES = 2000
-MAX_PACKAGE_EVENTS_PER_CYCLE = 100
+MAX_PACKAGE_EVENTS_PER_CYCLE = 600
+PACKUMENT_WORKERS = 16
 MAX_STATIC_ANALYSES_PER_CYCLE = 10
 MAX_RETRY_SECONDS = 300
 MAX_ATTEMPTS = 8
@@ -48,7 +50,7 @@ MAX_STATIC_ATTEMPTS = 3
 # Events older than this are not worth analysing as "new release" signals and
 # would otherwise sit in the queue forever.
 STALE_PENDING_DAYS = 7
-STATIC_RANKING_WINDOW = 200
+STATIC_RANKING_WINDOW = 1000
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9@._:/+\-]+$")
 LIFECYCLE_NAMES = {
     "preinstall",
@@ -704,15 +706,23 @@ def _promote_static_candidate(*, db_path: Optional[str], event: Dict[str, Any], 
     return str(alert.get("alert_id") or "")
 
 
+def _fetch_or_error(package: str, fetcher: SafeFetcher) -> Any:
+    try:
+        return _fetch_packument(package, fetcher)
+    except Exception as exc:  # raised where the package's failure is recorded
+        return exc
+
+
 def _enrich_package(
     *,
     package: str,
     rows: List[Dict[str, Any]],
     db_path: Optional[str],
     fetcher: SafeFetcher,
+    packument: Optional[Tuple[str, Dict[str, Any], str]] = None,
 ) -> Dict[str, Any]:
     now = _now()
-    final_url, payload, source_hash = _fetch_packument(package, fetcher)
+    final_url, payload, source_hash = packument or _fetch_packument(package, fetcher)
     current_versions, latest = _packument_summary(payload)
     if not current_versions:
         raise IntakeError("npm packument contained no versions")
@@ -1006,29 +1016,37 @@ def run_npm_enrichment_cycle(
     packages_fetched = 0
     versions_created = 0
     failures = 0
-    for package, package_rows in list(grouped.items())[:max(1, min(int(event_limit), MAX_PACKAGE_EVENTS_PER_CYCLE))]:
-        try:
-            result = _enrich_package(package=package, rows=package_rows, db_path=db_path, fetcher=fetcher)
-            packages_fetched += 1
-            versions_created += int(result.get("versions_created") or 0)
-        except Exception as exc:
-            failures += 1
-            now = _now()
-            with closing(soc_store.connect(db_path)) as connection:
-                with _write_transaction(connection, db_path):
-                    for row in package_rows:
-                        metadata = _event_metadata(row)
-                        attempts = int(metadata.get("npm_enrichment_attempts") or 0) + 1
-                        metadata.update({
-                            "npm_enrichment_status": "failed",
-                            "npm_enrichment_last_attempt": now,
-                            "npm_enrichment_attempts": attempts,
-                            "npm_enrichment_error": str(exc)[:1000],
-                        })
-                        connection.execute(
-                            "UPDATE registry_feed_events SET processing_state='enrichment_failed', metadata_json=? WHERE feed_event_id=?",
-                            (_json(metadata), row["feed_event_id"]),
-                        )
+    selected = list(grouped.items())[:max(1, min(int(event_limit), MAX_PACKAGE_EVENTS_PER_CYCLE))]
+    with ThreadPoolExecutor(max_workers=PACKUMENT_WORKERS) as pool:
+        # Fetch in chunks and write one at a time, so at most one chunk of documents is in memory.
+        for start in range(0, len(selected), PACKUMENT_WORKERS):
+            chunk = selected[start:start + PACKUMENT_WORKERS]
+            fetched = list(pool.map(lambda item: _fetch_or_error(item[0], fetcher), chunk))
+            for (package, package_rows), packument in zip(chunk, fetched):
+                try:
+                    if isinstance(packument, Exception):
+                        raise packument
+                    result = _enrich_package(package=package, rows=package_rows, db_path=db_path, fetcher=fetcher, packument=packument)
+                    packages_fetched += 1
+                    versions_created += int(result.get("versions_created") or 0)
+                except Exception as exc:
+                    failures += 1
+                    now = _now()
+                    with closing(soc_store.connect(db_path)) as connection:
+                        with _write_transaction(connection, db_path):
+                            for row in package_rows:
+                                metadata = _event_metadata(row)
+                                attempts = int(metadata.get("npm_enrichment_attempts") or 0) + 1
+                                metadata.update({
+                                    "npm_enrichment_status": "failed",
+                                    "npm_enrichment_last_attempt": now,
+                                    "npm_enrichment_attempts": attempts,
+                                    "npm_enrichment_error": str(exc)[:1000],
+                                })
+                                connection.execute(
+                                    "UPDATE registry_feed_events SET processing_state='enrichment_failed', metadata_json=? WHERE feed_event_id=?",
+                                    (_json(metadata), row["feed_event_id"]),
+                                )
     static_result = _run_static_triage(db_path=db_path, fetcher=fetcher, limit=static_limit)
     completed = _now()
     total_failures = failures + int(static_result.get("failures", 0))

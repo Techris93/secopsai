@@ -280,7 +280,7 @@ def inspect(*, reader=fetch, now=None, scope="all", worker_active=None,
                                         "(more than three collection intervals): " + ", ".join(severe))
                 if health.get("artifact_backup_pending"):
                     blockers.append("registered public artifacts lack completed durable backups")
-                for key in ("primary_intel_pending_preparation", "primary_intel_awaiting_human_review",
+                for key in ("primary_intel_pending_preparation", "primary_intel_awaiting_human_review", "primary_intel_needs_decision",
                             "primary_intel_preparation_dead_letters", "primary_intel_oldest_preparation_age_seconds"):
                     checks[name][key] = health.get(key)
                 checks[name]["ontology_pending"] = health.get("ontology_pending")

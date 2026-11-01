@@ -159,6 +159,28 @@ def test_npm_enrichment_keeps_registry_failures_visible_and_retryable(tmp_path):
     assert "registry returned HTTP 503" in metadata["npm_enrichment_error"]
 
 
+def test_one_failed_package_does_not_stop_the_rest_of_its_batch(tmp_path):
+    db = str(tmp_path / "research.db")
+    ensure_collectors(db_path=db)
+    packages = [f"pkg-{index}" for index in range(40)]
+    for seq, package in enumerate(packages):
+        _event(db, package, seq)
+
+    def fetch(url, _max_bytes):
+        package = url.rsplit("/", 1)[-1]
+        if package == "pkg-7":
+            return 503, {"content-type": "text/plain"}, b"temporary outage"
+        version = {"name": package, "version": "1.0.0", "dist": {"tarball": f"https://registry.npmjs.org/{package}/-/{package}-1.0.0.tgz"}}
+        payload = {"name": package, "dist-tags": {"latest": "1.0.0"}, "time": {"1.0.0": "2026-08-04T19:00:00.000Z"}, "versions": {"1.0.0": version}}
+        return 200, {"content-type": "application/json"}, json.dumps(payload).encode()
+
+    result = run_npm_enrichment_cycle(db_path=db, fetcher=SafeFetcher(fetch=fetch), static_limit=1)
+    assert (result["packages_fetched"], result["failures"]) == (39, 1)
+    with soc_store.connect(db) as connection:
+        states = dict(connection.execute("SELECT package, processing_state FROM registry_feed_events WHERE version=''").fetchall())
+    assert states.pop("pkg-7") == "enrichment_failed" and set(states.values()) == {"enriched"} and len(states) == 39
+
+
 def _indicators(*ids):
     return [{"indicator_id": item, "observation_fingerprint": item} for item in ids]
 

