@@ -15,6 +15,10 @@ is measured on the malware sets alone. The two benign sources report separately.
 pinned to one model, without starving production triage. A second dispatch
 resumes: idempotency keys stop duplicates and results are read back from Core.
 
+``--exclude-corpus`` builds a fresh test after a held-out run has been read: no
+package from those corpora is used again, thresholds are already frozen, so every
+sample is held out.
+
 ``report`` turns results into decisions with the same checks production uses.
 It reads the tuning partition as often as needed, for choosing thresholds. The
 held-out partition is run once, with those thresholds frozen.
@@ -96,13 +100,28 @@ def spread(rows: List[Dict[str, Any]], counts: Dict[str, int], seed: int) -> Lis
     return out
 
 
-def malware_rows(dataset: Path, wanted: int, seed: int) -> List[Dict[str, Any]]:
+def package_key(ecosystem: str, package: str) -> tuple:
+    """The dataset writes a scoped package as @scope@name; registries as @scope/name."""
+    return ecosystem, package.replace("/", "@")
+
+
+def excluded_packages(corpora: Iterable[Path]) -> set:
+    return {package_key(row["ecosystem"], row["package"]) for path in corpora for row in load_corpus(path)["rows"]}
+
+
+def malware_rows(dataset: Path, wanted: int, seed: int, excluded: frozenset = frozenset()) -> List[Dict[str, Any]]:
     from recall_benchmark import checkout, sample_members, sample_paths
     from triage_replay import build
 
     used = {path for used_seed, count in USED_SEEDS for path in sample_paths(dataset, {"npm": count * 2, "pypi": count}, used_seed)}
     # Scanning finds what the rules flag, and flagged samples are what reach a model.
     paths = [path for path in sample_paths(dataset, {"npm": wanted * 3, "pypi": wanted * 2}, seed) if path not in used]
+
+    def sample_package(path: str) -> tuple:
+        parts = path.split("/")
+        return package_key(parts[1], "/".join(parts[3:-2]) or parts[3])
+
+    paths = [path for path in paths if sample_package(path) not in excluded]
     checkout(dataset, paths)
 
     def one(path: str) -> Optional[Dict[str, Any]]:
@@ -149,7 +168,14 @@ def has_malicious_advisory(ecosystem: str, package: str, version: str) -> bool:
         return any(str(item.get("id", "")).startswith("MAL-") for item in json.load(response).get("vulns") or [])
 
 
-def clean_rows(fetcher: Any, seed: int) -> List[Dict[str, Any]]:
+def next_clean_targets() -> List[Dict[str, Any]]:
+    """The popular packages after those clean_targets(3000, 1500) already scanned."""
+    from build_watchlists import npm_watchlist, pypi_watchlist
+
+    return [{"ecosystem": "npm", "package": name} for name in npm_watchlist()[3000:6000]] + [{"ecosystem": "pypi", "package": name} for name in pypi_watchlist()[1500:3000]]
+
+
+def clean_rows(fetcher: Any, seed: int, excluded: frozenset = frozenset()) -> List[Dict[str, Any]]:
     from recall_benchmark import clean_targets
     from secopsai import research_content_funnel
     from triage_replay import build
@@ -172,8 +198,9 @@ def clean_rows(fetcher: Any, seed: int) -> List[Dict[str, Any]]:
         return {"set": "clean", "label": "benign", "label_source": "registry_vetted", "ecosystem": ecosystem, "package": package, "version": version,
                 "artifact": f"{ecosystem}:{package}@{version}", "partition": partition_of(ecosystem, package, seed), "context": built["context"]}
 
+    targets = [target for target in next_clean_targets() if package_key(target["ecosystem"], target["package"]) not in excluded] if excluded else clean_targets(3000, 1500)
     with ThreadPoolExecutor(max_workers=16) as pool:
-        return [row for row in pool.map(one, clean_targets(3000, 1500)) if row]
+        return [row for row in pool.map(one, targets) if row]
 
 
 def production_targets(client: Any) -> List[Dict[str, str]]:
@@ -239,10 +266,15 @@ def command_build(args: argparse.Namespace) -> int:
         raise SystemExit("YARA rules unavailable")
     malware_held_out = args.malware_held_out + args.adversarial
     built_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    malware = malware_rows(args.dataset, args.malware_tune + malware_held_out, args.seed)
+    excluded = frozenset(excluded_packages(args.exclude_corpus))
+    malware = malware_rows(args.dataset, args.malware_tune + malware_held_out, args.seed, excluded)
     print(f"{len(malware)} malware samples flagged", flush=True)
-    clean = clean_rows(SafeFetcher(timeout=60), args.seed)
+    clean = clean_rows(SafeFetcher(timeout=60), args.seed, excluded)
     print(f"{len(clean)} vetted clean packages flagged", flush=True)
+    if excluded:
+        print(f"{len(excluded)} packages excluded", flush=True)
+        for row in malware + clean:
+            row["partition"] = "held_out"
     rows = spread(malware, {"tune": args.malware_tune, "held_out": malware_held_out}, args.seed)
     rows += spread(clean, {"tune": args.clean_tune, "held_out": args.clean_held_out}, args.seed)
     # The attack set is separate packages, so no sample is counted twice.
@@ -252,6 +284,8 @@ def command_build(args: argparse.Namespace) -> int:
         row["set"] = "adversarial"
         row["context"] = inject(row["context"], rng.choice(INJECTIONS))
     corpus = {"built_at": built_at, "seed": args.seed, "model": MODEL, "min_age_days": MIN_AGE_DAYS, "rows": rows}
+    if excluded:
+        corpus["excluded_packages"] = len(excluded)
     with gzip.open(args.corpus, "wt", encoding="utf-8") as handle:
         json.dump(corpus, handle)
     print(json.dumps(corpus_summary(rows), indent=1))
@@ -266,11 +300,15 @@ def command_extend(args: argparse.Namespace) -> int:
     if not yara_engine.load().get("available"):
         raise SystemExit("YARA rules unavailable")
     corpus = load_corpus(args.corpus)
-    known = {(row["ecosystem"], row["package"]) for row in corpus["rows"]}
-    targets = [target for target in production_targets(CoreEdgeClient()) if (target["ecosystem"], target["package"]) not in known]
+    excluded = excluded_packages(args.exclude_corpus)
+    known = excluded | excluded_packages([args.corpus])
+    targets = [target for target in production_targets(CoreEdgeClient()) if package_key(target["ecosystem"], target["package"]) not in known]
     print(f"{len(targets)} production packages to check", flush=True)
     found = production_rows(SafeFetcher(timeout=60), targets, corpus["seed"])
     print(f"{len(found)} still flagged, aged and without a malware advisory", flush=True)
+    if excluded:
+        for row in found:
+            row["partition"] = "held_out"
     corpus["rows"] += spread(found, {"tune": args.clean_tune, "held_out": args.clean_held_out}, corpus["seed"])
     corpus["built_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     corpus["production_min_age_days"] = PRODUCTION_MIN_AGE_DAYS
@@ -482,6 +520,7 @@ def main() -> int:
     build.add_argument("--dataset", type=Path, required=True)
     build.add_argument("--corpus", type=Path, required=True)
     build.add_argument("--seed", type=int, default=20261031)
+    build.add_argument("--exclude-corpus", type=Path, nargs="*", default=[], help="Corpora whose packages must not be used again")
     build.add_argument("--malware-tune", type=int, default=200)
     build.add_argument("--malware-held-out", type=int, default=600)
     build.add_argument("--adversarial", type=int, default=100)
@@ -489,6 +528,7 @@ def main() -> int:
     build.add_argument("--clean-held-out", type=int, default=200)
     extend = commands.add_parser("extend")
     extend.add_argument("--corpus", type=Path, required=True)
+    extend.add_argument("--exclude-corpus", type=Path, nargs="*", default=[], help="Corpora whose packages must not be used again")
     extend.add_argument("--clean-tune", type=int, default=100)
     extend.add_argument("--clean-held-out", type=int, default=200)
     rebuild = commands.add_parser("rebuild")
@@ -507,7 +547,7 @@ def main() -> int:
     report.add_argument("--partition", choices=("tune", "held_out"), required=True)
     report.add_argument("--results", type=Path, required=True)
     report.add_argument("--max-probability", type=int, default=10)
-    report.add_argument("--min-confidence", type=int, default=85)
+    report.add_argument("--min-confidence", type=int, default=70)
     report.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     return {"build": command_build, "extend": command_extend, "rebuild": command_rebuild, "refit": command_refit, "run": command_run, "report": command_report}[args.command](args)

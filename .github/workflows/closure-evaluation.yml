@@ -16,6 +16,12 @@ on:
       build_run:
         description: Run id of the corpus to use (all modes except build)
         default: ""
+      exclude_runs:
+        description: Corpus run ids whose packages must not be used again (build and extend)
+        default: ""
+      seed:
+        description: Sampling seed (build)
+        default: "20261031"
       max_probability:
         description: Closure threshold for the report
         default: "10"
@@ -43,6 +49,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       MODE: ${{ inputs.mode }}
       BUILD_RUN: ${{ inputs.build_run }}
+      EXCLUDE_RUNS: ${{ inputs.exclude_runs }}
+      SEED: ${{ inputs.seed }}
       MAX_PROBABILITY: ${{ inputs.max_probability }}
       MIN_CONFIDENCE: ${{ inputs.min_confidence }}
     steps:
@@ -70,9 +78,19 @@ jobs:
             https://github.com/DataDog/malicious-software-packages-dataset.git "$RUNNER_TEMP/malware-dataset"
           git -C "$RUNNER_TEMP/malware-dataset" checkout --quiet --detach "$DATASET_COMMIT"
 
+      - name: Fetch the corpora to exclude
+        if: (inputs.mode == 'build' || inputs.mode == 'extend') && inputs.exclude_runs != ''
+        run: |
+          for run in $EXCLUDE_RUNS; do
+            gh run download "$run" --repo "$GITHUB_REPOSITORY" --name closure-corpus --dir "$RUNNER_TEMP/exclude/$run"
+          done
+
       - name: Build the corpus
         if: inputs.mode == 'build'
-        run: python -I scripts/closure_evaluation.py build --dataset "$RUNNER_TEMP/malware-dataset" --corpus "$RUNNER_TEMP/corpus.json.gz"
+        run: |
+          shopt -s nullglob
+          python -I scripts/closure_evaluation.py build --dataset "$RUNNER_TEMP/malware-dataset" --corpus "$RUNNER_TEMP/corpus.json.gz" --seed "$SEED" \
+            --exclude-corpus "$RUNNER_TEMP"/exclude/*/corpus.json.gz
 
       - name: Fetch the corpus
         if: inputs.mode != 'build'
@@ -80,7 +98,9 @@ jobs:
 
       - name: Add packages production flagged
         if: inputs.mode == 'extend'
-        run: python -I scripts/closure_evaluation.py extend --corpus "$RUNNER_TEMP/corpus.json.gz"
+        run: |
+          shopt -s nullglob
+          python -I scripts/closure_evaluation.py extend --corpus "$RUNNER_TEMP/corpus.json.gz" --exclude-corpus "$RUNNER_TEMP"/exclude/*/corpus.json.gz
 
       - name: Rebuild every context from its package
         if: inputs.mode == 'rebuild'

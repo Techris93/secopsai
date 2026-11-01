@@ -288,3 +288,71 @@ def test_rebuild_keeps_samples_and_labels_and_drops_what_cannot_be_checked(tmp_p
     assert by_artifact["npm:m@1"]["context"] == {"new": "m"} and by_artifact["npm:a@1"]["context"]["injected"] is True
     assert by_artifact["npm:c@1"]["label_source"] == "production_aged" and by_artifact["npm:c@1"]["context"] == {"new": "c"}
 
+
+
+def _stored_corpus(path, rows, **fields):
+    with gzip.open(path, "wt", encoding="utf-8") as handle:
+        json.dump({"built_at": "old", "seed": 1, "rows": rows, **fields}, handle)
+    return path
+
+
+def test_excluded_packages_match_across_dataset_and_registry_spelling(tmp_path):
+    old = _stored_corpus(tmp_path / "old.json.gz", [{"ecosystem": "npm", "package": "@a@b"}, {"ecosystem": "npm", "package": "@c/d"}])
+    assert ce.excluded_packages([old]) == {("npm", "@a@b"), ("npm", "@c@d")}
+    assert ce.package_key("npm", "@a/b") in ce.excluded_packages([old])
+
+
+def test_a_fresh_build_uses_no_old_package_and_holds_out_every_sample(tmp_path, monkeypatch):
+    from secopsai import research_intake, yara_engine
+    old = _stored_corpus(tmp_path / "old.json.gz", [{"ecosystem": "npm", "package": "seen"}])
+    seen = {}
+
+    def malware(dataset, wanted, seed, excluded):
+        seen.update(seed=seed, excluded=excluded)
+        return [{"set": "malware", "ecosystem": "npm", "package": f"m{n}", "partition": "tune" if n % 2 else "held_out", "context": {"findings": []}} for n in range(8)]
+
+    monkeypatch.setattr(yara_engine, "load", lambda: {"available": True})
+    monkeypatch.setattr(research_intake, "SafeFetcher", lambda timeout: None)
+    monkeypatch.setattr(ce, "malware_rows", malware)
+    monkeypatch.setattr(ce, "clean_rows", lambda fetcher, seed, excluded: [{"set": "clean", "ecosystem": "npm", "package": "c", "partition": "tune", "context": {"findings": []}}])
+    corpus = tmp_path / "new.json.gz"
+    monkeypatch.setattr(sys, "argv", ["closure_evaluation.py", "build", "--dataset", str(tmp_path), "--corpus", str(corpus), "--seed", "7", "--exclude-corpus", str(old), "--malware-held-out", "5", "--adversarial", "1"])
+    assert ce.main() == 0
+    stored = ce.load_corpus(corpus)
+    assert seen == {"seed": 7, "excluded": frozenset({("npm", "seen")})}
+    assert stored["excluded_packages"] == 1 and {row["partition"] for row in stored["rows"]} == {"held_out"}
+    assert sum(row["set"] in {"malware", "adversarial"} for row in stored["rows"]) == 6
+
+
+def test_malware_rows_drop_excluded_packages_before_reading_them(tmp_path, monkeypatch):
+    import types
+    paths = ["samples/npm/malicious_intent/seen/1.0.0/1.zip", "samples/npm/malicious_intent/@a/b/1.0.0/1.zip", "samples/npm/malicious_intent/fresh/1.0.0/1.zip"]
+    read = []
+    monkeypatch.setitem(sys.modules, "recall_benchmark", types.SimpleNamespace(sample_paths=lambda dataset, quotas, seed: paths if seed == 9 else [], sample_members=lambda data: [], checkout=lambda dataset, chosen: read.extend(chosen)))
+    monkeypatch.setitem(sys.modules, "triage_replay", types.SimpleNamespace(build=lambda *_: {"context": {}}))
+    for path in paths:
+        (tmp_path / path).parent.mkdir(parents=True)
+        (tmp_path / path).write_bytes(b"")
+    rows = ce.malware_rows(tmp_path, 1, 9, frozenset({("npm", "seen"), ("npm", "@a@b")}))
+    assert read == paths[2:] and [row["package"] for row in rows] == ["fresh"]
+
+
+def test_a_fresh_extend_adds_only_new_production_packages_as_held_out(tmp_path, monkeypatch):
+    from secopsai import core_edge_client, research_intake, yara_engine
+    old = _stored_corpus(tmp_path / "old.json.gz", [{"ecosystem": "npm", "package": "@s@seen"}])
+    corpus = _stored_corpus(tmp_path / "new.json.gz", [{"ecosystem": "npm", "package": "here", "set": "clean", "partition": "held_out", "context": {"findings": []}}])
+    monkeypatch.setattr(yara_engine, "load", lambda: {"available": True})
+    monkeypatch.setattr(research_intake, "SafeFetcher", lambda timeout: None)
+    monkeypatch.setattr(core_edge_client, "CoreEdgeClient", lambda: None)
+    monkeypatch.setattr(ce, "production_targets", lambda client: [{"ecosystem": "npm", "package": name, "version": "1"} for name in ("@s/seen", "here", "new")])
+    checked = []
+
+    def production(fetcher, targets, seed):
+        checked.extend(target["package"] for target in targets)
+        return [{"set": "production", "ecosystem": "npm", "package": target["package"], "partition": "tune", "context": {"findings": []}} for target in targets]
+
+    monkeypatch.setattr(ce, "production_rows", production)
+    monkeypatch.setattr(sys, "argv", ["closure_evaluation.py", "extend", "--corpus", str(corpus), "--exclude-corpus", str(old)])
+    assert ce.main() == 0
+    assert checked == ["new"]
+    assert next(row for row in ce.load_corpus(corpus)["rows"] if row["package"] == "new")["partition"] == "held_out"
