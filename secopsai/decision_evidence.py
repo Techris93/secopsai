@@ -7,7 +7,7 @@ CATEGORIES = ("matched_strings", "flag_locations", "findings", "install_time_fil
 MAX_STATE_CHARS = 32_000
 # Contexts built before this contract carry no exact region counts, so they
 # can never count as complete.
-COVERAGE_CONTRACT = "context-v2"
+COVERAGE_CONTRACT = "context-v3"
 
 
 def build_evidence(context: dict[str, Any], limit: int = MAX_STATE_CHARS) -> tuple[str, dict[str, Any]]:
@@ -110,13 +110,17 @@ def context_coverage(context: dict[str, Any]) -> dict[str, Any]:
     read in what was supplied, and every located behaviour flag is in a file or
     region the model has. A flagged file too large to send whole still counts
     when every matched region is in its excerpt: the rules scanned the rest.
-    Anything the model cannot read is a gap, and a gap blocks closure.
+    Anything the model cannot read is a gap, and a gap blocks closure. So is a
+    file list too long to send: the rules flagging little in a package that size
+    says too little about the code nobody read.
     """
     gaps: list[str] = []
     if context.get("coverage_contract") != COVERAGE_CONTRACT:
         gaps.append("context_predates_coverage_contract")
     if context.get("evidence_truncated"):
         gaps.extend(f"omitted:{item}" for item in context.get("evidence_omissions") or ["evidence_truncated"])
+    if "missing_files" in (context.get("listing_limits") or []):
+        gaps.append("unread_files_over_limit")
     findings = [item for item in context.get("findings") or [] if isinstance(item, dict)]
     if not findings:
         gaps.append("no_findings")

@@ -68,10 +68,11 @@ def test_silent_caps_upstream_are_gaps():
     assert context_coverage(_context(decoded_payloads_total=7))["complete"] is False
 
 
-def test_listing_limits_do_not_block_completeness_but_are_recorded():
+def test_a_cut_list_of_unread_files_blocks_completeness():
     context = _context(missing_files=["package/b.js"], missing_files_truncated=True)
     assert context["listing_limits"] == ["missing_files"]
-    assert context_coverage(context)["complete"] is True
+    assert context_coverage(context)["gaps"] == ["unread_files_over_limit"]
+    assert context_coverage(_context(missing_files=["package/b.js"]))["complete"] is True
 
 
 def test_transport_cut_blocks_completeness():
