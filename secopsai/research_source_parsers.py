@@ -12,7 +12,6 @@ PRIMARY_SOURCE_OVERRIDES = {
     "JFrog Security Research": ("https://research.jfrog.com/", "jfrog_index"),
     "Grafana Security": ("https://grafana.com/security/security-advisories/index.xml", "rss"),
     "Open VSX Registry": ("https://open-vsx.org/api/-/search?size=100&sortBy=timestamp&sortOrder=desc", "openvsx_index"),
-    "Socket Blog": ("https://socket.dev/blog", "socket_index"),
 }
 
 
@@ -79,8 +78,7 @@ def parse_index(config, content):
             url = urljoin(config["url"], href)
             parsed = urlparse(url)
             parts = [p for p in parsed.path.split("/") if p]
-            eligible = (len(parts) == 2 and parts[0] == "vulnerabilities" if parser == "jfrog_index"
-                        else len(parts) == 2 and parts[0] == "blog" and parts[1] not in {"category", "tag", "author", "rss", "feed"})
+            eligible = len(parts) == 2 and parts[0] == "vulnerabilities"
             if not eligible or parsed.scheme != "https" or parsed.hostname != host or parsed.username or parsed.password or not label or url in seen:
                 continue
             seen.add(url)

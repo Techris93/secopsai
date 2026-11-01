@@ -158,17 +158,6 @@
       "poll_frequency_hint": "daily"
     },
     {
-      "name": "Socket Blog",
-      "url": "https://socket.dev/blog",
-      "feed_url": "https://socket.dev/blog",
-      "type": "html",
-      "category": "Supply Chain",
-      "trust_level": "external_research",
-      "enabled": true,
-      "default_tags": ["Security News", "Supply Chain", "Research"],
-      "poll_frequency_hint": "hourly"
-    },
-    {
       "name": "PHP Security Advisories",
       "url": "https://www.php.net/",
       "feed_url": "https://www.php.net/feed.atom",

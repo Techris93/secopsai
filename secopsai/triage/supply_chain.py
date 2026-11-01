@@ -436,7 +436,6 @@ def investigate_supply_chain(
 
     external_links = {
         "osv": f"https://osv.dev/list?ecosystem={ecosystem}&q={package}",
-        "socket": f"https://socket.dev/{ecosystem}/package/{package}" if ecosystem == "npm" else f"https://socket.dev/pypi/package/{package}",
         "snyk": f"https://snyk.io/advisor/{ecosystem}-package/{package}",
     }
 

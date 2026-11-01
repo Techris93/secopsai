@@ -57,7 +57,6 @@ def test_no_relay_or_credentials_for_arbitrary_urls(monkeypatch):
  ('github_advisories','https://api.github.com/advisories',json.dumps([{'ghsa_id':'GHSA-1234-abcd-5678','html_url':'https://github.com/advisories/GHSA-1234-abcd-5678','summary':'Fixture','description':'Known source report','published_at':'2026-10-14T00:00:00Z','vulnerabilities':[]}]).encode(),1),
  ('openvsx_index','https://open-vsx.org/api/-/search',json.dumps({'extensions':[{'namespace':'fixture','name':'tool','version':'1','description':'New release','url':'https://open-vsx.org/api/fixture/tool','timestamp':'2026-10-14T00:00:00Z'}]}).encode(),1),
  ('jfrog_index','https://research.jfrog.com/',b'<a href="/vulnerabilities/fixture/">Fixture vulnerability</a><a href="/vulnerabilities/">Navigation</a><a href="https://attacker.example/vulnerabilities/fake/">Wrong host</a>',1),
- ('socket_index','https://socket.dev/blog',b'<script><a href="/blog/fake">Fake</a></script><a href="/blog/category/security">Navigation</a><a href="/blog/fixture">Fixture</a>',1),
 ])
 def test_reviewed_source_indexes_are_scoped_leads(parser,url,body,count):
     items = parse_source({'parser':parser,'url':url},body)
@@ -65,7 +64,7 @@ def test_reviewed_source_indexes_are_scoped_leads(parser,url,body,count):
     assert all(x['collection_scope'].startswith('bounded_') for x in items)
 
 
-@pytest.mark.parametrize('parser,body',[('jfrog_index',b'<html>challenge page</html>'),('socket_index',b'<html>no articles</html>'),('github_advisories',b'{"message":"API denied"}'),('openvsx_index',b'{}')])
+@pytest.mark.parametrize('parser,body',[('jfrog_index',b'<html>challenge page</html>'),('github_advisories',b'{"message":"API denied"}'),('openvsx_index',b'{}')])
 def test_malformed_or_challenged_indexes_cannot_advance(parser,body):
     with pytest.raises(ValueError): parse_source({'parser':parser,'url':'https://vendor.example/'},body)
 

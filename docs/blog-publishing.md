@@ -42,7 +42,7 @@ The default registry now prioritizes direct/primary sources before commentary or
 
 - Government/direct advisories: CISA KEV, CISA News, CERT/CC Vulnerability Notes.
 - Vendor/project primary sources: MSRC, GitHub Security Lab, GitHub Security Advisories, OpenSSF, Google Online Security Blog, Cloudflare Security Blog, Microsoft Security Blog, Grafana Security, and Open VSX Registry.
-- External research/context sources: Socket Blog, JFrog Security Research, and The Hacker News.
+- External research/context sources: JFrog Security Research, and The Hacker News.
 
 Supply-chain campaign discovery also reports per-source freshness/status records
 through `secopsai supply-chain discover-campaigns --json`, so feed errors and
