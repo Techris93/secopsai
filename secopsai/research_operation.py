@@ -240,6 +240,13 @@ def hosted_projection(*, db_path=None) -> dict:
     # agreements and confidential review notes are never sent to the hosted
     # read surface. Pending review contains only capped excerpts from sources
     # explicitly configured for public sharing, with archive hashes attached.
+    try:
+        from secopsai.research_auto_verify import ranked_event_ids
+        from secopsai.research_primary_intel import reviews_needing_decision
+
+        status["coverage"]["health"]["primary_intel_needs_decision"] = reviews_needing_decision(set(ranked_event_ids(db_path=db_path)), db_path=db_path)
+    except Exception:  # like the desk, this must never block the operation snapshot
+        status["coverage"]["health"]["primary_intel_needs_decision"] = None
     raw_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
     runtime = {"worker_run_id": os.environ.get("GITHUB_RUN_ID") or os.environ.get("SECOPSAI_GITHUB_RUN_ID"),
                "worker_run_attempt": int(raw_attempt) if raw_attempt.isdigit() else None,

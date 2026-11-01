@@ -169,7 +169,7 @@ watchlist scoring:
    marked `static_confirmed` only when the exact artifact was collected
    successfully; it is never a maliciousness verdict.
 
-The default safety budgets are 100 package documents and 10 artifact analyses
+The default safety budgets are 600 package documents and 10 artifact analyses
 per worker cycle. They can be lowered or raised up to the hard safety caps with
 `SECOPSAI_NPM_ENRICHMENT_EVENT_LIMIT` and
 `SECOPSAI_NPM_STATIC_ANALYSIS_LIMIT`. Events that exceed the current budget

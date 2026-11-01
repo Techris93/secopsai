@@ -542,24 +542,34 @@ def intel_event(event_id: str, *, db_path=None) -> dict:
     return result
 
 
+def _held_event_ids(db_path=None) -> set[str]:
+    """Items a person has marked; automation does not decide these again."""
+    from secopsai.research_operation_store import records
+
+    return {record["payload"]["event_id"] for record in records("intel_verification", db_path=db_path, limit=10000)
+            if not record["payload"].get("automation")}
+
+
+def reviews_needing_decision(keep: set[str] | frozenset[str] = frozenset(), *, db_path=None) -> int:
+    """Queued items the desk ranks or a person marked; the rest age out unread."""
+    wanted = set(keep) | _held_event_ids(db_path)
+    with read_connection(db_path) as conn:
+        return sum(row["event_id"] in wanted for row in conn.execute(
+            "SELECT event_id FROM research_operation_queue WHERE kind='verify_intel' AND state='awaiting_review'"))
+
+
 def age_out_reviews(*, keep: set[str] | frozenset[str] = frozenset(), enforce: bool = False, now: str | None = None, db_path=None) -> dict:
-    """Move old review items with no exploitation signal out of the queue.
+    """Move old review items out of the queue, reported exploitation included.
 
     Reports what it would move unless ``enforce`` is set. Nothing is deleted or
     decided: the row becomes ``archived`` and returns if the desk ranks it later.
     ``keep`` is the desk's ranked events; an item a person marked for further
     review stays too.
     """
-    from secopsai.research_desk import EXPLOITED_RE
-    from secopsai.research_operation_store import records
-
     now = timestamp(now or _now())
     cutoff = (datetime.fromisoformat(now.replace("Z", "+00:00")) - timedelta(days=AGE_OUT_DAYS)).isoformat().replace("+00:00", "Z")
-    held = set()
-    for record in records("intel_verification", db_path=db_path, limit=10000):
-        if not record["payload"].get("automation"):
-            held.add(record["payload"]["event_id"])
-    candidates, by_source, kept_recent, kept_exploited, kept_ranked, oldest = [], {}, 0, 0, 0, ""
+    held = _held_event_ids(db_path)
+    candidates, by_source, kept_recent, kept_ranked, oldest = [], {}, 0, 0, ""
     with read_connection(db_path) as conn:
         rows = conn.execute("""SELECT q.job_id,q.event_id,e.published_at,e.first_observed_at,e.payload_json,s.config_json
             FROM research_operation_queue q JOIN research_intel_events e ON e.event_id=q.event_id
@@ -574,15 +584,13 @@ def age_out_reviews(*, keep: set[str] | frozenset[str] = frozenset(), enforce: b
             kept_recent += 1
         elif row["event_id"] in keep or row["event_id"] in held:
             kept_ranked += 1
-        elif source.get("parser") == "cisa_kev" or EXPLOITED_RE.search(f"{payload.get('title') or ''}\n{payload.get('excerpt') or ''}"):
-            kept_exploited += 1
         else:
             candidates.append(row["job_id"])
             name = str(source.get("name") or row["event_id"])
             by_source[name] = by_source.get(name, 0) + 1
             oldest = min(oldest or dated, dated)
     result = {"status": "enforced" if enforce else "report_only", "older_than_days": AGE_OUT_DAYS, "would_archive": len(candidates),
-              "kept_recent": kept_recent, "kept_exploited": kept_exploited, "kept_ranked_or_held": kept_ranked, "oldest": oldest,
+              "kept_recent": kept_recent, "kept_ranked_or_held": kept_ranked, "oldest": oldest,
               "by_source": dict(sorted(by_source.items(), key=lambda item: -item[1])[:10]), "restored": 0, "archived": 0}
     if enforce:
         with transaction(db_path) as conn:

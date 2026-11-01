@@ -154,6 +154,20 @@ def behaviour_signals(result: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [{"id": "behaviours", "flags": result.get("features", [])[:30]}]
 
 
+def _scan_event(fetcher: SafeFetcher, event: Dict[str, Any], scan: Callable[..., Dict[str, Any]]) -> Dict[str, Any]:
+    """Scan one feed event. PyPI's index names new projects without a version, so use the latest."""
+    if event["version"]:
+        return scan(fetcher, event["ecosystem"], event["package"], event["version"])
+    try:
+        _u, _h, body = fetcher.get(f"https://pypi.org/pypi/{event['package']}/json", allowed_hosts=PYPI_HOSTS, max_bytes=4 * 1024 * 1024)
+        version = str((json.loads(body).get("info") or {}).get("version") or "")
+    except Exception as exc:  # removed before we got to it, or no release yet
+        return {"status": "skipped", "reason": str(exc)[:200]}
+    if not version:
+        return {"status": "skipped", "reason": "project has no release"}
+    return {**scan(fetcher, event["ecosystem"], event["package"], version), "resolved_version": version}
+
+
 def _scan_mcp(fetcher: SafeFetcher, metadata: Dict[str, Any], scan: Callable[..., Dict[str, Any]]) -> Dict[str, Any]:
     """Scan the npm/PyPI package an MCP server ships, with MCP rules applied."""
     for item in metadata.get("packages") or []:
@@ -168,7 +182,8 @@ def _pending(db_path: Optional[str], ecosystem: str, limit: int) -> List[Dict[st
     with closing(soc_store.connect(db_path)) as connection:
         rows = connection.execute(
             """SELECT feed_event_id, ecosystem, package, version, registry_timestamp, metadata_json FROM registry_feed_events
-               WHERE ecosystem = ? AND version <> '' AND event_type NOT LIKE '%removed%'
+               WHERE ecosystem = ? AND (version <> '' OR (ecosystem = 'pypi' AND event_type = 'project_added'))
+                 AND event_type NOT LIKE '%removed%'
                  AND json_extract(metadata_json, '$.content_prescan') IS NULL
                ORDER BY registry_timestamp DESC LIMIT ?""",
             (ecosystem, limit),
@@ -215,13 +230,14 @@ def run(*, db_path: Optional[str] = None, fetcher: Optional[SafeFetcher] = None,
             if ecosystem == "mcp-registry":
                 results = list(pool.map(lambda event: _scan_mcp(fetcher, json.loads(event.get("metadata_json") or "{}"), scan), events))
             else:
-                results = list(pool.map(lambda event: scan(fetcher, ecosystem, event["package"], event["version"]), events))
+                results = list(pool.map(lambda event: _scan_event(fetcher, event, scan), events))
         counts = {"scanned": len(events), "hits": 0, "clean": 0, "errors": 0, "skipped": 0, "rules_matched": {}}
         now = _now()
         for event, result in zip(events, results):
+            event = {**event, "version": result.get("resolved_version") or event["version"]}
             status = result.get("status", "error")
             counts["hits" if status == "hit" else "clean" if status == "clean" else "skipped" if status == "skipped" else "errors"] += 1
-            record = {"status": status, "at": now, **{key: result[key] for key in ("score", "level", "rules_matched", "files", "scanned_package") if key in result}}
+            record = {"status": status, "at": now, **{key: result[key] for key in ("score", "level", "rules_matched", "files", "scanned_package", "resolved_version") if key in result}}
             if result.get("reason"):
                 record["reason"] = result["reason"]
             with closing(soc_store.connect(db_path)) as connection:

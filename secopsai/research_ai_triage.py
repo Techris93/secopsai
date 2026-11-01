@@ -25,7 +25,7 @@ import soc_store
 from secopsai.decision_evidence import COVERAGE_CONTRACT
 
 CURSOR_KEY = "core_ai_triage_results"
-MAX_QUEUE_PER_CYCLE = 25
+MAX_QUEUE_PER_CYCLE = 50
 QUEUE_CHUNK = 5
 AUTO_RESOLVE_CONFIDENCE = 85
 # Thresholds are candidate policy settings, not permission to close alerts.

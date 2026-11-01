@@ -21,12 +21,12 @@ from secopsai.research_intake import SafeFetcher
 
 NPM_ARTIFACT_HOSTS = ("registry.npmjs.org",)
 MAX_ARCHIVE_BYTES = 25 * 1024 * 1024
-DEFAULT_WORKERS = 12
+DEFAULT_WORKERS = 16
 HIT_LEVELS = {"notice", "warning", "alert"}
 
 
 def prescan_limit() -> int:
-    return max(0, min(int(os.environ.get("SECOPSAI_NPM_PRESCAN_LIMIT", "150") or 0), 2000))
+    return max(0, min(int(os.environ.get("SECOPSAI_NPM_PRESCAN_LIMIT", "600") or 0), 2000))
 
 
 INSTALL_SCRIPTS = ("preinstall", "install", "postinstall", "prepare")
