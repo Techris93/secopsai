@@ -23,7 +23,6 @@ TARGETS = {
     'github_advisories': b'[{"ghsa_id":"GHSA-abcd-1234-5678","html_url":"https://github.com/advisories/GHSA-abcd-1234-5678","summary":"Fixture","description":"Fixture"}]',
     'openvsx_index': b'{"extensions":[{"namespace":"fixture","name":"tool","version":"1","url":"https://open-vsx.org/api/fixture/tool","description":"Fixture"}]}',
     'jfrog_index': b'<a href="/vulnerabilities/fixture/">Fixture vulnerability</a>',
-    'socket_index': b'<a href="/blog/fixture">Fixture article</a>',
 }
 
 
@@ -49,7 +48,7 @@ def _exercise(seed, cases):
         parser = sorted(TARGETS)[index % len(TARGETS)]
         body = TARGETS[parser] if index < len(TARGETS) else _mutate(TARGETS[parser], rng)
         corpus.update(parser.encode() + b'\0' + len(body).to_bytes(4,'big') + body)
-        url = 'https://research.jfrog.com/' if parser=='jfrog_index' else 'https://socket.dev/blog' if parser=='socket_index' else 'https://example.org/'
+        url = 'https://research.jfrog.com/' if parser=='jfrog_index' else 'https://example.org/'
         try:
             result = parse_source({'parser':parser,'url':url},body)
             if not isinstance(result,list) or any(r.get('assessment')!='source_reported' or r.get('observed_exploitation_by_secopsai') is not False for r in result):

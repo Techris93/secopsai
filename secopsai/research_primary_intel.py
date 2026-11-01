@@ -35,7 +35,7 @@ class IntakeBackpressureError(ValueError):
 
 
 def source_headers(parser: str, *, url: str | None = None) -> dict:
-    if parser in {"jfrog_index", "socket_index"}:
+    if parser == "jfrog_index":
         headers = {"Accept": "text/html"}
     else:
         headers = {"Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8" if parser in {"rss", "msrc_rss"} else "application/json"}
@@ -74,7 +74,7 @@ def configure_source(config: dict, *, actor: str, db_path=None) -> dict:
              "parser": config.get("parser"), "source_class": config.get("source_class"),
              "sharing": config.get("sharing", "public"), "license": text(config.get("license", "unknown"), "license", limit=1000),
              "interval_seconds": config.get("interval_seconds", 86400), "enabled": config.get("enabled", False)}
-    if value["parser"] not in {"rss", "msrc_rss", "cisa_kev", "normalized_json", "github_advisories", "openvsx_index", "jfrog_index", "socket_index"} or value["source_class"] not in {"government", "vendor", "registry", "research", "partner", "aggregator", "project"}:
+    if value["parser"] not in {"rss", "msrc_rss", "cisa_kev", "normalized_json", "github_advisories", "openvsx_index", "jfrog_index"} or value["source_class"] not in {"government", "vendor", "registry", "research", "partner", "aggregator", "project"}:
         raise ValueError("unsupported source parser or class")
     if type(value["interval_seconds"]) is not int or not 300 <= value["interval_seconds"] <= 604800 or type(value["enabled"]) is not bool:
         raise ValueError("invalid source interval or enablement")
@@ -115,6 +115,16 @@ def seed_sources(*, db_path=None) -> dict:
                 if previous and any(previous[key] != desired[key] for key in ("url", "parser")):
                     conn.execute("UPDATE research_intel_sources SET last_attempt_at=NULL,last_success_at=NULL,error_category='',consecutive_failures=0 WHERE source_id=?", (identity,))
         supported.append(identity)
+    # A source dropped from the catalog stops polling; its events stay as history.
+    with transaction(db_path) as conn:
+        for row in conn.execute("SELECT source_id,config_json FROM research_intel_sources").fetchall():
+            config = json.loads(row["config_json"])
+            last_config = conn.execute("SELECT actor,payload_json FROM research_operation_records WHERE kind='source_configuration' AND json_extract(payload_json,'$.source_id')=? ORDER BY created_at DESC,rowid DESC LIMIT 1", (row["source_id"],)).fetchone()
+            if row["source_id"] in supported or not config["enabled"] or not last_config or last_config["actor"] != "source-catalog" or json.loads(last_config["payload_json"]) != config:
+                continue
+            retired = {**config, "enabled": False}
+            conn.execute("UPDATE research_intel_sources SET config_json=? WHERE source_id=?", (canonical(retired), row["source_id"]))
+            append("source_configuration", retired, actor="source-catalog", connection=conn)
     return {"sources": supported, "unsupported_sources": omitted}
 
 
@@ -188,7 +198,7 @@ def parse_source_report(config: dict, content: bytes, *, now=None) -> dict:
                             excerpt_sha256=hashlib.sha256(excerpt.encode()).hexdigest(), excerpt_selection={"start": 0, "end": 20000})
             items.append(item)
         events_total = len(feed.entries)
-    elif parser in {"github_advisories", "openvsx_index", "jfrog_index", "socket_index"}:
+    elif parser in {"github_advisories", "openvsx_index", "jfrog_index"}:
         from secopsai.research_source_parsers import parse_index
         items = parse_index(config, content)
         events_total = len(items)

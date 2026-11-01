@@ -88,7 +88,6 @@ def main() -> int:
     for required in {
         "CISA Known Exploited Vulnerabilities",
         "CERT/CC Vulnerability Notes",
-        "Socket Blog",
         "JFrog Security Research",
         "The Hacker News",
         "GitHub Security Advisories",

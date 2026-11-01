@@ -163,7 +163,7 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
                 attempt_status = "unknown"
             sources.append({"source_id": row["source_id"], "name": config["name"], "coverage_mode": "source_reporting", "enabled": config["enabled"],
                             "collection_scope": ("bounded_revision_overlap" if config["parser"] == "msrc_rss" else
-                                                 "bounded_recent_index" if config["parser"] in {"github_advisories", "openvsx_index", "jfrog_index", "socket_index"} else "bounded_published_feed"),
+                                                 "bounded_recent_index" if config["parser"] in {"github_advisories", "openvsx_index", "jfrog_index"} else "bounded_published_feed"),
                             "eligible_events": None, "observed_events": observed, "last_success_at": row["last_success_at"],
                             "last_attempt_at": row["last_attempt_at"], "last_attempt_status": attempt_status,
                             "interval_seconds": int(config["interval_seconds"]), "delay_seconds": delay,

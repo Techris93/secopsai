@@ -2170,7 +2170,7 @@ def _parse_html_items(text: str, source: Dict[str, Any], *, limit: int) -> List[
                 ]
                 items.append(_normalise_news_item({
                     "title": title,
-                    "url": f"https://socket.dev/blog/{slug}" if "socket.dev" in str(source.get("url")) else slug,
+                    "url": slug,
                     "summary": node.get("description") or title,
                     "published_at": node.get("publishedAt", ""),
                     "tags": categories,
