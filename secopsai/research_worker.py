@@ -848,6 +848,18 @@ def _cycle_outcomes(summary: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _record_completed_cycles(cycles: int) -> None:
+    """Tell the supervisor how many cycles finished; this must not stop surveillance."""
+    path = os.environ.get("SECOPSAI_WORKER_CYCLES_PATH", "")
+    if not path:
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"cycles": cycles}, handle)
+    except OSError as exc:
+        capture_exception(exc, context={"component": "research_worker_cycle_record"})
+
+
 def run_worker_loop(
     *,
     db_path: Optional[str] = None,
@@ -1036,6 +1048,7 @@ def run_worker_loop(
                               "primary_intel": primary_diagnostics},
                              default=str)[:4000], flush=True)
             cycles += 1
+            _record_completed_cycles(cycles)
             check_shutdown()
             if core_edge.enabled:
                 # Publish the final heartbeat only after ontology sync and
