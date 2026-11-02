@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -27,6 +28,33 @@ HIT_LEVELS = {"notice", "warning", "alert"}
 
 def prescan_limit() -> int:
     return max(0, min(int(os.environ.get("SECOPSAI_NPM_PRESCAN_LIMIT", "150") or 0), 2000))
+
+
+# The same 150 prescans took 251.5 s in worker 41380897262 and 559.8 s in
+# 41385834554, so a count alone cannot keep the cycle inside its budget.  After
+# the cap, scans already running take up to about 60-90 s to finish (16 in
+# parallel, about 27-60 s each), full analyses about 40 s, and the later stages
+# about 360-380 s (content funnel 256-289 s), so 540 s stays free.
+PRESCAN_SECONDS = 600
+PRESCAN_RESERVE_SECONDS = 540
+
+
+def _env_seconds(name: str, default: int) -> int:
+    try:
+        return max(0, min(int(os.environ.get(name, str(default)) or 0), 3600))
+    except ValueError:
+        return default
+
+
+def prescan_seconds() -> float:
+    """How long new prescans may start: a fixed cap, cut to leave the reserve before the worker's deadline."""
+    from secopsai.research_worker import seconds_left
+
+    cap = float(_env_seconds("SECOPSAI_NPM_PRESCAN_SECONDS", PRESCAN_SECONDS))
+    left = seconds_left()
+    if left is not None:
+        cap = min(cap, max(0.0, left - _env_seconds("SECOPSAI_NPM_PRESCAN_RESERVE_SECONDS", PRESCAN_RESERVE_SECONDS)))
+    return cap
 
 
 INSTALL_SCRIPTS = ("preinstall", "install", "postinstall", "prepare")
@@ -119,12 +147,26 @@ def _scan_one(target: Dict[str, Any], fetcher: SafeFetcher) -> Dict[str, Any]:
     }
 
 
-def prescan(targets: Iterable[Dict[str, Any]], *, fetcher: Optional[SafeFetcher] = None, workers: int = DEFAULT_WORKERS) -> Dict[str, Dict[str, Any]]:
-    """Scan targets ({key, package, version, tarball}); returns results by key."""
+def prescan(targets: Iterable[Dict[str, Any]], *, fetcher: Optional[SafeFetcher] = None, workers: int = DEFAULT_WORKERS,
+            seconds: Optional[float] = None) -> Dict[str, Dict[str, Any]]:
+    """Scan targets ({key, package, version, tarball}); returns results by key.
+
+    No scan starts once `seconds` (default prescan_seconds()) have passed; the
+    rest come back "deferred" and stay pending for a later cycle.  Each result
+    records its own seconds so a slow batch shows which releases cost the time.
+    """
     items = list(targets)
     if not items or not yara_engine.status().get("available"):
         return {}
     fetcher = fetcher or SafeFetcher(timeout=30)
+    stop_at = time.monotonic() + (prescan_seconds() if seconds is None else seconds)
+
+    def scan(item: Dict[str, Any]) -> Dict[str, Any]:
+        if time.monotonic() >= stop_at:
+            return {"key": item.get("key"), "package": item.get("package"), "version": item.get("version"), "status": "deferred"}
+        started = time.monotonic()
+        return {**_scan_one(item, fetcher), "seconds": round(time.monotonic() - started, 1)}
+
     with ThreadPoolExecutor(max_workers=max(1, min(int(workers), 32))) as pool:
-        results = list(pool.map(lambda item: _scan_one(item, fetcher), items))
+        results = list(pool.map(scan, items))
     return {str(item["key"]): item for item in results}

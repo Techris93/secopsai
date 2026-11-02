@@ -288,6 +288,82 @@ def test_static_triage_spends_downloads_on_the_most_suspicious_release(tmp_path,
     assert analysed == ["hooked-package"]
 
 
+def test_prescan_starts_no_scan_after_its_time_runs_out(monkeypatch):
+    # Workers 41385834554 and 41402706964 spent 560 s and 531 s on the same 150
+    # prescans that took 251.5 s an hour earlier, and completed no cycle.
+    import time
+    from secopsai import research_funnel, yara_engine
+
+    monkeypatch.setattr(yara_engine, "status", lambda: {"available": True})
+    started = []
+
+    def slow_scan(target, _fetcher):
+        started.append(target["key"])
+        time.sleep(0.2)
+        return {"key": target["key"], "package": target["package"], "version": target["version"], "status": "clean", "files": 1}
+
+    monkeypatch.setattr(research_funnel, "_scan_one", slow_scan)
+    targets = [{"key": f"E{index}", "package": f"p{index}", "version": "1.0.0", "tarball": ""} for index in range(10)]
+    fetcher = SafeFetcher(fetch=lambda *_: (503, {}, b""))
+    results = research_funnel.prescan(targets, fetcher=fetcher, workers=1, seconds=0.5)
+    assert 1 <= len(started) <= 3, "each scan takes 0.2 s, so at most three start inside 0.5 s"
+    assert {key for key, item in results.items() if item["status"] == "deferred"} == {item["key"] for item in targets} - set(started)
+    assert all(results[key]["seconds"] >= 0.2 for key in started), "each scan records its own time"
+    started.clear()
+    assert {item["status"] for item in research_funnel.prescan(targets, fetcher=fetcher, seconds=0).values()} == {"deferred"}
+    assert started == []
+
+
+def test_prescan_time_leaves_the_later_stages_their_reserve(monkeypatch):
+    import time
+    from secopsai import research_funnel
+
+    for name in ("SECOPSAI_WORKER_DEADLINE_EPOCH", "SECOPSAI_NPM_PRESCAN_SECONDS", "SECOPSAI_NPM_PRESCAN_RESERVE_SECONDS"):
+        monkeypatch.delenv(name, raising=False)
+    assert research_funnel.prescan_seconds() == 600, "an unbounded run keeps the fixed cap"
+    monkeypatch.setenv("SECOPSAI_WORKER_DEADLINE_EPOCH", str(time.time() + 790))
+    assert 245 <= research_funnel.prescan_seconds() <= 250, "540 s stay free before the worker deadline"
+    monkeypatch.setenv("SECOPSAI_WORKER_DEADLINE_EPOCH", str(time.time() + 500))
+    assert research_funnel.prescan_seconds() == 0, "too late in the budget for any prescan"
+    monkeypatch.setenv("SECOPSAI_WORKER_DEADLINE_EPOCH", str(time.time() + 3000))
+    monkeypatch.setenv("SECOPSAI_NPM_PRESCAN_SECONDS", "120")
+    assert research_funnel.prescan_seconds() == 120
+
+
+def test_deferred_prescans_stay_pending_and_the_slowest_scans_are_reported(tmp_path, monkeypatch):
+    from secopsai import research_funnel
+    from secopsai import research_npm_enrichment as enrichment
+
+    db = str(tmp_path / "research.db")
+    ensure_collectors(db_path=db)
+    now = soc_store.utc_now()
+    with soc_store.connect(db) as connection:
+        for seq in range(2):
+            connection.execute(
+                """INSERT INTO registry_feed_events
+                   (feed_event_id, collector_id, ecosystem, package, version, event_type, registry_timestamp, page_url,
+                    leaf_url, leaf_fetched, metadata_json, idempotency_key, collected_at, processing_state)
+                   VALUES (?, 'COL-NPM-CHANGES', 'npm', ?, '1.0.1', 'published', ?, 'u', 'u', 0, ?, ?, ?, 'pending')""",
+                (f"RFE-CAP-{seq}", f"plain-{seq}", now, json.dumps({"version_summary": {"tarball": "t"}}), f"cap-{seq}", now),
+            )
+        connection.commit()
+    monkeypatch.setattr(research_funnel, "prescan", lambda targets, **_kw: {
+        "RFE-CAP-0": {"key": "RFE-CAP-0", "package": "plain-0", "version": "1.0.1", "status": "clean", "files": 3, "bytes": 900, "seconds": 41.5},
+        "RFE-CAP-1": {"key": "RFE-CAP-1", "package": "plain-1", "version": "1.0.1", "status": "deferred"},
+    })
+    analysed = []
+    monkeypatch.setattr(enrichment, "collect_package_intake", lambda **kw: analysed.append(kw["package"]) or (_ for _ in ()).throw(RuntimeError("offline")))
+    funnel = enrichment._run_static_triage(db_path=db, fetcher=SafeFetcher(fetch=lambda *_: (503, {}, b"")), limit=1)["funnel"]
+    assert (funnel["prescanned"], funnel["deferred"], funnel["retired_clean"]) == (1, 1, 1)
+    assert funnel["slowest"] == [{"package": "plain-0", "version": "1.0.1", "status": "clean", "seconds": 41.5, "bytes": 900, "files": 3}]
+    assert analysed == ["plain-1"], "a deferred release keeps its place in the ranking"
+    with soc_store.connect(db) as connection:
+        rows = {row["feed_event_id"]: (row["processing_state"], json.loads(row["metadata_json"])) for row in connection.execute(
+            "SELECT feed_event_id, processing_state, metadata_json FROM registry_feed_events WHERE feed_event_id LIKE 'RFE-CAP-%'")}
+    assert rows["RFE-CAP-0"][0] == "scored"
+    assert rows["RFE-CAP-1"][0] != "scored" and "npm_prescan" not in rows["RFE-CAP-1"][1], "deferred is not retired as clean"
+
+
 def test_developer_scripts_and_first_observed_hooks_do_not_inflate_score():
     # Regression from a live false positive: a first-observed release whose
     # existing postinstall predates it, and "secret" appearing only in the
