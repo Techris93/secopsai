@@ -8,7 +8,7 @@ CATEGORIES = ("matched_strings", "flag_locations", "findings", "install_time_fil
 MAX_STATE_CHARS = 32_000
 # Contexts built before this contract carry no exact region counts, so they
 # can never count as complete.
-COVERAGE_CONTRACT = "context-v4"
+COVERAGE_CONTRACT = "context-v5"
 # Package text written for whoever reviews it. Legitimate code rarely argues
 # its own innocence, so this blocks closure however the model answered.
 REVIEWER_TEXT = re.compile(
@@ -194,10 +194,24 @@ def context_coverage(context: dict[str, Any]) -> dict[str, Any]:
     gaps.extend(f"root_manifest_not_supplied:{path}" for path in manifests if path not in whole)
     if reviewer_directed_text(context):
         gaps.append("reviewer_directed_text")
+    gaps.extend(dependency_gaps(context))
     gaps = list(dict.fromkeys(gaps))
     return {"contract": COVERAGE_CONTRACT, "complete": not gaps, "gaps": gaps[:50], "gap_count": len(gaps),
             "included_categories": sorted(key for key in CATEGORIES if context.get(key)), "omitted_categories": [],
             "truncated_records": gaps[:50], "source_truncated": bool(context.get("evidence_truncated"))}
+
+
+def dependency_gaps(context: dict[str, Any]) -> list[str]:
+    """A malicious dependency, or one nobody could check, keeps a package open
+    whatever its own code shows (npm @mastra/laminar 1.2.3, 2026-11-02)."""
+    advisories = context.get("dependency_advisories")
+    if not isinstance(advisories, dict):
+        return ["dependencies_not_checked"]
+    gaps = [f"dependency_check:{advisories.get('status')}"] if advisories.get("status") != "checked" else []
+    gaps += [f"malicious_dependency:{item.get('name')}" for item in advisories.get("malicious") or [] if isinstance(item, dict)]
+    gaps += [f"unverifiable_dependency:{name}" for name in advisories.get("unverifiable") or []]
+    gaps += [f"dependency_list_unreadable:{path}" for path in advisories.get("unparsed") or []]
+    return gaps
 
 
 def coverage_for_result(context: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:

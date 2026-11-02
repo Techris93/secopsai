@@ -840,8 +840,11 @@ def _cycle_outcomes(summary: dict[str, Any]) -> dict[str, Any]:
     for run in investigations.get("runs") or []:
         code = str(run.get("blocker_code") or "none") if isinstance(run, dict) else "none"
         blockers[code] = blockers.get(code, 0) + 1
+    from secopsai import dependency_advisories
+
     return {
         "age_out": editorial.get("age_out"),
+        "osv_dependency_lookups": dependency_advisories.take_stats(),
         "automated_verification": {key: value for key, value in verification.items() if key != "needs_review_ids"},
         "investigations": {"processed": investigations.get("processed"), "blockers": blockers,
                            "queued_before_backfill": (investigations.get("queue") or {}).get("queued_before_backfill")},

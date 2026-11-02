@@ -174,9 +174,12 @@ def has_malicious_advisory(ecosystem: str, package: str, version: str) -> bool:
 
 def next_clean_targets() -> List[Dict[str, Any]]:
     """The popular packages after those clean_targets(3000, 1500) and earlier fresh corpora scanned."""
-    from build_watchlists import npm_watchlist, pypi_watchlist
+    import build_watchlists
 
-    return [{"ecosystem": "npm", "package": name} for name in npm_watchlist()[6000:10000]] + [{"ecosystem": "pypi", "package": name} for name in pypi_watchlist()[3000:5000]]
+    # Past the Fast Lane limits: the lists hold about 15,900 npm and 15,000 PyPI names.
+    build_watchlists.NPM_LIMIT, build_watchlists.PYPI_LIMIT = 16_000, 9_000
+    return [{"ecosystem": "npm", "package": name} for name in build_watchlists.npm_watchlist()[10000:16000]] + \
+        [{"ecosystem": "pypi", "package": name} for name in build_watchlists.pypi_watchlist()[5000:9000]]
 
 
 def clean_rows(fetcher: Any, seed: int, excluded: frozenset = frozenset()) -> List[Dict[str, Any]]:
@@ -250,6 +253,27 @@ def production_rows(fetcher: Any, targets: List[Dict[str, str]], seed: int) -> L
         return [row for row in pool.map(one, targets) if row]
 
 
+def recheck_dependencies(rows: List[Dict[str, Any]], attempts: int = 3, pause: float = 30) -> None:
+    """Retry dependency lookups that failed while building: an unchecked sample cannot close, which would bias the test."""
+    from secopsai import dependency_advisories
+
+    pending = [row for row in rows if (row["context"].get("dependency_advisories") or {}).get("status") == "unavailable"]
+    for attempt in range(attempts):
+        for row in list(pending):
+            advisories = row["context"]["dependency_advisories"]
+            dependency_advisories._unavailable_until = 0.0
+            fresh = dependency_advisories.check(row["ecosystem"], {"names": advisories.get("declared") or [], "unverifiable": advisories.get("unverifiable") or [],
+                                                                   "unparsed": advisories.get("unparsed") or []})
+            if fresh["status"] != "unavailable":
+                row["context"]["dependency_advisories"] = fresh
+                pending.remove(row)
+        if not pending:
+            return
+        if attempt < attempts - 1:
+            time.sleep(pause)
+    raise SystemExit(f"{len(pending)} samples still have unchecked dependencies")
+
+
 def corpus_summary(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     groups: Dict[str, Dict[str, Any]] = {}
     gaps: Counter = Counter()
@@ -287,6 +311,7 @@ def command_build(args: argparse.Namespace) -> int:
     for row in rng.sample(held_out, min(args.adversarial, len(held_out))):
         row["set"] = "adversarial"
         row["context"] = inject(row["context"], rng.choice(INJECTIONS))
+    recheck_dependencies(rows)
     corpus = {"built_at": built_at, "seed": args.seed, "model": MODEL, "min_age_days": MIN_AGE_DAYS, "rows": rows}
     if excluded:
         corpus["excluded_packages"] = len(excluded)
@@ -310,6 +335,7 @@ def command_extend(args: argparse.Namespace) -> int:
     print(f"{len(targets)} production packages to check", flush=True)
     found = production_rows(SafeFetcher(timeout=60), targets, corpus["seed"])
     print(f"{len(found)} still flagged, aged and without a malware advisory", flush=True)
+    recheck_dependencies(found)
     if excluded:
         for row in found:
             row["partition"] = "held_out"
@@ -353,6 +379,7 @@ def command_rebuild(args: argparse.Namespace) -> int:
     with ThreadPoolExecutor(max_workers=16) as pool:
         rebuilt = [row for row in pool.map(one, corpus["rows"]) if row]
     print(f"{len(rebuilt)} of {len(corpus['rows'])} samples rebuilt", flush=True)
+    recheck_dependencies(rebuilt)
     corpus["rows"] = rebuilt
     corpus["built_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     with gzip.open(args.corpus, "wt", encoding="utf-8") as handle:
