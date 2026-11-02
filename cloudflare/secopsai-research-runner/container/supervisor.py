@@ -668,6 +668,32 @@ def checkpoint(db_path: Path, store: LedgerStore, workdir: Path, *, force_rebase
         return key
 
 
+# The ledger store accepts at most 900 objects of 28 MiB per checkpoint.
+LEDGER_LIMIT_BYTES = 900 * 28 * 1024 * 1024
+COMPACT_FRACTION = 0.80
+FEED_RETENTION_SECONDS = 300
+COMPACT_RETENTION_SECONDS = 2700
+
+
+def compaction_due(size_bytes: int) -> bool:
+    return size_bytes > LEDGER_LIMIT_BYTES * COMPACT_FRACTION
+
+
+def run_feed_retention(data_dir: Path, output: Path, *, compact: bool) -> dict:
+    """Prune registry feed events before the worker starts, so deletes never
+    compete with collectors and never count against the worker's budget."""
+    output.unlink(missing_ok=True)
+    command = [sys.executable, "-u", "-m", "secopsai.cli", "research", "storage", "feed-retention",
+               "--seconds", str(COMPACT_RETENTION_SECONDS if compact else FEED_RETENTION_SECONDS),
+               "--output", str(output)] + (["--compact"] if compact else [])
+    code = subprocess.run(command, env={**os.environ, "SECOPS_FINDINGS_DIR": str(data_dir)}).returncode
+    try:
+        result = json.loads(output.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        result = {}
+    return {**result, "exit_code": code}
+
+
 def periodic_checkpoints(stopping, interval, capture):
     """Wait a full interval after each bounded capture, including failed ones."""
     while not stopping.wait(interval):
@@ -766,7 +792,30 @@ def main(argv: Optional[list] = None) -> int:
             _write_runtime_report(report_path, report)
             return 2
         _log("ledger_restored" if restored else "ledger_initialized", path=str(db_path))
-        if restored and planned_rebase_due(store):
+        compacted = False
+        if restored and not args.delivery_only:
+            size = db_path.stat().st_size
+            compact = compaction_due(size)
+            _log("ledger_capacity", bytes=size, limit_bytes=LEDGER_LIMIT_BYTES, fraction=round(size / LEDGER_LIMIT_BYTES, 3), compact=compact)
+            retention = run_feed_retention(data_dir, report_dir / "feed-retention.json", compact=compact)
+            report["feed_retention"] = retention
+            _write_runtime_report(report_path, report)
+            _log("feed_retention_finished", **{key: retention.get(key) for key in ("exit_code", "complete", "prune_seconds", "compacted", "compact_skipped", "before_bytes", "after_bytes")})
+            compacted = retention.get("compacted") is True
+        if compacted:
+            # Every page moved, so the old baseline is useless; upload the
+            # smaller ledger as the new one before any worker writes. If that
+            # fails, stop: the store still holds the previous ledger intact.
+            try:
+                save_checkpoint("compaction_rebase", force_rebase=True)
+                _log("compaction_rebase_completed")
+            except Exception as exc:
+                _log("compaction_rebase_failed", **_error_fields(exc))
+                report.update(status="failed", failure_category="compaction_checkpoint_failed",
+                              completed_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+                _write_runtime_report(report_path, report)
+                return 1
+        elif restored and planned_rebase_due(store):
             # No worker is writing yet, so the capture is quick and consistent.
             _log("planned_rebase_started", delta_bytes=store.restored_delta_bytes, size_bytes=store.restored_size_bytes)
             try:

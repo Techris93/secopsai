@@ -1113,3 +1113,78 @@ def test_forced_rebase_skips_the_sparse_diff_and_gets_its_own_upload_budget(tmp_
     assert supervisor.checkpoint(db, store, tmp_path, force_rebase=True) == 'full-checkpoint'
     assert store.deadline == 300 + supervisor.PLANNED_REBASE_UPLOAD_SECONDS
     assert store.baseline_path == tmp_path/'.checkpoint-base.db' and store.indexed, "the upload becomes the new baseline"
+
+
+def test_compaction_is_due_above_four_fifths_of_the_store_limit():
+    limit = 900 * 28 * 1024 * 1024
+    assert supervisor.LEDGER_LIMIT_BYTES == limit
+    assert supervisor.compaction_due(25_793_097_728), "the 2026-11-02 production ledger"
+    assert not supervisor.compaction_due(int(limit * 0.8))
+    assert not supervisor.compaction_due(15 * 1024 ** 3)
+
+
+@pytest.mark.parametrize("compact", [False, True])
+def test_feed_retention_runs_as_a_bounded_cli_step(tmp_path, monkeypatch, compact):
+    calls = []
+
+    def fake_run(command, env):
+        calls.append((command, env["SECOPS_FINDINGS_DIR"]))
+        Path(command[command.index("--output") + 1]).write_text(json.dumps({"complete": True, "compacted": compact}))
+        return type("Done", (), {"returncode": 0})()
+
+    monkeypatch.setattr(supervisor.subprocess, "run", fake_run)
+    result = supervisor.run_feed_retention(tmp_path, tmp_path / "feed-retention.json", compact=compact)
+    command, findings_dir = calls[0]
+    assert command[3:7] == ["secopsai.cli", "research", "storage", "feed-retention"]
+    assert command[command.index("--seconds") + 1] == str(supervisor.COMPACT_RETENTION_SECONDS if compact else supervisor.FEED_RETENTION_SECONDS)
+    assert ("--compact" in command) is compact and findings_dir == str(tmp_path)
+    assert result == {"complete": True, "compacted": compact, "exit_code": 0}
+
+
+def test_a_failed_feed_retention_step_still_lets_the_worker_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(supervisor.subprocess, "run", lambda command, env: type("Done", (), {"returncode": 1})())
+    assert supervisor.run_feed_retention(tmp_path, tmp_path / "missing.json", compact=True) == {"exit_code": 1}
+
+
+@pytest.mark.parametrize("rebase_fails", [False, True])
+def test_a_compacted_ledger_becomes_the_new_baseline_before_the_worker_starts(tmp_path, monkeypatch, rebase_fails):
+    reports = tmp_path / "reports"
+    monkeypatch.setenv("SECOPS_FINDINGS_DIR", str(tmp_path / "research"))
+    monkeypatch.setenv("SECOPSAI_WORKER_DIAGNOSTICS_DIR", str(reports))
+    monkeypatch.setenv("LEDGER_STORE_URL", "http://ledger.internal")
+    monkeypatch.setenv("LEDGER_STORE_TOKEN", "tok")
+
+    class Store:
+        def __init__(self, url, token):
+            pass
+
+        def download(self, path):
+            sqlite3.connect(path).execute("CREATE TABLE t (x)").connection.commit()
+            return True
+
+    events = []
+
+    def fake_checkpoint(db_path, store, workdir, *, force_rebase=False):
+        events.append(("checkpoint", force_rebase))
+        if force_rebase and rebase_fails:
+            raise RuntimeError("ledger store unavailable")
+        return "key"
+
+    original_popen = supervisor.subprocess.Popen
+
+    def fake_popen(command, **kwargs):
+        events.append(("worker",))
+        return original_popen([supervisor.sys.executable, "-c", "pass"], **kwargs)
+
+    monkeypatch.setattr(supervisor, "LedgerStore", Store)
+    monkeypatch.setattr(supervisor, "run_feed_retention", lambda data_dir, output, *, compact: {"compacted": True, "exit_code": 0})
+    monkeypatch.setattr(supervisor, "checkpoint", fake_checkpoint)
+    monkeypatch.setattr(supervisor.subprocess, "Popen", fake_popen)
+    code = supervisor.main(["--cycles", "1"])
+    report = json.loads((reports / "worker-runtime.json").read_text())
+    assert report["feed_retention"]["compacted"] is True
+    if rebase_fails:
+        assert code == 1 and events == [("checkpoint", True)], "the worker must not write on top of an unsaved rewrite"
+        assert report["failure_category"] == "compaction_checkpoint_failed"
+    else:
+        assert events[:2] == [("checkpoint", True), ("worker",)]
