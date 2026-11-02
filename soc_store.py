@@ -18,6 +18,7 @@ from typing import Any, Dict, Iterable, List
 from urllib.parse import quote
 
 from secopsai.sqlite_writer_lock import sqlite_writer_lock
+from secopsai.worker_control import WorkerShutdown, shutdown_requested
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -97,6 +98,60 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
     return connection
 
 
+READ_STOP_CHECK_STEPS = 10_000
+
+
+def _stop_as_shutdown(error: sqlite3.OperationalError) -> None:
+    """A read interrupted because the worker is stopping is a stop, not a failure."""
+    if shutdown_requested():
+        raise WorkerShutdown() from error
+
+
+class _StopAwareCursor(sqlite3.Cursor):
+    def execute(self, *args):
+        try:
+            return super().execute(*args)
+        except sqlite3.OperationalError as error:
+            _stop_as_shutdown(error)
+            raise
+
+    def fetchone(self):
+        try:
+            return super().fetchone()
+        except sqlite3.OperationalError as error:
+            _stop_as_shutdown(error)
+            raise
+
+    def fetchmany(self, *args):
+        try:
+            return super().fetchmany(*args)
+        except sqlite3.OperationalError as error:
+            _stop_as_shutdown(error)
+            raise
+
+    def fetchall(self):
+        try:
+            return super().fetchall()
+        except sqlite3.OperationalError as error:
+            _stop_as_shutdown(error)
+            raise
+
+    def __next__(self):
+        try:
+            return super().__next__()
+        except sqlite3.OperationalError as error:
+            _stop_as_shutdown(error)
+            raise
+
+
+class _StopAwareConnection(sqlite3.Connection):
+    def cursor(self, factory=_StopAwareCursor):
+        return super().cursor(factory)
+
+    def execute(self, *args):
+        return self.cursor().execute(*args)
+
+
 def read_connect(db_path: str | None = None) -> sqlite3.Connection:
     """Open a query-only connection for dashboard and reporting reads.
 
@@ -111,11 +166,16 @@ def read_connect(db_path: str | None = None) -> sqlite3.Connection:
     raw_timeout = os.environ.get("SECOPS_BUSY_TIMEOUT_MS", "").strip()
     busy_timeout_ms = int(raw_timeout) if raw_timeout.isdigit() else 30000
     uri = f"file:{quote(resolved_path, safe='/')}?mode=ro"
-    connection = sqlite3.connect(uri, uri=True, timeout=max(30, busy_timeout_ms // 1000))
+    connection = sqlite3.connect(uri, uri=True, timeout=max(30, busy_timeout_ms // 1000), factory=_StopAwareConnection)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
     connection.execute("PRAGMA query_only = ON")
+    # A stopping worker must not sit in a long read: Python runs the stop
+    # signal's handler only between SQLite steps, and the supervisor kills a
+    # worker that has not stopped 180 s after it was asked to (2026-11-02, a
+    # post-cycle ontology read). The read then raises WorkerShutdown.
+    connection.set_progress_handler(shutdown_requested, READ_STOP_CHECK_STEPS)
     return connection
 
 
