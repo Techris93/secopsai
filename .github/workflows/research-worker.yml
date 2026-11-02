@@ -174,7 +174,11 @@ jobs:
         # Exhausted retries still fail the run so an unsaved checkpoint is visible.
         run: |
           delivery_args=()
-          max_seconds=900
+          # A cycle took 497-847 s in recent runs, but network-bound stages vary by
+          # several minutes (registry collection 12-183 s, npm scans 227-420 s), and
+          # a run that completes no cycle fails (41525492232). The run stays well
+          # inside the watchdog's 90-minute limit (about 40 minutes after #229).
+          max_seconds=1500
           if [ -n "$SECOPSAI_VERIFY_RETRY_COLLECTORS" ] && [ "$SECOPSAI_VERIFY_DELIVERY_ONLY" != "1" ]; then
             echo "retry_collectors requires delivery_only=true" >&2
             exit 2
