@@ -26,7 +26,7 @@ HIT_LEVELS = {"notice", "warning", "alert"}
 
 
 def prescan_limit() -> int:
-    return max(0, min(int(os.environ.get("SECOPSAI_NPM_PRESCAN_LIMIT", "600") or 0), 2000))
+    return max(0, min(int(os.environ.get("SECOPSAI_NPM_PRESCAN_LIMIT", "150") or 0), 2000))
 
 
 INSTALL_SCRIPTS = ("preinstall", "install", "postinstall", "prepare")
