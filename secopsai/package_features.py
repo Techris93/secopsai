@@ -20,6 +20,11 @@ import ast
 from pathlib import PurePosixPath
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 compatibility.
+    import tomli as tomllib
+
 MAX_TEXT_BYTES = 1024 * 1024
 TINY_CODE_BYTES = 50_000
 INSTALL_NETWORK_FLAGS = ("exfil_service", "discord_webhook", "telegram_bot", "raw_ip_url", "download_tool", "http_send")
@@ -446,8 +451,6 @@ def _setup_requirements(path: str, text: str) -> Optional[List[str]]:
     name = PurePosixPath(path.lower()).name
     try:
         if name == "pyproject.toml":
-            import tomllib
-
             return [str(item) for item in (tomllib.loads(text).get("project") or {}).get("dependencies") or []]
         if name == "setup.cfg":
             import configparser
