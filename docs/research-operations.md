@@ -145,7 +145,7 @@ triage. Coverage:
 
 | Source | Collection | Content scan |
 | --- | --- | --- |
-| npm | changes feed | up to `SECOPSAI_NPM_PRESCAN_LIMIT` (150) per cycle, then full static analysis |
+| npm | changes feed | up to `SECOPSAI_NPM_PRESCAN_LIMIT` (150) per cycle, then full static analysis. No prescan starts after `SECOPSAI_NPM_PRESCAN_SECONDS` (600), or once fewer than `SECOPSAI_NPM_PRESCAN_RESERVE_SECONDS` (540) remain before the worker's deadline; unscanned releases wait for the next cycle, and the cycle summary lists the five slowest scans |
 | PyPI, Open VSX, crates.io | registry collectors | newest `SECOPSAI_CONTENT_PRESCAN_LIMIT` (40) per registry per cycle; PyPI's index names only new projects, scanned at their latest version |
 | Official MCP Registry | servers updated since the cursor | each server's npm/PyPI package, with MCP rules |
 | Visual Studio Marketplace | ships paused; enabled in production through `SECOPSAI_ENABLE_COLLECTORS` in `research-worker.yml` (remove it there to turn it off) | as above |

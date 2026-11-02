@@ -857,7 +857,14 @@ def _apply_funnel(ranked: List[Tuple[int, int, Dict[str, Any], Dict[str, Any], L
     results = research_funnel.prescan(targets, fetcher=fetcher)
     if not results:
         return ranked, {"enabled": False, "prescanned": 0}
-    stats = {"enabled": True, "prescanned": len(results), "seconds": round(time.monotonic() - scan_started, 1), "hits": 0, "retired_clean": 0, "errors": 0, "rules_matched": {}}
+    # Releases the time cap left unscanned keep their place for a later cycle.
+    scanned = {key: item for key, item in results.items() if item["status"] != "deferred"}
+    slowest = sorted(scanned.values(), key=lambda item: -(item.get("seconds") or 0))[:5]
+    stats = {"enabled": True, "prescanned": len(scanned), "deferred": len(results) - len(scanned),
+             "seconds": round(time.monotonic() - scan_started, 1), "hits": 0, "retired_clean": 0, "errors": 0, "rules_matched": {},
+             "slowest": [{**{key: item.get(key) for key in ("package", "version", "status", "seconds", "bytes", "files")},
+                          **({"reason": str(item.get("reason") or "")[:120]} if item.get("status") == "error" else {})} for item in slowest]}
+    results = scanned
     kept: List[Tuple[int, int, Dict[str, Any], Dict[str, Any], List[Any]]] = []
     for score, position, event, metadata, signals in ranked:
         result = results.get(str(event.get("feed_event_id")))
