@@ -19,6 +19,7 @@ import math
 import os
 import re
 import secrets
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
@@ -41,7 +42,7 @@ MAX_PACKUMENT_BYTES = max(1, int(os.environ.get("SECOPSAI_NPM_MAX_PACKUMENT_BYTE
 MAX_PACKUMENT_VERSIONS = 5000
 MAX_SNAPSHOT_SUMMARIES = 256
 MAX_SNAPSHOT_VERSION_NAMES = 2000
-MAX_PACKAGE_EVENTS_PER_CYCLE = 600
+MAX_PACKAGE_EVENTS_PER_CYCLE = 100
 PACKUMENT_WORKERS = 16
 MAX_STATIC_ANALYSES_PER_CYCLE = 10
 MAX_RETRY_SECONDS = 300
@@ -50,7 +51,7 @@ MAX_STATIC_ATTEMPTS = 3
 # Events older than this are not worth analysing as "new release" signals and
 # would otherwise sit in the queue forever.
 STALE_PENDING_DAYS = 7
-STATIC_RANKING_WINDOW = 1000
+STATIC_RANKING_WINDOW = 200
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9@._:/+\-]+$")
 LIFECYCLE_NAMES = {
     "preinstall",
@@ -852,10 +853,11 @@ def _apply_funnel(ranked: List[Tuple[int, int, Dict[str, Any], Dict[str, Any], L
     for _score, _position, event, metadata, _signals in window:
         summary = metadata.get("version_summary") if isinstance(metadata.get("version_summary"), dict) else {}
         targets.append({"key": event.get("feed_event_id"), "package": event.get("package"), "version": event.get("version"), "tarball": summary.get("tarball") or ""})
+    scan_started = time.monotonic()
     results = research_funnel.prescan(targets, fetcher=fetcher)
     if not results:
         return ranked, {"enabled": False, "prescanned": 0}
-    stats = {"enabled": True, "prescanned": len(results), "hits": 0, "retired_clean": 0, "errors": 0, "rules_matched": {}}
+    stats = {"enabled": True, "prescanned": len(results), "seconds": round(time.monotonic() - scan_started, 1), "hits": 0, "retired_clean": 0, "errors": 0, "rules_matched": {}}
     kept: List[Tuple[int, int, Dict[str, Any], Dict[str, Any], List[Any]]] = []
     for score, position, event, metadata, signals in ranked:
         result = results.get(str(event.get("feed_event_id")))
@@ -1017,6 +1019,7 @@ def run_npm_enrichment_cycle(
     versions_created = 0
     failures = 0
     selected = list(grouped.items())[:max(1, min(int(event_limit), MAX_PACKAGE_EVENTS_PER_CYCLE))]
+    fetch_started = time.monotonic()
     with ThreadPoolExecutor(max_workers=PACKUMENT_WORKERS) as pool:
         # Fetch in chunks and write one at a time, so at most one chunk of documents is in memory.
         for start in range(0, len(selected), PACKUMENT_WORKERS):
@@ -1047,7 +1050,10 @@ def run_npm_enrichment_cycle(
                                     "UPDATE registry_feed_events SET processing_state='enrichment_failed', metadata_json=? WHERE feed_event_id=?",
                                     (_json(metadata), row["feed_event_id"]),
                                 )
+    fetch_seconds = round(time.monotonic() - fetch_started, 1)
+    static_started = time.monotonic()
     static_result = _run_static_triage(db_path=db_path, fetcher=fetcher, limit=static_limit)
+    static_seconds = round(time.monotonic() - static_started, 1)
     completed = _now()
     total_failures = failures + int(static_result.get("failures", 0))
     status = "degraded" if total_failures else "completed"
@@ -1077,6 +1083,8 @@ def run_npm_enrichment_cycle(
         "events_seen": len(rows),
         "expired_stale": expired_stale,
         "packages_fetched": packages_fetched,
+        "fetch_seconds": fetch_seconds,
+        "static_seconds": static_seconds,
         "versions_created": versions_created,
         "skipped_backoff": skipped,
         "static": static_result,

@@ -176,6 +176,7 @@ def test_one_failed_package_does_not_stop_the_rest_of_its_batch(tmp_path):
 
     result = run_npm_enrichment_cycle(db_path=db, fetcher=SafeFetcher(fetch=fetch), static_limit=1)
     assert (result["packages_fetched"], result["failures"]) == (39, 1)
+    assert result["fetch_seconds"] >= 0 and result["static_seconds"] >= 0
     with soc_store.connect(db) as connection:
         states = dict(connection.execute("SELECT package, processing_state FROM registry_feed_events WHERE version=''").fetchall())
     assert states.pop("pkg-7") == "enrichment_failed" and set(states.values()) == {"enriched"} and len(states) == 39
