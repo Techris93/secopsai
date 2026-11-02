@@ -1064,6 +1064,7 @@ def run_worker_loop(
                 # remain on the local research ledger or R2.
                 # Research cases feed the hosted Research page; a failure is
                 # retried next cycle from the last accepted batch.
+                _step_started = time.monotonic()
                 try:
                     from secopsai.research_case_sync import sync_research_cases
 
@@ -1073,8 +1074,11 @@ def run_worker_loop(
                     capture_exception(exc, context={"component": "research_case_sync"})
                     last_summary = dict(last_summary)
                     last_summary["research_case_sync"] = {"status": "degraded", "error": str(exc)[:500]}
+                print(json.dumps({"component": "research-worker", "event": "step_done", "step": "research_case_sync", "seconds": round(time.monotonic() - _step_started)}), flush=True)
+                _step_started = time.monotonic()
                 try:
                     ontology_result = materialize_recent(db_path=db_path, limit=100)
+                    print(json.dumps({"component": "research-worker", "event": "step_done", "step": "ontology_snapshot", "seconds": round(time.monotonic() - _step_started)}), flush=True)
                     delivery = getattr(core_edge, "deliver_ontology", None)
                     ontology_sync = (delivery(ontology_result.get("snapshot") or {}, db_path=db_path)
                                      if callable(delivery) else core_edge.sync_ontology(ontology_result.get("snapshot") or {}))
@@ -1109,12 +1113,15 @@ def run_worker_loop(
                     capture_exception(exc, context={"component": "research_ontology_sync"})
                     last_summary = dict(last_summary)
                     last_summary["ontology"] = {"status": "degraded", "error": str(exc)[:500]}
+                print(json.dumps({"component": "research-worker", "event": "step_done", "step": "ontology_sync", "seconds": round(time.monotonic() - _step_started)}), flush=True)
                 if os.environ.get("SECOPSAI_PRIMARY_INTEL", "0") == "1":
+                    _step_started = time.monotonic()
                     try:
                         from secopsai.research_operation import hosted_projection
                         last_summary["research_operation_sync"] = core_edge.sync_research_operation(hosted_projection(db_path=db_path))
                     except Exception as exc:
                         last_summary["research_operation_sync"] = {"status": "degraded", "error": str(exc)[:500]}
+                    print(json.dumps({"component": "research-worker", "event": "step_done", "step": "research_operation_sync", "seconds": round(time.monotonic() - _step_started)}), flush=True)
                 try:
                     commands = early_commands + core_edge.process_commands(db_path=db_path)
                 except Exception as exc:  # command polling is optional control-plane work

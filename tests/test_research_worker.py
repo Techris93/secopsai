@@ -622,3 +622,81 @@ def test_the_daily_brief_is_assembled_after_collection_and_verification(tmp_path
     assert calls.index("brief") > calls.index("verify") > calls.index("primary")
     assert calls.index("brief") > calls.index("external")
     assert result["editorial"]["status"] == "waiting" and "automated_verification" in result["editorial"]
+
+
+LONG_READ = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 100000000) SELECT max(i) FROM n"
+
+
+def test_a_stop_signal_ends_a_long_ledger_read_as_a_worker_shutdown(tmp_path):
+    import signal
+    import time
+
+    import pytest
+    from secopsai.worker_control import WorkerShutdown, request_shutdown, reset_shutdown
+
+    db = _db(tmp_path)
+    soc_store.init_db(db)
+    previous = signal.signal(signal.SIGALRM, lambda *_: request_shutdown())
+    started = time.monotonic()
+    signal.setitimer(signal.ITIMER_REAL, 0.2)
+    try:
+        with soc_store.read_connect(db) as connection, pytest.raises(WorkerShutdown):
+            connection.execute(LONG_READ).fetchone()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+        reset_shutdown()
+    assert time.monotonic() - started < 3
+
+
+def test_ledger_read_errors_are_unchanged_without_a_stop(tmp_path):
+    import sqlite3
+
+    import pytest
+
+    db = _db(tmp_path)
+    soc_store.init_db(db)
+    with soc_store.read_connect(db) as connection:
+        with pytest.raises(sqlite3.OperationalError):
+            connection.execute("SELECT * FROM no_such_table")
+        with pytest.raises(sqlite3.OperationalError):
+            connection.execute("CREATE TABLE written (x)")
+        assert [tuple(row) for row in connection.execute("SELECT 1 UNION ALL SELECT 2")] == [(1,), (2,)]
+
+
+def test_worker_stops_during_a_slow_post_cycle_snapshot_without_a_late_heartbeat(tmp_path, monkeypatch):
+    import secopsai.core_edge_client as client_module
+    from secopsai.worker_control import request_shutdown
+
+    class FakeCoordinator:
+        enabled = True
+
+        def __init__(self):
+            self.states = []
+
+        def pull_and_apply_settings(self, **kwargs):
+            return {"status": "accepted"}
+
+        def sync_state(self, summary, **kwargs):
+            self.states.append(summary)
+            return {"status": "accepted", "runner": {"status": "healthy"}}
+
+        def process_commands(self, **kwargs):
+            return []
+
+    def slow_snapshot(*, db_path, limit):
+        request_shutdown()  # the stop signal arrives while the snapshot reads the ledger
+        with soc_store.read_connect(db_path) as connection:
+            connection.execute(LONG_READ).fetchone()
+        raise AssertionError("the read should have been stopped")
+
+    coordinator = FakeCoordinator()
+    monkeypatch.setattr(client_module, "coordinator_client", lambda: coordinator)
+    monkeypatch.setattr("secopsai.research_worker.run_worker_cycle", lambda **kwargs: {"status": "succeeded", "completed_at": "2026-11-02T00:00:00Z"})
+    monkeypatch.setattr("secopsai.research_worker.materialize_recent", slow_snapshot)
+    monkeypatch.setattr("secopsai.research_worker._sync_investigation_jobs", lambda *args, **kwargs: {})
+    monkeypatch.setattr("secopsai.research_case_sync.sync_research_cases", lambda *args, **kwargs: {"status": "accepted"})
+    result = run_worker_loop(db_path=_db(tmp_path), fetcher=_fail_fetcher(), interval_seconds=15, max_cycles=1)
+    assert result["cycles"] == 1
+    assert result["stopped_by_signal"] is True
+    assert coordinator.states == []
