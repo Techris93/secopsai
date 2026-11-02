@@ -677,6 +677,14 @@ def periodic_checkpoints(stopping, interval, capture):
 GRACE_SECONDS = 180
 
 
+def read_completed_cycles(path: Path) -> int:
+    """Cycles the worker recorded; a missing or unreadable record counts as none."""
+    try:
+        return max(0, int(json.loads(path.read_text(encoding="utf-8"))["cycles"]))
+    except (OSError, ValueError, KeyError, TypeError):
+        return 0
+
+
 def delivery_verification_timeout_seconds(delivery_seconds: int, refresh_seconds: int = 0) -> int:
     if not 1 <= delivery_seconds <= 2700 or not 0 <= refresh_seconds <= 2700:
         raise ValueError("delivery and refresh budgets are outside their permitted ranges")
@@ -704,6 +712,8 @@ def main(argv: Optional[list] = None) -> int:
     report_path = report_dir / "worker-runtime.json"
     report_dir.mkdir(parents=True, exist_ok=True)
     (report_dir / "delivery-drain.json").unlink(missing_ok=True)
+    cycles_path = report_dir / "worker-cycles.json"
+    cycles_path.unlink(missing_ok=True)
     report = {"schema_version": "secopsai.research.worker-runtime.v1", "status": "starting",
               "run_id": os.environ.get("GITHUB_RUN_ID") or None,
               "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT") or None,
@@ -774,6 +784,7 @@ def main(argv: Optional[list] = None) -> int:
     # it cannot finish before the time budget stops it.
     budget_env = {"SECOPSAI_WORKER_DEADLINE_EPOCH": str(time.time() + args.max_seconds)} if args.max_seconds > 0 else {}
     worker = subprocess.Popen(command, env={**os.environ, "SECOPS_FINDINGS_DIR": str(data_dir),
+                                               "SECOPSAI_WORKER_CYCLES_PATH": str(cycles_path),
                                                "SECOPSAI_RESTORED_LEDGER_RECOVERY": "1" if restored else "0", **budget_env})
     active_child = [worker]
     stopping = threading.Event()
@@ -829,6 +840,13 @@ def main(argv: Optional[list] = None) -> int:
         exit_code = 1  # checkpoint preservation does not make forced shutdown healthy
     elif exit_code == -signal.SIGTERM and budget_stop.is_set():
         exit_code = 0
+    # The worker handles SIGTERM and exits 0 by itself, so its exit code cannot
+    # show this. Judge it only here at the end of the run: the checkpoint and
+    # delivery drain below must still run so durable work is not lost.
+    completed_cycles = read_completed_cycles(cycles_path)
+    no_completed_cycles = not args.delivery_only and stopping.is_set() and completed_cycles == 0
+    if not args.delivery_only:
+        report["completed_cycles"] = completed_cycles
     stopping.set()
     # Do not race the pre-drain/final checkpoint against an interval save.
     # Each capture has a bounded upload deadline, so a completed worker waits
@@ -926,6 +944,10 @@ def main(argv: Optional[list] = None) -> int:
             report.update(status="failed", failure_category="checkpoint_failed", completed_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
             _write_runtime_report(report_path, report)
             return 1
+    if no_completed_cycles:
+        _log("worker_stopped_without_completed_cycle")
+        report["failure_category"] = "no_completed_cycles"
+        exit_code = 1
     _log("worker_exited", exit_code=exit_code)
     report.update(status="succeeded" if exit_code == 0 else "failed", exit_code=exit_code,
                   completed_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))

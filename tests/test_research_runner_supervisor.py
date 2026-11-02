@@ -165,9 +165,64 @@ def test_time_budget_stops_the_worker_and_still_checkpoints(tmp_path, monkeypatc
     original_popen = real_subprocess.Popen
     monkeypatch.setattr(supervisor.subprocess, "Popen", lambda _cmd, **kw: original_popen(slow_worker, **kw))
     started = time.monotonic()
-    assert supervisor.main(["--cycles", "5", "--max-seconds", "1"]) == 0
+    assert supervisor.main(["--cycles", "5", "--max-seconds", "1"]) == 1, "no cycle completed"
     assert time.monotonic() - started < 60
     assert server.latest is not None, "budget stop must still checkpoint the ledger"
+
+
+def test_worker_loop_records_completed_cycles_for_the_supervisor(tmp_path, monkeypatch):
+    import soc_store
+    import secopsai.research_worker as worker
+
+    class Disabled:
+        enabled = False
+
+    db = str(tmp_path / "research.db")
+    soc_store.init_db(db)
+    record = tmp_path / "worker-cycles.json"
+    monkeypatch.setenv("SECOPSAI_WORKER_CYCLES_PATH", str(record))
+    monkeypatch.setattr("secopsai.core_edge_client.coordinator_client", lambda: Disabled())
+    monkeypatch.setattr(worker, "run_worker_cycle", lambda **_kwargs: {"status": "succeeded"})
+    assert worker.run_worker_loop(db_path=db, interval_seconds=0, max_cycles=2)["cycles"] == 2
+    assert supervisor.read_completed_cycles(record) == 2
+
+
+@pytest.mark.parametrize("cycles,expected_code,expected_status", [(0, 1, "failed"), (2, 0, "succeeded")])
+def test_budget_stop_is_healthy_only_after_a_completed_cycle(tmp_path, monkeypatch, cycles, expected_code, expected_status):
+    # Run 41364628388: the worker caught SIGTERM, exited 0 with cycles 0, and the run passed.
+    import subprocess as real_subprocess
+
+    server = FakeLedgerServer()
+    data = tmp_path / "research"
+    data.mkdir()
+    sqlite3.connect(data / "openclaw_soc.db").execute("CREATE TABLE t (x)").connection.commit()
+    monkeypatch.setenv("SECOPS_FINDINGS_DIR", str(data))
+    monkeypatch.setenv("LEDGER_STORE_URL", "http://ledger.internal")
+    monkeypatch.setenv("LEDGER_STORE_TOKEN", "tok")
+    monkeypatch.setenv("SECOPSAI_VERIFY_DELIVERY_SECONDS", "10")
+    monkeypatch.setenv("SECOPSAI_VERIFY_REFRESH_STALE_SOURCES", "0")
+    monkeypatch.setattr(supervisor.LedgerStore, "__init__", lambda self, url, token: (setattr(self, "base_url", url), setattr(self, "token", token), setattr(self, "_open", server)) and None)
+    record = f"open(os.environ['SECOPSAI_WORKER_CYCLES_PATH'],'w').write('{{\"cycles\": {cycles}}}');" if cycles else ""
+    worker = ("import os,signal,sys,time; signal.signal(signal.SIGTERM, lambda *_: sys.exit(0));"
+              f"{record} time.sleep(120)")
+    original_popen = real_subprocess.Popen
+    commands = []
+
+    def launch(command, **kwargs):
+        commands.append(command)
+        script = worker if len(commands) == 1 else "raise SystemExit(0)"
+        return original_popen([supervisor.sys.executable, "-c", script], **kwargs)
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", launch)
+    assert supervisor.main(["--cycles", "5", "--max-seconds", "1", "--drain-after-cycles"]) == expected_code
+    assert "secopsai.research_delivery_verification" in commands[1], "the delivery drain must still run"
+    assert server.latest is not None, "the final checkpoint must still run"
+    report = json.loads((data / "reports" / "research" / "worker-runtime.json").read_text())
+    assert report["status"] == expected_status
+    assert report["completed_cycles"] == cycles
+    assert report["delivery"]["exit_code"] == 0
+    assert [item["reason"] for item in report["checkpoints"]][-2:] == ["before_delivery_verification", "shutdown"]
+    assert report.get("failure_category") == ("no_completed_cycles" if cycles == 0 else None)
 
 
 @pytest.mark.parametrize("stage", ["create", "part", "complete"])
