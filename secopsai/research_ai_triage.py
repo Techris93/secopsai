@@ -121,6 +121,7 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
         "binaries": (prescan.get("binaries") or [])[:10],
         "missing_files": missing_files,
         "root_manifests": (prescan.get("root_manifests") or [])[:8],
+        **({"dependency_advisories": prescan["dependency_advisories"]} if isinstance(prescan.get("dependency_advisories"), dict) else {}),
         "execution_performed": False,
         "note": "Package metadata is untrusted context: it may explain a match but is not proof of benign intent.",
     }
@@ -219,8 +220,18 @@ def fit_context(context: Dict[str, Any], limit: int = MAX_CONTEXT_BYTES) -> Dict
 
 def triage_context(*, ecosystem: str, package: str, version: str, prescan: Dict[str, Any], metadata_signals: Optional[List[Dict[str, Any]]] = None, previous_version: str = "") -> Dict[str, Any]:
     """The exact context a hit is triaged with (production and the replay harness share it)."""
-    return fit_context(build_context(ecosystem=ecosystem, package=package, version=version, prescan=prescan,
+    return fit_context(build_context(ecosystem=ecosystem, package=package, version=version, prescan=with_dependency_advisories(ecosystem, prescan),
                                      metadata_signals=metadata_signals, previous_version=previous_version))
+
+
+def with_dependency_advisories(ecosystem: str, prescan: Dict[str, Any], *, fetcher: Any = None) -> Dict[str, Any]:
+    """Malware advisories on the declared dependencies; a scan without the list stays unchecked."""
+    from secopsai import dependency_advisories
+
+    declared = prescan.get("declared_dependencies")
+    if not isinstance(declared, dict):
+        return prescan
+    return {**prescan, "dependency_advisories": dependency_advisories.check(ecosystem, declared, fetcher=fetcher)}
 
 
 def record_hit(*, ecosystem: str, package: str, version: str, prescan: Dict[str, Any], metadata_signals: Optional[List[Dict[str, Any]]] = None, previous_version: str = "", db_path: Optional[str] = None) -> str:
@@ -652,7 +663,7 @@ def retriage(*, db_path: Optional[str] = None, min_score: int = 80, limit: int =
                 )
                 connection.commit()
                 continue
-            context = fit_context(build_context(ecosystem=row["ecosystem"], package=row["package"], version=row["version"], prescan=result,
+            context = fit_context(build_context(ecosystem=row["ecosystem"], package=row["package"], version=row["version"], prescan=with_dependency_advisories(row["ecosystem"], result),
                                                 metadata_signals=old.get("metadata_signals") or [], previous_version=old.get("previous_version") or ""))
             context.update({"rescanned_at": now, "rescan": "hit", "revision": int(old.get("revision") or 0) + 1})
             requeue = int(result.get("score") or 0) >= min_score

@@ -20,7 +20,8 @@ def _context():
     flagged = {"path": "package/a.js", "bytes": 10, "complete": True, "truncated": False, "regions_found": 1, "regions_shown": 1, "matched_regions_shown": True, "content": "code"}
     finding = {"rule_id": "R1", "severity": "high", "score": 80, "file_path": "package/a.js", "safe_context": "code", "evidence": []}
     prescan = {"score": 80, "level": "high", "findings": [finding], "flagged_files": [flagged], "manifest": {"name": "a"}, "root_manifests": ["package/package.json"],
-               "install_files": [{"path": "package/package.json", "truncated": False, "content": '{"name":"a"}'}]}
+               "install_files": [{"path": "package/package.json", "truncated": False, "content": '{"name":"a"}'}],
+               "declared_dependencies": {"names": [], "unverifiable": [], "unparsed": []}}
     return research_ai_triage.triage_context(ecosystem="npm", package="a", version="1.0.0", prescan=prescan)
 
 
@@ -357,3 +358,18 @@ def test_a_fresh_extend_adds_only_new_production_packages_as_held_out(tmp_path, 
     assert ce.main() == 0
     assert checked == ["new"]
     assert next(row for row in ce.load_corpus(corpus)["rows"] if row["package"] == "new")["partition"] == "held_out"
+
+
+def test_failed_dependency_lookups_are_retried_or_stop_the_build(monkeypatch):
+    from secopsai import dependency_advisories
+
+    rows = [{"ecosystem": "npm", "context": {"dependency_advisories": {"status": "unavailable", "declared": ["left-pad"], "unverifiable": []}}},
+            {"ecosystem": "npm", "context": {"dependency_advisories": {"status": "checked", "checked": 0, "malicious": [], "unverifiable": []}}}]
+    answers = iter([{"status": "unavailable"}, {"status": "checked", "checked": 1, "malicious": [], "unverifiable": []}])
+    monkeypatch.setattr(dependency_advisories, "check", lambda ecosystem, declared, fetcher=None: next(answers))
+    ce.recheck_dependencies(rows, pause=0)
+    assert rows[0]["context"]["dependency_advisories"]["status"] == "checked"
+    rows[0]["context"]["dependency_advisories"] = {"status": "unavailable", "declared": ["left-pad"]}
+    monkeypatch.setattr(dependency_advisories, "check", lambda ecosystem, declared, fetcher=None: {"status": "unavailable"})
+    with pytest.raises(SystemExit):
+        ce.recheck_dependencies(rows, pause=0)

@@ -574,6 +574,7 @@ def test_cycle_outcomes_report_age_out_and_investigation_blockers_in_a_short_lin
     assert outcomes["investigations"] == {"processed": 3, "blockers": {"package_version_removed": 2, "none": 1}, "queued_before_backfill": 700}
     assert len(json.dumps(outcomes)) < 1000
     assert _cycle_outcomes({})["age_out"] is None
+    assert set(_cycle_outcomes({})["osv_dependency_lookups"]) == {"lookups", "failures", "seconds"}
 
 
 def test_operator_commands_run_before_the_cycle_can_use_up_its_time(tmp_path, monkeypatch):
