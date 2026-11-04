@@ -225,9 +225,23 @@ def test_research_note_maps_detections_claims_and_exposure(db):
     assert "| CVE-2026-109618 exists | confirmed |" in note
     assert "SecOpsAI detection: RULE-311" in note
     node = "\n".join(desk.research_note("node-rel", db_path=db, now=NOW))
-    assert "no SecOpsAI rule covers this yet" in node and "SecOpsAI deployment exposure: Node.js." in node
+    assert "no SecOpsAI rule covers this yet" in node
+    assert "deployment exposure" not in node, "what SecOpsAI itself runs is internal ranking, not reader guidance"
+    assert "| CVE-2026-109618 exists | confirmed | [cve.org](https://www.cve.org/CVERecord?id=CVE-2026-109618) |" in note
+    assert "services.nvd.nist.gov" not in note
     assert desk.research_note("not-an-event", db_path=db, now=NOW) == []
 
+
+
+def test_an_items_official_score_gets_its_own_row_and_reader_link(tmp_path, monkeypatch):
+    ranked = [{"event_ids": ["stanza"], "deployment_exposure": ["PyPI / Python"], "cves": ["CVE-2026-115878"]}]
+    monkeypatch.setattr(desk, "latest_claim_checks", lambda db_path=None: {"CVE-2026-115878": {
+        "claims": [{"claim": "CVE-2026-115878 exists", "status": "confirmed", "source": "https://www.cve.org/CVERecord?id=CVE-2026-115878"}],
+        "official_cvss": [7.8]}})
+    monkeypatch.setattr(desk, "detections_for", lambda item: [])
+    note = "\n".join(desk.research_note("stanza", ranked=ranked, cves=["CVE-2026-115878"]))
+    assert "| CVSS 7.8 | official | [NVD](https://nvd.nist.gov/vuln/detail/CVE-2026-115878) |" in note
+    assert "deployment exposure" not in note
 
 def test_html_scores_vectors_and_non_advisories(db):
     gitlab = desk.signals("GitLab Patch Release: 19.5.1",

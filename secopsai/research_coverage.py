@@ -217,7 +217,13 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
                        "ontology_last_batch": dict(ontology_last_batch) if ontology_last_batch else None,
                        "ontology_new_unique_chunks_24h": ontology_ingress_24h,
                        "ontology_acknowledged_chunks_24h": ontology_ack_24h},
-            "public_summary": f"Collection is bounded and does not establish comprehensive surveillance. {len(gaps)} enabled sources lack a fresh successful collection. {len(metadata)} registry collectors provide metadata coverage without artifact scanning. Unknown eligible-event and evidence-coverage denominators are reported as unknown."}
+            # Readers need what was watched and what was not, not collector internals.
+            "public_summary": " ".join([
+                f"SecOpsAI watched {sum(1 for source in sources if source['enabled'])} sources for this edition"
+                + ("; all were current." if not gaps else f"; {len(gaps)} {'was' if len(gaps) == 1 else 'were'} behind schedule: {', '.join(gaps[:5])}"
+                   + (f" and {len(gaps) - 5} more." if len(gaps) > 5 else ".")),
+                f"{len(metadata)} package {'registry is' if len(metadata) == 1 else 'registries are'} watched through release metadata only, without scanning package contents." if metadata else "",
+                "This is not complete coverage of every source or registry."]).replace("  ", " ").strip()}
 
 
 def readiness_report(*, db_path=None) -> dict:

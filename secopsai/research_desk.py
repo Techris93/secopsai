@@ -23,6 +23,7 @@ from __future__ import annotations
 import html
 import json
 import re
+import urllib.parse
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -591,7 +592,7 @@ def research_note(event_id: str, *, db_path=None, now: Optional[datetime] = None
         return []
     lines = []
     if cves is None:
-        claims = [claim for check in item.get("claims") or [] for claim in check["claims"]]
+        claims = [("", claim) for check in item.get("claims") or [] for claim in check["claims"]]
     else:
         # Clusters group by shared CVE or name, so a cluster's checks and rules
         # can belong to a neighbouring item. Report this item's own.
@@ -600,16 +601,38 @@ def research_note(event_id: str, *, db_path=None, now: Optional[datetime] = None
         # and were not checked, so they would read as findings about this item.
         # A cached CVSS mismatch is about whichever report was checked first: this
         # item's own score was judged at verification and its text states the official one.
-        claims = [claim for cve in cves for claim in (latest.get(cve) or {}).get("claims", [])
+        claims = [(cve, claim) for cve in cves for claim in (latest.get(cve) or {}).get("claims", [])
                   if claim["status"] not in {"reported", "unverified"}
                   and not (claim["status"] == "mismatch" and claim["claim"].startswith("CVSS "))]
+        # The item's text states the official score, so the table shows where it comes from.
+        for cve in cves:
+            scores = (latest.get(cve) or {}).get("official_cvss") or []
+            if scores and not any(owner == cve and claim["claim"].startswith("CVSS ") for owner, claim in claims):
+                claims.append((cve, {"claim": "CVSS " + " and ".join(f"{score:g}" for score in scores),
+                                     "status": "official", "source": NVD_URL.format(cve=cve)}))
     if claims:
         lines += ["", "| Claim | Check | Source |", "| --- | --- | --- |"]
-        lines += [f"| {claim['claim']} | {claim['status'].replace('_', ' ')} | {claim.get('source') or claim.get('detail') or ''} |"
-                  for claim in claims]
+        lines += [f"| {claim['claim']} | {claim['status'].replace('_', ' ')} | {_claim_link(claim.get('source') or '', cve) or claim.get('detail') or ''} |"
+                  for cve, claim in claims]
     rules = detections_for(item if cves is None else {"cves": cves})
     lines.append("SecOpsAI detection: " + ("; ".join(f"{rule['rule_id']} ({rule['title']})" for rule in rules)
                                            if rules else "no SecOpsAI rule covers this yet."))
-    if item["deployment_exposure"]:
-        lines.append("SecOpsAI deployment exposure: " + ", ".join(item["deployment_exposure"]) + ".")
+    # deployment_exposure (what SecOpsAI's own servers run) ranks the desk; it is
+    # not something a reader of the brief can act on, so it stays internal.
     return lines
+
+
+def _claim_link(url: str, cve: str) -> str:
+    """A link a reader can open: NVD's API answer is raw JSON and the KEV page lists every entry."""
+    if not url:
+        return ""
+    if url.startswith("https://services.nvd.nist.gov/"):
+        found = re.search(r"cveId=(CVE-\d{4}-\d+)", url)
+        url, label = f"https://nvd.nist.gov/vuln/detail/{found.group(1) if found else cve}", "NVD"
+    elif url.startswith("https://www.cisa.gov/known-exploited-vulnerabilities-catalog"):
+        url, label = url + (f"?search_api_fulltext={cve}" if cve and "?" not in url else ""), "CISA KEV"
+    elif url.startswith("https://www.cve.org/"):
+        label = "cve.org"
+    else:
+        label = urllib.parse.urlparse(url).netloc or url
+    return f"[{label}]({url})"

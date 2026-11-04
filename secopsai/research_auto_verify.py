@@ -12,8 +12,8 @@ pending public source items with deterministic rules:
   update time resurfaces them, but they are not news;
 * a primary item is verified only when every CVE it is about exists in cve.org,
   no reported score contradicts the official record, and the source itself
-  states a fix or mitigation. CVEs merely mentioned in its text are named as
-  related, not described as if they were the item's own;
+  states a fix or mitigation. CVEs merely mentioned in its text are not
+  described as if they were the item's own;
 * anything else is marked ``needs_review`` with the reason.
 
 Decisions are recorded under the delegating operator with an ``automation``
@@ -81,11 +81,30 @@ def fixed_versions(title: str, excerpt: str, payload: dict) -> list[str]:
     return list(dict.fromkeys(found))[:12]
 
 
+FLAW_WORDS = re.compile(r"vulnerab|allows?|attacker|execut|inject|bypass|overflow|deserializ|disclos|escalat|traversal|forg|race condition|denial", re.IGNORECASE)
+
+
+def _flaw_sentences(text: str) -> list[str]:
+    """Official sentences from the first that describes the flaw: a CVE record
+    often opens with what the product is ("Stanza is a ... library")."""
+    sentences = _sentences(text)
+    for index, sentence in enumerate(sentences):
+        if FLAW_WORDS.search(sentence):
+            return sentences[index:]
+    return sentences
+
+
 def mitigations(excerpt: str) -> list[str]:
     return list(dict.fromkeys(match.strip() for match in MITIGATION_RE.findall(excerpt)))[:3]
 
 
-def _defensive_action(title: str, excerpt: str, payload: dict, rules: list[dict]) -> str:
+# CISA's KEV "required action" is a directive to US federal agencies (BOD
+# compliance, asset exposure duties); readers need the fix itself.
+CISA_DIRECTIVE_RE = re.compile(r"\bBOD\s*\d|vendor instructions", re.IGNORECASE)
+AFFECTED_RANGE_RE = re.compile(r"\bversions?\s+(\d(?:[\w.-]*[\w-])?)\s+(?:through|to)\s+(\d(?:[\w.-]*[\w-])?)", re.IGNORECASE)
+
+
+def _defensive_action(title: str, excerpt: str, payload: dict, rules: list[dict], context: str = "") -> str:
     parts = []
     versions = fixed_versions(title, excerpt, payload)
     if versions:
@@ -94,7 +113,13 @@ def _defensive_action(title: str, excerpt: str, payload: dict, rules: list[dict]
         parts.append(f"Until upgraded, set {setting} as the source advises.")
     if payload.get("required_action"):
         # CISA's "Notes" field is not part of the item, so the pointer leads nowhere.
-        parts.append(re.sub(r"\s*\(see URL in Notes\)", "", _text(payload["required_action"])))
+        required = re.sub(r"\s*\(see URL in Notes\)", "", _text(payload["required_action"]))
+        if CISA_DIRECTIVE_RE.search(required):
+            affected = AFFECTED_RANGE_RE.search(f"{excerpt} {context}")
+            required = ("Apply the vendor's security update" + (f"; versions {affected.group(1)} through {affected.group(2)} are affected" if affected else "")
+                        + ". If no update or mitigation is available, take the product out of service.")
+        if not versions or not CISA_DIRECTIVE_RE.search(_text(payload["required_action"])):
+            parts.append(required)
     if parts and rules:
         parts.append("SecOpsAI users can enable " + "; ".join(f"{rule['rule_id']} ({rule['title']})" for rule in rules) + ".")
     return " ".join(parts)
@@ -161,7 +186,6 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: 
     if published:
         return {"decision": "rejected", "reason": f"advisory published {published}; over {STALE_ADVISORY_DAYS} days old with no exploitation signal, so not news"}
     cves = subject_cves(event, found)
-    related = [cve for cve in found["cves"] if cve not in cves][:8]
     missing = [cve for cve in cves if cve not in checks]
     if missing:
         return {"decision": None, "reason": "claim checks pending for " + ", ".join(missing), "unchecked": missing}
@@ -180,18 +204,20 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: 
     if RELEASE_TITLE_RE.search(title) and cves and any(f"cves:{source['name']}:{','.join(cves)}" == key for key in decided):
         return {"decision": "rejected", "reason": "release announcement for a fix already covered by this source's advisory"}
     rules = detections_for({"cves": cves, "names": found["names"]})
-    action = _defensive_action(title, excerpt, payload, rules)
+    descriptions = " ".join(checks[cve].get("official_description") or "" for cve in cves)
+    action = _defensive_action(title, excerpt, payload, rules, context=descriptions)
     if not action:
         return {"decision": "needs_review", "reason": "the source states no fixed version or mitigation"}
     official = [checks[cve] for cve in cves]
-    summary_parts = [f"{source['name']} reports: {title}."]
+    # The heading already carries the title, and the source line names the source.
+    summary_parts = []
     for check in official:
-        description = _sentences(check.get("official_description") or "")
+        description = _flaw_sentences(check.get("official_description") or "")
         score = check.get("official_cvss") or []
         line = check["cve"] + (f" (official CVSS {' and '.join(f'{value:g}' for value in score)})" if score else "")
         summary_parts.append(line + (": " + description[0] if description else "."))
-    if related:
-        summary_parts.append("The source also mentions " + ", ".join(related) + ".")
+    # Related CVEs (prior art, chained flaws) are not explained by the source
+    # line alone, so listing them bare only raised questions; they stay in the record.
     kev = source.get("source_class") == "government" and "known exploited" in source.get("name", "").casefold()
     limitations = ["Source-reported; SecOpsAI did not reproduce the issue."]
     if kev:
