@@ -795,7 +795,9 @@ def main(argv: Optional[list] = None) -> int:
         compacted = False
         if restored and not args.delivery_only:
             size = db_path.stat().st_size
-            compact = compaction_due(size)
+            # An operator can force one compaction below the automatic threshold,
+            # e.g. after a change frees space in place (npm snapshot slimming).
+            compact = compaction_due(size) or os.environ.get("SECOPSAI_FORCE_COMPACTION", "0") == "1"
             _log("ledger_capacity", bytes=size, limit_bytes=LEDGER_LIMIT_BYTES, fraction=round(size / LEDGER_LIMIT_BYTES, 3), compact=compact)
             retention = run_feed_retention(data_dir, report_dir / "feed-retention.json", compact=compact)
             report["feed_retention"] = retention

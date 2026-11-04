@@ -643,6 +643,13 @@ def apply_feed_retention(
     result: Dict[str, Any] = {"deleted": deleted, "complete": complete,
                               "prune_seconds": round(time.monotonic() - started, 1), "compacted": False}
     if compact:
+        from secopsai.research_npm_enrichment import slim_snapshot_rows
+
+        slim_started = time.monotonic()
+        with closing(soc_store.connect(str(database))) as connection, sqlite_writer_lock(str(database)):
+            result["npm_snapshots_slimmed"] = slim_snapshot_rows(connection)
+        result["slim_seconds"] = round(time.monotonic() - slim_started, 1)
+        _storage_progress("npm_snapshots_slimmed", rows=result["npm_snapshots_slimmed"], seconds=result["slim_seconds"])
         result.update(_compact(database))
     _storage_progress("feed_retention_completed", **result)
     return result

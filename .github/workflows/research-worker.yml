@@ -38,6 +38,10 @@ on:
         description: "Start a new empty ledger if none exists in R2 (first run only)"
         type: boolean
         default: false
+      compact_ledger:
+        description: "Compact the ledger and upload it as the new baseline before the cycle"
+        type: boolean
+        default: false
       trigger:
         description: "Who started the run (cloudflare-cron or manual)"
         required: false
@@ -65,6 +69,7 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       SECOPS_FINDINGS_DIR: /home/runner/research
       SECOPSAI_LEDGER_ALLOW_EMPTY: ${{ inputs.allow_empty_ledger && 'true' || 'false' }}
+      SECOPSAI_FORCE_COMPACTION: ${{ inputs.compact_ledger && '1' || '0' }}
       LEDGER_STORE_URL: https://ledger.secopsai.dev
       LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
       SECOPSAI_CORE_ENVIRONMENT: production

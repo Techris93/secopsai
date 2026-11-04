@@ -1188,3 +1188,28 @@ def test_a_compacted_ledger_becomes_the_new_baseline_before_the_worker_starts(tm
         assert report["failure_category"] == "compaction_checkpoint_failed"
     else:
         assert events[:2] == [("checkpoint", True), ("worker",)]
+
+
+def test_an_operator_can_force_one_compaction_below_the_threshold(tmp_path, monkeypatch):
+    monkeypatch.setenv("SECOPS_FINDINGS_DIR", str(tmp_path / "research"))
+    monkeypatch.setenv("SECOPSAI_WORKER_DIAGNOSTICS_DIR", str(tmp_path / "reports"))
+    monkeypatch.setenv("LEDGER_STORE_URL", "http://ledger.internal")
+    monkeypatch.setenv("LEDGER_STORE_TOKEN", "tok")
+    monkeypatch.setenv("SECOPSAI_FORCE_COMPACTION", "1")
+
+    class Store:
+        def __init__(self, url, token):
+            pass
+
+        def download(self, path):
+            sqlite3.connect(path).execute("CREATE TABLE t (x)").connection.commit()
+            return True
+
+    asked = []
+    monkeypatch.setattr(supervisor, "LedgerStore", Store)
+    monkeypatch.setattr(supervisor, "run_feed_retention", lambda data_dir, output, *, compact: asked.append(compact) or {"compacted": False, "exit_code": 0})
+    monkeypatch.setattr(supervisor, "checkpoint", lambda *args, **kwargs: "key")
+    original_popen = supervisor.subprocess.Popen
+    monkeypatch.setattr(supervisor.subprocess, "Popen", lambda command, **kw: original_popen([supervisor.sys.executable, "-c", "pass"], **kw))
+    supervisor.main(["--cycles", "1"])
+    assert asked == [True], "a tiny ledger is far below the automatic threshold"
