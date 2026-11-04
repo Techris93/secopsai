@@ -86,6 +86,37 @@ def measure(db, report):
                 result.append({"from": re.search(r"FROM (\w+)", sql).group(1), "seconds": round(time.monotonic() - started, 2), "plan": plan})
         return result
 
+    def npm_snapshots():
+        """Where snapshot bytes go, and how far a stored previous version lags."""
+        import random
+        with closing(connect()) as conn:
+            totals = dict(conn.execute(
+                "SELECT COUNT(*) AS rows, SUM(length(versions_json)) AS versions_bytes, SUM(length(known_versions_json)) AS known_bytes, "
+                "SUM(length(source_url) + length(metadata_sha256) + length(latest_version)) AS other_bytes FROM research_npm_package_snapshots").fetchone())
+            rowids = [row[0] for row in conn.execute("SELECT rowid FROM research_npm_package_snapshots")]
+            sample = random.Random(7).sample(rowids, min(2000, len(rowids)))
+            fields, summaries, per_row = {}, 0, []
+            for rowid in sample:
+                versions = json.loads(conn.execute("SELECT versions_json FROM research_npm_package_snapshots WHERE rowid=?", (rowid,)).fetchone()[0] or "{}")
+                per_row.append(len(versions))
+                for summary in versions.values():
+                    summaries += 1
+                    for key, value in summary.items():
+                        fields[key] = fields.get(key, 0) + len(json.dumps(value))
+            per_row.sort()
+            # How many releases arrive between enrichment and static ranking:
+            # versions published per package in the last 7 days, from the feed.
+            bursts = [row[0] for row in conn.execute(
+                "SELECT COUNT(*) FROM registry_feed_events WHERE ecosystem='npm' AND version<>'' "
+                "AND collected_at >= strftime('%Y-%m-%dT%H:%M:%S','now','-7 days') GROUP BY package")]
+        bursts.sort()
+        pick = lambda values, q: values[min(len(values) - 1, int(q * len(values)))] if values else None
+        return {**totals, "sample_rows": len(sample), "sample_summaries": summaries,
+                "summary_field_bytes": dict(sorted(fields.items(), key=lambda item: -item[1])),
+                "summaries_per_row": {q: pick(per_row, q) for q in (0.5, 0.9, 0.99)} | {"max": per_row[-1] if per_row else None},
+                "npm_versions_per_package_7d": {q: pick(bursts, q) for q in (0.5, 0.9, 0.99, 0.999)} | {"max": bursts[-1] if bursts else None, "packages": len(bursts)}}
+
+    _timed(report, "npm_snapshots", npm_snapshots)
     _timed(report, "pages", pages)
     _timed(report, "objects", objects)
     _timed(report, "row_counts", row_counts)
