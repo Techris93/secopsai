@@ -58,7 +58,9 @@ def main() -> int:
             raise AssertionError(f"blog index missing mobile navigation marker: {marker}")
     if "data-comments" not in post:
         raise AssertionError("post does not include comments scaffold")
-    for marker in ["Operator commands", "Affected Artifacts", "References", "What SecOpsAI Detected", "article:published_time", "twitter:image", "data-nav-toggle"]:
+    if "Operator commands" in post or "Operator note" in post:
+        raise AssertionError("public post must not render operator commands or notes")
+    for marker in ["Affected Artifacts", "References", "What SecOpsAI Detected", "article:published_time", "twitter:image", "data-nav-toggle"]:
         if marker not in post:
             raise AssertionError(f"post page missing intelligence section: {marker}")
     if "Review Checklist" in post or "review_checklist" in post:

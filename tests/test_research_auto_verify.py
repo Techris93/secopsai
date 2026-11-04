@@ -1,5 +1,6 @@
 """Automated verification under the operator's policy, on items shaped like the 2026-10-24 queue."""
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -107,7 +108,7 @@ def test_routine_items_are_decided_and_disputes_stay_with_the_human(db):
     assert got["php-rel"]["decision"] == "rejected", "release note for an already verified advisory"
     assert got["gl-2"]["decision"] == "verified" and got["gl-1"]["decision"] == "rejected", "the newest copy is kept"
     assert "duplicate of gl-2" in got["gl-1"]["rationale"]
-    assert got["kev-ivanti"]["decision"] == "verified" and "discontinue use" in got["kev-ivanti"]["defensive_action"]
+    assert got["kev-ivanti"]["decision"] == "verified" and "take the product out of service" in got["kev-ivanti"]["defensive_action"]
     assert got["thn-brick"]["decision"] == "needs_review", "news reports never verified automatically"
     assert got["php-fake"]["decision"] == "needs_review" and "not found" in got["php-fake"]["rationale"]
     assert got["php-nofix"]["decision"] == "needs_review" and "no fixed version" in got["php-nofix"]["rationale"]
@@ -131,7 +132,13 @@ def test_a_second_run_does_not_redecide_and_brief_discloses_automation(db):
     today = datetime.now(__import__("zoneinfo").ZoneInfo("Europe/Istanbul")).date().isoformat()
     brief = create_daily_brief(date=today, db_path=db)
     assert {item["verification"] for item in brief["draft"]["items"]} == {"automated"}
-    assert "Verified automatically by SecOpsAI rules" in brief["draft"]["body_markdown"]
+    body = brief["draft"]["body_markdown"]
+    assert "Identifiers and scores checked automatically against cve.org and NVD." in body
+    assert "not supplied" not in body and "first observed:" not in body, "dates are written for readers"
+    assert re.search(r"first seen by SecOpsAI \d{1,2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2} UTC\.", body)
+    assert "distinguishes source reporting" not in body, "no original observations in this edition"
+    assert brief["draft"]["severity"] != "info", "the badge follows the most serious item"
+    assert not brief["draft"]["summary"].startswith("Verified intelligence")
 
 
 def test_only_the_reviewer_can_delegate_and_a_revoked_policy_stops_automation(db):
@@ -259,7 +266,7 @@ def test_a_mentioned_cve_is_not_described_as_the_items_own():
     assert result["cves"] == ["CVE-2026-46300"]
     assert "Official text of CVE-2026-46300" in result["summary"]
     assert "Official text of CVE-2026-109618" not in result["summary"]
-    assert "also mentions CVE-2026-109618, CVE-2026-109619" in result["summary"]
+    assert "CVE-2026-109618" not in result["summary"], "a bare mention would leave readers guessing how it relates"
     assert "official CVSS 7.8 and 9.2" in result["summary"]
 
 
@@ -369,5 +376,53 @@ def test_only_a_socket_card_title_is_shortened():
 
 
 def test_cisa_action_loses_the_pointer_to_notes_the_brief_does_not_carry():
-    action = auto._defensive_action("t", "", {"required_action": "Follow BOD 26-04 (see URL in Notes) guidance and triage (see URL in Notes)."}, [])
-    assert action == "Follow BOD 26-04 guidance and triage."
+    action = auto._defensive_action("t", "", {"required_action": "Patch the appliance (see URL in Notes) and rotate keys (see URL in Notes)."}, [])
+    assert action == "Patch the appliance and rotate keys."
+
+
+def test_cisa_agency_directive_becomes_the_fix_a_reader_can_apply():
+    directive = ("Apply mitigations in accordance with vendor instructions, ensuring compliance with CISA's BOD 26-04 guidance. "
+                 "Stakeholders are responsible for evaluating each asset's internet exposure.")
+    action = auto._defensive_action("t", "", {"required_action": directive}, [],
+                                    context="WordPress Core is vulnerable to Remote Code Execution in versions 4.7 through 7.1.3.")
+    assert action == ("Apply the vendor's security update; versions 4.7 through 7.1.3 are affected. "
+                      "If no update or mitigation is available, take the product out of service.")
+    assert "BOD" not in action and "Stakeholders" not in action
+
+
+def test_the_summary_starts_at_the_sentence_that_describes_the_flaw():
+    text = ("Stanza is a Stanford NLP Python library for tokenization and parsing. "
+            "Prior to 1.15.0, loading a lemmatizer model unpickles untrusted data, which allows code execution.")
+    assert auto._flaw_sentences(text) == ["Prior to 1.15.0, loading a lemmatizer model unpickles untrusted data, which allows code execution."]
+    assert auto._flaw_sentences("Official description of CVE-1.") == ["Official description of CVE-1."], "kept when no sentence names a flaw"
+
+
+def test_brief_dates_links_and_severity_are_written_for_readers():
+    from secopsai import research_editorial as editorial
+
+    assert editorial._when("2026-11-03T22:56:36.022450Z") == "3 Nov 2026, 22:56 UTC"
+    assert editorial._when("2026-11-03T00:00:00Z") == "3 Nov 2026"
+    feed = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    assert editorial._reader_url(feed, ["CVE-2026-119977"]) == editorial.KEV_CATALOG_URL + "?search_api_fulltext=CVE-2026-119977"
+    assert editorial._reader_url("https://github.com/advisories/GHSA-x", []) == "https://github.com/advisories/GHSA-x"
+    kev = {"summary": "CVE-1 (official CVSS 8.1): x. CISA lists it as exploited in the wild.", "title": "CVE-2026-1: WordPress flaw"}
+    pkg = {"summary": "CVE-2 (official CVSS 7.8 and 9.8): y.", "title": "Stanza: RCE"}
+    assert editorial._brief_severity([kev]) == "high"
+    assert editorial._brief_severity([kev, pkg]) == "critical"
+    assert editorial._brief_severity([]) == "info"
+    assert editorial._brief_summary([kev, pkg]) == "WordPress flaw (exploited); Stanza: RCE."
+    assert editorial._dates_line({"published_at": None, "first_observed_at": "2026-11-03T22:56:36Z"},
+                                 {"catalog_added_at": "2026-11-03T00:00:00Z"}) == \
+        "Added to the CISA KEV catalog 3 Nov 2026; first seen by SecOpsAI 3 Nov 2026, 22:56 UTC."
+
+
+def test_collection_scope_reads_as_plain_language(tmp_path):
+    from secopsai.research_coverage import coverage_report
+    from secopsai.research_surveillance import ensure_collectors
+
+    db = str(tmp_path / "coverage.db")
+    ensure_collectors(db_path=db)
+    summary = coverage_report(db_path=db)["public_summary"]
+    assert summary.startswith("SecOpsAI watched ")
+    assert "denominators" not in summary and "lack a fresh successful collection" not in summary
+    assert "without scanning package contents" in summary and "not complete coverage" in summary

@@ -3227,23 +3227,6 @@ def _render_pills(values: Iterable[Any], *, limit: int = 8) -> str:
     )
 
 
-def _render_command_blocks(post: Dict[str, Any]) -> str:
-    commands = post.get("operator_commands")
-    if not isinstance(commands, list) or not commands:
-        packages = _safe_list(post.get("affected_packages", []), limit=2)
-        commands = [
-            "secopsai blog rebuild-feeds",
-            "secopsai supply-chain reconcile-history --include-advisories",
-        ]
-        if packages:
-            commands.insert(0, f"secopsai supply-chain explain-verdict --package {packages[0]}")
-    safe_commands = _safe_list(commands, limit=6)
-    return "\n".join(
-        f'<button class="command-chip" type="button" data-copy="{html.escape(command)}"><code>{html.escape(command)}</code></button>'
-        for command in safe_commands
-    )
-
-
 def _render_reference_links(post: Dict[str, Any]) -> str:
     references = _safe_reference_list(post.get("references") or post.get("sources") or [], limit=8)
     if not references:
@@ -3272,7 +3255,7 @@ def _render_related_links(post: Dict[str, Any], posts: Optional[List[Dict[str, A
             if len(related) >= 3:
                 break
     if not related:
-        return "<p>No related posts yet.</p>"
+        return ""
     items = []
     by_slug = {str(item.get("slug")): item for item in posts or []}
     for slug in related:
@@ -3612,6 +3595,11 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     social_alt = str(post.get("social_image_alt") or f"SecOpsAI social preview card for {raw_title}")
     hero_media = _render_hero_media(post)
     media_gallery = _render_media_gallery(post)
+    # Operator commands and the drafting note are for the publisher, not readers,
+    # and an empty "Related posts" card is clutter.
+    related_links = _render_related_links(post)
+    related = (f'        <section class="card">\n          <p class="eyebrow">Related posts</p>\n          {related_links}\n        </section>'
+               if related_links else "")
     return f"""<!doctype html>
 <html lang="en">
   <head>
@@ -3687,8 +3675,7 @@ def _render_post_html(post: Dict[str, Any]) -> str:
             <input name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="display:none" />
             <div class="field">
               <label for="comment-body">Comment</label>
-              <textarea id="comment-body" name="body" maxlength="2000" rows="5" aria-describedby="comment-body-hint" required></textarea>
-              <p class="field-hint" id="comment-body-hint">Source-backed context, a mitigation note or a question. Up to 2,000 characters.</p>
+              <textarea id="comment-body" name="body" maxlength="2000" rows="5" required></textarea>
             </div>
             <div class="turnstile-slot" data-turnstile></div>
             <div class="comment-form-actions">
@@ -3699,23 +3686,12 @@ def _render_post_html(post: Dict[str, Any]) -> str:
         </section>
       </article>
       <aside class="side">
-        <section class="card">
-          <p class="eyebrow">Operator note</p>
-          <p>Source-backed posts are generated as drafts first and require explicit publishing.</p>
-        </section>
-        <section class="card command-panel">
-          <p class="eyebrow">Operator commands</p>
-          {_render_command_blocks(post)}
-        </section>
 {_render_ioc_card(post)}
         <section class="card">
           <p class="eyebrow">References</p>
           {_render_reference_links(post)}
         </section>
-        <section class="card">
-          <p class="eyebrow">Related posts</p>
-          {_render_related_links(post)}
-        </section>
+{related}
       </aside>
       </div>
     </main>
