@@ -167,6 +167,17 @@ jobs:
       - name: Fetch pinned YARA rule packs
         run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
 
+      - name: Free runner disk for the ledger
+        # The restore needs free space of three ledger copies (ledger, sparse
+        # baseline, checkpoint capture) plus 1 GB: 50.6 GB for the 16.5 GB ledger
+        # on 2026-11-04. Older runner images have less, and run 41880557106
+        # failed before restoring. The worker uses none of these toolchains.
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/boost
+          df -h / | tail -1
+
       - name: Restore ledger, run worker cycles, checkpoint
         id: worker
         # Routine bounded runs include an additional 14-minute durable delivery
