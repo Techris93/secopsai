@@ -285,6 +285,14 @@ separate advisory comparison are allowed. The private token is never forwarded
 to a publisher. Hashes, original source identity and collection transport are
 validated and retained. A failed relay remains a collection gap.
 
+Since 2026-11-04 cisa.gov answers 403 to every automated client, including the
+Ledger Worker, for everything except the KEV file; a browser still loads the same
+pages. SecOpsAI does not imitate a browser to get past this. CISA News is
+disabled. CISA's IT and ICS advisories are collected from the ROLIE feeds in
+CISA's official CSAF repository (github.com/cisagov/CSAF). The feeds list the
+whole catalogue, so only advisories updated in the last 14 days are in scope and
+the rest count as historical. ICS advisories link readers to their cisa.gov page.
+
 `SECOPSAI_PUBLIC_ARTIFACT_RECOVERY=1` permits bounded reacquisition of registered
 public registry artifacts from their archived URL and the ecosystem adapter's
 host allowlist. Both the original hash and size must match before catalog repair;

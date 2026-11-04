@@ -20,6 +20,9 @@ from secopsai.research_operation_store import append, canonical, digest, text, t
 
 PARSER_VERSION = "primary-intel-v4"
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
+# CISA's ROLIE feed lists every ICS advisory since 2025 (4.4 MB in 2026-11).
+SOURCE_BYTE_LIMITS = {"cisa_csaf_rolie": 12 * 1024 * 1024}
+CSAF_WINDOW_DAYS = 14
 MAX_EVENTS = 10000
 EVENT_BATCH_SIZE = 250
 MAX_PENDING = 10000
@@ -32,6 +35,10 @@ MSRC_OVERLAP_DAYS = 3
 
 class IntakeBackpressureError(ValueError):
     """The source snapshot is durable, but queued work has reached its bound."""
+
+
+def source_byte_limit(parser: str) -> int:
+    return SOURCE_BYTE_LIMITS.get(parser, MAX_SOURCE_BYTES)
 
 
 def source_headers(parser: str, *, url: str | None = None) -> dict:
@@ -74,7 +81,7 @@ def configure_source(config: dict, *, actor: str, db_path=None) -> dict:
              "parser": config.get("parser"), "source_class": config.get("source_class"),
              "sharing": config.get("sharing", "public"), "license": text(config.get("license", "unknown"), "license", limit=1000),
              "interval_seconds": config.get("interval_seconds", 86400), "enabled": config.get("enabled", False)}
-    if value["parser"] not in {"rss", "msrc_rss", "cisa_kev", "normalized_json", "github_advisories", "openvsx_index", "jfrog_index"} or value["source_class"] not in {"government", "vendor", "registry", "research", "partner", "aggregator", "project"}:
+    if value["parser"] not in {"rss", "msrc_rss", "cisa_kev", "normalized_json", "github_advisories", "openvsx_index", "jfrog_index", "cisa_csaf_rolie"} or value["source_class"] not in {"government", "vendor", "registry", "research", "partner", "aggregator", "project"}:
         raise ValueError("unsupported source parser or class")
     if type(value["interval_seconds"]) is not int or not 300 <= value["interval_seconds"] <= 604800 or type(value["enabled"]) is not bool:
         raise ValueError("invalid source interval or enablement")
@@ -156,9 +163,9 @@ def msrc_window_start(*, last_success_at: str | None = None, now=None) -> str:
 
 
 def parse_source_report(config: dict, content: bytes, *, now=None) -> dict:
-    if not content or len(content) > MAX_SOURCE_BYTES:
-        raise ValueError("source body is empty or exceeds budget")
     parser = config["parser"]
+    if not content or len(content) > source_byte_limit(parser):
+        raise ValueError("source body is empty or exceeds budget")
     historical_excluded = 0
     window_start = ""
     if parser in {"rss", "msrc_rss"}:
@@ -202,6 +209,9 @@ def parse_source_report(config: dict, content: bytes, *, now=None) -> dict:
         from secopsai.research_source_parsers import parse_index
         items = parse_index(config, content)
         events_total = len(items)
+    elif parser == "cisa_csaf_rolie":
+        items, historical_excluded, window_start = _parse_csaf_rolie(content, now=now)
+        events_total = len(items) + historical_excluded
     elif parser == "cisa_kev":
         body = json.loads(content)
         if not isinstance(body, dict) or not isinstance(body.get("vulnerabilities"), list):
@@ -233,6 +243,38 @@ def parse_source_report(config: dict, content: bytes, *, now=None) -> dict:
         normalized.append(value)
     return {"items": normalized, "events_total": events_total, "events_in_scope": len(normalized),
             "historical_excluded": historical_excluded, "window_start": window_start}
+
+
+def _parse_csaf_rolie(content: bytes, *, now=None):
+    """Advisories from a CISA CSAF ROLIE feed changed within the window.
+
+    The feed is a complete catalogue; older entries count as historical so a
+    first pass does not queue years of advisories."""
+    feed = json.loads(content).get("feed") if content.lstrip().startswith(b"{") else None
+    if not isinstance(feed, dict) or not isinstance(feed.get("entry"), list) or not feed["entry"]:
+        raise ValueError("invalid CSAF ROLIE feed")
+    current = now or datetime.now(timezone.utc)
+    if isinstance(current, str):
+        current = datetime.fromisoformat(current.replace("Z", "+00:00"))
+    cutoff = (current.astimezone(timezone.utc) - timedelta(days=CSAF_WINDOW_DAYS)).replace(microsecond=0)
+    window_start = cutoff.isoformat().replace("+00:00", "Z")
+    items, historical = [], 0
+    for entry in feed["entry"]:
+        advisory, title = entry.get("id"), entry.get("title")
+        document = (entry.get("content") or {}).get("src")
+        if not all(isinstance(value, str) and value for value in (advisory, title, document)):
+            raise ValueError("CSAF ROLIE entry lacks an identity, title or document")
+        updated = _date(entry.get("updated", "")) or _date(entry.get("published", ""))
+        if not updated:
+            raise ValueError("CSAF ROLIE entry has no reliable publication or update time")
+        if datetime.fromisoformat(updated.replace("Z", "+00:00")) < cutoff:
+            historical += 1
+            continue
+        items.append({"external_id": advisory, "url": document, "root_url": document,
+                      "title": f"{advisory}: {title}", "excerpt": f"CISA advisory {advisory}: {title}",
+                      "published_at": entry.get("published") or updated, "source_updated_at": updated,
+                      "collection_scope": "bounded_recent_advisory_index", "assessment": "source_reported"})
+    return items, historical, window_start
 
 
 def parse_source(config: dict, content: bytes) -> list[dict]:
@@ -371,7 +413,7 @@ def collect_due(*, db_path=None, fetcher=None, limit: int = 10, force_source_ids
                 from secopsai.research_source_transport import fetch_source
                 if config["parser"] == "msrc_rss":
                     config = {**config, "msrc_lookback_start": msrc_window_start(last_success_at=source["last_success_at"])}
-                _, received_headers, content = fetch_source(config["url"], max_bytes=MAX_SOURCE_BYTES,
+                _, received_headers, content = fetch_source(config["url"], max_bytes=source_byte_limit(config["parser"]),
                                                            headers=source_headers(config["parser"], url=config["url"]), fetcher=fetcher)
             stage = "parse"
             results.append(acquire(config, content, db_path=db_path, transport=received_headers.get("secopsai-transport", "direct")))

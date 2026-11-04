@@ -87,3 +87,44 @@ def test_interrupted_advisory_processing_cannot_starve_backups_or_primary_intake
     with pytest.raises(WorkerShutdown):
         research_worker._run_worker_cycle_unlocked(db_path=str(tmp_path/'worker.db'))
     assert events==['backup','primary','external']
+
+
+CSAF_OT = 'https://raw.githubusercontent.com/cisagov/CSAF/develop/csaf_files/OT/white/'
+
+
+def _rolie(*entries):
+    return json.dumps({'feed': {'id': 'cisa-csaf-ot-feed-tlp-white', 'entry': [
+        {'id': advisory, 'title': title, 'published': updated, 'updated': updated,
+         'content': {'src': CSAF_OT + '2026/' + advisory.lower() + '.json', 'type': 'application/json'}}
+        for advisory, title, updated in entries]}}).encode()
+
+
+def test_cisa_csaf_feed_keeps_recent_advisories_and_counts_the_rest_as_historical():
+    from secopsai.research_primary_intel import parse_source_report, source_byte_limit, MAX_SOURCE_BYTES
+    body = _rolie(('ICSA-26-307-01', 'Subnet Solutions PowerSYSTEM Center', '2026-11-03T06:00:00.000000Z'),
+                  ('ICSA-25-160-01', 'Old advisory', '2025-06-09T06:00:00.000000Z'))
+    report = parse_source_report({'parser': 'cisa_csaf_rolie', 'url': CSAF_OT + 'cisa-csaf-ot-feed-tlp-white.json'}, body,
+                                 now='2026-11-04T20:00:00Z')
+    assert (report['events_total'], report['events_in_scope'], report['historical_excluded']) == (2, 1, 1)
+    assert report['window_start'] == '2026-10-21T20:00:00Z'
+    [item] = report['items']
+    assert item['external_id'] == 'ICSA-26-307-01' and item['title'] == 'ICSA-26-307-01: Subnet Solutions PowerSYSTEM Center'
+    assert item['url'] == CSAF_OT + '2026/icsa-26-307-01.json' and item['published_at'] == '2026-11-03T06:00:00Z'
+    assert item['assessment'] == 'source_reported' and item['observed_exploitation_by_secopsai'] is False
+    # The complete ICS catalogue is larger than the general source budget.
+    assert source_byte_limit('cisa_csaf_rolie') > 4_500_000 and source_byte_limit('rss') == MAX_SOURCE_BYTES
+
+
+@pytest.mark.parametrize('body', [b'{}', b'<html>Access Denied</html>', json.dumps({'feed': {'entry': []}}).encode(),
+                                  _rolie(('ICSA-26-307-01', 'Undated', ''))])
+def test_malformed_cisa_csaf_feed_cannot_advance(body):
+    with pytest.raises(ValueError):
+        parse_source({'parser': 'cisa_csaf_rolie', 'url': CSAF_OT}, body)
+
+
+def test_ics_advisory_links_point_readers_to_cisa_pages():
+    from secopsai.research_editorial import _reader_url
+    assert _reader_url(CSAF_OT + '2026/icsa-26-307-01.json', []) == 'https://www.cisa.gov/news-events/ics-advisories/icsa-26-307-01'
+    it = 'https://raw.githubusercontent.com/cisagov/CSAF/develop/csaf_files/IT/white/2026/va-26-294-01.json'
+    assert _reader_url(it, []) == it
+    assert _reader_url('https://attacker.example/icsa-26-307-01.json', []) == 'https://attacker.example/icsa-26-307-01.json'

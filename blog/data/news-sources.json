@@ -19,8 +19,31 @@
       "type": "rss",
       "category": "Threat Intelligence",
       "trust_level": "government",
-      "enabled": true,
+      "enabled": false,
+      "disabled_reason": "Since 2026-11-04 cisa.gov returns 403 to automated clients for every page except the KEV file; IT and ICS advisories are collected from CISA's CSAF repository instead.",
       "default_tags": ["Security News", "CISA"],
+      "poll_frequency_hint": "daily"
+    },
+    {
+      "name": "CISA ICS Advisories",
+      "url": "https://www.cisa.gov/news-events/cybersecurity-advisories",
+      "feed_url": "https://raw.githubusercontent.com/cisagov/CSAF/develop/csaf_files/OT/white/cisa-csaf-ot-feed-tlp-white.json",
+      "type": "json",
+      "category": "Threat Intelligence",
+      "trust_level": "government",
+      "enabled": true,
+      "default_tags": ["Security News", "CISA", "ICS", "Vulnerability"],
+      "poll_frequency_hint": "daily"
+    },
+    {
+      "name": "CISA Vulnerability Advisories",
+      "url": "https://www.cisa.gov/news-events/cybersecurity-advisories",
+      "feed_url": "https://raw.githubusercontent.com/cisagov/CSAF/develop/csaf_files/IT/white/cisa-csaf-it-feed-tlp-white.json",
+      "type": "json",
+      "category": "Threat Intelligence",
+      "trust_level": "government",
+      "enabled": true,
+      "default_tags": ["Security News", "CISA", "Vulnerability"],
       "poll_frequency_hint": "daily"
     },
     {
