@@ -535,3 +535,22 @@ def test_feed_retention_cli_writes_its_result(tmp_path, capsys):
     assert code == 0
     printed = json.loads(capsys.readouterr().out)
     assert json.loads(output.read_text()) == printed and printed["complete"] is True
+
+
+def test_compaction_slims_npm_snapshots_before_rewriting_the_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(research_storage, "COMPACT_MIN_RECLAIM_BYTES", 1)
+    db_path = _db(tmp_path)
+    soc_store.init_db(db_path)
+    padded = {f"1.0.{index}": {"version": f"1.0.{index}", "dependencies": ["x"], "tarball": "t" * 4000} for index in range(50)}
+    with soc_store.connect(db_path) as connection:
+        for index in range(60):
+            connection.execute(
+                """INSERT INTO research_npm_package_snapshots (package, source_url, metadata_sha256, versions_json, latest_version,
+                   first_seen, last_seen, updated_at) VALUES (?, 'u', 's', ?, '1.0.0', 'now', 'now', 'now')""",
+                (f"pkg-{index}", json.dumps(padded)))
+    result = research_storage.apply_feed_retention(db_path=db_path, seconds=60, compact=True)
+    assert result["npm_snapshots_slimmed"] == 60 and result["compacted"] is True
+    with soc_store.connect(db_path) as connection:
+        stored = json.loads(connection.execute("SELECT versions_json FROM research_npm_package_snapshots LIMIT 1").fetchone()[0])
+    assert set(stored) == set(padded) and all("tarball" not in summary for summary in stored.values())
+    assert result["after_bytes"] < result["before_bytes"] / 5
