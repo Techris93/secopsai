@@ -779,11 +779,16 @@ def test_watchdog_treats_a_superseded_worker_run_as_provisional_not_failed():
 def test_real_source_catalog_seeds_supported_parsers_and_explicit_omissions(db):
     from secopsai.research_primary_intel import seed_sources
     seeded = seed_sources(db_path=db)
-    assert len(seeded["sources"]) == 17 and not seeded["unsupported_sources"]
+    assert len(seeded["sources"]) == 19 and not seeded["unsupported_sources"]
     with soc_store.connect(db) as conn:
         sources = [json.loads(r[0]) for r in conn.execute("SELECT config_json FROM research_intel_sources")]
     assert any(s["name"] == "OpenSSF Blog" and s["source_class"] == "project" for s in sources)
     assert any(s["parser"] == "cisa_kev" for s in sources)
+    # cisa.gov refuses automated clients; CISA's advisories come from its CSAF repository.
+    csaf = {s["name"]: s for s in sources if s["parser"] == "cisa_csaf_rolie"}
+    assert set(csaf) == {"CISA ICS Advisories", "CISA Vulnerability Advisories"}
+    assert all(s["enabled"] and s["url"].startswith("https://raw.githubusercontent.com/cisagov/CSAF/") for s in csaf.values())
+    assert not next(s for s in sources if s["name"] == "CISA News")["enabled"]
     # Vendor advisories the research desk needs as primary sources.
     vendor_feeds = {s["name"]: s for s in sources if s["source_class"] == "vendor"}
     for name in ("PHP Security Advisories", "Node.js Security Releases", "GitLab Security Releases"):

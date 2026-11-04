@@ -521,10 +521,18 @@ KEV_CATALOG_URL = "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
 SEVERITIES = ("info", "low", "medium", "high", "critical")
 
 
+CSAF_OT_PREFIX = "https://raw.githubusercontent.com/cisagov/CSAF/develop/csaf_files/OT/white/"
+ICS_ADVISORY_RE = re.compile(r"/(icsa|icsma)-\d{2}-\d{3}-\d{2}\.json$")
+
+
 def _reader_url(url: str, cves: list[str]) -> str:
-    """A page a reader can open: CISA's KEV feed is one JSON file of every entry."""
+    """A page a reader can open: CISA's KEV feed is one JSON file of every entry,
+    and an ICS advisory's CSAF document has a page on cisa.gov."""
     if url.startswith("https://www.cisa.gov/") and url.endswith(".json"):
         return KEV_CATALOG_URL + (f"?search_api_fulltext={cves[0]}" if cves else "")
+    match = ICS_ADVISORY_RE.search(url) if url.startswith(CSAF_OT_PREFIX) else None
+    if match:
+        return "https://www.cisa.gov/news-events/ics-advisories/" + match.group(0)[1:-len(".json")]
     return url
 
 
