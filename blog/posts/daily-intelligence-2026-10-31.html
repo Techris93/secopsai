@@ -283,8 +283,7 @@
             <input name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="display:none" />
             <div class="field">
               <label for="comment-body">Comment</label>
-              <textarea id="comment-body" name="body" maxlength="2000" rows="5" aria-describedby="comment-body-hint" required></textarea>
-              <p class="field-hint" id="comment-body-hint">Source-backed context, a mitigation note or a question. Up to 2,000 characters.</p>
+              <textarea id="comment-body" name="body" maxlength="2000" rows="5" required></textarea>
             </div>
             <div class="turnstile-slot" data-turnstile></div>
             <div class="comment-form-actions">
@@ -295,24 +294,12 @@
         </section>
       </article>
       <aside class="side">
-        <section class="card">
-          <p class="eyebrow">Operator note</p>
-          <p>Source-backed posts are generated as drafts first and require explicit publishing.</p>
-        </section>
-        <section class="card command-panel">
-          <p class="eyebrow">Operator commands</p>
-          <button class="command-chip" type="button" data-copy="secopsai blog rebuild-feeds"><code>secopsai blog rebuild-feeds</code></button>
-<button class="command-chip" type="button" data-copy="secopsai supply-chain reconcile-history --include-advisories"><code>secopsai supply-chain reconcile-history --include-advisories</code></button>
-        </section>
 
         <section class="card">
           <p class="eyebrow">References</p>
           <ul><li><a href="https://socket.dev/blog/claude-code-extension-compromise" rel="noopener noreferrer" target="_blank">socket.dev</a></li><li><a href="https://www.php.net/index.php#2026-10-23-1" rel="noopener noreferrer" target="_blank">www.php.net</a></li><li><a href="https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json" rel="noopener noreferrer" target="_blank">www.cisa.gov</a></li><li><a href="https://github.com/advisories/GHSA-h3rc-j82p-2c3h" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/advisories/GHSA-m665-v7pm-7grj" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/advisories/GHSA-2ffq-g2xg-c22p" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/advisories/GHSA-w8jc-g24h-crhw" rel="noopener noreferrer" target="_blank">github.com</a></li></ul>
         </section>
-        <section class="card">
-          <p class="eyebrow">Related posts</p>
-          <p>No related posts yet.</p>
-        </section>
+
       </aside>
       </div>
     </main>
