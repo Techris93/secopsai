@@ -143,8 +143,7 @@
             <input name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="display:none" />
             <div class="field">
               <label for="comment-body">Comment</label>
-              <textarea id="comment-body" name="body" maxlength="2000" rows="5" aria-describedby="comment-body-hint" required></textarea>
-              <p class="field-hint" id="comment-body-hint">Source-backed context, a mitigation note or a question. Up to 2,000 characters.</p>
+              <textarea id="comment-body" name="body" maxlength="2000" rows="5" required></textarea>
             </div>
             <div class="turnstile-slot" data-turnstile></div>
             <div class="comment-form-actions">
@@ -155,24 +154,12 @@
         </section>
       </article>
       <aside class="side">
-        <section class="card">
-          <p class="eyebrow">Operator note</p>
-          <p>Source-backed posts are generated as drafts first and require explicit publishing.</p>
-        </section>
-        <section class="card command-panel">
-          <p class="eyebrow">Operator commands</p>
-          <button class="command-chip" type="button" data-copy="secopsai research package --ecosystem npm --package &lt;name&gt; --version &lt;new&gt; --comparison-ecosystem npm --comparison-package &lt;name&gt; --comparison-version &lt;previous&gt; --research-type package_compromise"><code>secopsai research package --ecosystem npm --package &lt;name&gt; --version &lt;new&gt; --comparison-ecosystem npm --comparison-package &lt;name&gt; --comparison-version &lt;previous&gt; --research-type package_compromise</code></button>
-<button class="command-chip" type="button" data-copy="secopsai research workflow verdict &lt;case&gt; --verdict benign --confidence 90 --rationale &quot;...&quot; --evidence-id EVD-..."><code>secopsai research workflow verdict &lt;case&gt; --verdict benign --confidence 90 --rationale &quot;...&quot; --evidence-id EVD-...</code></button>
-        </section>
 
         <section class="card">
           <p class="eyebrow">References</p>
           <ul><li><a href="https://docs.npmjs.com/cli/v10/using-npm/scripts" rel="noopener noreferrer" target="_blank">docs.npmjs.com</a></li><li><a href="https://docs.npmjs.com/trusted-publishers" rel="noopener noreferrer" target="_blank">docs.npmjs.com</a></li></ul>
         </section>
-        <section class="card">
-          <p class="eyebrow">Related posts</p>
-          <p>No related posts yet.</p>
-        </section>
+
       </aside>
       </div>
     </main>

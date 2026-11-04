@@ -155,8 +155,7 @@ secopsai supply-chain reconcile-history --include-advisories</code></pre>
             <input name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="display:none" />
             <div class="field">
               <label for="comment-body">Comment</label>
-              <textarea id="comment-body" name="body" maxlength="2000" rows="5" aria-describedby="comment-body-hint" required></textarea>
-              <p class="field-hint" id="comment-body-hint">Source-backed context, a mitigation note or a question. Up to 2,000 characters.</p>
+              <textarea id="comment-body" name="body" maxlength="2000" rows="5" required></textarea>
             </div>
             <div class="turnstile-slot" data-turnstile></div>
             <div class="comment-form-actions">
@@ -167,25 +166,12 @@ secopsai supply-chain reconcile-history --include-advisories</code></pre>
         </section>
       </article>
       <aside class="side">
-        <section class="card">
-          <p class="eyebrow">Operator note</p>
-          <p>Source-backed posts are generated as drafts first and require explicit publishing.</p>
-        </section>
-        <section class="card command-panel">
-          <p class="eyebrow">Operator commands</p>
-          <button class="command-chip" type="button" data-copy="secopsai supply-chain advisory check --ecosystem npm --package @opensearch-project/opensearch --version 3.8.0"><code>secopsai supply-chain advisory check --ecosystem npm --package @opensearch-project/opensearch --version 3.8.0</code></button>
-<button class="command-chip" type="button" data-copy="secopsai supply-chain explain-verdict --ecosystem pypi --package guardrails-ai --version 0.10.1"><code>secopsai supply-chain explain-verdict --ecosystem pypi --package guardrails-ai --version 0.10.1</code></button>
-<button class="command-chip" type="button" data-copy="secopsai supply-chain reconcile-history --include-advisories"><code>secopsai supply-chain reconcile-history --include-advisories</code></button>
-        </section>
 
         <section class="card">
           <p class="eyebrow">References</p>
           <ul><li><a href="https://www.ox.security/blog/shai-hulud-here-we-go-again-170-packages-hit-across-npm-pypi/" rel="noopener noreferrer" target="_blank">www.ox.security</a></li><li><a href="https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack" rel="noopener noreferrer" target="_blank">socket.dev</a></li><li><a href="https://docs.secopsai.dev/supply-chain-advisories/" rel="noopener noreferrer" target="_blank">docs.secopsai.dev</a></li></ul>
         </section>
-        <section class="card">
-          <p class="eyebrow">Related posts</p>
-          <p>No related posts yet.</p>
-        </section>
+
       </aside>
       </div>
     </main>
