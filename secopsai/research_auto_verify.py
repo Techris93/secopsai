@@ -284,6 +284,9 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: 
         limitations.append("Exploitation is reported but not confirmed by CISA KEV.")
     if not cves:
         limitations.append("SecOpsAI recorded no CVE identifier for this advisory.")
+        # No official record to quote: the source's own account of the flaw,
+        # without sentences about other CVEs (prior art it cites).
+        summary_parts = ([sentence for sentence in _flaw_sentences(excerpt) if not CVE_RE.search(sentence)] or [title])[:3]
     return {"decision": "verified", "reason": "primary source; identifiers and scores match official records; fix or mitigation stated",
             "summary": " ".join(summary_parts)[:4000], "defensive_action": action[:4000], "limitations": " ".join(limitations),
             "cves": cves, "checks": {cve: [c["status"] for c in checks[cve]["claims"]] for cve in cves}}
@@ -379,7 +382,7 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
                 decided.setdefault(f"cves:{prior['source']['name']}:{','.join(cves)}", value["event_id"])
             for cve in cves:
                 decided.setdefault(f"cve:{cve}", value["event_id"])
-    outcome = {"verified": [], "rejected": [], "needs_review": [], "waiting": [], "claim_checks": 0, "withdrawn": []}
+    outcome = {"verified": [], "rejected": [], "needs_review": [], "waiting": [], "claim_checks": 0, "withdrawn": [], "errors": []}
     # Only what the research desk ranks: the newest collected items are
     # mostly routine registry advisories that do not belong in a brief.
     ranked = ranked_event_ids(db_path=db_path)
@@ -428,7 +431,12 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
                    "summary": result.get("summary", ""), "defensive_action": result.get("defensive_action", ""),
                    "limitations": result.get("limitations") or result["reason"], "primary_url": event["payload"]["url"],
                    "primary_event_id": event["event_id"], "attribution": "source_reported"}
-        verify_event(event["event_id"], payload, actor=operator, automation=automation, db_path=db_path)
+        try:
+            verify_event(event["event_id"], payload, actor=operator, automation=automation, db_path=db_path)
+        except ValueError as exc:
+            # One malformed decision must not stop the rest of the queue.
+            outcome["errors"].append({"event_id": event["event_id"], "error": str(exc)[:200]})
+            continue
         outcome[result["decision"]].append(event["event_id"])
         if result["decision"] in {"verified", "rejected"}:
             decided.setdefault(citation_key(event), event["event_id"])
@@ -438,4 +446,5 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
                 for cve in result["cves"]:
                     decided.setdefault(f"cve:{cve}", event["event_id"])
     return {"status": "ran", **{key: value if isinstance(value, int) else len(value) for key, value in outcome.items()},
+            "error_samples": outcome["errors"][:5],
             "needs_review_ids": outcome["needs_review"]}
