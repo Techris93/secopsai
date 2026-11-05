@@ -116,6 +116,36 @@ def measure(db, report):
                 "summaries_per_row": {q: pick(per_row, q) for q in (0.5, 0.9, 0.99)} | {"max": per_row[-1] if per_row else None},
                 "npm_versions_per_package_7d": {q: pick(bursts, q) for q in (0.5, 0.9, 0.99, 0.999)} | {"max": bursts[-1] if bursts else None, "packages": len(bursts)}}
 
+    def review_queue():
+        """Why each item in the human review queue is there (public source data only)."""
+        from secopsai import research_auto_verify as av
+        from secopsai.research_desk import latest_claim_checks, signals
+        from secopsai.research_operation_store import records
+        ranked = av.ranked_event_ids(db_path=str(db))
+        checks = latest_claim_checks(db_path=str(db))
+        latest = {}
+        for record in records("intel_verification", db_path=str(db), limit=10000):
+            latest.setdefault(record["payload"]["event_id"], record)
+        from secopsai.research_primary_intel import pending_public_reviews
+        rows = []
+        for item in pending_public_reviews(db_path=str(db), limit=50, event_ids=list(ranked))[:40]:
+            record = latest.get(item["event_id"])
+            value = (record or {}).get("payload") or {}
+            from secopsai.research_primary_intel import intel_event
+            event = intel_event(item["event_id"], db_path=str(db))
+            found = signals(av._text(event["payload"].get("title")), av._text(event["payload"].get("excerpt")))
+            cves = av.subject_cves(event, found)
+            rows.append({"title": str(item.get("title"))[:140], "source": event["source"].get("name"), "class": event["source"].get("source_class"),
+                         "review_status": item.get("review_status"), "ranked": item["event_id"] in ranked,
+                         "first_observed_at": item.get("first_observed_at"),
+                         "decision": value.get("decision"), "decided_at": (record or {}).get("created_at"),
+                         "automated": bool(value.get("automation")), "rule": str((value.get("automation") or {}).get("rule", ""))[:300],
+                         "cves": cves, "claims": {c: [(x["claim"], x["status"]) for x in (checks.get(c) or {}).get("claims", [])] for c in cves},
+                         "claims_checked_at": {c: (checks.get(c) or {}).get("checked_at") for c in cves},
+                         "redecide_now": av._decide(event, checks, {}).get("reason")})
+        return rows
+
+    _timed(report, "review_queue", review_queue)
     _timed(report, "npm_snapshots", npm_snapshots)
     _timed(report, "pages", pages)
     _timed(report, "objects", objects)
