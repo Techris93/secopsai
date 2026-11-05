@@ -219,7 +219,7 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
         lines.extend(research_desk.research_note(item["event_id"], ranked=ranked, db_path=db_path, cves=item.get("cves")))
     lines.extend(["", "## Collection scope", "", coverage["public_summary"], "", "## Credits and corrections", "", f"Prepared by {author['display_name']}. The editor approves each edition before it is published. Corrections keep the previous edition and explain material changes."])
     draft = {"title": f"SecOpsAI Daily Intelligence Brief — {date}", "slug": f"daily-intelligence-{date}", "summary": _brief_summary(items),
-             "body_markdown": "\n\n".join(lines), "author": author["display_name"], "author_id": author["person_id"], "items": items,
+             "body_markdown": "\n\n".join(_blocks(lines)), "author": author["display_name"], "author_id": author["person_id"], "items": items,
              "sources": [item["url"] for item in items], "references": [_reader_url(item["url"], item.get("cves") or []) for item in items],
              "categories": ["Threat Intelligence"], "severity": _brief_severity(items),
              "editorial_edition_id": identity, "review_status": "needs_review", "coverage": coverage, "external_news": False,
@@ -534,6 +534,18 @@ def _reader_url(url: str, cves: list[str]) -> str:
     if match:
         return "https://www.cisa.gov/news-events/ics-advisories/" + match.group(0)[1:-len(".json")]
     return url
+
+
+def _blocks(lines: list[str]) -> list[str]:
+    """Paragraph blocks: consecutive table rows stay together, since a blank
+    line between rows ends the table and leaves its pipes as plain text."""
+    blocks: list[str] = []
+    for line in lines:
+        if line.startswith("|") and blocks and blocks[-1].startswith("|"):
+            blocks[-1] += "\n" + line
+        else:
+            blocks.append(line)
+    return blocks
 
 
 def _when(value: str) -> str:
