@@ -538,3 +538,13 @@ def test_needs_review_is_taken_again_when_the_record_appears_and_news_on_kev_is_
     count = len(records("intel_verification", db_path=db, limit=1000))
     auto.run(cve_fetch, db_path=db)
     assert len(records("intel_verification", db_path=db, limit=1000)) == count, "an unchanged needs_review is not recorded again"
+
+
+def test_an_advisory_without_a_cve_is_summarised_from_its_own_text():
+    event = {"event_id": "ghsa", "source_id": "gh", "external_id": "GHSA-abcd-1234-5678",
+             "source": {"name": "GitHub Security Advisories", "source_class": "registry"},
+             "payload": {"title": "dcmjs: input validation bypass", "external_id": "GHSA-abcd-1234-5678", "published_at": RECENT,
+                         "excerpt": "dcmjs is a DICOM library. A crafted value allows an attacker to bypass validation. Fixed in dcmjs 0.38.1.",
+                         "affected_versions": [{"package": {"name": "dcmjs"}, "first_patched_version": "0.38.1"}]}}
+    result = auto._decide(event, {}, {})
+    assert result["decision"] == "verified" and result["summary"].startswith("A crafted value allows an attacker")
