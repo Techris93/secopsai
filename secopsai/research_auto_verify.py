@@ -6,15 +6,21 @@ pending public source items with deterministic rules:
 
 * a repeat of an item already decided (same citation or same title from the
   same source) is rejected as a duplicate;
-* a news report (aggregator) is never verified here; it needs its primary
-  source and stays with the human reviewer;
+* a news report (aggregator) is never verified here. One about CVEs that CISA
+  KEV or an already verified primary item covers is rejected as a duplicate of
+  that source; one naming no CVE is rejected, since a brief cites primary
+  sources and it links none; the rest stay with the human reviewer;
 * an old advisory with no exploitation signal is rejected: a feed sorted by
   update time resurfaces them, but they are not news;
 * a primary item is verified only when every CVE it is about exists in cve.org,
   no reported score contradicts the official record, and the source itself
   states a fix or mitigation. CVEs merely mentioned in its text are not
   described as if they were the item's own;
-* anything else is marked ``needs_review`` with the reason.
+* a primary item naming no CVE and stating no fix or mitigation is not an
+  advisory and is rejected;
+* anything else is marked ``needs_review`` with the reason. A ``needs_review``
+  decision is taken again when the evidence changes (a CVE record appears, a
+  score is corrected, a request that failed succeeds).
 
 Decisions are recorded under the delegating operator with an ``automation``
 block naming the policy and the checks that passed, so the brief can say the
@@ -43,6 +49,9 @@ MITIGATION_RE = re.compile(r"\bset\s+(?:<[^>]+>)?\s*([\w.\-]+\s*=\s*[\w.\-]+)", 
 RELEASE_TITLE_RE = re.compile(r"\breleased?\b|\bavailable\b", re.IGNORECASE)
 TAG_RE = re.compile(r"<[^>]{0,500}>")
 OLD_CVSS_RULE = re.compile(r"\bCVSS \d+(?:\.\d)?: mismatch")
+# A cve.org or NVD request that failed is not a disagreement: retry the check.
+# Items an earlier revision sent to the reviewer for that reason are decided again.
+TRANSIENT_RULE = re.compile(r"official records disagree: [^;]*: unavailable")
 
 
 def policy(*, db_path=None) -> Optional[dict[str, Any]]:
@@ -101,6 +110,7 @@ def mitigations(excerpt: str) -> list[str]:
 # CISA's KEV "required action" is a directive to US federal agencies (BOD
 # compliance, asset exposure duties); readers need the fix itself.
 CISA_DIRECTIVE_RE = re.compile(r"\bBOD\s*\d|vendor instructions", re.IGNORECASE)
+FIXED_BEFORE_RE = re.compile(r"\bbefore (?:versions? )?(\d[\w.-]*[\w-](?:(?:,\s*|,?\s+(?:and|or)\s+)\d[\w.-]*[\w-])*)", re.IGNORECASE)
 AFFECTED_RANGE_RE = re.compile(r"\bversions?\s+(\d(?:[\w.-]*[\w-])?)\s+(?:through|to)\s+(\d(?:[\w.-]*[\w-])?)", re.IGNORECASE)
 
 
@@ -116,7 +126,9 @@ def _defensive_action(title: str, excerpt: str, payload: dict, rules: list[dict]
         required = re.sub(r"\s*\(see URL in Notes\)", "", _text(payload["required_action"]))
         if CISA_DIRECTIVE_RE.search(required):
             affected = AFFECTED_RANGE_RE.search(f"{excerpt} {context}")
+            fixed = FIXED_BEFORE_RE.search(f"{excerpt} {context}")
             required = ("Apply the vendor's security update" + (f"; versions {affected.group(1)} through {affected.group(2)} are affected" if affected else "")
+                        + (f"; the CVE record lists the fix in {fixed.group(1)}" if fixed and not affected else "")
                         + ". If no update or mitigation is available, take the product out of service.")
         if not versions or not CISA_DIRECTIVE_RE.search(_text(payload["required_action"])):
             parts.append(required)
@@ -158,6 +170,16 @@ def _too_old(event: dict, found: dict, now: datetime) -> str:
     return published[:10]
 
 
+def _kev_cves(db_path=None) -> set[str]:
+    """CVEs with an entry from the CISA KEV catalog in the ledger."""
+    from secopsai.research_operation_store import read_connection
+
+    with read_connection(db_path) as conn:
+        return {str(row[0]).upper() for row in conn.execute(
+            "SELECT json_extract(e.payload_json,'$.external_id') FROM research_intel_events e JOIN research_intel_sources s USING(source_id) "
+            "WHERE json_extract(s.config_json,'$.parser')='cisa_kev'") if row[0]}
+
+
 def _released_event_ids(db_path=None) -> set[str]:
     import json
 
@@ -167,6 +189,29 @@ def _released_event_ids(db_path=None) -> set[str]:
         return {item["event_id"] for row in conn.execute(
             "SELECT draft_json FROM research_editorial_editions WHERE state IN ('approved','published','corrected','retracted')")
             for item in json.loads(row["draft_json"]).get("items", [])}
+
+
+def _needs_check(check: Optional[dict], now: datetime) -> bool:
+    """A CVE with no check, a failed request, or a missing record checked long ago."""
+    from secopsai.research_desk import CLAIM_CHECK_TTL_HOURS
+
+    if not check:
+        return True
+    statuses = {claim["status"] for claim in check.get("claims") or []}
+    if "unavailable" in statuses:
+        return True
+    if statuses & {"not_found", "not_published"} and check.get("checked_at"):
+        checked = datetime.fromisoformat(str(check["checked_at"]).replace("Z", "+00:00"))
+        return now - checked >= timedelta(hours=CLAIM_CHECK_TTL_HOURS)
+    return False
+
+
+def _covered_by(cve: str, check: Optional[dict], decided: dict[str, str]) -> str:
+    """The primary source already covering a CVE: CISA KEV or a verified item."""
+    if f"kev:{cve}" in decided or any(claim["claim"] == "exploited in the wild" and claim["status"] == "confirmed"
+                                      for claim in (check or {}).get("claims") or []):
+        return "the CISA KEV entry"
+    return f"verified item {decided[f'cve:{cve}']}" if f"cve:{cve}" in decided else ""
 
 
 def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: Optional[datetime] = None) -> dict[str, Any]:
@@ -179,14 +224,25 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: 
     for key in (cited, title_key):
         if key and key in decided and decided[key] != event["event_id"]:
             return {"decision": "rejected", "reason": f"duplicate of {decided[key]} (same {'citation' if key == cited else 'title'})"}
-    if source.get("source_class") not in AUTOMATED_SOURCE_CLASSES:
-        return {"decision": "needs_review", "reason": "news report: verify against its primary source before it can be cited"}
+    current = now or datetime.now(timezone.utc)
     found = signals(title, excerpt)
-    published = _too_old(event, found, now or datetime.now(timezone.utc))
+    if source.get("source_class") not in AUTOMATED_SOURCE_CLASSES:
+        cves = subject_cves(event, found)
+        if source.get("source_class") == "aggregator" and not cves:
+            return {"decision": "rejected", "reason": "news report naming no CVE; a brief cites primary sources and this report links none"}
+        missing = [cve for cve in cves if _needs_check(checks.get(cve), current)]
+        if source.get("source_class") == "aggregator" and missing:
+            return {"decision": None, "reason": "claim checks pending for " + ", ".join(missing), "unchecked": missing}
+        covered = {cve: _covered_by(cve, checks.get(cve), decided) for cve in cves}
+        if source.get("source_class") == "aggregator" and all(covered.values()):
+            return {"decision": "rejected", "reason": "news report on " + ", ".join(cves) + "; already covered by "
+                    + ", ".join(dict.fromkeys(covered.values())) + " as its primary source"}
+        return {"decision": "needs_review", "reason": "news report: verify against its primary source before it can be cited"}
+    published = _too_old(event, found, current)
     if published:
         return {"decision": "rejected", "reason": f"advisory published {published}; over {STALE_ADVISORY_DAYS} days old with no exploitation signal, so not news"}
     cves = subject_cves(event, found)
-    missing = [cve for cve in cves if cve not in checks]
+    missing = [cve for cve in cves if _needs_check(checks.get(cve), current)]
     if missing:
         return {"decision": None, "reason": "claim checks pending for " + ", ".join(missing), "unchecked": missing}
     # Identifier claims come from the cached per-CVE checks. The score is
@@ -206,6 +262,8 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: 
     rules = detections_for({"cves": cves, "names": found["names"]})
     descriptions = " ".join(checks[cve].get("official_description") or "" for cve in cves)
     action = _defensive_action(title, excerpt, payload, rules, context=descriptions)
+    if not action and not cves:
+        return {"decision": "rejected", "reason": "names no CVE and states no fix or mitigation, so it is not an advisory"}
     if not action:
         return {"decision": "needs_review", "reason": "the source states no fixed version or mitigation"}
     official = [checks[cve] for cve in cves]
@@ -283,8 +341,9 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
         return {"status": "disabled", "reason": "no accepted automated_verification policy"}
     operator = delegation["operator_id"]
     checks = latest_claim_checks(db_path=db_path)
-    decided: dict[str, str] = {}
+    decided: dict[str, str] = {f"kev:{cve}": "CISA KEV" for cve in _kev_cves(db_path)}
     redo: list[str] = []
+    revisit: dict[str, str] = {}  # automated needs_review decisions and their rule
     latest_seen: set[str] = set()
     for record in records("intel_verification", db_path=db_path, limit=10000):
         value = record["payload"]
@@ -293,7 +352,7 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
         rule = str((value.get("automation") or {}).get("rule", ""))
         if first and value.get("automation") and (
                 (value.get("decision") == "rejected" and "(same citation)" in rule)
-                or (value.get("decision") == "needs_review" and OLD_CVSS_RULE.search(rule))):
+                or (value.get("decision") == "needs_review" and (OLD_CVSS_RULE.search(rule) or TRANSIENT_RULE.search(rule)))):
             # Decided under a superseded rule (URL-only citation key, or cached
             # per-CVE scores); decide again under the current one.
             redo.append(value["event_id"])
@@ -304,6 +363,8 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
             continue
         if not first:
             continue  # only an item's latest decision counts
+        if value.get("decision") == "needs_review" and value.get("automation") and value["event_id"] not in released:
+            revisit[value["event_id"]] = rule
         if value.get("decision") not in {"verified", "rejected"}:
             continue
         try:
@@ -316,6 +377,8 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
             cves = subject_cves(prior, signals(_text(prior["payload"].get("title")), _text(prior["payload"].get("excerpt"))))
             if cves:
                 decided.setdefault(f"cves:{prior['source']['name']}:{','.join(cves)}", value["event_id"])
+            for cve in cves:
+                decided.setdefault(f"cve:{cve}", value["event_id"])
     outcome = {"verified": [], "rejected": [], "needs_review": [], "waiting": [], "claim_checks": 0, "withdrawn": []}
     # Only what the research desk ranks: the newest collected items are
     # mostly routine registry advisories that do not belong in a brief.
@@ -328,12 +391,23 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
     queue = sorted((item for item in pending_public_reviews(db_path=db_path, limit=50, event_ids=list(ranked)) if item["event_id"] in ranked),
                    key=lambda item: item["first_observed_at"], reverse=True)
     queue.sort(key=lambda item: "advisory" not in item["title"].casefold())
-    redo_items = [{"event_id": event_id, "review_status": "pending_review"} for event_id in redo if event_id in ranked]
-    for item in redo_items + queue[:limit]:
+    # A needs_review decision is taken again with the current evidence; it is
+    # recorded only when the outcome changes.
+    redo_items = [{"event_id": event_id, "review_status": "pending_review"}
+                  for event_id in dict.fromkeys([*redo, *revisit]) if event_id in ranked]
+    # News reports the desk does not rank still reach the reviewer's queue;
+    # settle the ones the rules can reject without fetching anything.
+    unranked_news = [{**item, "settle_only": True} for item in pending_public_reviews(db_path=db_path, limit=50)
+                     if item["event_id"] not in ranked and item["review_status"] == "pending_review"]
+    for item in redo_items + queue[:limit] + unranked_news:
         if item["review_status"] not in {"pending_review", "source_changed_review_required"}:
             continue
         event = intel_event(item["event_id"], db_path=db_path)
+        if item.get("settle_only") and event["source"].get("source_class") != "aggregator":
+            continue
         result = _decide(event, checks, decided)
+        if item.get("settle_only") and result["decision"] != "rejected":
+            continue
         if result["decision"] is None and fetch is not None and outcome["claim_checks"] < CLAIMS_PER_RUN:
             found = signals(_text(event["payload"].get("title")), _text(event["payload"].get("excerpt")))
             cluster = {**found, "sources": [event["source"]["name"]],
@@ -346,6 +420,8 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
         if result["decision"] is None:
             outcome["waiting"].append(item["event_id"])
             continue
+        if item["event_id"] in revisit and result["decision"] == "needs_review" and result["reason"] == revisit[item["event_id"]]:
+            continue  # nothing changed
         automation = {"policy_record_id": delegation["record_id"], "rule": result["reason"], "checks": result.get("checks", {}),
                       "revision": DECISION_REVISION}
         payload = {"decision": result["decision"], "rationale": "Automated verification: " + result["reason"],
@@ -359,5 +435,7 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
             decided.setdefault(f"{event['source_id']}|{_text(event['payload'].get('title')).casefold()}", event["event_id"])
             if result["decision"] == "verified" and result.get("cves"):
                 decided.setdefault(f"cves:{event['source']['name']}:{','.join(result['cves'])}", event["event_id"])
+                for cve in result["cves"]:
+                    decided.setdefault(f"cve:{cve}", event["event_id"])
     return {"status": "ran", **{key: value if isinstance(value, int) else len(value) for key, value in outcome.items()},
             "needs_review_ids": outcome["needs_review"]}
