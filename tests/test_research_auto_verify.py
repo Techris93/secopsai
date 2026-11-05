@@ -426,3 +426,130 @@ def test_collection_scope_reads_as_plain_language(tmp_path):
     assert summary.startswith("SecOpsAI watched ")
     assert "denominators" not in summary and "lack a fresh successful collection" not in summary
     assert "without scanning package contents" in summary and "not complete coverage" in summary
+
+
+def test_a_failed_record_lookup_is_retried_not_sent_to_the_reviewer(db):
+    """2026-11-05: a KEV item stayed with the reviewer because cve.org did not answer once."""
+    queue(db)
+    delegate(db)
+    calls = []
+
+    def flaky(url):
+        calls.append(url)
+        if "cveawg" in url and "104935" in url and sum("104935" in u and "cveawg" in u for u in calls) == 1:
+            raise OSError("timed out")
+        return cve_fetch(url)
+
+    auto.run(flaky, db_path=db)
+    assert "kev-ivanti" not in decisions(db) or decisions(db)["kev-ivanti"]["decision"] != "needs_review"
+    auto.run(flaky, db_path=db)
+    assert decisions(db)["kev-ivanti"]["decision"] == "verified"
+
+
+def test_an_item_sent_to_the_reviewer_over_a_failed_lookup_is_decided_again(db):
+    queue(db)
+    delegate(db)
+    from secopsai.research_primary_intel import verify_event
+    delegation = auto.policy(db_path=db)
+    rule = "official records disagree: CVE-2026-104935 exists: unavailable"
+    verify_event("kev-ivanti", {"decision": "needs_review", "rationale": "Automated verification: " + rule, "limitations": rule,
+                                "primary_url": "https://kev.example/kev-ivanti", "attribution": "source_reported"},
+                 actor=OPERATOR, db_path=db, automation={"policy_record_id": delegation["record_id"], "rule": rule, "checks": {}})
+    auto.run(cve_fetch, db_path=db)
+    assert decisions(db)["kev-ivanti"]["decision"] == "verified"
+
+
+def test_cisa_action_names_the_fixed_releases_from_the_cve_record():
+    directive = "Apply mitigations in accordance with vendor instructions, ensuring compliance with CISA's BOD 26-04 guidance."
+    action = auto._defensive_action("t", "", {"required_action": directive}, [],
+                                    context="Use of predictable filenames in Ivanti Connect Secure before versions 25.1.1.3 and 22.8R2.6 allows a remote authenticated attacker to upload files.")
+    assert action == ("Apply the vendor's security update; the CVE record lists the fix in 25.1.1.3 and 22.8R2.6. "
+                      "If no update or mitigation is available, take the product out of service.")
+
+
+CONFIRMED = [{"claim": "exists", "status": "confirmed"}]
+
+
+def _news(title, excerpt=""):
+    return {"event_id": "thn", "source_id": "thn", "source": {"name": "The Hacker News", "source_class": "aggregator"},
+            "payload": {"title": title, "excerpt": excerpt, "published_at": None}}
+
+
+def test_a_news_report_on_a_kev_listed_cve_is_a_duplicate_of_the_kev_entry():
+    checks = {"CVE-2026-111497": {"cve": "CVE-2026-111497", "claims": CONFIRMED}}
+    result = auto._decide(_news("Brotli decoder flaw behind Node.js RCE", "CVE-2026-111497 exploited."), checks, {"kev:CVE-2026-111497": "CISA KEV"})
+    assert result["decision"] == "rejected" and "covered by the CISA KEV entry" in result["reason"]
+
+
+def test_a_news_report_on_a_verified_primary_item_is_a_duplicate_of_it():
+    checks = {"CVE-2026-112900": {"cve": "CVE-2026-112900", "claims": CONFIRMED}}
+    result = auto._decide(_news("Critical Pillow flaw", "CVE-2026-112900."), checks, {"cve:CVE-2026-112900": "ghsa-pillow"})
+    assert result["decision"] == "rejected" and "verified item ghsa-pillow" in result["reason"]
+
+
+def test_a_news_report_on_an_uncovered_cve_stays_with_the_reviewer_and_one_without_a_cve_is_rejected():
+    checks = {"CVE-2026-115560": {"cve": "CVE-2026-115560", "claims": CONFIRMED}}
+    assert auto._decide(_news("PHP warns of another RCE", "CVE-2026-115560."), checks, {})["decision"] == "needs_review"
+    result = auto._decide(_news("5 Active Cyber Threats That Put US Enterprises at Risk"), {}, {})
+    assert result["decision"] == "rejected" and "naming no CVE" in result["reason"]
+
+
+def test_a_news_report_waits_for_its_cve_to_be_checked():
+    result = auto._decide(_news("Cisco patches exploited flaw", "CVE-2026-76418."), {}, {})
+    assert result["decision"] is None and result["unchecked"] == ["CVE-2026-76418"]
+
+
+def test_a_vendor_post_with_no_cve_or_fix_is_not_an_advisory():
+    event = {"event_id": "cf", "source_id": "cf", "source": {"name": "Cloudflare Security Blog", "source_class": "vendor"},
+             "payload": {"title": "Introducing Zero Wire, a hub for investigating critical Internet vulnerabilities",
+                         "excerpt": "A new hub for our research.", "published_at": RECENT}}
+    result = auto._decide(event, {}, {})
+    assert result["decision"] == "rejected" and "not an advisory" in result["reason"]
+
+
+def test_a_missing_cve_record_is_checked_again_after_the_ttl():
+    old = (datetime.now(timezone.utc) - timedelta(hours=7)).isoformat().replace("+00:00", "Z")
+    fresh = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    missing = [{"claim": "exists", "status": "not_found"}]
+    assert auto._needs_check({"claims": missing, "checked_at": old}, datetime.now(timezone.utc))
+    assert not auto._needs_check({"claims": missing, "checked_at": fresh}, datetime.now(timezone.utc))
+    assert auto._needs_check({"claims": [{"claim": "exists", "status": "unavailable"}], "checked_at": fresh}, datetime.now(timezone.utc))
+
+
+def test_needs_review_is_taken_again_when_the_record_appears_and_news_on_kev_is_settled(db):
+    """2026-11-05: the Ivanti KEV item stayed with the reviewer after cve.org first had no record."""
+    queue(db)
+    add(db, "thn-ivanti", "thn", "Attackers Chain Ivanti Connect Secure Flaws", "CVE-2026-104935 exploited for root access.")
+    add(db, "thn-list", "thn", "5 Active Cyber Threats That Put US Enterprises at Risk", "A roundup.")
+    delegate(db)
+    from secopsai.research_primary_intel import verify_event
+    delegation = auto.policy(db_path=db)
+    rule = "official records disagree: CVE-2026-104935 exists: not found"
+    verify_event("kev-ivanti", {"decision": "needs_review", "rationale": "Automated verification: " + rule, "limitations": rule,
+                                "primary_url": "https://kev.example/kev-ivanti", "attribution": "source_reported"},
+                 actor=OPERATOR, db_path=db, automation={"policy_record_id": delegation["record_id"], "rule": rule, "checks": {}})
+    auto.run(cve_fetch, db_path=db)
+    got = decisions(db)
+    assert got["kev-ivanti"]["decision"] == "verified"
+    assert got["thn-list"]["decision"] == "rejected"
+    auto.run(cve_fetch, db_path=db)
+    got = decisions(db)
+    assert got["thn-ivanti"]["decision"] == "rejected" and "CVE-2026-104935" in got["thn-ivanti"]["rationale"]
+    count = len(records("intel_verification", db_path=db, limit=1000))
+    auto.run(cve_fetch, db_path=db)
+    assert len(records("intel_verification", db_path=db, limit=1000)) == count, "an unchanged needs_review is not recorded again"
+
+
+def test_an_advisory_without_a_cve_is_summarised_from_its_own_text():
+    event = {"event_id": "ghsa", "source_id": "gh", "external_id": "GHSA-abcd-1234-5678",
+             "source": {"name": "GitHub Security Advisories", "source_class": "registry"},
+             "payload": {"title": "dcmjs: input validation bypass", "external_id": "GHSA-abcd-1234-5678", "published_at": RECENT,
+                         "excerpt": "dcmjs is a DICOM library. A crafted value allows an attacker to bypass validation. Fixed in dcmjs 0.38.1.",
+                         "affected_versions": [{"package": {"name": "dcmjs"}, "first_patched_version": "0.38.1"}]}}
+    result = auto._decide(event, {}, {})
+    assert result["decision"] == "verified" and result["summary"].startswith("A crafted value allows an attacker")
+
+
+def test_a_news_report_on_a_kev_cve_is_settled_without_a_record_lookup():
+    result = auto._decide(_news("Hackers exploit patched Apple flaw", "CVE-2024-27834."), {}, {"kev:CVE-2024-27834": "CISA KEV"})
+    assert result["decision"] == "rejected" and "CISA KEV" in result["reason"]
