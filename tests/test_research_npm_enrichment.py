@@ -385,3 +385,45 @@ def test_developer_scripts_and_first_observed_hooks_do_not_inflate_score():
     new_score, new_signals = _suspicion_score(hooked, previous=previous, baseline_only=False)
     assert {"new_lifecycle_hook", "lifecycle_script_changed"} & {item["id"] for item in new_signals}
     assert new_score >= 45
+
+
+def _full_summary(version, *, author="alice", scripts=None, deps=("lodash",)):
+    from secopsai import research_npm_enrichment as enrichment
+
+    item = {"author": {"name": author}, "scripts": scripts or {}, "dependencies": {name: "^1" for name in deps},
+            "maintainers": [{"name": author}], "dist": {"tarball": f"https://r/{version}.tgz", "integrity": "sha512-x", "shasum": "ab"},
+            "homepage": "https://h", "repository": {"url": "git+https://g"}, "description": "d"}
+    return enrichment._version_summary(version, item, {version: "2026-11-01T00:00:00Z"})
+
+
+def test_snapshots_keep_only_what_the_release_comparison_reads():
+    from secopsai import research_npm_enrichment as enrichment
+
+    previous = _full_summary("1.0.0")
+    stored = enrichment._compact_snapshot_versions({"1.0.0": previous})["1.0.0"]
+    assert set(stored) == set(enrichment.SNAPSHOT_FIELDS)
+    hijack = _full_summary("1.0.1", author="mallory", scripts={"postinstall": "node x.js"}, deps=("lodash", "evil"))
+    for baseline_only in (False, True):
+        assert enrichment._suspicion_score(hijack, previous=stored, baseline_only=baseline_only) == \
+            enrichment._suspicion_score(hijack, previous=previous, baseline_only=baseline_only), "same signals as the full summary"
+
+
+def test_old_snapshot_rows_are_slimmed_once(tmp_path):
+    from secopsai import research_npm_enrichment as enrichment
+
+    db = str(tmp_path / "npm.db")
+    soc_store.init_db(db)
+    full = {"1.0.0": _full_summary("1.0.0"), "0.9.0": _full_summary("0.9.0")}
+    with soc_store.connect(db) as connection:
+        for package in ("a", "b"):
+            connection.execute(
+                """INSERT INTO research_npm_package_snapshots (package, source_url, metadata_sha256, versions_json, latest_version,
+                   first_seen, last_seen, updated_at) VALUES (?, 'u', 's', ?, '1.0.0', 'now', 'now', 'now')""",
+                (package, json.dumps(full)))
+    with soc_store.connect(db) as connection:
+        assert enrichment.slim_snapshot_rows(connection, batch_size=1) == 2
+        assert enrichment.slim_snapshot_rows(connection) == 0, "already slim rows are left alone"
+        stored = json.loads(connection.execute("SELECT versions_json FROM research_npm_package_snapshots WHERE package='a'").fetchone()[0])
+    assert set(stored) == {"1.0.0", "0.9.0"}, "every stored version is kept"
+    assert all(set(summary) == set(enrichment.SNAPSHOT_FIELDS) for summary in stored.values())
+    assert stored["1.0.0"]["dependencies"] == ["lodash"]

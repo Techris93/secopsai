@@ -202,22 +202,26 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
         ranked = research_desk.shortlist(db_path=db_path, limit=50, minimum_score=0) if items else []
     except Exception:  # the desk enriches the brief; it never blocks it
         ranked = []
-    lines = [f"# SecOpsAI Daily Intelligence Brief — {date}", "", "This brief distinguishes source reporting from SecOpsAI's original observations."]
+    lines = [f"# SecOpsAI Daily Intelligence Brief — {date}"]
+    if any(item["attribution"] != "source_reported" for item in items):
+        lines.extend(["", "This brief distinguishes source reporting from SecOpsAI's original observations."])
     if not items:
         lines.extend(["", "No new items passed technical verification for this edition. Collection gaps and unresolved leads remain visible to the editor."])
     for item in items:
-        lines.extend(["", f"## {item['title']}", "", f"Source-reported by [{item['source']}]({item['url']}).",
-                      item["summary"],
+        payload = intel_event(item["event_id"], db_path=db_path)["payload"]
+        lines.extend(["", f"## {item['title']}", "", f"Source-reported by [{item['source']}]({_reader_url(item['url'], item.get('cves') or [])}).",
+                      *([item["summary"]] if item["summary"] else []),
                       f"Defensive action: {item['defensive_action']}", f"Limitations: {item['limitations']}",
-                      f"Published: {item['published_at'] or 'not supplied'}; first observed: {item['first_observed_at']}."])
+                      _dates_line(item, payload)])
         if item.get("verification") == "automated":
-            checked = "identifiers and scores checked against cve.org and NVD" if item.get("cves") else "primary source with a stated fix; no CVE recorded to check"
-            lines.append(f"Verified automatically by SecOpsAI rules ({checked}) under the editor's recorded policy.")
+            lines.append("Identifiers and scores checked automatically against cve.org and NVD." if item.get("cves")
+                         else "Checked automatically: primary source with a stated fix; no CVE to check.")
         lines.extend(research_desk.research_note(item["event_id"], ranked=ranked, db_path=db_path, cves=item.get("cves")))
-    lines.extend(["", "## Collection scope", "", coverage["public_summary"], "", "## Credits and corrections", "", f"Prepared by {author['display_name']}. Technical verification and final release require recorded human review. Corrections will retain the previous edition and explain material changes."])
-    draft = {"title": f"SecOpsAI Daily Intelligence Brief — {date}", "slug": f"daily-intelligence-{date}", "summary": f"Verified intelligence and defensive updates for {date}.",
+    lines.extend(["", "## Collection scope", "", coverage["public_summary"], "", "## Credits and corrections", "", f"Prepared by {author['display_name']}. The editor approves each edition before it is published. Corrections keep the previous edition and explain material changes."])
+    draft = {"title": f"SecOpsAI Daily Intelligence Brief — {date}", "slug": f"daily-intelligence-{date}", "summary": _brief_summary(items),
              "body_markdown": "\n\n".join(lines), "author": author["display_name"], "author_id": author["person_id"], "items": items,
-             "sources": [item["url"] for item in items], "references": [item["url"] for item in items], "categories": ["Threat Intelligence"], "severity": "info",
+             "sources": [item["url"] for item in items], "references": [_reader_url(item["url"], item.get("cves") or []) for item in items],
+             "categories": ["Threat Intelligence"], "severity": _brief_severity(items),
              "editorial_edition_id": identity, "review_status": "needs_review", "coverage": coverage, "external_news": False,
              "duty": duty, "status": "draft"}
     if existing_edition:
@@ -511,6 +515,67 @@ def update_board(case_id: str, payload: dict, *, actor: str, db_path=None) -> di
     if value["channel"] not in {"continuous_monitoring", "planned_investigation", "partner_submission"}:
         raise ValueError("invalid discovery channel")
     return append("editorial_board", value, actor=actor, case_id=case_id, db_path=db_path)
+
+
+KEV_CATALOG_URL = "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
+SEVERITIES = ("info", "low", "medium", "high", "critical")
+
+
+CSAF_OT_PREFIX = "https://raw.githubusercontent.com/cisagov/CSAF/develop/csaf_files/OT/white/"
+ICS_ADVISORY_RE = re.compile(r"/(icsa|icsma)-\d{2}-\d{3}-\d{2}\.json$")
+
+
+def _reader_url(url: str, cves: list[str]) -> str:
+    """A page a reader can open: CISA's KEV feed is one JSON file of every entry,
+    and an ICS advisory's CSAF document has a page on cisa.gov."""
+    if url.startswith("https://www.cisa.gov/") and url.endswith(".json"):
+        return KEV_CATALOG_URL + (f"?search_api_fulltext={cves[0]}" if cves else "")
+    match = ICS_ADVISORY_RE.search(url) if url.startswith(CSAF_OT_PREFIX) else None
+    if match:
+        return "https://www.cisa.gov/news-events/ics-advisories/" + match.group(0)[1:-len(".json")]
+    return url
+
+
+def _when(value: str) -> str:
+    """'3 Nov 2026, 22:56 UTC', or '3 Nov 2026' for a date without a time."""
+    try:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(ZoneInfo("UTC"))
+    except ValueError:
+        return str(value)
+    day = f"{moment.day} {moment:%b %Y}"
+    return day if (moment.hour, moment.minute, moment.second) == (0, 0, 0) else f"{day}, {moment:%H:%M} UTC"
+
+
+def _dates_line(item: dict, payload: dict) -> str:
+    dates = []
+    if item.get("published_at"):
+        dates.append(f"Published {_when(item['published_at'])}")
+    elif payload.get("catalog_added_at"):
+        dates.append(f"Added to the CISA KEV catalog {_when(payload['catalog_added_at'])}")
+    dates.append(f"first seen by SecOpsAI {_when(item['first_observed_at'])}")
+    line = "; ".join(dates) + "."
+    return line[0].upper() + line[1:]
+
+
+def _item_severity(item: dict) -> int:
+    scores = [float(value) for match in re.finditer(r"official CVSS ([\d. and]+)\)", item["summary"])
+              for value in re.findall(r"\d+(?:\.\d+)?", match.group(1))]
+    top = max(scores, default=0.0)
+    exploited = "exploited in the wild" in item["summary"]
+    return 4 if top >= 9 else 3 if top >= 7 or exploited else 2 if top >= 4 else 1
+
+
+def _brief_severity(items: list[dict]) -> str:
+    """The badge follows the most serious item, not a fixed "info"."""
+    return SEVERITIES[max((_item_severity(item) for item in items), default=0)]
+
+
+def _brief_summary(items: list[dict]) -> str:
+    if not items:
+        return "No new advisories passed verification for this edition."
+    heads = [re.sub(r"^CVE-\d{4}-\d+:\s*", "", item["title"]) + (" (exploited)" if "exploited in the wild" in item["summary"] else "")
+             for item in items]
+    return "; ".join(heads[:3]) + (f"; and {len(heads) - 3} more" if len(heads) > 3 else "") + "."
 
 
 def _display_title(title: str, source: str) -> str:

@@ -175,7 +175,7 @@ def test_pressure_does_not_expand_automatic_pruning_batches(tmp_path, monkeypatc
 
 def test_high_volume_feed_retention_is_explicit_only():
     assert not any(table == "registry_feed_events" for table, *_rest in research_storage._prune_rules())
-    assert sum(table == "registry_feed_events" for table, *_rest in research_storage._prune_rules(include_high_volume=True)) == 2
+    assert sum(table == "registry_feed_events" for table, *_rest in research_storage._prune_rules(include_high_volume=True)) == 3, "processed, candidate and unscored events"
 
 
 def test_completed_npm_analysis_retention_does_not_scan_candidate_evidence():
@@ -448,3 +448,109 @@ def test_history_archive_does_not_delete_when_archive_write_fails(tmp_path, monk
         assert connection.execute(
             "SELECT COUNT(*) AS n FROM findings WHERE finding_id='FND-UNARCHIVED'"
         ).fetchone()["n"] == 1
+
+
+def _feed_event(connection, collector_id, event_id, state, collected_at, *, padding=0):
+    connection.execute(
+        """INSERT INTO registry_feed_events
+           (feed_event_id, collector_id, ecosystem, package, version, event_type,
+            registry_timestamp, page_url, leaf_url, metadata_json, idempotency_key,
+            collected_at, processing_state)
+           VALUES (?, ?, 'go', ?, '1.0.0', 'published', ?, 'https://example.test/page',
+                   'https://example.test/leaf', ?, ?, ?, ?)""",
+        (event_id, collector_id, event_id.lower(), collected_at, json.dumps({"pad": "x" * padding}),
+         f"key-{event_id}", collected_at, state),
+    )
+
+
+def test_feed_retention_removes_week_old_unscored_and_day_old_processed_events(tmp_path):
+    db_path = _db(tmp_path)
+    collector_id = ensure_collectors(db_path=db_path)[0]["collector_id"]
+    with soc_store.connect(db_path) as connection:
+        for event_id, state, collected_at in (
+            ("OLD-PENDING", "pending", _stamp(days=8)),
+            ("OLD-ANALYSIS-FAILED", "analysis_failed", _stamp(days=8)),
+            ("WEEK-PENDING", "pending", _stamp(days=6)),
+            ("OLD-IGNORED", "ignored", _stamp(days=2)),
+            ("NEW-SCORED", "scored", _stamp(hours=1)),
+            ("OLD-ENRICHED", "enriched", _stamp(days=30)),
+            ("OLD-CANDIDATE", "candidate", _stamp(days=30)),
+        ):
+            _feed_event(connection, collector_id, event_id, state, collected_at)
+    result = research_storage.apply_feed_retention(db_path=db_path, seconds=60, batch_size=1)
+    with soc_store.connect(db_path) as connection:
+        kept = {row[0] for row in connection.execute("SELECT feed_event_id FROM registry_feed_events")}
+    assert kept == {"WEEK-PENDING", "NEW-SCORED", "OLD-ENRICHED", "OLD-CANDIDATE"}
+    assert result["complete"] is True and sum(result["deleted"].values()) == 3
+    assert result["compacted"] is False
+
+
+def test_feed_retention_stops_at_its_time_budget(tmp_path):
+    db_path = _db(tmp_path)
+    collector_id = ensure_collectors(db_path=db_path)[0]["collector_id"]
+    with soc_store.connect(db_path) as connection:
+        _feed_event(connection, collector_id, "OLD-PENDING", "pending", _stamp(days=8))
+    result = research_storage.apply_feed_retention(db_path=db_path, seconds=0)
+    assert result["complete"] is False and sum(result["deleted"].values()) == 0
+    with soc_store.connect(db_path) as connection:
+        assert connection.execute("SELECT count(*) FROM registry_feed_events").fetchone()[0] == 1
+
+
+def test_compaction_rewrites_the_ledger_smaller_and_keeps_it_usable(tmp_path, monkeypatch):
+    monkeypatch.setattr(research_storage, "COMPACT_MIN_RECLAIM_BYTES", 1)
+    db_path = _db(tmp_path)
+    collector_id = ensure_collectors(db_path=db_path)[0]["collector_id"]
+    with soc_store.connect(db_path) as connection:
+        for index in range(400):
+            _feed_event(connection, collector_id, f"OLD-{index}", "pending", _stamp(days=8), padding=4000)
+        _feed_event(connection, collector_id, "NEW", "pending", _stamp(hours=1))
+    with soc_store.connect(db_path) as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    before = Path(db_path).stat().st_size
+    result = research_storage.apply_feed_retention(db_path=db_path, seconds=60, compact=True)
+    assert result["compacted"] is True and result["after_bytes"] < before / 2
+    assert Path(db_path).stat().st_size == result["after_bytes"]
+    assert not Path(db_path + ".compact").exists()
+    with soc_store.connect(db_path) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert [row[0] for row in connection.execute("SELECT feed_event_id FROM registry_feed_events")] == ["NEW"]
+        _feed_event(connection, collector_id, "AFTER", "pending", _stamp(hours=0))
+
+
+def test_compaction_is_skipped_when_little_would_be_reclaimed(tmp_path):
+    db_path = _db(tmp_path)
+    collector_id = ensure_collectors(db_path=db_path)[0]["collector_id"]
+    with soc_store.connect(db_path) as connection:
+        _feed_event(connection, collector_id, "OLD-PENDING", "pending", _stamp(days=8))
+    result = research_storage.apply_feed_retention(db_path=db_path, seconds=60, compact=True)
+    assert result["compacted"] is False and result["compact_skipped"] == "too_little_to_reclaim"
+
+
+def test_feed_retention_cli_writes_its_result(tmp_path, capsys):
+    db_path = _db(tmp_path)
+    ensure_collectors(db_path=db_path)
+    output = tmp_path / "feed-retention.json"
+    code = cli.main(["research", "storage", "feed-retention", "--seconds", "30", "--output", str(output), "--db-path", db_path])
+    assert code == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert json.loads(output.read_text()) == printed and printed["complete"] is True
+
+
+def test_compaction_slims_npm_snapshots_before_rewriting_the_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(research_storage, "COMPACT_MIN_RECLAIM_BYTES", 1)
+    db_path = _db(tmp_path)
+    soc_store.init_db(db_path)
+    padded = {f"1.0.{index}": {"version": f"1.0.{index}", "dependencies": ["x"], "tarball": "t" * 4000} for index in range(50)}
+    with soc_store.connect(db_path) as connection:
+        for index in range(60):
+            connection.execute(
+                """INSERT INTO research_npm_package_snapshots (package, source_url, metadata_sha256, versions_json, latest_version,
+                   first_seen, last_seen, updated_at) VALUES (?, 'u', 's', ?, '1.0.0', 'now', 'now', 'now')""",
+                (f"pkg-{index}", json.dumps(padded)))
+    result = research_storage.apply_feed_retention(db_path=db_path, seconds=60, compact=True)
+    assert result["npm_snapshots_slimmed"] == 60 and result["compacted"] is True
+    with soc_store.connect(db_path) as connection:
+        stored = json.loads(connection.execute("SELECT versions_json FROM research_npm_package_snapshots LIMIT 1").fetchone()[0])
+    assert set(stored) == set(padded) and all("tarball" not in summary for summary in stored.values())
+    assert result["after_bytes"] < result["before_bytes"] / 5

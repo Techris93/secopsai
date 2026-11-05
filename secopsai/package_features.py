@@ -20,6 +20,11 @@ import ast
 from pathlib import PurePosixPath
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 compatibility.
+    import tomli as tomllib
+
 MAX_TEXT_BYTES = 1024 * 1024
 TINY_CODE_BYTES = 50_000
 INSTALL_NETWORK_FLAGS = ("exfil_service", "discord_webhook", "telegram_bot", "raw_ip_url", "download_tool", "http_send")
@@ -432,6 +437,91 @@ def root_manifests(members: Iterable[Tuple[str, bytes]]) -> List[str]:
     return [path[:300] for path in paths if path.count("/") == depth]
 
 
+NPM_DEPENDENCY_FIELDS = ("dependencies", "optionalDependencies", "peerDependencies")
+REQUIREMENT_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+
+def _python_name(requirement: str) -> str:
+    match = REQUIREMENT_NAME.match(requirement)
+    return re.sub(r"[-_.]+", "-", match.group(1)).lower() if match else ""
+
+
+def _setup_requirements(path: str, text: str) -> Optional[List[str]]:
+    """install_requires / [project] dependencies from a Python manifest; None when unreadable."""
+    name = PurePosixPath(path.lower()).name
+    try:
+        if name == "pyproject.toml":
+            return [str(item) for item in (tomllib.loads(text).get("project") or {}).get("dependencies") or []]
+        if name == "setup.cfg":
+            import configparser
+
+            parser = configparser.ConfigParser()
+            parser.read_string(text)
+            return [line for line in parser.get("options", "install_requires", fallback="").splitlines() if line.strip()]
+        for node in ast.walk(ast.parse(text)):
+            if isinstance(node, ast.keyword) and node.arg == "install_requires":
+                return [str(item) for item in ast.literal_eval(node.value)]
+        return []
+    except Exception:
+        return None
+
+
+def declared_dependencies(members: Iterable[Tuple[str, bytes]]) -> Dict[str, List[str]]:
+    """Dependency names the root manifests declare, for an advisory lookup.
+
+    ``unverifiable`` holds npm dependencies fetched from a URL, git or a local
+    path, which no registry advisory can cover; ``unparsed`` holds manifests
+    whose dependency list could not be read."""
+    members = list(members)
+    by_path = {path: data for path, data in members}
+    names: List[str] = []
+    unverifiable: List[str] = []
+    unparsed: List[str] = []
+    for path in root_manifests(members):
+        text = by_path.get(path, b"").decode("utf-8", errors="ignore")
+        if PurePosixPath(path.lower()).name == "package.json":
+            try:
+                doc = json.loads(text)
+            except ValueError:
+                unparsed.append(path)
+                continue
+            for field in NPM_DEPENDENCY_FIELDS:
+                for name, spec in (doc.get(field) or {}).items() if isinstance(doc.get(field), dict) else []:
+                    spec = str(spec).strip()
+                    if spec.startswith("npm:"):  # an alias installs the package after "npm:"
+                        name = spec[4:].rsplit("@", 1)[0] if spec.count("@") > (1 if spec[4:].startswith("@") else 0) else spec[4:]
+                    elif re.match(r"^(https?:|git(\+[a-z]+)?:|github:|gitlab:|bitbucket:|file:|link:|[^@\s]+/[^@\s]+$)", spec):
+                        unverifiable.append(str(name))
+                        continue
+                    names.append(str(name))
+            continue
+        requirements = _setup_requirements(path, text)
+        if requirements is None:
+            unparsed.append(path)
+            continue
+        names.extend(_python_name(item) for item in requirements)
+    # Python distributions also list requirements in core metadata (PKG-INFO,
+    # .dist-info/METADATA) and in .egg-info/requires.txt; either one makes an
+    # unreadable setup.py moot.
+    metadata = [path for path, _data in members if path.lower().endswith((".dist-info/metadata", ".egg-info/requires.txt"))
+                or PurePosixPath(path.lower()).name == "pkg-info"]
+    depth = min((path.count("/") for path in metadata), default=0)
+    listed = False
+    for path in metadata:
+        if path.count("/") > depth + 1:
+            continue
+        for line in by_path[path].decode("utf-8", errors="ignore").splitlines():
+            if path.lower().endswith("requires.txt"):
+                if line.strip() and not line.startswith("["):  # [extra] headers name no package
+                    listed = True
+                    names.append(_python_name(line))
+            elif line.lower().startswith("requires-dist:"):
+                listed = True
+                names.append(_python_name(line.split(":", 1)[1]))
+    return {"names": sorted({name for name in names if name}), "unverifiable": sorted(set(unverifiable)),
+            "unparsed": [] if listed else unparsed}
+
+
 def install_time_files(members: Iterable[Tuple[str, bytes]], *, per_file: int = 12000, total: int = 24000) -> List[Dict[str, object]]:
     """Full text of what runs at install or build time, for triage: the root
     manifests, the files package.json hooks call, build.rs. Bounded in size."""
@@ -704,4 +794,5 @@ def triage_evidence(members: Iterable[Tuple[str, bytes]], findings: Iterable[Dic
                     item["referenced_by"].append(path[:300])
     return {"flagged_files": files, "flagged_files_total": len(flagged), "flag_locations": locations, "flag_regions": flag_regions, "decoded_payloads": payloads, "decoded_payloads_total": payload_total, "binaries": binaries[:10],
             "binaries_total": len(binaries), "missing_files": bounded_missing_files, "root_manifests": root_manifests(members),
+            "declared_dependencies": declared_dependencies(members),
             "missing_files_truncated": len(missing_files) > len(bounded_missing_files)}

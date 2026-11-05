@@ -13,7 +13,8 @@ def _prescan(**changes):
     finding = {"rule_id": "R1", "severity": "high", "score": 80, "file_path": "package/a.js", "safe_context": "match", "evidence": []}
     prescan = {"score": 80, "level": "high", "findings": [finding], "flagged_files": [flagged], "manifest": {"name": "a"},
                "fingerprints": {"author": "x"}, "flag_locations": [], "decoded_payloads": [], "binaries": [], "root_manifests": ["package/package.json"],
-               "install_files": [{"path": "package/package.json", "truncated": False, "content": '{"name":"a"}'}]}
+               "install_files": [{"path": "package/package.json", "truncated": False, "content": '{"name":"a"}'}],
+               "declared_dependencies": {"names": [], "unverifiable": [], "unparsed": []}}
     return {**prescan, **changes}
 
 
@@ -48,6 +49,59 @@ def test_package_text_addressed_to_its_reviewer_blocks_completeness(text):
                   {"install_time_files": [{**context["install_time_files"][0], "content": text}]},
                   {"decoded_payloads": [{"found_in": "package/a.js", "text": text}]}):
         assert "reviewer_directed_text" in context_coverage({**context, **place})["gaps"]
+
+
+class _OSV:
+    """OSV querybatch stand-in: answers each queried name from ``advisories``."""
+
+    def __init__(self, advisories=None, error=None):
+        self.advisories, self.error, self.calls = advisories or {}, error, 0
+
+    def get(self, url, *, allowed_hosts, max_bytes, headers=None, data=None):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        names = [query["package"]["name"] for query in json.loads(data)["queries"]]
+        return url, {}, json.dumps({"results": [{"vulns": [{"id": item} for item in self.advisories.get(name, [])]} for name in names]}).encode()
+
+
+@pytest.fixture
+def osv(monkeypatch):
+    from secopsai import dependency_advisories
+
+    monkeypatch.setattr(dependency_advisories, "_unavailable_until", 0.0)
+    dependency_advisories.take_stats()
+
+    def use(fake):
+        monkeypatch.setattr(dependency_advisories, "SafeFetcher", lambda **_kwargs: fake)
+        return fake
+    return use
+
+
+def test_a_malicious_dependency_blocks_closure_whatever_the_code_shows(osv):
+    fake = osv(_OSV({"easy-day-js": ["MAL-2026-5979"], "axios": ["GHSA-x"]}))
+    context = _context(declared_dependencies={"names": ["axios", "easy-day-js"], "unverifiable": [], "unparsed": []})
+    assert context["dependency_advisories"]["malicious"] == [{"name": "easy-day-js", "ids": ["MAL-2026-5979"]}]
+    assert context_coverage(context)["gaps"] == ["malicious_dependency:easy-day-js"] and fake.calls == 1
+    osv(_OSV({"axios": ["GHSA-x"]}))
+    assert context_coverage(_context(declared_dependencies={"names": ["axios"], "unverifiable": [], "unparsed": []}))["complete"] is True
+
+
+def test_an_unchecked_dependency_list_blocks_closure(osv):
+    from secopsai import dependency_advisories
+
+    fake = osv(_OSV(error=TimeoutError("osv down")))
+    declared = {"names": ["left-pad"], "unverifiable": [], "unparsed": []}
+    assert context_coverage(_context(declared_dependencies=declared))["gaps"] == ["dependency_check:unavailable"]
+    # One failure pauses lookups for the cycle instead of waiting on every hit.
+    assert context_coverage(_context(declared_dependencies=declared))["gaps"] == ["dependency_check:unavailable"] and fake.calls == 1
+    assert dependency_advisories._unavailable_until > 0
+    assert dependency_advisories.take_stats()["failures"] == 1 and dependency_advisories.take_stats()["lookups"] == 0
+    context = _context()
+    del context["dependency_advisories"]
+    assert context_coverage(context)["gaps"] == ["dependencies_not_checked"]
+    loose = {"names": [], "unverifiable": ["evil"], "unparsed": ["package/setup.py"]}
+    assert context_coverage(_context(declared_dependencies=loose))["gaps"] == ["unverifiable_dependency:evil", "dependency_list_unreadable:package/setup.py"]
 
 
 def test_our_own_note_is_not_package_text():
@@ -162,7 +216,8 @@ def _flag_context(**regions):
     return {"coverage_contract": COVERAGE_CONTRACT, "findings": [{"rule_id": "R1", "file_path": "package/test.js"}],
             "flagged_files": [{"path": "package/test.js", "content": "fixture", "complete": True}],
             "root_manifests": ["package/package.json"], "install_time_files": [{"path": "package/package.json", "truncated": False, "content": "{}"}],
-            "flag_locations": [{"flag": "child_process", "file_path": "package/bin/run.js", "line": 3, "context": "spawn()"}], **regions}
+            "flag_locations": [{"flag": "child_process", "file_path": "package/bin/run.js", "line": 3, "context": "spawn()"}],
+            "dependency_advisories": {"status": "checked", "checked": 0, "malicious": [], "unverifiable": []}, **regions}
 
 
 def test_a_flag_in_an_unsupplied_file_blocks_closure():

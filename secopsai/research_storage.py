@@ -439,6 +439,7 @@ def _delete_batches_with_writer_yields(
 def _prune_rules(*, include_high_volume: bool = False) -> Tuple[Tuple[str, str, Tuple[Any, ...]], ...]:
     event_hours = _env_int("SECOPSAI_RESEARCH_EVENT_RETENTION_HOURS", 24, minimum=1)
     candidate_days = _env_int("SECOPSAI_RESEARCH_CANDIDATE_EVENT_RETENTION_DAYS", 90, minimum=1)
+    pending_days = _env_int("SECOPSAI_RESEARCH_PENDING_EVENT_RETENTION_DAYS", 7, minimum=1)
     run_days = _env_int("SECOPSAI_RESEARCH_RUN_RETENTION_DAYS", 30, minimum=1)
     gap_days = _env_int("SECOPSAI_RESEARCH_GAP_RETENTION_DAYS", 180, minimum=1)
     delivery_days = _env_int("SECOPSAI_RESEARCH_DELIVERY_RETENTION_DAYS", 90, minimum=1)
@@ -446,6 +447,11 @@ def _prune_rules(*, include_high_volume: bool = False) -> Tuple[Tuple[str, str, 
     rules = (
         ("registry_feed_events", "processing_state IN ('scored','ignored') AND collected_at < ?", (_iso_cutoff(hours=event_hours),)),
         ("registry_feed_events", "processing_state = 'candidate' AND collected_at < ?", (_iso_cutoff(days=candidate_days),)),
+        # The scorer takes 25 pending events a cycle, oldest first, against
+        # about 360,000 new events a day (2026-11-02: 9.7M pending, oldest
+        # 2026-09-11), so an event still unscored after a week never will be.
+        # npm already marks such events ignored (expire_stale_pending).
+        ("registry_feed_events", "processing_state IN ('pending', 'enrichment_failed', 'analysis_failed') AND collected_at < ?", (_iso_cutoff(days=pending_days),)),
         ("research_registry_events", "observed_at < ? AND NOT EXISTS (SELECT 1 FROM research_candidates c WHERE c.event_id = research_registry_events.event_id)", (_iso_cutoff(hours=event_hours),)),
         ("registry_ingestion_runs", "status != 'running' AND started_at < ?", (_iso_cutoff(days=run_days),)),
         ("research_monitor_runs", "status != 'running' AND started_at < ?", (_iso_cutoff(days=run_days),)),
@@ -591,3 +597,94 @@ def maintain_research_storage(
     }
     _storage_progress("maintenance_completed", seconds=round(time.monotonic() - started, 3), deleted_rows=deleted)
     return result
+
+
+# The ledger store rejects a checkpoint above 900 objects of 28 MiB, so a
+# compaction only helps once deletes have freed a meaningful share of pages.
+COMPACT_MIN_RECLAIM_BYTES = 512 * 1024 * 1024
+
+
+def apply_feed_retention(
+    *,
+    db_path: Optional[str] = None,
+    seconds: int = 300,
+    compact: bool = False,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+) -> Dict[str, Any]:
+    """Delete registry feed events past retention, then optionally rewrite the file smaller.
+
+    Routine worker cycles leave this table alone (random I/O against active
+    collectors), so it grew without limit: 11.6M rows and 13.9 GB of the
+    25.8 GB ledger on 2026-11-02. Run this only while no worker is writing; the
+    runner supervisor calls it after restoring the ledger and before the worker.
+    """
+    database = _resolved_db_path(db_path)
+    started = time.monotonic()
+    deadline = started + max(0, int(seconds))
+    deleted: Dict[str, int] = {}
+    complete = True
+    with closing(soc_store.connect(str(database))) as connection:
+        for table, predicate, params in _prune_rules(include_high_volume=True):
+            if table != "registry_feed_events":
+                continue
+            count = 0
+            while True:
+                if time.monotonic() >= deadline:
+                    complete = False
+                    break
+                with sqlite_writer_lock(str(database)):
+                    changed = _delete_batch(connection, table=table, predicate=predicate, params=params, batch_size=batch_size)
+                count += changed
+                if changed < batch_size:
+                    break
+            deleted[predicate] = count
+            _storage_progress("feed_retention_rule", predicate=predicate, deleted=count,
+                              seconds=round(time.monotonic() - started, 1))
+    result: Dict[str, Any] = {"deleted": deleted, "complete": complete,
+                              "prune_seconds": round(time.monotonic() - started, 1), "compacted": False}
+    if compact:
+        from secopsai.research_npm_enrichment import slim_snapshot_rows
+
+        slim_started = time.monotonic()
+        with closing(soc_store.connect(str(database))) as connection, sqlite_writer_lock(str(database)):
+            result["npm_snapshots_slimmed"] = slim_snapshot_rows(connection)
+        result["slim_seconds"] = round(time.monotonic() - slim_started, 1)
+        _storage_progress("npm_snapshots_slimmed", rows=result["npm_snapshots_slimmed"], seconds=result["slim_seconds"])
+        result.update(_compact(database))
+    _storage_progress("feed_retention_completed", **result)
+    return result
+
+
+def _compact(database: Path) -> Dict[str, Any]:
+    started = time.monotonic()
+    with closing(sqlite3.connect(str(database), timeout=60)) as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        page_size, page_count, free_pages = (connection.execute(f"PRAGMA {name}").fetchone()[0]
+                                             for name in ("page_size", "page_count", "freelist_count"))
+    before = page_size * page_count
+    reclaimable = page_size * free_pages
+    if reclaimable < COMPACT_MIN_RECLAIM_BYTES:
+        return {"compact_skipped": "too_little_to_reclaim", "reclaimable_bytes": reclaimable}
+    needed = before - reclaimable + 1024 ** 3
+    free = shutil.disk_usage(database.parent).free
+    if free < needed:
+        return {"compact_skipped": "insufficient_disk", "free_bytes": free, "needed_bytes": needed}
+    compacted = database.with_name(database.name + ".compact")
+    compacted.unlink(missing_ok=True)
+    with sqlite_writer_lock(str(database)):
+        with closing(sqlite3.connect(str(database), timeout=60)) as connection:
+            connection.execute("VACUUM INTO ?", (str(compacted),))
+        with closing(sqlite3.connect(str(compacted))) as connection:
+            check = [row[0] for row in connection.execute("PRAGMA quick_check").fetchall()]
+            if check != ["ok"]:
+                compacted.unlink(missing_ok=True)
+                raise RuntimeError(f"compacted ledger failed quick_check: {check[:3]}")
+            connection.execute("PRAGMA journal_mode = WAL")
+        # The old WAL was truncated above; a leftover one must never be
+        # replayed onto the rewritten file.
+        for suffix in ("-wal", "-shm"):
+            Path(str(database) + suffix).unlink(missing_ok=True)
+        os.replace(compacted, database)
+    after = database.stat().st_size
+    return {"compacted": True, "before_bytes": before, "after_bytes": after,
+            "compact_seconds": round(time.monotonic() - started, 1)}

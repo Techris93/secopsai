@@ -40,7 +40,7 @@ Curated sources live in `blog/data/news-sources.json`. Each source declares a na
 
 The default registry now prioritizes direct/primary sources before commentary or aggregator-style sources:
 
-- Government/direct advisories: CISA KEV, CISA News, CERT/CC Vulnerability Notes.
+- Government/direct advisories: CISA KEV, CISA ICS and Vulnerability Advisories (from CISA's CSAF repository), CERT/CC Vulnerability Notes.
 - Vendor/project primary sources: MSRC, GitHub Security Lab, GitHub Security Advisories, OpenSSF, Google Online Security Blog, Cloudflare Security Blog, Microsoft Security Blog, Grafana Security, and Open VSX Registry.
 - External research/context sources: JFrog Security Research, and The Hacker News.
 

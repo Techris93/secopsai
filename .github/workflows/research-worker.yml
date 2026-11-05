@@ -38,6 +38,10 @@ on:
         description: "Start a new empty ledger if none exists in R2 (first run only)"
         type: boolean
         default: false
+      compact_ledger:
+        description: "Compact the ledger and upload it as the new baseline before the cycle"
+        type: boolean
+        default: false
       trigger:
         description: "Who started the run (cloudflare-cron or manual)"
         required: false
@@ -59,11 +63,13 @@ jobs:
     # Production restores include a multi-gigabyte ledger before worker and
     # drain budgets begin; leave room for restore, work, final checkpoint, and
     # projection instead of cancelling a healthy run at the old 60-minute cap.
-    timeout-minutes: 150
+    # A compaction run also prunes, rewrites and re-uploads the whole ledger.
+    timeout-minutes: 240
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       SECOPS_FINDINGS_DIR: /home/runner/research
       SECOPSAI_LEDGER_ALLOW_EMPTY: ${{ inputs.allow_empty_ledger && 'true' || 'false' }}
+      SECOPSAI_FORCE_COMPACTION: ${{ inputs.compact_ledger && '1' || '0' }}
       LEDGER_STORE_URL: https://ledger.secopsai.dev
       LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
       SECOPSAI_CORE_ENVIRONMENT: production
@@ -166,6 +172,17 @@ jobs:
       - name: Fetch pinned YARA rule packs
         run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
 
+      - name: Free runner disk for the ledger
+        # The restore needs free space of three ledger copies (ledger, sparse
+        # baseline, checkpoint capture) plus 1 GB: 50.6 GB for the 16.5 GB ledger
+        # on 2026-11-04. Older runner images have less, and run 41880557106
+        # failed before restoring. The worker uses none of these toolchains.
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/boost
+          df -h / | tail -1
+
       - name: Restore ledger, run worker cycles, checkpoint
         id: worker
         # Routine bounded runs include an additional 14-minute durable delivery
@@ -173,7 +190,11 @@ jobs:
         # Exhausted retries still fail the run so an unsaved checkpoint is visible.
         run: |
           delivery_args=()
-          max_seconds=900
+          # A cycle took 497-847 s in recent runs, but network-bound stages vary by
+          # several minutes (registry collection 12-183 s, npm scans 227-420 s), and
+          # a run that completes no cycle fails (41525492232). The run stays well
+          # inside the watchdog's 90-minute limit (about 40 minutes after #229).
+          max_seconds=1500
           if [ -n "$SECOPSAI_VERIFY_RETRY_COLLECTORS" ] && [ "$SECOPSAI_VERIFY_DELIVERY_ONLY" != "1" ]; then
             echo "retry_collectors requires delivery_only=true" >&2
             exit 2
@@ -236,6 +257,7 @@ jobs:
           name: research-worker-diagnostics
           path: |
             reports/research/worker-runtime.json
+            reports/research/feed-retention.json
             reports/research/delivery-drain.json
             reports/research/delivery-health.json
             reports/research/final-projection.json

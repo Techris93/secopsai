@@ -12,6 +12,11 @@ PRIMARY_SOURCE_OVERRIDES = {
     "JFrog Security Research": ("https://research.jfrog.com/", "jfrog_index"),
     "Grafana Security": ("https://grafana.com/security/security-advisories/index.xml", "rss"),
     "Open VSX Registry": ("https://open-vsx.org/api/-/search?size=100&sortBy=timestamp&sortOrder=desc", "openvsx_index"),
+    # cisa.gov refuses automated clients except for the KEV file. CISA
+    # publishes the same IT and ICS advisories as CSAF documents with ROLIE
+    # feeds in its official GitHub repository.
+    "CISA ICS Advisories": ("https://raw.githubusercontent.com/cisagov/CSAF/develop/csaf_files/OT/white/cisa-csaf-ot-feed-tlp-white.json", "cisa_csaf_rolie"),
+    "CISA Vulnerability Advisories": ("https://raw.githubusercontent.com/cisagov/CSAF/develop/csaf_files/IT/white/cisa-csaf-it-feed-tlp-white.json", "cisa_csaf_rolie"),
 }
 
 

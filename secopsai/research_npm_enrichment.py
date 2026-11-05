@@ -228,6 +228,16 @@ def _summary_time(summary: Dict[str, Any]) -> Optional[datetime]:
     return _parse_time(summary.get("published_at"))
 
 
+# A stored summary is read only as the previous release in _suspicion_score
+# and for ordering. The other fields (tarball, integrity, maintainers, script
+# names, ...) were 73% of 5.4 GB of snapshots on 2026-11-04 and never read.
+SNAPSHOT_FIELDS = ("version", "published_at", "lifecycle_scripts", "author", "dependencies")
+
+
+def _snapshot_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: summary[key] for key in SNAPSHOT_FIELDS if key in summary}
+
+
 def _compact_snapshot_versions(versions: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """Keep a bounded recent baseline; the event ledger remains authoritative."""
     ordered = sorted(
@@ -235,7 +245,29 @@ def _compact_snapshot_versions(versions: Dict[str, Dict[str, Any]]) -> Dict[str,
         key=lambda item: (_summary_time(item[1]) or datetime.min.replace(tzinfo=timezone.utc), item[0]),
         reverse=True,
     )
-    return dict(ordered[:MAX_SNAPSHOT_SUMMARIES])
+    return {version: _snapshot_summary(summary) for version, summary in ordered[:MAX_SNAPSHOT_SUMMARIES]}
+
+
+def slim_snapshot_rows(connection: Any, *, batch_size: int = 500) -> int:
+    """Rewrite stored snapshots written before SNAPSHOT_FIELDS, in committed batches."""
+    rewritten, last = 0, 0
+    while True:
+        rows = connection.execute(
+            "SELECT rowid, versions_json FROM research_npm_package_snapshots WHERE rowid > ? ORDER BY rowid LIMIT ?",
+            (last, batch_size)).fetchall()
+        if not rows:
+            return rewritten
+        for row in rows:
+            last = row[0]
+            versions = _decode(row[1], {})
+            if not isinstance(versions, dict):
+                continue
+            slim = {version: _snapshot_summary(summary) if isinstance(summary, dict) else summary
+                    for version, summary in versions.items()}
+            if slim != versions:
+                connection.execute("UPDATE research_npm_package_snapshots SET versions_json=? WHERE rowid=?", (_json(slim), last))
+                rewritten += 1
+        connection.commit()
 
 
 def _known_version_names(versions: Dict[str, Dict[str, Any]]) -> List[str]:

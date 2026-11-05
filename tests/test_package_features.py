@@ -275,3 +275,30 @@ def test_manifests_come_before_hook_files_in_the_size_budget():
     manifest = b'{"scripts": {"postinstall": "node run.js"}}'
     files = package_features.install_time_files([("package/run.js", b"x" * 40_000), ("package/package.json", manifest)])
     assert files[0]["path"] == "package/package.json" and files[0]["truncated"] is False
+
+
+def test_declared_dependencies_come_from_the_root_manifest_and_resolve_aliases():
+    manifest = {"dependencies": {"dayjs": "^1.11", "easy": "npm:easy-day-js@^1.11.21", "scoped": "npm:@evil/pkg@1.0.0"},
+                "optionalDependencies": {"fsevents": "2.x"}, "peerDependencies": {"react": ">=18"},
+                "devDependencies": {"jest": "29"}}
+    remote = {"dependencies": {"a": "http://evil.example/a.tgz", "b": "git+https://x/b.git", "c": "user/repo", "d": "file:../d", "e": "1.0.0"}}
+    members = [("package/package.json", json.dumps(manifest).encode()), ("package/node_modules/x/package.json", b'{"dependencies":{"inner":"1"}}')]
+    assert package_features.declared_dependencies(members) == {
+        "names": ["@evil/pkg", "dayjs", "easy-day-js", "fsevents", "react"], "unverifiable": [], "unparsed": []}
+    assert package_features.declared_dependencies([("package/package.json", json.dumps(remote).encode())]) == {
+        "names": ["e"], "unverifiable": ["a", "b", "c", "d"], "unparsed": []}
+
+
+def test_python_requirements_come_from_metadata_or_a_readable_manifest():
+    setup = b"from setuptools import setup\nsetup(name='a', install_requires=['Requests>=2', 'evil_pkg'])\n"
+    assert package_features.declared_dependencies([("a-1.0/setup.py", setup)])["names"] == ["evil-pkg", "requests"]
+    dynamic = b"from setuptools import setup\nreqs = open('r.txt').read().split()\nsetup(name='a', install_requires=reqs)\n"
+    assert package_features.declared_dependencies([("a-1.0/setup.py", dynamic)]) == {"names": [], "unverifiable": [], "unparsed": ["a-1.0/setup.py"]}
+    info = b"Metadata-Version: 2.1\nName: a\nRequires-Dist: urllib3 (>=1.26)\nRequires-Dist: Colorama; extra == 'win'\n"
+    requires = b"six\n\n[dev]\npytest\n"
+    built = package_features.declared_dependencies([("a-1.0/setup.py", dynamic), ("a-1.0/PKG-INFO", info), ("a-1.0/a.egg-info/requires.txt", requires)])
+    assert built == {"names": ["colorama", "pytest", "six", "urllib3"], "unverifiable": [], "unparsed": []}
+    project = b'[project]\nname = "a"\ndependencies = ["httpx>=0.27", "Py.Yaml"]\n'
+    assert package_features.declared_dependencies([("a-1.0/pyproject.toml", project)])["names"] == ["httpx", "py-yaml"]
+    cfg = b"[metadata]\nname = a\n[options]\ninstall_requires =\n    click\n    rich>=13\n"
+    assert package_features.declared_dependencies([("a-1.0/setup.cfg", cfg)])["names"] == ["click", "rich"]

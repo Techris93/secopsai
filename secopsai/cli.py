@@ -396,6 +396,7 @@ from secopsai.research_worker import (
 )
 from secopsai.research_storage import (
     archive_and_prune_history,
+    apply_feed_retention,
     maintain_research_storage,
     release_storage_reserve,
     storage_status,
@@ -2199,6 +2200,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     storage_maintain = research_storage_sub.add_parser("maintain", help="Prune retained operational history safely")
     storage_maintain.add_argument("--aggressive", action="store_true", help="Run all pruning batches and VACUUM when enough free space exists")
     storage_maintain.add_argument("--db-path", default=None)
+    storage_feed = research_storage_sub.add_parser("feed-retention", help="Delete registry feed events past retention while no worker is running")
+    storage_feed.add_argument("--seconds", type=int, default=300, help="Stop deleting after this many seconds")
+    storage_feed.add_argument("--compact", action="store_true", help="Rewrite the ledger without its free pages afterwards")
+    storage_feed.add_argument("--output", default=None, help="Also write the result JSON to this file")
+    storage_feed.add_argument("--db-path", default=None)
     storage_release = research_storage_sub.add_parser("release-reserve", help="Release emergency disk reserve before manual recovery")
     storage_release.add_argument("--db-path", default=None)
     storage_archive = research_storage_sub.add_parser(
@@ -3501,6 +3507,10 @@ def _run_research_automation_command(args: argparse.Namespace) -> int:
                 payload = storage_status(db_path=args.db_path)
             elif args.research_storage_cmd == "maintain":
                 payload = maintain_research_storage(db_path=args.db_path, aggressive=args.aggressive)
+            elif args.research_storage_cmd == "feed-retention":
+                payload = apply_feed_retention(db_path=args.db_path, seconds=args.seconds, compact=args.compact)
+                if args.output:
+                    Path(args.output).write_text(json.dumps(payload, indent=2), encoding="utf-8")
             elif args.research_storage_cmd == "archive-history":
                 payload = archive_and_prune_history(
                     db_path=args.db_path,

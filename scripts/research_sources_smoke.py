@@ -10,7 +10,7 @@ import re
 from urllib.parse import urlparse
 
 from secopsai.research_intake import SafeFetcher
-from secopsai.research_primary_intel import MAX_SOURCE_BYTES, msrc_window_start, parse_source_report, source_headers, source_url
+from secopsai.research_primary_intel import msrc_window_start, source_byte_limit, parse_source_report, source_headers, source_url
 
 
 def check_source(source, *, fetcher=None, now=None):
@@ -24,7 +24,7 @@ def check_source(source, *, fetcher=None, now=None):
         url = source_url(url)
         from secopsai.research_source_transport import fetch_source
         _, headers, body = fetch_source(url, fetcher=fetcher or SafeFetcher(timeout=15),
-                                        max_bytes=MAX_SOURCE_BYTES, headers=source_headers(parser, url=url))
+                                        max_bytes=source_byte_limit(parser), headers=source_headers(parser, url=url))
     except Exception as error:
         result["error_category"] = type(error).__name__
         status = re.fullmatch(r"registry returned HTTP ([0-9]{3})", str(error))
