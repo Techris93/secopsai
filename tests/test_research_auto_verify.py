@@ -547,7 +547,23 @@ def test_an_advisory_without_a_cve_is_summarised_from_its_own_text():
                          "excerpt": "dcmjs is a DICOM library. A crafted value allows an attacker to bypass validation. Fixed in dcmjs 0.38.1.",
                          "affected_versions": [{"package": {"name": "dcmjs"}, "first_patched_version": "0.38.1"}]}}
     result = auto._decide(event, {}, {})
-    assert result["decision"] == "verified" and result["summary"].startswith("A crafted value allows an attacker")
+    assert result["decision"] == "verified"
+    assert result["summary"] == "dcmjs: input validation bypass. A crafted value allows an attacker to bypass validation."
+
+
+def test_a_report_note_or_cut_off_list_is_not_used_as_the_summary():
+    """2026-11-05: the GitPython item's summary was a note about missing attachments."""
+    base = {"event_id": "ghsa", "source_id": "gh", "external_id": "GHSA-23mf-xhv8-69c2",
+            "source": {"name": "GitHub Security Advisories", "source_class": "registry"}}
+    note = ("> **A note on the referenced files.** This report was submitted through GitHub's private > vulnerability reporting API, "
+            "which carries no attachments. Every transcript this report leans on is reproduced inline above.")
+    event = {**base, "payload": {"title": "GitPython: arbitrary file read via attacker-controlled branch name", "external_id": base["external_id"],
+                                 "published_at": RECENT, "excerpt": note,
+                                 "affected_versions": [{"package": {"name": "GitPython"}, "first_patched_version": "3.2.0"}]}}
+    assert auto._decide(event, {}, {})["summary"] == "GitPython: arbitrary file read via attacker-controlled branch name."
+    cut = "The regex strips direct NaN strings, it preserves scientific notation, enabling: 1."
+    event["payload"] = {**event["payload"], "title": "dcmjs: input validation bypass", "excerpt": cut}
+    assert auto._decide(event, {}, {})["summary"] == "dcmjs: input validation bypass."
 
 
 def test_a_news_report_on_a_kev_cve_is_settled_without_a_record_lookup():
