@@ -146,6 +146,35 @@ def measure(db, report):
         return rows
 
     _timed(report, "review_queue", review_queue)
+
+    def auto_verify_dry_run():
+        """Run the automated verification rules on the disposable copy only."""
+        from secopsai import research_auto_verify as av
+        from secopsai.research_desk import CLAIM_SOURCE_HOSTS
+        from secopsai.research_intake import SafeFetcher
+        from secopsai.research_operation_store import records
+        fetcher = SafeFetcher(timeout=20)
+        before = {}
+        for record in records("intel_verification", db_path=str(db), limit=10000):
+            before.setdefault(record["payload"]["event_id"], record["payload"].get("decision"))
+        runs = [av.run(lambda url: fetcher.get(url, allowed_hosts=CLAIM_SOURCE_HOSTS, max_bytes=4 << 20)[2], db_path=str(db)) for _ in range(3)]
+        after, changes = {}, []
+        for record in records("intel_verification", db_path=str(db), limit=10000):
+            after.setdefault(record["payload"]["event_id"], record)
+        from secopsai.research_primary_intel import intel_event, pending_public_reviews
+        for event_id, record in after.items():
+            value = record["payload"]
+            if before.get(event_id) != value.get("decision"):
+                event = intel_event(event_id, db_path=str(db))
+                changes.append({"title": str(event["payload"].get("title"))[:120], "source": event["source"].get("name"),
+                                "from": before.get(event_id), "to": value.get("decision"),
+                                "rule": str((value.get("automation") or {}).get("rule", ""))[:240],
+                                "action": str(value.get("defensive_action") or "")[:240]})
+        left = [{"title": str(i.get("title"))[:120], "status": i.get("review_status")}
+                for i in pending_public_reviews(db_path=str(db), limit=50) if i.get("review_status") in {"needs_review", "pending_review"}]
+        return {"runs": runs, "changes": changes, "still_waiting": left}
+
+    _timed(report, "auto_verify_dry_run", auto_verify_dry_run)
     _timed(report, "npm_snapshots", npm_snapshots)
     _timed(report, "pages", pages)
     _timed(report, "objects", objects)
