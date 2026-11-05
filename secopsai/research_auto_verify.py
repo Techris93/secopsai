@@ -40,7 +40,7 @@ CLAIMS_PER_RUN = 10
 STALE_ADVISORY_DAYS = 14
 # Raised when a change makes earlier automated verifications wrong. Unreleased
 # recent ones are decided again, so a draft never carries the old text.
-DECISION_REVISION = 4
+DECISION_REVISION = 5
 REDECIDE_WINDOW_DAYS = 3
 CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
 VERSION_RE = re.compile(r"\b\d+\.\d+(?:\.\d+)+\b")
@@ -68,8 +68,21 @@ def _text(value: Any) -> str:
     return re.sub(r"\s+", " ", TAG_RE.sub(" ", str(value or ""))).strip()
 
 
+ABBREVIATIONS = re.compile(r"\b(?:e\.g|i\.e|etc|vs|cf|approx|incl|no)\.$", re.IGNORECASE)
+
+
 def _sentences(text: str) -> list[str]:
-    return [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
+    """Sentences, not split after abbreviations such as "e.g." or "i.e."."""
+    sentences: list[str] = []
+    for part in re.split(r"(?<=[.!?])\s+", text):
+        part = part.strip()
+        if not part:
+            continue
+        if sentences and ABBREVIATIONS.search(sentences[-1]):
+            sentences[-1] += " " + part
+        else:
+            sentences.append(part)
+    return sentences
 
 
 def fixed_versions(title: str, excerpt: str, payload: dict) -> list[str]:

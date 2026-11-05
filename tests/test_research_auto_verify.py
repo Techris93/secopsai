@@ -584,3 +584,11 @@ def test_a_duplicate_rejected_under_the_current_rules_is_not_decided_again(db):
         outcome = auto.run(cve_fetch, db_path=db)
         assert outcome["rejected"] == 0 and outcome["verified"] == 0
     assert len(records("intel_verification", db_path=db, limit=1000)) == count
+
+
+def test_a_sentence_is_not_cut_at_an_abbreviation():
+    """2026-11-05: a summary ended at "(e.g." in the official description."""
+    text = ("There is no allowlist on import_path, so any importable Python attribute (e.g. os.system) can be loaded, i.e. code runs. "
+            "Upgrade to 2.1.")
+    assert auto._sentences(text) == ["There is no allowlist on import_path, so any importable Python attribute (e.g. os.system) can be loaded, i.e. code runs.",
+                                     "Upgrade to 2.1."]
