@@ -40,7 +40,7 @@ CLAIMS_PER_RUN = 10
 STALE_ADVISORY_DAYS = 14
 # Raised when a change makes earlier automated verifications wrong. Unreleased
 # recent ones are decided again, so a draft never carries the old text.
-DECISION_REVISION = 3
+DECISION_REVISION = 4
 REDECIDE_WINDOW_DAYS = 3
 CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
 VERSION_RE = re.compile(r"\b\d+\.\d+(?:\.\d+)+\b")
@@ -101,6 +101,12 @@ def _flaw_sentences(text: str) -> list[str]:
         if FLAW_WORDS.search(sentence):
             return sentences[index:]
     return sentences
+
+
+def _clean_sentence(sentence: str) -> bool:
+    """A plain prose sentence: not a quote, markup, another CVE, or a cut-off list."""
+    return (20 <= len(sentence) <= 400 and not CVE_RE.search(sentence) and not re.search(r"^[>#|*-]|\*\*|`|:\s*\d+\.$", sentence)
+            and not re.search(r"\b(report|submitted|attachment|transcript)s?\b", sentence, re.IGNORECASE))
 
 
 def mitigations(excerpt: str) -> list[str]:
@@ -285,9 +291,12 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: 
         limitations.append("Exploitation is reported but not confirmed by CISA KEV.")
     if not cves:
         limitations.append("SecOpsAI recorded no CVE identifier for this advisory.")
-        # No official record to quote: the source's own account of the flaw,
-        # without sentences about other CVEs (prior art it cites).
-        summary_parts = ([sentence for sentence in _flaw_sentences(excerpt) if not CVE_RE.search(sentence)] or [title])[:3]
+        # No official record to quote: the advisory's title, and one clean
+        # sentence of its own account of the flaw when it has one.
+        summary_parts = [title.rstrip(".") + "."]
+        sentence = next((s for s in _flaw_sentences(excerpt) if _clean_sentence(s)), "")
+        if sentence and FLAW_WORDS.search(sentence):
+            summary_parts.append(sentence)
     return {"decision": "verified", "reason": "primary source; identifiers and scores match official records; fix or mitigation stated",
             "summary": " ".join(summary_parts)[:4000], "defensive_action": action[:4000], "limitations": " ".join(limitations),
             "cves": cves, "checks": {cve: [c["status"] for c in checks[cve]["claims"]] for cve in cves}}
@@ -355,7 +364,8 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
         latest_seen.add(value["event_id"])
         rule = str((value.get("automation") or {}).get("rule", ""))
         if first and value.get("automation") and (
-                (value.get("decision") == "rejected" and "(same citation)" in rule)
+                (value.get("decision") == "rejected" and "(same citation)" in rule
+                 and int(value["automation"].get("revision") or 1) < DECISION_REVISION)
                 or (value.get("decision") == "needs_review" and (OLD_CVSS_RULE.search(rule) or TRANSIENT_RULE.search(rule)))):
             # Decided under a superseded rule (URL-only citation key, or cached
             # per-CVE scores); decide again under the current one.
