@@ -553,3 +553,18 @@ def test_an_advisory_without_a_cve_is_summarised_from_its_own_text():
 def test_a_news_report_on_a_kev_cve_is_settled_without_a_record_lookup():
     result = auto._decide(_news("Hackers exploit patched Apple flaw", "CVE-2024-27834."), {}, {"kev:CVE-2024-27834": "CISA KEV"})
     assert result["decision"] == "rejected" and "CISA KEV" in result["reason"]
+
+
+def test_a_duplicate_rejected_under_the_current_rules_is_not_decided_again(db):
+    """2026-11-05: same-citation duplicates were rejected again on every run."""
+    queue(db)
+    for event_id, title in (("thn-a", "Attackers chain Ivanti flaws"), ("thn-b", "URGENT - Attackers chain Ivanti flaws")):
+        add(db, event_id, "thn", title, "CVE-2026-104935 exploited for root access.", url="https://thn.example/ivanti", external_id="thn-ivanti")
+    delegate(db)
+    auto.run(cve_fetch, db_path=db)
+    auto.run(cve_fetch, db_path=db)
+    count = len(records("intel_verification", db_path=db, limit=1000))
+    for _ in range(2):
+        outcome = auto.run(cve_fetch, db_path=db)
+        assert outcome["rejected"] == 0 and outcome["verified"] == 0
+    assert len(records("intel_verification", db_path=db, limit=1000)) == count

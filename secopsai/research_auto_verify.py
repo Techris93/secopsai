@@ -355,7 +355,8 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
         latest_seen.add(value["event_id"])
         rule = str((value.get("automation") or {}).get("rule", ""))
         if first and value.get("automation") and (
-                (value.get("decision") == "rejected" and "(same citation)" in rule)
+                (value.get("decision") == "rejected" and "(same citation)" in rule
+                 and int(value["automation"].get("revision") or 1) < DECISION_REVISION)
                 or (value.get("decision") == "needs_review" and (OLD_CVSS_RULE.search(rule) or TRANSIENT_RULE.search(rule)))):
             # Decided under a superseded rule (URL-only citation key, or cached
             # per-CVE scores); decide again under the current one.
