@@ -139,6 +139,11 @@ def test_a_second_run_does_not_redecide_and_brief_discloses_automation(db):
     assert "distinguishes source reporting" not in body, "no original observations in this edition"
     assert brief["draft"]["severity"] != "info", "the badge follows the most serious item"
     assert not brief["draft"]["summary"].startswith("Verified intelligence")
+    # 2026-11-05: a blank line between table rows printed "| --- | --- | --- |" as text.
+    assert "| Claim | Check | Source |\n| --- | --- | --- |\n| " in body
+    from secopsai.blog import markdown_to_html
+    html = markdown_to_html(body)
+    assert "<table>" in html and "<p>| ---" not in html and "<p>| Claim" not in html
 
 
 def test_only_the_reviewer_can_delegate_and_a_revoked_policy_stops_automation(db):
