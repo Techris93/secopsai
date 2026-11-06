@@ -6,7 +6,14 @@
     <link>https://blog.secopsai.dev/</link>
     <description>Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.</description>
     <language>en-us</language>
-    <lastBuildDate>Wed, 04 Nov 2026 14:01:22 GMT</lastBuildDate>
+    <lastBuildDate>Fri, 06 Nov 2026 21:42:15 GMT</lastBuildDate>
+    <item>
+      <title>SecOpsAI Daily Intelligence Brief — 2026-11-06</title>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-06.html</link>
+      <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-06.html</guid>
+      <pubDate>Fri, 06 Nov 2026 21:42:15 GMT</pubDate>
+      <description>Ivanti Connect Secure Generation of Predictable Numbers or Identifiers Vulnerability (exploited); Banks: Unsafe importlib.import_module of attacker-controlled Tool.import_path in CompletionExtension allows RCE; GitPython: arbitrary file read via attacker-controlled branch name in `Head.checkout()` (incomplete fix of CVE-2026-78679); and 1 more.</description>
+    </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-03</title>
       <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-03.html</link>
