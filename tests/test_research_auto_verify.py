@@ -553,7 +553,7 @@ def test_an_advisory_without_a_cve_is_summarised_from_its_own_text():
                          "affected_versions": [{"package": {"name": "dcmjs"}, "first_patched_version": "0.38.1"}]}}
     result = auto._decide(event, {}, {})
     assert result["decision"] == "verified"
-    assert result["summary"] == "dcmjs: input validation bypass. A crafted value allows an attacker to bypass validation."
+    assert result["summary"] == "A crafted value allows an attacker to bypass validation.", "the heading already shows the title"
 
 
 def test_a_report_note_or_cut_off_list_is_not_used_as_the_summary():
