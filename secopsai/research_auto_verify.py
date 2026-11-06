@@ -40,7 +40,7 @@ CLAIMS_PER_RUN = 10
 STALE_ADVISORY_DAYS = 14
 # Raised when a change makes earlier automated verifications wrong. Unreleased
 # recent ones are decided again, so a draft never carries the old text.
-DECISION_REVISION = 5
+DECISION_REVISION = 6
 REDECIDE_WINDOW_DAYS = 3
 CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
 VERSION_RE = re.compile(r"\b\d+\.\d+(?:\.\d+)+\b")
@@ -304,12 +304,11 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: 
         limitations.append("Exploitation is reported but not confirmed by CISA KEV.")
     if not cves:
         limitations.append("SecOpsAI recorded no CVE identifier for this advisory.")
-        # No official record to quote: the advisory's title, and one clean
-        # sentence of its own account of the flaw when it has one.
-        summary_parts = [title.rstrip(".") + "."]
+        # No official record to quote: one clean sentence of the advisory's own
+        # account of the flaw. The heading already shows the title, so it is
+        # used only when the advisory has no such sentence.
         sentence = next((s for s in _flaw_sentences(excerpt) if _clean_sentence(s)), "")
-        if sentence and FLAW_WORDS.search(sentence):
-            summary_parts.append(sentence)
+        summary_parts = [sentence] if sentence and FLAW_WORDS.search(sentence) else [title.rstrip(".") + "."]
     return {"decision": "verified", "reason": "primary source; identifiers and scores match official records; fix or mitigation stated",
             "summary": " ".join(summary_parts)[:4000], "defensive_action": action[:4000], "limitations": " ".join(limitations),
             "cves": cves, "checks": {cve: [c["status"] for c in checks[cve]["claims"]] for cve in cves}}
