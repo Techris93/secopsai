@@ -13,6 +13,7 @@ from secopsai.research_operation_store import records
 # Core rejects a snapshot over 131072 bytes.
 PROJECTION_BUDGET_BYTES = 125000
 PROJECTION_MINIMUM_ENTRIES = 3
+EDITION_EDITOR_FIELDS = ("title", "summary", "body_markdown")
 READ_ACTIONS = {"status", "coverage", "people", "events", "editions", "queue", "audit", "metrics", "storage-assessment"}
 READ_ACTIONS.add("assistant-teams")
 WRITE_ACTIONS = {"person-register", "claim-assess", "prior-art", "experiment", "behavior", "case-review", "case-disposition", "source-configure", "source-collect", "event-verify", "roster", "board", "brief-create", "brief-edit", "brief-approve", "brief-publish", "brief-correct", "submission", "disclosure-milestone", "requirement", "queue-claim", "queue-heartbeat", "queue-complete", "queue-fail", "outcome"}
@@ -285,7 +286,7 @@ def fit_projection_budget(projection: dict, *, budget: int = PROJECTION_BUDGET_B
     editions = projection.get("editions") or []
     desk = projection.get("research_desk") if isinstance(projection.get("research_desk"), dict) else {}
     items, reviews = desk.get("items") or [], projection.get("pending_source_reviews") or []
-    trimmed = {"older_drafts": 0, "update_details": 0, "desk_items": 0, "source_reviews": 0, "todays_draft": 0}
+    trimmed = {"older_draft_details": 0, "older_drafts": 0, "update_details": 0, "desk_items": 0, "source_reviews": 0, "todays_draft": 0}
 
     def over() -> bool:
         return _projection_size(projection) > budget
@@ -294,6 +295,16 @@ def fit_projection_budget(projection: dict, *, budget: int = PROJECTION_BUDGET_B
         edition.pop("draft")
         edition["draft_omitted"] = "Complete draft exceeds hosted transport budget; review it in the ledger"
 
+    # The edition drawer edits and corrects from title, summary and body
+    # text only. Older drafts first lose the rest (coverage alone is ~33 KB),
+    # so a published brief can still be corrected from the dashboard.
+    for edition in reversed(editions[1:]):
+        if not over():
+            break
+        draft = edition.get("draft")
+        if isinstance(draft, dict) and set(draft) - set(EDITION_EDITOR_FIELDS):
+            edition["draft"] = {key: draft[key] for key in EDITION_EDITOR_FIELDS if key in draft}
+            trimmed["older_draft_details"] += 1
     for edition in reversed(editions[1:]):
         if not over():
             break
