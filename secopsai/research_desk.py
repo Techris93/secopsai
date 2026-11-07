@@ -129,6 +129,18 @@ def signals(title: str, excerpt: str, *, techs: Optional[dict[str, re.Pattern]] 
     }
 
 
+def event_signals(event: dict[str, Any], *, techs: Optional[dict[str, re.Pattern]] = None) -> dict[str, Any]:
+    """``signals`` plus the severity and CVSS a registry states as data rather than text."""
+    payload = event["payload"]
+    found = signals(str(payload.get("title") or ""), str(payload.get("excerpt") or ""), techs=techs)
+    score = payload.get("cvss_score")
+    if found["reported_cvss"] is None and isinstance(score, (int, float)) and not isinstance(score, bool) and 0 < score <= 10:
+        found["reported_cvss"] = float(score)
+    if found["reported_severity"] is None and payload.get("severity") in {"critical", "high"}:
+        found["reported_severity"] = payload["severity"]
+    return found
+
+
 def score(cluster: dict[str, Any]) -> int:
     """Priority for human attention (0-100); explained by ``score_reasons``."""
     value = 0
@@ -269,7 +281,7 @@ def clusters(*, db_path=None, now: Optional[datetime] = None, window_days: int =
         title, excerpt = str(payload.get("title") or ""), str(payload.get("excerpt") or "")
         if not SECURITY_RE.search(f"{title}\n{excerpt}\n{payload.get('external_id') or ''}"):
             continue
-        found = signals(title, excerpt, techs=techs)
+        found = event_signals(event, techs=techs)
         if event["source"].get("source_class") == "vendor":
             # A vendor's own feed is about its technology even when an entry
             # title is just "Security Releases".
@@ -395,7 +407,10 @@ def clusters(*, db_path=None, now: Optional[datetime] = None, window_days: int =
 
 def shortlist(*, db_path=None, now: Optional[datetime] = None, limit: int = 10, minimum_score: int = 45) -> list[dict[str, Any]]:
     checks = latest_claim_checks(db_path=db_path)
-    items = [item for item in clusters(db_path=db_path, now=now) if item["score"] >= minimum_score][:max(1, min(limit, 50))]
+    # A KEV entry added in the window always ranks: the catalog states no
+    # score, so on its own it can never reach the bar.
+    items = [item for item in clusters(db_path=db_path, now=now)
+             if item["score"] >= minimum_score or item["kev"]][:max(1, min(limit, 50))]
     for item in items:
         item["claims"] = _report_level_cvss([checks[cve] for cve in item["cves"] if cve in checks])
     return items

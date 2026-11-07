@@ -283,3 +283,42 @@ def test_solo_operator_can_approve_a_brief_they_are_listed_as_author_of(db):
                                                        "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]},
                                actor="operator.owner", db_path=db)
     assert approved["state"] == "approved"
+
+
+def test_ghsa_rows_keep_their_stated_severity_and_highest_cvss():
+    from secopsai.research_source_parsers import parse_index
+
+    rows = [{"ghsa_id": "GHSA-47w9-6r3f-938g", "html_url": "https://github.com/advisories/GHSA-47w9-6r3f-938g",
+             "summary": "LXD has restricted project bypass leading to arbitrary command execution", "severity": "critical",
+             "cvss": {"score": 9.1}, "cvss_severities": {"cvss_v3": {"score": 9.9}, "cvss_v4": {"score": None}}},
+            {"ghsa_id": "GHSA-9hjg-9r4m-mvj7", "html_url": "https://github.com/advisories/GHSA-9hjg-9r4m-mvj7",
+             "summary": "unrated", "severity": "unknown", "cvss": {"score": 0}}]
+    rated, unrated = parse_index({"parser": "github_advisories"}, json.dumps(rows).encode())
+    assert rated["severity"] == "critical" and rated["cvss_score"] == 9.9
+    assert "severity" not in unrated and "cvss_score" not in unrated, "unknown severity and a zero score are not ratings"
+
+
+def test_a_registry_rating_ranks_an_advisory_whose_text_states_none(db):
+    add(db, "ghsa-lxd", "ghsa", "LXD has restricted project bypass leading to arbitrary command execution",
+        "A restricted user can execute arbitrary code on the host.", external_id="GHSA-47w9-6r3f-938g",
+        severity="critical", cvss_score=9.9)
+    add(db, "ghsa-plain", "ghsa", "LXD has restricted project bypass leading to arbitrary command execution in copies",
+        "A restricted user can execute arbitrary code on the host.", external_id="GHSA-7mr3-28h5-m5vx")
+    labels = by_label(desk.clusters(db_path=db, now=NOW))
+    assert labels["GHSA-47w9-6r3f-938g"]["reported_cvss"] == 9.9
+    assert labels["GHSA-47w9-6r3f-938g"]["score"] >= 45 > labels["GHSA-7mr3-28h5-m5vx"]["score"]
+    assert [item["label"] for item in desk.shortlist(db_path=db, now=NOW)] == ["GHSA-47w9-6r3f-938g"]
+
+
+def test_text_cvss_wins_over_the_registry_rating(db):
+    add(db, "ghsa-text", "ghsa", "Example: header injection (CVSS 7.5)", external_id="GHSA-w889-685w-c8fh", cvss_score=9.8)
+    assert by_label(desk.clusters(db_path=db, now=NOW))["GHSA-w889-685w-c8fh"]["reported_cvss"] == 7.5
+
+
+def test_a_new_kev_entry_ranks_without_news_coverage(db):
+    add(db, "kev-new", "kev", "CVE-2026-19868: SonicWall SonicOS SSLVPN Use of Single-factor Authentication",
+        "SonicWall SonicOS SSLVPN contains a weak authentication issue.", published=None, catalog_added_at="2026-10-21T00:00:00Z")
+    add(db, "kev-old", "kev", "CVE-2021-22175: GitLab SSRF", "old catalog entry", published=None, catalog_added_at="2021-11-01T00:00:00Z")
+    labels = by_label(desk.clusters(db_path=db, now=NOW))
+    assert labels["CVE-2026-19868"]["score"] < 45, "the catalog states no score"
+    assert [item["label"] for item in desk.shortlist(db_path=db, now=NOW)] == ["CVE-2026-19868"]
