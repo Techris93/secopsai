@@ -51,6 +51,18 @@ class IndexLinks(HTMLParser):
             self.href, self.bits = "", []
 
 
+def _ghsa_rating(row):
+    """The advisory's own severity and highest CVSS score; its text rarely states them."""
+    rating = {}
+    if row.get("severity") in {"critical", "high", "medium", "low"}:
+        rating["severity"] = row["severity"]
+    scores = [entry.get("score") for entry in [row.get("cvss"), *((row.get("cvss_severities") or {}).values())] if isinstance(entry, dict)]
+    scores = [float(score) for score in scores if isinstance(score, (int, float)) and not isinstance(score, bool) and 0 < score <= 10]
+    if scores:
+        rating["cvss_score"] = max(scores)
+    return rating
+
+
 def parse_index(config, content):
     parser, items = config["parser"], []
     if parser == "github_advisories":
@@ -64,7 +76,7 @@ def parse_index(config, content):
                           "excerpt": row.get("description") or row["summary"], "published_at": row.get("published_at"),
                           "source_updated_at": row.get("updated_at"), "affected_versions": row.get("vulnerabilities", []),
                           "withdrawn_at": row.get("withdrawn_at"), "collection_scope": "bounded_recent_advisory_index",
-                          **({"cve_id": row["cve_id"]} if row.get("cve_id") else {})})
+                          **({"cve_id": row["cve_id"]} if row.get("cve_id") else {}), **_ghsa_rating(row)})
     elif parser == "openvsx_index":
         body = json.loads(content)
         if not isinstance(body, dict) or not isinstance(body.get("extensions"), list) or not body["extensions"]:
