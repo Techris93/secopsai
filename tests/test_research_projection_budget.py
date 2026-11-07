@@ -50,3 +50,14 @@ def test_todays_draft_is_the_last_resort():
 def test_an_impossible_budget_names_the_section_sizes():
     with pytest.raises(ValueError, match="coverage"):
         fit_projection_budget(_projection(filler=50000), budget=10000)
+
+
+def test_older_drafts_keep_their_editable_text_before_being_dropped():
+    # 2026-11-08: the published 11-06 brief could not be corrected from the
+    # dashboard because its whole draft (mostly ~33 KB of coverage) was dropped.
+    projection = _projection()
+    projection["editions"][1]["draft"].update(title="Brief", summary="s", coverage={"sources": "c" * 6000})
+    fitted = fit_projection_budget(projection, budget=13000)
+    assert fitted["editions"][1]["draft"] == {"title": "Brief", "summary": "s", "body_markdown": "y" * 2000}
+    trimmed = fitted["research_desk"]["projection_trimmed"]
+    assert trimmed["older_draft_details"] == 1 and trimmed["older_drafts"] == 0
