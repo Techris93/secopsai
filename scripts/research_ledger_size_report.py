@@ -146,6 +146,24 @@ def measure(db, report):
         return rows
 
     _timed(report, "review_queue", review_queue)
+    def outbox_failures():
+        """Queued ontology chunks Core refused, with the stored error (read-only)."""
+        rows = []
+        with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            for row in conn.execute("SELECT idempotency_key, attempts, failure_category, last_error, created_at, updated_at, next_attempt_at, payload_json "
+                                    "FROM ontology_sync_outbox WHERE failure_category IN ('validation','authorization') ORDER BY updated_at"):
+                try:
+                    payload = json.loads(row["payload_json"] or "{}")
+                except ValueError as exc:
+                    payload = {"_unparsable": str(exc)[:200]}
+                shape = {k: (len(v) if isinstance(v, (list, dict)) else str(v)[:80]) for k, v in payload.items()} if isinstance(payload, dict) else str(type(payload))
+                rows.append({"key": row["idempotency_key"], "attempts": row["attempts"], "category": row["failure_category"],
+                             "error": str(row["last_error"] or "")[:1500], "created_at": row["created_at"], "updated_at": row["updated_at"],
+                             "next_attempt_at": row["next_attempt_at"], "payload_bytes": len(row["payload_json"] or ""), "shape": shape})
+        return rows
+
+    _timed(report, "outbox_failures", outbox_failures)
 
     def auto_verify_dry_run():
         """Run the automated verification rules on the disposable copy only."""
@@ -174,7 +192,6 @@ def measure(db, report):
                 for i in pending_public_reviews(db_path=str(db), limit=50) if i.get("review_status") in {"needs_review", "pending_review"}]
         return {"runs": runs, "changes": changes, "still_waiting": left}
 
-    _timed(report, "auto_verify_dry_run", auto_verify_dry_run)
     _timed(report, "npm_snapshots", npm_snapshots)
     _timed(report, "pages", pages)
     _timed(report, "objects", objects)
