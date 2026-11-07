@@ -69,7 +69,10 @@ def default_db_path() -> str:
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    # Always six fraction digits. isoformat() drops them at an exact whole
+    # second, and stored times are compared as text: "12:00:01Z" sorts after
+    # "12:00:01.5Z", so a row written at a whole second looked not yet due.
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def connect(db_path: str | None = None) -> sqlite3.Connection:
