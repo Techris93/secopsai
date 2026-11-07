@@ -940,10 +940,21 @@ class CoreEdgeClient:
             now = soc_store.utc_now()
             bound = max(1, min(int(max_items), 100))
             deadline = time.monotonic() + max(1, min(float(seconds), 120))
+            # One snapshot is enqueued in dependency order (entities, evidence,
+            # relationships, events), every chunk sharing the same created_at.
+            # If an earlier chunk is waiting out a transient-failure backoff,
+            # its later chunks wait too: sending an event chunk before the
+            # entity chunk it points at gets a 422 "Unknown event entity" that
+            # health then reports as a validation failure. Chunks Core has
+            # refused as invalid do not hold back the rest of their snapshot.
             with soc_store.read_connect(resolved_db) as connection:
                 rows = connection.execute(
-                    "SELECT idempotency_key, payload_json, attempts FROM ontology_sync_outbox WHERE status = 'queued' AND next_attempt_at <= ? ORDER BY next_attempt_at, created_at LIMIT ?",
-                    (now, bound),
+                    "SELECT o.idempotency_key, o.payload_json, o.attempts FROM ontology_sync_outbox o "
+                    "WHERE o.status = 'queued' AND o.next_attempt_at <= ? AND NOT EXISTS ("
+                    "SELECT 1 FROM ontology_sync_outbox e WHERE e.status = 'queued' AND e.created_at = o.created_at "
+                    "AND e.rowid < o.rowid AND e.next_attempt_at > ? AND e.failure_category NOT IN ('validation', 'authorization')) "
+                    "ORDER BY o.created_at, o.rowid LIMIT ?",
+                    (now, now, bound),
                 ).fetchall()
         except Exception as exc:
             self.last_error = _clean(exc, 500)
