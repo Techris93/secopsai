@@ -675,3 +675,24 @@ def test_a_slow_command_ends_the_drain_and_leaves_the_rest_queued(monkeypatch):
     client, queue, finished = _command_client(monkeypatch, pending=5, run_seconds=200.0)
     assert len(client.process_commands()) == 1
     assert finished == ["CMD-0"] and len(queue) == 4
+
+
+def test_a_chunk_queued_at_a_whole_second_is_due_later_that_second(tmp_path, monkeypatch):
+    """CI 2026-11-06: one of three chunks was left behind (assert 2 == 3)."""
+    from datetime import datetime as real_datetime, timezone
+
+    clock = [real_datetime(2026, 11, 6, 18, 51, 51, 0, tzinfo=timezone.utc)]
+
+    class _Clock(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0]
+
+    monkeypatch.setattr(soc_store, 'datetime', _Clock)
+    assert soc_store.utc_now() == '2026-11-06T18:51:51.000000Z'
+    db = str(tmp_path / 'outbox.db')
+    client = CoreEdgeClient(_settings(), session=_Session())
+    client.enqueue_ontology_snapshot({'entities': [{'entity_id': 'pkg:npm:a', 'entity_type': 'package', 'namespace': 'npm', 'canonical_key': 'a'}]}, db_path=db)
+    clock[0] = real_datetime(2026, 11, 6, 18, 51, 51, 500000, tzinfo=timezone.utc)
+    result = client.flush_ontology_outbox(db_path=db)
+    assert result['flushed'] == 1 and result['pending'] == 0
