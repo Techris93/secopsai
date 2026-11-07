@@ -696,3 +696,60 @@ def test_a_chunk_queued_at_a_whole_second_is_due_later_that_second(tmp_path, mon
     clock[0] = real_datetime(2026, 11, 6, 18, 51, 51, 500000, tzinfo=timezone.utc)
     result = client.flush_ontology_outbox(db_path=db)
     assert result['flushed'] == 1 and result['pending'] == 0
+
+
+def test_event_chunk_waits_while_its_entity_chunk_backs_off(tmp_path, monkeypatch):
+    # 2026-11-07: the entity chunk of a snapshot timed out and was given a
+    # retry backoff, the event chunks behind it were still due and went first,
+    # and Core refused them (422 Unknown event entity), which health reported
+    # as a validation failure.
+    import requests
+    from secopsai import core_edge_client as module
+    monkeypatch.setattr(module.time, 'sleep', lambda _: None)
+
+    class Core(_Session):
+        def __init__(self):
+            super().__init__()
+            self.known = set()
+            self.offline = True
+
+        def request(self, method, url, **kwargs):
+            super().request(method, url, **kwargs)
+            body = kwargs.get('json') or {}
+            if body.get('entities'):
+                if self.offline:
+                    raise requests.ConnectionError('synthetic timeout')
+                self.known.update(item['entity_id'] for item in body['entities'])
+            unknown = [item for item in body.get('events') or [] if item['entity_id'] not in self.known]
+            if unknown:
+                class Rejected(_Response):
+                    status_code = 422
+                    ok = False
+
+                    def json(self):
+                        return {'error': 'invalid_event', 'detail': f"Unknown event entity: {unknown[0]['entity_id']}"}
+                return Rejected()
+            return _Response()
+
+    db = str(tmp_path / 'order.db')
+    core = Core()
+    client = CoreEdgeClient(_settings(), session=core)
+    entity = {'entity_id': 'pkgver:npm:demo@1.0.0', 'entity_type': 'package_version', 'namespace': 'npm', 'canonical_key': 'demo@1.0.0'}
+    event = {'event_id': 'evt-1', 'entity_id': entity['entity_id'], 'event_type': 'release', 'source': 'npm', 'source_record_id': 'r1', 'occurred_at': '2026-11-07T18:00:00Z'}
+    queued = client.enqueue_ontology_snapshot({'entities': [entity], 'events': [event]}, db_path=db)
+    assert queued['inserted_chunks'] == 2
+
+    first = client.flush_ontology_outbox(db_path=db, max_items=100)
+    assert first['failed'] == 1 and first['flushed'] == 0
+
+    core.offline = False
+    sent_before = len(core.calls)
+    second = client.flush_ontology_outbox(db_path=db, max_items=100)
+    assert len(core.calls) == sent_before
+    assert second['attempted'] == 0 and second['validation_failures'] == 0 and second['pending'] == 2
+
+    with soc_store.connect(db) as connection:
+        connection.execute("UPDATE ontology_sync_outbox SET next_attempt_at='2000-01-01T00:00:00.000000Z'")
+        connection.commit()
+    third = client.flush_ontology_outbox(db_path=db, max_items=100)
+    assert third['flushed'] == 2 and third['pending'] == 0 and third['validation_failures'] == 0
