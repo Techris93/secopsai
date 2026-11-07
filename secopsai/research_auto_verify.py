@@ -234,7 +234,7 @@ def _covered_by(cve: str, check: Optional[dict], decided: dict[str, str]) -> str
 
 
 def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: Optional[datetime] = None) -> dict[str, Any]:
-    from secopsai.research_desk import detections_for, signals
+    from secopsai.research_desk import detections_for, event_signals
 
     payload, source = event["payload"], event["source"]
     title, excerpt = _text(payload.get("title")), _text(payload.get("excerpt"))
@@ -244,7 +244,7 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: 
         if key and key in decided and decided[key] != event["event_id"]:
             return {"decision": "rejected", "reason": f"duplicate of {decided[key]} (same {'citation' if key == cited else 'title'})"}
     current = now or datetime.now(timezone.utc)
-    found = signals(title, excerpt)
+    found = event_signals(event)
     if source.get("source_class") not in AUTOMATED_SOURCE_CLASSES:
         cves = subject_cves(event, found)
         if source.get("source_class") == "aggregator" and not cves:
@@ -417,6 +417,9 @@ def run(fetch: Optional[Callable[[str], Any]] = None, *, db_path=None, limit: in
     queue = sorted((item for item in pending_public_reviews(db_path=db_path, limit=50, event_ids=list(ranked)) if item["event_id"] in ranked),
                    key=lambda item: item["first_observed_at"], reverse=True)
     queue.sort(key=lambda item: "advisory" not in item["title"].casefold())
+    # Zero here with zero decisions means the desk ranked nothing new, not that
+    # nothing was collected.
+    outcome["ranked_events"], outcome["ranked_pending"] = len(ranked), len(queue)
     # A needs_review decision is taken again with the current evidence; it is
     # recorded only when the outcome changes.
     redo_items = [{"event_id": event_id, "review_status": "pending_review"}
