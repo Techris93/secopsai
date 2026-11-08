@@ -1119,6 +1119,70 @@ def test_hosted_actions_report_outcome_and_people_without_qualifications(db):
     assert people["dave.new"]["roles"] == ["author"] and "qualification" not in people["dave.new"]
 
 
+def _published_then_corrected(db, tmp_path):
+    from scripts.publish_editorial_releases import publish_all
+    from secopsai.research_editorial import confirm_live_publications, release_bundles
+
+    roster(db)
+    value, _ = event(db)
+    verify(value, db)
+    local_date = datetime.fromisoformat(value["first_observed_at"].replace("Z", "+00:00")).astimezone(ZoneInfo("Europe/Istanbul")).date().isoformat()
+    edition = create_daily_brief(date=local_date, db_path=db)
+    approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
+    paths = blog.BlogPaths(root=tmp_path / "blog")
+    publish_all(release_bundles(db_path=db), paths)
+    live_path = paths.posts / (edition["draft"]["slug"] + ".json")
+    assert confirm_live_publications(lambda url: live_path.read_bytes(), db_path=db)["confirmed"] == [edition["edition_id"]]
+    corrected = correct_edition(edition["edition_id"], {"action": "correction", "reason": "Rewrote a summary",
+                                "body_markdown": edition["draft"]["body_markdown"] + "\n\nRewritten summary."}, actor="carol", db_path=db)
+    approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked the correction", "expected_fingerprint": corrected["fingerprint"], "reviewed_draft": corrected["draft"]["body_markdown"]}, actor="carol", db_path=db)
+    return edition, local_date, paths, live_path
+
+
+def test_a_correction_is_not_confirmed_live_from_the_previous_page(db, tmp_path):
+    from scripts.publish_editorial_releases import publish_all
+    from secopsai.research_editorial import confirm_live_publications, release_bundles
+
+    edition, _, paths, live_path = _published_then_corrected(db, tmp_path)
+    # Same title, summary and slug: the old page must not count as the correction.
+    assert confirm_live_publications(lambda url: live_path.read_bytes(), db_path=db) == {"confirmed": [], "waiting": [edition["edition_id"]]}
+    assert hosted_projection(db_path=db)["editions"][0]["state"] == "approved"
+    publish_all(release_bundles(db_path=db), paths)
+    assert "Rewritten summary." in json.loads(live_path.read_bytes())["body_markdown"]
+    assert confirm_live_publications(lambda url: live_path.read_bytes(), db_path=db)["confirmed"] == [edition["edition_id"]]
+    assert hosted_projection(db_path=db)["editions"][0]["state"] == "corrected"
+
+
+def test_a_correction_wrongly_marked_live_is_reopened_and_exported(db, tmp_path):
+    from secopsai.research_editorial import confirm_live_publications, release_bundles
+
+    edition, _, _, live_path = _published_then_corrected(db, tmp_path)
+    with soc_store.connect(db) as conn:  # what the title-only check recorded
+        conn.execute("UPDATE research_editorial_editions SET state='corrected' WHERE edition_id=?", (edition["edition_id"],))
+    result = confirm_live_publications(lambda url: live_path.read_bytes(), db_path=db)
+    assert result["reopened"] == [edition["edition_id"]] and result["confirmed"] == []
+    assert [b["edition_id"] for b in release_bundles(db_path=db)] == [edition["edition_id"]]
+    assert "Rewritten summary." in release_bundles(db_path=db)[0]["draft"]["body_markdown"]
+
+
+def test_items_stay_with_a_published_edition_while_its_correction_is_reviewed(db, tmp_path):
+    from secopsai.research_editorial import release_bundles
+
+    roster(db)
+    value, _ = event(db)
+    verify(value, db)
+    local_date = datetime.fromisoformat(value["first_observed_at"].replace("Z", "+00:00")).astimezone(ZoneInfo("Europe/Istanbul")).date().isoformat()
+    edition = create_daily_brief(date=local_date, db_path=db)
+    approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
+    publish_edition(edition["edition_id"], actor="carol", db_path=db, paths=blog.BlogPaths(root=tmp_path / "blog"))
+    correct_edition(edition["edition_id"], {"action": "correction", "reason": "Rewrote a summary",
+                    "body_markdown": edition["draft"]["body_markdown"] + "\n\nRewritten summary."}, actor="carol", db_path=db)
+    assert hosted_projection(db_path=db)["editions"][0]["state"] == "verifying"
+    next_day = (datetime.fromisoformat(local_date) + timedelta(days=1)).date().isoformat()
+    assert create_daily_brief(date=next_day, db_path=db)["draft"]["items"] == [], "a correction under review keeps its items"
+    assert release_bundles(db_path=db) == []
+
+
 def test_item_verified_today_joins_todays_brief_once(db):
     from secopsai.research_primary_intel import source_url
 
