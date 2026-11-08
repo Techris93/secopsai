@@ -664,8 +664,39 @@ def _brief_selection(items: list[dict]) -> list[dict]:
     return items[:MAX_BRIEF_ITEMS]
 
 
+STALE_BRIEF_REFRESH_DAYS = 7
+
+
+def refresh_stale_past_briefs(*, db_path=None, now=None) -> list[str]:
+    """Rebuild earlier briefs still awaiting approval whose items changed.
+
+    Only today's brief is assembled on schedule. A verification decided or
+    reversed after its day ended left that day's draft listing items that no
+    longer pass, so every approval was refused (11-07). Reassembly follows
+    the usual rules: an unedited draft is refreshed, an edited one gets a
+    pending update for the editor.
+    """
+    local = (now or datetime.now(TIMEZONE)).astimezone(TIMEZONE).date()
+    oldest = (local - timedelta(days=STALE_BRIEF_REFRESH_DAYS)).isoformat()
+    with read_connection(db_path) as conn:
+        rows = conn.execute("SELECT edition_id, edition_date FROM research_editorial_editions WHERE state='verifying' "
+                            "AND COALESCE(published_url,'')='' AND edition_date>=? AND edition_date<? ORDER BY edition_date",
+                            (oldest, local.isoformat())).fetchall()
+    refreshed = []
+    for edition_id, edition_date in rows:
+        edition = _edition(edition_id, db_path=db_path)
+        if pending_edition_update(edition_id, db_path=db_path) or _items_current(edition, db_path):
+            continue
+        after = create_daily_brief(date=edition_date, db_path=db_path)
+        if after.get("fingerprint") != edition["fingerprint"] or after.get("updates_waiting_for_editor"):
+            refreshed.append(edition_id)
+    return refreshed
+
+
 def scheduled_brief(*, db_path=None, now=None) -> dict:
     local = (now or datetime.now(TIMEZONE)).astimezone(TIMEZONE)
+    refreshed = refresh_stale_past_briefs(db_path=db_path, now=local)
+    extra = {"refreshed_past_briefs": refreshed} if refreshed else {}
     if local.hour < 16:
-        return {"status": "waiting", "assemble_at": "16:00 Europe/Istanbul"}
-    return create_daily_brief(date=local.date().isoformat(), db_path=db_path)
+        return {"status": "waiting", "assemble_at": "16:00 Europe/Istanbul", **extra}
+    return {**create_daily_brief(date=local.date().isoformat(), db_path=db_path), **extra}
