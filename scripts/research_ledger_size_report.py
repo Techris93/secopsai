@@ -165,6 +165,42 @@ def measure(db, report):
 
     _timed(report, "outbox_failures", outbox_failures)
 
+    def edition_items():
+        """For recent briefs, which release check each item fails (disposable copy)."""
+        from secopsai.research_editorial import _edition, _event_decisions
+        from secopsai.research_operation_store import digest, records
+        from secopsai.research_primary_intel import intel_event
+        decisions = _event_decisions(db_path=db)
+        verifications = {}
+        for r in records("intel_verification", db_path=db, limit=20000):
+            verifications.setdefault(r["payload"].get("event_id"), []).append({"at": r["created_at"], "decision": r["payload"].get("decision"),
+                                                                                "automated": bool(r["payload"].get("automation")), "fp": digest(r["payload"])[:12]})
+        out = {}
+        for day in ("2026-11-05", "2026-11-06", "2026-11-07", "2026-11-08"):
+            edition_id = f"BRIEF-{day}"
+            try:
+                edition = _edition(edition_id, db_path=db)
+            except Exception as exc:
+                out[edition_id] = {"error": str(exc)[:200]}
+                continue
+            rows = []
+            for item in edition["draft"].get("items", []):
+                event = intel_event(item["event_id"], db_path=db)
+                primary = intel_event(item["primary_event_id"], db_path=db)
+                decision = decisions.get(item["event_id"], {})
+                rows.append({"event_id": item["event_id"], "title": str(item.get("title", ""))[:90],
+                             "event_changed": digest(event) != item["event_fingerprint"],
+                             "primary_changed": digest(primary) != item["primary_fingerprint"],
+                             "decision": decision.get("decision"),
+                             "decision_event_mismatch": decision.get("event_fingerprint") != digest(event),
+                             "verification_changed": digest(decision) != item["verification_fingerprint"],
+                             "sharing": [event["source"].get("sharing"), primary["source"].get("sharing")],
+                             "verification_history": verifications.get(item["event_id"], [])[:8]})
+            out[edition_id] = {"state": edition["state"], "updated_at": edition.get("updated_at"), "items": rows}
+        return out
+
+    _timed(report, "edition_items", edition_items)
+
     def auto_verify_dry_run():
         """Run the automated verification rules on the disposable copy only."""
         from secopsai import research_auto_verify as av
