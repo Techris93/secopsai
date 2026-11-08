@@ -23,12 +23,34 @@ def test_nothing_changes_under_budget():
     assert fit_projection_budget(projection, budget=100000) == _projection()
 
 
+def _with_older(projection, **older):
+    projection["editions"].append({"edition_id": "older", "state": "published", "draft": {"body_markdown": "o" * 2000}, **older})
+    return projection
+
+
 def test_older_drafts_go_first_and_todays_stays():
-    fitted = fit_projection_budget(_projection(), budget=7500)
+    fitted = fit_projection_budget(_with_older(_projection()), budget=9500)
     assert "draft" in fitted["editions"][0]
-    assert "draft" not in fitted["editions"][1]
+    assert "draft" in fitted["editions"][1]
+    assert "draft" not in fitted["editions"][2]
     assert fitted["research_desk"]["projection_trimmed"]["older_drafts"] == 1
     assert fitted["research_desk"]["projection_trimmed"]["todays_draft"] == 0
+
+
+def test_yesterdays_draft_outlasts_lower_ranked_desk_and_review_entries():
+    # 2026-11-08: the published 11-06 brief could not be corrected because its
+    # draft was dropped while the review and desk lists kept every entry.
+    fitted = fit_projection_budget(_projection(), budget=9000)
+    trimmed = fitted["research_desk"]["projection_trimmed"]
+    assert "draft" in fitted["editions"][1]
+    assert trimmed["desk_items"] + trimmed["source_reviews"] > 0 and trimmed["older_drafts"] == 0
+
+
+def test_a_correction_waiting_for_approval_keeps_its_draft():
+    projection = _with_older(_projection(), state="verifying", published_url="https://blog.example/posts/older")
+    fitted = fit_projection_budget(projection, budget=11000)
+    assert "draft" in fitted["editions"][2]
+    assert fitted["research_desk"]["projection_trimmed"]["older_drafts"] == 0
 
 
 def test_lower_ranked_entries_go_before_todays_draft_and_are_counted():
@@ -53,8 +75,7 @@ def test_an_impossible_budget_names_the_section_sizes():
 
 
 def test_older_drafts_keep_their_editable_text_before_being_dropped():
-    # 2026-11-08: the published 11-06 brief could not be corrected from the
-    # dashboard because its whole draft (mostly ~33 KB of coverage) was dropped.
+    # Fields the edition drawer does not use go before any whole draft.
     projection = _projection()
     projection["editions"][1]["draft"].update(title="Brief", summary="s", coverage={"sources": "c" * 6000})
     fitted = fit_projection_budget(projection, budget=13000)
