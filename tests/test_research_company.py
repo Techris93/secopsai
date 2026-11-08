@@ -1204,6 +1204,16 @@ def test_a_past_brief_is_rebuilt_when_its_item_stops_passing_verification(db):
     assert refresh_stale_past_briefs(db_path=db, now=next_morning) == [], "approved and current briefs are left alone"
 
 
+def test_every_recent_brief_waiting_for_approval_keeps_its_draft(db):
+    roster(db)
+    today = datetime.now(ZoneInfo("Europe/Istanbul")).date()
+    for days in (1, 2, 3, 4, 9):
+        create_daily_brief(date=(today - timedelta(days=days)).isoformat(), db_path=db)
+    editions = {e["edition_date"]: e for e in hosted_projection(db_path=db)["editions"]}
+    assert "draft" in editions[(today - timedelta(days=4)).isoformat()], "the fourth-newest brief can still be approved"
+    assert "draft_omitted" in editions[(today - timedelta(days=9)).isoformat()]
+
+
 def test_item_verified_today_joins_todays_brief_once(db):
     from secopsai.research_primary_intel import source_url
 

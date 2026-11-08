@@ -4,7 +4,9 @@ from __future__ import annotations
 import json
 import sys
 from contextlib import closing
+from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import soc_store
 from secopsai.research_operation_store import read_connection
@@ -217,6 +219,10 @@ def hosted_projection(*, db_path=None) -> dict:
     dispatches = records("assistant_team_automation_dispatch", db_path=db_path, limit=1)
     auto_cycles = records("assistant_team_automation_cycle", db_path=db_path, limit=1)
     editions = []
+    # A brief still waiting for approval keeps its draft for as long as the
+    # worker keeps it current, so the editor can approve it from the console.
+    from secopsai.research_editorial import STALE_BRIEF_REFRESH_DAYS
+    waiting_since = (datetime.now(ZoneInfo("Europe/Istanbul")).date() - timedelta(days=STALE_BRIEF_REFRESH_DAYS)).isoformat()
     for index, item in enumerate(execute("editions", db_path=db_path)["editions"]):
         value = {key: item.get(key) for key in ("edition_id", "edition_date", "product", "author_id", "state", "published_url", "updated_at", "fingerprint")}
         update = pending_edition_update(item["edition_id"], db_path=db_path)
@@ -232,7 +238,8 @@ def hosted_projection(*, db_path=None) -> dict:
                                                           for key in ("event_id", "title", "source", "url")}
                                                          for source_item in update.get("removed_items", [])],
                                        "coverage_summary": str(update.get("coverage_summary") or "")[:1000]}
-        if index < 3 and len(item["draft"]["body_markdown"].encode()) <= 30000:
+        waiting = item.get("state") == "verifying" and not item.get("published_url") and str(item.get("edition_date") or "") >= waiting_since
+        if (index < 3 or waiting) and len(item["draft"]["body_markdown"].encode()) <= 30000:
             value["draft"] = {key: item["draft"].get(key) for key in ("title", "summary", "body_markdown", "author", "references")}
         else:
             value["draft_omitted"] = "Full draft remains in the ledger; it cannot be approved from this projection"
