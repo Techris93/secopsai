@@ -6,7 +6,14 @@
     <link>https://blog.secopsai.dev/</link>
     <description>Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.</description>
     <language>en-us</language>
-    <lastBuildDate>Fri, 06 Nov 2026 21:42:15 GMT</lastBuildDate>
+    <lastBuildDate>Sun, 08 Nov 2026 15:30:41 GMT</lastBuildDate>
+    <item>
+      <title>SecOpsAI Daily Intelligence Brief — 2026-11-08</title>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08.html</link>
+      <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08.html</guid>
+      <pubDate>Sun, 08 Nov 2026 15:30:41 GMT</pubDate>
+      <description>Ivanti Connect Secure Generation of Predictable Numbers or Identifiers Vulnerability (exploited); LXD has argument injection in backup compression algorithm leading to AFW and ACE; LXD has arbitrary file write on client due to trusted image hash; and 4 more.</description>
+    </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-06</title>
       <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-06.html</link>
