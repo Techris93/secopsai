@@ -164,7 +164,10 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
         # An item verified today belongs in today's edition even when it was
         # collected earlier; otherwise a late review could never be published.
         released = set()
-        for row in conn.execute("SELECT edition_id,draft_json FROM research_editorial_editions WHERE state IN ('approved','published','corrected','retracted')"):
+        # An edition with a publication keeps its items while a correction is
+        # under review (state 'verifying'); otherwise the next edition would
+        # repeat them.
+        for row in conn.execute("SELECT edition_id,draft_json FROM research_editorial_editions WHERE state IN ('approved','published','corrected','retracted') OR COALESCE(published_url,'')<>''"):
             if row["edition_id"] != identity:
                 released.update(item["event_id"] for item in json.loads(row["draft_json"]).get("items", []))
     # Items verified today, plus recent verifications that missed their day's
@@ -421,24 +424,73 @@ def verify_release_bundle(bundle: dict) -> dict:
     return draft
 
 
+def _live_matches(live: dict, draft: dict) -> bool:
+    """The public post carries the approved text, as the blog renders it.
+
+    A correction keeps the title, summary and slug, so the body must be
+    compared too, after the same public transform publishing applies.
+    """
+    from secopsai import blog
+
+    if any(live.get(key) != draft.get(key) for key in ("title", "summary", "slug")):
+        return False
+    return live.get("body_markdown") == blog._public_post(dict(draft)).get("body_markdown")
+
+
+def _fetch_live(fetch, draft: dict):
+    from secopsai import blog
+
+    url = blog._post_url(draft["slug"])
+    try:
+        return url, json.loads(fetch(url.removesuffix(".html") + ".json"))
+    except Exception:
+        return url, None
+
+
+def _reopen_unconfirmed_corrections(fetch, *, db_path=None) -> list[str]:
+    """Return corrections recorded as live while the old page was still up.
+
+    Before the body was compared, a correction matched the previous page on
+    title, summary and slug and was marked corrected without being written.
+    Its approval still holds, so it goes back to 'approved' and is exported.
+    """
+    with read_connection(db_path) as conn:
+        ids = [r[0] for r in conn.execute("SELECT edition_id FROM research_editorial_editions WHERE state IN ('corrected','retracted')")]
+    reopened = []
+    for edition_id in ids:
+        edition = _edition(edition_id, db_path=db_path)
+        draft = edition["draft"]
+        if draft.get("correction_action") not in {"correction", "retraction"}:
+            continue
+        try:
+            validate_release(edition_id, draft, db_path=db_path)
+        except ValueError:
+            continue
+        _, live = _fetch_live(fetch, draft)
+        if live is None or _live_matches(live, draft):
+            continue
+        with transaction(db_path) as conn:
+            conn.execute("UPDATE research_editorial_editions SET state='approved',updated_at=? WHERE edition_id=? AND state IN ('corrected','retracted')",
+                         (soc_store.utc_now(), edition_id))
+            append("edition_publication_reopened", {"edition_id": edition_id, "fingerprint": edition["fingerprint"],
+                   "reason": "live page does not carry the approved correction"}, actor="secopsai-worker", connection=conn)
+        reopened.append(edition_id)
+    return reopened
+
+
 def confirm_live_publications(fetch, *, db_path=None) -> dict:
     """Mark approved editions published once their page is live with the approved text.
 
     ``fetch(url)`` returns the response bytes or raises.  Nothing changes until
-    the public post JSON exists and carries the approved title, summary and slug.
+    the public post JSON exists and carries the approved title, summary, slug
+    and body.
     """
-    from secopsai import blog
-
+    reopened = _reopen_unconfirmed_corrections(fetch, db_path=db_path)
     confirmed, waiting = [], []
     for bundle in release_bundles(db_path=db_path):
         draft = bundle["draft"]
-        url = blog._post_url(draft["slug"])
-        try:
-            live = json.loads(fetch(url.removesuffix(".html") + ".json"))
-        except Exception:
-            waiting.append(bundle["edition_id"])
-            continue
-        if any(live.get(key) != draft.get(key) for key in ("title", "summary", "slug")):
+        url, live = _fetch_live(fetch, draft)
+        if live is None or not _live_matches(live, draft):
             waiting.append(bundle["edition_id"])
             continue
         with transaction(db_path) as conn:
@@ -448,7 +500,10 @@ def confirm_live_publications(fetch, *, db_path=None) -> dict:
             append("edition_published", {"edition_id": bundle["edition_id"], "url": url, "fingerprint": bundle["fingerprint"],
                    "confirmed_live": True}, actor=bundle["editor_id"], connection=conn)
         confirmed.append(bundle["edition_id"])
-    return {"confirmed": confirmed, "waiting": waiting}
+    result = {"confirmed": confirmed, "waiting": waiting}
+    if reopened:
+        result["reopened"] = reopened
+    return result
 
 
 def correct_edition(edition_id: str, payload: dict, *, actor: str, db_path=None) -> dict:
