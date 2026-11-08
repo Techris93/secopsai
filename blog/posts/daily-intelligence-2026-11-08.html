@@ -4,11 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SecOpsAI Daily Intelligence Brief — 2026-11-08 | SecOpsAI Security Blog</title>
-    <meta name="description" content="Ivanti Connect Secure Generation of Predictable Numbers or Identifiers Vulnerability (exploited); LXD has argument injection in backup compression algorithm leading to AFW and ACE; LXD has arbitrary file write on client due to trusted image hash; and 4 more." />
+    <meta name="description" content="LXD has argument injection in backup compression algorithm leading to AFW and ACE; LXD has arbitrary file write on client due to trusted image hash; LXD has restricted project bypass leading to arbitrary command execution." />
     <meta property="og:type" content="article" />
     <meta property="og:site_name" content="SecOpsAI Security Blog" />
     <meta property="og:title" content="SecOpsAI Daily Intelligence Brief — 2026-11-08 | SecOpsAI Security Blog" />
-    <meta property="og:description" content="Ivanti Connect Secure Generation of Predictable Numbers or Identifiers Vulnerability (exploited); LXD has argument injection in backup compression algorithm leading to AFW and ACE; LXD has arbitrary file write on client due to trusted image hash; and 4 more." />
+    <meta property="og:description" content="LXD has argument injection in backup compression algorithm leading to AFW and ACE; LXD has arbitrary file write on client due to trusted image hash; LXD has restricted project bypass leading to arbitrary command execution." />
     <meta property="og:url" content="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08.html" />
     <meta property="og:image" content="https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-08.png" />
     <meta property="og:image:alt" content="SecOpsAI social preview card for SecOpsAI Daily Intelligence Brief — 2026-11-08" />
@@ -16,11 +16,11 @@
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="SecOpsAI Daily Intelligence Brief — 2026-11-08 | SecOpsAI Security Blog" />
-    <meta name="twitter:description" content="Ivanti Connect Secure Generation of Predictable Numbers or Identifiers Vulnerability (exploited); LXD has argument injection in backup compression algorithm leading to AFW and ACE; LXD has arbitrary file write on client due to trusted image hash; and 4 more." />
+    <meta name="twitter:description" content="LXD has argument injection in backup compression algorithm leading to AFW and ACE; LXD has arbitrary file write on client due to trusted image hash; LXD has restricted project bypass leading to arbitrary command execution." />
     <meta name="twitter:image" content="https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-08.png" />
     <meta name="twitter:image:alt" content="SecOpsAI social preview card for SecOpsAI Daily Intelligence Brief — 2026-11-08" />
-    <meta property="article:published_time" content="2026-11-08T15:30:41Z" />
-    <meta property="article:modified_time" content="2026-11-08T15:30:41Z" />
+    <meta property="article:published_time" content="2026-11-08T20:31:14Z" />
+    <meta property="article:modified_time" content="2026-11-08T20:31:14Z" />
     <meta property="article:tag" content="Threat Intelligence" />
     <link rel="canonical" href="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08.html" />
     <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
@@ -54,13 +54,13 @@
         <div class="breadcrumb">
           <a href="/">Blog Home</a><span>&gt;</span><span>SecOpsAI Daily Intelligence Brief — 2026-11-08</span>
         </div>
-        <p class="eyebrow">HIGH • SecOpsAI Intelligence</p>
+        <p class="eyebrow">LOW • SecOpsAI Intelligence</p>
         <h1>SecOpsAI Daily Intelligence Brief — 2026-11-08</h1>
-        <p class="dek">Ivanti Connect Secure Generation of Predictable Numbers or Identifiers Vulnerability (exploited); LXD has argument injection in backup compression algorithm leading to AFW and ACE; LXD has arbitrary file write on client due to trusted image hash; and 4 more.</p>
+        <p class="dek">LXD has argument injection in backup compression algorithm leading to AFW and ACE; LXD has arbitrary file write on client due to trusted image hash; LXD has restricted project bypass leading to arbitrary command execution.</p>
         <div class="meta">
-          <span class="pill high">High</span>
+          <span class="pill low">Low</span>
           <span>By Onyedika Christopher Agada</span>
-          <span>4 min read</span>
+          <span>2 min read</span>
           <span>Published: 2026-11-08</span>
             <span>Updated: 2026-11-08</span>
         </div>
@@ -78,19 +78,7 @@
       </header>
       <div class="shell post-layout">
         <article class="post-body">
-        <h2>CVE-2026-118527: Ivanti Connect Secure Generation of Predictable Numbers or Identifiers Vulnerability</h2>
-<p>Source-reported by <a class="inline-ref" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-118527" rel="noopener noreferrer" target="_blank">CISA Known Exploited Vulnerabilities</a>.</p>
-<p>CVE-2026-118527 (official CVSS 4.3): Use of predictable filenames in Ivanti Connect Secure before versions 25.1.1.3 and 22.8R2.6 allows a remote authenticated attacker to upload files with attacker-controlled content to a known location on disk. CISA lists it as exploited in the wild.</p>
-<p>Defensive action: Apply the vendor&#x27;s security update; the CVE record lists the fix in 25.1.1.3 and 22.8R2.6. If no update or mitigation is available, take the product out of service.</p>
-<p>Limitations: Source-reported; SecOpsAI did not reproduce the issue.</p>
-<p>Added to the CISA KEV catalog 30 Oct 2026; first seen by SecOpsAI 30 Oct 2026, 20:51 UTC.</p>
-<p>Identifiers and scores checked automatically against cve.org and NVD.</p>
-<div class="table-scroll"><table>
-<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
-<tbody><tr><td>CVE-2026-118527 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-118527" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>exploited in the wild</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-118527" rel="noopener noreferrer" target="_blank">CISA KEV</a></td></tr><tr><td>CVSS 4.3</td><td>official</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-118527" rel="noopener noreferrer" target="_blank">NVD</a></td></tr></tbody>
-</table></div>
-<p>SecOpsAI detection: no SecOpsAI rule covers this yet.</p>
-<h2>LXD has argument injection in backup compression algorithm leading to AFW and ACE</h2>
+        <h2>LXD has argument injection in backup compression algorithm leading to AFW and ACE</h2>
 <p>Source-reported by <a class="inline-ref" href="https://github.com/advisories/GHSA-fmc8-p6q7-75cc" rel="noopener noreferrer" target="_blank">GitHub Security Advisories</a>.</p>
 <p>Reported from <a class="inline-ref" href="https://github.com/lxc/incus/security/advisories/GHSA-v6mj-8pf4-hhw4" rel="noopener noreferrer" target="_blank">https://github.com/lxc/incus/security/advisories/GHSA-v6mj-8pf4-hhw4</a> ### Summary Improper validation of user-provided backup compression algorithm leads to argument injection in the constructed command line.</p>
 <p>Defensive action: Upgrade to a fixed release: github.com/canonical/lxd 0.0.0-20260630083100-c5184be310b1.</p>
@@ -112,34 +100,6 @@
 <p>Defensive action: Upgrade to a fixed release: github.com/canonical/lxd 0.0.0-20260630083100-c5184be310b1.</p>
 <p>Limitations: Source-reported; SecOpsAI did not reproduce the issue. SecOpsAI recorded no CVE identifier for this advisory.</p>
 <p>Published 6 Nov 2026, 19:51 UTC; first seen by SecOpsAI 7 Nov 2026, 21:10 UTC.</p>
-<p>Checked automatically: primary source with a stated fix; no CVE to check.</p>
-<p>SecOpsAI detection: no SecOpsAI rule covers this yet.</p>
-<h2>Banks: Unsafe importlib.import_module of attacker-controlled Tool.import_path in CompletionExtension allows RCE</h2>
-<p>Source-reported by <a class="inline-ref" href="https://github.com/advisories/GHSA-64vx-6h2c-rjh7" rel="noopener noreferrer" target="_blank">GitHub Security Advisories</a>.</p>
-<p>CVE-2026-61536 (official CVSS 7.5): There is no allowlist or sanitization on import_path, so any importable Python attribute (e.g. os.system, subprocess.getoutput) can be selected.</p>
-<p>Defensive action: Upgrade to a fixed release: banks 2.4.3.</p>
-<p>Limitations: Source-reported; SecOpsAI did not reproduce the issue.</p>
-<p>Published 5 Nov 2026, 17:51 UTC; first seen by SecOpsAI 5 Nov 2026, 17:58 UTC.</p>
-<p>Identifiers and scores checked automatically against cve.org and NVD.</p>
-<div class="table-scroll"><table>
-<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
-<tbody><tr><td>CVE-2026-61536 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-61536" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>CVSS 7.5</td><td>official</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-61536" rel="noopener noreferrer" target="_blank">NVD</a></td></tr></tbody>
-</table></div>
-<p>SecOpsAI detection: no SecOpsAI rule covers this yet.</p>
-<h2>GitPython: arbitrary file read via attacker-controlled branch name in <code>Head.checkout()</code> (incomplete fix of CVE-2026-78679)</h2>
-<p>Source-reported by <a class="inline-ref" href="https://github.com/advisories/GHSA-23mf-xhv8-69c2" rel="noopener noreferrer" target="_blank">GitHub Security Advisories</a>.</p>
-<p>GitPython: arbitrary file read via attacker-controlled branch name in <code>Head.checkout()</code> (incomplete fix of CVE-2026-78679).</p>
-<p>Defensive action: Upgrade to a fixed release: GitPython 3.2.0.</p>
-<p>Limitations: Source-reported; SecOpsAI did not reproduce the issue. SecOpsAI recorded no CVE identifier for this advisory.</p>
-<p>Published 27 Oct 2026, 15:28 UTC; first seen by SecOpsAI 27 Oct 2026, 16:20 UTC.</p>
-<p>Checked automatically: primary source with a stated fix; no CVE to check.</p>
-<p>SecOpsAI detection: no SecOpsAI rule covers this yet.</p>
-<h2>dcmjs: DS/IS VALUE REPRESENTATION INPUT VALIDATION BYPASS</h2>
-<p>Source-reported by <a class="inline-ref" href="https://github.com/advisories/GHSA-px68-xx5g-48q5" rel="noopener noreferrer" target="_blank">GitHub Security Advisories</a>.</p>
-<p>dcmjs, a JavaScript library for DICOM manipulation used in web-based medical imaging viewers, contains an input validation bypass in its handling of DS (Decimal String) and IS (Integer String) value representations.</p>
-<p>Defensive action: Upgrade to a fixed release: dcmjs 0.52.0.</p>
-<p>Limitations: Source-reported; SecOpsAI did not reproduce the issue. SecOpsAI recorded no CVE identifier for this advisory.</p>
-<p>Published 27 Oct 2026, 13:29 UTC; first seen by SecOpsAI 27 Oct 2026, 15:12 UTC.</p>
 <p>Checked automatically: primary source with a stated fix; no CVE to check.</p>
 <p>SecOpsAI detection: no SecOpsAI rule covers this yet.</p>
 <h2>Collection scope</h2>
@@ -189,7 +149,7 @@
 
         <section class="card">
           <p class="eyebrow">References</p>
-          <ul><li><a href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-118527" rel="noopener noreferrer" target="_blank">www.cisa.gov</a></li><li><a href="https://github.com/advisories/GHSA-fmc8-p6q7-75cc" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/advisories/GHSA-pjff-c2wc-f6jm" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/advisories/GHSA-47w9-6r3f-938g" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/advisories/GHSA-64vx-6h2c-rjh7" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/advisories/GHSA-23mf-xhv8-69c2" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/advisories/GHSA-px68-xx5g-48q5" rel="noopener noreferrer" target="_blank">github.com</a></li></ul>
+          <ul><li><a href="https://github.com/advisories/GHSA-fmc8-p6q7-75cc" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/advisories/GHSA-pjff-c2wc-f6jm" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/advisories/GHSA-47w9-6r3f-938g" rel="noopener noreferrer" target="_blank">github.com</a></li></ul>
         </section>
 
       </aside>

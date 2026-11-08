@@ -10,6 +10,28 @@
           "name": "Onyedika Christopher Agada"
         }
       ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-08.png",
+      "date_modified": "2026-11-08T20:31:14Z",
+      "date_published": "2026-11-08T20:31:14Z",
+      "id": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08.html",
+      "image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-08.png",
+      "images": [],
+      "reading_time_minutes": 2,
+      "severity": "low",
+      "summary": "LXD has argument injection in backup compression algorithm leading to AFW and ACE; LXD has arbitrary file write on client due to trusted image hash; LXD has restricted project bypass leading to arbitrary command execution.",
+      "tags": [
+        "Threat Intelligence"
+      ],
+      "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-08",
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Onyedika Christopher Agada"
+        }
+      ],
       "banner_image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-06.png",
       "date_modified": "2026-11-08T17:11:26Z",
       "date_published": "2026-11-08T17:11:26Z",
@@ -24,28 +46,6 @@
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-06",
       "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-06.html"
-    },
-    {
-      "affected_packages": [],
-      "authors": [
-        {
-          "name": "Onyedika Christopher Agada"
-        }
-      ],
-      "banner_image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-08.png",
-      "date_modified": "2026-11-08T15:30:41Z",
-      "date_published": "2026-11-08T15:30:41Z",
-      "id": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08.html",
-      "image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-08.png",
-      "images": [],
-      "reading_time_minutes": 4,
-      "severity": "high",
-      "summary": "Ivanti Connect Secure Generation of Predictable Numbers or Identifiers Vulnerability (exploited); LXD has argument injection in backup compression algorithm leading to AFW and ACE; LXD has arbitrary file write on client due to trusted image hash; and 4 more.",
-      "tags": [
-        "Threat Intelligence"
-      ],
-      "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-08",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08.html"
     },
     {
       "affected_packages": [],
