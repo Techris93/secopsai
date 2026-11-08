@@ -10,6 +10,28 @@
           "name": "Onyedika Christopher Agada"
         }
       ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-06.png",
+      "date_modified": "2026-11-08T17:11:26Z",
+      "date_published": "2026-11-08T17:11:26Z",
+      "id": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-06.html",
+      "image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-06.png",
+      "images": [],
+      "reading_time_minutes": 3,
+      "severity": "high",
+      "summary": "Ivanti Connect Secure Generation of Predictable Numbers or Identifiers Vulnerability (exploited); Banks: Unsafe importlib.import_module of attacker-controlled Tool.import_path in CompletionExtension allows RCE; GitPython: arbitrary file read via attacker-controlled branch name in `Head.checkout()` (incomplete fix of CVE-2026-78679); and 1 more.",
+      "tags": [
+        "Threat Intelligence"
+      ],
+      "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-06",
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-06.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Onyedika Christopher Agada"
+        }
+      ],
       "banner_image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-08.png",
       "date_modified": "2026-11-08T15:30:41Z",
       "date_published": "2026-11-08T15:30:41Z",
@@ -24,28 +46,6 @@
       ],
       "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-08",
       "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08.html"
-    },
-    {
-      "affected_packages": [],
-      "authors": [
-        {
-          "name": "Onyedika Christopher Agada"
-        }
-      ],
-      "banner_image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-06.png",
-      "date_modified": "2026-11-06T21:42:15Z",
-      "date_published": "2026-11-06T21:42:15Z",
-      "id": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-06.html",
-      "image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-06.png",
-      "images": [],
-      "reading_time_minutes": 3,
-      "severity": "high",
-      "summary": "Ivanti Connect Secure Generation of Predictable Numbers or Identifiers Vulnerability (exploited); Banks: Unsafe importlib.import_module of attacker-controlled Tool.import_path in CompletionExtension allows RCE; GitPython: arbitrary file read via attacker-controlled branch name in `Head.checkout()` (incomplete fix of CVE-2026-78679); and 1 more.",
-      "tags": [
-        "Threat Intelligence"
-      ],
-      "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-06",
-      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-06.html"
     },
     {
       "affected_packages": [],

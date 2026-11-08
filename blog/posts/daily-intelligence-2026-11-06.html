@@ -19,8 +19,8 @@
     <meta name="twitter:description" content="Ivanti Connect Secure Generation of Predictable Numbers or Identifiers Vulnerability (exploited); Banks: Unsafe importlib.import_module of attacker-controlled Tool.import_path in CompletionExtension allows RCE; GitPython: arbitrary file read via attacker-controlled branch name in `Head.checkout()` (incomplete fix of CVE-2026-78679); and 1 more." />
     <meta name="twitter:image" content="https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-06.png" />
     <meta name="twitter:image:alt" content="SecOpsAI social preview card for SecOpsAI Daily Intelligence Brief — 2026-11-06" />
-    <meta property="article:published_time" content="2026-11-06T21:42:15Z" />
-    <meta property="article:modified_time" content="2026-11-06T21:42:15Z" />
+    <meta property="article:published_time" content="2026-11-08T17:11:26Z" />
+    <meta property="article:modified_time" content="2026-11-08T17:11:26Z" />
     <meta property="article:tag" content="Threat Intelligence" />
     <link rel="canonical" href="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-06.html" />
     <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
@@ -61,8 +61,8 @@
           <span class="pill high">High</span>
           <span>By Onyedika Christopher Agada</span>
           <span>3 min read</span>
-          <span>Published: 2026-11-06</span>
-            <span>Updated: 2026-11-06</span>
+          <span>Published: 2026-11-08</span>
+            <span>Updated: 2026-11-08</span>
         </div>
         <div class="tags"><span class="pill">Threat Intelligence</span></div>
         <div class="share-bar share-bar-compact" data-share-bar>
@@ -92,7 +92,7 @@
 <p>SecOpsAI detection: no SecOpsAI rule covers this yet.</p>
 <h2>Banks: Unsafe importlib.import_module of attacker-controlled Tool.import_path in CompletionExtension allows RCE</h2>
 <p>Source-reported by <a class="inline-ref" href="https://github.com/advisories/GHSA-64vx-6h2c-rjh7" rel="noopener noreferrer" target="_blank">GitHub Security Advisories</a>.</p>
-<p>CVE-2026-61536 (official CVSS 7.5): There is no allowlist or sanitization on import_path, so any importable Python attribute (e.g. os.system, subprocess.getoutput) can be selected.</p>
+<p>CVE-2026-61536 (official CVSS 7.5): In banks 2.4.2 and earlier, {% completion %} blocks load each tool’s handler from its import_path with importlib.import_module and no allowlist, so a tool definition that reaches the rendered template can point at any Python function, such as os.system. When the model calls that tool, the function runs with the model’s arguments, giving code execution in the process running banks. The 2.4.2 sandbox fix for CVE-2026-44209 does not cover this path.</p>
 <p>Defensive action: Upgrade to a fixed release: banks 2.4.3.</p>
 <p>Limitations: Source-reported; SecOpsAI did not reproduce the issue.</p>
 <p>Published 5 Nov 2026, 17:51 UTC; first seen by SecOpsAI 5 Nov 2026, 17:58 UTC.</p>
@@ -104,7 +104,7 @@
 <p>SecOpsAI detection: no SecOpsAI rule covers this yet.</p>
 <h2>GitPython: arbitrary file read via attacker-controlled branch name in <code>Head.checkout()</code> (incomplete fix of CVE-2026-78679)</h2>
 <p>Source-reported by <a class="inline-ref" href="https://github.com/advisories/GHSA-23mf-xhv8-69c2" rel="noopener noreferrer" target="_blank">GitHub Security Advisories</a>.</p>
-<p>GitPython: arbitrary file read via attacker-controlled branch name in <code>Head.checkout()</code> (incomplete fix of CVE-2026-78679).</p>
+<p>In GitPython 3.1.62 and earlier, a repository whose HEAD names a crafted branch can make Head.checkout() read any file the application can read and return its contents in an exception message. An attacker only needs the application to clone and check out a repository URL they control. This is an incomplete fix of CVE-2026-78679.</p>
 <p>Defensive action: Upgrade to a fixed release: GitPython 3.2.0.</p>
 <p>Limitations: Source-reported; SecOpsAI did not reproduce the issue. SecOpsAI recorded no CVE identifier for this advisory.</p>
 <p>Published 27 Oct 2026, 15:28 UTC; first seen by SecOpsAI 27 Oct 2026, 16:20 UTC.</p>
@@ -122,6 +122,8 @@
 <p>SecOpsAI watched 29 sources for this edition; all were current. 5 package registries are watched through release metadata only, without scanning package contents. This is not complete coverage of every source or registry.</p>
 <h2>Credits and corrections</h2>
 <p>Prepared by Onyedika Christopher Agada. The editor approves each edition before it is published. Corrections keep the previous edition and explain material changes.</p>
+<h2>Correction history</h2>
+<p>2026-11-08T12:25:23.221924Z: Rewrote the GitPython and Banks summaries: the GitPython summary repeated its heading, and the Banks summary did not say where the flaw is. Affected versions, fixes and checks are unchanged.</p>
 
         <div class="share-bar" data-share-bar>
           <p class="eyebrow">Share this research</p>
