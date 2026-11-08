@@ -465,6 +465,10 @@ def test_published_brief_late_source_requires_a_reviewed_correction(db, tmp_path
     verify(intel_event(event_id, db_path=db), db)
     create_daily_brief(date=local_date, db_path=db)
     pending = hosted_projection(db_path=db)["editions"][0]["pending_update"]
+    # Reassembling with only collection counters changed keeps the same update,
+    # so a correction saved from the page is not refused as stale.
+    create_daily_brief(date=local_date, db_path=db)
+    assert hosted_projection(db_path=db)["editions"][0]["pending_update"]["fingerprint"] == pending["fingerprint"]
 
     correction_body = edition["draft"]["body_markdown"] + "\n\n## Correction notice\n\nSource: https://vendor.example/correction\nA later patch notice."
     corrected = correct_edition(edition["edition_id"], {

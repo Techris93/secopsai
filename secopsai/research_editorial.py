@@ -90,7 +90,9 @@ def _record_edition_update(edition: dict, draft: dict, *, db_path=None) -> dict:
     remove_ids = sorted(previous_items.keys() - current_items.keys())
     add_items = [item for item in draft.get("items", [])
                  if item["event_id"] not in previous_items or previous_items[item["event_id"]] != item]
-    fingerprint = digest(draft)
+    # Only what the editor reconciles: collection counters change every cycle
+    # and must not make a correction saved from the page stale.
+    fingerprint = digest({"items": draft.get("items", []), "coverage_summary": (draft.get("coverage") or {}).get("public_summary", "")})
     pending = pending_edition_update(edition["edition_id"], db_path=db_path)
     if pending and pending.get("draft_fingerprint") == fingerprint:
         return pending
