@@ -1183,6 +1183,27 @@ def test_items_stay_with_a_published_edition_while_its_correction_is_reviewed(db
     assert release_bundles(db_path=db) == []
 
 
+def test_a_past_brief_is_rebuilt_when_its_item_stops_passing_verification(db):
+    from secopsai.research_editorial import _edition, refresh_stale_past_briefs, scheduled_brief
+
+    roster(db)
+    value, _ = event(db)
+    verify(value, db)
+    local_date = datetime.fromisoformat(value["first_observed_at"].replace("Z", "+00:00")).astimezone(ZoneInfo("Europe/Istanbul")).date()
+    edition = create_daily_brief(date=local_date.isoformat(), db_path=db)
+    assert len(edition["draft"]["items"]) == 1
+    # Reversed after its day ended: the draft still lists the item.
+    verify(value, db, decision="needs_review")
+    next_morning = datetime.combine(local_date + timedelta(days=1), datetime.min.time(), ZoneInfo("Europe/Istanbul")).replace(hour=9)
+    with pytest.raises(ValueError, match="source verification changed"):
+        approve_edition(edition["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked", "expected_fingerprint": edition["fingerprint"], "reviewed_draft": edition["draft"]["body_markdown"]}, actor="carol", db_path=db)
+    assert scheduled_brief(db_path=db, now=next_morning)["refreshed_past_briefs"] == [edition["edition_id"]]
+    rebuilt = _edition(edition["edition_id"], db_path=db)
+    assert rebuilt["draft"]["items"] == [] and rebuilt["state"] == "verifying"
+    approve_edition(rebuilt["edition_id"], {"checks": dict.fromkeys(BRIEF_CHECKS, "passed"), "rationale": "checked the rebuilt edition", "expected_fingerprint": rebuilt["fingerprint"], "reviewed_draft": rebuilt["draft"]["body_markdown"]}, actor="carol", db_path=db)
+    assert refresh_stale_past_briefs(db_path=db, now=next_morning) == [], "approved and current briefs are left alone"
+
+
 def test_item_verified_today_joins_todays_brief_once(db):
     from secopsai.research_primary_intel import source_url
 
