@@ -281,6 +281,7 @@ def fit_projection_budget(projection: dict, *, budget: int = PROJECTION_BUDGET_B
     """Bring the snapshot under Core's limit by dropping whole entries, least useful first.
 
     Today's draft goes last: it is the only copy a reviewer can approve from.
+    Yesterday's draft and a pending correction come just before it.
     Text is never cut, and what was dropped is counted on the desk.
     """
     editions = projection.get("editions") or []
@@ -296,8 +297,7 @@ def fit_projection_budget(projection: dict, *, budget: int = PROJECTION_BUDGET_B
         edition["draft_omitted"] = "Complete draft exceeds hosted transport budget; review it in the ledger"
 
     # The edition drawer edits and corrects from title, summary and body
-    # text only. Older drafts first lose the rest (coverage alone is ~33 KB),
-    # so a published brief can still be corrected from the dashboard.
+    # text only, so older drafts first lose their other fields.
     for edition in reversed(editions[1:]):
         if not over():
             break
@@ -305,11 +305,18 @@ def fit_projection_budget(projection: dict, *, budget: int = PROJECTION_BUDGET_B
         if isinstance(draft, dict) and set(draft) - set(EDITION_EDITOR_FIELDS):
             edition["draft"] = {key: draft[key] for key in EDITION_EDITOR_FIELDS if key in draft}
             trimmed["older_draft_details"] += 1
-    for edition in reversed(editions[1:]):
+
+    # Yesterday's brief, and a published brief whose correction is waiting
+    # for approval, can only be corrected or approved from their draft. They
+    # are kept until the desk and review lists are at their minimum.
+    def correctable(index: int, edition: dict) -> bool:
+        return index == 1 or (edition.get("state") == "verifying" and bool(edition.get("published_url")))
+
+    for index in range(len(editions) - 1, 0, -1):
         if not over():
             break
-        if "draft" in edition:
-            drop_draft(edition)
+        if "draft" in editions[index] and not correctable(index, editions[index]):
+            drop_draft(editions[index])
             trimmed["older_drafts"] += 1
     for edition in reversed(editions):
         if not over():
@@ -325,6 +332,12 @@ def fit_projection_budget(projection: dict, *, budget: int = PROJECTION_BUDGET_B
         else:
             reviews.pop()
             trimmed["source_reviews"] += 1
+    for index in range(len(editions) - 1, 0, -1):
+        if not over():
+            break
+        if "draft" in editions[index]:
+            drop_draft(editions[index])
+            trimmed["older_drafts"] += 1
     if over() and editions and "draft" in editions[0]:
         drop_draft(editions[0])
         trimmed["todays_draft"] += 1
