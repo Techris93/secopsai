@@ -158,6 +158,19 @@ def score(cluster: dict[str, Any]) -> int:
     return min(100, value)
 
 
+def serious(cluster: dict[str, Any]) -> bool:
+    """A primary-source advisory rated critical, or high with code execution.
+
+    Ranked whatever its score: an advisory published before its CVE, or one
+    only its registry covers, scores no news or exposure points. About 45 a
+    fortnight on GitHub; all high-rated advisories would be over 150.
+    """
+    if not cluster.get("primary_source"):
+        return False
+    cvss = cluster.get("reported_cvss") or {"critical": 9.0, "high": 7.0}.get(cluster.get("reported_severity") or "", 0)
+    return cvss >= 9 or (cvss >= 7 and bool(cluster.get("remote_code_execution")))
+
+
 def _score_reasons(cluster: dict[str, Any]) -> list[str]:
     reasons = []
     if cluster.get("reported_cvss"):
@@ -177,6 +190,8 @@ def _score_reasons(cluster: dict[str, Any]) -> list[str]:
     if cluster.get("deployment_exposure"):
         reasons.append("this deployment runs " + ", ".join(cluster["deployment_exposure"]))
     reasons.append(("primary source" if cluster.get("primary_source") else "aggregator only") + f", {len(cluster.get('sources') or [])} source(s)")
+    if serious(cluster) and score(cluster) < 45 and not cluster.get("kev"):
+        reasons.append("ranked as a serious advisory (critical, or high with code execution)")
     if cluster.get("linked"):
         reasons.append("related reports linked by " + "; ".join(sorted({link["linked_by"] for link in cluster["linked"]})))
     return reasons
@@ -408,9 +423,10 @@ def clusters(*, db_path=None, now: Optional[datetime] = None, window_days: int =
 def shortlist(*, db_path=None, now: Optional[datetime] = None, limit: int = 10, minimum_score: int = 45) -> list[dict[str, Any]]:
     checks = latest_claim_checks(db_path=db_path)
     # A KEV entry added in the window always ranks: the catalog states no
-    # score, so on its own it can never reach the bar.
+    # score, so on its own it can never reach the bar. So does a serious
+    # advisory that only its registry covers.
     items = [item for item in clusters(db_path=db_path, now=now)
-             if item["score"] >= minimum_score or item["kev"]][:max(1, min(limit, 50))]
+             if item["score"] >= minimum_score or item["kev"] or serious(item)][:max(1, min(limit, 50))]
     for item in items:
         item["claims"] = _report_level_cvss([checks[cve] for cve in item["cves"] if cve in checks])
     return items
