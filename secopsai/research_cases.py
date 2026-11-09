@@ -1049,6 +1049,39 @@ def update_subject_state(
     return get_case(row["case_id"], db_path=db_path)
 
 
+ORIGINAL_EVIDENCE_FIELDS = frozenset({"file_contents", "source_excerpts", "matched_strings", "trace_events", "experiment_output"})
+MAX_LIFTED_MATCHES = 50
+
+
+def matched_strings_from(metadata: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The quoted code or text inside static-analysis results, as ``matched_strings``.
+
+    Intake indicators carry the matched line (``snippet``) and artifact-fleet
+    findings carry ``matched_strings``; both sit one level down, where the
+    original-evidence checks do not look.
+    """
+    lifted: List[Dict[str, Any]] = []
+    for item in (metadata or {}).get("indicators") or []:
+        if isinstance(item, dict) and str(item.get("snippet") or "").strip():
+            span = item.get("source_range") or {}
+            lifted.append({"rule_id": str(item.get("rule_id") or ""), "file_path": str(item.get("path") or ""),
+                           "start_line": span.get("start_line"), "end_line": span.get("end_line"),
+                           "text": str(item["snippet"])[:1000]})
+    for finding in (metadata or {}).get("findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        for match in finding.get("matched_strings") or []:
+            value = match.get("text") if isinstance(match, dict) else match
+            if str(value or "").strip():
+                lifted.append({"rule_id": str(finding.get("rule_id") or ""), "file_path": str(finding.get("file_path") or ""),
+                               "text": str(value)[:1000]})
+    return lifted[:MAX_LIFTED_MATCHES]
+
+
+def has_original_evidence(item: Dict[str, Any]) -> bool:
+    return item.get("evidence_type") != "analyst_note" and bool(set(item.get("metadata") or {}) & ORIGINAL_EVIDENCE_FIELDS)
+
+
 def add_evidence(
     case_id: str,
     *,
@@ -1073,6 +1106,10 @@ def add_evidence(
         raise ValueError("sha256 must contain exactly 64 hexadecimal characters")
     now = soc_store.utc_now()
     metadata_payload = dict(metadata or {})
+    if evidence_type != "analyst_note" and "matched_strings" not in metadata_payload:
+        lifted = matched_strings_from(metadata_payload)
+        if lifted:
+            metadata_payload["matched_strings"] = lifted
     fingerprint_payload = {
         "case_id": case_id,
         "evidence_type": evidence_type,

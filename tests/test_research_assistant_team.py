@@ -406,3 +406,41 @@ def test_permanent_hosted_contract_rejection_is_not_retried(setup, monkeypatch):
     sync_hosted(client, db_path=db)
     assert len(calls) == 1
     assert team.get_team(current['team_id'], db_path=db)['status'] == 'failed'
+
+
+INDICATOR = {'rule_id': 'process-execution', 'path': 'package/index.js', 'source_range': {'start_line': 3, 'end_line': 3},
+             'snippet': 'require("child_process").exec(payload)', 'matched_operation': 'child_process.exec'}
+
+
+def test_static_analysis_lines_are_recorded_as_matched_strings(tmp_path):
+    db = str(tmp_path / 'lift.db')
+    case = create_case(title='Intake', summary='Intake', owner='operator.owner', db_path=db)
+    case = add_evidence(case['case_id'], evidence_type='static_analysis', title='Static intake analysis', sha256='b' * 64,
+                        provenance='SecOpsAI bounded archive inspection', metadata={'indicators': [INDICATOR, {'rule_id': 'no-text'}],
+                        'findings': [{'rule_id': 'yara', 'file_path': 'a.py', 'matched_strings': [{'pattern': '$a', 'text': 'eval(b64)'}]}]}, db_path=db)
+    assert case['evidence'][-1]['metadata']['matched_strings'] == [
+        {'rule_id': 'process-execution', 'file_path': 'package/index.js', 'start_line': 3, 'end_line': 3, 'text': 'require("child_process").exec(payload)'},
+        {'rule_id': 'yara', 'file_path': 'a.py', 'text': 'eval(b64)'}]
+    note = add_evidence(case['case_id'], evidence_type='analyst_note', title='Note', metadata={'indicators': [INDICATOR]}, db_path=db)
+    assert 'matched_strings' not in note['evidence'][-1]['metadata'], 'an analyst note is never original evidence'
+
+
+def test_autostart_quotes_matched_lines_recorded_before_they_were_lifted(tmp_path, monkeypatch):
+    monkeypatch.setenv('SECOPSAI_CORE_WORKER_ID', 'github-actions-research-worker')
+    monkeypatch.setenv('SECOPSAI_RESEARCH_ASSISTANT_AUTOSTART', '1')
+    for key in ('SECOPSAI_BRIDGE_MODEL', 'SECOPSAI_BRIDGE_FALLBACK_MODE', 'SECOPSAI_BRIDGE_FALLBACK_MODELS'):
+        monkeypatch.delenv(key, raising=False)
+    db = str(tmp_path / 'old.db')
+    register_person({'person_id': 'operator.owner', 'display_name': 'Synthetic Owner', 'roles': ['operator', 'researcher'], 'qualification': 'Synthetic test fixture'}, actor='operator.owner', db_path=db)
+    persist_model_routing(primary_model='opencodex/test-research', fallback_models=['opencodex/test-fallback'], fallback_mode='any_provider', db_path=db)
+    case = create_case(title='Intake', summary='Intake', owner='operator.owner', db_path=db)
+    case = add_evidence(case['case_id'], evidence_type='static_analysis', title='Static intake analysis', sha256='c' * 64,
+                        provenance='SecOpsAI bounded archive inspection', metadata={'indicators': [INDICATOR]}, db_path=db)
+    old = case['evidence'][-1]
+    with soc_store.connect(db) as conn:  # as stored before this change
+        conn.execute('UPDATE research_evidence SET metadata_json=? WHERE evidence_id=?', (json.dumps({'indicators': [INDICATOR]}), old['evidence_id']))
+    assert team.start_due_automatically(db_path=db, now=datetime(2026, 11, 10, 9, 0, tzinfo=timezone.utc))['started'] == 1
+    quoted = [item for item in get_case(case['case_id'], db_path=db)['evidence'] if item['evidence_id'] != old['evidence_id']]
+    assert len(quoted) == 1 and quoted[0]['metadata']['quoted_from_evidence_id'] == old['evidence_id']
+    assert quoted[0]['metadata']['matched_strings'][0]['text'] == INDICATOR['snippet']
+    assert quoted[0]['locator'] == f"evidence://{old['evidence_id']}/matched_strings"
