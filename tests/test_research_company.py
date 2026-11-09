@@ -429,20 +429,35 @@ def test_automated_brief_picks_up_late_roster_and_preserves_human_edits(db):
         event_id = conn.execute("SELECT event_id FROM research_intel_events WHERE snapshot_id=?", (acquired["snapshot_id"],)).fetchone()[0]
     verify(intel_event(event_id, db_path=db), db)
 
-    waiting = create_daily_brief(date=local_date, db_path=db)
-    assert waiting["updates_waiting_for_editor"] is True
-    assert waiting["draft"]["body_markdown"] == revised_text
-    assert len(waiting["draft"]["items"]) == 1
-    pending_update = hosted_projection(db_path=db)["editions"][0]["pending_update"]
-    reconciled_text = revised_text + "\n\n## Second patch\n\nSource: https://vendor.example/second\nA second synthetic patch is available."
-    reconciled = edit_edition(waiting["edition_id"], {
-        "body_markdown": reconciled_text,
-        "incorporate_update_fingerprint": pending_update["fingerprint"],
-    }, actor="alice", db_path=db)
-    assert len(reconciled["draft"]["items"]) == 2
-    assert "Human editorial note." in reconciled["draft"]["body_markdown"]
-    assert "https://vendor.example/second" in reconciled["draft"]["sources"]
+    added = create_daily_brief(date=local_date, db_path=db)
+    assert not added.get("updates_waiting_for_editor") and len(added["items_added"]) == 1
+    body = added["draft"]["body_markdown"]
+    assert body.startswith(revised_text.split("\n\n## Collection scope")[0]) and body.endswith("Human editorial note.")
+    assert body.index("## Second patch") < body.index("## Collection scope")
+    assert len(added["draft"]["items"]) == 2 and "https://vendor.example/second" in added["draft"]["sources"]
+    assert added["state"] == "verifying" and added["fingerprint"] != refreshed["fingerprint"], "the editor approves the new text"
     assert hosted_projection(db_path=db)["editions"][0].get("pending_update") is None
+    assert create_daily_brief(date=local_date, db_path=db)["draft"]["body_markdown"] == body
+
+
+def test_a_removed_item_in_an_edited_brief_stays_with_the_editor(db):
+    import secopsai.research_editorial as editorial
+
+    value, _ = event(db)
+    local_date = datetime.fromisoformat(value["first_observed_at"].replace("Z", "+00:00")).astimezone(ZoneInfo("Europe/Istanbul")).date().isoformat()
+    roster(db)
+    verify(value, db)
+    first = create_daily_brief(date=local_date, db_path=db)
+    edited = first["draft"]["body_markdown"] + "\n\nHuman editorial note."
+    edit_edition(first["edition_id"], {"body_markdown": edited}, actor="alice", db_path=db)
+    original = editorial._brief_selection
+    editorial._brief_selection = lambda items: []
+    try:
+        waiting = create_daily_brief(date=local_date, db_path=db)
+    finally:
+        editorial._brief_selection = original
+    assert waiting["updates_waiting_for_editor"] is True and waiting["draft"]["body_markdown"] == edited
+    assert hosted_projection(db_path=db)["editions"][0]["pending_update"]
 
 
 def test_published_brief_late_source_requires_a_reviewed_correction(db, tmp_path):

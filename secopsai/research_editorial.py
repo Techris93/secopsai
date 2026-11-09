@@ -106,6 +106,80 @@ def _record_edition_update(edition: dict, draft: dict, *, db_path=None) -> dict:
     return update
 
 
+def _item_lines(item: dict, *, ranked, version_checks: dict, db_path=None) -> list[str]:
+    from secopsai import advisory_check, research_desk
+
+    payload = intel_event(item["event_id"], db_path=db_path)["payload"]
+    lines = ["", f"## {item['title']}", "", f"Source-reported by [{item['source']}]({_reader_url(item['url'], item.get('cves') or [])}).",
+             *([item["summary"]] if item["summary"] else []),
+             f"Defensive action: {item['defensive_action']}", f"Limitations: {item['limitations']}",
+             _dates_line(item, payload)]
+    if item.get("verification") == "automated":
+        lines.append("Identifiers and scores checked automatically against cve.org and NVD." if item.get("cves")
+                     else "Checked automatically: primary source with a stated fix; no CVE to check.")
+    lines.extend(research_desk.research_note(item["event_id"], ranked=ranked, db_path=db_path, cves=item.get("cves")))
+    lines.extend(advisory_check.brief_line(item["url"], checks=version_checks))
+    return lines
+
+
+NO_ITEMS_TEXT = "No new items passed technical verification for this edition. Collection gaps and unresolved leads remain visible to the editor."
+SCOPE_HEADING = "\n\n## Collection scope\n\n"
+
+
+def _add_new_items(edition: dict, draft: dict, item_lines: dict, *, db_path=None) -> dict | None:
+    """Add newly verified items to a draft an editor has already changed.
+
+    Only additions are automatic: the editor's text stays as written and each
+    new item goes in as the scheduler renders it, before the collection scope.
+    A removed or changed item would rewrite the editor's text, so it stays with
+    the editor. The edition still needs the editor's approval to publish.
+    """
+    previous = edition["draft"]
+    old_ids = [item["event_id"] for item in previous.get("items", [])]
+    new_ids = [item["event_id"] for item in draft.get("items", [])]
+    old_items = {item["event_id"]: item for item in previous.get("items", [])}
+    if any(event_id not in new_ids for event_id in old_ids):
+        return None
+    if any(item != old_items[item["event_id"]] for item in draft["items"] if item["event_id"] in old_items):
+        return None
+    added = [item for item in draft["items"] if item["event_id"] not in old_items]
+    body = previous["body_markdown"]
+    if not added or body.count(SCOPE_HEADING) != 1:
+        return None
+    if any(item["url"] in body for item in added):
+        return None
+    head, tail = body.split(SCOPE_HEADING)
+    if not old_ids:
+        head = head.replace("\n\n" + NO_ITEMS_TEXT, "")
+    section = "\n\n".join(_blocks([line for event_id in new_ids if event_id not in old_items for line in item_lines[event_id]]))
+    old_scope = (previous.get("coverage") or {}).get("public_summary", "")
+    new_scope = (draft.get("coverage") or {}).get("public_summary", "")
+    if old_scope and tail.startswith(old_scope):
+        tail = new_scope + tail[len(old_scope):]
+    items = [*previous.get("items", []), *added]
+    updated = {**previous, "body_markdown": head.rstrip() + "\n\n" + section.strip() + SCOPE_HEADING + tail,
+               "items": items, "sources": list(dict.fromkeys(item["url"] for item in items)),
+               "references": list(dict.fromkeys([*previous.get("references", []), *draft["references"]])),
+               "severity": _brief_severity(items), "coverage": draft.get("coverage")}
+    if previous.get("summary") == _brief_summary(previous.get("items", [])):
+        updated["summary"] = _brief_summary(items)
+    if not _items_current({"draft": updated}, db_path):
+        return None
+    pending = pending_edition_update(edition["edition_id"], db_path=db_path)
+    with transaction(db_path) as conn:
+        append("edition_revision", {"edition_id": edition["edition_id"], "before": previous, "after": updated,
+               "incorporated_update_fingerprint": (pending or {}).get("draft_fingerprint", ""),
+               "added_event_ids": [item["event_id"] for item in added]},
+               actor="editorial-scheduler", connection=conn)
+        if pending:  # the items it held are in the draft now
+            append("edition_update_reconciled", {"edition_id": edition["edition_id"],
+                   "update_fingerprint": pending["draft_fingerprint"], "after_fingerprint": digest(updated)},
+                   actor="editorial-scheduler", connection=conn)
+        conn.execute("UPDATE research_editorial_editions SET draft_json=?,fingerprint=?,state='verifying',updated_at=? WHERE edition_id=?",
+                     (canonical(updated), digest(updated), soc_store.utc_now(), edition["edition_id"]))
+    return {**_edition(edition["edition_id"], db_path=db_path), "items_added": [item["event_id"] for item in added]}
+
+
 def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
     date = date or datetime.now(TIMEZONE).date().isoformat()
     day = datetime.fromisoformat(date).date()
@@ -215,18 +289,11 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
     if any(item["attribution"] != "source_reported" for item in items):
         lines.extend(["", "This brief distinguishes source reporting from SecOpsAI's original observations."])
     if not items:
-        lines.extend(["", "No new items passed technical verification for this edition. Collection gaps and unresolved leads remain visible to the editor."])
+        lines.extend(["", NO_ITEMS_TEXT])
+    item_lines = {}
     for item in items:
-        payload = intel_event(item["event_id"], db_path=db_path)["payload"]
-        lines.extend(["", f"## {item['title']}", "", f"Source-reported by [{item['source']}]({_reader_url(item['url'], item.get('cves') or [])}).",
-                      *([item["summary"]] if item["summary"] else []),
-                      f"Defensive action: {item['defensive_action']}", f"Limitations: {item['limitations']}",
-                      _dates_line(item, payload)])
-        if item.get("verification") == "automated":
-            lines.append("Identifiers and scores checked automatically against cve.org and NVD." if item.get("cves")
-                         else "Checked automatically: primary source with a stated fix; no CVE to check.")
-        lines.extend(research_desk.research_note(item["event_id"], ranked=ranked, db_path=db_path, cves=item.get("cves")))
-        lines.extend(advisory_check.brief_line(item["url"], checks=version_checks))
+        item_lines[item["event_id"]] = _item_lines(item, ranked=ranked, version_checks=version_checks, db_path=db_path)
+        lines.extend(item_lines[item["event_id"]])
     lines.extend(["", "## Collection scope", "", coverage["public_summary"], "", "## Credits and corrections", "", f"Prepared by {author['display_name']}. The editor approves each edition before it is published. Corrections keep the previous edition and explain material changes."])
     draft = {"title": f"SecOpsAI Daily Intelligence Brief — {date}", "slug": f"daily-intelligence-{date}", "summary": _brief_summary(items),
              "body_markdown": "\n\n".join(_blocks(lines)), "author": author["display_name"], "author_id": author["person_id"], "items": items,
@@ -254,6 +321,9 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
         if same_content and (revisions or existing_edition["draft"].get("body_markdown") == draft.get("body_markdown")):
             return {**existing_edition, "reused": True}
         if revisions:
+            added = _add_new_items(existing_edition, draft, item_lines, db_path=db_path)
+            if added:
+                return {**added, "reused": True}
             update = _record_edition_update(existing_edition, draft, db_path=db_path)
             return {**existing_edition, "reused": True, "updates_waiting_for_editor": True,
                     "pending_update_fingerprint": update["draft_fingerprint"]}
