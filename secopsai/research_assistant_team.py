@@ -1,6 +1,7 @@
 """Six bounded model roles; durable proposals, never factual or human approvals."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import datetime, timezone, timedelta
@@ -96,7 +97,8 @@ def start_team(case_id: str, payload: dict, *, actor: str, db_path=None, _automa
         active = [e for e in case["evidence"] if e.get("status", "active") == "active"]
         if not active or len(active) > 25:
             raise ValueError("assistant team requires 1–25 active evidence records; narrow the case instead of silently omitting evidence")
-        if not any(e.get("evidence_type") != "analyst_note" and set(e.get("metadata") or {}) & {"file_contents", "source_excerpts", "matched_strings", "trace_events", "experiment_output"} for e in active):
+        from secopsai.research_cases import has_original_evidence
+        if not any(has_original_evidence(e) for e in active):
             raise ValueError("assistant team requires original evidence payloads, not analyst conclusions alone")
         validation = validate_catalog()
         if not validation["ok"]:
@@ -166,8 +168,11 @@ def start_due_automatically(*, db_path=None, now=None, limit: int = 1) -> dict:
                      updated_at DESC, created_at DESC
             LIMIT 200""").fetchall()
 
+    from secopsai.research_cases import has_original_evidence
+
     eligible = []
     skipped = {}
+    quoted = 0
     for row in rows:
         try:
             case = get_case(row["case_id"], include_reliability=False, db_path=db_path)
@@ -178,11 +183,15 @@ def start_due_automatically(*, db_path=None, now=None, limit: int = 1) -> dict:
         if not 1 <= len(active) <= 25:
             skipped["evidence_count_out_of_bounds"] = skipped.get("evidence_count_out_of_bounds", 0) + 1
             continue
-        if not any(item.get("evidence_type") != "analyst_note"
-                   and set(item.get("metadata") or {}) & {"file_contents", "source_excerpts", "matched_strings", "trace_events", "experiment_output"}
-                   for item in active):
-            skipped["original_evidence_not_ready"] = skipped.get("original_evidence_not_ready", 0) + 1
-            continue
+        if not any(has_original_evidence(item) for item in active):
+            # Evidence recorded before matched lines were lifted keeps them one
+            # level down; quote them as their own evidence, citing the source.
+            case = _quote_matched_lines(case, active, db_path=db_path) if quoted < MAX_QUOTED_PER_CYCLE else case
+            active = [item for item in case.get("evidence", []) if item.get("status", "active") == "active"]
+            if not any(has_original_evidence(item) for item in active) or len(active) > 25:
+                skipped["original_evidence_not_ready"] = skipped.get("original_evidence_not_ready", 0) + 1
+                continue
+            quoted += 1
         fingerprint = case_fingerprint(case)
         if any(plan.get("case_fingerprint") == fingerprint for plan in _plans(case["case_id"], db_path=db_path, limit=200)):
             skipped["team_already_exists_for_current_evidence"] = skipped.get("team_already_exists_for_current_evidence", 0) + 1
@@ -218,6 +227,34 @@ def start_due_automatically(*, db_path=None, now=None, limit: int = 1) -> dict:
            actor=AUTOMATION_ACTOR, db_path=db_path)
     return {"status": "started", "started": 1, "case_id": case["case_id"], "team_id": current["team_id"],
             "examined": len(rows), "skipped": skipped}
+
+
+MAX_QUOTED_PER_CYCLE = 5
+
+
+def _quote_matched_lines(case: dict, active: list[dict], *, db_path=None) -> dict:
+    """Attach the matched lines inside a case's static analysis as their own evidence."""
+    from secopsai.research_cases import add_evidence, matched_strings_from
+
+    if len(active) >= 25:
+        return case
+    for item in active:
+        if item.get("evidence_type") == "analyst_note":
+            continue
+        lines = matched_strings_from(item.get("metadata"))
+        if not lines:
+            continue
+        body = json.dumps(lines, sort_keys=True, separators=(",", ":")).encode()
+        return add_evidence(case["case_id"], evidence_type=item["evidence_type"],
+                            title=f"Matched lines quoted from {item.get('title') or item['evidence_id']}"[:500],
+                            locator=f"evidence://{item['evidence_id']}/matched_strings",
+                            sha256=hashlib.sha256(body).hexdigest(),
+                            provenance=f"Quoted from evidence {item['evidence_id']} ({item.get('provenance') or 'static analysis'})"[:4000],
+                            notes="The lines the static analysis matched, quoted unchanged; no package code was executed.",
+                            metadata={"matched_strings": lines, "quoted_from_evidence_id": item["evidence_id"],
+                                      "quoted_from_sha256": item.get("sha256") or ""},
+                            actor=AUTOMATION_ACTOR, db_path=db_path)
+    return case
 
 
 def _save(team: dict, state: dict, *, db_path=None) -> dict:
