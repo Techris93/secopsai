@@ -133,7 +133,8 @@ FIXED_BEFORE_RE = re.compile(r"\bbefore (?:versions? )?(\d[\w.-]*[\w-](?:(?:,\s*
 AFFECTED_RANGE_RE = re.compile(r"\bversions?\s+(\d(?:[\w.-]*[\w-])?)\s+(?:through|to)\s+(\d(?:[\w.-]*[\w-])?)", re.IGNORECASE)
 
 
-def _defensive_action(title: str, excerpt: str, payload: dict, rules: list[dict], context: str = "") -> str:
+def _defensive_action(title: str, excerpt: str, payload: dict, rules: list[dict], context: str = "", record: Optional[dict] = None) -> str:
+    record = record or {}
     parts = []
     versions = fixed_versions(title, excerpt, payload)
     if versions:
@@ -146,9 +147,13 @@ def _defensive_action(title: str, excerpt: str, payload: dict, rules: list[dict]
         if CISA_DIRECTIVE_RE.search(required):
             affected = AFFECTED_RANGE_RE.search(f"{excerpt} {context}")
             fixed = FIXED_BEFORE_RE.search(f"{excerpt} {context}")
-            required = ("Apply the vendor's security update" + (f"; versions {affected.group(1)} through {affected.group(2)} are affected" if affected else "")
-                        + (f"; the CVE record lists the fix in {fixed.group(1)}" if fixed and not affected else "")
-                        + ". If no update or mitigation is available, take the product out of service.")
+            advisory = record.get("vendor_advisory") or ""
+            listed = record.get("affected") or ""
+            required = (("Apply the fix in the vendor's advisory (" + advisory + ")") if advisory else "Apply the vendor's security update")
+            required += (f"; versions {affected.group(1)} through {affected.group(2)} are affected" if affected else "")
+            required += (f"; the CVE record lists the fix in {fixed.group(1)}" if fixed and not affected else "")
+            required += (f"; the CVE record lists as affected: {listed}" if listed and not affected and not fixed else "")
+            required += ". If no update or mitigation is available, take the product out of service."
         if not versions or not CISA_DIRECTIVE_RE.search(_text(payload["required_action"])):
             parts.append(required)
     if parts and rules:
@@ -281,7 +286,9 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: 
         return {"decision": "rejected", "reason": "release announcement for a fix already covered by this source's advisory"}
     rules = detections_for({"cves": cves, "names": found["names"]})
     descriptions = " ".join(checks[cve].get("official_description") or "" for cve in cves)
-    action = _defensive_action(title, excerpt, payload, rules, context=descriptions)
+    record = {"affected": "; ".join(checks[cve].get("affected") or "" for cve in cves if checks[cve].get("affected")),
+              "vendor_advisory": next((checks[cve]["vendor_advisory"] for cve in cves if checks[cve].get("vendor_advisory")), "")}
+    action = _defensive_action(title, excerpt, payload, rules, context=descriptions, record=record)
     if not action and not cves:
         return {"decision": "rejected", "reason": "names no CVE and states no fix or mitigation, so it is not an advisory"}
     if not action:
@@ -292,8 +299,19 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: 
     for check in official:
         description = _flaw_sentences(check.get("official_description") or "")
         score = check.get("official_cvss") or []
-        line = check["cve"] + (f" (official CVSS {' and '.join(f'{value:g}' for value in score)})" if score else "")
-        summary_parts.append(line + (": " + description[0] if description else "."))
+        if score:
+            line = check["cve"] + f" (official CVSS {' and '.join(f'{value:g}' for value in score)})"
+        elif check.get("cisa_cvss"):
+            line = check["cve"] + (f" (CVSS {' and '.join(f'{value:g}' for value in check['cisa_cvss'])}, scored by CISA;"
+                                   " the vendor and NVD have not published a score)")
+        else:
+            line = check["cve"]
+        # The record's second sentence often carries the impact (an MFA bypass,
+        # code execution), so it is kept when the two stay short.
+        kept = description[:1]
+        if len(description) > 1 and len(description[0]) + len(description[1]) <= 600:
+            kept = description[:2]
+        summary_parts.append(line + (": " + " ".join(kept) if kept else "."))
     # Related CVEs (prior art, chained flaws) are not explained by the source
     # line alone, so listing them bare only raised questions; they stay in the record.
     kev = source.get("source_class") == "government" and "known exploited" in source.get("name", "").casefold()
