@@ -331,6 +331,22 @@ def test_a_registry_rating_ranks_an_advisory_whose_text_states_none(db):
     assert [item["label"] for item in desk.shortlist(db_path=db, now=NOW)] == ["GHSA-47w9-6r3f-938g"]
 
 
+def test_a_serious_advisory_ranks_without_a_cve_or_news(db):
+    add(db, "ghsa-write", "ghsa", "isomorphic-git: Arbitrary file write outside of working tree via directory symlink during checkout (potential RCE)",
+        "A malicious repository can write outside the working directory.", external_id="GHSA-9qw7-j9xw-fv9c", severity="high", cvss_score=8.8)
+    add(db, "ghsa-crit", "ghsa", "pkg: authorization bypass", "Any user can read every tenant's data.",
+        external_id="GHSA-2c2c-2c2c-2c2c", severity="critical", cvss_score=9.3)
+    add(db, "ghsa-high", "ghsa", "pkg: path traversal in unpack", "Entries are written outside the destination.",
+        external_id="GHSA-3f3f-3f3f-3f3f", severity="high", cvss_score=8.2)
+    add(db, "ghsa-medium", "ghsa", "pkg: circular symbolic references (RCE claimed)", "Remote code execution is claimed.",
+        external_id="GHSA-4g4g-4g4g-4g4g", severity="medium", cvss_score=5.3)
+    labels = by_label(desk.clusters(db_path=db, now=NOW))
+    assert all(labels[key]["score"] < 45 for key in labels), "none reaches the score bar on its own"
+    ranked = {item["label"]: item for item in desk.shortlist(db_path=db, now=NOW)}
+    assert set(ranked) == {"GHSA-9qw7-j9xw-fv9c", "GHSA-2c2c-2c2c-2c2c"}
+    assert "ranked as a serious advisory (critical, or high with code execution)" in ranked["GHSA-9qw7-j9xw-fv9c"]["score_reasons"]
+
+
 def test_text_cvss_wins_over_the_registry_rating(db):
     add(db, "ghsa-text", "ghsa", "Example: header injection (CVSS 7.5)", external_id="GHSA-w889-685w-c8fh", cvss_score=9.8)
     assert by_label(desk.clusters(db_path=db, now=NOW))["GHSA-w889-685w-c8fh"]["reported_cvss"] == 7.5
