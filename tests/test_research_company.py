@@ -520,11 +520,15 @@ def test_unreviewed_research_cannot_publish_via_generic_blog_boundary(db, tmp_pa
         blog.publish(draft["draft_path"], confirm=True, db_path=db, paths=blog.BlogPaths(root=tmp_path / "blog"))
 
 
-def test_unknown_coverage_denominators_remain_unknown_and_private_notes_are_not_projected(db):
-    event(db)
+def test_unknown_coverage_denominators_remain_unknown_and_private_notes_are_not_projected(db, monkeypatch):
+    from secopsai import research_auto_verify
+
+    value, _ = event(db)
     coverage = coverage_report(db_path=db)
     assert coverage["sources"][0]["eligible_events"] is None
     assert coverage["sources"][0]["fresh"] is True
+    assert hosted_projection(db_path=db)["pending_source_reviews"] == [], "routine collection is not listed for review"
+    monkeypatch.setattr(research_auto_verify, "ranked_event_ids", lambda **kw: {value["event_id"]: None})
     projection = hosted_projection(db_path=db)
     assert "claim_assessment" not in projection and "content" not in projection
     assert projection["pending_source_reviews"][0]["title"] == "Patch available"
@@ -1312,3 +1316,19 @@ def test_item_verified_yesterday_reaches_the_next_brief_if_never_released(db):
         conn.execute("UPDATE research_operation_records SET created_at=? WHERE kind='intel_verification'", (yesterday,))
     today = datetime.now(ZoneInfo("Europe/Istanbul")).date().isoformat()
     assert [item["event_id"] for item in create_daily_brief(date=today, db_path=db)["draft"]["items"]] == [value["event_id"]]
+
+
+def test_the_review_list_holds_only_what_someone_must_decide(db, monkeypatch):
+    from secopsai import research_auto_verify
+
+    value, _ = event(db)
+    with soc_store.connect(db) as conn:
+        conn.execute("INSERT OR REPLACE INTO research_operation_queue (job_id,kind,event_id,payload_json,state,retry_at,created_at,updated_at) VALUES ('JOB-1','verify_intel',?,'{}','awaiting_review','2026-11-09T00:00:00Z','2026-11-09T00:00:00Z','2026-11-09T00:00:00Z')",
+                     (value["event_id"],))
+    projection = hosted_projection(db_path=db)
+    assert projection["pending_source_reviews"] == []
+    assert projection["routine_source_reviews"] == {"pending": 1, "archived_after_days": 14}
+    monkeypatch.setattr(research_auto_verify, "ranked_event_ids", lambda **kw: {value["event_id"]: None})
+    projection = hosted_projection(db_path=db)
+    assert [item["event_id"] for item in projection["pending_source_reviews"]] == [value["event_id"]]
+    assert projection["routine_source_reviews"]["pending"] == 0

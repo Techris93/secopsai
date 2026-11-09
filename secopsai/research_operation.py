@@ -215,7 +215,24 @@ def hosted_projection(*, db_path=None) -> dict:
                                                     for r in automated[:20]]}
     desk["recent_actions"] = recent_actions(db_path=db_path)
     desk_event_ids = [event_id for item in desk["items"] for event_id in (item.get("primary_event_ids") or item.get("event_ids") or [])[:2]]
-    pending_reviews = pending_public_reviews(db_path=db_path, limit=10, event_ids=desk_event_ids)
+    # Only what someone needs to decide: the desk's ranked items and items a
+    # person marked. Routine collection is counted and ages out on its own.
+    from secopsai.research_auto_verify import ranked_event_ids as _ranked
+    from secopsai.research_primary_intel import AGE_OUT_DAYS, _held_event_ids, routine_review_count
+    try:
+        ranked_ids = set(_ranked(db_path=db_path))
+    except Exception:
+        ranked_ids = None
+    try:
+        needs_you = (ranked_ids or set()) | set(desk_event_ids)
+        if ranked_ids is None:
+            raise ValueError("desk ranking unavailable")
+        pending_reviews = pending_public_reviews(db_path=db_path, limit=10, event_ids=desk_event_ids,
+                                                 only=needs_you | _held_event_ids(db_path))
+        routine_reviews = {"pending": routine_review_count(needs_you, db_path=db_path), "archived_after_days": AGE_OUT_DAYS}
+    except Exception:  # never block the operation snapshot
+        pending_reviews = pending_public_reviews(db_path=db_path, limit=10, event_ids=desk_event_ids)
+        routine_reviews = None
     dispatches = records("assistant_team_automation_dispatch", db_path=db_path, limit=1)
     auto_cycles = records("assistant_team_automation_cycle", db_path=db_path, limit=1)
     editions = []
@@ -249,10 +266,11 @@ def hosted_projection(*, db_path=None) -> dict:
     # read surface. Pending review contains only capped excerpts from sources
     # explicitly configured for public sharing, with archive hashes attached.
     try:
-        from secopsai.research_auto_verify import ranked_event_ids
         from secopsai.research_primary_intel import reviews_needing_decision
 
-        status["coverage"]["health"]["primary_intel_needs_decision"] = reviews_needing_decision(set(ranked_event_ids(db_path=db_path)), db_path=db_path)
+        if ranked_ids is None:
+            raise ValueError("desk ranking unavailable")
+        status["coverage"]["health"]["primary_intel_needs_decision"] = reviews_needing_decision(ranked_ids, db_path=db_path)
     except Exception:  # like the desk, this must never block the operation snapshot
         status["coverage"]["health"]["primary_intel_needs_decision"] = None
     raw_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
@@ -262,6 +280,7 @@ def hosted_projection(*, db_path=None) -> dict:
     projection = minimize({"schema_version": "secopsai.research.operation.v1", "coverage": status["coverage"], "editions": editions, "assistant_teams": teams,
                      "runtime": runtime,
                      "pending_source_reviews": pending_reviews,
+                     "routine_source_reviews": routine_reviews,
                      "research_desk": desk,
                      "automation": {"assistant_team_autostart_enabled": os.environ.get("SECOPSAI_RESEARCH_ASSISTANT_AUTOSTART") == "1",
                                     "daily_brief_assembly_enabled": os.environ.get("SECOPSAI_PRIMARY_INTEL") == "1",
