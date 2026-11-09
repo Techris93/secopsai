@@ -479,30 +479,43 @@ def check_claims(cluster: dict[str, Any], fetch: Callable[[str], Any], cve: Opti
     else:
         claims.append({"claim": f"{cve} exists", "status": "not_found",
                        "detail": "no CVE record; the identifier may be wrong", "source": f"https://www.cve.org/CVERecord?id={cve}"})
-    official_scores = []
+    # Official means the vendor's own score (the CNA) or NVD's primary one.
+    # CISA's enrichment (an ADP container, a "Secondary" row on NVD) is real but
+    # is CISA's judgement, so it is reported as CISA's, never as official.
+    official_scores, cisa_scores = [], []
     for vulnerability in (nvd or {}).get("vulnerabilities") or []:
         metrics = (vulnerability.get("cve") or {}).get("metrics") or {}
         for key in ("cvssMetricV40", "cvssMetricV31", "cvssMetricV30"):
             for metric in metrics.get(key) or []:
                 base = (metric.get("cvssData") or {}).get("baseScore")
-                if isinstance(base, (int, float)):
+                if isinstance(base, (int, float)) and metric.get("type") == "Primary":
                     official_scores.append(float(base))
-    for container in (((record or {}).get("containers") or {}).get("cna") or {}).get("metrics") or []:
+    containers = (record or {}).get("containers") or {}
+    for container in (containers.get("cna") or {}).get("metrics") or []:
         for key in ("cvssV4_0", "cvssV3_1", "cvssV3_0"):
             base = (container.get(key) or {}).get("baseScore")
             if isinstance(base, (int, float)):
                 official_scores.append(float(base))
+    for adp in containers.get("adp") or []:
+        if "cisa" not in str(adp.get("title") or (adp.get("providerMetadata") or {}).get("shortName") or "").casefold():
+            continue
+        for container in adp.get("metrics") or []:
+            for key in ("cvssV4_0", "cvssV3_1", "cvssV3_0"):
+                base = (container.get(key) or {}).get("baseScore")
+                if isinstance(base, (int, float)):
+                    cisa_scores.append(float(base))
+    known_scores = official_scores + cisa_scores
     reported = cluster.get("reported_cvss")
     if reported is not None:
-        if not official_scores:
+        if not known_scores:
             claims.append({"claim": f"CVSS {reported}", "status": "unverified", "detail": "no CVSS score in the CVE record or NVD yet",
                            "source": NVD_URL.format(cve=cve)})
-        elif any(abs(official - reported) < 0.05 for official in official_scores):
+        elif any(abs(official - reported) < 0.05 for official in known_scores):
             claims.append({"claim": f"CVSS {reported}", "status": "confirmed", "detail": "matches the CVE record or NVD",
                            "source": NVD_URL.format(cve=cve)})
         else:
             claims.append({"claim": f"CVSS {reported}", "status": "mismatch",
-                           "detail": "official score(s): " + ", ".join(f"{s:g}" for s in sorted(set(official_scores))),
+                           "detail": "official score(s): " + ", ".join(f"{s:g}" for s in sorted(set(known_scores))),
                            "source": NVD_URL.format(cve=cve)})
     if cluster.get("kev"):
         claims.append({"claim": "exploited in the wild", "status": "confirmed", "detail": "listed in CISA Known Exploited Vulnerabilities",
@@ -515,8 +528,50 @@ def check_claims(cluster: dict[str, Any], fetch: Callable[[str], Any], cve: Opti
         if item.get("lang", "").startswith("en"):
             description = str(item.get("value") or "")[:1500]
             break
+    cna = containers.get("cna") or {}
     return {"cve": cve, "claims": claims, "official_description": description,
-            "official_cvss": sorted(set(official_scores)), "needs_attention": [c for c in claims if c["status"] in {"not_found", "not_published", "mismatch"}]}
+            "official_cvss": sorted(set(official_scores)), "cisa_cvss": sorted(set(cisa_scores)) if not official_scores else [],
+            "affected": _affected_versions(cna), "vendor_advisory": _vendor_advisory(cna),
+            "needs_attention": [c for c in claims if c["status"] in {"not_found", "not_published", "mismatch"}]}
+
+
+_AGGREGATOR_HOSTS = ("cve.org", "nvd.nist.gov", "cisa.gov", "mitre.org", "first.org")
+
+
+def _affected_versions(cna: dict) -> str:
+    """The CVE record's affected versions as one short phrase, or ""."""
+    parts = []
+    for entry in cna.get("affected") or []:
+        versions = []
+        for version in entry.get("versions") or []:
+            if version.get("status") != "affected":
+                continue
+            value = str(version.get("version") or "").strip()
+            if version.get("lessThan"):
+                value = (f"{value} before {version['lessThan']}" if value not in {"", "0", "*"} else f"before {version['lessThan']}")
+            elif version.get("lessThanOrEqual"):
+                value = (f"{value} through {version['lessThanOrEqual']}" if value not in {"", "0", "*"} else f"{version['lessThanOrEqual']} and older")
+            if value and value not in {"0", "*", "n/a"}:
+                versions.append(value)
+        if not versions:
+            continue
+        product = str(entry.get("product") or "").strip()
+        platforms = [str(p) for p in entry.get("platforms") or []][:4]
+        label = product + (f" ({', '.join(platforms)})" if platforms else "")
+        parts.append(f"{label} {'; '.join(versions[:4])}".strip())
+    text = "; ".join(parts[:3])
+    return text if len(text) <= 300 else ""
+
+
+def _vendor_advisory(cna: dict) -> str:
+    """The vendor's own advisory from the CVE record's references, or ""."""
+    references = [ref for ref in cna.get("references") or [] if str(ref.get("url") or "").startswith("https://")]
+    tagged = [ref for ref in references if "vendor-advisory" in (ref.get("tags") or [])]
+    for ref in tagged or references:
+        host = urllib.parse.urlsplit(ref["url"]).hostname or ""
+        if not any(host == agg or host.endswith("." + agg) for agg in _AGGREGATOR_HOSTS) and "github.com/advisories" not in ref["url"]:
+            return ref["url"]
+    return ""
 
 
 def latest_claim_checks(*, db_path=None) -> dict[str, dict[str, Any]]:
@@ -621,17 +676,21 @@ def research_note(event_id: str, *, db_path=None, now: Optional[datetime] = None
                   and not (claim["status"] == "mismatch" and claim["claim"].startswith("CVSS "))]
         # The item's text states the official score, so the table shows where it comes from.
         for cve in cves:
-            scores = (latest.get(cve) or {}).get("official_cvss") or []
+            check = latest.get(cve) or {}
+            scores, status = check.get("official_cvss") or [], "official"
+            if not scores and check.get("cisa_cvss"):
+                scores, status = check["cisa_cvss"], "scored by CISA; not yet by the vendor or NVD"
             if scores and not any(owner == cve and claim["claim"].startswith("CVSS ") for owner, claim in claims):
                 claims.append((cve, {"claim": "CVSS " + " and ".join(f"{score:g}" for score in scores),
-                                     "status": "official", "source": NVD_URL.format(cve=cve)}))
+                                     "status": status, "source": NVD_URL.format(cve=cve)}))
     if claims:
         lines += ["", "| Claim | Check | Source |", "| --- | --- | --- |"]
         lines += [f"| {claim['claim']} | {claim['status'].replace('_', ' ')} | {_claim_link(claim.get('source') or '', cve) or claim.get('detail') or ''} |"
                   for cve, claim in claims]
     rules = detections_for(item if cves is None else {"cves": cves})
-    lines.append("SecOpsAI detection: " + ("; ".join(f"{rule['rule_id']} ({rule['title']})" for rule in rules)
-                                           if rules else "no SecOpsAI rule covers this yet."))
+    # Only a real rule is worth a line; "none yet" on every item told readers nothing.
+    if rules:
+        lines.append("SecOpsAI detection: " + "; ".join(f"{rule['rule_id']} ({rule['title']})" for rule in rules))
     # deployment_exposure (what SecOpsAI's own servers run) ranks the desk; it is
     # not something a reader of the brief can act on, so it stays internal.
     return lines

@@ -102,7 +102,7 @@ def test_routine_items_are_decided_and_disputes_stay_with_the_human(db):
     assert got["php-adv"]["decision"] == "verified"
     assert "8.5.12, 8.4.27, 8.3.36, 8.2.35" in got["php-adv"]["defensive_action"]
     assert "RULE-311" in got["php-adv"]["defensive_action"], "the matching detection is named"
-    assert "Official description of CVE-2026-109618" in got["php-adv"]["summary"]
+    assert "Official description of CVE-2026-109618. More detail." in got["php-adv"]["summary"], "the record's second sentence is kept"
     assert got["php-adv"]["automation"]["checks"]["CVE-2026-109618"][0] == "confirmed"
     assert got["php-info"]["decision"] == "verified" and "session.upload_progress.enabled=0" in got["php-info"]["defensive_action"]
     assert got["php-rel"]["decision"] == "rejected", "release note for an already verified advisory"
@@ -469,6 +469,16 @@ def test_cisa_action_names_the_fixed_releases_from_the_cve_record():
     action = auto._defensive_action("t", "", {"required_action": directive}, [],
                                     context="Use of predictable filenames in Ivanti Connect Secure before versions 25.1.1.3 and 22.8R2.6 allows a remote authenticated attacker to upload files.")
     assert action == ("Apply the vendor's security update; the CVE record lists the fix in 25.1.1.3 and 22.8R2.6. "
+                      "If no update or mitigation is available, take the product out of service.")
+
+
+def test_cisa_action_points_to_the_vendor_advisory_and_affected_versions():
+    directive = "Apply mitigations in accordance with vendor instructions, ensuring compliance with CISA's BOD 26-04 guidance."
+    action = auto._defensive_action("t", "", {"required_action": directive}, [], context="An authentication flaw may bypass SAML.",
+                                    record={"affected": "SonicOS (Gen7) 7.3.3-7015 and older versions",
+                                            "vendor_advisory": "https://psirt.global.sonicwall.com/vuln-detail/SNWLID-2026-0014"})
+    assert action == ("Apply the fix in the vendor's advisory (https://psirt.global.sonicwall.com/vuln-detail/SNWLID-2026-0014); "
+                      "the CVE record lists as affected: SonicOS (Gen7) 7.3.3-7015 and older versions. "
                       "If no update or mitigation is available, take the product out of service.")
 
 

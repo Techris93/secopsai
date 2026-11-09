@@ -627,7 +627,7 @@ def _dates_line(item: dict, payload: dict) -> str:
 
 
 def _item_severity(item: dict) -> int:
-    scores = [float(value) for match in re.finditer(r"official CVSS ([\d. and]+)\)", item["summary"])
+    scores = [float(value) for match in re.finditer(r"\((?:official )?CVSS ([\d. and]+?)(?:\)|, scored by)", item["summary"])
               for value in re.findall(r"\d+(?:\.\d+)?", match.group(1))]
     top = max(scores, default=0.0)
     exploited = "exploited in the wild" in item["summary"]

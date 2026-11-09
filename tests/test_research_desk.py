@@ -132,6 +132,27 @@ def test_claim_check_confirms_flags_mismatch_and_wrong_ids(db):
     assert unavailable["claims"][0]["status"] == "unavailable"
 
 
+def test_a_cisa_enrichment_score_is_not_called_official(db):
+    # Shape of CVE-2026-19868: no vendor score, CISA's ADP score, NVD "Secondary".
+    record = {"cveMetadata": {"state": "PUBLISHED"}, "containers": {
+        "cna": {"descriptions": [{"lang": "en", "value": "An authentication flaw may bypass SAML. Exploitation may also bypass MFA."}],
+                "affected": [{"vendor": "SonicWall", "product": "SonicOS", "platforms": ["Gen7", "Gen8"],
+                              "versions": [{"status": "affected", "version": "7.3.3-7015 and older versions"},
+                                           {"status": "affected", "version": "8.2.2-8015 and older versions"}]}],
+                "references": [{"url": "https://psirt.global.sonicwall.com/vuln-detail/SNWLID-2026-0014"}]},
+        "adp": [{"title": "CISA ADP Vulnrichment", "metrics": [{"cvssV3_1": {"baseScore": 7.5}}]}]}}
+    nvd = {"vulnerabilities": [{"cve": {"metrics": {"cvssMetricV31": [{"type": "Secondary", "cvssData": {"baseScore": 7.5}}]}}}]}
+    fetch = fake_fetch({"cveawg.mitre.org/api/cve/CVE-2026-19868": record, "nvd": nvd})
+    check = desk.check_claims({"cves": ["CVE-2026-19868"], "reported_cvss": 7.5, "sources": []}, fetch)
+    assert check["official_cvss"] == [] and check["cisa_cvss"] == [7.5]
+    assert {c["claim"]: c["status"] for c in check["claims"]}["CVSS 7.5"] == "confirmed", "a reported 7.5 still matches a real score"
+    assert check["affected"] == "SonicOS (Gen7, Gen8) 7.3.3-7015 and older versions; 8.2.2-8015 and older versions"
+    assert check["vendor_advisory"] == "https://psirt.global.sonicwall.com/vuln-detail/SNWLID-2026-0014"
+    primary = {"vulnerabilities": [{"cve": {"metrics": {"cvssMetricV31": [{"type": "Primary", "cvssData": {"baseScore": 8.1}}]}}}]}
+    scored = desk.check_claims({"cves": ["CVE-2026-19868"], "sources": []}, fake_fetch({"cveawg.mitre.org/api/cve/CVE-2026-19868": record, "nvd": primary}))
+    assert scored["official_cvss"] == [8.1] and scored["cisa_cvss"] == [], "once NVD scores it, that is the official score"
+
+
 def test_claim_checks_are_cached_and_shown_in_the_projection(db):
     week(db)
     calls = []
@@ -185,7 +206,7 @@ def test_research_note_reports_the_items_own_cves_not_its_clusters(db):
     desk.run_claim_checks(lambda url: json.dumps(record if "cveawg" in url else {"vulnerabilities": []}).encode(), db_path=db, now=NOW)
     note = "\n".join(desk.research_note("php-adv", db_path=db, now=NOW, cves=[]))
     assert "CVE-2026-109618" not in note
-    assert "SecOpsAI detection: no SecOpsAI rule covers this yet." in note
+    assert "SecOpsAI detection" not in note, "no line at all when no rule matches"
     own = "\n".join(desk.research_note("php-adv", db_path=db, now=NOW, cves=["CVE-2026-109618"]))
     assert "| CVE-2026-109618 exists | confirmed |" in own
     assert "SecOpsAI detection: RULE-311" in own
@@ -225,7 +246,7 @@ def test_research_note_maps_detections_claims_and_exposure(db):
     assert "| CVE-2026-109618 exists | confirmed |" in note
     assert "SecOpsAI detection: RULE-311" in note
     node = "\n".join(desk.research_note("node-rel", db_path=db, now=NOW))
-    assert "no SecOpsAI rule covers this yet" in node
+    assert "SecOpsAI detection" not in node and "no SecOpsAI rule" not in node
     assert "deployment exposure" not in node, "what SecOpsAI itself runs is internal ranking, not reader guidance"
     assert "| CVE-2026-109618 exists | confirmed | [cve.org](https://www.cve.org/CVERecord?id=CVE-2026-109618) |" in note
     assert "services.nvd.nist.gov" not in note
