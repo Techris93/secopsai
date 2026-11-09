@@ -1218,6 +1218,21 @@ def test_every_recent_brief_waiting_for_approval_keeps_its_draft(db):
     assert "draft_omitted" in editions[(today - timedelta(days=9)).isoformat()]
 
 
+def test_a_tested_version_check_is_named_in_the_brief(db, monkeypatch):
+    from secopsai import advisory_check
+
+    roster(db)
+    value, _ = event(db)
+    verify(value, db)
+    monkeypatch.setattr(advisory_check, "advisory_id", lambda url: "GHSA-64vx-6h2c-rjh7" if url == value["payload"]["url"] else "")
+    monkeypatch.setattr(advisory_check, "latest_checks", lambda **kw: {"GHSA-64vx-6h2c-rjh7": {
+        "advisory": "GHSA-64vx-6h2c-rjh7", "ok": True, "packages": [{"ecosystem": "pypi", "name": "banks", "fixed": ["2.4.3"]}]}})
+    local_date = datetime.fromisoformat(value["first_observed_at"].replace("Z", "+00:00")).astimezone(ZoneInfo("Europe/Istanbul")).date()
+    body = create_daily_brief(date=local_date.isoformat(), db_path=db)["draft"]["body_markdown"]
+    assert "advisory-check --advisory GHSA-64vx-6h2c-rjh7 PATH` flags banks before 2.4.3" in body
+    assert "no SecOpsAI rule" not in body
+
+
 def test_item_verified_today_joins_todays_brief_once(db):
     from secopsai.research_primary_intel import source_url
 

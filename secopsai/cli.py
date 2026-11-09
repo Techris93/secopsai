@@ -3021,6 +3021,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     supply_chain_ai_guard.add_argument("--report-path", help="Write full JSON report to this path")
     supply_chain_ai_guard.add_argument("--timeout", type=int, default=8, help="Registry metadata timeout seconds")
 
+    supply_chain_advisory = supply_chain_sub.add_parser(
+        "advisory-check", help="Find package versions named by a GitHub advisory in a project's manifests and lockfiles")
+    supply_chain_advisory.add_argument("path", nargs="?", default=".", help="Project directory or a single manifest/lockfile")
+    supply_chain_advisory.add_argument("--advisory", action="append", required=True, help="GHSA identifier; repeat for several")
+    supply_chain_advisory.add_argument("--json", action="store_true", help="Print the result as JSON")
+
     supply_chain_once = supply_chain_sub.add_parser("once", help="Scan recent releases from the top watchlists")
     supply_chain_once.add_argument("--top", type=int, default=1000, help="Top N packages per ecosystem (default: 1000)")
     supply_chain_once.add_argument("--npm-top", type=int, help="Top N npm packages (defaults to --top)")
@@ -6434,6 +6440,32 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if payload.get("slack_alerts_sent"):
                     print(f"slack_alerts_sent={payload['slack_alerts_sent']}")
             return 0 if payload["result"]["verdict"] != "error" else 1
+
+        if args.supply_chain_cmd == "advisory-check":
+            from secopsai.advisory_check import GHSA_RE, OSV_HOSTS, scan as advisory_scan
+            from secopsai.research_intake import SafeFetcher
+
+            bad = [a for a in args.advisory if not GHSA_RE.fullmatch(a)]
+            if bad:
+                print(f"error: not a GHSA identifier: {', '.join(bad)}")
+                return 2
+            fetcher = SafeFetcher(timeout=20)
+            try:
+                result = advisory_scan(args.path, args.advisory,
+                                       lambda url: fetcher.get(url, allowed_hosts=OSV_HOSTS, max_bytes=2 << 20)[2])
+            except Exception as exc:
+                print(to_json({"ok": False, "error": str(exc)}) if args.json else f"error: {exc}")
+                return 2
+            if args.json:
+                print(to_json(result))
+            else:
+                for tested in result["advisories"]:
+                    if not tested["ok"]:
+                        print(f"{tested['advisory']}: not checked ({tested['reason']})")
+                for finding in result["findings"]:
+                    print(f"{finding['advisory']}: {finding['name']} {finding['version']} in {finding['file']}; fixed in {', '.join(finding['fixed'])}")
+                print(f"advisory-check: {len(result['findings'])} affected of {result['packages_read']} pinned packages read")
+            return 1 if result["findings"] else 0
 
         if args.supply_chain_cmd == "ai-dependency-guard":
             try:

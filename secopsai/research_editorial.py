@@ -202,11 +202,15 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
     items = _brief_selection(items)
     from secopsai.research_coverage import coverage_report
     coverage = coverage_report(db_path=db_path)
-    from secopsai import research_desk
+    from secopsai import advisory_check, research_desk
     try:
         ranked = research_desk.shortlist(db_path=db_path, limit=50, minimum_score=0) if items else []
     except Exception:  # the desk enriches the brief; it never blocks it
         ranked = []
+    try:
+        version_checks = advisory_check.latest_checks(db_path=db_path) if items else {}
+    except Exception:
+        version_checks = {}
     lines = [f"# SecOpsAI Daily Intelligence Brief — {date}"]
     if any(item["attribution"] != "source_reported" for item in items):
         lines.extend(["", "This brief distinguishes source reporting from SecOpsAI's original observations."])
@@ -222,6 +226,7 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
             lines.append("Identifiers and scores checked automatically against cve.org and NVD." if item.get("cves")
                          else "Checked automatically: primary source with a stated fix; no CVE to check.")
         lines.extend(research_desk.research_note(item["event_id"], ranked=ranked, db_path=db_path, cves=item.get("cves")))
+        lines.extend(advisory_check.brief_line(item["url"], checks=version_checks))
     lines.extend(["", "## Collection scope", "", coverage["public_summary"], "", "## Credits and corrections", "", f"Prepared by {author['display_name']}. The editor approves each edition before it is published. Corrections keep the previous edition and explain material changes."])
     draft = {"title": f"SecOpsAI Daily Intelligence Brief — {date}", "slug": f"daily-intelligence-{date}", "summary": _brief_summary(items),
              "body_markdown": "\n\n".join(_blocks(lines)), "author": author["display_name"], "author_id": author["person_id"], "items": items,
