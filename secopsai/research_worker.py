@@ -576,6 +576,18 @@ def _run_worker_cycle_unlocked(
         except Exception as exc:
             capture_exception(exc, context={"component": "research_desk"})
             primary_intel = {**primary_intel, "desk_claim_checks": {"status": "degraded", "error_category": type(exc).__name__}}
+        # Vulnerable-version checks for package advisories in recent briefs:
+        # each OSV record is tested before the brief names it.
+        try:
+            from secopsai.advisory_check import OSV_HOSTS, recent_brief_advisories, run_checks
+
+            check_fetcher = fetcher or SafeFetcher(timeout=20)
+            primary_intel = {**primary_intel, "advisory_version_checks": run_checks(
+                lambda url: check_fetcher.get(url, allowed_hosts=OSV_HOSTS, max_bytes=2 << 20)[2],
+                recent_brief_advisories(db_path=db_path), db_path=db_path)}
+        except Exception as exc:
+            capture_exception(exc, context={"component": "advisory_version_checks"})
+            primary_intel = {**primary_intel, "advisory_version_checks": {"status": "degraded", "error_category": type(exc).__name__}}
     _cycle_stage("external_intelligence")
     try:
         # External threat-intel is a separate signal from registry telemetry.
