@@ -224,16 +224,26 @@ def run_checks(fetch: Callable[[str], Any], advisories: Iterable[str], *, db_pat
 
 
 def recent_brief_advisories(*, db_path=None, days: int = 7) -> list[str]:
-    """GitHub advisories behind items verified for recent briefs."""
-    from secopsai.research_operation_store import records
+    """GitHub advisories named by items in the briefs of the last ``days`` days.
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    Read from the brief drafts themselves: the verification log is dominated
+    by automated rejections, so its newest rows rarely reach a brief item.
+    """
+    import soc_store
+    from secopsai.research_operation_store import read_connection
+
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    soc_store.init_db(db_path)
+    with read_connection(db_path) as conn:
+        rows = conn.execute("SELECT draft_json FROM research_editorial_editions WHERE edition_date>=? ORDER BY edition_date DESC",
+                            (since,)).fetchall()
     found = []
-    for row in records("intel_verification", db_path=db_path, limit=1000):
-        if row["created_at"] < cutoff:
-            break
-        if row["payload"].get("decision") == "verified":
-            found.append(advisory_id(str(row["payload"].get("primary_url") or "")))
+    for row in rows:
+        try:
+            items = json.loads(row["draft_json"]).get("items") or []
+        except (TypeError, ValueError):
+            continue
+        found.extend(advisory_id(str(item.get("url") or "")) for item in items)
     return [a for a in dict.fromkeys(found) if a]
 
 

@@ -111,3 +111,16 @@ def test_the_brief_names_a_check_only_after_its_test_passed(db):
     calls.clear()
     check.run_checks(fetch, ["GHSA-64vx-6h2c-rjh7", "GHSA-23mf-xhv8-69c2"], db_path=db, now=now + timedelta(hours=1))
     assert calls == ["https://api.osv.dev/v1/vulns/GHSA-23mf-xhv8-69c2"], "a passed check is cached; an unavailable one is retried"
+
+
+def test_advisories_come_from_recent_brief_drafts(db):
+    today = datetime.now(timezone.utc).date()
+    rows = [("BRIEF-new", today - timedelta(days=1), ["https://github.com/advisories/GHSA-64vx-6h2c-rjh7",
+                                                       "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"]),
+            ("BRIEF-old", today - timedelta(days=12), ["https://github.com/advisories/GHSA-px68-xx5g-48q5"])]
+    with soc_store.connect(db) as conn:
+        for edition_id, day, urls in rows:
+            draft = json.dumps({"items": [{"url": url} for url in urls]})
+            conn.execute("INSERT INTO research_editorial_editions VALUES (?,?,?,?,?,?,'verifying','',?,?)",
+                         (edition_id, day.isoformat(), "daily_brief", "author", draft, "fp", "2026-11-09T00:00:00Z", "2026-11-09T00:00:00Z"))
+    assert check.recent_brief_advisories(db_path=db) == ["GHSA-64vx-6h2c-rjh7"]
