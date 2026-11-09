@@ -22,6 +22,11 @@ const WATCHLIST_TTL_MS = 10 * 60 * 1000;
 // dispatching the same releases again.  It expires if a tick dies.
 const LEASE_MS = 5 * 60 * 1000;
 const DISPATCH_LEASE_MS = 90 * 60 * 1000;
+// A dispatched run reports when its job starts.  GitHub sometimes accepts a
+// dispatch and then fails before any job runs ("Internal server error"); such
+// a batch is re-queued after this short wait instead of the full lease.
+const START_LEASE_MS = 15 * 60 * 1000;
+const TERMINAL_STATES = new Set(["completed", "incomplete", "failed"]);
 
 let watchlistCache = { at: 0, npm: new Set(), pypi: new Set() };
 
@@ -126,7 +131,8 @@ async function recoverExpiredDispatches(bucket, now, limit = 100) {
     item.state = "queued";
     item.retry_at = now;
     item.dispatch_lease_until = null;
-    item.last_outcome = {status: "missing_completion_receipt", at: new Date(now).toISOString()};
+    item.last_outcome = {status: item.started_at ? "missing_completion_receipt" : "run_never_started", at: new Date(now).toISOString()};
+    item.started_at = null;
     await bucket.put(key, JSON.stringify(item));
     await bucket.put(queueIndex("queued", item), JSON.stringify({queue_id: id}));
     recovered += 1;
@@ -146,7 +152,8 @@ async function dispatchQueued(bucket, dispatch, now) {
       item.state = "dispatched";
       item.attempt = Number(item.attempt || 0) + 1;
       item.last_dispatched_at = new Date(now).toISOString();
-      item.dispatch_lease_until = now + DISPATCH_LEASE_MS;
+      item.dispatch_lease_until = now + START_LEASE_MS;
+      item.started_at = null;
       await bucket.put(`${TARGET_PREFIX}${item.queue_id}.json`, JSON.stringify(item));
       await bucket.put(queueIndex("dispatched", item), JSON.stringify({queue_id: item.queue_id}));
     }
@@ -158,6 +165,40 @@ async function dispatchQueued(bucket, dispatch, now) {
 // Anything else thrown while completing is a storage failure: the client may
 // resend the whole batch, which is idempotent for targets already completed.
 export class FastlaneCompletionError extends Error {}
+
+function validQueueId(id) {
+  return typeof id === "string" && /^[a-f0-9]{64}$/.test(id);
+}
+
+// The run's job started: its batch keeps the full lease.  A run that starts
+// after its batch was re-queued takes the batch back rather than racing a
+// second run for it.
+export async function startFastlaneTargets(bucket, queueIds, {now = Date.now(), runId = ""} = {}) {
+  if (!Array.isArray(queueIds) || queueIds.length > MAX_TARGETS_PER_TICK || !queueIds.every(validQueueId)) {
+    throw new FastlaneCompletionError("invalid fast-lane start batch");
+  }
+  let started = 0, ignored = 0;
+  for (const id of queueIds) {
+    const key = `${TARGET_PREFIX}${id}.json`;
+    const object = await bucket.get(key);
+    if (!object) throw new FastlaneCompletionError("unknown fast-lane target");
+    const item = JSON.parse(await object.text());
+    if (item.state === "queued") {
+      await bucket.delete(queueIndex("queued", item));
+      item.state = "dispatched";
+      await bucket.put(queueIndex("dispatched", item), JSON.stringify({queue_id: id}));
+    } else if (item.state !== "dispatched") {
+      ignored += 1;
+      continue;
+    }
+    item.started_at = new Date(now).toISOString();
+    item.start_run_id = String(runId).slice(0, 80);
+    item.dispatch_lease_until = now + DISPATCH_LEASE_MS;
+    await bucket.put(key, JSON.stringify(item));
+    started += 1;
+  }
+  return {status: "stored", started, ignored};
+}
 
 export async function completeFastlaneTargets(bucket, results, {now = Date.now(), runId = ""} = {}) {
   if (!Array.isArray(results) || results.length > MAX_TARGETS_PER_TICK) throw new FastlaneCompletionError("invalid fast-lane completion batch");
@@ -179,8 +220,14 @@ export async function completeFastlaneTargets(bucket, results, {now = Date.now()
       completed += 1;
       continue;
     }
-    if (item.state !== "dispatched") throw new FastlaneCompletionError("fast-lane target is not awaiting a dispatch receipt");
-    await bucket.delete(queueIndex("dispatched", item));
+    // A run that started late can finish after its batch was re-queued, or
+    // after a second run already completed it; neither is an error.
+    if (TERMINAL_STATES.has(item.state)) {
+      completed += 1;
+      continue;
+    }
+    if (item.state !== "dispatched" && item.state !== "queued") throw new FastlaneCompletionError("fast-lane target is not awaiting a dispatch receipt");
+    await bucket.delete(queueIndex(item.state, item));
     item.last_outcome = outcome;
     item.dispatch_lease_until = null;
     if (result.status === "retryable_failure") {

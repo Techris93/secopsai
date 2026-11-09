@@ -5,7 +5,7 @@
 // binding.  That lets the old Render worker upload its ledger without anyone
 // copying a credential between providers.
 import { bearer, handleLedgerRequest, json, timingSafeEqual } from "../../secopsai-research-runner/src/ledger.js";
-import { FastlaneCompletionError, completeFastlaneTargets, fastlaneQueueStatus, fastlaneTick } from "./fastlane.js";
+import { FastlaneCompletionError, completeFastlaneTargets, fastlaneQueueStatus, fastlaneTick, startFastlaneTargets } from "./fastlane.js";
 
 const FASTLANE_CRON = "* * * * *";
 const WATCHLIST_CRON = "17 3 * * *";
@@ -166,6 +166,22 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/healthz") return json({ status: "ok", service: "secopsai-ledger-store", checkpoint_protocol: "ledger-checkpoint-v2", completion_retry_safe: true });
+    if (url.pathname === "/fastlane/start") {
+      const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);
+      if (!isOwner) return json({ error: "unauthorized" }, 401);
+      if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+      const body = await request.text();
+      if (new TextEncoder().encode(body).byteLength > 16 * 1024) return json({ error: "start batch too large" }, 413);
+      let value;
+      try { value = JSON.parse(body); } catch { return json({ error: "invalid json" }, 400); }
+      try {
+        return json(await startFastlaneTargets(env.LEDGER, value.queue_ids, {runId: value.run_id || ""}));
+      } catch (error) {
+        const message = String(error?.message || error).slice(0, 200);
+        if (error instanceof FastlaneCompletionError) return json({ error: message }, 422);
+        return json({ error: "start_storage_unavailable", detail: message }, 503);
+      }
+    }
     if (url.pathname === "/fastlane/complete") {
       const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);
       if (!isOwner) return json({ error: "unauthorized" }, 401);
