@@ -762,7 +762,12 @@ def refresh_stale_past_briefs(*, db_path=None, now=None) -> list[str]:
     refreshed = []
     for edition_id, edition_date in rows:
         edition = _edition(edition_id, db_path=db_path)
-        if pending_edition_update(edition_id, db_path=db_path) or _items_current(edition, db_path):
+        pending = pending_edition_update(edition_id, db_path=db_path)
+        # A waiting update of new items only is added on reassembly; one that
+        # removes or changes an item stays with the editor.
+        adds_only = bool(pending and pending.get("new_items") and not pending.get("remove_event_ids")
+                         and not pending.get("replace_event_ids"))
+        if (pending and not adds_only) or (not pending and _items_current(edition, db_path)):
             continue
         after = create_daily_brief(date=edition_date, db_path=db_path)
         if after.get("fingerprint") != edition["fingerprint"] or after.get("updates_waiting_for_editor"):
