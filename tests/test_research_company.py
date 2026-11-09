@@ -1332,3 +1332,30 @@ def test_the_review_list_holds_only_what_someone_must_decide(db, monkeypatch):
     projection = hosted_projection(db_path=db)
     assert [item["event_id"] for item in projection["pending_source_reviews"]] == [value["event_id"]]
     assert projection["routine_source_reviews"]["pending"] == 0
+
+
+def test_a_past_edited_brief_takes_a_waiting_new_item(db, monkeypatch):
+    import secopsai.research_editorial as editorial
+
+    roster(db)
+    value, _ = event(db)
+    verify(value, db)
+    local_date = datetime.fromisoformat(value["first_observed_at"].replace("Z", "+00:00")).astimezone(ZoneInfo("Europe/Istanbul")).date()
+    edition = create_daily_brief(date=local_date.isoformat(), db_path=db)
+    edit_edition(edition["edition_id"], {"body_markdown": edition["draft"]["body_markdown"] + "\n\nHuman editorial note."}, actor="alice", db_path=db)
+    second_source = source(db, source_id="vendor-two")
+    body = json.dumps({"events": [{"external_id": "notice-2", "title": "Second patch", "excerpt": "A second synthetic patch is available.",
+                                    "url": "https://vendor.example/second", "published_at": "2026-10-13T08:00:00Z"}]}).encode()
+    acquired = acquire(second_source, body, db_path=db)
+    with soc_store.connect(db) as conn:
+        event_id = conn.execute("SELECT event_id FROM research_intel_events WHERE snapshot_id=?", (acquired["snapshot_id"],)).fetchone()[0]
+    verify(intel_event(event_id, db_path=db), db)
+    with monkeypatch.context() as patch:  # recorded the way it was before additions were automatic
+        patch.setattr(editorial, "_add_new_items", lambda *a, **kw: None)
+        assert create_daily_brief(date=local_date.isoformat(), db_path=db)["updates_waiting_for_editor"] is True
+    next_morning = datetime.combine(local_date + timedelta(days=1), datetime.min.time(), ZoneInfo("Europe/Istanbul")).replace(hour=9)
+    assert editorial.refresh_stale_past_briefs(db_path=db, now=next_morning) == [edition["edition_id"]]
+    rebuilt = editorial._edition(edition["edition_id"], db_path=db)
+    assert len(rebuilt["draft"]["items"]) == 2 and "Human editorial note." in rebuilt["draft"]["body_markdown"]
+    assert editorial.pending_edition_update(edition["edition_id"], db_path=db) is None
+    assert editorial.refresh_stale_past_briefs(db_path=db, now=next_morning) == []
