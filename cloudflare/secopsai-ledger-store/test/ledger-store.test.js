@@ -82,7 +82,7 @@ test("a new research worker run starts only after the previous one finishes", as
   assert.equal(gh.dispatches().length, 0);
 });
 
-import { completeFastlaneTargets, fastlaneQueueStatus, fastlaneTick, parsePypiRss } from "../src/fastlane.js";
+import { completeFastlaneTargets, fastlaneQueueStatus, fastlaneTick, parsePypiRss, startFastlaneTargets } from "../src/fastlane.js";
 
 function memoryBucket(initial = {}) {
   const store = new Map(Object.entries(initial).map(([k, v]) => [k, JSON.stringify(v)]));
@@ -385,4 +385,72 @@ test("fast-lane completion: refused batches are 422, storage failures are retrya
   const refused = await post(JSON.stringify({ run_id: "1", results: [{ queue_id: "d".repeat(64), status: "analyzed" }] }));
   assert.equal(refused.status, 422);
   assert.equal((await refused.json()).error, "unknown fast-lane target");
+});
+
+test("a Fast Lane run that never starts is re-queued after 15 minutes, a started one keeps its lease", async () => {
+  const bucket = memoryBucket({
+    "fastlane/watchlist/npm.json": {names: []},
+    "fastlane/watchlist/pypi.json": {names: ["requests", "flask"]},
+  });
+  let release = "<item><title>requests 7.0.0</title></item>";
+  const fetcher = async () => new Response(release);
+  const env = {LEDGER: bucket};
+  const minute = 60 * 1000;
+  let batch;
+  const dispatch = async (_workflow, inputs) => { batch = JSON.parse(inputs.targets); return {status: "dispatched"}; };
+  const t0 = 100_000_000;  // far from other tests: the watchlist cache lives 10 minutes
+  await fastlaneTick(env, {fetcher, now: t0, dispatch});
+  const neverStarted = batch[0]._queue_id;
+  release = "<item><title>flask 9.0.0</title></item>";
+  await fastlaneTick(env, {fetcher, now: t0 + minute, dispatch});
+  const started = batch[0]._queue_id;
+  assert.deepEqual(await startFastlaneTargets(bucket, [started], {now: t0 + 2 * minute, runId: "run-ok"}), {status: "stored", started: 1, ignored: 0});
+
+  const early = await fastlaneTick(env, {fetcher, now: t0 + 14 * minute, dispatch: async () => ({status: "failed"})});
+  assert.equal(early.expired_dispatches_recovered, 0, "not before the start window ends");
+  const late = await fastlaneTick(env, {fetcher, now: t0 + 16 * minute, dispatch: async () => ({status: "failed"})});
+  assert.equal(late.expired_dispatches_recovered, 1, "only the batch that never started");
+  const item = JSON.parse(await (await bucket.get(`fastlane/targets/${neverStarted}.json`)).text());
+  assert.equal(item.state, "queued");
+  assert.equal(item.last_outcome.status, "run_never_started");
+  const kept = JSON.parse(await (await bucket.get(`fastlane/targets/${started}.json`)).text());
+  assert.equal(kept.state, "dispatched");
+  assert.equal(kept.dispatch_lease_until, t0 + 2 * minute + 90 * minute);
+});
+
+test("a late Fast Lane run reclaims its batch and a duplicate completion is not an error", async () => {
+  const bucket = memoryBucket({
+    "fastlane/watchlist/npm.json": {names: []},
+    "fastlane/watchlist/pypi.json": {names: ["requests"]},
+  });
+  const fetcher = async () => new Response("<item><title>requests 8.0.0</title></item>");
+  const env = {LEDGER: bucket};
+  let batch;
+  const dispatch = async (_workflow, inputs) => { batch = JSON.parse(inputs.targets); return {status: "dispatched"}; };
+  const t0 = 200_000_000;
+  await fastlaneTick(env, {fetcher, now: t0, dispatch});
+  const id = batch[0]._queue_id;
+  await fastlaneTick(env, {fetcher, now: t0 + 16 * 60 * 1000, dispatch: async () => ({status: "failed"})});
+  assert.equal((await fastlaneQueueStatus(bucket)).queued, 1);
+  // The slow run starts after all and takes its batch back.
+  assert.equal((await startFastlaneTargets(bucket, [id], {now: t0 + 17 * 60 * 1000, runId: "slow"})).started, 1);
+  const status = await fastlaneQueueStatus(bucket);
+  assert.equal(status.queued, 0);
+  assert.equal(status.dispatched, 1);
+  assert.equal((await completeFastlaneTargets(bucket, [{queue_id: id, status: "analyzed"}], {now: t0 + 20 * 60 * 1000, runId: "slow"})).completed, 1);
+  assert.equal((await completeFastlaneTargets(bucket, [{queue_id: id, status: "analyzed"}], {now: t0 + 21 * 60 * 1000, runId: "other"})).completed, 1,
+    "a second run finishing the same target is acknowledged, not refused");
+  assert.equal((await startFastlaneTargets(bucket, [id], {now: t0 + 22 * 60 * 1000, runId: "later"})).ignored, 1);
+  await assert.rejects(startFastlaneTargets(bucket, ["not-an-id"]), /invalid fast-lane start batch/);
+});
+
+test("the start receipt route needs the owner token", async () => {
+  const env = { LEDGER_STORE_TOKEN: "secret", LEDGER: memoryBucket({}) };
+  const post = (headers, body) => worker.fetch(new Request("https://ls.example/fastlane/start", {method: "POST", headers, body}), env);
+  assert.equal((await post({}, JSON.stringify({queue_ids: []}))).status, 401);
+  assert.equal((await post({authorization: "Bearer secret"}, "{")).status, 400);
+  assert.equal((await post({authorization: "Bearer secret"}, JSON.stringify({queue_ids: ["x"]}))).status, 422);
+  const ok = await post({authorization: "Bearer secret"}, JSON.stringify({run_id: "1", queue_ids: []}));
+  assert.equal(ok.status, 200);
+  assert.deepEqual(await ok.json(), {status: "stored", started: 0, ignored: 0});
 });

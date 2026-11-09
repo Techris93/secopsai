@@ -43,6 +43,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Report that the run started
+        env:
+          LEDGER_STORE_URL: https://ledger.secopsai.dev
+          LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+        run: python3 scripts/fast_lane_start.py
+
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
