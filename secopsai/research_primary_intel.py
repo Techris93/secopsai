@@ -592,6 +592,17 @@ def _held_event_ids(db_path=None) -> set[str]:
             if not record["payload"].get("automation")}
 
 
+def routine_review_count(keep: set[str] | frozenset[str] = frozenset(), *, db_path=None) -> int:
+    """Queued items nobody needs to decide: not ranked by the desk and not marked by a person.
+
+    They are archived after ``AGE_OUT_DAYS`` and return if the desk ranks them.
+    """
+    wanted = set(keep) | _held_event_ids(db_path)
+    with read_connection(db_path) as conn:
+        return sum(row["event_id"] not in wanted for row in conn.execute(
+            "SELECT event_id FROM research_operation_queue WHERE kind='verify_intel' AND state='awaiting_review'"))
+
+
 def reviews_needing_decision(keep: set[str] | frozenset[str] = frozenset(), *, db_path=None) -> int:
     """Queued items the desk ranks or a person marked; the rest age out unread."""
     wanted = set(keep) | _held_event_ids(db_path)
@@ -643,11 +654,13 @@ def age_out_reviews(*, keep: set[str] | frozenset[str] = frozenset(), enforce: b
     return result
 
 
-def pending_public_reviews(*, db_path=None, limit: int = 20, event_ids: list[str] | None = None) -> list[dict]:
+def pending_public_reviews(*, db_path=None, limit: int = 20, event_ids: list[str] | None = None,
+                           only: set[str] | frozenset[str] | None = None) -> list[dict]:
     """Return a bounded, privacy-safe queue for the independent human reviewer.
 
     ``event_ids`` returns those events first, in that order (the research
-    desk's ranking), followed by the newest remaining events.
+    desk's ranking), followed by the newest remaining events. ``only`` limits
+    the queue to those events.
     """
     from secopsai.research_operation_store import records
 
@@ -684,7 +697,7 @@ def pending_public_reviews(*, db_path=None, limit: int = 20, event_ids: list[str
         decision = decisions.get(event["event_id"])
         # Decisions fingerprint the canonical intel_event record; this row has
         # queue columns as well, so compare against the same shape.
-        if event.get("queue_state") == "archived":
+        if event.get("queue_state") == "archived" or (only is not None and event["event_id"] not in only):
             continue
         current = bool(decision and decision.get("event_fingerprint") == digest(intel_event(event["event_id"], db_path=db_path)))
         if current and decision.get("decision") in {"verified", "rejected"}:
