@@ -1327,11 +1327,11 @@ def test_the_review_list_holds_only_what_someone_must_decide(db, monkeypatch):
                      (value["event_id"],))
     projection = hosted_projection(db_path=db)
     assert projection["pending_source_reviews"] == []
-    assert projection["routine_source_reviews"] == {"pending": 1, "archived_after_days": 14}
+    assert projection["coverage"]["health"]["routine_source_reviews"] == {"pending": 1, "archived_after_days": 14}
     monkeypatch.setattr(research_auto_verify, "ranked_event_ids", lambda **kw: {value["event_id"]: None})
     projection = hosted_projection(db_path=db)
     assert [item["event_id"] for item in projection["pending_source_reviews"]] == [value["event_id"]]
-    assert projection["routine_source_reviews"]["pending"] == 0
+    assert projection["coverage"]["health"]["routine_source_reviews"]["pending"] == 0
 
 
 def test_a_past_edited_brief_takes_a_waiting_new_item(db, monkeypatch):
@@ -1359,3 +1359,13 @@ def test_a_past_edited_brief_takes_a_waiting_new_item(db, monkeypatch):
     assert len(rebuilt["draft"]["items"]) == 2 and "Human editorial note." in rebuilt["draft"]["body_markdown"]
     assert editorial.pending_edition_update(edition["edition_id"], db_path=db) is None
     assert editorial.refresh_stale_past_briefs(db_path=db, now=next_morning) == []
+
+
+def test_the_projection_has_only_keys_hosted_core_accepts(db):
+    import re
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "cloudflare" / "secopsai-core-edge" / "src" / "index.js"
+    allowed = set(re.findall(r'"([a-z_]+)"', re.search(r"const allowed = \[([^\]]+)\]", source.read_text(encoding="utf-8")).group(1)))
+    event(db)
+    assert set(hosted_projection(db_path=db)) - {"request_id", "synced_at", "hosted_projection"} <= allowed

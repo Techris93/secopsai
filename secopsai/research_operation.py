@@ -273,6 +273,8 @@ def hosted_projection(*, db_path=None) -> dict:
         status["coverage"]["health"]["primary_intel_needs_decision"] = reviews_needing_decision(ranked_ids, db_path=db_path)
     except Exception:  # like the desk, this must never block the operation snapshot
         status["coverage"]["health"]["primary_intel_needs_decision"] = None
+    # Inside coverage: hosted Core accepts only its listed top-level keys.
+    status["coverage"].setdefault("health", {})["routine_source_reviews"] = routine_reviews
     raw_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
     runtime = {"worker_run_id": os.environ.get("GITHUB_RUN_ID") or os.environ.get("SECOPSAI_GITHUB_RUN_ID"),
                "worker_run_attempt": int(raw_attempt) if raw_attempt.isdigit() else None,
@@ -280,7 +282,6 @@ def hosted_projection(*, db_path=None) -> dict:
     projection = minimize({"schema_version": "secopsai.research.operation.v1", "coverage": status["coverage"], "editions": editions, "assistant_teams": teams,
                      "runtime": runtime,
                      "pending_source_reviews": pending_reviews,
-                     "routine_source_reviews": routine_reviews,
                      "research_desk": desk,
                      "automation": {"assistant_team_autostart_enabled": os.environ.get("SECOPSAI_RESEARCH_ASSISTANT_AUTOSTART") == "1",
                                     "daily_brief_assembly_enabled": os.environ.get("SECOPSAI_PRIMARY_INTEL") == "1",
