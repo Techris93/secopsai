@@ -9,6 +9,61 @@ from secopsai.research_operation_store import append, canonical, digest, records
 from secopsai.sqlite_writer_lock import sqlite_writer_lock
 
 
+TRANSPORT_BUDGET = 60000
+INCOMPLETE_COVERAGE = {'complete': False, 'reason': 'privacy or transport limits changed the supplied context; request precise missing evidence and preserve limitations'}
+# Mirrors sanitize(value, 0, true) in the Core edge, which rejects any
+# assistant context it would have to change (unsafe_assistant_context).
+_EDGE_BLOCKED = {'artifact', 'artifact_bytes', 'artifact_content', 'authorization', 'password', 'raw_content', 'raw_package', 'raw_output', 'raw_scan',
+                 'packet_capture', 'pcap', 'secret', 'token', 'access_token', 'api_key', 'credential', 'private_key', 'cookie'}
+_EDGE_BLOCKED_PART = re.compile(r'(?:^|_)(?:token|secret|password|credential|private_key|api_key)(?:_|$)')
+_EDGE_LOCATOR_KEY = re.compile(r'(?:^|_)(?:url|uri|locator)$', re.IGNORECASE)
+_EDGE_STABLE_URL = re.compile(r"https?://[a-z0-9-]+(?:\.[a-z0-9-]+)*/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*")
+_PRIVATE_HOST = re.compile(r'^(?:localhost$|0\.|10\.|127\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|f[cd]|fe80)|\.(?:local|internal)$')
+
+
+def _stable_locator(value: str) -> bool:
+    """True when the edge's locator rewrite would return the value unchanged."""
+    if value == '':
+        return True
+    if len(value) > 1024 or not _EDGE_STABLE_URL.fullmatch(value) or '%' in value:
+        return False
+    if any(segment in {'.', '..'} for segment in value.split('/')[3:]):
+        return False  # The edge's URL parser resolves dot segments.
+    host = value.split('/', 3)[2]
+    return not _PRIVATE_HOST.search(host)
+
+
+def edge_stable(value, depth=0):
+    """Apply the edge's assistant-context rules so it accepts the payload as sent.
+
+    Locators the edge would rewrite are dropped rather than replaced: its
+    opaque digest is not idempotent, so no stand-in value would pass.
+    """
+    if depth > 8:
+        return '[truncated]'
+    if isinstance(value, list):
+        return [edge_stable(item, depth + 1) for item in value[:100]]
+    if isinstance(value, dict):
+        output = {}
+        for key, item in value.items():
+            key = str(key)
+            lowered = key.lower()
+            if lowered in _EDGE_BLOCKED or _EDGE_BLOCKED_PART.search(lowered):
+                continue
+            if _EDGE_LOCATOR_KEY.search(key) and isinstance(item, str):
+                if not _stable_locator(item):
+                    continue
+                output[key[:128]] = item
+                continue
+            output[key[:128]] = edge_stable(item, depth + 1)
+        return output
+    if isinstance(value, str):
+        return value[:16000]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:2000]
+
+
 def sync_hosted(client, *, db_path=None) -> dict:
     if not getattr(client, 'enabled', False):
         return {'status': 'disabled', 'publication_performed': False}
@@ -53,8 +108,16 @@ def sync_hosted(client, *, db_path=None) -> dict:
                     request['instructions'] += ' Return no more than 48 KB of structured output. If evidence is incomplete, name missing evidence and preserve limitations.'
                     inputs = json.loads(job['input_json'])
                     inputs.update({'assistant_request': request, 'target_id': run['run_id']})
-                    payload = {'action': job['action'], 'target_id': run['run_id'], 'inputs': inputs, 'idempotency_key': 'assistant:' + job['job_id']}
-                    if len(canonical(payload).encode()) > 60000:
+                    payload = {'action': job['action'], 'target_id': run['run_id'], 'inputs': edge_stable(inputs), 'idempotency_key': 'assistant:' + job['job_id']}
+                    if len(canonical(payload).encode()) > TRANSPORT_BUDGET and 'ontology' in request.get('context', {}):
+                        # The graph is supporting context; the case evidence is not.
+                        request['context']['ontology'] = {'status': 'omitted', 'reason': 'assistant transport budget'}
+                        request['context']['evidence_coverage'] = INCOMPLETE_COVERAGE
+                        payload['inputs'] = edge_stable(inputs)
+                    if payload['inputs'] != inputs:
+                        inputs['assistant_request']['context']['evidence_coverage'] = INCOMPLETE_COVERAGE
+                        payload['inputs'] = edge_stable(inputs)
+                    if len(canonical(payload).encode()) > TRANSPORT_BUDGET:
                         _terminal(job, team, status='failed', reason='assistant_context_exceeds_budget', db_path=db_path)
                         rejected += 1
                         continue
@@ -66,7 +129,7 @@ def sync_hosted(client, *, db_path=None) -> dict:
                 except CoreEdgeHTTPError as error:
                     if error.status not in {400, 401, 403, 409, 413, 422}:
                         raise
-                    _terminal(job, team, status='failed', reason='assistant_delivery_rejected', db_path=db_path)
+                    _terminal(job, team, status='failed', reason=('assistant_delivery_rejected:' + str(error.error_code or error.status))[:160], db_path=db_path)
                     rejected += 1
                     continue
                 remote_id = (response.get('job') or {}).get('job_id')

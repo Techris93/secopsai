@@ -333,8 +333,11 @@ def advance_team(team_id: str, *, db_path=None) -> dict:
                     return _save(team, state, db_path=db_path)
                 run = get_run(run_id, db_path=db_path)
                 for job_id in (run.get("intelligence_job_id"), run.get("reviewer_job_id")):
-                    if job_id and get_job(job_id, db_path=db_path)["status"] in {"failed", "canceled"}:
-                        return _save(team, {**state, "status": "failed", "reason": "assistant provider job failed or was canceled", "blocked_run_id": run_id}, db_path=db_path)
+                    job = get_job(job_id, db_path=db_path) if job_id else None
+                    if job and job["status"] in {"failed", "canceled"}:
+                        cause = str(job.get("error_code") or "").strip()[:160]
+                        reason = "assistant provider job failed or was canceled" + (": " + cause if cause else "")
+                        return _save(team, {**state, "status": "failed", "reason": reason, "blocked_run_id": run_id}, db_path=db_path)
                 if run["status"] in {"failed", "canceled"}:
                     return _save(team, {**state, "status": "failed", "blocked_run_id": run_id}, db_path=db_path)
                 if run["status"] != "needs_review":
