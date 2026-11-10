@@ -21,6 +21,25 @@ _EDGE_STABLE_URL = re.compile(r"https?://[a-z0-9-]+(?:\.[a-z0-9-]+)*/[A-Za-z0-9.
 _PRIVATE_HOST = re.compile(r'^(?:localhost$|0\.|10\.|127\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|f[cd]|fe80)|\.(?:local|internal)$')
 
 
+SHRINKABLE_CONTEXT = ('research_case', 'evidence_matrix', 'blind_review')
+SHRINK_STEPS = ((2000, 40), (1000, 20), (500, 10), (250, 5), (120, 3))
+_CUT = ' [trimmed for transport]'
+
+
+def _shrink(value, string_limit, list_limit):
+    if isinstance(value, list):
+        # Evidence items and identifier lists stay whole so every supplied
+        # evidence_id remains citable; only their contents are shortened.
+        keep = all(isinstance(item, dict) and 'evidence_id' in item for item in value) or all(isinstance(item, str) and len(item) <= 80 for item in value)
+        kept = value if keep else value[:list_limit]
+        return [_shrink(item, string_limit, list_limit) for item in kept] + ([f'[{len(value) - list_limit} more trimmed for transport]'] if len(kept) < len(value) else [])
+    if isinstance(value, dict):
+        return {key: _shrink(item, string_limit, list_limit) for key, item in value.items()}
+    if isinstance(value, str) and len(value) > string_limit:
+        return value[:string_limit] + _CUT
+    return value
+
+
 def _stable_locator(value: str) -> bool:
     """True when the edge's locator rewrite would return the value unchanged."""
     if value == '':
@@ -114,11 +133,22 @@ def sync_hosted(client, *, db_path=None) -> dict:
                         request['context']['ontology'] = {'status': 'omitted', 'reason': 'assistant transport budget'}
                         request['context']['evidence_coverage'] = INCOMPLETE_COVERAGE
                         payload['inputs'] = edge_stable(inputs)
-                    if payload['inputs'] != inputs:
-                        inputs['assistant_request']['context']['evidence_coverage'] = INCOMPLETE_COVERAGE
+                    context = request.get('context', {})
+                    for string_limit, list_limit in SHRINK_STEPS:
+                        if len(canonical(payload).encode()) <= TRANSPORT_BUDGET:
+                            break
+                        # Shorter excerpts of every evidence item beat dropping the case.
+                        for key in SHRINKABLE_CONTEXT:
+                            if key in context:
+                                context[key] = _shrink(context[key], string_limit, list_limit)
+                        context['evidence_coverage'] = {**INCOMPLETE_COVERAGE, 'trimmed_to': {'characters_per_value': string_limit, 'items_per_list': list_limit}}
                         payload['inputs'] = edge_stable(inputs)
-                    if len(canonical(payload).encode()) > TRANSPORT_BUDGET:
-                        _terminal(job, team, status='failed', reason='assistant_context_exceeds_budget', db_path=db_path)
+                    if payload['inputs'] != inputs:
+                        context.setdefault('evidence_coverage', INCOMPLETE_COVERAGE)
+                        payload['inputs'] = edge_stable(inputs)
+                    size = len(canonical(payload).encode())
+                    if size > TRANSPORT_BUDGET:
+                        _terminal(job, team, status='failed', reason=f'assistant_context_exceeds_budget:{size}_bytes', db_path=db_path)
                         rejected += 1
                         continue
                     # Persist before sending: even a lost HTTP response must
