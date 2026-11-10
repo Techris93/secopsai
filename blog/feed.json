@@ -10,6 +10,28 @@
           "name": "Onyedika Christopher Agada"
         }
       ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-09.png",
+      "date_modified": "2026-11-10T02:45:08Z",
+      "date_published": "2026-11-10T02:45:08Z",
+      "id": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-09.html",
+      "image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-09.png",
+      "images": [],
+      "reading_time_minutes": 4,
+      "severity": "critical",
+      "summary": "SonicWall SonicOS SSLVPN Use of Single-factor Authentication Vulnerability (exploited); fastapi-code-generator: Import-time RCE via response status-code key -> unescaped @app.get(..., responses={...}) dict; fastapi-code-generator: Import-time RCE via route path -> unescaped @app.get('...') decorator; and 2 more.",
+      "tags": [
+        "Threat Intelligence"
+      ],
+      "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-09",
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-09.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Onyedika Christopher Agada"
+        }
+      ],
       "banner_image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-08.png",
       "date_modified": "2026-11-08T20:31:14Z",
       "date_published": "2026-11-08T20:31:14Z",

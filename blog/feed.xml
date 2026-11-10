@@ -6,7 +6,14 @@
     <link>https://blog.secopsai.dev/</link>
     <description>Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.</description>
     <language>en-us</language>
-    <lastBuildDate>Sun, 08 Nov 2026 20:31:14 GMT</lastBuildDate>
+    <lastBuildDate>Tue, 10 Nov 2026 02:45:08 GMT</lastBuildDate>
+    <item>
+      <title>SecOpsAI Daily Intelligence Brief — 2026-11-09</title>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-09.html</link>
+      <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-09.html</guid>
+      <pubDate>Tue, 10 Nov 2026 02:45:08 GMT</pubDate>
+      <description>SonicWall SonicOS SSLVPN Use of Single-factor Authentication Vulnerability (exploited); fastapi-code-generator: Import-time RCE via response status-code key -&gt; unescaped @app.get(..., responses={...}) dict; fastapi-code-generator: Import-time RCE via route path -&gt; unescaped @app.get(&#x27;...&#x27;) decorator; and 2 more.</description>
+    </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-08</title>
       <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-08.html</link>
