@@ -6,7 +6,14 @@
     <link>https://blog.secopsai.dev/</link>
     <description>Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.</description>
     <language>en-us</language>
-    <lastBuildDate>Tue, 10 Nov 2026 02:45:08 GMT</lastBuildDate>
+    <lastBuildDate>Tue, 10 Nov 2026 22:30:23 GMT</lastBuildDate>
+    <item>
+      <title>SecOpsAI Daily Intelligence Brief — 2026-11-10</title>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-10.html</link>
+      <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-10.html</guid>
+      <pubDate>Tue, 10 Nov 2026 22:30:23 GMT</pubDate>
+      <description>IBM Aspera Faspex Incorrect Authorization Vulnerability (exploited); OpenBSD OpenSSH Unexpected Status Code or Return Value Vulnerability (exploited); node-opcua: Namespace-Level RBAC Fail-Open - Anonymous Write/Call Bypass via Unbound `DefaultRolePermissions; and 5 more.</description>
+    </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-09</title>
       <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-09.html</link>
