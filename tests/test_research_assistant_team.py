@@ -492,3 +492,23 @@ def test_autostart_quotes_matched_lines_recorded_before_they_were_lifted(tmp_pat
     assert len(quoted) == 1 and quoted[0]['metadata']['quoted_from_evidence_id'] == old['evidence_id']
     assert quoted[0]['metadata']['matched_strings'][0]['text'] == INDICATOR['snippet']
     assert quoted[0]['locator'] == f"evidence://{old['evidence_id']}/matched_strings"
+
+
+def test_a_large_case_is_trimmed_to_fit_instead_of_failing(setup, monkeypatch):
+    from secopsai.research_assistant_transport import TRANSPORT_BUDGET, sync_hosted
+    from secopsai.research_operation_store import canonical
+    db, case_id = setup
+    lines = [{'rule_id': 'r', 'file_path': f'pkg/f{i}.js', 'text': 'eval(atob(x)); ' * 200} for i in range(50)]
+    for n in range(9):
+        add_evidence(case_id, evidence_type='static_analysis', title=f'Scan {n}', sha256=format(n, 'x') * 64, provenance='Synthetic retained fixture',
+                     metadata={'matched_strings': lines, 'file_contents': {'install.js': 'ORIGINAL-CODE-MARKER ' + 'x' * 3900}}, db_path=db)
+    ids = [item['evidence_id'] for item in get_case(case_id, db_path=db)['evidence']]
+    hosted(setup, monkeypatch)
+    client = HostedFixture()
+    assert sync_hosted(client, db_path=db)['delivered'] == 1
+    payload = next(iter(client.jobs.values()))['payload']
+    assert len(canonical(payload).encode()) <= TRANSPORT_BUDGET
+    context = payload['inputs']['assistant_request']['context']
+    assert [item['evidence_id'] for item in context['research_case']['evidence']] == ids, 'every evidence item stays citable'
+    assert context['evidence_coverage']['complete'] is False and context['evidence_coverage']['trimmed_to']
+    assert 'ORIGINAL-CODE-MARKER' in json.dumps(context)
