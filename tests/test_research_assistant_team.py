@@ -288,7 +288,7 @@ class HostedFixture:
         return {'job': {'job_id': self.jobs[key]['job_id']}}
     def assistant_results(self, job_ids):
         return {'results': [{'job_id': j['job_id'], 'target_id': j['payload']['target_id'], 'action': j['payload']['action'], 'status': j['status'],
-                             'provider': 'synthetic-hosted', 'model': j.get('model', 'opencodex/test-research'), 'result': j.get('result', {})} for j in self.jobs.values() if j['job_id'] in job_ids]}
+                             'provider': 'synthetic-hosted', 'model': j.get('model', 'opencodex/test-research'), 'result': j.get('result', {}), 'error_code': j.get('error_code', '')} for j in self.jobs.values() if j['job_id'] in job_ids]}
     def cancel_assistant_jobs(self, job_ids):
         self.cancelled.extend(job_ids)
         return {'canceled': job_ids}
@@ -408,6 +408,19 @@ def test_permanent_hosted_contract_rejection_is_not_retried(setup, monkeypatch):
     failed = team.get_team(current['team_id'], db_path=db)
     assert failed['status'] == 'failed'
     assert failed['reason'].endswith(': assistant_delivery_rejected:invalid_assistant_contract'), 'the operator sees which check refused the job'
+
+
+def test_provider_failure_reason_names_the_bridge_error(setup, monkeypatch):
+    from secopsai.research_assistant_transport import sync_hosted
+    db, _ = setup
+    current = hosted(setup, monkeypatch)
+    client = HostedFixture()
+    sync_hosted(client, db_path=db)
+    next(iter(client.jobs.values())).update(status='failed', error_code='rate_limit')
+    assert sync_hosted(client, db_path=db)['rejected'] == 1
+    sync_hosted(client, db_path=db)
+    failed = team.get_team(current['team_id'], db_path=db)
+    assert failed['reason'].endswith(': hosted_assistant_provider_failed:rate_limit'), 'the operator sees why the bridge gave up'
 
 
 def test_edge_stable_keeps_only_what_the_core_edge_accepts_unchanged():

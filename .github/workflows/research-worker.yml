@@ -116,6 +116,12 @@ jobs:
       SECOPSAI_RESEARCH_AUTONOMY_MODE: agent_review  # the agent records bounded verdicts; publication, disclosure and sandbox stay human
       SECOPSAI_INTEL_AGE_OUT: enforce  # archives old items with no exploitation signal; a later ranking restores them
       SECOPSAI_RESEARCH_ASSISTANT_AUTOSTART: "1"  # one evidence-ready case team per day; read-only proposals only
+      # Team jobs pin the model chain captured here. Match the operator's
+      # bridge routing (set 2026-11-07); without it the worker falls back to
+      # gpt-5.6-luna alone, which fails whenever the OpenAI quota is spent.
+      SECOPSAI_BRIDGE_MODEL: anthropic/claude-haiku-5-5
+      SECOPSAI_BRIDGE_FALLBACK_MODELS: xai/grok-4.7,gpt-6.1-terra
+      SECOPSAI_BRIDGE_FALLBACK_MODE: any_provider
       SECOPSAI_PUBLIC_ARTIFACT_RECOVERY: "1"  # exact public bytes only; hash mismatch cannot recover
       SECOPSAI_ARTIFACT_VAULT: "1"  # private, immutable backups of public registry artifacts only
       SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL: https://core.secopsai.dev/api/v1/research/alerts/webhook

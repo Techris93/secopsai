@@ -177,7 +177,7 @@ def sync_hosted(client, *, db_path=None) -> dict:
                 if item.get('status') not in {'succeeded', 'failed', 'canceled'}:
                     continue
                 if item['status'] != 'succeeded':
-                    _terminal(job, team, status='failed' if item['status'] == 'failed' else 'canceled', reason='hosted_assistant_provider_failed', db_path=db_path)
+                    _terminal(job, team, status='failed' if item['status'] == 'failed' else 'canceled', reason='hosted_assistant_provider_failed' + (':' + str(item.get('error_code'))[:80] if item.get('error_code') else ''), db_path=db_path)
                     rejected += 1
                     continue
                 try:
