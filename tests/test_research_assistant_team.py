@@ -405,7 +405,55 @@ def test_permanent_hosted_contract_rejection_is_not_retried(setup, monkeypatch):
     assert sync_hosted(client, db_path=db)['rejected'] == 1
     sync_hosted(client, db_path=db)
     assert len(calls) == 1
-    assert team.get_team(current['team_id'], db_path=db)['status'] == 'failed'
+    failed = team.get_team(current['team_id'], db_path=db)
+    assert failed['status'] == 'failed'
+    assert failed['reason'].endswith(': assistant_delivery_rejected:invalid_assistant_contract'), 'the operator sees which check refused the job'
+
+
+def test_edge_stable_keeps_only_what_the_core_edge_accepts_unchanged():
+    from secopsai.research_assistant_transport import edge_stable
+    deep = {'a': {'b': {'c': {'d': {'e': {'f': {'g': {'h': {'i': {'j': 1}}}}}}}}}}
+    value = {'repo_url': 'https://github.com/a/b', 'query_url': 'https://github.com/a/b?tab=1', 'host_url': 'https://example.com',
+             'locator': 'evidence://EVD-1/matched_strings', 'dot_url': 'https://a.com/a/../b', 'local_uri': 'file:///tmp/x', 'empty_url': '',
+             'artifact': {'k': 1}, 'session_token': 'x', 'Credential': 'x', 'notes': 'kept', 'deep': deep, 'items': list(range(150)), 'text': 'x' * 17000}
+    stable = edge_stable(value)
+    assert stable['repo_url'] == 'https://github.com/a/b' and stable['empty_url'] == '' and stable['notes'] == 'kept'
+    for dropped in ('query_url', 'host_url', 'locator', 'dot_url', 'local_uri', 'artifact', 'session_token', 'Credential'):
+        assert dropped not in stable, dropped
+    assert stable['deep']['a']['b']['c']['d']['e']['f']['g']['h'] == '[truncated]'
+    assert len(stable['items']) == 100 and len(stable['text']) == 16000
+    assert edge_stable(stable) == stable
+
+
+def test_hosted_delivery_sends_graph_context_the_edge_accepts(setup, monkeypatch):
+    from secopsai import intelligence
+    from secopsai.research_assistant_transport import edge_stable, sync_hosted
+    db, _ = setup
+    graph = {'status': 'available', 'neighbors': {'nodes': [{'source_url': 'https://github.com/a/b?tab=1', 'properties': {'a': {'b': {'c': {'d': 1}}}}}]}}
+    monkeypatch.setattr(intelligence, '_attach_ontology_context', lambda context, *a, **k: {**context, 'ontology': graph})
+    hosted(setup, monkeypatch)
+    client = HostedFixture()
+    assert sync_hosted(client, db_path=db)['delivered'] == 1
+    inputs = next(iter(client.jobs.values()))['payload']['inputs']
+    assert edge_stable(inputs) == inputs
+    context = inputs['assistant_request']['context']
+    assert 'source_url' not in context['ontology']['neighbors']['nodes'][0]
+    assert context['evidence_coverage']['complete'] is False
+    assert 'ORIGINAL-CODE-MARKER' in json.dumps(context)
+
+
+def test_an_oversized_graph_is_omitted_before_the_case_is_rejected(setup, monkeypatch):
+    from secopsai import intelligence
+    from secopsai.research_assistant_transport import sync_hosted
+    db, _ = setup
+    graph = {'status': 'available', 'neighbors': [{'entity_id': str(i), 'summary': 'n' * 3000} for i in range(30)]}
+    monkeypatch.setattr(intelligence, '_attach_ontology_context', lambda context, *a, **k: {**context, 'ontology': graph})
+    hosted(setup, monkeypatch)
+    client = HostedFixture()
+    assert sync_hosted(client, db_path=db)['delivered'] == 1
+    context = next(iter(client.jobs.values()))['payload']['inputs']['assistant_request']['context']
+    assert context['ontology'] == {'status': 'omitted', 'reason': 'assistant transport budget'}
+    assert context['evidence_coverage']['complete'] is False
 
 
 INDICATOR = {'rule_id': 'process-execution', 'path': 'package/index.js', 'source_range': {'start_line': 3, 'end_line': 3},
