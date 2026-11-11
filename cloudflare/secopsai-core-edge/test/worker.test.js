@@ -204,6 +204,18 @@ test("health and readiness report the Cloudflare data store", async () => {
   assert.ok(readiness.request_id.length > 0);
 });
 
+test("every alert type the worker sends by webhook is accepted", async () => {
+  // Keep in step with operational_types and external_types in secopsai/research_delivery.py.
+  const env = { DB: new MockD1(), RESEARCH_WEBHOOK_SECRET: "s".repeat(44), CORE_READ_TOKEN: "r".repeat(44) };
+  for (const alertType of ["collector_degraded", "collector_retention_risk", "storage_capacity_warning", "rule_noisy",
+    "external_advisory_match", "external_advisory_feed_degraded", "npm_proactive_anomaly", "npm_enrichment_degraded",
+    "registry_release_anomaly", "campaign_activity"]) {
+    const payload = { schema_version: "secopsai.research.alert.v1", alert_id: `RAL-${alertType}`, alert_type: alertType, severity: "medium", reason: "x", evidence: {}, occurred_at: new Date().toISOString() };
+    const res = await handleRequest(await signedRequest(env.RESEARCH_WEBHOOK_SECRET, payload), env);
+    assert.equal(res.status, 200, alertType);
+  }
+});
+
 test("signed alerts are accepted and idempotently updated", async () => {
   const env = { DB: new MockD1(), RESEARCH_WEBHOOK_SECRET: "s".repeat(44), CORE_READ_TOKEN: "r".repeat(44) };
   const payload = { schema_version: "secopsai.research.alert.v1", alert_id: "RAL-1", alert_type: "collector_degraded", severity: "high", reason: "Collector missed a window", evidence: { collector: "npm", token: "must-be-removed" }, occurred_at: new Date().toISOString() };

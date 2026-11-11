@@ -411,39 +411,44 @@ def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datet
     urgent_types = {"urgent_case_review"}
     max_attempts = max(1, min(int(os.environ.get("SECOPSAI_RESEARCH_ALERT_MAX_ATTEMPTS", "5")), 10))
     current = now or datetime.now(timezone.utc)
+    eligible_by_type = {**{kind: operational_channels for kind in operational_types},
+                        **{kind: external_channels for kind in external_types},
+                        **{kind: urgent_channels for kind in urgent_types}}
+    types = sorted(kind for kind, kind_channels in eligible_by_type.items() if kind_channels)
     soc_store.init_db(db_path)
+    marks = ",".join("?" for _ in types)
     with soc_store.connect(db_path) as connection:
         alerts = connection.execute(
-            "SELECT * FROM research_alerts WHERE status = 'open' ORDER BY created_at LIMIT 100"
-        ).fetchall()
+            f"SELECT alert_id, alert_type FROM research_alerts WHERE status = 'open' AND alert_type IN ({marks}) ORDER BY created_at",
+            types,
+        ).fetchall() if types else []
+        # One pass over the delivery log instead of one query per alert and channel.
+        history: Dict[tuple, Dict[str, Any]] = {}
+        for item in connection.execute(
+            """SELECT d.alert_id, d.channel, SUM(d.status = 'sent') AS sent, SUM(d.status = 'failed') AS failed,
+                      MAX(d.created_at) AS latest
+               FROM research_notification_deliveries d
+               JOIN research_alerts a ON a.alert_id = d.alert_id AND a.status = 'open'
+               GROUP BY d.alert_id, d.channel"""
+        ).fetchall():
+            history[(item["alert_id"], item["channel"])] = dict(item)
 
-    summary = {"enabled": True, "channels": channels, "attempted": 0, "sent": 0, "failed": 0, "deferred": 0}
+    # An alert whose retries are used up stays open for an analyst, but it no
+    # longer takes a slot in the batch. Before, the oldest 100 open alerts were
+    # all used up and no newer alert was ever tried.
+    batch_limit = 100
+    summary = {"enabled": True, "channels": channels, "attempted": 0, "sent": 0, "failed": 0, "deferred": 0, "exhausted": 0}
     for row in alerts:
-        alert = dict(row)
-        alert_type = str(alert.get("alert_type") or "")
-        if alert_type in operational_types:
-            eligible_channels = operational_channels
-        elif alert_type in external_types:
-            eligible_channels = external_channels
-        elif alert_type in urgent_types:
-            eligible_channels = urgent_channels
-        else:
-            continue
-        for channel in eligible_channels:
-            with soc_store.connect(db_path) as connection:
-                deliveries = connection.execute(
-                    """SELECT status, created_at FROM research_notification_deliveries
-                    WHERE alert_id = ? AND channel = ? ORDER BY created_at DESC""",
-                    (alert["alert_id"], channel),
-                ).fetchall()
-            if any(item["status"] == "sent" for item in deliveries):
+        for channel in eligible_by_type[row["alert_type"]]:
+            seen = history.get((row["alert_id"], channel)) or {}
+            if int(seen.get("sent") or 0):
                 continue
-            failures = sum(1 for item in deliveries if item["status"] == "failed")
+            failures = int(seen.get("failed") or 0)
             if failures >= max_attempts:
-                summary["deferred"] += 1
+                summary["exhausted"] += 1
                 continue
-            if deliveries:
-                latest_text = str(deliveries[0]["created_at"] or "").replace("Z", "+00:00")
+            if seen.get("latest"):
+                latest_text = str(seen["latest"]).replace("Z", "+00:00")
                 try:
                     latest = datetime.fromisoformat(latest_text)
                     if latest.tzinfo is None:
@@ -454,8 +459,11 @@ def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datet
                         continue
                 except ValueError:
                     pass
+            if summary["attempted"] >= batch_limit:
+                summary["deferred"] += 1
+                continue
             summary["attempted"] += 1
-            result = send_research_alert(alert["alert_id"], channel=channel, db_path=db_path)
+            result = send_research_alert(row["alert_id"], channel=channel, db_path=db_path)
             if result.get("ok"):
                 summary["sent"] += 1
             else:
