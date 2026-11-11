@@ -11,6 +11,10 @@ const ACCEPTED_ALERT_TYPES = new Set([
   "npm_proactive_anomaly",
   "npm_enrichment_degraded",
   "registry_release_anomaly",
+  // Sent by the worker since campaign linking and rule-health checks were added;
+  // rejecting them used up their retries and stalled every newer alert.
+  "campaign_activity",
+  "rule_noisy",
 ]);
 const SEVERITIES = new Set(["info", "low", "medium", "high", "critical"]);
 const WORKSPACE_TYPES = ["assets", "findings", "sites", "sensors", "services", "wifi_networks", "sync_state"];

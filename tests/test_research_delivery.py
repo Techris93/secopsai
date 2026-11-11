@@ -308,6 +308,32 @@ def test_operational_alert_failure_is_audited_and_backed_off(tmp_path, monkeypat
     assert delivery["last_error"] == "smtp unavailable"
 
 
+def test_used_up_alerts_do_not_block_newer_ones(tmp_path, monkeypatch):
+    # 2026-11-11: the oldest 100 open alerts had all used their retries, so no
+    # newer alert was tried for at least a week.
+    db = str(tmp_path / "research.db")
+    soc_store.init_db(db)
+    with soc_store.connect(db) as connection:
+        for index in range(120):
+            alert_id = f"RAL-OLD-{index:03d}"
+            connection.execute(
+                "INSERT INTO research_alerts (alert_id, alert_type, severity, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at) "
+                "VALUES (?, 'collector_degraded', 'high', ?, 'old', '{}', 'open', '', ?, ?)",
+                (alert_id, alert_id, f"2026-11-01T00:{index // 60:02d}:{index % 60:02d}Z", "2026-11-01T00:00:00Z"))
+            for attempt in range(5):
+                connection.execute(
+                    "INSERT INTO research_notification_deliveries (delivery_id, alert_id, channel, destination, status, attempts, provider_id, last_error, created_at, updated_at) "
+                    "VALUES (?, ?, 'email', 'x', 'failed', ?, '', 'rejected', '2026-11-01T01:00:00Z', '2026-11-01T01:00:00Z')",
+                    (f"RND-{index}-{attempt}", alert_id, attempt + 1))
+    _record_collector_degraded_alert({"ecosystem": "pypi", "status": "failed", "coverage": "gap"}, db_path=db)
+    monkeypatch.setenv("SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS", "email")
+    sent = []
+    monkeypatch.setattr("secopsai.research_delivery.send_email", lambda **kwargs: sent.append(kwargs) or {"provider_id": "x"})
+    result = deliver_pending_operational_alerts(db_path=db)
+    assert result["exhausted"] == 120
+    assert result["attempted"] == 1 and result["sent"] == 1 and len(sent) == 1
+
+
 def test_external_campaign_alerts_use_webhook_channel_without_email_flood(tmp_path, monkeypatch):
     db = str(tmp_path / "research.db")
     alert = create_candidate_alert(
