@@ -2142,9 +2142,9 @@ def _normalize_bridge_result(payload: dict[str, Any], *, action_name: str = "") 
         if isinstance(verdict, str) and verdict in dispositions:
             result["disposition_recommendation"] = dispositions[verdict]
     from secopsai.decision_contracts import number
-    for field in ("finding_confidence", "malicious_probability", "verdict_confidence"):
-        if field in result and result[field] is not None:
-            number(result[field], 0, 100, field, integer=True)
+    for score in ("finding_confidence", "malicious_probability", "verdict_confidence"):
+        if score in result and result[score] is not None:
+            number(result[score], 0, 100, score, integer=True)
     analyst_brief = result.get("analyst_brief")
     if isinstance(analyst_brief, dict):
         nested_map = {

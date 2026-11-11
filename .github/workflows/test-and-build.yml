@@ -20,7 +20,8 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ["3.10", "3.11"]
+        # 3.13 is what the Research Worker runs in production.
+        python-version: ["3.10", "3.11", "3.13"]
 
     steps:
       - name: Checkout code
@@ -125,7 +126,7 @@ jobs:
 
       - name: Test detection rules
         run: |
-          python -m pytest tests/ -v --cov=detect --cov-report=xml --cov-report=term
+          python -m pytest tests/ -v --cov=secopsai --cov=detect --cov-report=xml --cov-report=term
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@1af58845a975a7985b0beb0cbe6fbbb71a41dbad

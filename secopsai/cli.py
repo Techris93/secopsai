@@ -2231,9 +2231,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     research_artifact = research_sub.add_parser("artifact", help="Manage local authorized research artifacts")
     research_artifact_sub = research_artifact.add_subparsers(dest="research_artifact_cmd", required=True)
-    artifact_list = research_artifact_sub.add_parser("list")
-    artifact_list.add_argument("--ecosystem", default="")
-    artifact_list.add_argument("--db-path", default=None)
+    artifact_list_parser = research_artifact_sub.add_parser("list")
+    artifact_list_parser.add_argument("--ecosystem", default="")
+    artifact_list_parser.add_argument("--db-path", default=None)
     artifact_import = research_artifact_sub.add_parser("import", help="Import a local artifact into hash-addressed quarantine")
     artifact_import.add_argument("--path", required=True)
     artifact_import.add_argument("--ecosystem", default="nuget")
@@ -4362,7 +4362,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                         db_path=args.db_path,
                     )
                 elif command == "human-review":
-                    from secopsai.specialist_orchestrator import list_runs as list_specialist_runs
                     from secopsai.specialist_orchestrator import record_human_review
 
                     runs = [item for item in list_specialist_runs(limit=100, db_path=args.db_path) if str(item.get("task_id") or "") == args.case_id]
