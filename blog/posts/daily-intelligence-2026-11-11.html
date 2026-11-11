@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SecOpsAI Daily Intelligence Brief — 2026-11-11 | SecOpsAI Security Blog</title>
+    <meta name="description" content="8 separate advisories · 4 exploited in the wild · highest CVSS 9.5." />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="SecOpsAI Security Blog" />
+    <meta property="og:title" content="SecOpsAI Daily Intelligence Brief — 2026-11-11 | SecOpsAI Security Blog" />
+    <meta property="og:description" content="8 separate advisories · 4 exploited in the wild · highest CVSS 9.5." />
+    <meta property="og:url" content="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-11.html" />
+    <meta property="og:image" content="https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-11.png" />
+    <meta property="og:image:alt" content="SecOpsAI social preview card for SecOpsAI Daily Intelligence Brief — 2026-11-11" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="SecOpsAI Daily Intelligence Brief — 2026-11-11 | SecOpsAI Security Blog" />
+    <meta name="twitter:description" content="8 separate advisories · 4 exploited in the wild · highest CVSS 9.5." />
+    <meta name="twitter:image" content="https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-11.png" />
+    <meta name="twitter:image:alt" content="SecOpsAI social preview card for SecOpsAI Daily Intelligence Brief — 2026-11-11" />
+    <meta property="article:published_time" content="2026-11-11T20:09:57Z" />
+    <meta property="article:modified_time" content="2026-11-11T20:09:57Z" />
+    <meta property="article:tag" content="Threat Intelligence" />
+    <link rel="canonical" href="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-11.html" />
+    <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/blog.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <nav class="shell nav" data-site-nav>
+        <a class="brand" href="/">
+          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
+          <span class="brand-title"><span>SECOPSAI</span><span>SECURITY BLOG</span></span>
+        </a>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-menu" data-nav-toggle>
+          <span class="nav-toggle-lines" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span class="nav-toggle-label">Menu</span>
+        </button>
+        <div class="nav-links" id="site-menu" data-nav-menu>
+          <a href="/">Blog Home</a>
+          <a href="https://docs.secopsai.dev/">Docs</a>
+          <a href="/feed.xml">RSS</a>
+          <a href="/json-feed">JSON Feed</a>
+        </div>
+      </nav>
+    </header>
+    <main>
+      <header class="shell article-hero">
+        <div class="breadcrumb">
+          <a href="/">Blog Home</a><span>&gt;</span><span>SecOpsAI Daily Intelligence Brief — 2026-11-11</span>
+        </div>
+        <p class="eyebrow">CRITICAL • SecOpsAI Intelligence</p>
+        <h1>SecOpsAI Daily Intelligence Brief — 2026-11-11</h1>
+        <p class="dek">8 separate advisories · 4 exploited in the wild · highest CVSS 9.5.</p>
+        <div class="meta">
+          <span class="pill critical">Critical</span>
+          <span>By Onyedika Christopher Agada</span>
+          <span>6 min read</span>
+          <span>Published: 2026-11-11</span>
+            <span>Updated: 2026-11-11</span>
+        </div>
+        <div class="tags"><span class="pill">Threat Intelligence</span></div>
+        <div class="share-bar share-bar-compact" data-share-bar>
+          
+          <div class="share-links">
+            <button class="share-link share-native" type="button" data-share-native data-share-url="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-11.html" data-share-title="SecOpsAI Daily Intelligence Brief — 2026-11-11" hidden>Share…</button>
+            <a class="share-link" href="https://x.com/intent/post?text=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-11&amp;url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-11.html" target="_blank" rel="noopener noreferrer" aria-label="Share on X">X</a><a class="share-link" href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-11.html" target="_blank" rel="noopener noreferrer" aria-label="Share on LinkedIn">LinkedIn</a><a class="share-link" href="https://bsky.app/intent/compose?text=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-11%20https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-11.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Bluesky">Bluesky</a><a class="share-link" href="https://www.reddit.com/submit?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-11.html&amp;title=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-11" target="_blank" rel="noopener noreferrer" aria-label="Share on Reddit">Reddit</a><a class="share-link" href="https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-11.html&amp;t=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-11" target="_blank" rel="noopener noreferrer" aria-label="Share on Hacker News">Hacker News</a><a class="share-link" href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-11.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Facebook">Facebook</a>
+            <a class="share-link" href="mailto:?subject=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-11&amp;body=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-11%0A%0Ahttps%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-11.html" aria-label="Share by email">Email</a>
+            <button class="share-link" type="button" data-copy="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-11.html" aria-label="Copy link to this post">Copy link</button>
+          </div>
+        </div>
+
+      </header>
+      <div class="shell post-layout">
+        <article class="post-body">
+        <section class="brief-overview" aria-labelledby="brief-overview-title"><h2 id="brief-overview-title">In this brief</h2><p class="brief-intro">8 separate items, each from its own source. They are not related unless an item says so.</p><ol class="brief-list"><li><a href="#cve-2026-116606"><span class="brief-row-title">CVE-2026-116606: Barracuda Networks Email Security Gateway (ESG) Authentication Bypass Using an Alternate Path or Channel Vulnerability</span><span class="brief-badges"><span class="pill critical">Critical</span><span class="pill">CVSS 9.3</span><span class="brief-status exploited">Exploited (CISA KEV)</span></span></a></li><li><a href="#cve-2026-111560"><span class="brief-row-title">CVE-2026-111560: Barracuda Networks Multiple Products OS Command Injection Vulnerability</span><span class="brief-badges"><span class="pill high">High</span><span class="pill">CVSS 8.6</span><span class="brief-status exploited">Exploited (CISA KEV)</span></span></a></li><li><a href="#cve-2026-20320"><span class="brief-row-title">CVE-2026-20320: Cisco BroadWorks Improper Restriction of XML External Entity Reference Vulnerability</span><span class="brief-badges"><span class="pill high">High</span><span class="pill">CVSS 7.5</span><span class="brief-status exploited">Exploited (CISA KEV)</span></span></a></li><li><a href="#cve-2026-125350"><span class="brief-row-title">CVE-2026-125350: Google Chromium Use-After-Free Vulnerability</span><span class="brief-badges"><span class="pill high">High</span><span class="pill">CVSS 8.8</span><span class="brief-status exploited">Exploited (CISA KEV)</span></span></a></li><li><a href="#cve-2026-126187"><span class="brief-row-title">React: Unauthenticated Remote Code Execution in React Server Components</span><span class="brief-badges"><span class="pill critical">Critical</span><span class="pill">CVSS 9.5</span></span></a></li><li><a href="#cve-2026-105437"><span class="brief-row-title">GitLab Critical Patch Release: 19.5.4, 19.4.6, 19.3.8</span><span class="brief-badges"><span class="pill high">High</span><span class="pill">CVSS 7.5</span></span></a></li><li><a href="#cve-2026-120778"><span class="brief-row-title">Microsoft Security Advisory CVE-2026-120778 - Aspire Elevation of Privilege Vulnerability</span><span class="brief-badges"><span class="pill high">High</span><span class="pill">CVSS 7.3</span></span></a></li><li><a href="#cve-2026-120792"><span class="brief-row-title">Microsoft Security Advisory CVE-2026-120792 - Aspire Information Disclosure Vulnerability</span><span class="brief-badges"><span class="pill high">High</span><span class="pill">CVSS 7.3</span></span></a></li></ol></section>
+<section class="brief-item" id="cve-2026-116606" aria-labelledby="cve-2026-116606-title">
+<header class="brief-item-head"><p class="brief-count">Item 1 of 8</p><h2 id="cve-2026-116606-title"><a class="brief-self" href="#cve-2026-116606">CVE-2026-116606: Barracuda Networks Email Security Gateway (ESG) Authentication Bypass Using an Alternate Path or Channel Vulnerability</a></h2><div class="brief-badges"><span class="pill critical">Critical</span><span class="pill">CVSS 9.3</span><span class="brief-status exploited">Exploited (CISA KEV)</span></div></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-116606" rel="noopener noreferrer" target="_blank">CISA Known Exploited Vulnerabilities</a>.</p>
+<p>CVE-2026-116606 (official CVSS 9.3): An authentication bypass in Barracuda Email Security Gateway versions earlier than 9.4.0.030 allows an unauthenticated remote attacker to invoke a configuration-import function and restore a crafted, compatible backup archive, resulting in unauthorized modification of the appliance’s global configuration. CISA lists it as exploited in the wild.</p>
+<p class="brief-action"><strong>What to do:</strong> Apply the fix in the vendor&#x27;s advisory (<a class="inline-ref" href="https://trust.barracuda.com/security/pre-authentication-authorization-bypass-command-injection" rel="noopener noreferrer" target="_blank">https://trust.barracuda.com/security/pre-authentication-authorization-bypass-command-injection</a>); the CVE record lists as affected: Barracuda Email Security Gateway (ESG) before 9.4.0.030. If no update or mitigation is available, take the product out of service.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
+<tbody><tr><td>CVE-2026-116606 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-116606" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>CVSS 9.3</td><td>confirmed</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-116606" rel="noopener noreferrer" target="_blank">NVD</a></td></tr><tr><td>exploited in the wild</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-116606" rel="noopener noreferrer" target="_blank">CISA KEV</a></td></tr></tbody>
+</table></div>
+<p class="brief-checked">Identifiers and scores checked automatically against cve.org and NVD.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue.</p>
+<p class="brief-meta">Added to the CISA KEV catalog 10 Nov 2026; first seen by SecOpsAI 11 Nov 2026, 00:30 UTC.</p>
+</section>
+<section class="brief-item" id="cve-2026-111560" aria-labelledby="cve-2026-111560-title">
+<header class="brief-item-head"><p class="brief-count">Item 2 of 8</p><h2 id="cve-2026-111560-title"><a class="brief-self" href="#cve-2026-111560">CVE-2026-111560: Barracuda Networks Multiple Products OS Command Injection Vulnerability</a></h2><div class="brief-badges"><span class="pill high">High</span><span class="pill">CVSS 8.6</span><span class="brief-status exploited">Exploited (CISA KEV)</span></div></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-111560" rel="noopener noreferrer" target="_blank">CISA Known Exploited Vulnerabilities</a>.</p>
+<p>CVE-2026-111560 (official CVSS 8.6): Improper neutralization of shell metacharacters in the timezone configuration field in certain Barracuda appliance products using common Barracuda code allows an authenticated administrator to inject OS commands that execute with root privileges when the crafted timezone value is subsequently processed. CISA lists it as exploited in the wild.</p>
+<p class="brief-action"><strong>What to do:</strong> Apply the fix in the vendor&#x27;s advisory (<a class="inline-ref" href="https://trust.barracuda.com/security/pre-authentication-authorization-bypass-command-injection" rel="noopener noreferrer" target="_blank">https://trust.barracuda.com/security/pre-authentication-authorization-bypass-command-injection</a>); the CVE record lists as affected: Barracuda Email Security Gateway (ESG) 9.4.0.27 and older; Barracuda Load Balancer Application Delivery Controller (ADC) 6.4.0 and older; Barracuda Web Application Firewall (WAF) 11.0.1 and older. If no update or mitigation is available, take the product out of service.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
+<tbody><tr><td>CVE-2026-111560 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-111560" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>exploited in the wild</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-111560" rel="noopener noreferrer" target="_blank">CISA KEV</a></td></tr><tr><td>CVSS 8.6</td><td>official</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-111560" rel="noopener noreferrer" target="_blank">NVD</a></td></tr></tbody>
+</table></div>
+<p class="brief-checked">Identifiers and scores checked automatically against cve.org and NVD.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue.</p>
+<p class="brief-meta">Added to the CISA KEV catalog 10 Nov 2026; first seen by SecOpsAI 11 Nov 2026, 00:30 UTC.</p>
+</section>
+<section class="brief-item" id="cve-2026-20320" aria-labelledby="cve-2026-20320-title">
+<header class="brief-item-head"><p class="brief-count">Item 3 of 8</p><h2 id="cve-2026-20320-title"><a class="brief-self" href="#cve-2026-20320">CVE-2026-20320: Cisco BroadWorks Improper Restriction of XML External Entity Reference Vulnerability</a></h2><div class="brief-badges"><span class="pill high">High</span><span class="pill">CVSS 7.5</span><span class="brief-status exploited">Exploited (CISA KEV)</span></div></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-20320" rel="noopener noreferrer" target="_blank">CISA Known Exploited Vulnerabilities</a>.</p>
+<p>CVE-2026-20320 (official CVSS 7.5): A vulnerability in the Open Client Interface (OCI) XML Parser of Cisco BroadWorks could allow an unauthenticated, remote attacker to read sensitive configuration information on an affected system. This vulnerability exists because XML entries are improperly parsed due to external entity resolution being allowed by default. CISA lists it as exploited in the wild.</p>
+<p class="brief-action"><strong>What to do:</strong> Apply the fix in the vendor&#x27;s advisory (<a class="inline-ref" href="https://sec.cloudapps.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-bworks-xxe-uwUd7CEt" rel="noopener noreferrer" target="_blank">https://sec.cloudapps.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-bworks-xxe-uwUd7CEt</a>); the CVE record lists as affected: Cisco BroadWorks N/A. If no update or mitigation is available, take the product out of service.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
+<tbody><tr><td>CVE-2026-20320 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-20320" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>CVSS 7.5</td><td>confirmed</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-20320" rel="noopener noreferrer" target="_blank">NVD</a></td></tr><tr><td>exploited in the wild</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-20320" rel="noopener noreferrer" target="_blank">CISA KEV</a></td></tr></tbody>
+</table></div>
+<p class="brief-checked">Identifiers and scores checked automatically against cve.org and NVD.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue.</p>
+<p class="brief-meta">Added to the CISA KEV catalog 10 Nov 2026; first seen by SecOpsAI 11 Nov 2026, 00:30 UTC.</p>
+</section>
+<section class="brief-item" id="cve-2026-125350" aria-labelledby="cve-2026-125350-title">
+<header class="brief-item-head"><p class="brief-count">Item 4 of 8</p><h2 id="cve-2026-125350-title"><a class="brief-self" href="#cve-2026-125350">CVE-2026-125350: Google Chromium Use-After-Free Vulnerability</a></h2><div class="brief-badges"><span class="pill high">High</span><span class="pill">CVSS 8.8</span><span class="brief-status exploited">Exploited (CISA KEV)</span></div></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-125350" rel="noopener noreferrer" target="_blank">CISA Known Exploited Vulnerabilities</a>.</p>
+<p>CVE-2026-125350: Use after free in XML in Google Chrome prior to 157.0.8103.50 allowed a remote attacker to execute arbitrary code inside the sandbox via a crafted HTML page. (Chromium security severity: High) CISA lists it as exploited in the wild.</p>
+<p class="brief-action"><strong>What to do:</strong> Apply the fix in the vendor&#x27;s advisory (<a class="inline-ref" href="https://chromereleases.googleblog.com/2026/11/stable-channel-update-for-desktop_018223192.html" rel="noopener noreferrer" target="_blank">https://chromereleases.googleblog.com/2026/11/stable-channel-update-for-desktop_018223192.html</a>); the CVE record lists as affected: Chrome 157.0.8103.50 before 157.0.8103.50. If no update or mitigation is available, take the product out of service.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
+<tbody><tr><td>CVE-2026-125350 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-125350" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>CVSS 8.8</td><td>confirmed</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-125350" rel="noopener noreferrer" target="_blank">NVD</a></td></tr><tr><td>exploited in the wild</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-125350" rel="noopener noreferrer" target="_blank">CISA KEV</a></td></tr></tbody>
+</table></div>
+<p class="brief-checked">Identifiers and scores checked automatically against cve.org and NVD.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue.</p>
+<p class="brief-meta">Added to the CISA KEV catalog 10 Nov 2026; first seen by SecOpsAI 11 Nov 2026, 00:30 UTC.</p>
+</section>
+<section class="brief-item" id="cve-2026-126187" aria-labelledby="cve-2026-126187-title">
+<header class="brief-item-head"><p class="brief-count">Item 5 of 8</p><h2 id="cve-2026-126187-title"><a class="brief-self" href="#cve-2026-126187">React: Unauthenticated Remote Code Execution in React Server Components</a></h2><div class="brief-badges"><span class="pill critical">Critical</span><span class="pill">CVSS 9.5</span></div></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://github.com/advisories/GHSA-xqc2-xf4c-x3h3" rel="noopener noreferrer" target="_blank">GitHub Security Advisories</a>.</p>
+<p>CVE-2026-126187 (official CVSS 9.5): From 19.0.0 until 19.0.9, 19.1.10, 19.2.9, and 19.3.1, the react-server-dom-webpack, react-server-dom-parcel, and react-server-dom-turbopack packages are vulnerable to unauthenticated remote code execution through crafted payloads targeting frameworks that support React Server Components. The vulnerability only affects extremely rare cases where responses transport multiple typed arrays and an attacker-controlled value.</p>
+<p class="brief-action"><strong>What to do:</strong> Upgrade to a fixed release: react-server-dom-parcel 19.0.9, react-server-dom-parcel 19.1.10, react-server-dom-parcel 19.2.9, react-server-dom-parcel 19.3.1, react-server-dom-turbopack 19.0.9, react-server-dom-turbopack 19.1.10, react-server-dom-turbopack 19.2.9, react-server-dom-turbopack 19.3.1, react-server-dom-webpack 19.0.9, react-server-dom-webpack 19.1.10, react-server-dom-webpack 19.2.9, react-server-dom-webpack 19.3.1.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
+<tbody><tr><td>CVE-2026-126187 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-126187" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>CVSS 9.5</td><td>official</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-126187" rel="noopener noreferrer" target="_blank">NVD</a></td></tr></tbody>
+</table></div>
+<p class="brief-checked">Identifiers and scores checked automatically against cve.org and NVD.</p>
+<p class="brief-detection">SecOpsAI detection: <code>secopsai supply-chain advisory-check --advisory GHSA-xqc2-xf4c-x3h3 PATH</code> flags react-server-dom-parcel before 19.0.9; react-server-dom-parcel before 19.1.10; react-server-dom-parcel before 19.2.9; react-server-dom-parcel before 19.3.1; react-server-dom-turbopack before 19.0.9; react-server-dom-turbopack before 19.1.10; react-server-dom-turbopack before 19.2.9; react-server-dom-turbopack before 19.3.1; react-server-dom-webpack before 19.0.9; react-server-dom-webpack before 19.1.10; react-server-dom-webpack before 19.2.9; react-server-dom-webpack before 19.3.1 in a project&#x27;s manifests and lockfiles.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue.</p>
+<p class="brief-meta">Published 10 Nov 2026, 22:44 UTC; first seen by SecOpsAI 10 Nov 2026, 23:54 UTC.</p>
+</section>
+<section class="brief-item" id="cve-2026-105437" aria-labelledby="cve-2026-105437-title">
+<header class="brief-item-head"><p class="brief-count">Item 6 of 8</p><h2 id="cve-2026-105437-title"><a class="brief-self" href="#cve-2026-105437">GitLab Critical Patch Release: 19.5.4, 19.4.6, 19.3.8</a></h2><div class="brief-badges"><span class="pill high">High</span><span class="pill">CVSS 7.5</span></div></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://docs.gitlab.com/releases/patches/patch-release-gitlab-19-5-4-released/" rel="noopener noreferrer" target="_blank">GitLab Security Releases</a>.</p>
+<p>CVE-2026-105437 (official CVSS 7.5): Affected versions of Git have a heap buffer overflow in the three-way merge code (xdiff), which an attacker can trigger through a repository they control. When Git merges a file, it first adds up the size of the merged output, allocates a buffer of that size, and then writes the output into it.</p>
+<p class="brief-action"><strong>What to do:</strong> Upgrade to a fixed release: 19.5.4, 19.4.6, 19.3.8.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
+<tbody><tr><td>CVE-2026-105437 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-105437" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>CVSS 7.5</td><td>official</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-105437" rel="noopener noreferrer" target="_blank">NVD</a></td></tr></tbody>
+</table></div>
+<p class="brief-checked">Identifiers and scores checked automatically against cve.org and NVD.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue.</p>
+<p class="brief-meta">Published 10 Nov 2026; first seen by SecOpsAI 10 Nov 2026, 22:40 UTC.</p>
+</section>
+<section class="brief-item" id="cve-2026-120778" aria-labelledby="cve-2026-120778-title">
+<header class="brief-item-head"><p class="brief-count">Item 7 of 8</p><h2 id="cve-2026-120778-title"><a class="brief-self" href="#cve-2026-120778">Microsoft Security Advisory CVE-2026-120778 - Aspire Elevation of Privilege Vulnerability</a></h2><div class="brief-badges"><span class="pill high">High</span><span class="pill">CVSS 7.3</span></div></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://github.com/advisories/GHSA-m63f-xhvm-6mv5" rel="noopener noreferrer" target="_blank">GitHub Security Advisories</a>.</p>
+<p>CVE-2026-120778 (official CVSS 7.3): Creation of temporary file in directory with insecure permissions in .NET Aspire allows an authorized attacker to elevate privileges locally.</p>
+<p class="brief-action"><strong>What to do:</strong> Upgrade to a fixed release: Aspire.Cli 13.6.5, Aspire.Cli.linux-x64 13.6.5, Aspire.Cli.linux-arm64 13.6.5, Aspire.Cli.linux-musl-x64 13.6.5, Aspire.Cli.osx-x64 13.6.5, Aspire.Cli.osx-arm64 13.6.5, @microsoft/aspire-cli 13.6.5, @microsoft/aspire-cli-linux-x64 13.6.5, @microsoft/aspire-cli-linux-arm64 13.6.5, @microsoft/aspire-cli-linux-musl-x64 13.6.5, @microsoft/aspire-cli-osx-x64 13.6.5, @microsoft/aspire-cli-osx-arm64 13.6.5.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
+<tbody><tr><td>CVE-2026-120778 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-120778" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>CVSS 7.3</td><td>official</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-120778" rel="noopener noreferrer" target="_blank">NVD</a></td></tr></tbody>
+</table></div>
+<p class="brief-checked">Identifiers and scores checked automatically against cve.org and NVD.</p>
+<p class="brief-detection">SecOpsAI detection: <code>secopsai supply-chain advisory-check --advisory GHSA-m63f-xhvm-6mv5 PATH</code> flags @microsoft/aspire-cli before 13.6.5; @microsoft/aspire-cli-linux-x64 before 13.6.5; @microsoft/aspire-cli-linux-arm64 before 13.6.5; @microsoft/aspire-cli-linux-musl-x64 before 13.6.5; @microsoft/aspire-cli-osx-x64 before 13.6.5; @microsoft/aspire-cli-osx-arm64 before 13.6.5 in a project&#x27;s manifests and lockfiles.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue.</p>
+<p class="brief-meta">Published 11 Nov 2026, 00:30 UTC; first seen by SecOpsAI 11 Nov 2026, 00:54 UTC.</p>
+</section>
+<section class="brief-item" id="cve-2026-120792" aria-labelledby="cve-2026-120792-title">
+<header class="brief-item-head"><p class="brief-count">Item 8 of 8</p><h2 id="cve-2026-120792-title"><a class="brief-self" href="#cve-2026-120792">Microsoft Security Advisory CVE-2026-120792 - Aspire Information Disclosure Vulnerability</a></h2><div class="brief-badges"><span class="pill high">High</span><span class="pill">CVSS 7.3</span></div></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://github.com/advisories/GHSA-q6jf-24jf-m3cg" rel="noopener noreferrer" target="_blank">GitHub Security Advisories</a>.</p>
+<p>CVE-2026-120792 (official CVSS 7.3): Insertion of sensitive information into log file in .NET Aspire allows an authorized attacker to disclose information locally.</p>
+<p class="brief-action"><strong>What to do:</strong> Upgrade to a fixed release: Aspire.Cli 13.6.5, Aspire.Cli.linux-x64 13.6.5, Aspire.Cli.linux-arm64 13.6.5, Aspire.Cli.linux-musl-x64 13.6.5, Aspire.Cli.osx-x64 13.6.5, Aspire.Cli.osx-arm64 13.6.5, @microsoft/aspire-cli 13.6.5, @microsoft/aspire-cli-linux-x64 13.6.5, @microsoft/aspire-cli-linux-arm64 13.6.5, @microsoft/aspire-cli-linux-musl-x64 13.6.5, @microsoft/aspire-cli-osx-x64 13.6.5, @microsoft/aspire-cli-osx-arm64 13.6.5.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
+<tbody><tr><td>CVE-2026-120792 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-120792" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>CVSS 7.3</td><td>confirmed</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-120792" rel="noopener noreferrer" target="_blank">NVD</a></td></tr></tbody>
+</table></div>
+<p class="brief-checked">Identifiers and scores checked automatically against cve.org and NVD.</p>
+<p class="brief-detection">SecOpsAI detection: <code>secopsai supply-chain advisory-check --advisory GHSA-q6jf-24jf-m3cg PATH</code> flags @microsoft/aspire-cli before 13.6.5; @microsoft/aspire-cli-linux-x64 before 13.6.5; @microsoft/aspire-cli-linux-arm64 before 13.6.5; @microsoft/aspire-cli-linux-musl-x64 before 13.6.5; @microsoft/aspire-cli-osx-x64 before 13.6.5; @microsoft/aspire-cli-osx-arm64 before 13.6.5 in a project&#x27;s manifests and lockfiles.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue.</p>
+<p class="brief-meta">Published 11 Nov 2026, 00:31 UTC; first seen by SecOpsAI 11 Nov 2026, 00:54 UTC.</p>
+</section>
+<footer class="brief-footer"><h2>Collection scope</h2>
+<p>SecOpsAI watched 29 sources for this edition; all were current. 5 package registries are watched through release metadata only, without scanning package contents. This is not complete coverage of every source or registry.</p>
+<h2>Credits and corrections</h2>
+<p>Prepared by Onyedika Christopher Agada. The editor approves each edition before it is published. Corrections keep the previous edition and explain material changes.</p></footer>
+
+        <div class="share-bar" data-share-bar>
+          <p class="eyebrow">Share this research</p>
+          <div class="share-links">
+            <button class="share-link share-native" type="button" data-share-native data-share-url="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-11.html" data-share-title="SecOpsAI Daily Intelligence Brief — 2026-11-11" hidden>Share…</button>
+            <a class="share-link" href="https://x.com/intent/post?text=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-11&amp;url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-11.html" target="_blank" rel="noopener noreferrer" aria-label="Share on X">X</a><a class="share-link" href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-11.html" target="_blank" rel="noopener noreferrer" aria-label="Share on LinkedIn">LinkedIn</a><a class="share-link" href="https://bsky.app/intent/compose?text=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-11%20https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-11.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Bluesky">Bluesky</a><a class="share-link" href="https://www.reddit.com/submit?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-11.html&amp;title=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-11" target="_blank" rel="noopener noreferrer" aria-label="Share on Reddit">Reddit</a><a class="share-link" href="https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-11.html&amp;t=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-11" target="_blank" rel="noopener noreferrer" aria-label="Share on Hacker News">Hacker News</a><a class="share-link" href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-11.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Facebook">Facebook</a>
+            <a class="share-link" href="mailto:?subject=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-11&amp;body=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-11%0A%0Ahttps%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-11.html" aria-label="Share by email">Email</a>
+            <button class="share-link" type="button" data-copy="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-11.html" aria-label="Copy link to this post">Copy link</button>
+          </div>
+        </div>
+        <section class="comments" data-comments data-slug="daily-intelligence-2026-11-11">
+          <h2>Comments</h2>
+          <p>Comments are moderated before publication. Do not post secrets, tokens, customer data, or exploit payloads.</p>
+          <div class="comment-list" data-comment-list></div>
+          <form class="comment-form" data-comment-form>
+            <div class="comment-form-row">
+              <div class="field">
+                <label for="comment-name">Name or handle</label>
+                <input id="comment-name" name="name" maxlength="80" autocomplete="nickname" required />
+              </div>
+              <div class="field">
+                <label for="comment-email">Email</label>
+                <input id="comment-email" name="email" type="email" maxlength="160" autocomplete="email" aria-describedby="comment-email-hint" required />
+                <p class="field-hint" id="comment-email-hint">Only used for moderation. Never published.</p>
+              </div>
+            </div>
+            <input name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="display:none" />
+            <div class="field">
+              <label for="comment-body">Comment</label>
+              <textarea id="comment-body" name="body" maxlength="2000" rows="5" required></textarea>
+            </div>
+            <div class="turnstile-slot" data-turnstile></div>
+            <div class="comment-form-actions">
+              <button class="button" type="submit">Submit for moderation</button>
+              <p class="comment-status" data-comment-status role="status"></p>
+            </div>
+          </form>
+        </section>
+      </article>
+      <aside class="side">
+
+        <section class="card">
+          <p class="eyebrow">References</p>
+          <ul><li><a href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-20320" rel="noopener noreferrer" target="_blank">www.cisa.gov</a></li><li><a href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-116606" rel="noopener noreferrer" target="_blank">www.cisa.gov</a></li><li><a href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-111560" rel="noopener noreferrer" target="_blank">www.cisa.gov</a></li><li><a href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-125350" rel="noopener noreferrer" target="_blank">www.cisa.gov</a></li><li><a href="https://github.com/advisories/GHSA-m63f-xhvm-6mv5" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/advisories/GHSA-q6jf-24jf-m3cg" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/advisories/GHSA-xqc2-xf4c-x3h3" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://docs.gitlab.com/releases/patches/patch-release-gitlab-19-5-4-released/" rel="noopener noreferrer" target="_blank">docs.gitlab.com</a></li></ul>
+        </section>
+
+      </aside>
+      </div>
+    </main>
+    <script src="/assets/blog.js" defer></script>
+    <script src="/assets/comments.js" defer></script>
+  </body>
+</html>
