@@ -114,7 +114,7 @@ def test_release_workflows_do_not_allow_known_bad_artifacts_to_publish():
 
     assert "Type check with mypy\n        continue-on-error" not in test_build
     assert "Test detection rules\n        run:" in test_build
-    assert "python -m pytest tests/ -v --cov=detect" in test_build
+    assert "python -m pytest tests/ -v --cov=secopsai --cov=detect --cov-report=xml" in test_build
     assert "exit-code: \"0\"" not in security
     assert "scanners: \"secret\"" in security
     assert "scan-type: \"secret\"" not in security
