@@ -110,18 +110,24 @@ def _item_lines(item: dict, *, ranked, version_checks: dict, db_path=None) -> li
     from secopsai import advisory_check, research_desk
 
     payload = intel_event(item["event_id"], db_path=db_path)["payload"]
+    # One fixed order per item (what it is, what to do, how it was checked,
+    # detection, limits and dates) lets the blog draw each item as its own card.
+    # Labels are plain text, so a reader of the raw draft sees the same order.
     lines = ["", f"## {item['title']}", "", f"Source-reported by [{item['source']}]({_reader_url(item['url'], item.get('cves') or [])}).",
              *([item["summary"]] if item["summary"] else []),
-             f"Defensive action: {item['defensive_action']}", f"Limitations: {item['limitations']}",
-             _dates_line(item, payload)]
+             f"**What to do:** {item['defensive_action']}"]
+    lines.extend(research_desk.research_note(item["event_id"], ranked=ranked, db_path=db_path, cves=item.get("cves")))
     if item.get("verification") == "automated":
         lines.append("Identifiers and scores checked automatically against cve.org and NVD." if item.get("cves")
                      else "Checked automatically: primary source with a stated fix; no CVE to check.")
-    lines.extend(research_desk.research_note(item["event_id"], ranked=ranked, db_path=db_path, cves=item.get("cves")))
     lines.extend(advisory_check.brief_line(item["url"], checks=version_checks))
+    lines.extend([f"**Limitations:** {item['limitations']}", _dates_line(item, payload)])
     return lines
 
 
+# The blog draws briefs carrying this marker as separate item cards. Briefs
+# published before it keep their original page.
+BRIEF_LAYOUT = "brief-v2"
 NO_ITEMS_TEXT = "No new items passed technical verification for this edition. Collection gaps and unresolved leads remain visible to the editor."
 SCOPE_HEADING = "\n\n## Collection scope\n\n"
 
@@ -291,7 +297,7 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
     if not items:
         lines.extend(["", NO_ITEMS_TEXT])
     item_lines = {}
-    for item in items:
+    for item in _display_order(items):
         item_lines[item["event_id"]] = _item_lines(item, ranked=ranked, version_checks=version_checks, db_path=db_path)
         lines.extend(item_lines[item["event_id"]])
     lines.extend(["", "## Collection scope", "", coverage["public_summary"], "", "## Credits and corrections", "", f"Prepared by {author['display_name']}. The editor approves each edition before it is published. Corrections keep the previous edition and explain material changes."])
@@ -300,7 +306,7 @@ def create_daily_brief(*, date: str | None = None, db_path=None) -> dict:
              "sources": [item["url"] for item in items], "references": [_reader_url(item["url"], item.get("cves") or []) for item in items],
              "categories": ["Threat Intelligence"], "severity": _brief_severity(items),
              "editorial_edition_id": identity, "review_status": "needs_review", "coverage": coverage, "external_news": False,
-             "duty": duty, "status": "draft"}
+             "duty": duty, "status": "draft", "layout": BRIEF_LAYOUT}
     if existing_edition:
         if existing_edition["state"] in {"approved", "published", "corrected", "retracted"}:
             previous_coverage = existing_edition["draft"].get("coverage") or {}
@@ -701,12 +707,26 @@ def _dates_line(item: dict, payload: dict) -> str:
     return line[0].upper() + line[1:]
 
 
-def _item_severity(item: dict) -> int:
+def _item_cvss(item: dict) -> float:
     scores = [float(value) for match in re.finditer(r"\((?:official )?CVSS ([\d. and]+?)(?:\)|, scored by)", item["summary"])
               for value in re.findall(r"\d+(?:\.\d+)?", match.group(1))]
-    top = max(scores, default=0.0)
+    return max(scores, default=0.0)
+
+
+def _item_exploited(item: dict) -> bool:
+    return "exploited in the wild" in item["summary"] or "known exploited" in str(item.get("source") or "").casefold()
+
+
+def _item_severity(item: dict) -> int:
+    top = _item_cvss(item)
     exploited = "exploited in the wild" in item["summary"]
     return 4 if top >= 9 else 3 if top >= 7 or exploited else 2 if top >= 4 else 1
+
+
+def _display_order(items: list[dict]) -> list[dict]:
+    """Reading order: exploited first, then the highest score, then the newest."""
+    newest = sorted(items, key=lambda item: item["first_observed_at"] or "", reverse=True)
+    return sorted(newest, key=lambda item: (not _item_exploited(item), -_item_cvss(item)))
 
 
 def _brief_severity(items: list[dict]) -> str:
@@ -715,11 +735,17 @@ def _brief_severity(items: list[dict]) -> str:
 
 
 def _brief_summary(items: list[dict]) -> str:
+    """A count, so readers see at once that the brief holds separate items."""
     if not items:
         return "No new advisories passed verification for this edition."
-    heads = [re.sub(r"^CVE-\d{4}-\d+:\s*", "", item["title"]) + (" (exploited)" if "exploited in the wild" in item["summary"] else "")
-             for item in items]
-    return "; ".join(heads[:3]) + (f"; and {len(heads) - 3} more" if len(heads) > 3 else "") + "."
+    parts = [f"{len(items)} separate advisories" if len(items) != 1 else "1 advisory"]
+    exploited = sum(1 for item in items if _item_exploited(item))
+    if exploited:
+        parts.append(f"{exploited} exploited in the wild")
+    top = max(_item_cvss(item) for item in items)
+    if top:
+        parts.append(f"highest CVSS {top:g}")
+    return " · ".join(parts) + "."
 
 
 def _display_title(title: str, source: str) -> str:
