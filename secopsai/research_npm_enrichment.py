@@ -81,6 +81,18 @@ SUSPICIOUS_SCRIPT_TOKENS = {
 }
 
 
+
+def material_failures(failures: int, events_seen: int) -> bool:
+    """Whether package failures mean the stage is unhealthy.
+
+    One failed fetch in a hundred is retried next cycle; counting it as
+    degraded marked nearly every worker cycle degraded and raised a
+    high-severity alert. Three or more failures, or more than 5% of the
+    events seen, still do.
+    """
+    failures = int(failures or 0)
+    return failures >= 3 or failures * 20 > max(int(events_seen or 0), 1)
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -1095,7 +1107,7 @@ def run_npm_enrichment_cycle(
     static_seconds = round(time.monotonic() - static_started, 1)
     completed = _now()
     total_failures = failures + int(static_result.get("failures", 0))
-    status = "degraded" if total_failures else "completed"
+    status = "degraded" if material_failures(total_failures, len(rows)) else "completed"
     with closing(soc_store.connect(db_path)) as connection:
         with _write_transaction(connection, db_path):
             connection.execute(
