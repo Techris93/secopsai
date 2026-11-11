@@ -371,7 +371,7 @@ def test_transient_chunk_retries_use_the_same_receipt(monkeypatch):
     assert session.calls[0][2]['json'] == session.calls[1][2]['json']
 
 
-def test_outbox_preserves_more_than_100_unacknowledged_chunks(tmp_path):
+def test_outbox_preserves_more_than_100_unacknowledged_chunks(tmp_path, monkeypatch):
     db = str(tmp_path / 'outbox.db')
     client = CoreEdgeClient(_settings(), session=_Session())
     for i in range(103):
@@ -380,9 +380,17 @@ def test_outbox_preserves_more_than_100_unacknowledged_chunks(tmp_path):
     with soc_store.read_connect(db) as conn:
         assert conn.execute('SELECT count(*) FROM ontology_sync_outbox').fetchone()[0] == 103
     result = client.flush_ontology_outbox(db_path=db, max_items=100)
-    assert result['flushed'] == 100 and result['pending'] == 3 and result['status'] == 'degraded'
+    # Chunks left for the next batch are a backlog, not a failure.
+    assert result['flushed'] == 100 and result['pending'] == 3 and result['status'] == 'accepted'
+    assert result['pending_chunks'] == 3 and result['rejected_chunks'] == 0
+    # A backlog older than the stuck limit is degraded.
+    monkeypatch.setattr('secopsai.core_edge_client.ONTOLOGY_STUCK_SECONDS', -1)
+    assert client.flush_ontology_outbox(db_path=db, max_items=0)['status'] == 'degraded'
+    monkeypatch.undo()
     result = client.flush_ontology_outbox(db_path=db)
-    assert result['flushed'] == 3 and result['pending'] == 0
+    assert result['pending'] == 0 and result['status'] == 'accepted'
+    with soc_store.read_connect(db) as conn:
+        assert conn.execute("SELECT count(*) FROM ontology_sync_outbox WHERE status='queued'").fetchone()[0] == 0
 
 
 def test_worker_shutdown_does_not_send_new_requests():
@@ -427,7 +435,8 @@ def test_outbox_deadline_leaves_unattempted_work_durable(tmp_path, monkeypatch):
     for i in range(3):
         client.enqueue_ontology_snapshot({'entities':[{'entity_id':f'pkg:npm:{i}','entity_type':'package','namespace':'npm','canonical_key':str(i)}]},db_path=db)
     result = client.flush_ontology_outbox(db_path=db,max_items=100,seconds=1)
-    assert result['flushed']==1 and result['pending']==2 and result['status']=='degraded'
+    # Work left by the deadline is backlog; it turns degraded only once stuck.
+    assert result['flushed']==1 and result['pending']==2 and result['status']=='accepted'
     assert len(session.calls)==1
 
 

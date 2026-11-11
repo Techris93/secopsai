@@ -427,3 +427,16 @@ def test_old_snapshot_rows_are_slimmed_once(tmp_path):
     assert set(stored) == {"1.0.0", "0.9.0"}, "every stored version is kept"
     assert all(set(summary) == set(enrichment.SNAPSHOT_FIELDS) for summary in stored.values())
     assert stored["1.0.0"]["dependencies"] == ["lodash"]
+
+
+def test_one_failed_package_in_a_hundred_is_not_degraded():
+    # 2026-11-11: one retryable failure in 100 events marked nearly every
+    # worker cycle degraded and raised a high-severity alert.
+    from secopsai.research_npm_enrichment import material_failures
+
+    assert not material_failures(0, 100)
+    assert not material_failures(1, 100)
+    assert not material_failures(2, 100)
+    assert material_failures(3, 100)
+    assert material_failures(1, 10), "more than 5% of a small batch"
+    assert material_failures(1, 0)

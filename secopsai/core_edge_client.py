@@ -37,6 +37,8 @@ ONTOLOGY_CHUNK_TARGET_BYTES = MAX_REQUEST_BYTES - 4096
 # when the byte limit would allow a larger chunk.
 ONTOLOGY_CHUNK_READ_BUDGET = 48
 MAX_RESPONSE_BYTES = 512 * 1024
+# A delivery backlog older than this is stuck, not draining.
+ONTOLOGY_STUCK_SECONDS = 3600
 MAX_COMMAND_RESULT_BYTES = 28 * 1024
 MAX_COMMANDS_PER_CYCLE = 10
 COMMAND_DRAIN_SECONDS = 120
@@ -1087,7 +1089,10 @@ class CoreEdgeClient:
                 connection.commit()
         if flushed:
             last_ack = completed_at
-        status = "accepted" if failed == 0 and pending == 0 else "degraded"
+        # Chunks left for the next batch are a normal backlog, not a failure.
+        # Delivery is degraded when a chunk failed or the backlog stops moving.
+        stuck = pending > 0 and (age or 0) > ONTOLOGY_STUCK_SECONDS
+        status = "accepted" if failed == 0 and not stuck else "degraded"
         return {"status": status, "flushed": flushed, "failed": failed, "pending": pending,
                 "error": delivery_error, "http_status": failure_http_status,
                 "deferred": deferred,
@@ -1097,7 +1102,7 @@ class CoreEdgeClient:
                 "authorization_failures": stats["authorization_failures"] or 0,
                 "failure_category": delivery_failure_category,
                 "elapsed_seconds": round(elapsed, 3), "last_acknowledged_at": last_ack,
-                "accepted_chunks": flushed, "rejected_chunks": pending, "chunks": flushed + pending}
+                "accepted_chunks": flushed, "rejected_chunks": failed, "pending_chunks": pending, "chunks": flushed + pending}
 
     def hosted_state(self) -> dict[str, Any]:
         return self._request("GET", "/api/v1/intelligence/bridge/state")

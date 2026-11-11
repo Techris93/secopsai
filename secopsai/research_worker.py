@@ -185,10 +185,12 @@ def _record_npm_enrichment_alert(result: Dict[str, Any], *, db_path: Optional[st
     failing.  Keep that state distinct and deliver a minimized alert through
     the same signed Core webhook used for source-backed intelligence.
     """
+    from secopsai.research_npm_enrichment import material_failures
+
     failures = int(result.get("failures") or 0)
     soc_store.init_db(db_path)
     now = _utcnow().isoformat().replace("+00:00", "Z")
-    if failures <= 0:
+    if not material_failures(failures, int(result.get("events_seen") or 0)):
         with sqlite_writer_lock(db_path):
             with closing(soc_store.connect(db_path)) as connection:
                 with connection:
