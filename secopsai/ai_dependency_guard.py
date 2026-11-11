@@ -323,9 +323,9 @@ def _scan_package_json(path: Path, root: Path, text: str, candidates: Dict[Tuple
         payload = json.loads(text)
     except json.JSONDecodeError:
         return
-    for field in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies", "bundledDependencies"):
-        for package in _iter_dependency_object(payload.get(field)):
-            _add_candidate(candidates, "npm", package, Evidence(_safe_rel(path, root), "manifest", f"package.json {field}"))
+    for section in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies", "bundledDependencies"):
+        for package in _iter_dependency_object(payload.get(section)):
+            _add_candidate(candidates, "npm", package, Evidence(_safe_rel(path, root), "manifest", f"package.json {section}"))
 
 
 def _scan_package_lock(path: Path, root: Path, text: str, candidates: Dict[Tuple[str, str], Candidate]) -> None:
@@ -369,11 +369,11 @@ def _scan_composer_json(path: Path, root: Path, text: str, candidates: Dict[Tupl
         payload = json.loads(text)
     except json.JSONDecodeError:
         return
-    for field in ("require", "require-dev"):
-        for package in (payload.get(field) or {}):
+    for section in ("require", "require-dev"):
+        for package in (payload.get(section) or {}):
             name = str(package)
             if name != "php" and not name.startswith("ext-"):
-                _add_candidate(candidates, "packagist", name, Evidence(_safe_rel(path, root), "manifest", f"composer.json {field}"))
+                _add_candidate(candidates, "packagist", name, Evidence(_safe_rel(path, root), "manifest", f"composer.json {section}"))
 
 
 def _scan_composer_lock(path: Path, root: Path, text: str, candidates: Dict[Tuple[str, str], Candidate]) -> None:

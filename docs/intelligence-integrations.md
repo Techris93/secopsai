@@ -436,6 +436,8 @@ Set the production MCP resource and audience to the exact public MCP service
 origin. The read-only Core upstream is the separate
 `https://core.secopsai.dev` origin.
 
+> **Status:** the hosted gateway is not deployed. `mcp.secopsai.dev` has no DNS record, so the checks below fail until it is deployed. Use the local stdio server meanwhile.
+
 After the opt-in deployment, verify:
 
 ```bash

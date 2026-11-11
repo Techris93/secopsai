@@ -570,7 +570,7 @@ def _run_worker_cycle_unlocked(
         # Research desk: check the claims of the highest-ranked advisories
         # against cve.org and NVD.  Failure leaves the ranking usable.
         try:
-            from secopsai.research_desk import CLAIM_SOURCE_HOSTS, run_claim_checks
+            from secopsai.research_desk import run_claim_checks
 
             desk_fetcher = fetcher or SafeFetcher(timeout=20)
             primary_intel = {**primary_intel, "desk_claim_checks": run_claim_checks(

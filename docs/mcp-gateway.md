@@ -47,6 +47,8 @@ remote authorization policy.
 
 ## Remote deployment
 
+> **Status:** the hosted gateway is not deployed. `mcp.secopsai.dev` has no DNS record, so the checks below fail until it is deployed. Use the local stdio server meanwhile.
+
 Use `https://mcp.secopsai.dev` as the canonical resource origin and
 `https://mcp.secopsai.dev/mcp` as the MCP endpoint. The authorization server
 must support OAuth authorization code with PKCE `S256`, metadata discovery,

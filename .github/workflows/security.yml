@@ -138,7 +138,7 @@ jobs:
           bandit -r . -x ./.git,./.venv,./__pycache__,./data,./tests --severity-level high -f json -o bandit-report.json
 
       - name: Upload reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: security-reports
