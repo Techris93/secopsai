@@ -12,7 +12,7 @@ import smtplib
 import ssl
 import time
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid, parseaddr
 from typing import Any, Dict, List
@@ -415,13 +415,28 @@ def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datet
                         **{kind: external_channels for kind in external_types},
                         **{kind: urgent_channels for kind in urgent_types}}
     types = sorted(kind for kind, kind_channels in eligible_by_type.items() if kind_channels)
+    # Only new alerts are sent. Older ones stay open for an analyst but are
+    # not emailed or posted: after an outage, a backlog of stale alerts would
+    # otherwise flood the channels for days (6,154 were queued on 2026-11-11).
+    max_age_hours = max(1, int(os.environ.get("SECOPSAI_RESEARCH_ALERT_MAX_AGE_HOURS", "24")))
+    cutoff = current - timedelta(hours=max_age_hours)
+    since_text = os.environ.get("SECOPSAI_RESEARCH_ALERT_SEND_SINCE", "").strip()
+    if since_text:
+        since = datetime.fromisoformat(since_text.replace("Z", "+00:00"))
+        cutoff = max(cutoff, since if since.tzinfo else since.replace(tzinfo=timezone.utc))
+    # Stored times always carry six fraction digits and compare as text.
+    cutoff_text = cutoff.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     soc_store.init_db(db_path)
     marks = ",".join("?" for _ in types)
     with soc_store.connect(db_path) as connection:
         alerts = connection.execute(
-            f"SELECT alert_id, alert_type FROM research_alerts WHERE status = 'open' AND alert_type IN ({marks}) ORDER BY created_at",
-            types,
+            f"SELECT alert_id, alert_type FROM research_alerts WHERE status = 'open' AND alert_type IN ({marks}) AND created_at >= ? ORDER BY created_at",
+            [*types, cutoff_text],
         ).fetchall() if types else []
+        skipped_old = connection.execute(
+            f"SELECT count(*) FROM research_alerts WHERE status = 'open' AND alert_type IN ({marks}) AND created_at < ?",
+            [*types, cutoff_text],
+        ).fetchone()[0] if types else 0
         # One pass over the delivery log instead of one query per alert and channel.
         history: Dict[tuple, Dict[str, Any]] = {}
         for item in connection.execute(
@@ -437,7 +452,8 @@ def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datet
     # longer takes a slot in the batch. Before, the oldest 100 open alerts were
     # all used up and no newer alert was ever tried.
     batch_limit = 100
-    summary = {"enabled": True, "channels": channels, "attempted": 0, "sent": 0, "failed": 0, "deferred": 0, "exhausted": 0}
+    summary = {"enabled": True, "channels": channels, "attempted": 0, "sent": 0, "failed": 0, "deferred": 0, "exhausted": 0,
+               "skipped_old": int(skipped_old), "send_since": cutoff_text}
     for row in alerts:
         for channel in eligible_by_type[row["alert_type"]]:
             seen = history.get((row["alert_id"], channel)) or {}
