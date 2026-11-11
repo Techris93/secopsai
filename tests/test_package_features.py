@@ -43,12 +43,16 @@ def test_reviewed_rule_lab_signals_are_npm_only():
     raw_ip = package_features.combine(scan, ["raw_ip_url"], "npm")
     assert raw_ip["score"] == 60 and raw_ip["level"] == "warning"
     assert "BEH_NPM_RAW_IP_URL" in raw_ip["rules_matched"]
-    assert package_features.combine(scan, ["raw_ip_url"], "pypi") is scan
+    # The reviewed rules are npm-only. Rule Lab may still propose separate PyPI
+    # rules for review, so only these two rules are checked on PyPI; asserting
+    # that nothing fires failed every Rule Lab run that proposed one (2026-10-26
+    # to 2026-11-09) and no proposal reached review.
+    assert "BEH_NPM_RAW_IP_URL" not in package_features.combine(scan, ["raw_ip_url"], "pypi").get("rules_matched", [])
 
     small_sender = package_features.combine(scan, ["http_send", "tiny_package"], "npm")
     assert small_sender["score"] == 60 and small_sender["level"] == "warning"
     assert "BEH_NPM_SMALL_HTTP_SEND" in small_sender["rules_matched"]
-    assert package_features.combine(scan, ["http_send", "tiny_package"], "pypi") is scan
+    assert "BEH_NPM_SMALL_HTTP_SEND" not in package_features.combine(scan, ["http_send", "tiny_package"], "pypi").get("rules_matched", [])
 
 
 def test_build_rs_beacon_rule():
