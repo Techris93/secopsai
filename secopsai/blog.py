@@ -3556,6 +3556,133 @@ def _wrap_tldr(body_html: str) -> str:
     return re.sub(r"<h2>TL;DR</h2>\s*(<ul>.*?</ul>)", r'<section class="tldr" aria-label="TL;DR"><h2>TL;DR</h2>\1</section>', body_html, count=1, flags=re.S)
 
 
+# Daily briefs marked with this layout are drawn as separate item cards with an
+# overview, so readers see a list of unrelated advisories, not one article.
+BRIEF_LAYOUT = "brief-v2"
+BRIEF_FOOTER_HEADINGS = {"collection scope", "credits and corrections", "correction history"}
+_BRIEF_CVSS_RE = re.compile(r"CVSS (\d+(?:\.\d+)?)")
+_BRIEF_CVE_RE = re.compile(r"CVE-\d{4}-\d{4,}", re.IGNORECASE)
+_BRIEF_PARAGRAPH_CLASSES = (
+    ("<p>Source-reported by ", "brief-source"),
+    ("<p><strong>What to do:</strong>", "brief-action"),
+    ("<p>SecOpsAI detection:", "brief-detection"),
+    ("<p>Identifiers and scores checked automatically", "brief-checked"),
+    ("<p>Checked automatically:", "brief-checked"),
+    ("<p><strong>Limitations:</strong>", "brief-meta"),
+    ("<p>Published ", "brief-meta"),
+    ("<p>Added to the CISA KEV catalog ", "brief-meta"),
+    ("<p>First seen by SecOpsAI ", "brief-meta"),
+)
+
+
+def _brief_sections(markdown: str) -> tuple[str, List[tuple[str, str]]]:
+    """The text before the first item, then each ``## `` section as (heading, body)."""
+    preamble: List[str] = []
+    sections: List[tuple[str, List[str]]] = []
+    in_code = False
+    for line in markdown.splitlines():
+        if line.strip().startswith("```"):
+            in_code = not in_code
+        if not in_code and line.startswith("## "):
+            sections.append((line[3:].strip(), []))
+        elif sections:
+            sections[-1][1].append(line)
+        else:
+            preamble.append(line)
+    return "\n".join(preamble).strip(), [(heading, "\n".join(body).strip()) for heading, body in sections]
+
+
+def _brief_item_facts(heading: str, body: str) -> Dict[str, Any]:
+    """Badges read from the item's own approved text, so they match what it says."""
+    text = f"{heading}\n{body}"
+    lowered = text.casefold()
+    scores = [float(value) for value in _BRIEF_CVSS_RE.findall(text)]
+    cvss = max(scores, default=0.0)
+    if "cisa lists it as exploited" in lowered or "known exploited vulnerabilities" in lowered:
+        status = ("exploited", "Exploited (CISA KEV)")
+    elif "exploited in the wild" in lowered or "exploitation is reported" in lowered or "exploitation was observed" in lowered:
+        status = ("reported", "Exploitation reported")
+    else:
+        status = ("", "")
+    if cvss >= 9:
+        severity = "critical"
+    elif cvss >= 7 or status[0] == "exploited":
+        severity = "high"
+    elif cvss >= 4:
+        severity = "medium"
+    elif cvss > 0:
+        severity = "low"
+    else:
+        severity = ""
+    cves = _BRIEF_CVE_RE.findall(heading) or _BRIEF_CVE_RE.findall(body)
+    return {"cvss": cvss, "status": status, "severity": severity, "cve": cves[0].upper() if cves else ""}
+
+
+def _brief_anchor(heading: str, facts: Dict[str, Any], used: set) -> str:
+    base = facts["cve"].lower() if facts["cve"] else (slugify(heading)[:60].strip("-") or "item")
+    anchor, number = base, 2
+    while anchor in used:
+        anchor, number = f"{base}-{number}", number + 1
+    used.add(anchor)
+    return anchor
+
+
+def _brief_item_html(body: str) -> str:
+    rendered = markdown_to_html(body)
+    for prefix, css in _BRIEF_PARAGRAPH_CLASSES:
+        rendered = rendered.replace(prefix, f'<p class="{css}">' + prefix[len("<p>"):])
+    return rendered
+
+
+def _render_brief_body(markdown: str) -> Optional[str]:
+    """Overview, one card per item, then the collection scope and credits.
+
+    Returns None when the text holds no item section (a retraction or an
+    empty edition), so the page falls back to the ordinary article layout.
+    """
+    preamble, sections = _brief_sections(markdown)
+    items = [(heading, body) for heading, body in sections if heading.casefold() not in BRIEF_FOOTER_HEADINGS]
+    footer = [(heading, body) for heading, body in sections if heading.casefold() in BRIEF_FOOTER_HEADINGS]
+    if not items:
+        return None
+    used: set = set()
+    total = len(items)
+    cards, rows = [], []
+    for number, (heading, body) in enumerate(items, start=1):
+        facts = _brief_item_facts(heading, body)
+        anchor = _brief_anchor(heading, facts, used)
+        title = _markdown_inline(heading)
+        badges = []
+        if facts["severity"]:
+            badges.append(f'<span class="pill {facts["severity"]}">{facts["severity"].title()}</span>')
+        if facts["cvss"]:
+            badges.append(f'<span class="pill">CVSS {facts["cvss"]:g}</span>')
+        if facts["status"][0]:
+            badges.append(f'<span class="brief-status {facts["status"][0]}">{facts["status"][1]}</span>')
+        badge_html = f'<div class="brief-badges">{"".join(badges)}</div>' if badges else ""
+        cards.append(
+            f'<section class="brief-item" id="{anchor}" aria-labelledby="{anchor}-title">\n'
+            f'<header class="brief-item-head"><p class="brief-count">Item {number} of {total}</p>'
+            f'<h2 id="{anchor}-title"><a class="brief-self" href="#{anchor}">{title}</a></h2>{badge_html}</header>\n'
+            f'{_brief_item_html(body)}\n</section>'
+        )
+        row_badges = f'<span class="brief-badges">{"".join(badges)}</span>' if badges else ""
+        rows.append(f'<li><a href="#{anchor}"><span class="brief-row-title">{title}</span>{row_badges}</a></li>')
+    intro = (f"{total} separate items, each from its own source. They are not related unless an item says so."
+             if total != 1 else "One item in this edition.")
+    overview = (
+        '<section class="brief-overview" aria-labelledby="brief-overview-title">'
+        '<h2 id="brief-overview-title">In this brief</h2>'
+        f'<p class="brief-intro">{intro}</p><ol class="brief-list">{"".join(rows)}</ol></section>'
+    )
+    parts = [markdown_to_html(preamble)] if preamble else []
+    parts.extend([overview, *cards])
+    if footer:
+        parts.append('<footer class="brief-footer">' + "\n".join(
+            f"<h2>{_markdown_inline(heading)}</h2>\n{markdown_to_html(body)}" for heading, body in footer) + "</footer>")
+    return "\n".join(parts)
+
+
 def _render_ioc_card(post: Dict[str, Any]) -> str:
     links = post.get("ioc_links") if isinstance(post.get("ioc_links"), dict) else {}
     safe = [(str(label), str(url)) for label, url in links.items() if str(url).startswith(BASE_URL + "/iocs/")]
@@ -3588,7 +3715,8 @@ def _render_post_html(post: Dict[str, Any]) -> str:
     public_hashes = tuple(str(value) for value in post.get("iocs") or [] if re.fullmatch(r"[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64}", str(value)))
     token = _PUBLIC_HASHES.set(public_hashes)
     try:
-        body_html = _wrap_tldr(markdown_to_html(str(post.get("body_markdown") or "")))
+        brief_html = _render_brief_body(str(post.get("body_markdown") or "")) if post.get("layout") == BRIEF_LAYOUT else None
+        body_html = brief_html or _wrap_tldr(markdown_to_html(str(post.get("body_markdown") or "")))
     finally:
         _PUBLIC_HASHES.reset(token)
     social_image = str(post.get("social_image") or _social_card_src(slug))

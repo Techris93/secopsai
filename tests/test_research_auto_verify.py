@@ -144,6 +144,15 @@ def test_a_second_run_does_not_redecide_and_brief_discloses_automation(db):
     from secopsai.blog import markdown_to_html
     html = markdown_to_html(body)
     assert "<table>" in html and "<p>| ---" not in html and "<p>| Claim" not in html
+    # 2026-11-11: each item is drawn as its own card, in a fixed order.
+    from secopsai.blog import _render_brief_body
+    assert brief["draft"]["layout"] == "brief-v2"
+    items = brief["draft"]["items"]
+    assert body.count("**What to do:** ") == len(items) and body.count("**Limitations:** ") == len(items)
+    page = _render_brief_body(body)
+    assert page.count('class="brief-item"') == len(items)
+    assert f"Item 1 of {len(items)}" in page and "In this brief" in page
+    assert '<footer class="brief-footer"><h2>Collection scope</h2>' in page
 
 
 def test_only_the_reviewer_can_delegate_and_a_revoked_policy_stops_automation(db):
@@ -415,7 +424,13 @@ def test_brief_dates_links_and_severity_are_written_for_readers():
     assert editorial._brief_severity([kev]) == "high"
     assert editorial._brief_severity([kev, pkg]) == "critical"
     assert editorial._brief_severity([]) == "info"
-    assert editorial._brief_summary([kev, pkg]) == "WordPress flaw (exploited); Stanza: RCE."
+    assert editorial._brief_summary([kev, pkg]) == "2 separate advisories · 1 exploited in the wild · highest CVSS 9.8."
+    assert editorial._brief_summary([pkg]) == "1 advisory · highest CVSS 9.8."
+    low = {"summary": "CVE-3 (official CVSS 5): z.", "title": "Low", "first_observed_at": "2026-11-03T23:00:00Z"}
+    newer = {**pkg, "first_observed_at": "2026-11-03T22:00:00Z"}
+    exploited = {**kev, "first_observed_at": "2026-11-03T01:00:00Z"}
+    assert [i["title"] for i in editorial._display_order([low, newer, exploited])] == ["CVE-2026-1: WordPress flaw", "Stanza: RCE", "Low"], \
+        "exploited first, then the highest score, then the newest"
     assert editorial._dates_line({"published_at": None, "first_observed_at": "2026-11-03T22:56:36Z"},
                                  {"catalog_added_at": "2026-11-03T00:00:00Z"}) == \
         "Added to the CISA KEV catalog 3 Nov 2026; first seen by SecOpsAI 3 Nov 2026, 22:56 UTC."

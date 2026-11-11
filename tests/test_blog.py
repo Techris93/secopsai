@@ -1153,3 +1153,88 @@ def test_posts_have_share_links_and_raster_social_cards(tmp_path):
         assert host in bar
     assert 'rel="noopener noreferrer"' in bar and "data-share-native" in bar and "data-copy=" in bar
     assert "<script" not in bar and "<iframe" not in bar
+
+
+BRIEF_V2_BODY = """# SecOpsAI Daily Intelligence Brief — 2026-11-11
+
+## CVE-2026-123218: IBM Aspera Faspex Incorrect Authorization Vulnerability
+
+Source-reported by [CISA Known Exploited Vulnerabilities](https://www.cisa.gov/kev).
+
+CVE-2026-123218 (official CVSS 9.8): authorization bypass. CISA lists it as exploited in the wild.
+
+**What to do:** Apply the fix in the vendor's advisory.
+
+| Claim | Check | Source |
+| --- | --- | --- |
+| CVSS 9.8 | confirmed | NVD |
+
+Identifiers and scores checked automatically against cve.org and NVD.
+
+**Limitations:** Source-reported; SecOpsAI did not reproduce the issue.
+
+Added to the CISA KEV catalog 9 Nov 2026; first seen by SecOpsAI 10 Nov 2026, 00:20 UTC.
+
+## GPUStack: Authentication bypass
+
+Source-reported by [GitHub Security Advisories](https://github.com/advisories/GHSA-x).
+
+CVE-2026-102895 (official CVSS 9.8): unauthenticated admin. Exploitation is reported but not confirmed by CISA KEV.
+
+**What to do:** Upgrade to gpustack 2.2.0.
+
+SecOpsAI detection: `secopsai supply-chain advisory-check --advisory GHSA-x PATH` flags gpustack before 2.2.0.
+
+**Limitations:** Source-reported.
+
+Published 9 Nov 2026, 22:15 UTC; first seen by SecOpsAI 9 Nov 2026, 23:23 UTC.
+
+## An item the editor rewrote freely
+
+Plain paragraph with no labels.
+
+## Collection scope
+
+SecOpsAI watched 29 sources for this edition.
+
+## Credits and corrections
+
+Prepared by the editor.
+"""
+
+
+def test_brief_v2_draws_an_overview_and_one_card_per_item():
+    page = blog._render_post_html({"slug": "daily-intelligence-2026-11-11", "title": "SecOpsAI Daily Intelligence Brief — 2026-11-11",
+                                   "summary": "3 separate advisories.", "severity": "critical", "layout": "brief-v2",
+                                   "body_markdown": BRIEF_V2_BODY, "published_at": "2026-11-11T00:00:00Z"})
+    assert "In this brief" in page and "3 separate items, each from its own source." in page
+    assert page.count('class="brief-item"') == 3, "a freely rewritten item still gets its card"
+    assert 'id="cve-2026-123218"' in page and 'href="#cve-2026-123218"' in page
+    assert 'id="cve-2026-102895"' in page, "the anchor comes from the CVE in the text when the heading has none"
+    assert 'id="an-item-the-editor-rewrote-freely"' in page
+    assert "Item 1 of 3" in page and "Item 3 of 3" in page
+    assert '<span class="brief-status exploited">Exploited (CISA KEV)</span>' in page
+    assert '<span class="brief-status reported">Exploitation reported</span>' in page
+    assert '<span class="pill critical">Critical</span>' in page and '<span class="pill">CVSS 9.8</span>' in page
+    assert '<p class="brief-action"><strong>What to do:</strong>' in page
+    assert '<p class="brief-detection">SecOpsAI detection:' in page
+    assert '<p class="brief-meta"><strong>Limitations:</strong>' in page and '<p class="brief-meta">Published 9 Nov' in page
+    footer = page.index('<footer class="brief-footer">')
+    assert page.index("Collection scope") > footer and page.index("Credits and corrections") > footer
+    assert page.index("Item 3 of 3") < footer, "scope and credits are not part of the last item"
+
+
+def test_briefs_without_the_layout_render_exactly_as_before():
+    post = {"slug": "daily-intelligence-2026-11-10", "title": "SecOpsAI Daily Intelligence Brief — 2026-11-10",
+            "summary": "x", "severity": "critical", "body_markdown": BRIEF_V2_BODY, "published_at": "2026-11-10T00:00:00Z"}
+    page = blog._render_post_html(post)
+    assert "brief-item" not in page and "In this brief" not in page
+    assert blog._wrap_tldr(blog.markdown_to_html(blog._public_post(post)["body_markdown"])) in page
+
+
+def test_a_retracted_brief_falls_back_to_the_article_layout():
+    body = "# Retraction: Brief\n\nWithdrawn.\n\n## Correction history\n\n2026-11-11: withdrawn"
+    assert blog._render_brief_body(body) is None
+    page = blog._render_post_html({"slug": "r", "title": "Brief", "summary": "x", "layout": "brief-v2", "body_markdown": body,
+                                   "published_at": "2026-11-11T00:00:00Z"})
+    assert "Withdrawn." in page and "brief-item" not in page

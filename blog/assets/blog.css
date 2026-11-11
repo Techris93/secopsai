@@ -706,3 +706,88 @@ button.button {
   .comment-form-row { grid-template-columns: 1fr; }
   .comment-form-actions .button { width: 100%; text-align: center; }
 }
+
+/* Daily brief (layout brief-v2): an overview, then one card per item. */
+.brief-overview {
+  border: 1px solid var(--rule-dark);
+  background: var(--panel);
+  padding: 14px 16px;
+  margin: 8px 0 28px;
+}
+.post-body .brief-overview h2 { margin: 0 0 6px; border: 0; padding: 0; font-size: 16px; }
+.post-body .brief-intro { margin: 0 0 10px; color: var(--muted); font-size: 13.5px; }
+.brief-list { list-style: none; margin: 0; padding: 0; counter-reset: brief; }
+.brief-list li { counter-increment: brief; border-top: 1px solid var(--rule); margin: 0; }
+.brief-list li:first-child { border-top: 0; }
+.brief-list a {
+  display: grid;
+  grid-template-columns: 2.2em minmax(0, 1fr);
+  gap: 4px 8px;
+  padding: 9px 0;
+  color: var(--ink);
+  text-decoration: none;
+}
+.brief-list a::before {
+  content: counter(brief);
+  grid-row: span 2;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  padding-top: 2px;
+}
+.brief-list a:hover .brief-row-title,
+.brief-list a:focus-visible .brief-row-title { text-decoration: underline; color: var(--note); }
+.brief-row-title { font-size: 14px; font-weight: 600; line-height: 1.45; }
+.brief-list .brief-badges { grid-column: 2; }
+.brief-badges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.brief-badges .pill { margin: 0; }
+.brief-status {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+}
+.brief-status.exploited { color: var(--warning); background: var(--warning-bg); }
+.brief-status.reported { color: var(--caution); background: var(--caution-bg); }
+
+.brief-item {
+  border: 1px solid var(--rule-dark);
+  background: var(--panel);
+  padding: 16px 18px 6px;
+  margin: 0 0 22px;
+  scroll-margin-top: 80px;
+}
+.brief-item:target { border-color: var(--note); box-shadow: 0 0 0 2px var(--note-bg); }
+.brief-item-head { margin-bottom: 10px; }
+.post-body .brief-count {
+  margin: 0 0 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.post-body .brief-item-head h2 { margin: 0 0 8px; border: 0; padding: 0; font-size: 18px; line-height: 1.35; }
+.post-body .brief-self { color: var(--ink); text-decoration: none; }
+.post-body .brief-self:hover { color: var(--note); text-decoration: underline; }
+.post-body .brief-source { font-size: 13px; color: var(--muted); margin-top: 0; }
+.post-body .brief-action {
+  background: var(--ok-bg);
+  border-left: 3px solid var(--ok);
+  padding: 8px 12px;
+  color: var(--ink);
+}
+.post-body .brief-action strong { color: var(--ok); }
+.post-body .brief-detection { font-size: 13.5px; }
+.post-body .brief-checked { font-size: 12.5px; color: var(--muted); margin-top: -6px; }
+.post-body .brief-meta { font-size: 12.5px; color: var(--muted); margin: 6px 0; }
+.brief-item .table-scroll { margin: 10px 0; }
+.brief-footer { border-top: 2px solid var(--ink); margin-top: 30px; padding-top: 4px; }
+.post-body .brief-footer h2 { font-size: 15px; }
+.post-body .brief-footer p { font-size: 13.5px; }
+@media (max-width: 560px) {
+  .brief-item { padding: 14px 12px 4px; }
+  .brief-overview { padding: 12px; }
+}
