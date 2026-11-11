@@ -47,7 +47,78 @@ def _pick(item: Dict[str, Any], keys: List[str], limit: int = 500) -> Dict[str, 
     return result
 
 
-def project_case(case: Dict[str, Any], summary: Dict[str, Any]) -> Dict[str, Any]:
+TEAM_TEXT_FIELDS = ("summary", "risk_assessment", "verdict_recommendation", "verdict_rationale")
+TEAM_LIST_FIELDS = ("evidence", "recommended_actions", "limitations")
+# Each step halves what a stage may show until the case fits Core's bounds.
+TEAM_SHRINK_STEPS = ((1500, 8, 500), (800, 6, 300), (400, 4, 200), (200, 3, 120))
+
+
+def _team_output(output: Any, text_limit: int, items: int, item_limit: int) -> Dict[str, Any]:
+    if not isinstance(output, dict):
+        return {}
+    shown: Dict[str, Any] = {}
+    for key in TEAM_TEXT_FIELDS:
+        value = _text(output.get(key), text_limit)
+        if value:
+            shown[key] = value
+    for key in TEAM_LIST_FIELDS:
+        values = [_text(item, item_limit) for item in (output.get(key) or []) if isinstance(item, str) and item.strip()]
+        if values:
+            shown[key] = values[:items]
+            if len(values) > items:
+                shown[key + "_omitted"] = len(values) - items
+    return shown
+
+
+def case_teams(case_id: str, *, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Each assistant team's stage outputs and blind reviews, newest team first.
+
+    These are model proposals for a human reviewer to read; the dashboard
+    shows them on the case so review does not need the worker's ledger.
+    """
+    from secopsai.research_assistant_team import STAGES, _plans
+    from secopsai.research_operation_store import records
+    from secopsai.specialist_orchestrator import get_run
+
+    teams = []
+    for plan in _plans(case_id, db_path=db_path, limit=3):
+        progress = records("assistant_team_progress", case_id=plan["team_id"], db_path=db_path, limit=1)
+        state = progress[0]["payload"] if progress else {}
+        stages = []
+        for stage, profile, _ in STAGES:
+            run_id = (state.get("runs") or {}).get(stage)
+            if not run_id:
+                continue
+            try:
+                run = get_run(run_id, db_path=db_path)
+            except Exception:  # a missing run must not stop the case from syncing
+                continue
+            review = run.get("review") or {}
+            stages.append({
+                "stage": stage, "profile": profile, "run_id": run_id, "status": run.get("status"),
+                "completed": stage in (state.get("completed_stages") or []),
+                "model": _text((run.get("result") or {}).get("model"), 160),
+                "material_disagreement": bool(run.get("material_disagreement")),
+                "output": (run.get("result") or {}).get("output") or {},
+                "review": review.get("output") or {},
+            })
+        teams.append({"team_id": plan["team_id"], "created_at": plan.get("created_at"), "status": state.get("status", "queued"),
+                      "reason": _text(state.get("reason"), 500), "updated_at": progress[0]["created_at"] if progress else plan.get("created_at"),
+                      "stages": stages})
+    return teams
+
+
+def _shown_teams(teams: List[Dict[str, Any]], step: tuple) -> List[Dict[str, Any]]:
+    text_limit, items, item_limit = step
+    return [{**{key: value for key, value in team.items() if key != "stages"},
+             "stages": [{**{key: value for key, value in stage.items() if key not in {"output", "review"}},
+                         "output": _team_output(stage["output"], text_limit, items, item_limit),
+                         "review": _team_output(stage["review"], text_limit, items, item_limit)}
+                        for stage in team["stages"]]}
+            for team in teams]
+
+
+def project_case(case: Dict[str, Any], summary: Dict[str, Any], teams: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """Return {summary, detail} within the Core size bounds."""
     summary_projection = {key: value for key, value in summary.items() if isinstance(value, (str, int, float, bool)) or value is None}
     detail: Dict[str, Any] = _pick(case, [
@@ -72,6 +143,14 @@ def project_case(case: Dict[str, Any], summary: Dict[str, Any]) -> Dict[str, Any
     detail["disclosures"] = [_pick(item, ["disclosure_id", "status", "recipient", "subject", "created_at", "sent_at"]) for item in (case.get("disclosures") or [])[:20]]
     detail["timeline"] = [_pick(item, ["event_id", "event_type", "message", "actor", "created_at"]) for item in (case.get("timeline") or [])[:50]]
     detail["findings"] = [_pick(item, ["finding_id", "title", "severity", "status", "relationship"]) for item in (case.get("findings") or [])[:50]]
+    teams = teams or []
+    for step in TEAM_SHRINK_STEPS:
+        detail["assistant_teams"] = _shown_teams(teams, step)
+        if len(json.dumps(detail, default=str)) <= DETAIL_LIMIT:
+            break
+    while len(json.dumps(detail, default=str)) > DETAIL_LIMIT and detail["assistant_teams"]:
+        detail["assistant_teams"].pop()  # oldest team first
+        detail["projection_truncated"] = True
     for key in ("timeline", "claims", "iocs", "evidence"):
         while len(json.dumps(detail, default=str)) > DETAIL_LIMIT and detail[key]:
             detail[key] = detail[key][: len(detail[key]) // 2]
@@ -102,6 +181,23 @@ def _save_cursor(db_path: Optional[str], value: str) -> None:
         connection.commit()
 
 
+def _team_changes(db_path: Optional[str]) -> Dict[str, str]:
+    """case_id -> when any of its assistant teams last changed."""
+    with closing(soc_store.connect(db_path)) as connection:
+        try:
+            rows = connection.execute(
+                """SELECT p.case_id, MAX(COALESCE(s.created_at, p.created_at)) AS changed
+                   FROM research_operation_records p
+                   LEFT JOIN research_operation_records s
+                     ON s.kind = 'assistant_team_progress' AND s.case_id = json_extract(p.payload_json, '$.team_id')
+                   WHERE p.kind = 'assistant_team_plan'
+                   GROUP BY p.case_id"""
+            ).fetchall()
+        except Exception:  # no operation store yet
+            return {}
+    return {str(row["case_id"]): str(row["changed"] or "") for row in rows}
+
+
 def sync_research_cases(client: Any, *, db_path: Optional[str] = None, limit: int = 200) -> Dict[str, Any]:
     """Push cases changed since the last successful sync.  Resumable."""
     from secopsai.research_cases import get_case, list_cases
@@ -111,18 +207,25 @@ def sync_research_cases(client: Any, *, db_path: Optional[str] = None, limit: in
     since = _cursor(db_path)
     listed = list_cases(limit=500, db_path=db_path)
     listed = listed.get("cases", []) if isinstance(listed, dict) else listed
-    changed = sorted((item for item in listed if str(item.get("updated_at") or "") > since), key=lambda item: str(item.get("updated_at") or ""))[:limit]
+    # A team's progress does not change the case's own updated_at, so the case
+    # is resent when either moves; Core keeps the newer of the two.
+    team_changes = _team_changes(db_path)
+    for item in listed:
+        item["_synced_at"] = max(str(item.get("updated_at") or ""), team_changes.get(item.get("case_id"), ""))
+    changed = sorted((item for item in listed if item["_synced_at"] > since), key=lambda item: item["_synced_at"])[:limit]
     accepted = 0
     rejected: List[Dict[str, Any]] = []
     for start in range(0, len(changed), BATCH_SIZE):
         batch = changed[start:start + BATCH_SIZE]
         payload = []
         for item in batch:
-            projection = project_case(get_case(item["case_id"], db_path=db_path), item)
-            payload.append({"case_id": item["case_id"], "updated_at": item.get("updated_at"), **projection})
+            summary = {key: value for key, value in item.items() if key != "_synced_at"}
+            teams = case_teams(item["case_id"], db_path=db_path) if item["case_id"] in team_changes else []
+            projection = project_case(get_case(item["case_id"], db_path=db_path), summary, teams)
+            payload.append({"case_id": item["case_id"], "updated_at": item["_synced_at"], **projection})
         result = client.sync_research_cases(payload)
         accepted += int(result.get("accepted") or 0)
         rejected.extend(result.get("rejected") or [])
         # Advance only past batches Core accepted, so a failure resumes here.
-        _save_cursor(db_path, str(batch[-1].get("updated_at") or since))
+        _save_cursor(db_path, str(batch[-1]["_synced_at"] or since))
     return {"status": "accepted", "considered": len(changed), "accepted": accepted, "rejected": rejected[:20]}

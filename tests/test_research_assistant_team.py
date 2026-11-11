@@ -525,3 +525,47 @@ def test_a_large_case_is_trimmed_to_fit_instead_of_failing(setup, monkeypatch):
     assert [item['evidence_id'] for item in context['research_case']['evidence']] == ids, 'every evidence item stays citable'
     assert context['evidence_coverage']['complete'] is False and context['evidence_coverage']['trimmed_to']
     assert 'ORIGINAL-CODE-MARKER' in json.dumps(context)
+
+
+def test_team_reports_reach_the_case_view_and_resend_the_case(setup):
+    # 2026-11-11: a finished team could only be read from the worker's ledger.
+    from secopsai.research_case_sync import case_teams, project_case, sync_research_cases
+    from secopsai.research_cases import list_cases
+
+    class Core:
+        enabled = True
+        def __init__(self):
+            self.cases = []
+        def sync_research_cases(self, cases):
+            self.cases.extend(cases)
+            return {'accepted': len(cases), 'rejected': []}
+
+    db, case_id = setup
+    core = Core()
+    sync_research_cases(core, db_path=db)
+    assert core.cases and core.cases[-1]['detail']['assistant_teams'] == []
+    current = team.advance_team(start(setup)['team_id'], db_path=db)
+    run_id = current['runs']['synthesis']
+    record_primary_result(run_id, {**output(db, case_id, summary='PRIMARY-SUMMARY-MARKER'), 'evidence': ['e'] * 20},
+                          model='opencodex/test-research', db_path=db)
+    record_review_result(run_id, output(db, case_id, summary='REVIEW-SUMMARY-MARKER'), model='opencodex/test-research', db_path=db)
+    team.advance_team(current['team_id'], db_path=db)
+
+    sent = len(core.cases)
+    assert sync_research_cases(core, db_path=db)['accepted'] == 1, 'team progress alone resends the case'
+    shown = core.cases[sent]['detail']['assistant_teams'][0]
+    assert shown['team_id'] == current['team_id']
+    stage = shown['stages'][0]
+    assert stage['stage'] == 'synthesis' and stage['completed'] is True
+    assert stage['output']['summary'] == 'PRIMARY-SUMMARY-MARKER'
+    assert stage['review']['summary'] == 'REVIEW-SUMMARY-MARKER'
+    assert len(stage['output']['evidence']) == 8 and stage['output']['evidence_omitted'] == 12
+    assert sync_research_cases(core, db_path=db)['considered'] == 0
+
+    # Oversized team text is shortened before anything else is cut.
+    teams = case_teams(case_id, db_path=db)
+    teams[0]['stages'][0]['output']['summary'] = 'x' * 200_000
+    summary = next(item for item in list_cases(db_path=db) if item['case_id'] == case_id)
+    detail = project_case(get_case(case_id, db_path=db), summary, teams)['detail']
+    assert len(json.dumps(detail)) <= 90_000
+    assert detail['assistant_teams'][0]['stages'][0]['output']['summary'] == 'x' * 1500
