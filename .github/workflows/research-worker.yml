@@ -127,6 +127,10 @@ jobs:
       SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL: https://core.secopsai.dev/api/v1/research/alerts/webhook
       SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET: ${{ secrets.SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET }}
       SECOPSAI_RESEARCH_ALERT_EMAIL: research@secopsai.dev
+      # Only new alerts are sent. The backlog from the 2026-11-04 to 11-11
+      # delivery stall stays open for analysts but is not sent; nothing older
+      # than SECOPSAI_RESEARCH_ALERT_MAX_AGE_HOURS (default 24) is ever sent.
+      SECOPSAI_RESEARCH_ALERT_SEND_SINCE: "2026-11-11T14:00:00Z"
       SECOPSAI_RESEARCH_FROM_EMAIL: research@secopsai.dev
       # Urgent review uses the existing SMTP delivery and research inbox, but
       # opts into its own channel so ordinary alert routing cannot enable it.

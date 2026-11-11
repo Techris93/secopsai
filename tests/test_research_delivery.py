@@ -3,6 +3,8 @@ import hmac
 import json
 from contextlib import contextmanager
 
+from datetime import datetime, timezone
+
 import soc_store
 
 from secopsai.research_delivery import deliver_pending_operational_alerts, deliver_urgent_review_alert, send_email, send_research_alert
@@ -319,7 +321,7 @@ def test_used_up_alerts_do_not_block_newer_ones(tmp_path, monkeypatch):
             connection.execute(
                 "INSERT INTO research_alerts (alert_id, alert_type, severity, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at) "
                 "VALUES (?, 'collector_degraded', 'high', ?, 'old', '{}', 'open', '', ?, ?)",
-                (alert_id, alert_id, f"2026-11-01T00:{index // 60:02d}:{index % 60:02d}Z", "2026-11-01T00:00:00Z"))
+                (alert_id, alert_id, soc_store.utc_now(), soc_store.utc_now()))
             for attempt in range(5):
                 connection.execute(
                     "INSERT INTO research_notification_deliveries (delivery_id, alert_id, channel, destination, status, attempts, provider_id, last_error, created_at, updated_at) "
@@ -332,6 +334,32 @@ def test_used_up_alerts_do_not_block_newer_ones(tmp_path, monkeypatch):
     result = deliver_pending_operational_alerts(db_path=db)
     assert result["exhausted"] == 120
     assert result["attempted"] == 1 and result["sent"] == 1 and len(sent) == 1
+
+
+def test_only_new_alerts_are_sent(tmp_path, monkeypatch):
+    # 2026-11-11: after the stall was fixed, 6,154 stale alerts were queued.
+    # Older alerts stay open for analysts but are not sent.
+    db = str(tmp_path / "research.db")
+    soc_store.init_db(db)
+    with soc_store.connect(db) as connection:
+        for alert_id, created in (("RAL-STALE", "2026-11-01T00:00:00.000000Z"), ("RAL-BEFORE-CUT", "2026-11-11T12:00:00.000000Z"),
+                                  ("RAL-NEW", "2026-11-11T14:00:00.000000Z")):
+            connection.execute(
+                "INSERT INTO research_alerts (alert_id, alert_type, severity, dedupe_key, reason, evidence_json, status, owner, created_at, updated_at) "
+                "VALUES (?, 'collector_degraded', 'high', ?, 'x', '{}', 'open', '', ?, ?)", (alert_id, alert_id, created, created))
+    monkeypatch.setenv("SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS", "email")
+    sent = []
+    monkeypatch.setattr("secopsai.research_delivery.send_research_alert",
+                        lambda alert_id, **kwargs: sent.append(alert_id) or {"ok": True})
+    now = datetime(2026, 11, 11, 15, 0, tzinfo=timezone.utc)
+    result = deliver_pending_operational_alerts(db_path=db, now=now)
+    assert sent == ["RAL-BEFORE-CUT", "RAL-NEW"] and result["skipped_old"] == 1, "older than 24 hours"
+    monkeypatch.setenv("SECOPSAI_RESEARCH_ALERT_SEND_SINCE", "2026-11-11T13:45:00Z")
+    sent.clear()
+    result = deliver_pending_operational_alerts(db_path=db, now=now)
+    assert sent == ["RAL-NEW"] and result["skipped_old"] == 2, "nothing from before the cut is sent"
+    with soc_store.connect(db) as connection:
+        assert connection.execute("SELECT count(*) FROM research_alerts WHERE status='open'").fetchone()[0] == 3, "skipped alerts stay open"
 
 
 def test_external_campaign_alerts_use_webhook_channel_without_email_flood(tmp_path, monkeypatch):
