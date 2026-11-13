@@ -1614,6 +1614,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     artifact_cycle.add_argument("--fixture", default="")
     artifact_cycle.add_argument("--db-path", default=None)
 
+    remediation = sub.add_parser("remediation", help="Find recurring CI failures and fix, verify and ship them with a specialist")
+    remediation_sub = remediation.add_subparsers(dest="remediation_cmd", required=True)
+    remediation_tick = remediation_sub.add_parser("tick", help="One pass: detect, triage, follow PRs, start at most one fix")
+    remediation_tick.add_argument("--mode", choices=["off", "observe", "pr", "merge"], default=None,
+                                  help="Override SECOPSAI_AUTO_REMEDIATION (observe writes nothing to GitHub)")
+    remediation_tick.add_argument("--db-path", default=None)
+    remediation_status = remediation_sub.add_parser("status", help="List incidents")
+    remediation_status.add_argument("--status", default="")
+    remediation_status.add_argument("--db-path", default=None)
+
     specialists = sub.add_parser(
         "specialists",
         help="Route and run bounded specialist work with the persisted OpenCodex model",
@@ -4923,6 +4933,18 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(to_json(payload))
         else:
             print(to_json(payload))
+        return 0
+
+    if args.cmd == "remediation":
+        from secopsai import auto_remediation
+
+        if args.remediation_cmd == "tick":
+            payload = auto_remediation.tick(db_path=args.db_path, run_mode=args.mode)
+        else:
+            payload = {"incidents": [{key: item[key] for key in ("incident_id", "status", "kind", "workflow", "step", "error",
+                                                                  "occurrences", "attempts", "issue_number", "pr_number", "last_seen")}
+                                     for item in auto_remediation.incidents(db_path=args.db_path, status=args.status)]}
+        print(json.dumps(payload, indent=2, sort_keys=True, default=str))
         return 0
 
     if args.cmd == "specialists":
