@@ -524,6 +524,20 @@ def test_operator_can_enable_paused_collectors_by_environment(tmp_path, monkeypa
     assert all(item["due"] for item in due)
 
 
+def test_operator_can_pause_a_collector_and_resume_it(tmp_path, monkeypatch):
+    # A registry that is down can be paused instead of failing every run.
+    db_path = _db(tmp_path)
+    monkeypatch.setenv("SECOPSAI_PAUSE_COLLECTORS", "maven")
+    due_collectors(db_path=db_path)
+    states = {item["ecosystem"]: int(item["enabled"]) for item in ensure_collectors(db_path=db_path)}
+    assert states["maven"] == 0 and states["npm"] == 1
+    monkeypatch.delenv("SECOPSAI_PAUSE_COLLECTORS")
+    due_collectors(db_path=db_path)
+    assert {item["ecosystem"]: int(item["enabled"]) for item in ensure_collectors(db_path=db_path)}["maven"] == 1
+    # A collector that ships paused is not turned on by the resume.
+    assert {item["ecosystem"]: int(item["enabled"]) for item in ensure_collectors(db_path=db_path)}["vscode-marketplace"] == 0
+
+
 def test_shutdown_skips_expensive_followup_stages_and_returns_cleanly(tmp_path, monkeypatch):
     import secopsai.research_worker as worker
     from secopsai.worker_control import request_shutdown,shutdown_requested

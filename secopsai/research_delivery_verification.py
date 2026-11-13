@@ -75,9 +75,21 @@ def _refresh_stale_enabled_sources(*, db_path, deadline, safety_margin_seconds=0
                 "pages_processed": result.get("pages_processed", 0),
                 "events_stored": result.get("events_stored", 0),
                 "error_category": "collector_error" if result.get("error") else None,
+                "failure_category": result.get("failure_category") or "",
+                "retryable": bool(result.get("retryable")),
             })
             print(json.dumps({"event": "stale_registry_collector_refresh", **collector_results[-1]}), flush=True)
     return source_results, collector_results
+
+
+def _collector_ok(item: dict) -> bool:
+    return item.get('status') == 'completed' and item.get('coverage') == 'complete'
+
+
+def _upstream_outage(item: dict) -> bool:
+    """A failure on the registry's side: a timeout, a dropped connection or a 5xx."""
+    category = str(item.get('failure_category') or '')
+    return bool(item.get('retryable')) or category == 'transient_transport' or bool(re.fullmatch(r'http_5\d\d', category))
 
 
 _SECRET_LIKE = re.compile(r"(?i)(bearer\s+\S+|(?:token|secret|password|api[_-]?key)\s*[=:]\s*\S+)")
@@ -259,22 +271,34 @@ def verify_delivery(*, db_path=None, client=None, seconds=840, retry_source_name
         elif stored.get('status') == 'stored':
             delivery_in_progress = True
     sources_ok = all(item.get('status') == 'acquired' for item in source_results)
+    # One registry whose own servers are unreachable is a coverage gap, not a
+    # SecOpsAI failure: it is reported in the brief's coverage line and as a
+    # warning, and the run passes. Two at once, or any failure that is not a
+    # network/upstream error, still fails (2026-11-13: a Maven Central search
+    # outage failed every run for hours and blocked publication).
+    upstream_down = sorted({item.get('name') for item in [*collector_results, *stale_collector_results]
+                            if not _collector_ok(item) and _upstream_outage(item)})
+    tolerated = upstream_down if len(upstream_down) == 1 else []
     collectors_ok = all(
-        item.get('status') == 'completed' and item.get('coverage') == 'complete'
+        _collector_ok(item) or item.get('name') in tolerated
         for item in [*collector_results, *stale_collector_results]
     )
+    warnings = []
+    if tolerated:
+        warnings.append('registry upstream unreachable; reported as a coverage gap: ' + ', '.join(tolerated))
+        source_freshness_gaps = [name for name in source_freshness_gaps if name not in tolerated]
     stale_sources_ok = all(item.get('status') == 'acquired' for item in stale_source_results)
     source_freshness_ok = not refresh_stale_sources or not source_freshness_gaps
     if refresh_stale_sources and source_freshness_gaps:
         delivery_blockers.append('enabled sources remain outside freshness targets: ' + ', '.join(source_freshness_gaps))
     if not stale_sources_ok:
         delivery_blockers.append('one or more stale primary sources could not be refreshed')
-    if any(not (item.get('status') == 'completed' and item.get('coverage') == 'complete')
-           for item in stale_collector_results):
+    if any(not _collector_ok(item) and item.get('name') not in tolerated for item in stale_collector_results):
         delivery_blockers.append('one or more stale registry collectors did not complete fully')
     report = {'status': ('passed' if acknowledged else 'in_progress' if delivery_in_progress else 'failed')
               if sources_ok and collectors_ok and stale_sources_ok and source_freshness_ok else 'failed', 'flushed_total': flushed_total,
-              'pending': pending, 'delivery_blockers': delivery_blockers, 'projection_status': stored.get('status'),
+              'pending': pending, 'delivery_blockers': delivery_blockers, 'delivery_warnings': warnings,
+              'upstream_unreachable': tolerated, 'projection_status': stored.get('status'),
               'health': health,
               'sources_retried': len(source_results), 'source_failures': sum(item.get('status') != 'acquired' for item in source_results),
               'stale_sources_refreshed': len(stale_source_results),
