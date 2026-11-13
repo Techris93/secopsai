@@ -254,6 +254,9 @@ def test_verification_requires_the_test_to_fail_without_the_fix(tmp_path):
     repo = _repo(tmp_path, "def add(a, b):\n    return a - b\n")
     (repo / "calc.py").write_text("def add(a, b):\n    return a + b\n")
     (repo / "tests" / "test_calc.py").write_text("from calc import add\n\n\ndef test_add():\n    assert add(2, 2) == 4\n")
+    # Fix and original are the same size; a stale .pyc would hide the bug.
+    import subprocess as sp
+    sp.run([__import__("sys").executable, "-m", "pytest", "-q", "tests/test_calc.py"], cwd=repo, capture_output=True)
     result = ar.verify(str(repo), ["calc.py", "tests/test_calc.py"])
     assert result["ok"], result
     assert {check["check"]: check["ok"] for check in result["checks"]}["fails_without_fix"] is True

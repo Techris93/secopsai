@@ -375,7 +375,9 @@ def merge_policy(files: Sequence[str], added_lines: int) -> tuple[bool, List[str
 def verify(worktree: str, files: Sequence[str], *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> Dict[str, Any]:
     """Checks run by this module on the worktree; the model's own claims are not trusted."""
     python = sys.executable
-    environment = {**os.environ, "PYTHONPATH": worktree}
+    # No bytecode cache: a same-size fix written within the same second would
+    # otherwise be read back from a stale .pyc when the original is restored.
+    environment = {**os.environ, "PYTHONPATH": worktree, "PYTHONDONTWRITEBYTECODE": "1"}
     checks = []
     tests = sorted({path for path in files if path.startswith("tests/") and path.endswith(".py")})
     if tests:
@@ -412,7 +414,9 @@ def _fails_without_fix(worktree: str, code: Sequence[str], command: List[str], e
                 target.write_bytes(original.stdout if isinstance(original.stdout, bytes) else str(original.stdout).encode())
             elif target.exists():
                 target.unlink()  # a new file did not exist before the fix
-        before = run(command, cwd=worktree, env=environment, capture_output=True, text=True, timeout=1200)
+            shutil.rmtree(target.parent / "__pycache__", ignore_errors=True)
+        before = run([*command, "-p", "no:cacheprovider"], cwd=worktree, env=environment, capture_output=True,
+                     text=True, timeout=1200)
     finally:
         for path, content in saved.items():
             target = Path(worktree, path)
