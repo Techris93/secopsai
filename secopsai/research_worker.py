@@ -321,10 +321,35 @@ def _apply_operator_enables(collectors: List[Dict[str, Any]], *, db_path: Option
     from secopsai.research_surveillance import set_collector_enabled
 
     wanted = {item.strip() for item in os.environ.get("SECOPSAI_ENABLE_COLLECTORS", "").split(",") if item.strip()}
+    # SECOPSAI_PAUSE_COLLECTORS pauses a collector while its registry is down
+    # (a paused collector is reported as paused, not as stale). Removing it
+    # from the list resumes only collectors this switch paused.
+    paused = {item.strip() for item in os.environ.get("SECOPSAI_PAUSE_COLLECTORS", "").split(",") if item.strip()}
+    with closing(soc_store.connect(db_path)) as connection:
+        connection.execute("CREATE TABLE IF NOT EXISTS collector_operator_pauses (ecosystem TEXT PRIMARY KEY, paused_at TEXT NOT NULL)")
+        held = {row[0] for row in connection.execute("SELECT ecosystem FROM collector_operator_pauses")}
+        connection.commit()
     changed = False
     for collector in collectors:
-        if collector["ecosystem"] in wanted and not int(collector["enabled"]):
-            set_collector_enabled(ecosystem=collector["ecosystem"], enabled=True, db_path=db_path)
+        ecosystem = collector["ecosystem"]
+        enabled = bool(int(collector["enabled"]))
+        if ecosystem in paused:
+            if enabled:
+                set_collector_enabled(ecosystem=ecosystem, enabled=False, db_path=db_path)
+                changed = True
+            if ecosystem not in held:
+                with closing(soc_store.connect(db_path)) as connection:
+                    connection.execute("INSERT OR IGNORE INTO collector_operator_pauses (ecosystem, paused_at) VALUES (?, ?)",
+                                       (ecosystem, _utcnow().isoformat()))
+                    connection.commit()
+        elif ecosystem in held:
+            set_collector_enabled(ecosystem=ecosystem, enabled=True, db_path=db_path)
+            with closing(soc_store.connect(db_path)) as connection:
+                connection.execute("DELETE FROM collector_operator_pauses WHERE ecosystem=?", (ecosystem,))
+                connection.commit()
+            changed = True
+        elif ecosystem in wanted and not enabled:
+            set_collector_enabled(ecosystem=ecosystem, enabled=True, db_path=db_path)
             changed = True
     return ensure_collectors(db_path=db_path) if changed else collectors
 

@@ -422,3 +422,48 @@ def test_a_failed_drain_records_a_masked_message_and_location():
     assert detail["error_message"].startswith("research operation projection exceeds budget")
     assert "abc123" not in detail["error_message"] and "xyz" not in detail["error_message"]
     assert detail["error_location"].startswith("test_research_delivery_verification.py:")
+
+
+def _gap_run(tmp_path, monkeypatch, collectors, outcomes, gaps):
+    db = str(tmp_path / 'upstream.db')
+    monkeypatch.setattr('secopsai.research_coverage.stale_enabled_sources',
+                        lambda **kwargs: {'intel_sources': [], 'registry_collectors': collectors})
+    monkeypatch.setattr('secopsai.research_surveillance.run_registry_collector', lambda **kwargs: outcomes[kwargs['ecosystem']])
+    monkeypatch.setattr('secopsai.ontology.materialize_recent', lambda **kwargs: {'snapshot': {}})
+    monkeypatch.setattr('secopsai.research_operation.hosted_projection', lambda **kwargs: {
+        'coverage': {'health': {'freshness_gaps': gaps, 'ontology_pending': 0}}})
+
+    class Client:
+        enabled = True
+        def enqueue_ontology_snapshot(self, *args, **kwargs): return {'status': 'queued'}
+        def flush_ontology_outbox(self, **kwargs): return {'pending': 0, 'flushed': 0}
+        def sync_research_operation(self, value): return {'status': 'stored'}
+
+    return verify_delivery(db_path=db, client=Client(), refresh_stale_sources=True)
+
+
+MAVEN = {'source_id': 'COL-MAVEN-SOLR', 'name': 'Maven Central Solr tail', 'ecosystem': 'maven'}
+NUGET = {'source_id': 'COL-NUGET-CATALOG', 'name': 'NuGet V3 Catalog', 'ecosystem': 'nuget'}
+DOWN = {'status': 'failed', 'coverage': 'gap', 'error': 'registry request failed (timeout)',
+        'failure_category': 'transient_transport', 'retryable': True}
+
+
+def test_one_unreachable_registry_is_a_coverage_gap_not_a_failed_run(tmp_path, monkeypatch):
+    # 2026-11-13: Maven Central's search API stopped answering and every run
+    # failed for hours, which also blocked brief publication.
+    result = _gap_run(tmp_path, monkeypatch, [MAVEN], {'maven': DOWN}, ['Maven Central Solr tail'])
+    assert result['status'] == 'passed', result['delivery_blockers']
+    assert result['upstream_unreachable'] == ['Maven Central Solr tail']
+    assert result['delivery_warnings'] == ['registry upstream unreachable; reported as a coverage gap: Maven Central Solr tail']
+    assert result['registry_collectors'][0]['failure_category'] == 'transient_transport'
+
+
+def test_two_unreachable_registries_or_a_collector_bug_still_fail(tmp_path, monkeypatch):
+    both = _gap_run(tmp_path, monkeypatch, [MAVEN, NUGET], {'maven': DOWN, 'nuget': DOWN},
+                    ['Maven Central Solr tail', 'NuGet V3 Catalog'])
+    assert both['status'] == 'failed' and both['upstream_unreachable'] == []
+    bug = {'status': 'failed', 'coverage': 'gap', 'error': 'KeyError: docs', 'failure_category': 'source_error', 'retryable': False}
+    ours = _gap_run(tmp_path / 'b', monkeypatch, [MAVEN], {'maven': bug}, ['Maven Central Solr tail'])
+    assert ours['status'] == 'failed', 'a failure in our own collector code is not an outage'
+    server = {**DOWN, 'failure_category': 'http_503', 'retryable': False}
+    assert _gap_run(tmp_path / 'c', monkeypatch, [MAVEN], {'maven': server}, ['Maven Central Solr tail'])['status'] == 'passed'
