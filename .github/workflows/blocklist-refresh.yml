@@ -1,0 +1,43 @@
+name: Blocklist Refresh
+
+# Frontier phase 5: rebuild the install-firewall blocklist from
+# ossf/malicious-packages every hour and upload its shards to the ledger store
+# (firewall/<ecosystem>/<xx>.json), where the registry firewall Worker reads them.
+# Reads OSV JSON only; no package is downloaded.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blocklist-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LEDGER_STORE_URL: https://ledger.secopsai.dev
+      LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+      - name: Fetch malicious-package reports
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/ossf/malicious-packages.git osv-src
+          git -C osv-src sparse-checkout set osv/malicious/npm osv/malicious/pypi
+          echo "OSV_COMMIT=$(git -C osv-src rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Build and upload shards
+        run: |
+          python scripts/build_blocklist.py --osv osv-src/osv/malicious/npm --osv osv-src/osv/malicious/pypi --upload
+          echo "Built from ossf/malicious-packages $OSV_COMMIT" >> "$GITHUB_STEP_SUMMARY"
+          cat reports/blocklist-summary.json >> "$GITHUB_STEP_SUMMARY"

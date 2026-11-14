@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "secopsai-registry-firewall",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-08",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  // Read-only use of the ledger bucket: the blocklist shards under firewall/.
+  "r2_buckets": [{ "binding": "LEDGER", "bucket_name": "secopsai-research-ledger" }]
+  // FIREWALL_TOKEN is a secret (wrangler secret put FIREWALL_TOKEN).
+}

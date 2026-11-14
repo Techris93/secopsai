@@ -504,3 +504,17 @@ test("the stream scan hands releases to the fast lane queue once", async () => {
   assert.equal((await post("wrong")).status, 401);
   assert.equal((await post("secret")).status, 200);
 });
+
+test("firewall shards are owner-only and well formed", async () => {
+  const store = new Map();
+  const bucket = { get: async (key) => store.has(key) ? { body: store.get(key) } : null, put: async (key, body) => { store.set(key, body); } };
+  const env = { LEDGER_STORE_TOKEN: "secret", LEDGER: bucket };
+  const call = (method, path, body, token = "secret") => worker.fetch(new Request(`https://ls.example/firewall/${path}`,
+    { method, body, headers: { authorization: `Bearer ${token}` } }), env);
+  assert.equal((await call("PUT", "npm/3f", "{}", "wrong")).status, 401);
+  assert.equal((await call("PUT", "npm/3f", JSON.stringify({ evil: { all: true, versions: [] } }))).status, 200);
+  assert.ok(store.has("firewall/npm/3f.json"));
+  assert.equal((await call("PUT", "npm/3f", "[]")).status, 400);
+  assert.equal((await call("PUT", "cargo/3f", "{}")).status, 404, "only npm and pypi shards");
+  assert.equal((await call("PUT", "npm/zz", "{}")).status, 404, "shard ids are two hex digits");
+});

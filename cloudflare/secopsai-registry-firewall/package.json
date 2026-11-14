@@ -1,0 +1,11 @@
+{
+  "name": "secopsai-registry-firewall",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/index.js && node --check test/firewall.test.js",
+    "test": "node --test test/firewall.test.js",
+    "deploy:remote": "wrangler deploy"
+  },
+  "devDependencies": {}
+}
