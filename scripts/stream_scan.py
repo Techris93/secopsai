@@ -59,8 +59,24 @@ def main() -> int:
 
     from secopsai.research_content_funnel import scan_release
 
+    from secopsai import takeover_signals
+
+    def pypi_takeover(target: Dict[str, Any]) -> Dict[str, Any]:
+        _final, _headers, body = fetcher.get(f"https://pypi.org/simple/{target['package']}/", allowed_hosts=("pypi.org",),
+                                             max_bytes=16 * 1024 * 1024, headers={"Accept": "application/vnd.pypi.simple.v1+json"})
+        files = takeover_signals.pypi_files_by_version(json.loads(body), takeover_signals.pypi_version_of)
+        signals = takeover_signals.pypi_signals(files, target["version"], role_added_at=stream_scan._parse(target.get("role_added_at")),
+                                                published_at=stream_scan._parse(target["published_at"]))
+        return {key: signals[key] for key in ("signals", "score")}
+
     def scan(target: Dict[str, Any]) -> Dict[str, Any]:
-        return scan_release(fetcher, target["ecosystem"], target["package"], target["version"])
+        result = scan_release(fetcher, target["ecosystem"], target["package"], target["version"])
+        if target["ecosystem"] == "pypi":
+            try:
+                result = {**result, "takeover": pypi_takeover(target)}
+            except Exception:  # noqa: BLE001 - the content verdict stands without metadata
+                pass
+        return result
 
     import fast_lane
 

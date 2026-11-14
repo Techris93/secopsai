@@ -21,6 +21,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+from secopsai import takeover_signals
+
 NPM_CHANGES = "https://replicate.npmjs.com/_changes"
 NPM_REGISTRY = "https://registry.npmjs.org/"
 NPM_HOSTS = ("replicate.npmjs.com", "registry.npmjs.org")
@@ -90,7 +92,9 @@ def npm_new_versions(fetch_json: Callable[[str], Dict[str, Any]], names: Iterabl
             if version in {"created", "modified"} or published is None or published <= since:
                 continue
             if version in (doc.get("versions") or {}):
-                out.append({"ecosystem": "npm", "package": name, "version": version, "published_at": _iso(published)})
+                signals = takeover_signals.npm_signals(doc, version)
+                out.append({"ecosystem": "npm", "package": name, "version": version, "published_at": _iso(published),
+                            "takeover": {key: signals[key] for key in ("signals", "score")}})
         return out
 
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
@@ -104,8 +108,12 @@ def npm_new_versions(fetch_json: Callable[[str], Dict[str, Any]], names: Iterabl
 
 
 def pypi_new_releases(changelog: Callable[[int], List[list]], last_serial: Callable[[], int],
-                      serial: Optional[int]) -> Tuple[List[Dict[str, Any]], Optional[int]]:
-    """'new release' events since the serial, and the new serial."""
+                      serial: Optional[int], roles: Optional[Dict[str, str]] = None) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+    """'new release' events since the serial, and the new serial.
+
+    Owner or maintainer additions are remembered in ``roles`` (package -> when),
+    so a release soon after one is flagged.
+    """
     if serial is None:
         return [], int(last_serial())
     events = changelog(int(serial))
@@ -113,6 +121,8 @@ def pypi_new_releases(changelog: Callable[[int], List[list]], last_serial: Calla
     newest = int(serial)
     for name, version, stamp, action, event_serial in events:
         newest = max(newest, int(event_serial))
+        if roles is not None and str(action).startswith(("add Owner", "add Maintainer")):
+            roles[str(name).lower()] = _iso(datetime.fromtimestamp(int(stamp), timezone.utc))
         if action == "new release" and version:
             published = datetime.fromtimestamp(int(stamp), timezone.utc)
             releases.append({"ecosystem": "pypi", "package": str(name), "version": str(version), "published_at": _iso(published)})
@@ -143,6 +153,19 @@ def record_verdict(stats: Dict[str, Any], target: Dict[str, Any], result: Dict[s
             bucket["latencies"].append(round(max(0.0, (verdict_at - published).total_seconds() / 60), 1))
     elif status == "error":
         bucket["errors"] += 1
+
+
+MAX_FLAGGED = 3000
+
+
+def record_takeover(stats: Dict[str, Any], target: Dict[str, Any], takeover: Optional[Dict[str, Any]] = None) -> None:
+    """Count the flag and keep the release, so it can later be checked against published advisories."""
+    bucket = _bucket(stats, target["published_at"], target["ecosystem"])
+    bucket["takeover_flags"] = bucket.get("takeover_flags", 0) + 1
+    flagged = stats.setdefault("takeover_flagged", [])
+    flagged.append({"ecosystem": target["ecosystem"], "package": target["package"], "version": target["version"],
+                    "published_at": target["published_at"], **{key: (takeover or {}).get(key) for key in ("signals", "score")}})
+    del flagged[:-MAX_FLAGGED]
 
 
 def prune_stats(stats: Dict[str, Any], now: datetime) -> None:
@@ -202,7 +225,7 @@ def run(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[s
     """One pass. Mutates and returns ``state`` and ``stats``; the caller saves them."""
     started = clock()
     current = now()
-    summary: Dict[str, Any] = {"discovered": {}, "scanned": 0, "hits": 0, "escalated": 0, "alerts": 0, "errors": 0,
+    summary: Dict[str, Any] = {"discovered": {}, "scanned": 0, "hits": 0, "escalated": 0, "alerts": 0, "errors": 0, "takeover_flags": 0,
                                "backlog_before": len(state.get("backlog") or []), "dropped": 0, "discovery_failures": 0}
     seen = list(state.get("seen") or [])
     seen_set = set(seen)
@@ -211,7 +234,11 @@ def run(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[s
     npm_since = _parse(state.get("npm_since")) or (current - timedelta(minutes=30))
     npm_targets, failures = npm_new_versions(fetch_json, names, npm_since, workers=workers) if names else ([], 0)
     summary["discovery_failures"] += failures
-    pypi_targets, pypi_serial = pypi_new_releases(pypi_changelog, pypi_last_serial, state.get("pypi_serial"))
+    roles = dict(state.get("pypi_roles") or {})
+    pypi_targets, pypi_serial = pypi_new_releases(pypi_changelog, pypi_last_serial, state.get("pypi_serial"), roles)
+    for target in pypi_targets:
+        if roles.get(target["package"].lower()):
+            target["role_added_at"] = roles[target["package"].lower()]
 
     fresh = [target for target in npm_targets + pypi_targets if key(target) not in seen_set]
     fresh = list({key(target): target for target in fresh}.values())
@@ -246,7 +273,11 @@ def run(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[s
                 summary["hits"] += int(result.get("status") == "hit")
             elif result.get("status") == "error":
                 summary["errors"] += 1
-            if result.get("level") in ESCALATE_LEVELS:
+            takeover = result.get("takeover") or target.get("takeover") or {}
+            if takeover.get("score", 0) >= takeover_signals.ESCALATE_SCORE:
+                summary["takeover_flags"] += 1
+                record_takeover(stats, target, takeover)
+            if result.get("level") in ESCALATE_LEVELS or takeover.get("score", 0) >= takeover_signals.ESCALATE_SCORE:
                 summary["escalated"] += 1
                 try:
                     outcome = escalate(target, result)
@@ -259,7 +290,9 @@ def run(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[s
         summary["dropped"] = len(remaining) - MAX_BACKLOG
         remaining = remaining[-MAX_BACKLOG:]  # keep the newest; the dropped are counted, never hidden
     newest = max([_parse(target["published_at"]) for target in npm_targets if _parse(target["published_at"])] or [npm_since])
-    state.update({"npm_seq": npm_cursor, "npm_since": _iso(max(npm_since, newest - timedelta(minutes=10))),
+    cutoff = _iso(current - timedelta(days=30))
+    roles = dict(sorted(((name, when) for name, when in roles.items() if when >= cutoff), key=lambda item: item[1])[-5000:])
+    state.update({"pypi_roles": roles, "npm_seq": npm_cursor, "npm_since": _iso(max(npm_since, newest - timedelta(minutes=10))),
                   "pypi_serial": pypi_serial, "backlog": remaining, "seen": seen[-MAX_SEEN:], "updated_at": _iso(now())})
     prune_stats(stats, now())
     summary.update(backlog_after=len(remaining), elapsed_seconds=round(clock() - started, 1))

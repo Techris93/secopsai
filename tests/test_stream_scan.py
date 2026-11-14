@@ -96,3 +96,27 @@ def test_unsettled_hours_are_left_out_of_coverage():
     assert ss.coverage_from_stats(stats, now=NOW)["all"]["published"] == 0
     ss.prune_stats(stats, NOW + timedelta(hours=60))
     assert stats["hours"] == {}
+
+
+def test_a_takeover_signal_escalates_even_a_clean_prescan():
+    feeds = Feeds()
+    trusted = {"name": "GitHub Actions", "trustedPublisher": {"id": "github"}}
+    feeds.npm_docs["left-pad"]["versions"] = {"1.0.0": {"_npmUser": trusted, "dist": {"attestations": {"url": "x"}}},
+                                              "1.1.0": {"_npmUser": {"name": "mallory"}, "dist": {}, "scripts": {"postinstall": "node x"}}}
+    state = {"npm_seq": "10", "pypi_serial": 500, "npm_since": _iso(NOW - timedelta(minutes=30))}
+    stats, escalated = {}, []
+    summary = _run(state, stats, feeds, lambda target: {"status": "clean", "level": "none"},
+                   escalate=lambda target, result: escalated.append(target["package"]) or {"alerted": True})
+    assert escalated == ["left-pad"] and summary["takeover_flags"] == 1
+    assert stats["takeover_flagged"][0]["package"] == "left-pad" and "trusted_publishing_lost" in stats["takeover_flagged"][0]["signals"]
+
+
+def test_pypi_owner_additions_are_remembered_for_later_releases():
+    feeds = Feeds()
+    stamp = int((NOW - timedelta(days=1)).timestamp())
+    feeds.pypi = [["requests", None, stamp, "add Owner mallory", 499]] + feeds.pypi
+    state = {"npm_seq": "10", "pypi_serial": 500, "npm_since": _iso(NOW - timedelta(minutes=30))}
+    seen = []
+    _run(state, {}, feeds, lambda target: seen.append(target) or {"status": "clean"})
+    assert "requests" in state["pypi_roles"]
+    assert next(target for target in seen if target["ecosystem"] == "pypi")["role_added_at"].startswith((NOW - timedelta(days=1)).strftime("%Y-%m-%d"))
