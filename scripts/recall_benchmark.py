@@ -346,8 +346,11 @@ def main() -> int:
         rows += list(pool.map(lambda target: scan_clean(target, fetcher), clean_targets(args.clean_npm, args.clean_pypi)))
     meta = {"dataset_commit": commit, "seed": args.seed, "rule_files": state.get("files"),
             "elapsed_seconds": round(time.time() - started), "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    args.out.write_text(json.dumps({"meta": meta, "rows": rows}, indent=1, sort_keys=True), encoding="utf-8")
-    text = report(rows, meta)
+    from secopsai.frontier_metrics import benchmark_scores
+
+    scores = benchmark_scores(rows)
+    args.out.write_text(json.dumps({"meta": meta, "scores": scores, "rows": rows}, indent=1, sort_keys=True), encoding="utf-8")
+    text = report(rows, meta) + _held_out_section(scores)
     print(text)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     breaches = fp_breaches(rows, args.fp_budget) if args.fp_budget is not None else []
@@ -357,6 +360,17 @@ def main() -> int:
     if summary:
         Path(summary).write_text(text + "\n", encoding="utf-8")
     return 1 if breaches else 0
+
+
+def _held_out_section(scores: Dict[str, Any]) -> str:
+    """Recall on samples discovered on or after the cutoff, which rule selection never sees."""
+    lines = ["", "", f"### Held-out recall (discovered on or after {scores['held_out_cutoff']})", "",
+             "| Group | Samples | Hit | Warning | Alert |", "| --- | --- | --- | --- | --- |"]
+    for key, block in scores["recall"].items():
+        held = block["held_out"]
+        cells = ["" if held[name] is None else f"{100 * held[name]:.1f}%" for name in ("hit", "warning", "alert")]
+        lines.append(f"| {key} | {held['samples']} | " + " | ".join(cells) + " |")
+    return "\n".join(lines)
 
 
 def fp_breaches(rows: List[Dict[str, Any]], budget: float) -> List[str]:
