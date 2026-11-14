@@ -67,6 +67,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--benchmark", type=Path)
     parser.add_argument("--live", type=Path)
+    parser.add_argument("--enforcement", type=Path, help="scripts/firewall_check.py output")
     parser.add_argument("--targets", type=Path, default=ROOT / "eval" / "frontier" / "targets.json")
     parser.add_argument("--out", type=Path, default=Path("frontier-scorecard.json"))
     args = parser.parse_args()
@@ -84,6 +85,8 @@ def main() -> int:
             measured["live"] = fetch_live()
         except Exception as exc:  # the scorecard reports what it could measure
             print(f"live coverage unavailable: {type(exc).__name__}", file=sys.stderr)
+    if args.enforcement and args.enforcement.exists():
+        measured["enforcement"] = json.loads(args.enforcement.read_text(encoding="utf-8"))
     if measured.get("live"):
         meta["live"] = f"last {measured['live'].get('window_hours')} h"
     results = evaluate_targets(targets, measured)

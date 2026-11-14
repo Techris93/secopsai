@@ -172,8 +172,27 @@ function forwardHeaders(request) {
   return headers;
 }
 
-function jsonResponse(value, headers = {}) {
-  return new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json", ...headers } });
+// Lockfile check: POST /check {"packages": [{"ecosystem": "npm"|"pypi", "name", "version"}]} (up to 2,000).
+export const MAX_CHECK = 2000;
+
+async function check(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: "invalid JSON" }, {}, 400); }
+  const packages = Array.isArray(body?.packages) ? body.packages : null;
+  if (!packages || packages.length > MAX_CHECK) return jsonResponse({ error: `packages must be a list of at most ${MAX_CHECK}` }, {}, 400);
+  const blocked = [];
+  for (const item of packages) {
+    if (!["npm", "pypi"].includes(item?.ecosystem) || typeof item.name !== "string" || typeof item.version !== "string") {
+      return jsonResponse({ error: "each package needs ecosystem (npm or pypi), name and version" }, {}, 400);
+    }
+    const entry = await entryFor(env, item.ecosystem, item.name);
+    if (isBlocked(entry, item.version)) blocked.push({ ...item, advisories: entry.ids || [] });
+  }
+  return jsonResponse({ checked: packages.length, blocked });
+}
+
+function jsonResponse(value, headers = {}, status = 200) {
+  return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json", ...headers } });
 }
 
 export default {
@@ -183,6 +202,7 @@ export default {
     if (!env.FIREWALL_TOKEN || !timingSafeEqual(presentedToken(request), env.FIREWALL_TOKEN)) {
       return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { "content-type": "application/json", "www-authenticate": "Basic realm=\"secopsai\"" } });
     }
+    if (url.pathname === "/check" && request.method === "POST") return check(request, env);
     if (!["GET", "HEAD"].includes(request.method)) return new Response("method not allowed", { status: 405 });
     const started = Date.now();
     let response;

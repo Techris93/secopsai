@@ -92,3 +92,17 @@ test("file names map to versions", () => {
   filterPackument(doc, { all: false, versions: ["2.0.0"] });
   assert.equal(doc["dist-tags"].latest, "1.0.0", "abbreviated documents fall back to publish order");
 });
+
+test("lockfile check reports blocked entries with their advisories", async () => {
+  // Names unused by other tests: shards are cached per isolate for five minutes.
+  const e = env({ npm: { "left-pad": { all: false, versions: ["9.9.9"], ids: ["MAL-2"] } }, pypi: { "bad-lib": { all: true, versions: [], ids: ["MAL-3"] } } });
+  const post = (body, token = "tok") => worker.fetch(new Request("https://fw.example/check", { method: "POST", body: JSON.stringify(body),
+    headers: { authorization: `Bearer ${token}` } }), e);
+  const result = await (await post({ packages: [
+    { ecosystem: "npm", name: "left-pad", version: "9.9.9" }, { ecosystem: "npm", name: "left-pad", version: "1.3.0" },
+    { ecosystem: "pypi", name: "Bad_Lib", version: "1.0" }] })).json();
+  assert.equal(result.checked, 3);
+  assert.deepEqual(result.blocked.map((item) => [item.name, item.advisories[0]]), [["left-pad", "MAL-2"], ["Bad_Lib", "MAL-3"]]);
+  assert.equal((await post({ packages: [{ ecosystem: "cargo", name: "x", version: "1" }] })).status, 400);
+  assert.equal((await post({ packages: [] }, "wrong")).status, 401);
+});

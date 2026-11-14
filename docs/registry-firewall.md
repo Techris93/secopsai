@@ -27,3 +27,15 @@ npm config set registry https://<firewall-host>/npm/
 npm config set //<firewall-host>/npm/:_authToken "$FIREWALL_TOKEN"
 pip config set global.index-url "https://token:$FIREWALL_TOKEN@<firewall-host>/pypi/simple/"
 ```
+
+## Lockfile check
+
+`POST /check` with `{"packages": [{"ecosystem": "npm", "name": "left-pad", "version": "1.3.0"}]}`
+(up to 2,000) returns the blocked entries and their advisory IDs, so CI can
+check a lockfile without installing.
+
+## Measure
+
+`firewall-check.yml` reports the block rate on the benchmark's known-malicious
+versions (through `/check`, with 100 npm tarballs confirmed refused end to end)
+and the 95th percentile added latency for popular packages' metadata.
