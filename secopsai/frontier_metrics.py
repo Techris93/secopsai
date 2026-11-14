@@ -51,6 +51,8 @@ def benchmark_scores(rows: Iterable[Dict[str, Any]], *, cutoff: str = HELD_OUT_C
     for row in malicious:
         groups[f"{row.get('ecosystem')}/{row.get('category')}"].append(row)
         groups[f"{row.get('ecosystem')}/all"].append(row)
+        # Each corpus is also reported on its own, so a new corpus never hides a change in another.
+        groups[f"{row.get('ecosystem')}/{row.get('category')}@{row.get('corpus') or 'datadog'}"].append(row)
     groups["all/all"] = malicious
     for key, group in sorted(groups.items()):
         held = [row for row in group if str(row.get("discovered") or "") >= cutoff]

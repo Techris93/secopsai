@@ -31,6 +31,9 @@ on:
       rule_packs:
         description: Third-party rule packs (signature-base or yara-forge-extended)
         default: "signature-base"
+      registry_samples:
+        description: Malicious PyPI samples from lxyeternal/pypi_malregistry (0 skips the second corpus)
+        default: "1000"
 
 permissions:
   contents: read
@@ -46,6 +49,10 @@ jobs:
     env:
       # Pinned so results are comparable across rule changes; bump deliberately.
       DATASET_COMMIT: 805fcd72db525244cae8dd32056efbd50b8b0e19
+      # Second corpus (about 10,000 malicious PyPI source archives) and the
+      # OSV reports that date them for the held-out split.
+      REGISTRY_COMMIT: b85fe7743597b850b72b0ac9cb815f88a301ef10
+      OSV_COMMIT: bc8cbbb3cd85195939491aed42f3289b2f13d4d2
     steps:
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -71,13 +78,25 @@ jobs:
             https://github.com/DataDog/malicious-software-packages-dataset.git "$RUNNER_TEMP/malware-dataset"
           git -C "$RUNNER_TEMP/malware-dataset" checkout --quiet --detach "$DATASET_COMMIT"
 
+      - name: Clone the second corpus and its OSV dates (blobless, pinned)
+        if: ${{ (inputs.registry_samples || '1000') != '0' }}
+        run: |
+          git clone --quiet --filter=blob:none --no-checkout --sparse \
+            https://github.com/lxyeternal/pypi_malregistry.git "$RUNNER_TEMP/malregistry"
+          git -C "$RUNNER_TEMP/malregistry" checkout --quiet --detach "$REGISTRY_COMMIT"
+          git clone --quiet --filter=blob:none --no-checkout --sparse \
+            https://github.com/ossf/malicious-packages.git "$RUNNER_TEMP/ossf"
+          git -C "$RUNNER_TEMP/ossf" sparse-checkout set osv/malicious/pypi
+          git -C "$RUNNER_TEMP/ossf" checkout --quiet --detach "$OSV_COMMIT"
+          echo "REGISTRY_ARGS=--registry $RUNNER_TEMP/malregistry --osv $RUNNER_TEMP/ossf/osv/malicious/pypi --registry-samples ${{ inputs.registry_samples || '1000' }}" >> "$GITHUB_ENV"
+
       - name: Run benchmark
         run: |
           python -I scripts/recall_benchmark.py \
             --dataset "$RUNNER_TEMP/malware-dataset" \
             --npm-samples "${{ inputs.npm_samples || '2000' }}" --pypi-samples "${{ inputs.pypi_samples || '1000' }}" \
             --clean-npm "${{ inputs.clean_npm || '1000' }}" --clean-pypi "${{ inputs.clean_pypi || '500' }}" \
-            --seed "${{ inputs.seed || '20261010' }}" --fp-budget 0.5 --out "$RUNNER_TEMP/recall-benchmark.json"
+            --seed "${{ inputs.seed || '20261010' }}" --fp-budget 0.5 --out "$RUNNER_TEMP/recall-benchmark.json" $REGISTRY_ARGS
 
       - name: Frontier scorecard
         if: always()
@@ -100,4 +119,4 @@ jobs:
 
       - name: Remove samples
         if: always()
-        run: rm -rf "$RUNNER_TEMP/malware-dataset"
+        run: rm -rf "$RUNNER_TEMP/malware-dataset" "$RUNNER_TEMP/malregistry" "$RUNNER_TEMP/ossf"

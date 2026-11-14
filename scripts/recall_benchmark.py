@@ -108,6 +108,78 @@ def sample_members(raw: bytes) -> List[Tuple[str, bytes]]:
     return members
 
 
+# ------------------------------------------------- second corpus: pypi_malregistry
+# lxyeternal/pypi_malregistry (ASE 2023, "An Empirical Study of Malicious Code
+# In PyPI Ecosystem"): about 10,000 malicious PyPI packages as source archives,
+# laid out <package>/<version>/<archive>. Used privately to measure detection,
+# with the citation its authors ask for; samples are never redistributed.
+REGISTRY_ARCHIVES = (".tar.gz", ".tgz", ".zip", ".whl", ".tar.bz2", ".egg")
+
+
+def _normalize(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def osv_published(osv_dir: Path) -> Dict[Tuple[str, str], str]:
+    """(package, version) and (package, "") -> earliest OSV 'published' date, from ossf/malicious-packages."""
+    dates: Dict[Tuple[str, str], str] = {}
+    for path in osv_dir.rglob("*.json"):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        published = str(record.get("published") or record.get("modified") or "")[:10]
+        if not published:
+            continue
+        for affected in record.get("affected") or []:
+            name = _normalize(str((affected.get("package") or {}).get("name") or ""))
+            for version in [""] + [str(item) for item in affected.get("versions") or []]:
+                key = (name, version)
+                if name and (key not in dates or published < dates[key]):
+                    dates[key] = published
+    return dates
+
+
+def registry_paths(registry: Path, quota: int, seed: int, exclude: set) -> List[str]:
+    """Random sample of one archive per malicious package version, skipping versions already in the first corpus."""
+    listing = subprocess.run(["git", "-C", str(registry), "ls-tree", "-r", "--name-only", "HEAD"],
+                             check=True, capture_output=True, text=True).stdout.split("\n")
+    versions: Dict[Tuple[str, str], str] = {}
+    for path in listing:
+        parts = path.split("/")
+        if len(parts) == 3 and parts[2].lower().endswith(REGISTRY_ARCHIVES):
+            key = (_normalize(parts[0]), parts[1])
+            if key not in exclude:
+                versions.setdefault(key, path)
+    rng = random.Random(seed)
+    return rng.sample(sorted(versions.values()), min(quota, len(versions)))
+
+
+def registry_members(raw: bytes, filename: str) -> List[Tuple[str, bytes]]:
+    """One plain source archive, read in memory through the safe archive reader."""
+    members: List[Tuple[str, bytes]] = []
+    suffix = next((ext for ext in REGISTRY_ARCHIVES if filename.lower().endswith(ext)), ".bin")
+    with tempfile.TemporaryDirectory(prefix="bench-") as tmp:
+        path = Path(tmp) / ("sample" + suffix)
+        path.write_bytes(raw[:MAX_SAMPLE_BYTES])
+        _safe_archive_files(path, members)
+    return [(name, body[:MAX_FILE_BYTES]) for name, body in members[:MAX_MEMBERS]]
+
+
+def scan_registry_sample(registry: Path, path: str, dates: Dict[Tuple[str, str], str]) -> Dict[str, Any]:
+    package, version, filename = path.split("/")
+    key = _normalize(package)
+    row: Dict[str, Any] = {"set": "malicious", "corpus": "pypi_malregistry", "ecosystem": "pypi", "category": "malicious_intent",
+                           "package": package, "version": version,
+                           "discovered": dates.get((key, version)) or dates.get((key, "")) or ""}
+    try:
+        members = registry_members((registry / path).read_bytes(), filename)
+    except Exception as exc:
+        return {**row, "status": "error", "reason": str(exc)[:200]}
+    return {**row, **_scan_members(members, version, "pypi", "", row["discovered"]),
+            "fingerprints": actor_fingerprint.from_members(members)}
+
+
 def scan_sample(dataset: Path, path: str) -> Dict[str, Any]:
     parts = path.split("/")
     discovered = re.match(r"(\d{4}-\d{2}-\d{2})-", parts[-1])
@@ -328,6 +400,9 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--out", type=Path, default=Path("recall-benchmark.json"))
     parser.add_argument("--fp-budget", type=float, default=None, help="Fail when more than this %% of a clean ecosystem is flagged")
+    parser.add_argument("--registry", type=Path, help="blobless, sparse clone of lxyeternal/pypi_malregistry at a pinned commit")
+    parser.add_argument("--registry-samples", type=int, default=1000)
+    parser.add_argument("--osv", type=Path, help="ossf/malicious-packages osv/malicious/pypi checkout (discovery dates)")
     args = parser.parse_args()
 
     started = time.time()
@@ -341,10 +416,21 @@ def main() -> int:
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         rows = list(pool.map(lambda path: scan_sample(args.dataset, path), paths))
     print(f"malicious set scanned in {round(time.time() - started)} s", flush=True)
+    registry_commit = ""
+    if args.registry:
+        dates = osv_published(args.osv) if args.osv else {}
+        first = {(_normalize(row["package"]), row["version"]) for row in rows if row.get("ecosystem") == "pypi"}
+        registry_list = registry_paths(args.registry, args.registry_samples, args.seed, first)
+        print(f"sampled {len(registry_list)} pypi_malregistry samples ({len(dates)} OSV dates); fetching blobs", flush=True)
+        checkout(args.registry, registry_list)
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            rows += list(pool.map(lambda path: scan_registry_sample(args.registry, path, dates), registry_list))
+        registry_commit = subprocess.run(["git", "-C", str(args.registry), "rev-parse", "HEAD"], check=True,
+                                         capture_output=True, text=True).stdout.strip()
     fetcher = SafeFetcher(timeout=60)
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         rows += list(pool.map(lambda target: scan_clean(target, fetcher), clean_targets(args.clean_npm, args.clean_pypi)))
-    meta = {"dataset_commit": commit, "seed": args.seed, "rule_files": state.get("files"),
+    meta = {"dataset_commit": commit, "registry_commit": registry_commit, "seed": args.seed, "rule_files": state.get("files"),
             "elapsed_seconds": round(time.time() - started), "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     from secopsai.frontier_metrics import benchmark_scores
 
