@@ -1,0 +1,48 @@
+name: Firewall Check
+
+# Frontier phase 5: measure the deployed install firewall's block rate on the
+# benchmark's known-malicious versions and its added latency
+# (scripts/firewall_check.py). Reads the corpora's file listings only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      firewall_url:
+        description: "Firewall base URL"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      DATASET_COMMIT: 805fcd72db525244cae8dd32056efbd50b8b0e19
+      REGISTRY_COMMIT: b85fe7743597b850b72b0ac9cb815f88a301ef10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+      - name: Clone corpus listings (blobless, no samples checked out)
+        run: |
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/DataDog/malicious-software-packages-dataset.git "$RUNNER_TEMP/dd"
+          git -C "$RUNNER_TEMP/dd" update-ref HEAD "$DATASET_COMMIT"
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/lxyeternal/pypi_malregistry.git "$RUNNER_TEMP/mr"
+          git -C "$RUNNER_TEMP/mr" update-ref HEAD "$REGISTRY_COMMIT"
+      - name: Measure
+        env:
+          FIREWALL_TOKEN: ${{ secrets.FIREWALL_TOKEN }}
+          FIREWALL_URL: ${{ inputs.firewall_url }}
+        run: |
+          python scripts/firewall_check.py --firewall "$FIREWALL_URL" --dataset "$RUNNER_TEMP/dd" --registry "$RUNNER_TEMP/mr"
+          python scripts/frontier_scorecard.py --enforcement reports/firewall-check.json --out reports/frontier-scorecard.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: firewall-check
+          path: reports/

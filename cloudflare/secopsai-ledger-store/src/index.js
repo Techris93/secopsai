@@ -88,6 +88,27 @@ export async function researchWorkerDispatchDecision(env, now = Date.now(), fetc
 // workflow, so this Worker's Cron Trigger dispatches the research worker
 // instead.  GITHUB_DISPATCH_TOKEN is a fine-grained token limited to Actions
 // read/write on the repository; without it the cron does nothing.
+// Install firewall blocklist (frontier phase 5): 256 shards per ecosystem,
+// read directly from R2 by the registry firewall Worker.
+const SHARD_LIMIT_BYTES = 2 * 1024 * 1024;
+
+export async function firewallShard(request, env, ecosystem, shard) {
+  const key = `firewall/${ecosystem}/${shard}.json`;
+  if (request.method === "GET") {
+    const object = await env.LEDGER.get(key);
+    if (!object) return json({ error: "not found" }, 404);
+    return new Response(object.body, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  }
+  if (request.method !== "PUT") return json({ error: "method not allowed" }, 405);
+  const body = await request.text();
+  if (new TextEncoder().encode(body).byteLength > SHARD_LIMIT_BYTES) return json({ error: "shard too large" }, 413);
+  let value;
+  try { value = JSON.parse(body); } catch { return json({ error: "invalid json" }, 400); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return json({ error: "shard must be an object" }, 400);
+  await env.LEDGER.put(key, body, { httpMetadata: { contentType: "application/json" } });
+  return json({ status: "stored", key, bytes: body.length });
+}
+
 // Stream scan (frontier phase 1): its cursor/backlog state and per-hour
 // coverage statistics, one JSON document each, written once per run.
 const STREAM_LIMIT_BYTES = 8 * 1024 * 1024;
@@ -245,6 +266,12 @@ export default {
         console.log(JSON.stringify({ component: "fastlane-complete", error: message }));
         return json({ error: "completion_storage_unavailable", detail: message }, 503);
       }
+    }
+    const firewallMatch = url.pathname.match(/^\/firewall\/(npm|pypi)\/([0-9a-f]{2})$/);
+    if (firewallMatch) {
+      const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);
+      if (!isOwner) return json({ error: "unauthorized" }, 401);
+      return firewallShard(request, env, firewallMatch[1], firewallMatch[2]);
     }
     const streamMatch = url.pathname.match(/^\/stream\/(state|stats)$/);
     if (streamMatch) {

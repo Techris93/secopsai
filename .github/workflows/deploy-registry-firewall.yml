@@ -1,0 +1,47 @@
+name: Deploy Registry Firewall
+
+# Frontier phase 5: npm and PyPI proxy that refuses known-malicious versions
+# (cloudflare/secopsai-registry-firewall). Needs the FIREWALL_TOKEN secret in
+# the production environment; clients present it as their registry token.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: secopsai-registry-firewall-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+      - name: Check token is configured
+        env:
+          FIREWALL_TOKEN: ${{ secrets.FIREWALL_TOKEN }}
+        run: |
+          if [ -z "$FIREWALL_TOKEN" ]; then
+            echo "::error::Add a FIREWALL_TOKEN secret to the production environment first."
+            exit 1
+          fi
+      - name: Test
+        working-directory: cloudflare/secopsai-registry-firewall
+        run: npm run check && npm test
+      - name: Deploy
+        working-directory: cloudflare/secopsai-registry-firewall
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FIREWALL_TOKEN: ${{ secrets.FIREWALL_TOKEN }}
+        run: |
+          npx --yes wrangler@4.149.0 deploy
+          printf '%s' "$FIREWALL_TOKEN" | npx --yes wrangler@4.149.0 secret put FIREWALL_TOKEN
