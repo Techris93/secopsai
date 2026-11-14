@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from secopsai import deobfuscate
 from secopsai import actor_fingerprint, package_features, version_diff, yara_engine
 from secopsai.research_intake import SafeFetcher
 
@@ -119,6 +120,7 @@ def _scan_one(target: Dict[str, Any], fetcher: SafeFetcher) -> Dict[str, Any]:
             path = Path(tmp) / "artifact.tgz"
             path.write_bytes(body)
             _safe_archive_files(path, members)
+        members = deobfuscate.expand(members)
         scanned = yara_engine.scan_files(members)
         flags = package_features.profile(members, version=str(target.get("version") or ""))
         flags, diff = version_diff.with_diff(fetcher, "npm", str(target.get("package") or ""), str(target.get("version") or ""), flags)
