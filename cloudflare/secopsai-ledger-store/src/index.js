@@ -5,7 +5,7 @@
 // binding.  That lets the old Render worker upload its ledger without anyone
 // copying a credential between providers.
 import { bearer, handleLedgerRequest, json, timingSafeEqual } from "../../secopsai-research-runner/src/ledger.js";
-import { FastlaneCompletionError, completeFastlaneTargets, fastlaneQueueStatus, fastlaneTick, startFastlaneTargets } from "./fastlane.js";
+import { FastlaneCompletionError, completeFastlaneTargets, enqueueFastlaneTargets, fastlaneQueueStatus, fastlaneTick, startFastlaneTargets } from "./fastlane.js";
 
 const FASTLANE_CRON = "* * * * *";
 const WATCHLIST_CRON = "17 3 * * *";
@@ -211,6 +211,22 @@ export default {
         const message = String(error?.message || error).slice(0, 200);
         if (error instanceof FastlaneCompletionError) return json({ error: message }, 422);
         return json({ error: "start_storage_unavailable", detail: message }, 503);
+      }
+    }
+    if (url.pathname === "/fastlane/enqueue") {
+      const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);
+      if (!isOwner) return json({ error: "unauthorized" }, 401);
+      if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+      const body = await request.text();
+      if (new TextEncoder().encode(body).byteLength > 64 * 1024) return json({ error: "enqueue batch too large" }, 413);
+      let value;
+      try { value = JSON.parse(body); } catch { return json({ error: "invalid json" }, 400); }
+      try {
+        return json(await enqueueFastlaneTargets(env.LEDGER, value.targets));
+      } catch (error) {
+        const message = String(error?.message || error).slice(0, 200);
+        if (error instanceof FastlaneCompletionError) return json({ error: message }, 422);
+        return json({ error: "enqueue_storage_unavailable", detail: message }, 503);
       }
     }
     if (url.pathname === "/fastlane/complete") {

@@ -11,7 +11,6 @@ import argparse
 import json
 import os
 import sys
-import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -41,6 +40,14 @@ def _store(method: str, name: str, value: Any = None) -> Dict[str, Any]:
             return {}
         raise
     return json.loads(body or b"{}")
+
+
+def _post(path: str, value: Any) -> Dict[str, Any]:
+    request = urllib.request.Request(f"{STORE}{path}", data=json.dumps(value).encode(), method="POST",
+                                     headers={"Authorization": f"Bearer {os.environ['LEDGER_STORE_TOKEN']}",
+                                              "Content-Type": "application/json", "User-Agent": "secopsai-stream-scan"})
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return json.loads(response.read() or b"{}")
 
 
 def main() -> int:
@@ -78,18 +85,13 @@ def main() -> int:
                 pass
         return result
 
-    import fast_lane
+    handoff = []
 
     def escalate(target: Dict[str, Any], prescan: Dict[str, Any]) -> Dict[str, Any]:
-        """Prescan warning or alert: diff against the previous version and alert when the delta is risky."""
-        release = fast_lane.resolve_release(fetcher, target["ecosystem"], target["package"], target["version"])
-        with tempfile.TemporaryDirectory(prefix="stream-scan-") as tmp:
-            result = fast_lane.investigate(target, release, Path(tmp))
-        decision = fast_lane.assess(result)
-        if decision["severity"] == "none":
-            return {"alerted": False}
-        fast_lane.deliver(target, release, decision, stream_scan._now())
-        return {"alerted": True, "severity": decision["severity"]}
+        """Prescan warning/alert or a takeover signal: the Fast Lane runs the diff and alert in its own jobs."""
+        reasons = list(prescan.get("rules_matched") or [])[:5] + list((prescan.get("takeover") or target.get("takeover") or {}).get("signals") or [])
+        handoff.append({"ecosystem": target["ecosystem"], "package": target["package"], "version": target["version"], "reasons": reasons})
+        return {"alerted": False, "queued": True}
 
     changelog, last_serial = stream_scan.pypi_client()
     state = _store("GET", "state")
@@ -97,6 +99,10 @@ def main() -> int:
     summary = stream_scan.run(state=state, stats=stats, fetch_json=fetch_json, pypi_changelog=changelog,
                               pypi_last_serial=last_serial, scan=scan, escalate=escalate,
                               budget_seconds=args.budget_seconds, workers=args.workers)
+    queued = 0
+    for start in range(0, len(handoff), 50):
+        queued += int(_post("/fastlane/enqueue", {"targets": handoff[start:start + 50]}).get("queued") or 0)
+    summary["handed_to_fast_lane"] = queued
     # State last: a crash before this point rescans the same releases next run.
     _store("PUT", "stats", stats)
     _store("PUT", "state", state)
@@ -104,7 +110,7 @@ def main() -> int:
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps({"summary": summary, "coverage": coverage}, indent=1), encoding="utf-8")
     lines = ["### Stream scan", "", f"Discovered {summary['discovered']}, scanned {summary['scanned']}, hits {summary['hits']}, "
-             f"escalated {summary['escalated']}, alerts {summary['alerts']}, errors {summary['errors']}, "
+             f"escalated {summary['escalated']} (handed to the Fast Lane: {summary.get('handed_to_fast_lane', 0)}), errors {summary['errors']}, "
              f"backlog {summary['backlog_before']} -> {summary['backlog_after']} (dropped {summary['dropped']}), "
              f"{summary['elapsed_seconds']} s.", "", "| Ecosystem | Published (24 h) | Scanned | Coverage | p50 min | p95 min |",
              "| --- | --- | --- | --- | --- | --- |"]
