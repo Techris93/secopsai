@@ -109,6 +109,32 @@ export async function firewallShard(request, env, ecosystem, shard) {
   return json({ status: "stored", key, bytes: body.length });
 }
 
+// Public frontier scorecard: the one object anyone may read (aggregate
+// measurements only). Only the owner writes it.
+const SCORECARD_KEY = "public/frontier-scorecard.json";
+const SCORECARD_LIMIT_BYTES = 512 * 1024;
+const PUBLIC_HEADERS = { "content-type": "application/json", "cache-control": "public, max-age=300",
+  "access-control-allow-origin": "https://secopsai.dev", "x-content-type-options": "nosniff" };
+
+export async function publicScorecard(request, env, isOwner) {
+  if (request.method === "GET" || request.method === "HEAD") {
+    const object = await env.LEDGER.get(SCORECARD_KEY);
+    if (!object) return new Response(JSON.stringify({ error: "not found" }), { status: 404, headers: PUBLIC_HEADERS });
+    return new Response(request.method === "HEAD" ? null : object.body, { headers: PUBLIC_HEADERS });
+  }
+  if (request.method !== "PUT") return json({ error: "method not allowed" }, 405);
+  if (!isOwner) return json({ error: "unauthorized" }, 401);
+  const body = await request.text();
+  if (new TextEncoder().encode(body).byteLength > SCORECARD_LIMIT_BYTES) return json({ error: "scorecard too large" }, 413);
+  let value;
+  try { value = JSON.parse(body); } catch { return json({ error: "invalid json" }, 400); }
+  if (value?.schema_version !== "secopsai.frontier-scorecard.v1" || !Array.isArray(value.results)) {
+    return json({ error: "not a frontier scorecard" }, 400);
+  }
+  await env.LEDGER.put(SCORECARD_KEY, body, { httpMetadata: { contentType: "application/json" } });
+  return json({ status: "stored", key: SCORECARD_KEY, bytes: body.length });
+}
+
 // Stream scan (frontier phase 1): its cursor/backlog state and per-hour
 // coverage statistics, one JSON document each, written once per run.
 const STREAM_LIMIT_BYTES = 8 * 1024 * 1024;
@@ -266,6 +292,10 @@ export default {
         console.log(JSON.stringify({ component: "fastlane-complete", error: message }));
         return json({ error: "completion_storage_unavailable", detail: message }, 503);
       }
+    }
+    if (url.pathname === "/public/frontier-scorecard") {
+      const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);
+      return publicScorecard(request, env, isOwner);
     }
     const firewallMatch = url.pathname.match(/^\/firewall\/(npm|pypi)\/([0-9a-f]{2})$/);
     if (firewallMatch) {

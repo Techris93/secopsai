@@ -1,0 +1,59 @@
+name: Frontier Scorecard
+
+# Publishes the public frontier scorecard (secopsai.dev/scorecard/) to the
+# ledger store's one public object. Benchmark: the latest successful
+# scheduled Recall Benchmark (default settings) unless a run is given; live
+# coverage: the stream scan's last 24 settled hours. Aggregates only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      benchmark_run:
+        description: "Recall Benchmark run id (default: latest successful scheduled run)"
+        required: false
+  schedule:
+    - cron: "23 5 * * *"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: frontier-scorecard
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      LEDGER_STORE_URL: https://ledger.secopsai.dev
+      LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+          cache: "pip"
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Fetch benchmark
+        env:
+          RUN_INPUT: ${{ inputs.benchmark_run }}
+        run: |
+          run="$RUN_INPUT"
+          if [ -z "$run" ]; then
+            run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow recall-benchmark.yml --event schedule --status success \
+              -L 1 --json databaseId --jq '.[0].databaseId')
+          fi
+          case "$run" in ''|*[!0-9]*) echo "::error::no benchmark run"; exit 1;; esac
+          gh run download "$run" -R "$GITHUB_REPOSITORY" -n recall-benchmark -D "$RUNNER_TEMP/bench"
+          echo "BENCHMARK_RUN=https://github.com/$GITHUB_REPOSITORY/actions/runs/$run" >> "$GITHUB_ENV"
+      - name: Build and publish
+        run: |
+          python scripts/frontier_scorecard.py --benchmark "$RUNNER_TEMP/bench/recall-benchmark.json" \
+            --benchmark-run "$BENCHMARK_RUN" --out "$RUNNER_TEMP/frontier-scorecard.json" --publish
+          curl -fsS https://ledger.secopsai.dev/public/frontier-scorecard | python -c "import json,sys; d=json.load(sys.stdin); print(d['generated_at'], len(d['results']))"

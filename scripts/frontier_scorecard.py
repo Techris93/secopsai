@@ -9,9 +9,11 @@ table (also to the GitHub job summary). It reports; it never fails a run.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -49,6 +51,35 @@ def fetch_live() -> dict:
     return ((projection.get("coverage") or {}).get("health") or {}).get("scan_coverage") or {}
 
 
+def build_card(targets: dict, targets_bytes: bytes, measured: dict, meta: dict, results: list, *, benchmark_run: str = "") -> dict:
+    """The scorecard with what is needed to check it: code commit, the hash of the
+    pre-registered targets, the benchmark run and the corpus commits it used."""
+    commit = os.environ.get("GITHUB_SHA", "")
+    repository = os.environ.get("GITHUB_REPOSITORY", "Techris93/secopsai")
+    return {
+        "schema_version": "secopsai.frontier-scorecard.v1",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "provenance": {
+            "repository": f"https://github.com/{repository}", "code_commit": commit,
+            "targets_file": "eval/frontier/targets.json", "targets_sha256": hashlib.sha256(targets_bytes).hexdigest(),
+            "targets_registered_at": targets.get("registered_at"), "held_out_cutoff": targets.get("held_out_cutoff"),
+            "rule": targets.get("rule"), "benchmark_run": benchmark_run,
+            "scorecard_run": (f"https://github.com/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}" if os.environ.get("GITHUB_RUN_ID") else ""),
+        },
+        "meta": meta, "measured": measured, "results": results,
+        "phases": [{"id": phase["id"], "title": phase["title"]} for phase in targets.get("phases", [])],
+    }
+
+
+def publish(card: dict) -> None:
+    store = os.environ.get("LEDGER_STORE_URL", "https://ledger.secopsai.dev").rstrip("/")
+    request = urllib.request.Request(f"{store}/public/frontier-scorecard", data=json.dumps(card, separators=(",", ":")).encode(), method="PUT",
+                                     headers={"Authorization": f"Bearer {os.environ['LEDGER_STORE_TOKEN']}", "Content-Type": "application/json",
+                                              "User-Agent": "secopsai-scorecard"})
+    with urllib.request.urlopen(request, timeout=60) as response:
+        response.read()
+
+
 def render(results: list, meta: dict) -> str:
     marks = {"pass": "✅ pass", "fail": "❌ fail", "not measured": "— not measured"}
     lines = ["## Frontier scorecard", "", f"Benchmark: {meta.get('benchmark') or 'none'}. Live window: {meta.get('live') or 'none'}.",
@@ -68,6 +99,8 @@ def main() -> int:
     parser.add_argument("--benchmark", type=Path)
     parser.add_argument("--live", type=Path)
     parser.add_argument("--enforcement", type=Path, help="scripts/firewall_check.py output")
+    parser.add_argument("--benchmark-run", default="", help="URL of the benchmark run, recorded as provenance")
+    parser.add_argument("--publish", action="store_true", help="store it as the public scorecard in the ledger store")
     parser.add_argument("--targets", type=Path, default=ROOT / "eval" / "frontier" / "targets.json")
     parser.add_argument("--out", type=Path, default=Path("frontier-scorecard.json"))
     args = parser.parse_args()
@@ -78,6 +111,7 @@ def main() -> int:
         data = json.loads(args.benchmark.read_text(encoding="utf-8"))
         measured["benchmark"] = benchmark_scores(data.get("rows") or [], cutoff=targets["held_out_cutoff"])
         meta["benchmark"] = (data.get("meta") or {}).get("generated_at", "")
+        meta["benchmark_inputs"] = {key: (data.get("meta") or {}).get(key) for key in ("dataset_commit", "registry_commit", "seed", "rule_files")}
     if args.live and args.live.exists():
         measured["live"] = json.loads(args.live.read_text(encoding="utf-8"))
     else:
@@ -90,7 +124,10 @@ def main() -> int:
     if measured.get("live"):
         meta["live"] = f"last {measured['live'].get('window_hours')} h"
     results = evaluate_targets(targets, measured)
-    args.out.write_text(json.dumps({"meta": meta, "measured": measured, "results": results}, indent=1, sort_keys=True), encoding="utf-8")
+    card = build_card(targets, args.targets.read_bytes(), measured, meta, results, benchmark_run=args.benchmark_run)
+    args.out.write_text(json.dumps(card, indent=1, sort_keys=True), encoding="utf-8")
+    if args.publish:
+        publish(card)
     text = render(results, meta)
     print(text)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
