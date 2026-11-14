@@ -120,3 +120,55 @@ def test_pypi_owner_additions_are_remembered_for_later_releases():
     _run(state, {}, feeds, lambda target: seen.append(target) or {"status": "clean"})
     assert "requests" in state["pypi_roles"]
     assert next(target for target in seen if target["ecosystem"] == "pypi")["role_added_at"].startswith((NOW - timedelta(days=1)).strftime("%Y-%m-%d"))
+
+
+def _mcp_page(published):
+    meta = lambda when: {"io.modelcontextprotocol.registry/official": {"publishedAt": _iso(when)}}  # noqa: E731
+    return {"servers": [
+        {"server": {"name": "io.github.x/files", "version": "1.2.0",
+                    "packages": [{"registryType": "npm", "identifier": "@x/files-mcp", "version": "1.2.0"}]}, "_meta": meta(published)},
+        {"server": {"name": "io.github.x/py", "version": "0.4.0",
+                    "packages": [{"registryType": "pypi", "identifier": "x-mcp"}, {"registryType": "oci", "identifier": "ghcr.io/x"}]},
+         "_meta": meta(published)},
+        {"server": {"name": "ad.example/remote", "version": "1.0.0", "remotes": [{"type": "streamable-http", "url": "https://x"}]},
+         "_meta": meta(published)},
+        {"server": {"name": "io.github.x/old", "version": "0.1.0", "packages": [{"registryType": "npm", "identifier": "old"}]},
+         "_meta": meta(published - timedelta(days=3))},
+    ], "metadata": {}}
+
+
+def test_mcp_servers_are_scanned_through_their_packages_and_remote_ones_counted():
+    page = _mcp_page(NOW - timedelta(minutes=5))
+    targets, unscannable, cursor = ss.mcp_new_servers(lambda url: page, _iso(NOW - timedelta(hours=1)))
+    assert [t["package"] for t in targets] == ["io.github.x/files", "io.github.x/py"]
+    assert targets[1]["packages"] == [{"ecosystem": "pypi", "package": "x-mcp", "version": "0.4.0"}], "a package without a version runs the server's"
+    assert [(t["package"], t["kinds"]) for t in unscannable] == [("ad.example/remote", ["remote"])]
+    assert cursor == _iso(NOW - timedelta(minutes=5)).replace(".000Z", ".000000Z")
+
+    verdicts = {"@x/files-mcp": {"status": "clean", "level": "none"}, "x-mcp": {"status": "hit", "level": "warning"}}
+    worst = ss.scan_mcp(lambda package: verdicts[package["package"]], {"packages": targets[0]["packages"] + targets[1]["packages"]})
+    assert worst["status"] == "hit" and worst["package"]["package"] == "x-mcp"
+
+
+def test_mcp_releases_enter_coverage_and_escalate_as_their_package():
+    feeds = Feeds()
+    page = _mcp_page(NOW - timedelta(minutes=5))
+    base = feeds.fetch_json
+    feeds.fetch_json = lambda url: page if url.startswith(ss.MCP_REGISTRY) else base(url)
+    state = {"npm_seq": "10", "pypi_serial": 500, "mcp_since": _iso(NOW - timedelta(hours=1))}
+    stats, escalated = {}, []
+
+    def scan(target):
+        if target["ecosystem"] == "mcp-registry":
+            return ss.scan_mcp(lambda package: {"status": "hit", "level": "warning"} if package["package"] == "x-mcp"
+                               else {"status": "clean", "level": "none"}, target)
+        return {"status": "clean", "level": "none"}
+
+    ss.run(state=state, stats=stats, fetch_json=feeds.fetch_json, pypi_changelog=lambda serial: [], pypi_last_serial=lambda: 500,
+           scan=scan, escalate=lambda target, result: escalated.append(target) or {"alerted": False},
+           workers=2, now=lambda: NOW, clock=lambda: 0.0, mcp=True)
+    assert [(t["ecosystem"], t["package"], t["mcp_server"]) for t in escalated] == [("pypi", "x-mcp", "io.github.x/py")]
+    bucket = stats["hours"][(NOW - timedelta(minutes=5)).strftime("%Y-%m-%dT%H")]["mcp-registry"]
+    assert (bucket["published"], bucket["scanned"], bucket["unscannable"]) == (2, 2, 1)
+    later = NOW + timedelta(hours=3)
+    assert ss.coverage_from_stats(stats, now=later)["ecosystems"]["mcp-registry"]["unscannable"] == 1

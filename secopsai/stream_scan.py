@@ -27,6 +27,11 @@ NPM_CHANGES = "https://replicate.npmjs.com/_changes"
 NPM_REGISTRY = "https://registry.npmjs.org/"
 NPM_HOSTS = ("replicate.npmjs.com", "registry.npmjs.org")
 PYPI_XMLRPC = "https://pypi.org/pypi"
+MCP_REGISTRY = "https://registry.modelcontextprotocol.io/v0/servers"
+MCP_HOSTS = ("registry.modelcontextprotocol.io",)
+MCP_PAGES = 20
+# Package types the content scan can read; remote-only and OCI servers are counted, not scanned.
+MCP_SCANNABLE = {"npm": "npm", "pypi": "pypi"}
 NPM_PAGE = 1000
 MAX_NPM_PAGES = 30
 MAX_BACKLOG = 20000
@@ -129,12 +134,73 @@ def pypi_new_releases(changelog: Callable[[int], List[list]], last_serial: Calla
     return releases, newest
 
 
+def mcp_new_servers(fetch_json: Callable[[str], Dict[str, Any]], since: Optional[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], str]:
+    """New MCP registry server versions since the cursor: (package-backed targets, unscannable, new cursor).
+
+    A target's ``packages`` are the npm and PyPI packages the server runs; its
+    verdict is the content scan of those packages.
+    """
+    current = _now()
+    if since is None:
+        return [], [], _iso(current)
+    floor = _parse(since) or current
+    targets: List[Dict[str, Any]] = []
+    unscannable: List[Dict[str, Any]] = []
+    newest = floor
+    cursor = ""
+    from urllib.parse import quote
+    for _ in range(MCP_PAGES):
+        page = fetch_json(f"{MCP_REGISTRY}?limit=100&updated_since={quote(_iso(floor - timedelta(minutes=5)))}"
+                          + (f"&cursor={quote(cursor)}" if cursor else ""))
+        for item in page.get("servers") or []:
+            server = item.get("server") or {}
+            meta = (item.get("_meta") or {}).get("io.modelcontextprotocol.registry/official") or {}
+            published = _parse(meta.get("publishedAt"))
+            if not server.get("name") or not server.get("version") or published is None or published <= floor:
+                continue
+            newest = max(newest, published)
+            packages = [{"ecosystem": MCP_SCANNABLE[str(package.get("registryType"))], "package": str(package.get("identifier")),
+                         "version": str(package.get("version") or server["version"])}
+                        for package in server.get("packages") or []
+                        if str(package.get("registryType")) in MCP_SCANNABLE and package.get("identifier")]
+            target = {"ecosystem": "mcp-registry", "package": str(server["name"]), "version": str(server["version"]),
+                      "published_at": _iso(published)}
+            if packages:
+                targets.append({**target, "packages": packages[:5]})
+            else:
+                kinds = sorted({str(package.get("registryType")) for package in server.get("packages") or []}
+                               | ({"remote"} if server.get("remotes") else set()))
+                unscannable.append({**target, "kinds": kinds})
+        cursor = str((page.get("metadata") or {}).get("nextCursor") or "")
+        if not cursor:
+            break
+    return targets, unscannable, _iso(newest)
+
+
+def scan_mcp(scan_package: Callable[[Dict[str, Any]], Dict[str, Any]], target: Dict[str, Any]) -> Dict[str, Any]:
+    """An MCP server's verdict is the worst verdict of the packages it runs."""
+    order = {"error": 0, "clean": 1, "hit": 2}
+    levels = {"none": 0, "info": 1, "warning": 2, "alert": 3}
+    worst: Dict[str, Any] = {"status": "error", "reason": "no packages"}
+    for package in target.get("packages") or []:
+        result = scan_package(package)
+        if (order.get(result.get("status"), 0), levels.get(result.get("level"), 0)) > (order.get(worst.get("status"), 0), levels.get(worst.get("level"), 0)):
+            worst = {**result, "package": package}
+    return worst
+
+
 # --- statistics ---------------------------------------------------------------
 
 def _bucket(stats: Dict[str, Any], published_at: str, ecosystem: str) -> Dict[str, Any]:
     hour = str(published_at)[:13]
     return stats.setdefault("hours", {}).setdefault(hour, {}).setdefault(
         ecosystem, {"published": 0, "scanned": 0, "hits": 0, "errors": 0, "latencies": []})
+
+
+def record_unscannable(stats: Dict[str, Any], targets: Iterable[Dict[str, Any]]) -> None:
+    for target in targets:
+        bucket = _bucket(stats, target["published_at"], target["ecosystem"])
+        bucket["unscannable"] = bucket.get("unscannable", 0) + 1
 
 
 def record_published(stats: Dict[str, Any], targets: Iterable[Dict[str, Any]]) -> None:
@@ -195,15 +261,18 @@ def coverage_from_stats(stats: Dict[str, Any], *, now: Optional[datetime] = None
         if not (first <= hour <= last):
             continue
         for ecosystem, bucket in ecosystems.items():
-            total = totals.setdefault(ecosystem, {"published": 0, "scanned": 0, "hits": 0, "errors": 0, "latencies": []})
-            for field in ("published", "scanned", "hits", "errors"):
+            total = totals.setdefault(ecosystem, {"published": 0, "scanned": 0, "hits": 0, "errors": 0, "unscannable": 0, "latencies": []})
+            for field in ("published", "scanned", "hits", "errors", "unscannable"):
                 total[field] += int(bucket.get(field) or 0)
             total["latencies"] += list(bucket.get("latencies") or [])
     report: Dict[str, Any] = {"source": "stream_scan", "window_hours": hours, "settle_minutes": settle_minutes, "ecosystems": {}}
     everything: Dict[str, Any] = {"published": 0, "scanned": 0, "latencies": []}
     for ecosystem, total in sorted(totals.items()):
+        if not total["published"] and not total["unscannable"]:
+            continue
         report["ecosystems"][ecosystem] = {
             "published": total["published"], "scanned": total["scanned"], "hits": total["hits"], "errors": total["errors"],
+            **({"unscannable": total["unscannable"]} if total["unscannable"] else {}),
             "coverage": round(total["scanned"] / total["published"], 4) if total["published"] else None,
             "p50_minutes": _percentile(total["latencies"], 0.5), "p95_minutes": _percentile(total["latencies"], 0.95)}
         everything["published"] += total["published"]
@@ -220,7 +289,7 @@ def coverage_from_stats(stats: Dict[str, Any], *, now: Optional[datetime] = None
 def run(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[str], Dict[str, Any]],
         pypi_changelog: Callable[[int], List[list]], pypi_last_serial: Callable[[], int],
         scan: Callable[[Dict[str, Any]], Dict[str, Any]], escalate: Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]],
-        budget_seconds: float = 900, workers: int = 12, now: Callable[[], datetime] = _now,
+        budget_seconds: float = 900, workers: int = 12, now: Callable[[], datetime] = _now, mcp: bool = False,
         clock: Callable[[], float] = time.monotonic) -> Dict[str, Any]:
     """One pass. Mutates and returns ``state`` and ``stats``; the caller saves them."""
     started = clock()
@@ -239,8 +308,19 @@ def run(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[s
     for target in pypi_targets:
         if roles.get(target["package"].lower()):
             target["role_added_at"] = roles[target["package"].lower()]
+    mcp_targets: List[Dict[str, Any]] = []
+    mcp_cursor = state.get("mcp_since")
+    if mcp:
+        try:
+            mcp_targets, unscannable, mcp_cursor = mcp_new_servers(fetch_json, state.get("mcp_since"))
+            unscannable = [target for target in unscannable if key(target) not in seen_set]
+            record_unscannable(stats, unscannable)
+            summary["discovered"]["mcp-registry-unscannable"] = len(unscannable)
+            seen.extend(key(target) for target in unscannable)
+        except Exception:  # noqa: BLE001 - the registry being down must not stop npm and PyPI
+            summary["discovery_failures"] += 1
 
-    fresh = [target for target in npm_targets + pypi_targets if key(target) not in seen_set]
+    fresh = [target for target in npm_targets + pypi_targets + mcp_targets if key(target) not in seen_set]
     fresh = list({key(target): target for target in fresh}.values())
     for target in fresh:
         summary["discovered"][target["ecosystem"]] = summary["discovered"].get(target["ecosystem"], 0) + 1
@@ -280,7 +360,10 @@ def run(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[s
             if result.get("level") in ESCALATE_LEVELS or takeover.get("score", 0) >= takeover_signals.ESCALATE_SCORE:
                 summary["escalated"] += 1
                 try:
-                    outcome = escalate(target, result)
+                    # An MCP server is escalated as the package that raised the verdict.
+                    subject = ({**result["package"], "published_at": target["published_at"], "mcp_server": target["package"]}
+                               if target["ecosystem"] == "mcp-registry" and result.get("package") else target)
+                    outcome = escalate(subject, result)
                     summary["alerts"] += int(bool(outcome.get("alerted")))
                 except Exception:  # noqa: BLE001 - the prescan verdict is already recorded
                     summary["errors"] += 1
@@ -292,7 +375,7 @@ def run(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[s
     newest = max([_parse(target["published_at"]) for target in npm_targets if _parse(target["published_at"])] or [npm_since])
     cutoff = _iso(current - timedelta(days=30))
     roles = dict(sorted(((name, when) for name, when in roles.items() if when >= cutoff), key=lambda item: item[1])[-5000:])
-    state.update({"pypi_roles": roles, "npm_seq": npm_cursor, "npm_since": _iso(max(npm_since, newest - timedelta(minutes=10))),
+    state.update({"mcp_since": mcp_cursor, "pypi_roles": roles, "npm_seq": npm_cursor, "npm_since": _iso(max(npm_since, newest - timedelta(minutes=10))),
                   "pypi_serial": pypi_serial, "backlog": remaining, "seen": seen[-MAX_SEEN:], "updated_at": _iso(now())})
     prune_stats(stats, now())
     summary.update(backlog_after=len(remaining), elapsed_seconds=round(clock() - started, 1))
