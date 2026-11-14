@@ -164,6 +164,29 @@ async function dispatchQueued(bucket, dispatch, now) {
 // A completion the queue must refuse (bad batch, unknown target, wrong state).
 // Anything else thrown while completing is a storage failure: the client may
 // resend the whole batch, which is idempotent for targets already completed.
+// The stream scan (frontier phase 1) hands releases that need the full diff
+// to this queue, so its run is not spent on slow investigations.
+const MAX_ENQUEUE = 50;
+const ENQUEUE_ECOSYSTEMS = new Set(["npm", "pypi"]);
+
+export async function enqueueFastlaneTargets(bucket, targets, { now = Date.now() } = {}) {
+  if (!Array.isArray(targets) || targets.length > MAX_ENQUEUE) throw new FastlaneCompletionError("invalid fast-lane enqueue batch");
+  const queued = [];
+  for (const raw of targets) {
+    const target = {
+      ecosystem: String(raw?.ecosystem || ""), package: String(raw?.package || ""), version: String(raw?.version || ""),
+      source: "stream_scan",
+    };
+    if (!ENQUEUE_ECOSYSTEMS.has(target.ecosystem) || !target.package || target.package.length > 214
+        || !target.version || target.version.length > 128 || /[\s\x00-\x1f]/.test(target.package + target.version)) {
+      throw new FastlaneCompletionError("invalid fast-lane enqueue target");
+    }
+    if (Array.isArray(raw?.reasons)) target.reasons = raw.reasons.slice(0, 10).map((item) => String(item).slice(0, 200));
+    queued.push(await persistTarget(bucket, target, now));
+  }
+  return { status: "queued", queued: queued.length, queue_ids: queued };
+}
+
 export class FastlaneCompletionError extends Error {}
 
 function validQueueId(id) {

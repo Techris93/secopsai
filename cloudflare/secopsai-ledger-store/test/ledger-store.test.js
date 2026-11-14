@@ -82,7 +82,7 @@ test("a new research worker run starts only after the previous one finishes", as
   assert.equal(gh.dispatches().length, 0);
 });
 
-import { completeFastlaneTargets, fastlaneQueueStatus, fastlaneTick, parsePypiRss, startFastlaneTargets } from "../src/fastlane.js";
+import { completeFastlaneTargets, enqueueFastlaneTargets, fastlaneQueueStatus, fastlaneTick, parsePypiRss, startFastlaneTargets } from "../src/fastlane.js";
 
 function memoryBucket(initial = {}) {
   const store = new Map(Object.entries(initial).map(([k, v]) => [k, JSON.stringify(v)]));
@@ -480,4 +480,27 @@ test("the stream scan starts only when the previous scan has finished", async ()
   assert.equal((await dispatchStreamScan(env, idle.fetcher, NOW)).status, "dispatched");
   assert.ok(idle.dispatches()[0].url.endsWith("/workflows/stream-scan.yml/dispatches"));
   assert.ok(idle.calls[0].url.includes("/workflows/stream-scan.yml/runs?"), "checks the stream scan's own runs");
+});
+
+
+test("the stream scan hands releases to the fast lane queue once", async () => {
+  const bucket = memoryBucket();
+  const target = { ecosystem: "npm", package: "@scope/thing", version: "2.0.0", reasons: ["trusted_publishing_lost"] };
+  const first = await enqueueFastlaneTargets(bucket, [target], { now: 1000 });
+  const again = await enqueueFastlaneTargets(bucket, [target], { now: 2000 });
+  assert.equal(first.queued, 1);
+  assert.deepEqual(first.queue_ids, again.queue_ids, "the same release maps to the same queue item");
+  const status = await fastlaneQueueStatus(bucket);
+  assert.equal(JSON.stringify(status).includes("queued"), true);
+  const stored = JSON.parse(bucket.store.get(`fastlane/targets/${first.queue_ids[0]}.json`));
+  assert.equal(stored.target.source, "stream_scan");
+  for (const bad of [[{ ecosystem: "cargo", package: "x", version: "1" }], [{ ecosystem: "npm", package: "a b", version: "1" }],
+    Array.from({ length: 51 }, (_, i) => ({ ecosystem: "npm", package: `p${i}`, version: "1" }))]) {
+    await assert.rejects(enqueueFastlaneTargets(bucket, bad));
+  }
+  const env = { LEDGER_STORE_TOKEN: "secret", LEDGER: bucket };
+  const post = (token) => worker.fetch(new Request("https://ls.example/fastlane/enqueue", { method: "POST", body: JSON.stringify({ targets: [target] }),
+    headers: { authorization: `Bearer ${token}` } }), env);
+  assert.equal((await post("wrong")).status, 401);
+  assert.equal((await post("secret")).status, 200);
 });
