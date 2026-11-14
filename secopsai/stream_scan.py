@@ -17,7 +17,6 @@ published release, scanned or not.
 from __future__ import annotations
 
 import time
-import xmlrpc.client
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -268,7 +267,13 @@ def run(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[s
 
 
 def pypi_client(timeout: int = 60) -> Tuple[Callable[[int], List[list]], Callable[[], int]]:
+    """PyPI's XML-RPC changelog, parsed with defusedxml (no entity expansion or external entities)."""
     import ssl
+
+    from defusedxml.xmlrpc import monkey_patch
+
+    monkey_patch()
+    import xmlrpc.client  # nosec B411
 
     class TimeoutTransport(xmlrpc.client.SafeTransport):
         def make_connection(self, host):  # noqa: ANN001
