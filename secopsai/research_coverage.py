@@ -198,11 +198,18 @@ def coverage_report(*, db_path=None, now=None, window_hours: int = 24) -> dict:
     vault_enabled = os.environ.get("SECOPSAI_ARTIFACT_VAULT", "0") == "1"
     gaps = [s["name"] for s in sources if s["enabled"] and not s["fresh"]]
     metadata = [s["name"] for s in sources if s["coverage_mode"] == "metadata_only"]
+    # Frontier programme metric: share of new releases scanned and publish-to-verdict time.
+    try:
+        from secopsai.frontier_metrics import live_coverage
+
+        scan_coverage = live_coverage(db_path=db_path, now=now)
+    except Exception as exc:  # the coverage report never fails on this measurement
+        scan_coverage = {"error": type(exc).__name__}
     return {"schema_version": "secopsai.research.coverage.v1", "as_of": now.isoformat(), "window_start": since, "window_hours": window_hours,
             "sources": sources, "queue": {"states": queue, "oldest_pending_age_seconds": _age(oldest, now)}, "editions": editions,
             "artifact_backup": {"enabled": vault_enabled, "pending_registered_public": backup_pending,
                                 "coverage": "latest 1000 collected catalog entries; restricted and unregistered artifacts excluded"},
-            "health": {"freshness_gaps": gaps, "collector_failures": failures, "dead_letters": queue.get("dead_letter", 0),
+            "health": {"freshness_gaps": gaps, "scan_coverage": scan_coverage, "collector_failures": failures, "dead_letters": queue.get("dead_letter", 0),
                        "primary_intel_pending_preparation": primary_preparation_pending,
                        "primary_intel_awaiting_human_review": primary_preparation["awaiting_review"] or 0,
                        "primary_intel_preparation_dead_letters": primary_preparation["dead_letter"] or 0,

@@ -1,0 +1,39 @@
+{
+  "schema_version": "secopsai.frontier-targets.v1",
+  "registered_at": "2026-11-15",
+  "rule": "Targets were fixed before any phase's work began and are not changed to fit results. Recall targets are judged on held-out samples (discovered on or after the cutoff) that rule selection never sees. A missing measurement is 'not measured', never a pass.",
+  "held_out_cutoff": "2026-01-01",
+  "baseline_source": "Recall Benchmark 2026-11-09 (all samples; held-out baselines are recorded from the first scorecard run) and the 2026-11-01 detection-speed study (1 of 866 reported malicious releases flagged)",
+  "phases": [
+    {"id": "phase-1", "title": "Scan everything, fast", "targets": [
+      {"name": "npm releases reaching a content verdict", "metric": "live.ecosystems.npm.coverage", "op": ">=", "value": 0.95},
+      {"name": "PyPI releases reaching a content verdict", "metric": "live.ecosystems.pypi.coverage", "op": ">=", "value": 0.95},
+      {"name": "npm median publish-to-verdict minutes", "metric": "live.ecosystems.npm.p50_minutes", "op": "<=", "value": 10},
+      {"name": "npm 95th percentile publish-to-verdict minutes", "metric": "live.ecosystems.npm.p95_minutes", "op": "<=", "value": 30},
+      {"name": "PyPI median publish-to-verdict minutes", "metric": "live.ecosystems.pypi.p50_minutes", "op": "<=", "value": 10},
+      {"name": "PyPI 95th percentile publish-to-verdict minutes", "metric": "live.ecosystems.pypi.p95_minutes", "op": "<=", "value": 30}
+    ]},
+    {"id": "phase-2", "title": "Takeover and provenance signals", "targets": [
+      {"name": "PyPI compromised-library recall (held-out, hit)", "metric": "benchmark.recall.pypi/compromised_lib.held_out.hit", "op": ">=", "value": 0.60, "baseline": 0.286},
+      {"name": "npm compromised-library recall (held-out, hit)", "metric": "benchmark.recall.npm/compromised_lib.held_out.hit", "op": ">=", "value": 0.90, "baseline": 0.82},
+      {"name": "npm false positives on popular packages (hit)", "metric": "benchmark.false_positive_rate.npm.hit", "op": "<=", "value": 0.01, "baseline": 0.0049},
+      {"name": "PyPI false positives on popular packages (hit)", "metric": "benchmark.false_positive_rate.pypi.hit", "op": "<=", "value": 0.01, "baseline": 0.0021}
+    ]},
+    {"id": "phase-3", "title": "Deobfuscation, diffs and calibrated intent", "targets": [
+      {"name": "npm recall at alert (held-out, all categories)", "metric": "benchmark.recall.npm/all.held_out.alert", "op": ">=", "value": 0.50, "baseline": 0.319},
+      {"name": "npm false positives at alert", "metric": "benchmark.false_positive_rate.npm.alert", "op": "<=", "value": 0.01, "baseline": 0.001}
+    ]},
+    {"id": "phase-4", "title": "Detonation at scale", "targets": [
+      {"name": "npm malicious-intent recall at alert (held-out)", "metric": "benchmark.recall.npm/malicious_intent.held_out.alert", "op": ">=", "value": 0.65, "baseline": 0.293},
+      {"name": "PyPI malicious-intent recall at alert (held-out)", "metric": "benchmark.recall.pypi/malicious_intent.held_out.alert", "op": ">=", "value": 0.55, "baseline": 0.173},
+      {"name": "PyPI false positives at alert", "metric": "benchmark.false_positive_rate.pypi.alert", "op": "<=", "value": 0.01, "baseline": 0.0}
+    ]},
+    {"id": "phase-5", "title": "Enforcement", "targets": [
+      {"name": "Install firewall blocks known-malicious benchmark versions", "metric": "enforcement.block_rate", "op": ">=", "value": 1.0},
+      {"name": "Install firewall added latency (ms, p95)", "metric": "enforcement.p95_latency_ms", "op": "<=", "value": 50}
+    ]},
+    {"id": "phase-6", "title": "Beyond world standard", "targets": [
+      {"name": "MCP registry releases reaching a content verdict", "metric": "live.ecosystems.mcp-registry.coverage", "op": ">=", "value": 0.95}
+    ]}
+  ]
+}

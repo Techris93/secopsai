@@ -79,12 +79,22 @@ jobs:
             --clean-npm "${{ inputs.clean_npm || '1000' }}" --clean-pypi "${{ inputs.clean_pypi || '500' }}" \
             --seed "${{ inputs.seed || '20261010' }}" --fp-budget 0.5 --out "$RUNNER_TEMP/recall-benchmark.json"
 
+      - name: Frontier scorecard
+        if: always()
+        env:
+          SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
+        run: |
+          python scripts/frontier_scorecard.py --benchmark "$RUNNER_TEMP/recall-benchmark.json" \
+            --out "$RUNNER_TEMP/frontier-scorecard.json"
+
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: recall-benchmark
-          path: ${{ runner.temp }}/recall-benchmark.json
+          path: |
+            ${{ runner.temp }}/recall-benchmark.json
+            ${{ runner.temp }}/frontier-scorecard.json
           retention-days: 90
 
       - name: Remove samples
