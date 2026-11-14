@@ -6,7 +6,14 @@
     <link>https://blog.secopsai.dev/</link>
     <description>Real-time SecOpsAI advisories, detections, mitigation steps, and incident updates.</description>
     <language>en-us</language>
-    <lastBuildDate>Fri, 13 Nov 2026 17:48:37 GMT</lastBuildDate>
+    <lastBuildDate>Sat, 14 Nov 2026 17:36:11 GMT</lastBuildDate>
+    <item>
+      <title>SecOpsAI Daily Intelligence Brief — 2026-11-14</title>
+      <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-14.html</link>
+      <guid>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-14.html</guid>
+      <pubDate>Sat, 14 Nov 2026 17:36:11 GMT</pubDate>
+      <description>2 separate advisories · 2 exploited in the wild · highest CVSS 8.6.</description>
+    </item>
     <item>
       <title>SecOpsAI Daily Intelligence Brief — 2026-11-13</title>
       <link>https://blog.secopsai.dev/posts/daily-intelligence-2026-11-13.html</link>
