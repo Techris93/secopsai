@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -24,6 +25,21 @@ CORE = "https://core.secopsai.dev/api/v1/research/operation"
 
 
 def fetch_live() -> dict:
+    """Live coverage: the stream scan's statistics (the whole registry stream) when
+    the ledger store is reachable, otherwise the worker's projection in Core."""
+    store_token = os.environ.get("LEDGER_STORE_TOKEN", "")
+    if store_token:
+        from secopsai.stream_scan import coverage_from_stats
+
+        store = os.environ.get("LEDGER_STORE_URL", "https://ledger.secopsai.dev").rstrip("/")
+        request = urllib.request.Request(f"{store}/stream/stats", headers={"Authorization": f"Bearer {store_token}",
+                                                                            "User-Agent": "secopsai-scorecard"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return coverage_from_stats(json.load(response))
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                raise
     token = os.environ.get("SECOPSAI_CORE_BRIDGE_TOKEN", "")
     if not token:
         return {}

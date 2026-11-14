@@ -83,6 +83,7 @@ jobs:
         if: always()
         env:
           SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
+          LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
         run: |
           python scripts/frontier_scorecard.py --benchmark "$RUNNER_TEMP/recall-benchmark.json" \
             --out "$RUNNER_TEMP/frontier-scorecard.json"
