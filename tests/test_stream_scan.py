@@ -1,0 +1,98 @@
+from datetime import datetime, timedelta, timezone
+
+from secopsai import stream_scan as ss
+
+NOW = datetime(2026, 11, 15, 12, 0, tzinfo=timezone.utc)
+
+
+def _iso(moment):
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+class Feeds:
+    def __init__(self):
+        self.npm_docs = {
+            "left-pad": {"time": {"created": "x", "modified": "x", "1.0.0": _iso(NOW - timedelta(days=9)),
+                                  "1.1.0": _iso(NOW - timedelta(minutes=3))}, "versions": {"1.0.0": {}, "1.1.0": {}}},
+            "@scope/thing": {"time": {"2.0.0": _iso(NOW - timedelta(minutes=2))}, "versions": {"2.0.0": {}}},
+        }
+        self.changes = [{"seq": 11, "id": "left-pad"}, {"seq": 12, "id": "@scope/thing"}, {"seq": 13, "id": "gone", "deleted": True},
+                        {"seq": 14, "id": "left-pad"}]
+        self.pypi = [["requests", "3.0.0", int((NOW - timedelta(minutes=4)).timestamp()), "new release", 501],
+                     ["requests", "3.0.0", int((NOW - timedelta(minutes=4)).timestamp()), "add py3 file x.whl", 502]]
+
+    def fetch_json(self, url):
+        if url == "https://replicate.npmjs.com/":
+            return {"update_seq": 10}
+        if url.startswith(ss.NPM_CHANGES):
+            return {"results": self.changes, "last_seq": 14}
+        name = url[len(ss.NPM_REGISTRY):].replace("%2F", "/")
+        return self.npm_docs[name]
+
+
+def _run(state, stats, feeds, scan, escalate=lambda target, result: {"alerted": True}, budget=900, clock=None):
+    return ss.run(state=state, stats=stats, fetch_json=feeds.fetch_json, pypi_changelog=lambda serial: feeds.pypi,
+                  pypi_last_serial=lambda: 500, scan=scan, escalate=escalate, budget_seconds=budget, workers=2,
+                  now=lambda: NOW, clock=clock or (lambda: 0.0))
+
+
+def test_first_run_only_sets_the_cursors():
+    state, stats, scanned = {}, {}, []
+    summary = _run(state, stats, Feeds(), lambda target: scanned.append(target) or {"status": "clean"})
+    assert state["npm_seq"] == "10" and state["pypi_serial"] == 500 and scanned == []
+    assert summary["discovered"] == {}
+
+
+def test_every_new_release_is_prescanned_once_and_hits_are_escalated():
+    state = {"npm_seq": "10", "pypi_serial": 500, "npm_since": _iso(NOW - timedelta(minutes=30))}
+    stats, escalated = {}, []
+
+    def scan(target):
+        return {"status": "hit", "level": "warning"} if target["package"] == "@scope/thing" else {"status": "clean", "level": "none"}
+
+    summary = _run(state, stats, Feeds(), scan, escalate=lambda target, result: escalated.append(target["package"]) or {"alerted": True})
+    assert summary["discovered"] == {"npm": 2, "pypi": 1}, "the old left-pad version and the deleted package are not new"
+    assert summary["scanned"] == 3 and summary["hits"] == 1 and summary["alerts"] == 1 and escalated == ["@scope/thing"]
+    assert state["npm_seq"] == "14" and state["pypi_serial"] == 502 and state["backlog"] == []
+    again = _run(state, stats, Feeds(), scan)
+    assert again["discovered"] == {} and again["scanned"] == 0, "a release is never scanned twice"
+    coverage = ss.coverage_from_stats(stats, now=NOW + timedelta(hours=2, minutes=5))
+    assert coverage["ecosystems"]["npm"]["coverage"] == 1.0 and coverage["ecosystems"]["pypi"]["published"] == 1
+    assert coverage["ecosystems"]["npm"]["p50_minutes"] in (2.0, 3.0) and coverage["all"]["scanned"] == 3
+
+
+def test_releases_beyond_the_budget_wait_in_the_backlog_and_count_as_unscanned():
+    state = {"npm_seq": "10", "pypi_serial": 500, "npm_since": _iso(NOW - timedelta(minutes=30))}
+    stats = {}
+    ticks = iter([0.0] + [1000.0] * 50)  # the budget is spent after the first check
+    summary = _run(state, stats, Feeds(), lambda target: {"status": "clean"}, budget=10, clock=lambda: next(ticks))
+    assert summary["scanned"] == 0 and len(state["backlog"]) == 3
+    coverage = ss.coverage_from_stats(stats, now=NOW + timedelta(hours=2, minutes=5))
+    assert coverage["all"]["published"] == 3 and coverage["all"]["coverage"] == 0.0, "unscanned releases are not hidden"
+    feeds = Feeds()
+    feeds.changes, feeds.pypi = [], []
+    later = _run(state, stats, feeds, lambda target: {"status": "clean"})
+    assert later["scanned"] == 3 and state["backlog"] == []
+
+
+def test_scan_errors_are_counted_and_do_not_stop_the_stream():
+    state = {"npm_seq": "10", "pypi_serial": 500, "npm_since": _iso(NOW - timedelta(minutes=30))}
+    stats = {}
+
+    def scan(target):
+        if target["ecosystem"] == "pypi":
+            raise RuntimeError("tarball 404")
+        return {"status": "clean"}
+
+    summary = _run(state, stats, Feeds(), scan)
+    assert summary["scanned"] == 2 and summary["errors"] == 1
+    coverage = ss.coverage_from_stats(stats, now=NOW + timedelta(hours=2, minutes=5))
+    assert coverage["ecosystems"]["pypi"]["coverage"] == 0.0 and coverage["ecosystems"]["pypi"]["errors"] == 1
+
+
+def test_unsettled_hours_are_left_out_of_coverage():
+    stats = {}
+    ss.record_published(stats, [{"ecosystem": "npm", "published_at": _iso(NOW - timedelta(minutes=5))}])
+    assert ss.coverage_from_stats(stats, now=NOW)["all"]["published"] == 0
+    ss.prune_stats(stats, NOW + timedelta(hours=60))
+    assert stats["hours"] == {}

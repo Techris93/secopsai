@@ -88,6 +88,36 @@ export async function researchWorkerDispatchDecision(env, now = Date.now(), fetc
 // workflow, so this Worker's Cron Trigger dispatches the research worker
 // instead.  GITHUB_DISPATCH_TOKEN is a fine-grained token limited to Actions
 // read/write on the repository; without it the cron does nothing.
+// Stream scan (frontier phase 1): its cursor/backlog state and per-hour
+// coverage statistics, one JSON document each, written once per run.
+const STREAM_LIMIT_BYTES = 8 * 1024 * 1024;
+
+export async function streamDocument(request, env, name) {
+  const key = `stream/${name}.json`;
+  if (request.method === "GET") {
+    const object = await env.LEDGER.get(key);
+    if (!object) return json({ error: "not found" }, 404);
+    return new Response(object.body, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  }
+  if (request.method !== "PUT") return json({ error: "method not allowed" }, 405);
+  const body = await request.text();
+  if (new TextEncoder().encode(body).byteLength > STREAM_LIMIT_BYTES) return json({ error: "stream document too large" }, 413);
+  let value;
+  try { value = JSON.parse(body); } catch { return json({ error: "invalid json" }, 400); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return json({ error: "stream document must be an object" }, 400);
+  await env.LEDGER.put(key, body, { httpMetadata: { contentType: "application/json" } });
+  return json({ status: "stored", name, bytes: body.length });
+}
+
+// Every five minutes, start the stream scan unless one is still running.
+export async function dispatchStreamScan(env, fetcher = fetch, now = Date.now()) {
+  if (!env.GITHUB_DISPATCH_TOKEN) return { status: "skipped", reason: "GITHUB_DISPATCH_TOKEN is not set" };
+  const streamEnv = { ...env, RESEARCH_WORKER_WORKFLOW: "stream-scan.yml", RESEARCH_WORKER_MIN_INTERVAL_MINUTES: "4" };
+  const decision = await researchWorkerDispatchDecision(streamEnv, now, fetcher);
+  if (!decision.dispatch) return { status: "skipped", reason: decision.reason };
+  return dispatchWorkflow(env, "stream-scan.yml", { trigger: "cloudflare-cron" }, fetcher);
+}
+
 export async function dispatchResearchWorker(env, fetcher = fetch, now = Date.now()) {
   if (!env.GITHUB_DISPATCH_TOKEN) return { status: "skipped", reason: "GITHUB_DISPATCH_TOKEN is not set" };
   const decision = await researchWorkerDispatchDecision(env, now, fetcher);
@@ -160,6 +190,7 @@ export default {
       ctx.waitUntil(dispatchWorkflow(env, "fast-lane-watchlist.yml", {}));
     } else {
       ctx.waitUntil(dispatchResearchWorker(env));
+      ctx.waitUntil(dispatchStreamScan(env));
     }
   },
 
@@ -198,6 +229,12 @@ export default {
         console.log(JSON.stringify({ component: "fastlane-complete", error: message }));
         return json({ error: "completion_storage_unavailable", detail: message }, 503);
       }
+    }
+    const streamMatch = url.pathname.match(/^\/stream\/(state|stats)$/);
+    if (streamMatch) {
+      const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);
+      if (!isOwner) return json({ error: "unauthorized" }, 401);
+      return streamDocument(request, env, streamMatch[1]);
     }
     const watchlistMatch = url.pathname.match(/^\/fastlane\/watchlist\/([a-z]+)$/);
     if (watchlistMatch || url.pathname === "/fastlane/status") {

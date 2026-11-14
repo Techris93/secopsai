@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import worker, { dispatchResearchWorker } from "../src/index.js";
+import worker, { dispatchResearchWorker, dispatchStreamScan } from "../src/index.js";
 
 test("ledger store requires its bearer token", async () => {
   const env = { LEDGER_STORE_TOKEN: "secret", LEDGER: { get: async () => null } };
@@ -453,4 +453,31 @@ test("the start receipt route needs the owner token", async () => {
   const ok = await post({authorization: "Bearer secret"}, JSON.stringify({run_id: "1", queue_ids: []}));
   assert.equal(ok.status, 200);
   assert.deepEqual(await ok.json(), {status: "stored", started: 0, ignored: 0});
+});
+
+
+test("stream state and stats are owner-only JSON documents", async () => {
+  const store = new Map();
+  const bucket = { get: async (key) => store.has(key) ? { body: store.get(key) } : null, put: async (key, body) => { store.set(key, body); } };
+  const env = { LEDGER_STORE_TOKEN: "secret", LEDGER: bucket };
+  const call = (method, name, body, token = "secret") => worker.fetch(new Request(`https://ls.example/stream/${name}`,
+    { method, body, headers: { authorization: `Bearer ${token}` } }), env);
+  assert.equal((await call("GET", "state", undefined, "wrong")).status, 401);
+  assert.equal((await call("GET", "state")).status, 404, "no state before the first run");
+  assert.equal((await call("PUT", "state", JSON.stringify({ npm_seq: "5" }))).status, 200);
+  assert.deepEqual(await (await call("GET", "state")).json(), { npm_seq: "5" });
+  assert.equal((await call("PUT", "stats", "[1]")).status, 400, "documents must be objects");
+  assert.equal((await call("PUT", "stats", "not json")).status, 400);
+  assert.equal((await call("PUT", "other", "{}")).status, 404, "only state and stats are stream documents");
+});
+
+test("the stream scan starts only when the previous scan has finished", async () => {
+  const env = { GITHUB_DISPATCH_TOKEN: "gh" };
+  const busy = githubFake([{ id: 9, status: "in_progress", created_at: "2026-10-17T16:58:00Z" }]);
+  assert.equal((await dispatchStreamScan(env, busy.fetcher, NOW)).status, "skipped");
+  assert.equal(busy.dispatches().length, 0);
+  const idle = githubFake([{ id: 9, status: "completed", created_at: "2026-10-17T16:50:00Z" }]);
+  assert.equal((await dispatchStreamScan(env, idle.fetcher, NOW)).status, "dispatched");
+  assert.ok(idle.dispatches()[0].url.endsWith("/workflows/stream-scan.yml/dispatches"));
+  assert.ok(idle.calls[0].url.includes("/workflows/stream-scan.yml/runs?"), "checks the stream scan's own runs");
 });
