@@ -20,7 +20,11 @@ pending public source items with deterministic rules:
   advisory and is rejected;
 * anything else is marked ``needs_review`` with the reason. A ``needs_review``
   decision is taken again when the evidence changes (a CVE record appears, a
-  score is corrected, a request that failed succeeds).
+  score is corrected, a request that failed succeeds);
+* an item the rules still cannot confirm ``UNDECIDED_DAYS`` after it was
+  collected is rejected (left out of the brief) with the reason, so the
+  reviewer's queue does not fill with items nobody decides. A person's own
+  decision is never replaced.
 
 Decisions are recorded under the delegating operator with an ``automation``
 block naming the policy and the checks that passed, so the brief can say the
@@ -38,6 +42,8 @@ AUTOMATION_POLICY_KIND = "automated_verification"
 AUTOMATED_SOURCE_CLASSES = {"vendor", "government", "registry"}
 CLAIMS_PER_RUN = 10
 STALE_ADVISORY_DAYS = 14
+# Items the rules cannot confirm are left out of the brief after this long.
+UNDECIDED_DAYS = 3
 # Raised when a change makes earlier automated verifications wrong. Unreleased
 # recent ones are decided again, so a draft never carries the old text.
 DECISION_REVISION = 6
@@ -239,6 +245,22 @@ def _covered_by(cve: str, check: Optional[dict], decided: dict[str, str]) -> str
 
 
 def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: Optional[datetime] = None) -> dict[str, Any]:
+    current = now or datetime.now(timezone.utc)
+    result = _decide_rules(event, checks, decided, current)
+    if result["decision"] == "needs_review":
+        observed = str(event.get("first_observed_at") or event.get("collected_at") or "")
+        try:
+            age = current - datetime.fromisoformat(observed.replace("Z", "+00:00"))
+        except ValueError:
+            return result
+        if age >= timedelta(days=UNDECIDED_DAYS):
+            reason = (f"not confirmed by the rules within {UNDECIDED_DAYS} days of collection, so left out of the brief "
+                      f"(last check: {result['reason']})")
+            return {"decision": "rejected", "reason": reason, "limitations": reason}
+    return result
+
+
+def _decide_rules(event: dict, checks: dict[str, dict], decided: dict[str, str], now: datetime) -> dict[str, Any]:
     from secopsai.research_desk import detections_for, event_signals
 
     payload, source = event["payload"], event["source"]
@@ -248,7 +270,7 @@ def _decide(event: dict, checks: dict[str, dict], decided: dict[str, str], now: 
     for key in (cited, title_key):
         if key and key in decided and decided[key] != event["event_id"]:
             return {"decision": "rejected", "reason": f"duplicate of {decided[key]} (same {'citation' if key == cited else 'title'})"}
-    current = now or datetime.now(timezone.utc)
+    current = now
     found = event_signals(event)
     if source.get("source_class") not in AUTOMATED_SOURCE_CLASSES:
         cves = subject_cves(event, found)

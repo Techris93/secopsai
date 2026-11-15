@@ -20,7 +20,10 @@ import soc_store
 SUMMARY_LIMIT = 15_000
 DETAIL_LIMIT = 90_000
 BATCH_SIZE = 25
-CURSOR_KEY = "core_research_case_sync"
+# The suffix is the projection revision. Changing what a case projection
+# carries (v2: review packs, superseded retries left out) starts a new cursor,
+# so every case is sent once more in the new shape (200 a run, resumable).
+CURSOR_KEY = "core_research_case_sync:v2"
 LOCAL_LOCATOR_RE = re.compile(r"^(?:local-artifact|file|quarantine)://|^/|^[A-Za-z]:\\\\")
 
 
@@ -70,6 +73,72 @@ def _team_output(output: Any, text_limit: int, items: int, item_limit: int) -> D
     return shown
 
 
+REVIEW_PACK_LIMIT = 9000
+
+
+def _verdict(output: Dict[str, Any]) -> str:
+    return str(output.get("verdict_recommendation") or "none").strip()[:40] or "none"
+
+
+def _unique(values: List[str], limit: int, width: int) -> List[str]:
+    seen, out = set(), []
+    for value in values:
+        text = " ".join(str(value).split())[:width]
+        key = text.casefold()[:80]
+        if text and key not in seen:
+            seen.add(key)
+            out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def review_pack(case_id: str, team: Dict[str, Any], evidence_ids: List[str]) -> str:
+    """One page for the person who must review a finished team: where the
+    stages and their blind reviews agree or not, what is still unknown, what
+    to check, and the commands that record the review. Model text is quoted as
+    proposals; nothing here is a verdict."""
+    stages = team.get("stages") or []
+    rows = ["| Stage | Specialist | Blind review | Disagreement |", "| --- | --- | --- | --- |"]
+    for stage in stages:
+        flag = "yes" if stage.get("material_disagreement") or _verdict(stage["output"]) != _verdict(stage["review"]) else "no"
+        rows.append(f"| {stage['stage'].replace('_', ' ')} | {_verdict(stage['output'])} | {_verdict(stage['review'])} | {flag} |")
+    verdicts = [_verdict(stage["output"]) for stage in stages] + [_verdict(stage["review"]) for stage in stages]
+    tally = ", ".join(f"{verdicts.count(v)} {v}" for v in dict.fromkeys(verdicts)) or "none"
+    disagreements = [stage["stage"].replace("_", " ") for stage in stages
+                     if stage.get("material_disagreement") or _verdict(stage["output"]) != _verdict(stage["review"])]
+    gaps = _unique([item for stage in stages for part in (stage["output"], stage["review"]) for item in (part.get("limitations") or [])
+                    if isinstance(item, str)], 8, 240)
+    actions = _unique([item for stage in stages for item in (stage["output"].get("recommended_actions") or []) if isinstance(item, str)], 6, 240)
+    challenge = next((stage for stage in stages if stage["stage"] == "challenge"), None)
+    evidence = " ".join(f"--evidence-id {eid}" for eid in evidence_ids[:3]) or "--evidence-id EVD-..."
+    lines = [f"# Review pack: {team['team_id']} (case {case_id})", "",
+             "Model proposals only. Nothing below counts until a person records a review.", "",
+             "## At a glance", "", *rows, "",
+             f"Recommendations across specialists and blind reviews: {tally}.",
+             ("Disagreement in: " + ", ".join(disagreements) + ". Read these stages first.") if disagreements
+             else "No stage disagrees with its blind review.", ""]
+    if challenge and challenge["output"].get("summary"):
+        lines += ["## Independent challenge (written before seeing the other conclusions)", "",
+                  " ".join(str(challenge["output"]["summary"]).split())[:900], ""]
+    if gaps:
+        lines += ["## Still unknown", "", *[f"- {gap}" for gap in gaps], ""]
+    if actions:
+        lines += ["## Suggested next checks", "", *[f"- {action}" for action in actions], ""]
+    lines += ["## Your review", "",
+              "- [ ] Open the evidence and confirm the summaries match the original records, not just each other.",
+              "- [ ] Read the stages with a disagreement and the challenge above.",
+              "- [ ] Decide the verdict yourself: likely, inconclusive or not substantiated.",
+              "- [ ] Record the primary review, then a second person records the independent review.", "",
+              "```bash",
+              f'secopsai research reliability human-review {case_id} --stage primary --verdict <verdict> --reviewer "<you>" {evidence} --summary "<why, 40+ characters>"',
+              f'secopsai research reliability human-review {case_id} --stage reviewer --verdict <verdict> --reviewer "<second person>" {evidence} --summary "<agree or disagree, and why>"',
+              f"secopsai research workflow publication-check {case_id}",
+              "```"]
+    text = "\n".join(lines)
+    return text if len(text) <= REVIEW_PACK_LIMIT else text[:REVIEW_PACK_LIMIT - 40] + "\n\n(shortened; full stages below)"
+
+
 def case_teams(case_id: str, *, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
     """Each assistant team's stage outputs and blind reviews, newest team first.
 
@@ -102,10 +171,17 @@ def case_teams(case_id: str, *, db_path: Optional[str] = None) -> List[Dict[str,
                 "output": (run.get("result") or {}).get("output") or {},
                 "review": review.get("output") or {},
             })
-        teams.append({"team_id": plan["team_id"], "created_at": plan.get("created_at"), "status": state.get("status", "queued"),
-                      "reason": _text(state.get("reason"), 500), "updated_at": progress[0]["created_at"] if progress else plan.get("created_at"),
-                      "stages": stages})
-    return teams
+        team = {"team_id": plan["team_id"], "case_id": case_id, "created_at": plan.get("created_at"), "status": state.get("status", "queued"),
+                "reason": _text(state.get("reason"), 500), "updated_at": progress[0]["created_at"] if progress else plan.get("created_at"),
+                "stages": stages}
+        if team["status"] == "awaiting_human_review":
+            # Built from the full stage text, before the projection shortens it.
+            team["review_pack"] = review_pack(case_id, team, list(plan.get("evidence_ids") or []))
+        teams.append(team)
+    from secopsai.research_assistant_team import mark_superseded
+
+    # A failed retry that a later run completed is left out; the ledger keeps it.
+    return [team for team in mark_superseded(teams) if not team.pop("superseded")]
 
 
 def _shown_teams(teams: List[Dict[str, Any]], step: tuple) -> List[Dict[str, Any]]:
