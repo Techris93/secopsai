@@ -360,6 +360,7 @@ async function ingestResearchAlert(request, env, requestId) {
   } catch {
     throw new HttpError(400, "invalid_json", "Request body must be valid UTF-8 JSON");
   }
+  if (payload?.schema_version === "secopsai.research.alert-resolution.v1") return await resolveListedAlert(env, payload, requestId);
   const alert = validateAlert(payload);
   const now = new Date().toISOString();
   const alertId = `RAL-WEB-${(await sha256Hex(alert.alert_id)).slice(0, 24).toUpperCase()}`;
@@ -2363,6 +2364,40 @@ async function listResearchAlerts(db, limit) {
     updated_at: row.updated_at,
     evidence: parseJson(row.evidence_json, {}),
   }));
+}
+
+// Automated closure, narrowly: an open alert is resolved only when
+// ossf/malicious-packages already lists the exact package version it is about
+// (an independent public confirmation). Nothing else is closed by automation.
+const OSSF_ADVISORY = /^MAL-\d{4}-\d{1,7}$/;
+
+async function resolveListedAlert(env, payload, requestId) {
+  const sourceId = clean(payload.source_alert_id, 128);
+  const ecosystem = clean(payload.ecosystem, 16);
+  const pkg = clean(payload.package, 214);
+  const version = clean(payload.version, 128);
+  const advisories = Array.isArray(payload.advisories) ? payload.advisories.map((item) => String(item)) : [];
+  if (!sourceId || !["npm", "pypi"].includes(ecosystem) || !pkg || !version || payload.resolution !== "listed_by_ossf"
+      || !advisories.length || advisories.length > 5 || !advisories.every((item) => OSSF_ADVISORY.test(item))) {
+    throw new HttpError(400, "invalid_resolution", "A resolution needs the alert, its package version and ossf MAL- advisory ids");
+  }
+  const row = await env.DB.prepare("SELECT alert_id, status, evidence_json FROM research_alerts WHERE source_alert_id = ?").bind(sourceId).first();
+  if (!row) throw new HttpError(404, "not_found", "Research alert not found");
+  const evidence = parseJson(row.evidence_json, {});
+  if (String(evidence.ecosystem || "") !== ecosystem || String(evidence.package || "") !== pkg || String(evidence.version || "") !== version) {
+    throw new HttpError(409, "evidence_mismatch", "The alert is not about this package version");
+  }
+  if (row.status !== "open") return response(200, { ok: true, alert_id: row.alert_id, status: row.status, changed: false }, requestId);
+  const now = nowIso();
+  await env.DB.prepare("UPDATE research_alerts SET status = 'resolved', owner = 'automation:ossf-listed', updated_at = ? WHERE alert_id = ? AND status = 'open'")
+    .bind(now, row.alert_id).run();
+  await writeAudit(env.DB, {
+    requestId, action: "research.alert.resolved", actorRole: "research_automation", result: "success",
+    sourceInstance: "secopsai-alert-digest",
+    details: { alert_id: row.alert_id, reason: "listed_by_ossf", ecosystem, package: pkg, version, advisories },
+    createdAt: now,
+  });
+  return response(200, { ok: true, alert_id: row.alert_id, status: "resolved", changed: true }, requestId);
 }
 
 function validateAlert(payload) {

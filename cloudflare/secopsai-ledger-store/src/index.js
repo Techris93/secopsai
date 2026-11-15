@@ -110,6 +110,56 @@ export async function firewallShard(request, env, ecosystem, shard) {
   return json({ status: "stored", key, bytes: body.length });
 }
 
+// Alert digest: one object per held-back alert per day, written by the Fast
+// Lane and the research worker, read once a day by scripts/alert_digest.py.
+const DIGEST_MAX_ENTRIES = 100;
+const DIGEST_MAX_READ = 3000;
+
+async function digestKey(day, entry) {
+  const bytes = new TextEncoder().encode(`${entry.source}|${entry.alert_id}`);
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
+  return `digest/${day}/${hash.slice(0, 32)}.json`;
+}
+
+export async function digestAdd(request, env) {
+  if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+  const body = await request.text();
+  if (new TextEncoder().encode(body).byteLength > 256 * 1024) return json({ error: "digest batch too large" }, 413);
+  let value;
+  try { value = JSON.parse(body); } catch { return json({ error: "invalid json" }, 400); }
+  const entries = Array.isArray(value?.entries) ? value.entries : null;
+  if (!entries || entries.length > DIGEST_MAX_ENTRIES) return json({ error: `entries must be a list of at most ${DIGEST_MAX_ENTRIES}` }, 400);
+  let stored = 0;
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object" || typeof entry.source !== "string" || typeof entry.alert_id !== "string" || !entry.alert_id) {
+      return json({ error: "each entry needs source and alert_id" }, 400);
+    }
+    const day = /^\d{4}-\d{2}-\d{2}/.test(String(entry.occurred_at || "")) ? String(entry.occurred_at).slice(0, 10) : new Date().toISOString().slice(0, 10);
+    const text = JSON.stringify(entry);
+    if (text.length > 8192) return json({ error: "digest entry too large" }, 413);
+    // Same alert, same day: the later write wins, so a retried run does not duplicate it.
+    await env.LEDGER.put(await digestKey(day, entry), text, { httpMetadata: { contentType: "application/json" } });
+    stored += 1;
+  }
+  return json({ status: "stored", stored });
+}
+
+export async function digestRead(env, day) {
+  const entries = [];
+  let cursor;
+  let truncated = false;
+  do {
+    const page = await env.LEDGER.list({ prefix: `digest/${day}/`, cursor, limit: 1000 });
+    for (const object of page.objects) {
+      if (entries.length >= DIGEST_MAX_READ) { truncated = true; break; }
+      const item = await env.LEDGER.get(object.key);
+      if (item) { try { entries.push(JSON.parse(await item.text())); } catch { /* skip a damaged entry */ } }
+    }
+    cursor = page.truncated && !truncated ? page.cursor : undefined;
+  } while (cursor);
+  return json({ day, entries, truncated });
+}
+
 // Public frontier scorecard: the one object anyone may read (aggregate
 // measurements only). Only the owner writes it.
 const SCORECARD_KEY = "public/frontier-scorecard.json";
@@ -293,6 +343,13 @@ export default {
         console.log(JSON.stringify({ component: "fastlane-complete", error: message }));
         return json({ error: "completion_storage_unavailable", detail: message }, 503);
       }
+    }
+    if (url.pathname === "/digest/add" || /^\/digest\/\d{4}-\d{2}-\d{2}$/.test(url.pathname)) {
+      const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);
+      if (!isOwner) return json({ error: "unauthorized" }, 401);
+      if (url.pathname === "/digest/add") return digestAdd(request, env);
+      if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
+      return digestRead(env, url.pathname.slice("/digest/".length));
     }
     if (url.pathname === "/public/frontier-scorecard") {
       const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);

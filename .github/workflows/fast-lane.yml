@@ -33,6 +33,8 @@ jobs:
       SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL: https://core.secopsai.dev/api/v1/research/alerts/webhook
       SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET: ${{ secrets.SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET }}
       SECOPSAI_RESEARCH_ALERT_EMAIL: research@secopsai.dev
+      # Repository variable: "true" stops every notification email (alerts still reach Core and the digest store).
+      SECOPSAI_EMAIL_PAUSED: ${{ vars.SECOPSAI_EMAIL_PAUSED }}
       SECOPSAI_SMTP_HOST: smtp.resend.com
       SECOPSAI_SMTP_PORT: "465"
       SECOPSAI_SMTP_USERNAME: resend
