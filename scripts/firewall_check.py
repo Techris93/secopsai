@@ -66,7 +66,7 @@ def _request(url: str, token: str = "", method: str = "GET", body: Optional[byte
     request = urllib.request.Request(url, data=body, method=method, headers=headers)
     started = time.perf_counter()
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=120) as response:
             data, status = response.read(), response.status
     except urllib.error.HTTPError as exc:
         data, status = exc.read(), exc.code
@@ -94,8 +94,9 @@ def main() -> int:
 
     versions = benchmark_versions(args.dataset, args.registry)
     blocked_keys = set()
-    for start in range(0, len(versions), 2000):
-        batch = [{key: item[key] for key in ("ecosystem", "name", "version")} for item in versions[start:start + 2000]]
+    # Small batches: a cold lookup reads one blocklist shard from storage per package.
+    for start in range(0, len(versions), 200):
+        batch = [{key: item[key] for key in ("ecosystem", "name", "version")} for item in versions[start:start + 200]]
         status, data, _ = _request(f"{base}/check", token, "POST", json.dumps({"packages": batch}).encode())
         if status != 200:
             raise SystemExit(f"/check returned {status}: {data[:200]!r}")
