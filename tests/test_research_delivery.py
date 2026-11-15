@@ -11,6 +11,17 @@ from secopsai.research_delivery import deliver_pending_operational_alerts, deliv
 from secopsai.research_discovery import create_candidate_alert, sync_actionable_alert_findings
 from secopsai import research_discovery
 from secopsai.research_worker import _record_collector_degraded_alert
+from secopsai import notification_policy
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _every_severity_emails(monkeypatch, request):
+    """These tests cover delivery mechanics (retries, backoff, channels); the
+    critical-only email policy has its own tests at the end of the file."""
+    if "digest" not in request.node.name:
+        monkeypatch.setattr(notification_policy, "IMMEDIATE_SEVERITIES", {"critical", "high", "medium", "low", "warning", "info", "review"})
+    monkeypatch.delenv("SECOPSAI_EMAIL_PAUSED", raising=False)
 
 
 def test_research_alert_delivery_is_audited_without_exposing_raw_artifacts(tmp_path, monkeypatch):
@@ -547,3 +558,50 @@ def test_signed_webhook_uses_timestamped_hmac_and_normalized_evidence(tmp_path, 
     payload = json.loads(request.data)
     assert isinstance(payload["evidence"], dict)
     assert payload["alert_type"] == "collector_degraded"
+
+
+def _digest_store(monkeypatch):
+    posted = []
+    monkeypatch.setattr("secopsai.research_delivery.post_digest_entries", lambda entries: posted.extend(entries) or True)
+    sent = []
+    monkeypatch.setattr("secopsai.research_delivery.send_email", lambda **kwargs: sent.append(kwargs) or {"channel": "email", "status": "sent"})
+    return posted, sent
+
+
+def test_digest_holds_non_critical_email_and_records_it_once(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    _record_collector_degraded_alert({"ecosystem": "nuget", "status": "failed", "coverage": "gap"}, db_path=db)
+    monkeypatch.setenv("SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS", "email")
+    posted, sent = _digest_store(monkeypatch)
+    first = deliver_pending_operational_alerts(db_path=db)
+    second = deliver_pending_operational_alerts(db_path=db)
+    assert sent == [], "a non-critical alert is not emailed"
+    assert (first["digest"], second["digest"]) == (1, 0), "held once, then recorded as handled"
+    assert posted[0]["source"] == "research_worker" and posted[0]["emailed"] is False
+
+
+def test_digest_still_emails_critical_unless_paused(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    _record_collector_degraded_alert({"ecosystem": "pypi", "status": "failed", "coverage": "gap"}, db_path=db)
+    with soc_store.connect(db) as connection:
+        connection.execute("UPDATE research_alerts SET severity = 'critical'")
+        connection.commit()
+    monkeypatch.setenv("SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS", "email")
+    posted, sent = _digest_store(monkeypatch)
+    monkeypatch.setenv("SECOPSAI_EMAIL_PAUSED", "true")
+    paused = deliver_pending_operational_alerts(db_path=db)
+    assert sent == [] and paused["digest"] == 1, "paused: even critical waits in the digest"
+    assert notification_policy.email_now("critical") is False
+    monkeypatch.delenv("SECOPSAI_EMAIL_PAUSED")
+    assert notification_policy.email_now("critical") is True and notification_policy.email_now("high") is False
+
+
+def test_digest_is_retried_when_the_store_is_unreachable(tmp_path, monkeypatch):
+    db = str(tmp_path / "research.db")
+    _record_collector_degraded_alert({"ecosystem": "maven", "status": "failed", "coverage": "gap"}, db_path=db)
+    monkeypatch.setenv("SECOPSAI_RESEARCH_AUTO_ALERT_CHANNELS", "email")
+    monkeypatch.setattr("secopsai.research_delivery.post_digest_entries", lambda entries: False)
+    monkeypatch.setattr("secopsai.research_delivery.send_email", lambda **kwargs: {"channel": "email", "status": "sent"})
+    assert deliver_pending_operational_alerts(db_path=db)["digest"] == 0
+    monkeypatch.setattr("secopsai.research_delivery.post_digest_entries", lambda entries: True)
+    assert deliver_pending_operational_alerts(db_path=db)["digest"] == 1, "not lost: held again on the next pass"

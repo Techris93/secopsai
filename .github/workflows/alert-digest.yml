@@ -1,0 +1,52 @@
+name: Alert Digest
+
+# One email a day with every alert that was not emailed immediately (only
+# critical alerts are), triaged automatically: already listed by
+# ossf/malicious-packages, removed from the registry, or needing review.
+# SECOPSAI_EMAIL_PAUSED=true writes the digest to the run summary instead.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 7 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alert-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LEDGER_STORE_URL: https://ledger.secopsai.dev
+      LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+      SECOPSAI_EMAIL_PAUSED: ${{ vars.SECOPSAI_EMAIL_PAUSED }}
+      SECOPSAI_RESEARCH_ALERT_EMAIL: research@secopsai.dev
+      SECOPSAI_RESEARCH_FROM_EMAIL: research@secopsai.dev
+      SECOPSAI_EMAIL_LOGO_URL: https://secopsai.dev/assets/favicon-512.png
+      SECOPSAI_EMAIL_PRODUCT_URL: https://secopsai.dev/
+      SECOPSAI_SMTP_HOST: smtp.resend.com
+      SECOPSAI_SMTP_PORT: "465"
+      SECOPSAI_SMTP_USERNAME: resend
+      SECOPSAI_SMTP_PASSWORD: ${{ secrets.SECOPSAI_SMTP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+          cache: "pip"
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Build, triage and send the digest
+        run: python scripts/alert_digest.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: alert-digest
+          path: reports/alert-digest.json
+          retention-days: 14

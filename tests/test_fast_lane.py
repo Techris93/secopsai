@@ -338,3 +338,25 @@ def test_npm_release_missing_from_the_time_map_is_pending():
     with pytest.raises(fast_lane.PublishTimePending):
         fast_lane.resolve_release(fetcher, "npm", "fixture", "1.0")
 
+
+
+@pytest.mark.parametrize("severity,paused,emailed", [("critical", False, True), ("high", False, False), ("critical", True, False)])
+def test_only_critical_emails_immediately_and_every_alert_reaches_the_digest(monkeypatch, severity, paused, emailed):
+    import secopsai.research_delivery as delivery
+
+    sent = []
+    monkeypatch.setattr(delivery, "send_email", lambda **kwargs: sent.append(kwargs) or {"status": "sent"})
+    monkeypatch.setattr(delivery, "send_signed_webhook", lambda **kwargs: {"status": "sent"})
+    monkeypatch.setenv("SECOPSAI_RESEARCH_ALERT_EMAIL", "research@example.test")
+    monkeypatch.setenv("SECOPSAI_SMTP_PASSWORD", "x")
+    monkeypatch.delenv("SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("SECOPSAI_EMAIL_PAUSED", "true" if paused else "")
+    decision = {"severity": severity, "reasons": ["new install hook"], "new_indicators": [], "added_files": [], "install_hooks": ["postinstall"],
+                "publisher_changed": False, "yara": [], "yara_findings": [], "pipeline_verdict": None}
+    release = {"version": "2.0.0", "previous_version": "1.0.0", "published_at": "2026-11-15T10:00:00Z"}
+    out = fast_lane.deliver({"ecosystem": "npm", "package": "demo"}, release, decision, datetime(2026, 11, 15, 10, 5, tzinfo=timezone.utc))
+    assert bool(sent) is emailed
+    assert out["digest"]["emailed"] is emailed and out["digest"]["package"] == "demo"
+    assert out["digest"]["dashboard_id"].startswith("RAL-WEB-")
+    if emailed:
+        assert "dashboard.secopsai.dev" in sent[0]["body"]

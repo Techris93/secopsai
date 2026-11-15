@@ -543,3 +543,24 @@ test("the frontier scorecard is publicly readable and only the owner writes it",
   assert.equal((await call("DELETE", null, "secret")).status, 405);
   assert.ok([...store.keys()].every((key) => key === "public/frontier-scorecard.json"));
 });
+
+test("digest entries are owner-only, one per alert per day, and read back by day", async () => {
+  const store = new Map();
+  const bucket = {
+    get: async (key) => store.has(key) ? { body: store.get(key), text: async () => store.get(key) } : null,
+    put: async (key, body) => { store.set(key, body); },
+    list: async ({ prefix }) => ({ objects: [...store.keys()].filter((key) => key.startsWith(prefix)).map((key) => ({ key })), truncated: false }),
+  };
+  const env = { LEDGER_STORE_TOKEN: "secret", LEDGER: bucket };
+  const call = (method, path, body, token = "secret") => worker.fetch(new Request(`https://ls.example${path}`, { method, body,
+    headers: { authorization: `Bearer ${token}` } }), env);
+  const entry = { source: "fast_lane", alert_id: "a1", severity: "high", occurred_at: "2026-11-15T10:00:00Z" };
+  assert.equal((await call("POST", "/digest/add", JSON.stringify({ entries: [entry] }), "wrong")).status, 401);
+  assert.equal((await call("POST", "/digest/add", JSON.stringify({ entries: [entry, { ...entry, severity: "critical" }] }))).status, 200);
+  assert.equal([...store.keys()].length, 1, "the same alert on the same day is one object");
+  assert.equal((await call("POST", "/digest/add", JSON.stringify({ entries: [{ source: "x" }] }))).status, 400);
+  await call("POST", "/digest/add", JSON.stringify({ entries: [{ ...entry, alert_id: "b2", occurred_at: "2026-11-16T01:00:00Z" }] }));
+  const day = await (await call("GET", "/digest/2026-11-15")).json();
+  assert.deepEqual(day.entries.map((item) => [item.alert_id, item.severity]), [["a1", "critical"]]);
+  assert.equal((await call("GET", "/digest/2026-11-15", undefined, "wrong")).status, 401);
+});

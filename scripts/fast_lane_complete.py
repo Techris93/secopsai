@@ -24,6 +24,27 @@ def _server_error(error: urllib.error.HTTPError) -> str:
     return "".join(ch if ch.isprintable() else " " for ch in text)[:200] or "no error message"
 
 
+def post_digest(report: dict) -> None:
+    """Hand this run's alerts to the daily digest. A failure is reported but never
+    blocks acknowledging the targets: the alerts are already in Core."""
+    entries = [item["delivery"]["digest"] for item in report.get("results") or []
+               if isinstance(item.get("delivery"), dict) and isinstance(item["delivery"].get("digest"), dict)]
+    token = os.environ.get("LEDGER_STORE_TOKEN", "")
+    base = os.environ.get("LEDGER_STORE_URL", "https://ledger.secopsai.dev").rstrip("/")
+    if not entries or not token or not base.startswith("https://"):
+        return
+    for start in range(0, len(entries), 50):
+        body = json.dumps({"entries": entries[start:start + 50]}, separators=(",", ":")).encode()
+        request = urllib.request.Request(base + "/digest/add", data=body, method="POST",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": "SecOpsAI-Fast-Lane/1"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                response.read(4096)
+        except (OSError, urllib.error.URLError) as error:
+            print(f"Digest entries not stored: {type(error).__name__}", file=sys.stderr)
+            return
+
+
 def main() -> int:
     path = Path(os.environ.get("FAST_LANE_REPORT_PATH", "reports/fast-lane-results.json"))
     if not path.is_file():
@@ -37,6 +58,7 @@ def main() -> int:
     if report.get("schema_version") != "secopsai.fast-lane.results.v1" or not isinstance(report.get("results"), list):
         print("Fast Lane result report has an unsupported contract.", file=sys.stderr)
         return 1
+    post_digest(report)
     results = []
     for item in report["results"]:
         if not item.get("queue_id"):

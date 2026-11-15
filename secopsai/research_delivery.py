@@ -356,6 +356,45 @@ def configured_urgent_alert_channels() -> List[str]:
     return channels
 
 
+def post_digest_entries(entries: List[Dict[str, Any]]) -> bool:
+    """Store held-back alerts for the daily digest in the ledger store. False when it is
+    not configured or fails; the caller then leaves the alert to be tried again."""
+    token = os.environ.get("LEDGER_STORE_TOKEN", "")
+    base = os.environ.get("LEDGER_STORE_URL", "https://ledger.secopsai.dev").rstrip("/")
+    if not entries:
+        return True
+    if not token or not base.startswith("https://"):
+        return False
+    try:
+        for start in range(0, len(entries), 50):
+            request = urllib.request.Request(
+                base + "/digest/add", data=json.dumps({"entries": entries[start:start + 50]}).encode(), method="POST",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": "secopsai-research-worker"})
+            with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310 - fixed https ledger endpoint
+                response.read(4096)
+    except Exception:  # noqa: BLE001 - retried on the next delivery pass
+        return False
+    return True
+
+
+def _digest_entry_for(alert: Dict[str, Any]) -> Dict[str, Any]:
+    from secopsai import notification_policy
+
+    return notification_policy.digest_entry(
+        source="research_worker", alert_id=str(alert["alert_id"]), dashboard_id=str(alert["alert_id"]),
+        severity=alert.get("severity"), title=str(alert.get("alert_type") or "research alert"),
+        reason=_redact(str(alert.get("reason") or "")), occurred_at=str(alert.get("created_at") or ""))
+
+
+def _hold_for_digest(alerts: List[Dict[str, Any]], *, db_path: str | None) -> int:
+    """Non-critical (or paused) email alerts: record them for the digest instead of sending."""
+    if not alerts or not post_digest_entries([_digest_entry_for(alert) for alert in alerts]):
+        return 0
+    for alert in alerts:
+        _record_alert_delivery(str(alert["alert_id"]), channel="email", destination="daily-digest", status="digest", attempts=0, db_path=db_path)
+    return len(alerts)
+
+
 def deliver_urgent_review_alert(alert_id: str, *, db_path: str | None = None) -> Dict[str, Any]:
     """Attempt immediate delivery on dedicated urgent-review channels.
 
@@ -379,6 +418,14 @@ def deliver_urgent_review_alert(alert_id: str, *, db_path: str | None = None) ->
         if any(item["status"] == "sent" for item in prior) or prior:
             result["deferred"] += 1
             continue
+        if channel == "email":
+            from secopsai import notification_policy
+
+            with soc_store.connect(db_path) as connection:
+                alert = connection.execute("SELECT * FROM research_alerts WHERE alert_id = ?", (alert_id,)).fetchone()
+            if alert is not None and not notification_policy.email_now(alert["severity"]):
+                result["digest"] = result.get("digest", 0) + _hold_for_digest([dict(alert)], db_path=db_path)
+                continue
         result["attempted"] += 1
         delivery = send_research_alert(alert_id, channel=channel, db_path=db_path)
         if delivery.get("ok"):
@@ -430,7 +477,7 @@ def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datet
     marks = ",".join("?" for _ in types)
     with soc_store.connect(db_path) as connection:
         alerts = connection.execute(
-            f"SELECT alert_id, alert_type FROM research_alerts WHERE status = 'open' AND alert_type IN ({marks}) AND created_at >= ? ORDER BY created_at",
+            f"SELECT alert_id, alert_type, severity, reason, created_at FROM research_alerts WHERE status = 'open' AND alert_type IN ({marks}) AND created_at >= ? ORDER BY created_at",
             [*types, cutoff_text],
         ).fetchall() if types else []
         skipped_old = connection.execute(
@@ -440,7 +487,7 @@ def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datet
         # One pass over the delivery log instead of one query per alert and channel.
         history: Dict[tuple, Dict[str, Any]] = {}
         for item in connection.execute(
-            """SELECT d.alert_id, d.channel, SUM(d.status = 'sent') AS sent, SUM(d.status = 'failed') AS failed,
+            """SELECT d.alert_id, d.channel, SUM(d.status IN ('sent', 'digest')) AS sent, SUM(d.status = 'failed') AS failed,
                       MAX(d.created_at) AS latest
                FROM research_notification_deliveries d
                JOIN research_alerts a ON a.alert_id = d.alert_id AND a.status = 'open'
@@ -452,12 +499,19 @@ def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datet
     # longer takes a slot in the batch. Before, the oldest 100 open alerts were
     # all used up and no newer alert was ever tried.
     batch_limit = 100
+    from secopsai import notification_policy
+
     summary = {"enabled": True, "channels": channels, "attempted": 0, "sent": 0, "failed": 0, "deferred": 0, "exhausted": 0,
-               "skipped_old": int(skipped_old), "send_since": cutoff_text}
+               "skipped_old": int(skipped_old), "send_since": cutoff_text, "digest": 0}
+    held: List[Dict[str, Any]] = []
     for row in alerts:
         for channel in eligible_by_type[row["alert_type"]]:
             seen = history.get((row["alert_id"], channel)) or {}
             if int(seen.get("sent") or 0):
+                continue
+            # Only critical alerts are emailed as they happen; the rest go to the daily digest.
+            if channel == "email" and not notification_policy.email_now(row["severity"]):
+                held.append(dict(row))
                 continue
             failures = int(seen.get("failed") or 0)
             if failures >= max_attempts:
@@ -484,4 +538,5 @@ def deliver_pending_operational_alerts(*, db_path: str | None = None, now: datet
                 summary["sent"] += 1
             else:
                 summary["failed"] += 1
+    summary["digest"] = _hold_for_digest(held, db_path=db_path)
     return summary

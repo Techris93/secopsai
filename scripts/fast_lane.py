@@ -320,14 +320,29 @@ def deliver(target: Dict[str, Any], release: Dict[str, Any], decision: Dict[str,
             out["triage"] = client.queue_triage_jobs([{"artifact_id": key, "idempotency_key": f"fast-lane:{key}", "inputs": {"artifact_triage": context}}]).get("count")
     except Exception as exc:
         out["triage"] = f"failed: {exc}"[:200]
+    from secopsai import notification_policy
+
+    # Only critical alerts are emailed now; every alert also goes into the daily
+    # digest (marked when it was already emailed). SECOPSAI_EMAIL_PAUSED stops both.
     recipient = os.environ.get("SECOPSAI_RESEARCH_ALERT_EMAIL", "")
-    if recipient and os.environ.get("SECOPSAI_SMTP_PASSWORD") and decision["severity"] in {"high", "critical"}:
+    emailed = False
+    if recipient and os.environ.get("SECOPSAI_SMTP_PASSWORD") and notification_policy.email_now(decision["severity"]):
         try:
-            body = payload["reason"] + "\n\n" + json.dumps(payload["evidence"], indent=2, default=str)[:6000]
+            body = (payload["reason"] + "\n\nDashboard: " + notification_policy.DASHBOARD_INBOX + "\n\n"
+                    + json.dumps(payload["evidence"], indent=2, default=str)[:6000])
             send_email(recipient=recipient, subject=f"[SecOpsAI fast lane] {decision['severity'].upper()}: {payload['evidence']['package']}@{release['version']}", body=body)
             out["email"] = "sent"
+            emailed = True
         except Exception as exc:
             out["email"] = f"failed: {exc}"[:200]
+    else:
+        out["email"] = "paused" if notification_policy.email_paused() else "digest"
+    evidence = payload["evidence"]
+    out["digest"] = notification_policy.digest_entry(
+        source="fast_lane", alert_id=payload["alert_id"], dashboard_id=notification_policy.core_alert_id(payload["alert_id"]),
+        severity=decision["severity"], title=f"{evidence['package']}@{evidence['version']}", reason="; ".join(decision["reasons"]),
+        occurred_at=payload["occurred_at"], ecosystem=evidence["ecosystem"], package=evidence["package"],
+        version=evidence["version"], emailed=emailed)
     return out
 
 
