@@ -1102,3 +1102,33 @@ test('research commands keep operator text exactly (brief approval carries the w
   assert.equal(refused.status,422);
   db.close();
 });
+
+test("automation resolves an alert only when ossf lists its exact version", async () => {
+  const sqlite = migratedSqliteD1();
+  if (!sqlite) return;
+  const env = { DB: sqlite.d1, RESEARCH_WEBHOOK_SECRET: "s".repeat(44), CORE_READ_TOKEN: "r".repeat(44) };
+  const alert = { schema_version: "secopsai.research.alert.v1", alert_id: "FASTLANE-npm:evil@1.0.1", alert_type: "registry_release_anomaly",
+    severity: "high", reason: "x", occurred_at: new Date().toISOString(), evidence: { source: "fast_lane", ecosystem: "npm", package: "evil", version: "1.0.1" } };
+  assert.equal((await handleRequest(await signedRequest(env.RESEARCH_WEBHOOK_SECRET, alert), env)).status, 200);
+  const resolution = (extra = {}) => ({ schema_version: "secopsai.research.alert-resolution.v1", source_alert_id: alert.alert_id,
+    resolution: "listed_by_ossf", ecosystem: "npm", package: "evil", version: "1.0.1", advisories: ["MAL-2026-808"], ...extra });
+  const status = () => ({ ...sqlite.db.prepare("SELECT status, owner FROM research_alerts WHERE source_alert_id = ?").get(alert.alert_id) });
+  // Refused: unsigned, wrong version, non-ossf id, unknown alert.
+  const unsigned = new Request("https://core.example/api/v1/research/alerts/webhook", { method: "POST", body: JSON.stringify(resolution()),
+    headers: { "x-secopsai-timestamp": String(Math.floor(Date.now() / 1000)), "x-secopsai-signature": `sha256=${"0".repeat(64)}` } });
+  assert.notEqual((await handleRequest(unsigned, env)).status, 200);
+  assert.equal((await handleRequest(await signedRequest(env.RESEARCH_WEBHOOK_SECRET, resolution({ version: "1.0.2" })), env)).status, 409);
+  assert.equal((await handleRequest(await signedRequest(env.RESEARCH_WEBHOOK_SECRET, resolution({ advisories: ["GHSA-xxxx"] })), env)).status, 400);
+  assert.equal((await handleRequest(await signedRequest(env.RESEARCH_WEBHOOK_SECRET, resolution({ source_alert_id: "nope" })), env)).status, 404);
+  assert.equal(status().status, "open");
+  const ok = await (await handleRequest(await signedRequest(env.RESEARCH_WEBHOOK_SECRET, resolution()), env)).json();
+  assert.equal(ok.changed, true);
+  assert.deepEqual(status(), { status: "resolved", owner: "automation:ossf-listed" });
+  const again = await (await handleRequest(await signedRequest(env.RESEARCH_WEBHOOK_SECRET, resolution()), env)).json();
+  assert.equal(again.changed, false, "idempotent");
+  // A re-sent alert does not reopen it.
+  await handleRequest(await signedRequest(env.RESEARCH_WEBHOOK_SECRET, alert), env);
+  assert.equal(status().status, "resolved");
+  const audit = sqlite.db.prepare("SELECT count(*) AS n FROM audit_logs WHERE action = 'research.alert.resolved'").get();
+  assert.equal(Number(audit.n), 1);
+});

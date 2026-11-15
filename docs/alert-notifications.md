@@ -16,13 +16,17 @@ email (workflow `alert-digest.yml`).
 Each package alert is checked without downloading the package:
 
 - **Known malicious:** ossf/malicious-packages lists the version; the install
-  firewall already blocks it.
+  firewall already blocks it. A Fast Lane alert in this group is closed
+  automatically in Core (owner `automation:ossf-listed`, with the `MAL-`
+  advisory ids in the audit log). This is the only automated closure: Core
+  accepts it only by signed webhook, for an open alert whose stored package
+  version matches exactly.
 - **Removed:** the registry no longer serves the version.
 - **Needs review:** still published and not listed anywhere. Work these in the
   dashboard inbox (`https://dashboard.secopsai.dev/#research/inbox`).
 
-The digest never resolves an alert or contacts a registry: closing alerts and
-disclosure stay with a person.
+Everything else stays open for a person, and nothing contacts a registry:
+reporting and disclosure stay with a person.
 
 ## Pause and resume
 

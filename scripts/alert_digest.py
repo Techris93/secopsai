@@ -71,6 +71,20 @@ def main() -> int:
             return None
 
     triaged = alert_digest.triage(entries, blocked=blocked, published=published)
+    # The one automated closure: Fast Lane alerts whose exact version ossf lists.
+    endpoint = os.environ.get("SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL", "")
+    secret = os.environ.get("SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET", "")
+    closed = set()
+    if endpoint and secret:
+        from secopsai.research_delivery import send_signed_webhook
+
+        for payload in alert_digest.resolutions(triaged):
+            try:
+                send_signed_webhook(endpoint=endpoint, secret=secret, event=payload)
+                closed.add(payload["source_alert_id"])
+            except Exception as exc:  # noqa: BLE001 - stays open for a person
+                print(f"could not close {payload['source_alert_id']}: {type(exc).__name__}", file=sys.stderr)
+    triaged = [{**entry, "auto_resolved": entry.get("alert_id") in closed} for entry in triaged]
     paused = notification_policy.email_paused()
     message = alert_digest.render(triaged, now, paused=paused)
     args.out.parent.mkdir(parents=True, exist_ok=True)

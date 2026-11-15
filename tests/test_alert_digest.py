@@ -45,3 +45,16 @@ def test_render_leads_with_what_needs_review_and_links_the_dashboard():
 def test_core_alert_id_matches_the_dashboard():
     import hashlib
     assert notification_policy.core_alert_id("FASTLANE-npm:x@1") == "RAL-WEB-" + hashlib.sha256(b"FASTLANE-npm:x@1").hexdigest()[:24].upper()
+
+
+def test_only_ossf_listed_fast_lane_alerts_are_closed():
+    entries = alert_digest.triage(
+        [_entry("listed", package="evil"), _entry("listed-no-mal", package="odd"), _entry("live", package="fresh"),
+         notification_policy.digest_entry(source="research_worker", alert_id="op", severity="high", title="x", ecosystem="npm",
+                                          package="evil", version="1.0.0")],
+        blocked=lambda eco, n, v: {"evil": ["MAL-2026-808"], "odd": ["listed"]}.get(n, []), published=lambda *a: True)
+    payloads = alert_digest.resolutions(entries)
+    assert [p["source_alert_id"] for p in payloads] == ["listed"], "fast lane only, MAL- ids only, never needs-review"
+    assert payloads[0]["resolution"] == "listed_by_ossf" and payloads[0]["advisories"] == ["MAL-2026-808"]
+    body = alert_digest.render([{**entries[0], "auto_resolved": True}], NOW)["body"]
+    assert "[closed automatically]" in body

@@ -12,13 +12,15 @@ package alert is checked without downloading the package:
   person should look at, highest severity first.
 
 Alerts that are not about one package (collector problems and the like) are
-``operational``. Nothing here resolves an alert or contacts anyone: closing
-and disclosure stay with a person.
+``operational``. The only automated closure: a Fast Lane alert whose exact
+version ossf lists (``MAL-`` advisory) is resolved in Core with that reason.
+Everything else stays open for a person, and nothing contacts a registry.
 """
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from secopsai import notification_policy
@@ -76,6 +78,21 @@ def triage(entries: List[Dict[str, Any]], *, blocked: Callable[[str, str, str], 
         return list(pool.map(one, entries))
 
 
+OSSF_ADVISORY = re.compile(r"^MAL-\d{4}-\d{1,7}$")
+
+
+def resolutions(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Signed-webhook payloads that close Fast Lane alerts ossf already lists."""
+    out = []
+    for entry in entries:
+        advisories = [item for item in entry.get("advisories") or [] if OSSF_ADVISORY.match(str(item))][:5]
+        if entry.get("group") == "known_malicious" and entry.get("source") == "fast_lane" and advisories:
+            out.append({"schema_version": "secopsai.research.alert-resolution.v1", "source_alert_id": entry["alert_id"],
+                        "resolution": "listed_by_ossf", "ecosystem": entry["ecosystem"], "package": entry["package"],
+                        "version": entry["version"], "advisories": advisories})
+    return out
+
+
 def render(entries: List[Dict[str, Any]], now: datetime, *, paused: bool = False) -> Dict[str, str]:
     counts = {key: sum(1 for e in entries if e.get("group") == key) for key, _ in GROUPS}
     review = counts["needs_review"]
@@ -92,7 +109,7 @@ def render(entries: List[Dict[str, Any]], now: datetime, *, paused: bool = False
         for e in items[:150]:
             subject_line = f"{e['package']}@{e['version']} ({e['ecosystem']})" if e.get("package") else e.get("title", "alert")
             extra = f" [{', '.join(e['advisories'][:2])}]" if e.get("advisories") else ""
-            sent = " [sent]" if e.get("emailed") else ""
+            sent = (" [sent]" if e.get("emailed") else "") + (" [closed automatically]" if e.get("auto_resolved") else "")
             reason = (e.get("reason") or "").replace("\n", " ")
             lines.append(f"- {str(e.get('severity', '')).upper()} {subject_line}{extra}{sent}: {reason[:160]}")
             lines.append(f"  id {e.get('dashboard_id') or e.get('alert_id')}")
