@@ -518,3 +518,23 @@ test("firewall shards are owner-only and well formed", async () => {
   assert.equal((await call("PUT", "cargo/3f", "{}")).status, 404, "only npm and pypi shards");
   assert.equal((await call("PUT", "npm/zz", "{}")).status, 404, "shard ids are two hex digits");
 });
+
+test("the frontier scorecard is publicly readable and only the owner writes it", async () => {
+  const store = new Map();
+  const bucket = { get: async (key) => store.has(key) ? { body: store.get(key) } : null, put: async (key, body) => { store.set(key, body); } };
+  const env = { LEDGER_STORE_TOKEN: "secret", LEDGER: bucket };
+  const call = (method, body, token) => worker.fetch(new Request("https://ls.example/public/frontier-scorecard", { method, body,
+    headers: token ? { authorization: `Bearer ${token}` } : {} }), env);
+  assert.equal((await call("GET")).status, 404);
+  const card = JSON.stringify({ schema_version: "secopsai.frontier-scorecard.v1", results: [] });
+  assert.equal((await call("PUT", card)).status, 401);
+  assert.equal((await call("PUT", card, "wrong")).status, 401);
+  assert.equal((await call("PUT", JSON.stringify({ results: [] }), "secret")).status, 400, "only a scorecard can be stored");
+  assert.equal((await call("PUT", card, "secret")).status, 200);
+  const read = await call("GET");
+  assert.equal(read.status, 200);
+  assert.equal(read.headers.get("access-control-allow-origin"), "https://secopsai.dev");
+  assert.deepEqual(await read.json(), JSON.parse(card));
+  assert.equal((await call("DELETE", null, "secret")).status, 405);
+  assert.ok([...store.keys()].every((key) => key === "public/frontier-scorecard.json"));
+});

@@ -1,0 +1,40 @@
+name: Takeover Follow-up
+
+# Frontier phase 2: daily forward check of the stream scan's takeover flags
+# against ossf/malicious-packages (secopsai/takeover_followup.py). Reads OSV
+# JSON and the stream statistics only.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "47 4 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  followup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LEDGER_STORE_URL: https://ledger.secopsai.dev
+      LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+      - name: Fetch malicious-package reports
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/ossf/malicious-packages.git osv-src
+          git -C osv-src sparse-checkout set osv/malicious/npm osv/malicious/pypi
+      - name: Match flags against reports
+        run: |
+          python scripts/takeover_followup.py --osv osv-src/osv/malicious/npm --osv osv-src/osv/malicious/pypi
+          { echo '```json'; python -c "import json; d=json.load(open('reports/takeover-followup.json')); print(json.dumps({k: v for k, v in d.items() if not k.endswith('_examples')}, indent=1))"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: takeover-followup
+          path: reports/takeover-followup.json

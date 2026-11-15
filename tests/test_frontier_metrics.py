@@ -107,3 +107,22 @@ def test_scorecard_script_reports_without_failing(tmp_path):
     assert outcomes["PyPI compromised-library recall (held-out, hit)"] == "pass"
     assert outcomes["npm releases reaching a content verdict"] == "fail"
     assert "## Frontier scorecard" in completed.stdout
+
+
+def test_public_card_carries_provenance_and_no_rows(monkeypatch):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import frontier_scorecard
+
+    monkeypatch.setenv("GITHUB_SHA", "abc123")
+    monkeypatch.setenv("GITHUB_RUN_ID", "42")
+    targets_bytes = (ROOT / "eval" / "frontier" / "targets.json").read_bytes()
+    targets = json.loads(targets_bytes)
+    results = fm.evaluate_targets(targets, {})
+    card = frontier_scorecard.build_card(targets, targets_bytes, {}, {}, results, benchmark_run="https://x/runs/1")
+    assert card["schema_version"] == "secopsai.frontier-scorecard.v1"
+    assert card["provenance"]["code_commit"] == "abc123"
+    assert card["provenance"]["scorecard_run"].endswith("/actions/runs/42")
+    import hashlib
+    assert card["provenance"]["targets_sha256"] == hashlib.sha256(targets_bytes).hexdigest()
+    assert {row["outcome"] for row in card["results"]} == {"not measured"}
+    assert "rows" not in json.dumps(card)

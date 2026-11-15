@@ -60,7 +60,7 @@ def main() -> int:
     fetcher = SafeFetcher(timeout=60)
 
     def fetch_json(url: str) -> Dict[str, Any]:
-        _final, _headers, body = fetcher.get(url, allowed_hosts=stream_scan.NPM_HOSTS, max_bytes=48 * 1024 * 1024,
+        _final, _headers, body = fetcher.get(url, allowed_hosts=stream_scan.NPM_HOSTS + stream_scan.MCP_HOSTS, max_bytes=48 * 1024 * 1024,
                                              headers={"Accept": "application/json"})
         return json.loads(body.decode("utf-8"))
 
@@ -77,6 +77,8 @@ def main() -> int:
         return {key: signals[key] for key in ("signals", "score")}
 
     def scan(target: Dict[str, Any]) -> Dict[str, Any]:
+        if target["ecosystem"] == "mcp-registry":
+            return stream_scan.scan_mcp(lambda package: scan_release(fetcher, package["ecosystem"], package["package"], package["version"]), target)
         result = scan_release(fetcher, target["ecosystem"], target["package"], target["version"])
         if target["ecosystem"] == "pypi":
             try:
@@ -98,7 +100,8 @@ def main() -> int:
     stats = _store("GET", "stats")
     summary = stream_scan.run(state=state, stats=stats, fetch_json=fetch_json, pypi_changelog=changelog,
                               pypi_last_serial=last_serial, scan=scan, escalate=escalate,
-                              budget_seconds=args.budget_seconds, workers=args.workers)
+                              budget_seconds=args.budget_seconds, workers=args.workers,
+                              mcp=os.environ.get("SECOPSAI_STREAM_MCP", "1") != "0")
     queued = 0
     for start in range(0, len(handoff), 50):
         queued += int(_post("/fastlane/enqueue", {"targets": handoff[start:start + 50]}).get("queued") or 0)
@@ -115,7 +118,7 @@ def main() -> int:
              f"{summary['elapsed_seconds']} s.", "", "| Ecosystem | Published (24 h) | Scanned | Coverage | p50 min | p95 min |",
              "| --- | --- | --- | --- | --- | --- |"]
     for ecosystem, block in coverage["ecosystems"].items():
-        lines.append(f"| {ecosystem} | {block['published']} | {block['scanned']} | {block['coverage']} | {block['p50_minutes']} | {block['p95_minutes']} |")
+        lines.append(f"| {ecosystem}{' (+%d unscannable)' % block['unscannable'] if block.get('unscannable') else ''} | {block['published']} | {block['scanned']} | {block['coverage']} | {block['p50_minutes']} | {block['p95_minutes']} |")
     text = "\n".join(lines)
     print(text)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
