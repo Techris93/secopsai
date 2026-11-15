@@ -134,3 +134,31 @@ test("an unlisted package keeps its document and only tarball URLs change", asyn
   assert.ok(text.includes('"homepage":"https://registry.npmjs.org/x"'), "only tarball fields are rewritten");
   assert.equal(rewriteTarballText('"tarball":"https://registry.npmjs.org/a"', "https://o"), '"tarball":"https://o/npm/a"');
 });
+
+test("shards are served from the edge cache when the isolate has not seen them", async () => {
+  const store = new Map();
+  globalThis.caches = { default: {
+    match: async (request) => store.has(request.url) ? new Response(store.get(request.url)) : undefined,
+    put: async (request, response) => { store.set(request.url, await response.text()); },
+  } };
+  try {
+    const e = env({ npm: { "edge-a": { all: true, versions: [], ids: ["MAL-7"] } } });
+    let reads = 0;
+    const read = e.LEDGER.get;
+    e.LEDGER.get = async (key) => { reads += 1; return read(key); };
+    upstream({});
+    const first = await get("/npm/edge-a", e);
+    assert.equal(first.status, 403);
+    assert.match(first.headers.get("server-timing"), /desc="r2"/);
+    assert.equal(reads, 1);
+    assert.equal(store.size, 1, "the shard went into the edge cache");
+    // A new isolate: same edge cache, empty memory.
+    const { default: fresh } = await import(`../src/index.js?isolate=${Date.now()}`);
+    const second = await fresh.fetch(new Request("https://fw.example/npm/edge-a", { headers: { authorization: "Bearer tok" } }), e);
+    assert.equal(second.status, 403);
+    assert.match(second.headers.get("server-timing"), /desc="edge"/);
+    assert.equal(reads, 1, "R2 was not read again");
+  } finally {
+    delete globalThis.caches;
+  }
+});

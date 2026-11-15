@@ -45,13 +45,43 @@ async function shardKey(ecosystem, name) {
   return `firewall/${ecosystem}/${await shardOf(ecosystem, name)}.json`;
 }
 
+// Edge cache: shards are kept in the data centre's cache for five minutes, so a
+// lookup in a fresh isolate rarely reaches R2. The blocklist refreshes hourly.
+const EDGE_TTL_SECONDS = 300;
+const EDGE_ORIGIN = "https://secopsai-firewall-shards.invalid/";
+
+function edgeCache() {
+  return typeof caches !== "undefined" && caches.default ? caches.default : null;
+}
+
 async function loadShard(env, key, now = Date.now()) {
+  const timing = env.TIMING;
   let cached = shardCache.get(key);
-  if (!cached || now - cached.at > SHARD_TTL_MS) {
-    const object = await env.LEDGER.get(key);
-    cached = { at: now, data: object ? JSON.parse(await object.text()) : {} };
-    shardCache.set(key, cached);
+  if (cached && now - cached.at <= SHARD_TTL_MS) {
+    if (timing) timing.sources.push("memory");
+    return cached.data;
   }
+  const started = Date.now();
+  const cache = edgeCache();
+  const cacheKey = new Request(EDGE_ORIGIN + key);
+  let text = null;
+  let source = "r2";
+  if (cache) {
+    const hit = await cache.match(cacheKey);
+    if (hit) { text = await hit.text(); source = "edge"; }
+  }
+  if (text === null) {
+    const object = await env.LEDGER.get(key);
+    text = object ? await object.text() : "{}";
+    if (cache) {
+      const put = cache.put(cacheKey, new Response(text, { headers: { "content-type": "application/json",
+        "cache-control": `public, max-age=${EDGE_TTL_SECONDS}` } }));
+      if (env.CTX?.waitUntil) env.CTX.waitUntil(put); else await put;
+    }
+  }
+  cached = { at: now, data: JSON.parse(text) };
+  shardCache.set(key, cached);
+  if (timing) { timing.sources.push(source); timing.shardMs += Date.now() - started; }
   return cached.data;
 }
 
@@ -219,21 +249,25 @@ function jsonResponse(value, headers = {}, status = 200) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/healthz") return jsonResponse({ status: "ok", service: "secopsai-registry-firewall" });
     if (!env.FIREWALL_TOKEN || !timingSafeEqual(presentedToken(request), env.FIREWALL_TOKEN)) {
       return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { "content-type": "application/json", "www-authenticate": "Basic realm=\"secopsai\"" } });
     }
-    if (url.pathname === "/check" && request.method === "POST") return check(request, env);
+    if (url.pathname === "/check" && request.method === "POST") return check(request, { ...env, CTX: ctx });
     if (!["GET", "HEAD"].includes(request.method)) return new Response("method not allowed", { status: 405 });
     const started = Date.now();
+    const timing = { sources: [], shardMs: 0 };
+    const scoped = { ...env, TIMING: timing, CTX: ctx };
     let response;
-    if (url.pathname.startsWith("/npm/")) response = await npm(request, env, url.pathname.slice(4), url.origin);
-    else if (url.pathname.startsWith("/pypi/simple/")) response = await pypi(request, env, url.pathname.slice("/pypi/simple".length));
+    if (url.pathname.startsWith("/npm/")) response = await npm(request, scoped, url.pathname.slice(4), url.origin);
+    else if (url.pathname.startsWith("/pypi/simple/")) response = await pypi(request, scoped, url.pathname.slice("/pypi/simple".length));
     else return new Response("not found", { status: 404 });
     const out = new Response(response.body, response);
     out.headers.set("x-secopsai-firewall-ms", String(Date.now() - started));
+    // Where the time went: shard lookup (memory, edge cache or R2) and the whole request.
+    out.headers.set("server-timing", `shard;dur=${timing.shardMs};desc="${timing.sources.join("+") || "none"}", total;dur=${Date.now() - started}`);
     return out;
   },
 };

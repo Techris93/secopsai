@@ -39,3 +39,10 @@ check a lockfile without installing.
 `firewall-check.yml` reports the block rate on the benchmark's known-malicious
 versions (through `/check`, with 100 npm tarballs confirmed refused end to end)
 and the 95th percentile added latency for popular packages' metadata.
+
+## Lookup path
+
+A blocklist shard is looked up in the isolate's memory, then the data
+centre's edge cache, then R2; edge-cached copies live five minutes. Every
+firewall response carries `Server-Timing: shard;dur=…;desc="memory|edge|r2"`,
+and Firewall Check reports the mix of sources beside the added latency.
