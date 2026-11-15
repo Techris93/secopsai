@@ -101,12 +101,12 @@ def main() -> int:
     blocked_keys = set()
     # Small batches: a cold lookup reads one blocklist shard from storage per package.
     check_ms = []
-    for start in range(0, len(versions), 50):
-        batch = [{key: item[key] for key in ("ecosystem", "name", "version")} for item in versions[start:start + 50]]
+    for start in range(0, len(versions), 200):
+        batch = [{key: item[key] for key in ("ecosystem", "name", "version")} for item in versions[start:start + 200]]
         status, data, elapsed = _request(f"{base}/check", token, "POST", json.dumps({"packages": batch}).encode())
         check_ms.append(elapsed)
-        if start // 50 % 50 == 0:
-            print(f"/check batch {start // 50}: {status} in {elapsed:.0f} ms", flush=True)
+        if start // 200 % 25 == 0:
+            print(f"/check batch {start // 200}: {status} in {elapsed:.0f} ms", flush=True)
         if status != 200:
             raise SystemExit(f"/check returned {status}: {data[:200]!r}")
         blocked_keys |= {(item["ecosystem"], item["name"], item["version"]) for item in json.loads(data)["blocked"]}
