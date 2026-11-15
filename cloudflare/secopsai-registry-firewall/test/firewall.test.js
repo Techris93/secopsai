@@ -106,3 +106,19 @@ test("lockfile check reports blocked entries with their advisories", async () =>
   assert.equal((await post({ packages: [{ ecosystem: "cargo", name: "x", version: "1" }] })).status, 400);
   assert.equal((await post({ packages: [] }, "wrong")).status, 401);
 });
+
+test("a lockfile check reads each shard once, in parallel", async () => {
+  const e = env({ npm: { "par-a": { all: true, versions: [], ids: ["MAL-9"] } } });
+  let inFlight = 0, peak = 0, reads = 0;
+  const get = e.LEDGER.get;
+  e.LEDGER.get = async (key) => { reads += 1; inFlight += 1; peak = Math.max(peak, inFlight); await new Promise((r) => setTimeout(r, 5)); inFlight -= 1; return get(key); };
+  const packages = Array.from({ length: 40 }, (_, i) => ({ ecosystem: "npm", name: `par-${i === 0 ? "a" : `x${i}`}`, version: "1.0.0" }));
+  packages.push({ ecosystem: "npm", name: "par-a", version: "2.0.0" });
+  const response = await worker.fetch(new Request("https://fw.example/check", { method: "POST", body: JSON.stringify({ packages }),
+    headers: { authorization: "Bearer tok" } }), e);
+  const result = await response.json();
+  assert.equal(result.blocked.length, 2);
+  assert.ok(peak > 1, "shards are read in parallel");
+  const distinct = new Set(packages.map((item) => shard("npm", item.name))).size;
+  assert.ok(reads <= distinct, `each shard read at most once (${reads} reads, ${distinct} shards)`);
+});

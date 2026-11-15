@@ -41,15 +41,23 @@ async function shardOf(ecosystem, name) {
   return [...new Uint8Array(digest).slice(0, 2)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 3);
 }
 
-export async function entryFor(env, ecosystem, name, now = Date.now()) {
-  const key = `firewall/${ecosystem}/${await shardOf(ecosystem, name)}.json`;
+async function shardKey(ecosystem, name) {
+  return `firewall/${ecosystem}/${await shardOf(ecosystem, name)}.json`;
+}
+
+async function loadShard(env, key, now = Date.now()) {
   let cached = shardCache.get(key);
   if (!cached || now - cached.at > SHARD_TTL_MS) {
     const object = await env.LEDGER.get(key);
     cached = { at: now, data: object ? JSON.parse(await object.text()) : {} };
     shardCache.set(key, cached);
   }
-  return cached.data[normalize(ecosystem, name)] || null;
+  return cached.data;
+}
+
+export async function entryFor(env, ecosystem, name, now = Date.now()) {
+  const data = await loadShard(env, await shardKey(ecosystem, name), now);
+  return data[normalize(ecosystem, name)] || null;
 }
 
 export function isBlocked(entry, version) {
@@ -180,11 +188,16 @@ async function check(request, env) {
   try { body = await request.json(); } catch { return jsonResponse({ error: "invalid JSON" }, {}, 400); }
   const packages = Array.isArray(body?.packages) ? body.packages : null;
   if (!packages || packages.length > MAX_CHECK) return jsonResponse({ error: `packages must be a list of at most ${MAX_CHECK}` }, {}, 400);
-  const blocked = [];
   for (const item of packages) {
     if (!["npm", "pypi"].includes(item?.ecosystem) || typeof item.name !== "string" || typeof item.version !== "string") {
       return jsonResponse({ error: "each package needs ecosystem (npm or pypi), name and version" }, {}, 400);
     }
+  }
+  // Each distinct shard is read once, all in parallel; lookups one by one outlast client timeouts.
+  const keys = [...new Set(await Promise.all(packages.map((item) => shardKey(item.ecosystem, item.name))))];
+  await Promise.all(keys.map((key) => loadShard(env, key)));
+  const blocked = [];
+  for (const item of packages) {
     const entry = await entryFor(env, item.ecosystem, item.name);
     if (isBlocked(entry, item.version)) blocked.push({ ...item, advisories: entry.ids || [] });
   }
