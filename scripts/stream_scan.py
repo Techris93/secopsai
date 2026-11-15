@@ -46,7 +46,7 @@ def _post(path: str, value: Any) -> Dict[str, Any]:
     request = urllib.request.Request(f"{STORE}{path}", data=json.dumps(value).encode(), method="POST",
                                      headers={"Authorization": f"Bearer {os.environ['LEDGER_STORE_TOKEN']}",
                                               "Content-Type": "application/json", "User-Agent": "secopsai-stream-scan"})
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with urllib.request.urlopen(request, timeout=120) as response:
         return json.loads(response.read() or b"{}")
 
 
@@ -102,11 +102,18 @@ def main() -> int:
 
     mcp = os.environ.get("SECOPSAI_STREAM_MCP", "1") != "0"
 
-    def hand_off(summary: Dict[str, Any]) -> None:
-        queued = 0
-        for start in range(0, len(handoff), 50):
-            queued += int(_post("/fastlane/enqueue", {"targets": handoff[start:start + 50]}).get("queued") or 0)
-        summary["handed_to_fast_lane"] = queued
+    def save_and_hand_off(state: Dict[str, Any], stats: Dict[str, Any], summary: Dict[str, Any]) -> None:
+        # Verdicts and state first, with the escalations recorded as pending; then the
+        # Fast Lane hand-off, whose failures stay pending for the next run.
+        pending = list(state.get("handoff_pending") or []) + handoff
+        state["handoff_pending"] = pending[-stream_scan.MAX_HANDOFF_PENDING:]
+        _store("PUT", "stats", stats)
+        _store("PUT", "state", state)
+        queued, failed = stream_scan.deliver_handoff(lambda chunk: _post("/fastlane/enqueue", {"targets": chunk}), state["handoff_pending"])
+        summary.update(handed_to_fast_lane=queued, handoff_pending=len(failed))
+        if failed != state["handoff_pending"]:
+            state["handoff_pending"] = failed
+            _store("PUT", "state", state)
 
     if args.phase == "scan":
         shard = json.loads((args.dir / f"shard-{args.shard}.json").read_text(encoding="utf-8"))
@@ -151,9 +158,7 @@ def main() -> int:
         stream_scan.apply_results(stats, results, escalate, summary)
         stream_scan.finish(state, stats, remaining, summary)
         summary.update(missing_shards=missing, elapsed_seconds=0)
-        hand_off(summary)
-        _store("PUT", "stats", stats)
-        _store("PUT", "state", state)
+        save_and_hand_off(state, stats, summary)
     else:
         changelog, last_serial = stream_scan.pypi_client()
         state = _store("GET", "state")
@@ -161,15 +166,13 @@ def main() -> int:
         summary = stream_scan.run(state=state, stats=stats, fetch_json=fetch_json, pypi_changelog=changelog,
                                   pypi_last_serial=last_serial, scan=scan, escalate=escalate,
                                   budget_seconds=args.budget_seconds, workers=args.workers, mcp=mcp)
-        hand_off(summary)
-        # State last: a crash before this point rescans the same releases next run.
-        _store("PUT", "stats", stats)
-        _store("PUT", "state", state)
+        # A crash before this point rescans the same releases next run.
+        save_and_hand_off(state, stats, summary)
     coverage = stream_scan.coverage_from_stats(stats)
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps({"summary": summary, "coverage": coverage}, indent=1), encoding="utf-8")
     lines = ["### Stream scan", "", f"Discovered {summary['discovered']}, scanned {summary['scanned']}, hits {summary['hits']}, "
-             f"escalated {summary['escalated']} (handed to the Fast Lane: {summary.get('handed_to_fast_lane', 0)}), errors {summary['errors']}, "
+             f"escalated {summary['escalated']} (handed to the Fast Lane: {summary.get('handed_to_fast_lane', 0)}, pending {summary.get('handoff_pending', 0)}), errors {summary['errors']}, "
              f"backlog {summary['backlog_before']} -> {summary['backlog_after']} (dropped {summary['dropped']})"
              + (f", failed shards {summary['missing_shards']}" if summary.get("missing_shards") else "")
              + (f", {summary['elapsed_seconds']} s." if summary.get("elapsed_seconds") else "."), "", "| Ecosystem | Published (24 h) | Scanned | Coverage | p50 min | p95 min |",

@@ -17,7 +17,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     environment: production
     env:
       DATASET_COMMIT: 805fcd72db525244cae8dd32056efbd50b8b0e19

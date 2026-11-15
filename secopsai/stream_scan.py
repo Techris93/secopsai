@@ -433,6 +433,30 @@ def run(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[s
     return summary
 
 
+MAX_HANDOFF_PENDING = 2000
+
+
+def deliver_handoff(post: Callable[[List[Dict[str, Any]]], Dict[str, Any]], targets: List[Dict[str, Any]], *,
+                    batch: int = 10, attempts: int = 3, sleep: Callable[[float], None] = time.sleep) -> Tuple[int, List[Dict[str, Any]]]:
+    """Send escalations to the Fast Lane queue in small batches: (queued, targets still to send).
+
+    Called after verdicts and state are saved, so a slow queue can never cost a pass its work."""
+    queued = 0
+    failed: List[Dict[str, Any]] = []
+    for start in range(0, len(targets), batch):
+        chunk = targets[start:start + batch]
+        for attempt in range(attempts):
+            try:
+                queued += int(post(chunk).get("queued") or 0)
+                break
+            except Exception:  # noqa: BLE001 - kept for the next run
+                if attempt == attempts - 1:
+                    failed += chunk
+                else:
+                    sleep(2 ** attempt)
+    return queued, failed[-MAX_HANDOFF_PENDING:]
+
+
 def pypi_client(timeout: int = 60) -> Tuple[Callable[[int], List[list]], Callable[[], int]]:
     """PyPI's XML-RPC changelog, parsed with defusedxml (no entity expansion or external entities)."""
     import ssl

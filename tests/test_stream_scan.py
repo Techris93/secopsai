@@ -204,3 +204,18 @@ def test_split_jobs_scan_every_shard_and_a_failed_shard_returns_to_the_backlog()
     assert sorted(ss.key(t) for t in state["backlog"]) == sorted(ss.key(t) for t in shards[1])
     assert summary["backlog_after"] == len(shards[1])
     assert sum(bucket["npm"]["scanned"] + bucket.get("pypi", {}).get("scanned", 0) for bucket in stats["hours"].values()) == summary["scanned"]
+
+
+def test_fast_lane_hand_off_keeps_what_could_not_be_sent():
+    targets = [{"ecosystem": "npm", "package": f"p{i}", "version": "1"} for i in range(25)]
+    calls = []
+
+    def post(chunk):
+        calls.append(len(chunk))
+        if chunk[0]["package"] == "p10":
+            raise TimeoutError("slow queue")
+        return {"queued": len(chunk)}
+
+    queued, failed = ss.deliver_handoff(post, targets, sleep=lambda seconds: None)
+    assert queued == 15 and [t["package"] for t in failed] == [f"p{i}" for i in range(10, 20)]
+    assert max(calls) == 10 and calls.count(10) == 4, "small batches, the failing one retried"
