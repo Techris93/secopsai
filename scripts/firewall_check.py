@@ -62,7 +62,7 @@ NPM_ACCEPT = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.
 
 
 def _request(url: str, token: str = "", method: str = "GET", body: Optional[bytes] = None,
-             accept: str = "application/json") -> Tuple[int, bytes, float]:
+             accept: str = "application/json", headers_out: Optional[dict] = None) -> Tuple[int, bytes, float]:
     headers = {"User-Agent": "secopsai-firewall-check", "Accept": accept}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -73,6 +73,8 @@ def _request(url: str, token: str = "", method: str = "GET", body: Optional[byte
     try:
         with urllib.request.urlopen(request, timeout=90) as response:
             data, status = response.read(), response.status
+            if headers_out is not None:
+                headers_out.update({key.lower(): value for key, value in response.headers.items()})
     except urllib.error.HTTPError as exc:
         data, status = exc.read(), exc.code
     return status, data, (time.perf_counter() - started) * 1000
@@ -124,13 +126,20 @@ def main() -> int:
                   if _request(f"{base}/npm/{item['name']}/-/{item['name'].split('/')[-1]}-{item['version']}.tgz", token)[0] == 403)
 
     added: Dict[str, List[float]] = {"npm": [], "pypi": []}
+    shard_ms: List[float] = []
+    sources: Counter = Counter()
     for _ in range(args.rounds):
         for ecosystem, names in POPULAR.items():
             for name in names:
                 accept = NPM_ACCEPT if ecosystem == "npm" else "application/vnd.pypi.simple.v1+json"
                 direct = _request(UPSTREAM[ecosystem] + name + ("/" if ecosystem == "pypi" else ""), accept=accept)
+                seen: dict = {}
                 through = _request(f"{base}/{ecosystem}/{'simple/' if ecosystem == 'pypi' else ''}{name}{'/' if ecosystem == 'pypi' else ''}",
-                                   token, accept=accept)
+                                   token, accept=accept, headers_out=seen)
+                timing = re.search(r'shard;dur=(\d+);desc="([^"]*)"', seen.get("server-timing", ""))
+                if timing:
+                    shard_ms.append(float(timing.group(1)))
+                    sources.update(timing.group(2).split("+"))
                 if direct[0] == 200 and through[0] == 200:
                     added[ecosystem].append(through[2] - direct[2])
 
@@ -140,6 +149,7 @@ def main() -> int:
         "block_rate": round(len(blocked_keys) / len(versions), 4) if versions else None,
         "by_group": {group: {"versions": totals[group], "blocked": hits[group], "rate": round(hits[group] / totals[group], 4)} for group in sorted(totals)},
         "check_batch_ms": {"p50": percentile(check_ms, 0.5), "p95": percentile(check_ms, 0.95), "n": len(check_ms)},
+        "shard_lookup": {"p50_ms": percentile(shard_ms, 0.5), "p95_ms": percentile(shard_ms, 0.95), "sources": dict(sources)},
         "tarball_sample": len(sample), "tarball_refused": refused,
         "p95_latency_ms": percentile(added["npm"] + added["pypi"], 0.95),
         "latency_ms": {ecosystem: {"p50": percentile(values, 0.5), "p95": percentile(values, 0.95), "n": len(values)} for ecosystem, values in added.items()},
