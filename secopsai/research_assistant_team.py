@@ -63,8 +63,29 @@ def get_team(team_id: str, *, db_path=None) -> dict:
     return {**plan, "transport": plan.get("transport", "local"), **state, "evidence_current": current, "human_review_required": True, "publication_approved": False}
 
 
-def list_teams(case_id="", *, db_path=None, limit=50) -> dict:
-    return {"teams": [get_team(p["team_id"], db_path=db_path) for p in _plans(case_id, db_path=db_path, limit=limit)]}
+RETRY_STATES = {"failed", "canceled", "stale"}
+
+
+def mark_superseded(teams: list) -> list:
+    """Flag failed, canceled or stale runs of a case that a later run completed.
+
+    ``teams`` is newest first. Such a run was a retry that no longer matters;
+    the record stays in the ledger, it is only left out of the lists.
+    """
+    completed_after: set = set()
+    out = []
+    for team in teams:  # newest first
+        superseded = team.get("status") in RETRY_STATES and team.get("case_id") in completed_after
+        out.append({**team, "superseded": superseded})
+        if team.get("status") == "awaiting_human_review":
+            completed_after.add(team.get("case_id"))
+    return out
+
+
+def list_teams(case_id="", *, db_path=None, limit=50, include_superseded: bool = False) -> dict:
+    teams = mark_superseded([get_team(p["team_id"], db_path=db_path) for p in _plans(case_id, db_path=db_path, limit=limit)])
+    return {"teams": [team for team in teams if include_superseded or not team["superseded"]],
+            "superseded_hidden": 0 if include_superseded else sum(team["superseded"] for team in teams)}
 
 
 def start_team(case_id: str, payload: dict, *, actor: str, db_path=None, _automated: bool = False) -> dict:

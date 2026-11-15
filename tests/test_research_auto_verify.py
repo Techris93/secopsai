@@ -21,6 +21,13 @@ SOURCES = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _no_deadline_unless_tested(monkeypatch, request):
+    """The fixtures are dated 2026-10-24; the undecided deadline has its own tests."""
+    if "deadline" not in request.node.name:
+        monkeypatch.setattr(auto, "UNDECIDED_DAYS", 100000)
+
+
 @pytest.fixture
 def db(tmp_path):
     path = str(tmp_path / "auto.db")
@@ -622,3 +629,32 @@ def test_a_sentence_is_not_cut_at_an_abbreviation():
             "Upgrade to 2.1.")
     assert auto._sentences(text) == ["There is no allowlist on import_path, so any importable Python attribute (e.g. os.system) can be loaded, i.e. code runs.",
                                      "Upgrade to 2.1."]
+
+
+def test_deadline_leaves_out_what_the_rules_cannot_confirm(db):
+    from secopsai.research_primary_intel import intel_event
+
+    queue(db)
+    event = intel_event("thn-brick", db_path=db)
+    observed = datetime.fromisoformat(event["first_observed_at"].replace("Z", "+00:00"))
+    checked = {"CVE-2026-85097": {"claims": [{"claim": "CVE-2026-85097 exists", "status": "confirmed"}],
+                                  "checked_at": event["first_observed_at"]}}
+    inside = auto._decide(event, checked, {}, now=observed + timedelta(days=2))
+    late = auto._decide(event, checked, {}, now=observed + timedelta(days=3, hours=1))
+    assert inside["decision"] == "needs_review", "inside the deadline a person can still decide"
+    assert late["decision"] == "rejected"
+    assert "within 3 days" in late["reason"] and "news report" in late["reason"], "the reason keeps the rule that could not decide"
+    # An item still waiting for its checks is not cut off: only needs_review is.
+    php = intel_event("php-adv", db_path=db)
+    assert auto._decide(php, {}, {}, now=observed + timedelta(days=30))["decision"] in {None, "rejected"}
+
+
+def test_deadline_never_replaces_a_persons_decision(db):
+    old = (datetime.now(timezone.utc) - timedelta(days=4)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    add(db, "held", "thn", "Attackers exploit a third WordPress flaw", "CVE-2026-85099 exploited.", observed=old)
+    queue(db)
+    from secopsai.research_primary_intel import verify_event
+    verify_event("held", {"decision": "needs_review", "rationale": "I want to read this one", "limitations": "manual"}, actor=OPERATOR, db_path=db)
+    delegate(db)
+    auto.run(cve_fetch, db_path=db)
+    assert decisions(db)["held"]["decision"] == "needs_review" and not decisions(db)["held"].get("automation")
