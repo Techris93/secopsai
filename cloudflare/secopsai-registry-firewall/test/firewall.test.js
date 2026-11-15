@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import worker, { filterPackument, normalize, npmTarballVersion, pypiFileVersion } from "../src/index.js";
+import worker, { filterPackument, normalize, npmTarballVersion, pypiFileVersion, rewriteTarballText } from "../src/index.js";
 
 const shard = (eco, name) => createHash("sha256").update(normalize(eco, name)).digest("hex").slice(0, 3);
 
@@ -121,4 +121,16 @@ test("a lockfile check reads each shard once, in parallel", async () => {
   assert.ok(peak > 1, "shards are read in parallel");
   const distinct = new Set(packages.map((item) => shard("npm", item.name))).size;
   assert.ok(reads <= distinct, `each shard read at most once (${reads} reads, ${distinct} shards)`);
+});
+
+test("an unlisted package keeps its document and only tarball URLs change", async () => {
+  const e = env({});
+  const body = '{"name":"clean-pkg","homepage":"https://registry.npmjs.org/x","versions":{"1.0.0":{"dist":{"tarball":"https://registry.npmjs.org/clean-pkg/-/clean-pkg-1.0.0.tgz"}}}}';
+  upstream({ "https://registry.npmjs.org/clean-pkg": { body, type: "application/vnd.npm.install-v1+json" } });
+  const response = await get("/npm/clean-pkg", e);
+  assert.equal(response.headers.get("content-type"), "application/vnd.npm.install-v1+json");
+  const text = await response.text();
+  assert.equal(text, body.replace('"tarball":"https://registry.npmjs.org/', '"tarball":"https://fw.example/npm/'));
+  assert.ok(text.includes('"homepage":"https://registry.npmjs.org/x"'), "only tarball fields are rewritten");
+  assert.equal(rewriteTarballText('"tarball":"https://registry.npmjs.org/a"', "https://o"), '"tarball":"https://o/npm/a"');
 });
