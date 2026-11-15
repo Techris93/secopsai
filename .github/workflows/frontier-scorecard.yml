@@ -52,8 +52,15 @@ jobs:
           case "$run" in ''|*[!0-9]*) echo "::error::no benchmark run"; exit 1;; esac
           gh run download "$run" -R "$GITHUB_REPOSITORY" -n recall-benchmark -D "$RUNNER_TEMP/bench"
           echo "BENCHMARK_RUN=https://github.com/$GITHUB_REPOSITORY/actions/runs/$run" >> "$GITHUB_ENV"
+      - name: Fetch the latest firewall measurement
+        run: |
+          run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow firewall-check.yml --status success -L 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$run" ]; then
+            gh run download "$run" -R "$GITHUB_REPOSITORY" -n firewall-check -D "$RUNNER_TEMP/firewall"
+            echo "ENFORCEMENT_ARGS=--enforcement $RUNNER_TEMP/firewall/firewall-check.json" >> "$GITHUB_ENV"
+          fi
       - name: Build and publish
         run: |
           python scripts/frontier_scorecard.py --benchmark "$RUNNER_TEMP/bench/recall-benchmark.json" \
-            --benchmark-run "$BENCHMARK_RUN" --out "$RUNNER_TEMP/frontier-scorecard.json" --publish
+            --benchmark-run "$BENCHMARK_RUN" --out "$RUNNER_TEMP/frontier-scorecard.json" --publish $ENFORCEMENT_ARGS
           curl -fsS https://ledger.secopsai.dev/public/frontier-scorecard | python -c "import json,sys; d=json.load(sys.stdin); print(d['generated_at'], len(d['results']))"
