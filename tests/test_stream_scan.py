@@ -172,3 +172,35 @@ def test_mcp_releases_enter_coverage_and_escalate_as_their_package():
     assert (bucket["published"], bucket["scanned"], bucket["unscannable"]) == (2, 2, 1)
     later = NOW + timedelta(hours=3)
     assert ss.coverage_from_stats(stats, now=later)["ecosystems"]["mcp-registry"]["unscannable"] == 1
+
+
+def test_split_jobs_scan_every_shard_and_a_failed_shard_returns_to_the_backlog():
+    state = {"npm_seq": "10", "pypi_serial": 500, "backlog": [
+        {"ecosystem": "npm", "package": f"old{i}", "version": "1.0.0", "published_at": _iso(NOW - timedelta(hours=2, minutes=i))}
+        for i in range(5)]}
+    stats = {}
+    feeds = Feeds()
+    queue, summary = ss.discover(state=state, stats=stats, fetch_json=feeds.fetch_json, pypi_changelog=lambda serial: feeds.pypi,
+                                 pypi_last_serial=lambda: 500, workers=2, now=lambda: NOW)
+    assert len(queue) == 8 and state["backlog"] == queue, "the plan saves the whole queue as the backlog"
+    assert [t["published_at"] for t in queue] == sorted(t["published_at"] for t in queue)
+
+    shards = ss.shard_queue(queue, 3)
+    assert sorted(ss.key(t) for shard in shards for t in shard) == sorted(ss.key(t) for t in queue)
+    assert all(shard[0]["published_at"] <= queue[3]["published_at"] for shard in shards), "every shard starts with old releases"
+
+    results, remaining = [], []
+    for index, shard in enumerate(shards):
+        if index == 1:  # this scan job failed
+            remaining += shard
+            continue
+        done, left = ss.scan_queue(shard, lambda target: {"status": "clean", "level": "none"}, workers=2, now=lambda: NOW,
+                                   clock=lambda: 0.0)
+        results += done
+        remaining += left
+    ss.apply_results(stats, results, lambda target, result: {"alerted": False}, summary)
+    ss.finish(state, stats, remaining, summary, now=lambda: NOW)
+    assert summary["scanned"] == len(queue) - len(shards[1])
+    assert sorted(ss.key(t) for t in state["backlog"]) == sorted(ss.key(t) for t in shards[1])
+    assert summary["backlog_after"] == len(shards[1])
+    assert sum(bucket["npm"]["scanned"] + bucket.get("pypi", {}).get("scanned", 0) for bucket in stats["hours"].values()) == summary["scanned"]

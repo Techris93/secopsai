@@ -13,6 +13,11 @@ kept in the ledger store, one write each per run. Releases not reached within
 the run's time budget stay in the backlog for the next run, so a burst delays
 verdicts but never drops releases silently: the statistics count every
 published release, scanned or not.
+
+The workflow splits a pass across jobs: ``discover`` (one job) saves the
+advanced cursors with the whole queue as the backlog, ``shard_queue`` deals
+the queue to parallel ``scan_queue`` jobs, and ``apply_results`` plus
+``finish`` (one job) record the verdicts and keep what was not scanned.
 """
 from __future__ import annotations
 
@@ -286,16 +291,19 @@ def coverage_from_stats(stats: Dict[str, Any], *, now: Optional[datetime] = None
 
 # --- run ----------------------------------------------------------------------
 
-def run(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[str], Dict[str, Any]],
-        pypi_changelog: Callable[[int], List[list]], pypi_last_serial: Callable[[], int],
-        scan: Callable[[Dict[str, Any]], Dict[str, Any]], escalate: Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]],
-        budget_seconds: float = 900, workers: int = 12, now: Callable[[], datetime] = _now, mcp: bool = False,
-        clock: Callable[[], float] = time.monotonic) -> Dict[str, Any]:
-    """One pass. Mutates and returns ``state`` and ``stats``; the caller saves them."""
-    started = clock()
+def _summary(state: Dict[str, Any]) -> Dict[str, Any]:
+    return {"discovered": {}, "scanned": 0, "hits": 0, "escalated": 0, "alerts": 0, "errors": 0, "takeover_flags": 0,
+            "backlog_before": len(state.get("backlog") or []), "dropped": 0, "discovery_failures": 0}
+
+
+def discover(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[str], Dict[str, Any]],
+             pypi_changelog: Callable[[int], List[list]], pypi_last_serial: Callable[[], int], workers: int = 12,
+             now: Callable[[], datetime] = _now, mcp: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Read the change streams from the saved cursors. Returns the queue (backlog plus new
+    releases, oldest first) and the summary. ``state`` is advanced and its backlog set to
+    the whole queue, so saving it before scanning loses nothing if a scan fails."""
     current = now()
-    summary: Dict[str, Any] = {"discovered": {}, "scanned": 0, "hits": 0, "escalated": 0, "alerts": 0, "errors": 0, "takeover_flags": 0,
-                               "backlog_before": len(state.get("backlog") or []), "dropped": 0, "discovery_failures": 0}
+    summary = _summary(state)
     seen = list(state.get("seen") or [])
     seen_set = set(seen)
 
@@ -327,9 +335,31 @@ def run(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[s
         seen.append(key(target))
     record_published(stats, fresh)
     queue = sorted((state.get("backlog") or []) + fresh, key=lambda target: target["published_at"])
+    if len(queue) > MAX_BACKLOG:
+        summary["dropped"] = len(queue) - MAX_BACKLOG
+        queue = queue[-MAX_BACKLOG:]  # keep the newest; the dropped are counted, never hidden
 
-    done: List[str] = []
-    remaining: List[Dict[str, Any]] = []
+    newest = max([_parse(target["published_at"]) for target in npm_targets if _parse(target["published_at"])] or [npm_since])
+    cutoff = _iso(current - timedelta(days=30))
+    roles = dict(sorted(((name, when) for name, when in roles.items() if when >= cutoff), key=lambda item: item[1])[-5000:])
+    state.update({"mcp_since": mcp_cursor, "pypi_roles": roles, "npm_seq": npm_cursor,
+                  "npm_since": _iso(max(npm_since, newest - timedelta(minutes=10))), "pypi_serial": pypi_serial,
+                  "backlog": queue, "seen": seen[-MAX_SEEN:], "updated_at": _iso(now())})
+    return queue, summary
+
+
+def shard_queue(queue: List[Dict[str, Any]], shards: int) -> List[List[Dict[str, Any]]]:
+    """Round-robin over the oldest-first queue, so every shard starts with the oldest releases."""
+    shards = max(1, shards)
+    return [queue[index::shards] for index in range(shards)]
+
+
+def scan_queue(queue: List[Dict[str, Any]], scan: Callable[[Dict[str, Any]], Dict[str, Any]], *, budget_seconds: float = 900,
+               workers: int = 12, now: Callable[[], datetime] = _now,
+               clock: Callable[[], float] = time.monotonic) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Scan oldest first until the budget ends: (results with verdict times, releases not started)."""
+    started = clock()
+    results: List[Dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         pending = {}
         position = 0
@@ -346,39 +376,60 @@ def run(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[s
                 result = future.result()
             except Exception as exc:  # noqa: BLE001 - one release must not stop the stream
                 result = {"status": "error", "reason": f"{type(exc).__name__}: {str(exc)[:200]}"}
-            record_verdict(stats, target, result, now())
-            done.append(key(target))
-            if result.get("status") in SCANNED:
-                summary["scanned"] += 1
-                summary["hits"] += int(result.get("status") == "hit")
-            elif result.get("status") == "error":
-                summary["errors"] += 1
-            takeover = result.get("takeover") or target.get("takeover") or {}
-            if takeover.get("score", 0) >= takeover_signals.ESCALATE_SCORE:
-                summary["takeover_flags"] += 1
-                record_takeover(stats, target, takeover)
-            if result.get("level") in ESCALATE_LEVELS or takeover.get("score", 0) >= takeover_signals.ESCALATE_SCORE:
-                summary["escalated"] += 1
-                try:
-                    # An MCP server is escalated as the package that raised the verdict.
-                    subject = ({**result["package"], "published_at": target["published_at"], "mcp_server": target["package"]}
-                               if target["ecosystem"] == "mcp-registry" and result.get("package") else target)
-                    outcome = escalate(subject, result)
-                    summary["alerts"] += int(bool(outcome.get("alerted")))
-                except Exception:  # noqa: BLE001 - the prescan verdict is already recorded
-                    summary["errors"] += 1
-        remaining = queue[position:]
+            results.append({"target": target, "result": result, "verdict_at": _iso(now())})
+    return results, queue[position:]
 
-    if len(remaining) > MAX_BACKLOG:
-        summary["dropped"] = len(remaining) - MAX_BACKLOG
-        remaining = remaining[-MAX_BACKLOG:]  # keep the newest; the dropped are counted, never hidden
-    newest = max([_parse(target["published_at"]) for target in npm_targets if _parse(target["published_at"])] or [npm_since])
-    cutoff = _iso(current - timedelta(days=30))
-    roles = dict(sorted(((name, when) for name, when in roles.items() if when >= cutoff), key=lambda item: item[1])[-5000:])
-    state.update({"mcp_since": mcp_cursor, "pypi_roles": roles, "npm_seq": npm_cursor, "npm_since": _iso(max(npm_since, newest - timedelta(minutes=10))),
-                  "pypi_serial": pypi_serial, "backlog": remaining, "seen": seen[-MAX_SEEN:], "updated_at": _iso(now())})
+
+def apply_results(stats: Dict[str, Any], results: Iterable[Dict[str, Any]],
+                  escalate: Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]], summary: Dict[str, Any]) -> None:
+    """Record verdicts in the statistics and escalate warnings, alerts and takeover signals."""
+    for item in results:
+        target, result = item["target"], item["result"]
+        record_verdict(stats, target, result, _parse(item.get("verdict_at")) or _now())
+        if result.get("status") in SCANNED:
+            summary["scanned"] += 1
+            summary["hits"] += int(result.get("status") == "hit")
+        elif result.get("status") == "error":
+            summary["errors"] += 1
+        takeover = result.get("takeover") or target.get("takeover") or {}
+        if takeover.get("score", 0) >= takeover_signals.ESCALATE_SCORE:
+            summary["takeover_flags"] += 1
+            record_takeover(stats, target, takeover)
+        if result.get("level") in ESCALATE_LEVELS or takeover.get("score", 0) >= takeover_signals.ESCALATE_SCORE:
+            summary["escalated"] += 1
+            try:
+                # An MCP server is escalated as the package that raised the verdict.
+                subject = ({**result["package"], "published_at": target["published_at"], "mcp_server": target["package"]}
+                           if target["ecosystem"] == "mcp-registry" and result.get("package") else target)
+                outcome = escalate(subject, result)
+                summary["alerts"] += int(bool(outcome.get("alerted")))
+            except Exception:  # noqa: BLE001 - the prescan verdict is already recorded
+                summary["errors"] += 1
+
+
+def finish(state: Dict[str, Any], stats: Dict[str, Any], remaining: Iterable[Dict[str, Any]], summary: Dict[str, Any],
+           now: Callable[[], datetime] = _now) -> None:
+    """Releases not scanned this time become the backlog, oldest first."""
+    backlog = sorted({key(target): target for target in remaining}.values(), key=lambda target: target["published_at"])
+    state.update({"backlog": backlog[-MAX_BACKLOG:], "updated_at": _iso(now())})
     prune_stats(stats, now())
-    summary.update(backlog_after=len(remaining), elapsed_seconds=round(clock() - started, 1))
+    summary["backlog_after"] = len(state["backlog"])
+
+
+def run(*, state: Dict[str, Any], stats: Dict[str, Any], fetch_json: Callable[[str], Dict[str, Any]],
+        pypi_changelog: Callable[[int], List[list]], pypi_last_serial: Callable[[], int],
+        scan: Callable[[Dict[str, Any]], Dict[str, Any]], escalate: Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]],
+        budget_seconds: float = 900, workers: int = 12, now: Callable[[], datetime] = _now, mcp: bool = False,
+        clock: Callable[[], float] = time.monotonic) -> Dict[str, Any]:
+    """One pass in a single process. Mutates and returns ``state`` and ``stats``; the caller saves them."""
+    started = clock()
+    queue, summary = discover(state=state, stats=stats, fetch_json=fetch_json, pypi_changelog=pypi_changelog,
+                              pypi_last_serial=pypi_last_serial, workers=workers, now=now, mcp=mcp)
+    results, remaining = scan_queue(queue, scan, budget_seconds=max(0.0, budget_seconds - (clock() - started)),
+                                    workers=workers, now=now, clock=clock)
+    apply_results(stats, results, escalate, summary)
+    finish(state, stats, remaining, summary, now)
+    summary["elapsed_seconds"] = round(clock() - started, 1)
     return summary
 
 
