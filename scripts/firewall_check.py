@@ -66,7 +66,7 @@ def _request(url: str, token: str = "", method: str = "GET", body: Optional[byte
     request = urllib.request.Request(url, data=body, method=method, headers=headers)
     started = time.perf_counter()
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with urllib.request.urlopen(request, timeout=90) as response:
             data, status = response.read(), response.status
     except urllib.error.HTTPError as exc:
         data, status = exc.read(), exc.code
@@ -95,9 +95,13 @@ def main() -> int:
     versions = benchmark_versions(args.dataset, args.registry)
     blocked_keys = set()
     # Small batches: a cold lookup reads one blocklist shard from storage per package.
-    for start in range(0, len(versions), 200):
-        batch = [{key: item[key] for key in ("ecosystem", "name", "version")} for item in versions[start:start + 200]]
-        status, data, _ = _request(f"{base}/check", token, "POST", json.dumps({"packages": batch}).encode())
+    check_ms = []
+    for start in range(0, len(versions), 50):
+        batch = [{key: item[key] for key in ("ecosystem", "name", "version")} for item in versions[start:start + 50]]
+        status, data, elapsed = _request(f"{base}/check", token, "POST", json.dumps({"packages": batch}).encode())
+        check_ms.append(elapsed)
+        if start // 50 % 50 == 0:
+            print(f"/check batch {start // 50}: {status} in {elapsed:.0f} ms", flush=True)
         if status != 200:
             raise SystemExit(f"/check returned {status}: {data[:200]!r}")
         blocked_keys |= {(item["ecosystem"], item["name"], item["version"]) for item in json.loads(data)["blocked"]}
@@ -128,6 +132,7 @@ def main() -> int:
         "versions": len(versions), "blocked": len(blocked_keys),
         "block_rate": round(len(blocked_keys) / len(versions), 4) if versions else None,
         "by_group": {group: {"versions": totals[group], "blocked": hits[group], "rate": round(hits[group] / totals[group], 4)} for group in sorted(totals)},
+        "check_batch_ms": {"p50": percentile(check_ms, 0.5), "p95": percentile(check_ms, 0.95), "n": len(check_ms)},
         "tarball_sample": len(sample), "tarball_refused": refused,
         "p95_latency_ms": percentile(added["npm"] + added["pypi"], 0.95),
         "latency_ms": {ecosystem: {"p50": percentile(values, 0.5), "p95": percentile(values, 0.95), "n": len(values)} for ecosystem, values in added.items()},
