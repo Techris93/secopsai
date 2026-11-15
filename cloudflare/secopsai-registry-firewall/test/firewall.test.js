@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import worker, { filterPackument, normalize, npmTarballVersion, pypiFileVersion } from "../src/index.js";
 
-const shard = (eco, name) => createHash("sha256").update(normalize(eco, name)).digest("hex").slice(0, 2);
+const shard = (eco, name) => createHash("sha256").update(normalize(eco, name)).digest("hex").slice(0, 3);
 
 function env(blocks) {
   const store = new Map();

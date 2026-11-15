@@ -511,12 +511,17 @@ test("firewall shards are owner-only and well formed", async () => {
   const env = { LEDGER_STORE_TOKEN: "secret", LEDGER: bucket };
   const call = (method, path, body, token = "secret") => worker.fetch(new Request(`https://ls.example/firewall/${path}`,
     { method, body, headers: { authorization: `Bearer ${token}` } }), env);
-  assert.equal((await call("PUT", "npm/3f", "{}", "wrong")).status, 401);
-  assert.equal((await call("PUT", "npm/3f", JSON.stringify({ evil: { all: true, versions: [] } }))).status, 200);
-  assert.ok(store.has("firewall/npm/3f.json"));
-  assert.equal((await call("PUT", "npm/3f", "[]")).status, 400);
-  assert.equal((await call("PUT", "cargo/3f", "{}")).status, 404, "only npm and pypi shards");
-  assert.equal((await call("PUT", "npm/zz", "{}")).status, 404, "shard ids are two hex digits");
+  assert.equal((await call("PUT", "npm/3f2", "{}", "wrong")).status, 401);
+  assert.equal((await call("PUT", "npm/3f2", JSON.stringify({ evil: { all: true, versions: [] } }))).status, 200);
+  assert.ok(store.has("firewall/npm/3f2.json"));
+  assert.equal((await call("PUT", "npm/3f2", "[]")).status, 400);
+  assert.equal((await call("PUT", "cargo/3f2", "{}")).status, 404, "only npm and pypi shards");
+  assert.equal((await call("PUT", "npm/zzz", "{}")).status, 404, "shard ids are three hex digits");
+  assert.equal((await call("PUT", "npm/3f", "{}")).status, 404, "old two-digit shards are not written");
+  assert.equal((await call("GET", "manifest", undefined, "wrong")).status, 401);
+  assert.equal((await call("GET", "manifest")).status, 404);
+  assert.equal((await call("PUT", "manifest", JSON.stringify({ "npm/3f2": "abc" }))).status, 200);
+  assert.deepEqual(JSON.parse(store.get("firewall/manifest.json")), { "npm/3f2": "abc" });
 });
 
 test("the frontier scorecard is publicly readable and only the owner writes it", async () => {

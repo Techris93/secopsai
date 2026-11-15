@@ -6,12 +6,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Dict, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -19,15 +22,47 @@ sys.path.insert(0, str(ROOT))
 from secopsai import blocklist  # noqa: E402
 
 
-def upload(key: str, entries: dict) -> int:
+def _body(entries: dict) -> bytes:
+    return json.dumps(entries, separators=(",", ":"), sort_keys=True).encode()
+
+
+def _call(method: str, path: str, body: Optional[bytes] = None) -> Optional[bytes]:
     store = os.environ.get("LEDGER_STORE_URL", "https://ledger.secopsai.dev").rstrip("/")
-    body = json.dumps(entries, separators=(",", ":"), sort_keys=True).encode()
-    request = urllib.request.Request(f"{store}/firewall/{key}", data=body, method="PUT",
+    request = urllib.request.Request(f"{store}/firewall/{path}", data=body, method=method,
                                      headers={"Authorization": f"Bearer {os.environ['LEDGER_STORE_TOKEN']}",
                                               "Content-Type": "application/json", "User-Agent": "secopsai-blocklist"})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        response.read()
-    return len(body)
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404 and method == "GET":
+            return None
+        raise
+
+
+def changed_shards(shards: dict, manifest: dict) -> Dict[str, str]:
+    """Shard key -> content hash, for shards whose content differs from the manifest."""
+    hashes = {key: hashlib.sha256(_body(entries)).hexdigest() for key, entries in shards.items()}
+    return {key: digest for key, digest in hashes.items() if manifest.get(key) != digest}
+
+
+def upload_changed(shards: dict) -> Dict[str, int]:
+    """Upload only shards whose content changed (storage writes are billed), then the manifest."""
+    raw = _call("GET", "manifest")
+    manifest = json.loads(raw) if raw else {}
+    changed = changed_shards(shards, manifest)
+
+    def put(key: str) -> int:
+        body = _body(shards[key])
+        _call("PUT", key, body)
+        return len(body)
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        uploaded = sum(pool.map(put, changed))
+    # Manifest last: an interrupted run re-uploads what it did not record.
+    manifest = {key: digest for key, digest in {**manifest, **changed}.items() if key in shards}
+    _call("PUT", "manifest", _body(manifest))
+    return {"uploaded_shards": len(changed), "uploaded_bytes": uploaded, "total_shards": len(shards)}
 
 
 def main() -> int:
@@ -42,9 +77,7 @@ def main() -> int:
                            "versions": sum(len(entry["versions"]) for entry in names.values())} for ecosystem, names in blocks.items()}
     summary["largest_shard_bytes"] = max(len(json.dumps(entries)) for entries in shards.values())
     if args.upload:
-        with ThreadPoolExecutor(max_workers=16) as pool:
-            summary["uploaded_bytes"] = sum(pool.map(lambda item: upload(*item), shards.items()))
-        summary["uploaded_shards"] = len(shards)
+        summary.update(upload_changed(shards))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(summary, indent=1), encoding="utf-8")
     print(json.dumps(summary))

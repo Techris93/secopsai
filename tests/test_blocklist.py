@@ -31,10 +31,25 @@ def test_shards_cover_every_key_and_match_the_worker_hash(tmp_path):
     (tmp_path / "a.json").write_text(json.dumps(_record("MAL-1", "npm", "@scope/lib", ["1.0.1"])))
     (tmp_path / "bad.json").write_text("{not json")
     shards = blocklist.shards(blocklist.from_osv([tmp_path]))
-    assert len(shards) == 512
+    assert len(shards) == 2 * 4096
     key = "npm/" + blocklist.shard_of("npm", "@scope/lib")
     assert "@scope/lib" in shards[key]
-    # Same key as the Worker: sha256 of the normalized name, first byte in hex.
+    # Same key as the Worker: sha256 of the normalized name, first three hex digits.
     import hashlib
-    assert key.endswith(hashlib.sha256(b"@scope/lib").hexdigest()[:2])
+    assert key.endswith(hashlib.sha256(b"@scope/lib").hexdigest()[:3])
     assert sum(len(entries) for entries in shards.values()) == 1
+
+
+def test_only_changed_shards_are_uploaded():
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("build_blocklist", Path(__file__).resolve().parents[1] / "scripts" / "build_blocklist.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    shards = {"npm/000": {}, "npm/001": {"a": {"all": True, "versions": [], "ids": []}}}
+    first = module.changed_shards(shards, {})
+    assert set(first) == {"npm/000", "npm/001"}
+    assert module.changed_shards(shards, first) == {}
+    shards["npm/001"]["b"] = {"all": True, "versions": [], "ids": []}
+    assert set(module.changed_shards(shards, first)) == {"npm/001"}

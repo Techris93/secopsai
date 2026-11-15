@@ -3,7 +3,7 @@
 // Point npm or pip at this Worker instead of the public registry. It serves the
 // registry's own responses with every known-malicious version removed, and
 // refuses known-malicious tarballs. The blocklist (ossf/malicious-packages plus
-// SecOpsAI verdicts) is built hourly into 256 shards per ecosystem in R2.
+// SecOpsAI verdicts) is built hourly into 4,096 shards per ecosystem in R2.
 //
 //   npm config set registry https://<worker>/npm/
 //   npm config set //<worker>/npm/:_authToken <FIREWALL_TOKEN>
@@ -38,7 +38,7 @@ export function normalize(ecosystem, name) {
 
 async function shardOf(ecosystem, name) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalize(ecosystem, name)));
-  return [...new Uint8Array(digest)][0].toString(16).padStart(2, "0");
+  return [...new Uint8Array(digest).slice(0, 2)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 3);
 }
 
 export async function entryFor(env, ecosystem, name, now = Date.now()) {
@@ -172,8 +172,8 @@ function forwardHeaders(request) {
   return headers;
 }
 
-// Lockfile check: POST /check {"packages": [{"ecosystem": "npm"|"pypi", "name", "version"}]} (up to 2,000).
-export const MAX_CHECK = 2000;
+// Lockfile check: POST /check {"packages": [{"ecosystem": "npm"|"pypi", "name", "version"}]} (up to 500).
+export const MAX_CHECK = 500;
 
 async function check(request, env) {
   let body;
