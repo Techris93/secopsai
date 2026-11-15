@@ -14,9 +14,13 @@ on:
         required: false
         default: "manual"
       workers:
-        description: "Parallel downloads and scans"
+        description: "Parallel downloads and scans in each scan job"
         required: false
-        default: "24"
+        default: "16"
+      shards:
+        description: "Scan jobs running at once (1-8)"
+        required: false
+        default: "4"
   schedule:
     - cron: "*/30 * * * *"
 
@@ -28,48 +32,111 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  scan:
+  # Reads the change streams, saves the advanced cursors with the whole queue
+  # as the backlog, and splits the queue into shards.
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       LEDGER_STORE_URL: https://ledger.secopsai.dev
       LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
-      SECOPSAI_CORE_COORDINATOR_URL: https://core.secopsai.dev
-      SECOPSAI_CORE_WORKER_ID: github-actions-stream-scan
-      SECOPSAI_CORE_BRIDGE_TOKEN: ${{ secrets.SECOPSAI_CORE_BRIDGE_TOKEN }}
-      SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL: https://core.secopsai.dev/api/v1/research/alerts/webhook
-      SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET: ${{ secrets.SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET }}
-      SECOPSAI_RESEARCH_ALERT_EMAIL: research@secopsai.dev
-      SECOPSAI_SMTP_HOST: smtp.resend.com
-      SECOPSAI_SMTP_PORT: "465"
-      SECOPSAI_SMTP_USERNAME: resend
-      SECOPSAI_SMTP_PASSWORD: ${{ secrets.SECOPSAI_SMTP_PASSWORD }}
     steps:
-      - name: Check out
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.13"
           cache: "pip"
-
       - name: Install
+        run: pip install -r requirements.txt
+      - name: Discover new releases
+        id: plan
+        env:
+          SHARDS: ${{ inputs.shards || '4' }}
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          case "$SHARDS" in [1-8]) ;; *) echo "::error::shards must be 1-8"; exit 1;; esac
+          python -u scripts/stream_scan.py --phase plan --shards "$SHARDS" --dir stream-shards
+          echo "shards=$(python -c "import json,sys; print(json.dumps(list(range(int(sys.argv[1])))))" "$SHARDS")" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: stream-plan
+          path: stream-shards/
+          retention-days: 2
 
+  # Each shard on its own runner. No secrets: these jobs only download and read packages.
+  scan:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+          cache: "pip"
+      - name: Install
+        run: pip install -r requirements.txt
       - name: Fetch pinned YARA rule packs
         run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
-
-      - name: Prescan every new release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: stream-plan
+          path: stream-shards
+      - name: Prescan this shard
         env:
-          WORKERS: ${{ inputs.workers || '24' }}
-        run: python -u scripts/stream_scan.py --budget-seconds 900 --workers "$WORKERS"
+          WORKERS: ${{ inputs.workers || '16' }}
+          SHARD: ${{ matrix.shard }}
+        run: python -u scripts/stream_scan.py --phase scan --shard "$SHARD" --dir stream-shards --budget-seconds 900 --workers "$WORKERS"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: stream-result-${{ matrix.shard }}
+          path: stream-shards/result-${{ matrix.shard }}.json
+          retention-days: 2
 
+  # Records every verdict, hands escalations to the Fast Lane, and puts what was
+  # not scanned (including the whole shard of a failed job) back in the backlog.
+  merge:
+    needs: [plan, scan]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      LEDGER_STORE_URL: https://ledger.secopsai.dev
+      LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+          cache: "pip"
+      - name: Install
+        run: pip install -r requirements.txt
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: stream-plan
+          path: stream-shards
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: stream-result-*
+          path: stream-shards
+          merge-multiple: true
+      - name: Record verdicts
+        run: python -u scripts/stream_scan.py --phase merge --dir stream-shards
       - name: Keep the run report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -55,6 +55,11 @@ def main() -> int:
     parser.add_argument("--budget-seconds", type=float, default=900)
     parser.add_argument("--workers", type=int, default=12)
     parser.add_argument("--report", type=Path, default=Path("reports/stream-scan.json"))
+    parser.add_argument("--phase", choices=("all", "plan", "scan", "merge"), default="all",
+                        help="all: one process; plan/scan/merge: split across parallel jobs")
+    parser.add_argument("--shards", type=int, default=4, help="plan: how many scan jobs")
+    parser.add_argument("--dir", type=Path, default=Path("stream-shards"), help="plan/scan/merge: shard and result files")
+    parser.add_argument("--shard", type=int, default=0, help="scan: which shard")
     args = parser.parse_args()
 
     fetcher = SafeFetcher(timeout=60)
@@ -95,27 +100,79 @@ def main() -> int:
         handoff.append({"ecosystem": target["ecosystem"], "package": target["package"], "version": target["version"], "reasons": reasons})
         return {"alerted": False, "queued": True}
 
-    changelog, last_serial = stream_scan.pypi_client()
-    state = _store("GET", "state")
-    stats = _store("GET", "stats")
-    summary = stream_scan.run(state=state, stats=stats, fetch_json=fetch_json, pypi_changelog=changelog,
-                              pypi_last_serial=last_serial, scan=scan, escalate=escalate,
-                              budget_seconds=args.budget_seconds, workers=args.workers,
-                              mcp=os.environ.get("SECOPSAI_STREAM_MCP", "1") != "0")
-    queued = 0
-    for start in range(0, len(handoff), 50):
-        queued += int(_post("/fastlane/enqueue", {"targets": handoff[start:start + 50]}).get("queued") or 0)
-    summary["handed_to_fast_lane"] = queued
-    # State last: a crash before this point rescans the same releases next run.
-    _store("PUT", "stats", stats)
-    _store("PUT", "state", state)
+    mcp = os.environ.get("SECOPSAI_STREAM_MCP", "1") != "0"
+
+    def hand_off(summary: Dict[str, Any]) -> None:
+        queued = 0
+        for start in range(0, len(handoff), 50):
+            queued += int(_post("/fastlane/enqueue", {"targets": handoff[start:start + 50]}).get("queued") or 0)
+        summary["handed_to_fast_lane"] = queued
+
+    if args.phase == "scan":
+        shard = json.loads((args.dir / f"shard-{args.shard}.json").read_text(encoding="utf-8"))
+        results, remaining = stream_scan.scan_queue(shard, scan, budget_seconds=args.budget_seconds, workers=args.workers)
+        (args.dir / f"result-{args.shard}.json").write_text(json.dumps({"results": results, "remaining": remaining}), encoding="utf-8")
+        print(f"shard {args.shard}: {len(results)} scanned, {len(remaining)} left")
+        return 0
+
+    if args.phase == "plan":
+        changelog, last_serial = stream_scan.pypi_client()
+        state = _store("GET", "state")
+        stats = _store("GET", "stats")
+        queue, summary = stream_scan.discover(state=state, stats=stats, fetch_json=fetch_json, pypi_changelog=changelog,
+                                              pypi_last_serial=last_serial, workers=args.workers, mcp=mcp)
+        # Saved before any scan: the whole queue is the backlog until the merge records what was done.
+        _store("PUT", "stats", stats)
+        _store("PUT", "state", state)
+        args.dir.mkdir(parents=True, exist_ok=True)
+        for index, shard in enumerate(stream_scan.shard_queue(queue, args.shards)):
+            (args.dir / f"shard-{index}.json").write_text(json.dumps(shard), encoding="utf-8")
+        (args.dir / "plan.json").write_text(json.dumps(summary), encoding="utf-8")
+        print(f"plan: {summary['discovered']}, queue {len(queue)} in {args.shards} shards")
+        return 0
+
+    if args.phase == "merge":
+        summary = json.loads((args.dir / "plan.json").read_text(encoding="utf-8"))
+        state = _store("GET", "state")
+        stats = _store("GET", "stats")
+        results: list = []
+        remaining: list = []
+        missing = []
+        for path in sorted(args.dir.glob("shard-*.json")):
+            index = path.stem.split("-", 1)[1]
+            result_path = args.dir / f"result-{index}.json"
+            if result_path.exists():
+                data = json.loads(result_path.read_text(encoding="utf-8"))
+                results += data["results"]
+                remaining += data["remaining"]
+            else:  # that scan job failed: its whole shard waits for the next run
+                missing.append(index)
+                remaining += json.loads(path.read_text(encoding="utf-8"))
+        stream_scan.apply_results(stats, results, escalate, summary)
+        stream_scan.finish(state, stats, remaining, summary)
+        summary.update(missing_shards=missing, elapsed_seconds=0)
+        hand_off(summary)
+        _store("PUT", "stats", stats)
+        _store("PUT", "state", state)
+    else:
+        changelog, last_serial = stream_scan.pypi_client()
+        state = _store("GET", "state")
+        stats = _store("GET", "stats")
+        summary = stream_scan.run(state=state, stats=stats, fetch_json=fetch_json, pypi_changelog=changelog,
+                                  pypi_last_serial=last_serial, scan=scan, escalate=escalate,
+                                  budget_seconds=args.budget_seconds, workers=args.workers, mcp=mcp)
+        hand_off(summary)
+        # State last: a crash before this point rescans the same releases next run.
+        _store("PUT", "stats", stats)
+        _store("PUT", "state", state)
     coverage = stream_scan.coverage_from_stats(stats)
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps({"summary": summary, "coverage": coverage}, indent=1), encoding="utf-8")
     lines = ["### Stream scan", "", f"Discovered {summary['discovered']}, scanned {summary['scanned']}, hits {summary['hits']}, "
              f"escalated {summary['escalated']} (handed to the Fast Lane: {summary.get('handed_to_fast_lane', 0)}), errors {summary['errors']}, "
-             f"backlog {summary['backlog_before']} -> {summary['backlog_after']} (dropped {summary['dropped']}), "
-             f"{summary['elapsed_seconds']} s.", "", "| Ecosystem | Published (24 h) | Scanned | Coverage | p50 min | p95 min |",
+             f"backlog {summary['backlog_before']} -> {summary['backlog_after']} (dropped {summary['dropped']})"
+             + (f", failed shards {summary['missing_shards']}" if summary.get("missing_shards") else "")
+             + (f", {summary['elapsed_seconds']} s." if summary.get("elapsed_seconds") else "."), "", "| Ecosystem | Published (24 h) | Scanned | Coverage | p50 min | p95 min |",
              "| --- | --- | --- | --- | --- | --- |"]
     for ecosystem, block in coverage["ecosystems"].items():
         lines.append(f"| {ecosystem}{' (+%d unscannable)' % block['unscannable'] if block.get('unscannable') else ''} | {block['published']} | {block['scanned']} | {block['coverage']} | {block['p50_minutes']} | {block['p95_minutes']} |")
