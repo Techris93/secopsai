@@ -57,8 +57,13 @@ def benchmark_versions(dataset: Optional[Path], registry: Optional[Path]) -> Lis
     return list(found.values())
 
 
-def _request(url: str, token: str = "", method: str = "GET", body: Optional[bytes] = None) -> Tuple[int, bytes, float]:
-    headers = {"User-Agent": "secopsai-firewall-check", "Accept": "application/json"}
+# What npm itself sends for install metadata (the abbreviated document).
+NPM_ACCEPT = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*"
+
+
+def _request(url: str, token: str = "", method: str = "GET", body: Optional[bytes] = None,
+             accept: str = "application/json") -> Tuple[int, bytes, float]:
+    headers = {"User-Agent": "secopsai-firewall-check", "Accept": accept}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     if body is not None:
@@ -122,8 +127,10 @@ def main() -> int:
     for _ in range(args.rounds):
         for ecosystem, names in POPULAR.items():
             for name in names:
-                direct = _request(UPSTREAM[ecosystem] + name + ("/" if ecosystem == "pypi" else ""))
-                through = _request(f"{base}/{ecosystem}/{'simple/' if ecosystem == 'pypi' else ''}{name}{'/' if ecosystem == 'pypi' else ''}", token)
+                accept = NPM_ACCEPT if ecosystem == "npm" else "application/vnd.pypi.simple.v1+json"
+                direct = _request(UPSTREAM[ecosystem] + name + ("/" if ecosystem == "pypi" else ""), accept=accept)
+                through = _request(f"{base}/{ecosystem}/{'simple/' if ecosystem == 'pypi' else ''}{name}{'/' if ecosystem == 'pypi' else ''}",
+                                   token, accept=accept)
                 if direct[0] == 200 and through[0] == 200:
                     added[ecosystem].append(through[2] - direct[2])
 

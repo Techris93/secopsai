@@ -110,6 +110,8 @@ export function npmTarballVersion(name, file) {
 async function npm(request, env, path, origin) {
   const { name, file } = npmPackageName(path);
   if (!name || name.startsWith("-/")) return fetch(NPM_UPSTREAM + path.replace(/^\/+/, ""), { headers: forwardHeaders(request) });
+  // Metadata fetch and blocklist lookup run together; most packages are not on the list.
+  const upstreamDoc = file ? null : fetch(NPM_UPSTREAM + encodeURIComponent(name).replace("%40", "@"), { headers: forwardHeaders(request) });
   const entry = await entryFor(env, "npm", name);
   if (file) {
     const version = npmTarballVersion(name, file);
@@ -117,7 +119,7 @@ async function npm(request, env, path, origin) {
     return fetch(`${NPM_UPSTREAM}${name}/-/${file}`, { headers: forwardHeaders(request) });
   }
   if (entry?.all) return refused(`every version of ${name} is known-malicious`, entry);
-  const upstream = await fetch(NPM_UPSTREAM + encodeURIComponent(name).replace("%40", "@"), { headers: forwardHeaders(request) });
+  const upstream = await upstreamDoc;
   if (!upstream.ok || !entry) return rewriteTarballs(upstream, origin);
   const doc = await upstream.json();
   const removed = filterPackument(doc, entry);
@@ -132,9 +134,17 @@ function rewriteDoc(doc, origin) {
   return doc;
 }
 
+// Nothing blocked: point tarballs back through the firewall with a text replace, no JSON parse
+// (package documents run to several MB).
+export function rewriteTarballText(text, origin) {
+  return text.split(`"tarball":"${NPM_UPSTREAM}`).join(`"tarball":"${origin}/npm/`);
+}
+
 async function rewriteTarballs(upstream, origin) {
-  if (!upstream.ok || !(upstream.headers.get("content-type") || "").includes("json")) return upstream;
-  return jsonResponse(rewriteDoc(await upstream.json(), origin), { "x-secopsai-firewall": "removed 0" });
+  const type = upstream.headers.get("content-type") || "";
+  if (!upstream.ok || !type.includes("json")) return upstream;
+  return new Response(rewriteTarballText(await upstream.text(), origin),
+    { headers: { "content-type": type, "x-secopsai-firewall": "removed 0" } });
 }
 
 // PyPI -------------------------------------------------------------------------
