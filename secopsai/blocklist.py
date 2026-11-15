@@ -1,8 +1,8 @@
 """Blocklist of known-malicious package versions for the install firewall (frontier phase 5).
 
 Built from ossf/malicious-packages OSV reports (and SecOpsAI's own confirmed
-verdicts when supplied) into 256 small shards per ecosystem, keyed by the
-first byte of the SHA-256 of the normalized package name, so the firewall
+verdicts when supplied) into 4,096 small shards per ecosystem, keyed by the
+first three hex digits of the SHA-256 of the normalized package name, so the firewall
 reads one small object per request. A report whose range starts at version 0
 with no fix blocks every version of the package.
 """
@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 ECOSYSTEMS = {"npm": "npm", "PyPI": "pypi"}
+# Three hex digits: shards of a few KB, so the Worker parses little per lookup.
+SHARD_HEX = 3
 
 
 def normalize(ecosystem: str, name: str) -> str:
@@ -24,7 +26,7 @@ def normalize(ecosystem: str, name: str) -> str:
 
 
 def shard_of(ecosystem: str, name: str) -> str:
-    return hashlib.sha256(normalize(ecosystem, name).encode("utf-8")).hexdigest()[:2]
+    return hashlib.sha256(normalize(ecosystem, name).encode("utf-8")).hexdigest()[:SHARD_HEX]
 
 
 def _all_versions(affected: Dict[str, Any]) -> bool:
@@ -67,7 +69,8 @@ def from_osv(directories: Iterable[Path], blocks: Optional[Dict[str, Any]] = Non
 
 def shards(blocks: Dict[str, Dict[str, Dict[str, Any]]]) -> Dict[str, Dict[str, Dict[str, Any]]]:
     """``{"npm/3f": {name: entry}, ...}``, every shard present (empty ones too, so stale entries are replaced)."""
-    out: Dict[str, Dict[str, Dict[str, Any]]] = {f"{eco}/{index:02x}": {} for eco in ECOSYSTEMS.values() for index in range(256)}
+    out: Dict[str, Dict[str, Dict[str, Any]]] = {f"{eco}/{index:0{SHARD_HEX}x}": {} for eco in ECOSYSTEMS.values()
+                                                     for index in range(16 ** SHARD_HEX)}
     for ecosystem, names in blocks.items():
         for name, entry in names.items():
             out[f"{ecosystem}/{shard_of(ecosystem, name)}"][name] = entry

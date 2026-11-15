@@ -88,12 +88,13 @@ export async function researchWorkerDispatchDecision(env, now = Date.now(), fetc
 // workflow, so this Worker's Cron Trigger dispatches the research worker
 // instead.  GITHUB_DISPATCH_TOKEN is a fine-grained token limited to Actions
 // read/write on the repository; without it the cron does nothing.
-// Install firewall blocklist (frontier phase 5): 256 shards per ecosystem,
+// Install firewall blocklist (frontier phase 5): 4,096 shards per ecosystem,
 // read directly from R2 by the registry firewall Worker.
 const SHARD_LIMIT_BYTES = 2 * 1024 * 1024;
 
 export async function firewallShard(request, env, ecosystem, shard) {
-  const key = `firewall/${ecosystem}/${shard}.json`;
+  // ecosystem "manifest" with no shard: the builder's record of shard hashes.
+  const key = shard ? `firewall/${ecosystem}/${shard}.json` : "firewall/manifest.json";
   if (request.method === "GET") {
     const object = await env.LEDGER.get(key);
     if (!object) return json({ error: "not found" }, 404);
@@ -297,11 +298,11 @@ export default {
       const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);
       return publicScorecard(request, env, isOwner);
     }
-    const firewallMatch = url.pathname.match(/^\/firewall\/(npm|pypi)\/([0-9a-f]{2})$/);
+    const firewallMatch = url.pathname.match(/^\/firewall\/(?:(npm|pypi)\/([0-9a-f]{3})|(manifest))$/);
     if (firewallMatch) {
       const isOwner = Boolean(env.LEDGER_STORE_TOKEN) && timingSafeEqual(bearer(request), env.LEDGER_STORE_TOKEN);
       if (!isOwner) return json({ error: "unauthorized" }, 401);
-      return firewallShard(request, env, firewallMatch[1], firewallMatch[2]);
+      return firewallMatch[3] ? firewallShard(request, env, "manifest", "") : firewallShard(request, env, firewallMatch[1], firewallMatch[2]);
     }
     const streamMatch = url.pathname.match(/^\/stream\/(state|stats)$/);
     if (streamMatch) {

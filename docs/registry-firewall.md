@@ -7,7 +7,7 @@ An npm and PyPI proxy that refuses package versions known to be malicious
 
 - The blocklist is rebuilt every hour from `ossf/malicious-packages` by
   `scripts/build_blocklist.py` (workflow `blocklist-refresh.yml`) and stored as
-  256 shards per ecosystem in the ledger bucket under `firewall/`.
+  4,096 shards per ecosystem (a few KB each; only changed shards are uploaded) in the ledger bucket under `firewall/`.
 - A report whose range starts at version 0 with no fix blocks every version of
   the package; otherwise only the listed versions are blocked.
 - npm: blocked versions are removed from package documents, `dist-tags` move
@@ -31,7 +31,7 @@ pip config set global.index-url "https://token:$FIREWALL_TOKEN@<firewall-host>/p
 ## Lockfile check
 
 `POST /check` with `{"packages": [{"ecosystem": "npm", "name": "left-pad", "version": "1.3.0"}]}`
-(up to 2,000) returns the blocked entries and their advisory IDs, so CI can
+(up to 500) returns the blocked entries and their advisory IDs, so CI can
 check a lockfile without installing.
 
 ## Measure
