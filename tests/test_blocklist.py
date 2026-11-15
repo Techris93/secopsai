@@ -53,3 +53,27 @@ def test_only_changed_shards_are_uploaded():
     assert module.changed_shards(shards, first) == {}
     shards["npm/001"]["b"] = {"all": True, "versions": [], "ids": []}
     assert set(module.changed_shards(shards, first)) == {"npm/001"}
+
+
+def test_a_failed_upload_stays_out_of_the_manifest(monkeypatch):
+    import importlib.util
+    import json as _json
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("build_blocklist", Path(__file__).resolve().parents[1] / "scripts" / "build_blocklist.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    stored = {}
+
+    def fake_call(method, path, body=None):
+        if method == "GET":
+            return None
+        if path == "npm/001":
+            raise RuntimeError("HTTP 500")
+        stored[path] = body
+        return b"{}"
+
+    monkeypatch.setattr(module, "_call", fake_call)
+    result = module.upload_changed({"npm/000": {}, "npm/001": {"a": {"all": True}}})
+    assert (result["uploaded_shards"], result["failed_shards"]) == (1, 1)
+    assert set(_json.loads(stored["manifest"])) == {"npm/000"}, "the failed shard is retried next run"

@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -31,13 +32,20 @@ def _call(method: str, path: str, body: Optional[bytes] = None) -> Optional[byte
     request = urllib.request.Request(f"{store}/firewall/{path}", data=body, method=method,
                                      headers={"Authorization": f"Bearer {os.environ['LEDGER_STORE_TOKEN']}",
                                               "Content-Type": "application/json", "User-Agent": "secopsai-blocklist"})
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return response.read()
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404 and method == "GET":
-            return None
-        raise
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404 and method == "GET":
+                return None
+            if exc.code not in (429, 500, 502, 503, 504) or attempt == 4:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == 4:
+                raise
+        time.sleep(2 ** attempt)
+    return None
 
 
 def changed_shards(shards: dict, manifest: dict) -> Dict[str, str]:
@@ -52,17 +60,23 @@ def upload_changed(shards: dict) -> Dict[str, int]:
     manifest = json.loads(raw) if raw else {}
     changed = changed_shards(shards, manifest)
 
-    def put(key: str) -> int:
+    def put(key: str) -> Optional[int]:
         body = _body(shards[key])
-        _call("PUT", key, body)
+        try:
+            _call("PUT", key, body)
+        except Exception as exc:  # noqa: BLE001 - recorded and retried next run
+            print(f"upload failed for {key}: {exc}", file=sys.stderr)
+            return None
         return len(body)
 
-    with ThreadPoolExecutor(max_workers=16) as pool:
-        uploaded = sum(pool.map(put, changed))
-    # Manifest last: an interrupted run re-uploads what it did not record.
-    manifest = {key: digest for key, digest in {**manifest, **changed}.items() if key in shards}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        sizes = dict(zip(changed, pool.map(put, changed)))
+    done = {key: changed[key] for key, size in sizes.items() if size is not None}
+    # Only what was stored enters the manifest; the rest is uploaded next run.
+    manifest = {key: digest for key, digest in {**manifest, **done}.items() if key in shards}
     _call("PUT", "manifest", _body(manifest))
-    return {"uploaded_shards": len(changed), "uploaded_bytes": uploaded, "total_shards": len(shards)}
+    return {"uploaded_shards": len(done), "failed_shards": len(changed) - len(done),
+            "uploaded_bytes": sum(size for size in sizes.values() if size), "total_shards": len(shards)}
 
 
 def main() -> int:
@@ -81,7 +95,7 @@ def main() -> int:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(summary, indent=1), encoding="utf-8")
     print(json.dumps(summary))
-    return 0
+    return 1 if summary.get("failed_shards") else 0
 
 
 if __name__ == "__main__":
