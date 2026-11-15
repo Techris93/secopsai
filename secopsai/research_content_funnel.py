@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import soc_store
+from secopsai import deobfuscate
 from secopsai import actor_fingerprint, package_features, version_diff, yara_engine
 from secopsai.research_intake import SafeFetcher
 
@@ -121,6 +122,7 @@ def scan_members(fetcher: Optional[SafeFetcher], ecosystem: str, package: str, v
                  rules_ecosystem: str = "", archive_bytes: int = 0) -> Dict[str, Any]:
     """Rules, behaviour profile and the triage evidence for unpacked release files.
     ``fetcher`` is used only to diff against the previous version (None skips it)."""
+    members = deobfuscate.expand(members)
     flags = package_features.profile(members, version=version)
     diff: Dict[str, Any] = {}
     if fetcher is not None:

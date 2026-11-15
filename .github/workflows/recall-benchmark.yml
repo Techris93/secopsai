@@ -34,12 +34,15 @@ on:
       registry_samples:
         description: Malicious PyPI samples from lxyeternal/pypi_malregistry (0 skips the second corpus)
         default: "1000"
+      deobfuscate:
+        description: Decode hidden payloads before the rules run (0 measures the funnel without it)
+        default: "1"
 
 permissions:
   contents: read
 
 concurrency:
-  group: recall-benchmark
+  group: recall-benchmark-${{ inputs.deobfuscate || '1' }}
   cancel-in-progress: false
 
 jobs:
@@ -91,6 +94,8 @@ jobs:
           echo "REGISTRY_ARGS=--registry $RUNNER_TEMP/malregistry --osv $RUNNER_TEMP/ossf/osv/malicious/pypi --registry-samples ${{ inputs.registry_samples || '1000' }}" >> "$GITHUB_ENV"
 
       - name: Run benchmark
+        env:
+          SECOPSAI_DEOBFUSCATE: ${{ inputs.deobfuscate || '1' }}
         run: |
           python -I scripts/recall_benchmark.py \
             --dataset "$RUNNER_TEMP/malware-dataset" \

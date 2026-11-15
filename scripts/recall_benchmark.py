@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from secopsai import actor_fingerprint, package_features, version_diff, yara_engine  # noqa: E402
+from secopsai import actor_fingerprint, deobfuscate, package_features, version_diff, yara_engine  # noqa: E402
 from secopsai.artifact_fleet import MAX_FILE_BYTES, _safe_archive_files  # noqa: E402
 from secopsai.research_funnel import MAX_ARCHIVE_BYTES, NPM_ARTIFACT_HOSTS  # noqa: E402
 from secopsai.research_intake import SafeFetcher  # noqa: E402
@@ -202,6 +202,7 @@ DIFF_FETCHER = SafeFetcher(timeout=30)
 
 def _scan_members(members: List[Tuple[str, bytes]], version: str = "", ecosystem: str = "npm", package: str = "", before: str = "") -> Dict[str, Any]:
     """Funnel verdict (YARA + behaviour + version-diff rules, as in production) plus flags, never content."""
+    members = deobfuscate.expand(members)
     flags = package_features.profile(members, version=version)
     if package:
         flags, _diff = version_diff.with_diff(DIFF_FETCHER, ecosystem, package, version, flags, before=before)
