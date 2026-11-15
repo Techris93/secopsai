@@ -13,6 +13,10 @@ on:
         description: "Who started the run"
         required: false
         default: "manual"
+      workers:
+        description: "Parallel downloads and scans"
+        required: false
+        default: "24"
   schedule:
     - cron: "*/30 * * * *"
 
@@ -62,7 +66,9 @@ jobs:
         run: echo "SECOPSAI_YARA_RULE_DIRS=$(bash scripts/fetch_rule_packs.sh)" >> "$GITHUB_ENV"
 
       - name: Prescan every new release
-        run: python -u scripts/stream_scan.py --budget-seconds 900 --workers 12
+        env:
+          WORKERS: ${{ inputs.workers || '24' }}
+        run: python -u scripts/stream_scan.py --budget-seconds 900 --workers "$WORKERS"
 
       - name: Keep the run report
         if: always()
