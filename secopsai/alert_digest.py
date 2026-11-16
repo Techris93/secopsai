@@ -100,7 +100,8 @@ def render(entries: List[Dict[str, Any]], now: datetime, *, paused: bool = False
                f" ({now:%d %b})")
     lines = [f"Alerts from the 24 hours to {now:%Y-%m-%d %H:%M} UTC: {len(entries)}.",
              "Critical alerts were emailed when they happened and are marked [sent].", "",
-             f"Open the inbox to work them: {notification_policy.DASHBOARD_INBOX}", ""]
+             f"Open the inbox to work them: {notification_policy.DASHBOARD_INBOX}",
+             f"Cases waiting for your review: {notification_policy.DASHBOARD_REVIEW}", ""]
     for key, title in GROUPS:
         items = [e for e in entries if e.get("group") == key]
         if not items:
