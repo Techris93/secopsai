@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 
 IMMEDIATE_SEVERITIES = {"critical"}
 DASHBOARD_INBOX = "https://dashboard.secopsai.dev/#research/inbox"
+DASHBOARD_REVIEW = "https://dashboard.secopsai.dev/#research/review"
 
 
 def email_paused() -> bool:

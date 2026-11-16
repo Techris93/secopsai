@@ -21,9 +21,10 @@ SUMMARY_LIMIT = 15_000
 DETAIL_LIMIT = 90_000
 BATCH_SIZE = 25
 # The suffix is the projection revision. Changing what a case projection
-# carries (v2: review packs, superseded retries left out) starts a new cursor,
-# so every case is sent once more in the new shape (200 a run, resumable).
-CURSOR_KEY = "core_research_case_sync:v2"
+# carries (v2: review packs, superseded retries left out; v3: review assist,
+# long text in parts) starts a new cursor, so every case is sent once more in
+# the new shape (200 a run, resumable).
+CURSOR_KEY = "core_research_case_sync:v3"
 LOCAL_LOCATOR_RE = re.compile(r"^(?:local-artifact|file|quarantine)://|^/|^[A-Za-z]:\\\\")
 
 
@@ -139,7 +140,7 @@ def review_pack(case_id: str, team: Dict[str, Any], evidence_ids: List[str]) -> 
     return text if len(text) <= REVIEW_PACK_LIMIT else text[:REVIEW_PACK_LIMIT - 40] + "\n\n(shortened; full stages below)"
 
 
-def case_teams(case_id: str, *, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
+def case_teams(case_id: str, *, db_path: Optional[str] = None, case: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """Each assistant team's stage outputs and blind reviews, newest team first.
 
     These are model proposals for a human reviewer to read; the dashboard
@@ -175,8 +176,14 @@ def case_teams(case_id: str, *, db_path: Optional[str] = None) -> List[Dict[str,
                 "reason": _text(state.get("reason"), 500), "updated_at": progress[0]["created_at"] if progress else plan.get("created_at"),
                 "stages": stages}
         if team["status"] == "awaiting_human_review":
+            from secopsai.research_review_brief import parts, review_assist
+
             # Built from the full stage text, before the projection shortens it.
-            team["review_pack"] = review_pack(case_id, team, list(plan.get("evidence_ids") or []))
+            # Sent in parts: Core cuts any single string at 4,000 characters.
+            pack = review_pack(case_id, team, list(plan.get("evidence_ids") or []))
+            team["review_pack"] = parts(pack)
+            if case is not None:
+                team["review_assist"] = review_assist(case, pack, db_path=db_path)
         teams.append(team)
     from secopsai.research_assistant_team import mark_superseded
 
@@ -296,8 +303,9 @@ def sync_research_cases(client: Any, *, db_path: Optional[str] = None, limit: in
         payload = []
         for item in batch:
             summary = {key: value for key, value in item.items() if key != "_synced_at"}
-            teams = case_teams(item["case_id"], db_path=db_path) if item["case_id"] in team_changes else []
-            projection = project_case(get_case(item["case_id"], db_path=db_path), summary, teams)
+            case = get_case(item["case_id"], db_path=db_path)
+            teams = case_teams(item["case_id"], db_path=db_path, case=case) if item["case_id"] in team_changes else []
+            projection = project_case(case, summary, teams)
             payload.append({"case_id": item["case_id"], "updated_at": item["_synced_at"], **projection})
         result = client.sync_research_cases(payload)
         accepted += int(result.get("accepted") or 0)
