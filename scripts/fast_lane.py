@@ -70,7 +70,9 @@ def resolve_release(fetcher: SafeFetcher, ecosystem: str, package: str, version:
     """Target version, its publish time, and the version published before it."""
     if ecosystem == "npm":
         doc = _get_json(fetcher, "https://registry.npmjs.org/" + package.replace("/", "%2F"), ("registry.npmjs.org",))
-        times = {k: v for k, v in (doc.get("time") or {}).items() if k not in {"created", "modified"}}
+        # npm keeps "time" entries for unpublished versions; only versions with a tarball in "versions" are releases.
+        published_versions = doc.get("versions") or {}
+        times = {k: v for k, v in (doc.get("time") or {}).items() if k not in {"created", "modified"} and k in published_versions}
         version = version or (doc.get("dist-tags") or {}).get("latest", "")
     elif ecosystem == "pypi":
         doc = _get_json(fetcher, f"https://pypi.org/pypi/{package}/json", ("pypi.org",))
