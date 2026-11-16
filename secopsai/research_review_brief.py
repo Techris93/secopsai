@@ -27,7 +27,10 @@ VERIFIED, JUDGEMENT, MISSING = "verified", "judgement", "not_established"
 # as parts that the dashboard joins back into the exact original.
 PART_LIMIT = 3800
 TARGET = "technical_advisory"
-DROPPED_CLAIMS = {"refuted", "rejected", "withdrawn", "retracted"}
+# "missing": the evidence matrix records what is not established as a claim
+# with that status; it is a gap, not something the draft asserts.
+DROPPED_CLAIMS = {"refuted", "rejected", "withdrawn", "retracted", "missing"}
+CLAIMS_ACTOR = "automation:review-brief"
 ATTRIBUTION = re.compile(r"\b(?:attributed to|operated by|linked to|nation-state|threat actor|actor|attacker|victims?|"
                          r"organizations? affected|compromised systems?|impact(?:ed)? users?)\b", re.I)
 EXECUTION_MODES = {"dynamic", "fuzz", "differential", "patch_verification", "detection_test"}
@@ -42,6 +45,21 @@ def parts(value: str, limit: int = PART_LIMIT) -> List[str]:
         out.append(rest[:cut])
         rest = rest[cut:]
     return out + ([rest] if rest or not out else [])
+
+
+def ensure_claims(case: Dict[str, Any], *, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """A case reaches review without claims when it skipped the pipeline step
+    that builds its evidence matrix. Build it now: the claims are the fixed,
+    evidence-derived ones every pipeline case gets (subject, artifact hash,
+    static observations, linked sandbox report), never model text. Each still
+    needs a person's claim assessment before an approval counts."""
+    if case.get("claims"):
+        return case
+    from secopsai.research_cases import get_case
+    from secopsai.research_workflow import build_evidence_matrix
+
+    build_evidence_matrix(case["case_id"], persist=True, actor=CLAIMS_ACTOR, db_path=db_path)
+    return get_case(case["case_id"], db_path=db_path)
 
 
 def _statements(case: Dict[str, Any]) -> List[str]:
