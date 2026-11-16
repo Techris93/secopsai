@@ -22,9 +22,10 @@ DETAIL_LIMIT = 90_000
 BATCH_SIZE = 25
 # The suffix is the projection revision. Changing what a case projection
 # carries (v2: review packs, superseded retries left out; v3: review assist,
-# long text in parts) starts a new cursor, so every case is sent once more in
-# the new shape (200 a run, resumable).
-CURSOR_KEY = "core_research_case_sync:v3"
+# long text in parts; v4: evidence-matrix claims for claimless cases awaiting
+# review) starts a new cursor, so every case is sent once more in the new
+# shape (200 a run, resumable).
+CURSOR_KEY = "core_research_case_sync:v4"
 LOCAL_LOCATOR_RE = re.compile(r"^(?:local-artifact|file|quarantine)://|^/|^[A-Za-z]:\\\\")
 
 
@@ -176,13 +177,18 @@ def case_teams(case_id: str, *, db_path: Optional[str] = None, case: Optional[Di
                 "reason": _text(state.get("reason"), 500), "updated_at": progress[0]["created_at"] if progress else plan.get("created_at"),
                 "stages": stages}
         if team["status"] == "awaiting_human_review":
-            from secopsai.research_review_brief import parts, review_assist
+            from secopsai.research_review_brief import ensure_claims, parts, review_assist
 
             # Built from the full stage text, before the projection shortens it.
             # Sent in parts: Core cuts any single string at 4,000 characters.
             pack = review_pack(case_id, team, list(plan.get("evidence_ids") or []))
             team["review_pack"] = parts(pack)
             if case is not None:
+                # Updated in place: the caller projects this same case object.
+                fresh = ensure_claims(case, db_path=db_path)
+                if fresh is not case:
+                    case.clear()
+                    case.update(fresh)
                 team["review_assist"] = review_assist(case, pack, db_path=db_path)
         teams.append(team)
     from secopsai.research_assistant_team import mark_superseded

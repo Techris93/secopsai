@@ -115,3 +115,47 @@ def test_long_assist_survives_the_core_projection_intact(tmp_path):
     joined = "".join(shown["review_assist"]["draft_parts"])
     assert digest(joined) == assist["draft_sha256"]
     assert len(json.dumps(detail)) <= 90_000
+
+
+def test_claimless_case_gets_evidence_matrix_claims_once_and_never_model_text(tmp_path):
+    from secopsai.research_cases import add_evidence, add_subject, create_case, get_case
+
+    db = str(tmp_path / "ledger.db")
+    case_id = create_case(title="Claimless case", db_path=db)["case_id"]
+    add_subject(case_id, subject_type="package", name="evil-pkg", ecosystem="npm", version="1.0.1", db_path=db)
+    add_evidence(case_id, evidence_type="package_artifact", title="Artifact", locator="https://example.com/a.tgz", sha256="b" * 64, db_path=db)
+    case = get_case(case_id, db_path=db)
+    assert not case.get("claims")
+
+    fresh = brief.ensure_claims(case, db_path=db)
+    statements = brief._statements(fresh)
+    assert any("npm:evil-pkg@1.0.1" in s for s in statements)
+    assert any("hash-identified and was not executed" in s for s in statements)
+    # No static analysis evidence: that claim is recorded as missing and is
+    # not presented as something the draft asserts.
+    assert not any("static inspection" in s for s in statements)
+    assert any(c["status"] == "missing" for c in fresh["claims"])
+    events = [e for e in fresh.get("timeline", []) if e.get("event_type") == "evidence_matrix_generated"]
+    assert events and events[0].get("actor") == brief.CLAIMS_ACTOR
+
+    # A case that already has claims is left exactly as it is.
+    assert brief.ensure_claims(fresh, db_path=db) is fresh
+
+
+def test_case_sync_adds_claims_before_prefilling_the_review(tmp_path, monkeypatch):
+    from secopsai import research_case_sync as sync
+    from secopsai.research_cases import add_evidence, add_subject, create_case, get_case
+
+    db = str(tmp_path / "ledger.db")
+    case_id = create_case(title="Claimless awaiting", db_path=db)["case_id"]
+    add_subject(case_id, subject_type="package", name="evil-pkg", ecosystem="npm", version="1.0.1", db_path=db)
+    add_evidence(case_id, evidence_type="package_artifact", title="Artifact", locator="https://example.com/a.tgz", sha256="c" * 64, db_path=db)
+    case = get_case(case_id, db_path=db)
+    import secopsai.research_assistant_team as team_module
+    import secopsai.research_operation_store as store
+    monkeypatch.setattr(team_module, "_plans", lambda cid, db_path=None, limit=3: [{"team_id": "RAT-1", "created_at": "2026-11-16T00:00:00Z"}])
+    monkeypatch.setattr(store, "records", lambda kind, case_id=None, db_path=None, limit=None: [
+        {"payload": {"status": "awaiting_human_review", "runs": {}}, "created_at": "2026-11-16T01:00:00Z"}] if kind == "assistant_team_progress" else [])
+    teams = sync.case_teams(case_id, db_path=db, case=case)
+    assert case.get("claims"), "the caller's case object now carries the claims it will project"
+    assert teams[0]["review_assist"]["claim_statements"]
