@@ -25,3 +25,16 @@ The draft is the case's claims word for word followed by the team's review
 pack, so an approval passes the "each claim is in the draft" rule. Long text
 is sent to Core in parts of under 4,000 characters and joined by the
 dashboard, because Core cuts single strings at that length.
+
+## Claims for cases that have none
+
+A review needs at least one material claim. A case that skipped the pipeline
+step that builds its evidence matrix has none, so when its team is awaiting
+review the case sync builds that matrix first (actor
+`automation:review-brief`, recorded on the case timeline). The claims are the
+fixed evidence-derived ones every pipeline case gets: the subject, the
+artifact hash and that SecOpsAI did not run it, the static observation count,
+and a linked sandbox report if any. Claims whose evidence is missing are kept
+in the ledger but left out of the draft. Model text from the team never
+becomes a claim; it stays in the review pack. Every claim still needs a
+person's claim assessment before an approval counts.
