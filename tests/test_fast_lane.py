@@ -360,3 +360,29 @@ def test_only_critical_emails_immediately_and_every_alert_reaches_the_digest(mon
     assert out["digest"]["dashboard_id"].startswith("RAL-WEB-")
     if emailed:
         assert "dashboard.secopsai.dev" in sent[0]["body"]
+def test_npm_unpublished_time_entries_are_not_releases_or_previous_versions():
+    # npm keeps "time" entries for unpublished versions. Such a version has no
+    # tarball in "versions", so it can be neither the target nor the comparison base.
+    fetcher = _Fetcher({
+        "https://registry.npmjs.org/@wild-framework%2Fopenapi": {
+            "dist-tags": {"latest": "0.2.20"},
+            "time": {
+                "0.2.18": "2026-10-01T00:00:00.000Z",
+                "0.2.19": "2026-10-10T00:00:00.000Z",
+                "0.2.20": "2026-11-16T21:00:00.000Z",
+            },
+            "versions": {"0.2.18": {"dist": {}}, "0.2.20": {"dist": {}}},
+        },
+    })
+    release = fast_lane.resolve_release(fetcher, "npm", "@wild-framework/openapi", "0.2.20")
+    assert release == {"version": "0.2.20", "published_at": "2026-11-16T21:00:00.000Z", "previous_version": "0.2.18"}
+
+    unpublished_target = _Fetcher({
+        "https://registry.npmjs.org/fixture": {
+            "dist-tags": {"latest": "1.0.0"},
+            "time": {"1.0.0": "2026-11-16T21:00:00.000Z", "1.0.1": "2026-11-16T21:05:00.000Z"},
+            "versions": {"1.0.0": {"dist": {}}},
+        },
+    })
+    with pytest.raises(fast_lane.PublishTimePending):
+        fast_lane.resolve_release(unpublished_target, "npm", "fixture", "1.0.1")
