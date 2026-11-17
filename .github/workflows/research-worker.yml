@@ -110,6 +110,9 @@ jobs:
       SECOPSAI_VERIFY_DELIVERY_SECONDS: ${{ inputs.delivery_seconds || 840 }}
       SECOPSAI_WORKER_DIAGNOSTICS_DIR: reports/research
       SECOPSAI_WORKER_STAGE_LOGS: '1'
+      # Stop cleanly after a cycle once under a minute is left, instead of starting
+      # one the time budget would cut mid-step. "0" or removing this turns it off.
+      SECOPSAI_WORKER_WRAPUP_RESERVE_SECONDS: "60"
       SECOPSAI_LEDGER_CHECKPOINT_SECONDS: ${{ vars.RESEARCH_INCREMENTAL_CHECKPOINTS == 'true' && '60' || '3600' }}
       # Ten investigations an hour, three model jobs each. Three slots drained 1.5 an
       # hour, about what arrives, so the backlog of 700+ never shrank.
