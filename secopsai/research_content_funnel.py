@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import soc_store
+from secopsai import source_match
 from secopsai import deobfuscate
 from secopsai import actor_fingerprint, package_features, version_diff, yara_engine
 from secopsai.research_intake import SafeFetcher
@@ -216,9 +217,16 @@ def scan_members(fetcher: Optional[SafeFetcher], ecosystem: str, package: str, v
     scanned = package_features.combine(yara_engine.scan_files(members), flags, rules_ecosystem or ecosystem, members)
     findings = [item for item in scanned.get("findings") or [] if item.get("rule_id") != "YARA-SCAN-ERROR"]
     level = str(scanned.get("level") or "none")
+    evidence = package_features.triage_evidence(members, findings, flags) if level in HIT_LEVELS else {}
+    install_files = package_features.install_time_files(members) if level in HIT_LEVELS else []
+    # Hashes of the whole files behind the evidence (the evidence text is
+    # clipped), so they can be compared with the project's source repository.
+    by_path = dict(members)
+    wanted = [str(item.get("path")) for item in [*install_files, *(evidence.get("flagged_files") or [])] if item.get("path") in by_path]
+    file_hashes = {path: source_match.content_hash(by_path[path]) for path in dict.fromkeys(wanted)}
     return {"fingerprints": actor_fingerprint.from_members(members) if level in HIT_LEVELS else {},
-            "install_files": package_features.install_time_files(members) if level in HIT_LEVELS else [],
-            **(package_features.triage_evidence(members, findings, flags) if level in HIT_LEVELS else {}),
+            "install_files": install_files, "file_hashes": file_hashes,
+            **evidence,
             "status": "hit" if level in HIT_LEVELS else "clean", "score": int(scanned.get("score") or 0), "level": level,
             "rules_matched": scanned.get("rules_matched") or [], "findings": findings[:20], "findings_total": len(findings), "features": flags, "files": len(members), "bytes": archive_bytes, "diff": diff}
 

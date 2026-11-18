@@ -49,6 +49,9 @@ A Fast Lane urgent email starts with an **auto-check**:
   means someone already reported it);
 - whether anything risky is new since the previous release;
 - whether the publisher changed;
+- whether the start-up/install and flagged files match the project's GitHub
+  repository at the release tag (`secopsai/source_match.py`; a hook missing
+  from the repository is how a hijacked release usually looks);
 - the model's triage verdict.
 
 These lead to one reading: *likely malicious*, *likely benign* or *needs
