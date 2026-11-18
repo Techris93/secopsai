@@ -210,6 +210,38 @@ def test_fast_lane_makes_a_start_up_hook_hit_critical_and_urgent():
     assert fast_lane.assess(_lane_result([]))["severity"] == "none"
 
 
+
+def _with_diff(rules, diff, publisher_changed=False):
+    result = _lane_result(rules)
+    result["behaviour"]["diff"] = diff
+    if publisher_changed:
+        result["comparison"] = {"metadata": {"publisher_changed": True}}
+    return result
+
+
+def test_a_start_up_hook_every_release_already_had_is_high_not_urgent():
+    # pirateface 0.2.25 and 0.2.26: same .pth design as the release before.
+    same = {"previous_version": "0.2.25", "new_flags": []}
+    decision = fast_lane.assess(_with_diff([("BEH_PTH_STARTUP_HARVEST", 80)], same))
+    assert decision["severity"] == "high"
+    assert not notification_policy.urgent_fast_lane(decision["severity"])
+    assert fast_lane.assess(_with_diff([("BEH_PTH_STARTUP_INLINE", 70)], same))["severity"] == "high"
+
+
+@pytest.mark.parametrize("diff,publisher_changed", [
+    ({"previous_version": "1.26.0", "new_flags": ["pth_startup_code", "pth_chain_network"]}, False),  # hook added (agent-framework)
+    ({"previous_version": "0.2.25", "new_flags": ["pth_chain_network"]}, False),  # existing hook starts sending
+    ({"previous_version": "0.2.25", "new_flags": []}, True),  # same hook, new publisher
+    ({"previous_version": "", "note": "first release"}, False),
+    ({"previous_version": "0.2.25", "note": "previous release only partly readable; no diff"}, False),
+    ({"error": "timeout"}, False),
+    ({}, False),
+])
+def test_a_new_or_unverifiable_start_up_hook_stays_critical(diff, publisher_changed):
+    decision = fast_lane.assess(_with_diff([("BEH_PTH_STARTUP_HARVEST", 80)], diff, publisher_changed))
+    assert decision["severity"] == "critical"
+
+
 # ---------------------------------------------------------------- urgent findings
 
 

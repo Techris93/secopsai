@@ -39,6 +39,21 @@ INSTALL_HOOKS = {"preinstall", "install", "postinstall", "prepare"}
 # Behaviour rules (secopsai/package_features.py) that mark code which runs
 # without any install step or a hijacked release: always critical here.
 CRITICAL_BEHAVIOUR = {"BEH_PTH_STARTUP_INLINE", "BEH_PTH_STARTUP_HARVEST", "BEH_DIFF_NEW_PTH_STARTUP"}
+PTH_FLAGS = {"pth_startup_code", "pth_startup_inline", "pth_chain_secrets", "pth_chain_network"}
+
+
+def established_start_up_hook(behaviour: Dict[str, Any], publisher_changed: bool) -> bool:
+    """True when the previous release was read in full and already had every
+    start-up hook flag this one has, from the same publisher. That is the
+    package's design (2026-11-18: pirateface patches Hugging Face downloads
+    from a .pth on every release), not a takeover; it stays a high alert for
+    triage but no longer sends the urgent email on each release. A first
+    release, an unreadable previous release or any new hook flag stays
+    critical (agent-framework 1.26.1 added its hook)."""
+    diff = behaviour.get("diff") or {}
+    if publisher_changed or not diff.get("previous_version") or "new_flags" not in diff:
+        return False
+    return not (set(diff.get("new_flags") or []) & PTH_FLAGS)
 NOT_FOUND_RETRIES = 3
 NOT_FOUND_DELAY_SECONDS = 20
 
@@ -147,7 +162,10 @@ def assess(result: Dict[str, Any]) -> Dict[str, Any]:
         # shown; the urgent email still fires if the model is sure.
         severity = "medium" if (set(new_ids) & EXEC_OR_EGRESS) or publisher_changed else "low"
     order = ["none", "low", "medium", "high", "critical"]
-    floor = "critical" if behaviour_ids & CRITICAL_BEHAVIOUR else "high" if behaviour_top >= 70 else "medium" if behaviour_top >= 60 else "none"
+    critical_ids = behaviour_ids & CRITICAL_BEHAVIOUR
+    if established_start_up_hook(result.get("behaviour") or {}, publisher_changed):
+        critical_ids -= {"BEH_PTH_STARTUP_INLINE", "BEH_PTH_STARTUP_HARVEST"}
+    floor = "critical" if critical_ids else "high" if behaviour_top >= 70 else "medium" if behaviour_top >= 60 else "none"
     severity = max(severity, floor, key=order.index)
     return {
         "severity": severity,
