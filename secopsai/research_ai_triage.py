@@ -56,6 +56,10 @@ def _ensure(connection: Any) -> None:
     )
     connection.execute("CREATE INDEX IF NOT EXISTS idx_research_ai_triage_status ON research_ai_triage (status, created_at)")
     connection.execute("CREATE TABLE IF NOT EXISTS core_sync_cursors (name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)")
+    # One row per urgent finding emailed, so a verdict is never sent twice.
+    connection.execute("""CREATE TABLE IF NOT EXISTS research_urgent_notifications (
+            artifact_key TEXT PRIMARY KEY, status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
 
 
 def artifact_key(ecosystem: str, package: str, version: str) -> str:
@@ -532,6 +536,7 @@ def sync(client: Any, *, db_path: Optional[str] = None) -> Dict[str, Any]:
     since = str(row["value"]) if row else ""
     outcomes = {"resolved": 0, "deprioritized": 0, "escalated": 0}
     applied, pending, pages, limit = 0, None, 0, RESULTS_PAGE_LIMIT
+    urgent: List[tuple] = []
     # Page through finished results. A page Core cannot fit under the client's
     # response limit is retried at half the size, so one large model output
     # can never jam the cursor (2026-10-28: replies of ~1 MB were rejected
@@ -562,10 +567,83 @@ def sync(client: Any, *, db_path: Optional[str] = None) -> Dict[str, Any]:
             )
             connection.commit()
         applied += len(results)
+        urgent.extend(urgent_candidates(results))
         if len(results) < limit and not response.get("truncated"):
             break
+    try:
+        urgent_email = send_urgent_verdicts(urgent, db_path=db_path)
+    except Exception as exc:  # notification is extra; applying verdicts already succeeded
+        urgent_email = {"status": "error", "error": str(exc)[:200]}
     health = rule_health(db_path=db_path)
-    return {"status": "ok", "clef": prescreen, **queued, "results": applied, "result_pages": pages, "pending_at_bridge": pending, **outcomes, "rule_health": health}
+    return {"status": "ok", "clef": prescreen, **queued, "results": applied, "result_pages": pages, "pending_at_bridge": pending, **outcomes,
+            "urgent_email": urgent_email, "rule_health": health}
+
+
+def urgent_candidates(results: List[Dict[str, Any]]) -> List[tuple]:
+    """(artifact key, result) for verdicts strong enough for an immediate
+    email: a schema-valid true_positive at or above the urgent probability.
+    Covers the worker's own hits and Fast Lane jobs, which have no local row."""
+    from secopsai import notification_policy
+    from secopsai.decision_contracts import DecisionError, validate_action_result
+
+    out = []
+    for item in results:
+        result = item.get("result") if isinstance(item.get("result"), dict) else {}
+        key = str(item.get("artifact_id") or "")
+        if not key or item.get("status") != "succeeded" or not notification_policy.urgent_verdict(result):
+            continue
+        try:
+            validate_action_result("triage_artifact", result)
+        except (DecisionError, TypeError, ValueError, KeyError):
+            continue
+        out.append((key, result))
+    return out
+
+
+def send_urgent_verdicts(items: List[tuple], *, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Email each urgent verdict once to the urgent reviewer. Nothing is
+    published or reported; the email asks a person to review."""
+    from secopsai import notification_policy
+
+    if not items:
+        return {"candidates": 0}
+    if not notification_policy.urgent_email_enabled():
+        return {"candidates": len(items), "status": "disabled"}
+    recipient = os.environ.get("SECOPSAI_RESEARCH_URGENT_REVIEWER_EMAIL") or os.environ.get("SECOPSAI_RESEARCH_ALERT_EMAIL") or ""
+    if not recipient or not os.environ.get("SECOPSAI_SMTP_PASSWORD"):
+        return {"candidates": len(items), "status": "not_configured"}
+    from secopsai.research_delivery import send_email
+
+    sent = failed = duplicate = 0
+    for key, result in items:
+        now = soc_store.utc_now()
+        with closing(soc_store.connect(db_path)) as connection:
+            _ensure(connection)
+            claimed = connection.execute("INSERT OR IGNORE INTO research_urgent_notifications (artifact_key, status, created_at, updated_at) VALUES (?, 'sending', ?, ?)",
+                                         (key, now, now)).rowcount
+            connection.commit()
+        if not claimed:
+            duplicate += 1
+            continue
+        release = key.removeprefix("FASTLANE-").split("#", 1)[0]
+        body = "\n".join([
+            f"{release}: the triage model judged this release malicious (probability {result.get('malicious_probability')}%, confidence {result.get('finding_confidence')}%).",
+            "No person has reviewed it. Nothing has been published or reported.",
+            "", f"Review: {notification_policy.DASHBOARD_INBOX}", "",
+            "Model summary (from untrusted package content):", str(result.get("summary") or "")[:1500], "",
+            "Evidence cited: " + ", ".join(str(ref) for ref in (result.get("decision_evidence_refs") or [])[:10]),
+        ])
+        try:
+            send_email(recipient=recipient, subject=f"[SecOpsAI] URGENT likely malicious: {release}", body=body)
+            status, detail = "sent", ""
+            sent += 1
+        except Exception as exc:  # recorded; delivery failure must not stop triage sync
+            status, detail = "failed", f"{type(exc).__name__}: {exc}"[:300]
+            failed += 1
+        with closing(soc_store.connect(db_path)) as connection:
+            connection.execute("UPDATE research_urgent_notifications SET status=?, detail=?, updated_at=? WHERE artifact_key=?", (status, detail, soc_store.utc_now(), key))
+            connection.commit()
+    return {"candidates": len(items), "sent": sent, "failed": failed, "duplicate": duplicate}
 
 
 RETRIAGE_ECOSYSTEMS = {"npm", "pypi", "crates", "open-vsx", "vscode-marketplace"}

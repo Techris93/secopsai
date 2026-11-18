@@ -54,6 +54,65 @@ def limit_per_ecosystem() -> int:
     return max(0, min(int(os.environ.get("SECOPSAI_CONTENT_PRESCAN_LIMIT", "40") or 0), 500))
 
 
+def limit_for(ecosystem: str) -> int:
+    """PyPI publishes about 560 releases an hour (2026-11 measurement) and a
+    worker runs about three cycles an hour, so it gets its own, larger quota."""
+    if ecosystem == "pypi":
+        return max(0, min(int(os.environ.get("SECOPSAI_CONTENT_PRESCAN_LIMIT_PYPI", "200") or 0), 500))
+    return limit_per_ecosystem()
+
+
+def _wheel_rank(filename: str) -> int:
+    """Which wheel pip most likely installs: pure-Python first, then CPython Linux x86-64."""
+    name = filename.lower()
+    if name.endswith(("-none-any.whl",)):
+        return 0
+    if "manylinux" in name and "x86_64" in name:
+        return 1
+    return 2
+
+
+def resolve_artifacts(fetcher: SafeFetcher, ecosystem: str, package: str, version: str) -> List[Tuple[str, Tuple[str, ...], str]]:
+    """Every artifact to scan for one release. For PyPI that is the sdist and
+    the wheel: pip installs the wheel, and a hijacked release can hide its
+    payload there (agent-framework 1.26.1 shipped a start-up .pth only in its
+    wheels), while setup.py malware lives in the sdist."""
+    if ecosystem != "pypi":
+        return [_resolve_npm(fetcher, package, version) if ecosystem == "npm" else resolve_artifact(fetcher, ecosystem, package, version)]
+    _u, _h, body = fetcher.get(f"https://pypi.org/pypi/{package}/{version}/json", allowed_hosts=PYPI_HOSTS, max_bytes=4 * 1024 * 1024)
+    files = [item for item in json.loads(body).get("urls") or [] if int(item.get("size") or 0) <= MAX_ARTIFACT_BYTES and item.get("url")]
+    sdists = [item for item in files if item.get("packagetype") == "sdist"]
+    wheels = sorted((item for item in files if item.get("packagetype") == "bdist_wheel"), key=lambda item: (_wheel_rank(str(item.get("filename") or "")), int(item.get("size") or 0)))
+    chosen = sdists[:1] + wheels[:1] or files[:1]
+    if not chosen:
+        raise LookupError("no artifact under the size limit")
+    return [(str(item["url"]), PYPI_FILE_HOSTS, str(item.get("filename") or "artifact")) for item in chosen]
+
+
+def download_members(fetcher: SafeFetcher, artifacts: List[Tuple[str, Tuple[str, ...], str]], *, prefix: str = "secopsai-content-") -> Tuple[List[Tuple[str, bytes]], int]:
+    """Download and unpack artifacts in memory. With more than one, each
+    artifact's members are prefixed with its filename so paths stay distinct."""
+    from secopsai.artifact_fleet import _safe_archive_files
+
+    members: List[Tuple[str, bytes]] = []
+    total = 0
+    for url, hosts, filename in artifacts:
+        _u, headers, raw = fetcher.get(url, allowed_hosts=hosts, max_bytes=MAX_ARTIFACT_BYTES)
+        if "gzip" in str(headers.get("content-encoding") or "").lower() and raw[:2] == b"\x1f\x8b":
+            raw = _gunzip(raw)  # the Marketplace serves .vsix gzip-encoded
+        total += len(raw)
+        unpacked: List[Tuple[str, bytes]] = []
+        with tempfile.TemporaryDirectory(prefix=prefix) as tmp:
+            path = Path(tmp) / Path(filename).name
+            path.write_bytes(raw)
+            _safe_archive_files(path, unpacked)
+        if len(artifacts) > 1:
+            label = Path(filename).name
+            unpacked = [(f"{label}/{member}", data) for member, data in unpacked]
+        members.extend(unpacked)
+    return members, total
+
+
 def resolve_artifact(fetcher: SafeFetcher, ecosystem: str, package: str, version: str) -> Tuple[str, Tuple[str, ...], str]:
     """(download url, allowed hosts, filename) for one release."""
     if ecosystem == "pypi":
@@ -104,18 +163,7 @@ def _resolve_npm(fetcher: SafeFetcher, package: str, version: str) -> Tuple[str,
 
 def fetch_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: str) -> Tuple[List[Tuple[str, bytes]], int]:
     """Download a release and unpack it in memory; returns (members, archive bytes)."""
-    from secopsai.artifact_fleet import _safe_archive_files
-
-    url, hosts, filename = _resolve_npm(fetcher, package, version) if ecosystem == "npm" else resolve_artifact(fetcher, ecosystem, package, version)
-    _u, headers, raw = fetcher.get(url, allowed_hosts=hosts, max_bytes=MAX_ARTIFACT_BYTES)
-    if "gzip" in str(headers.get("content-encoding") or "").lower() and raw[:2] == b"\x1f\x8b":
-        raw = _gunzip(raw)  # the Marketplace serves .vsix gzip-encoded
-    members: List[Tuple[str, bytes]] = []
-    with tempfile.TemporaryDirectory(prefix="secopsai-content-") as tmp:
-        path = Path(tmp) / Path(filename).name
-        path.write_bytes(raw)
-        _safe_archive_files(path, members)
-    return members, len(raw)
+    return download_members(fetcher, resolve_artifacts(fetcher, ecosystem, package, version))
 
 
 def scan_members(fetcher: Optional[SafeFetcher], ecosystem: str, package: str, version: str, members: List[Tuple[str, bytes]], *,
@@ -222,13 +270,15 @@ def run(*, db_path: Optional[str] = None, fetcher: Optional[SafeFetcher] = None,
 
     if not yara_engine.status().get("available"):
         return {"enabled": False, "reason": "YARA rules unavailable"}
-    per_ecosystem = limit_per_ecosystem() if limit is None else limit
+    # An explicit ``limit`` applies to every ecosystem; otherwise each has its quota.
     fetcher = fetcher or SafeFetcher(timeout=30)
     scan = scanner or scan_release
     stats: Dict[str, Any] = {"enabled": True}
     for ecosystem in ECOSYSTEMS:
-        events = _pending(db_path, ecosystem, per_ecosystem)
-        with ThreadPoolExecutor(max_workers=max(1, min(workers, 16))) as pool:
+        events = _pending(db_path, ecosystem, limit_for(ecosystem) if limit is None else limit)
+        # Downloads dominate; PyPI's larger batch gets more parallel fetches.
+        pool_size = max(1, min(workers * 2 if ecosystem == "pypi" else workers, 16))
+        with ThreadPoolExecutor(max_workers=pool_size) as pool:
             if ecosystem == "mcp-registry":
                 results = list(pool.map(lambda event: _scan_mcp(fetcher, json.loads(event.get("metadata_json") or "{}"), scan), events))
             else:

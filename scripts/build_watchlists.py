@@ -23,7 +23,10 @@ import urllib.request
 
 NPM_HIGH_IMPACT_VERSION = "1.13.0"
 NPM_LIMIT = int(os.environ.get("FAST_LANE_NPM_LIMIT", "10000"))
-PYPI_LIMIT = int(os.environ.get("FAST_LANE_PYPI_LIMIT", "5000"))
+# The whole published ranking (15,000). At 5,000, agent-framework (rank 8,509,
+# 216k downloads a month) was outside the fast lane when it was hijacked on
+# 2026-11-17. Top 15,000 is about 1,300 releases a day (2026-11-18 sample).
+PYPI_LIMIT = int(os.environ.get("FAST_LANE_PYPI_LIMIT", "15000"))
 PYPI_URL = "https://hugovk.github.io/top-pypi-packages/top-pypi-packages.min.json"
 UA = {"User-Agent": "SecOpsAI-Research/1.0"}
 

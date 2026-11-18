@@ -50,6 +50,12 @@ PACKAGIST_ALLOWED_HOSTS: Tuple[str, ...] = ("packagist.org",)
 PYPI_SIMPLE_INDEX_URL = "https://pypi.org/simple/"
 PYPI_ALLOWED_HOSTS: Tuple[str, ...] = ("pypi.org",)
 PYPI_SIMPLE_JSON_ACCEPT = "application/vnd.pypi.simple.v1+json"
+# XML-RPC changelog: every journal entry after a serial, in serial order (the
+# same serial as the simple index). The source of per-release events; PyPI
+# keeps it for mirrors. About 560 new releases an hour (2026-11-18).
+PYPI_XMLRPC_URL = "https://pypi.org/pypi"
+PYPI_INDEX_RECONCILE_SECONDS = 3600
+MAX_PYPI_CHANGELOG_BYTES = 32 * 1024 * 1024
 RUBYGEMS_TIMEFRAME_URL = "https://rubygems.org/api/v1/timeframe_versions.json"
 CRATES_RECENT_URL = "https://crates.io/api/v1/crates?sort=recent-updates&per_page=100"
 CRATES_ALLOWED_HOSTS: Tuple[str, ...] = ("crates.io",)
@@ -147,9 +153,11 @@ COLLECTOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         # per-release detection needs watchlist polling or backfill.
         "cursor_seed": "zero",
         "cursor_multiplier": 1,
-        # The simple index is a multi-megabyte full-document fetch; hourly
-        # reconciliation is the respectful default.
-        "interval_seconds": 3600,
+        # Releases come from the XML-RPC changelog, a small serial-ordered
+        # fetch, every 15 minutes. The simple index is a multi-megabyte
+        # full-document fetch, so project add/remove reconciliation stays
+        # hourly (PYPI_INDEX_RECONCILE_SECONDS).
+        "interval_seconds": 900,
     },
     "rubygems": {
         "collector_id": "COL-RUBYGEMS-TIMEFRAME",
@@ -836,6 +844,8 @@ def _close_run(
         "retryable": bool(outcome.get("retryable", False)),
         "transport_diagnostic": outcome.get("transport_diagnostic", ""),
         "algorithm_version": ALGORITHM_VERSION,
+        # Collector-specific detail (PyPI: release events, index reconciliation).
+        **{key: outcome[key] for key in ("release_events", "index_reconciled", "anomalies", "diff_truncated") if key in outcome},
     }
 
 
@@ -1113,6 +1123,42 @@ def _insert_index_event(
     return cursor.rowcount > 0
 
 
+def _pypi_changelog_since(fetcher: SafeFetcher, serial: int) -> List[Tuple[str, str, int, str, int]]:
+    """(name, version, epoch, action, serial) journal entries after ``serial``."""
+    import xmlrpc.client
+
+    body = xmlrpc.client.dumps((int(serial),), "changelog_since_serial").encode("utf-8")
+    _final, _headers, raw = fetcher.get(PYPI_XMLRPC_URL, allowed_hosts=PYPI_ALLOWED_HOSTS, max_bytes=MAX_PYPI_CHANGELOG_BYTES,
+                                        headers={"Content-Type": "text/xml", "Accept": "text/xml"}, data=body)
+    try:
+        (events,), _method = xmlrpc.client.loads(raw.decode("utf-8"))
+    except Exception as exc:  # Fault, malformed XML, or a non-XML-RPC reply
+        raise CollectorError(f"PyPI changelog response was not a valid XML-RPC result: {str(exc)[:160]}") from exc
+    rows: List[Tuple[str, str, int, str, int]] = []
+    for item in events if isinstance(events, list) else []:
+        if isinstance(item, (list, tuple)) and len(item) >= 5 and str(item[4]).isdigit():
+            rows.append((str(item[0] or ""), str(item[1] or ""), int(item[2] or 0), str(item[3] or ""), int(item[4])))
+    return sorted(rows, key=lambda row: row[4])
+
+
+def _insert_release_event(connection: sqlite3.Connection, *, collector: Dict[str, Any], name: str, version: str,
+                          published: str, serial: int, now: str) -> bool:
+    key = _idempotency_key(collector["ecosystem"], name, version, "", "release_published")
+    metadata = {"change": "new release", "serial": str(serial), "source": "xmlrpc_changelog", "algorithm_version": ALGORITHM_VERSION}
+    cursor = connection.execute(
+        """INSERT INTO registry_feed_events
+        (feed_event_id, collector_id, ecosystem, package, version, event_type,
+         registry_timestamp, page_url, leaf_url, leaf_fetched, metadata_json,
+         idempotency_key, collected_at, processing_state)
+        VALUES (?, ?, ?, ?, ?, 'release_published', ?, ?, ?, 0, ?, ?, ?, 'pending')
+        ON CONFLICT(idempotency_key) DO NOTHING""",
+        (_id("RFE"), collector["collector_id"], collector["ecosystem"], name, version, published, PYPI_XMLRPC_URL,
+         f"https://pypi.org/pypi/{urllib.parse.quote(name, safe='')}/{urllib.parse.quote(version, safe='')}/json",
+         _json(metadata), key, now),
+    )
+    return cursor.rowcount > 0
+
+
 def _ingest_pypi_index(
     *,
     collector: Dict[str, Any],
@@ -1122,11 +1168,93 @@ def _ingest_pypi_index(
     db_path: Optional[str],
     max_diff_events: int,
 ) -> Dict[str, Any]:
+    """PyPI releases from the changelog, projects from the simple index.
+
+    The cursor is the PyPI journal serial. Each run reads the XML-RPC
+    changelog after it and records every ``new release`` with its version,
+    so the content funnel can scan it; the cursor only moves past entries
+    that were recorded, so a failed or capped fetch is resumed, not lost.
+    The simple index (project additions and removals) is reconciled at most
+    hourly because it is a multi-megabyte document. The first run stores a
+    baseline and emits no events.
+    """
+    outcome = _empty_outcome(cursor_before)
+    outcome["pages_selected"] = 1
+    now = _format_ts(_utcnow())
+    established = cursor_before.isdigit() and int(cursor_before) > 0
+    cursor_after = cursor_before
+    if established:
+        try:
+            changelog = _pypi_changelog_since(fetcher, int(cursor_before))
+        except (IntakeError, CollectorError) as exc:
+            outcome["anomalies"] = [f"changelog fetch failed; releases resume from serial {cursor_before} next run: {str(exc)[:200]}"]
+            changelog = None
+        if changelog is not None:
+            releases = [row for row in changelog if row[3] == "new release" and row[0] and row[1]]
+            if len(releases) > max_diff_events:
+                # Oldest first, and stop the cursor at the last one recorded.
+                outcome["diff_truncated"] = True
+                releases = releases[:max_diff_events]
+                last_serial = releases[-1][4]
+            else:
+                last_serial = changelog[-1][4] if changelog else int(cursor_before)
+            with closing(soc_store.connect(db_path)) as connection:
+                with _write_transaction(connection, db_path):
+                    for name, version, epoch, _action, serial in releases:
+                        outcome["events_seen"] += 1
+                        published = _format_ts(datetime.fromtimestamp(epoch, tz=timezone.utc)) if epoch > 0 else now
+                        if _insert_release_event(connection, collector=collector, name=name, version=version, published=published, serial=serial, now=now):
+                            outcome["events_stored"] += 1
+                        else:
+                            outcome["events_duplicate"] += 1
+                    cursor_after = str(max(int(cursor_before), last_serial))
+                    connection.execute(
+                        "UPDATE registry_cursors SET cursor_value = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                        (cursor_after, run_id, now, collector["collector_id"]),
+                    )
+                    if releases:
+                        connection.execute("UPDATE registry_cursors SET last_event_at = ? WHERE collector_id = ?", (now, collector["collector_id"]))
+            outcome["release_events"] = len(releases)
+
+    with closing(soc_store.connect(db_path)) as connection:
+        previous = _latest_snapshot(connection, collector["collector_id"])
+    if established and previous is not None:
+        age = (_utcnow() - _parse_ts(str(previous["created_at"]))).total_seconds()
+        if age < PYPI_INDEX_RECONCILE_SECONDS:
+            outcome["pages_processed"] = 1
+            outcome["cursor_after"] = cursor_after
+            outcome["index_reconciled"] = False
+            return outcome
+    index = _reconcile_pypi_index(collector=collector, cursor_before=cursor_before, fetcher=fetcher, run_id=run_id, db_path=db_path,
+                                  max_diff_events=max_diff_events, advance_cursor=not established)
+    index["index_reconciled"] = True
+    for key in ("events_seen", "events_stored", "events_duplicate"):
+        index[key] = int(index.get(key) or 0) + int(outcome.get(key) or 0)
+    index["anomalies"] = list(outcome.get("anomalies") or []) + list(index.get("anomalies") or [])
+    if outcome.get("diff_truncated"):
+        index["diff_truncated"] = True
+    if "release_events" in outcome:
+        index["release_events"] = outcome["release_events"]
+    if established:
+        index["cursor_after"] = cursor_after
+    return index
+
+
+def _reconcile_pypi_index(
+    *,
+    collector: Dict[str, Any],
+    cursor_before: str,
+    fetcher: SafeFetcher,
+    run_id: str,
+    db_path: Optional[str],
+    max_diff_events: int,
+    advance_cursor: bool = True,
+) -> Dict[str, Any]:
     """Reconcile the PyPI simple index against the last stored snapshot.
 
-    PyPI exposes no chronological event feed, so coverage is honestly
-    limited to project additions and removals between snapshots. The first
-    run stores a baseline and emits no events.
+    Covers project additions and removals between snapshots. With
+    ``advance_cursor`` (the baseline run) the cursor becomes the index
+    serial; afterwards the changelog owns the cursor.
     """
     config = _decode(collector["config_json"], {})
     allowed_hosts = config.get("allowed_hosts", [])
@@ -1173,7 +1301,7 @@ def _ingest_pypi_index(
         return outcome
 
     # A serial regression is a registry-side anomaly; never overwrite newer state.
-    if cursor_before.isdigit() and int(serial) < int(cursor_before):
+    if advance_cursor and cursor_before.isdigit() and int(serial) < int(cursor_before):
         outcome["anomalies"] = [f"serial regressed from {cursor_before} to {serial}; snapshot skipped"]
         outcome["pages_processed"] = 1
         return outcome
@@ -1192,7 +1320,14 @@ def _ingest_pypi_index(
                     (run_id, now, collector["collector_id"]),
                 )
             outcome["pages_processed"] = 1
-            outcome["cursor_after"] = serial
+            outcome["cursor_after"] = serial if advance_cursor else cursor_before
+            return outcome
+        # Once the changelog owns the cursor, the index (CDN-cached) can lag
+        # it by minutes; regression is judged against the last snapshot.
+        if not advance_cursor and previous is not None and str(previous["serial"]).isdigit() and int(serial) < int(previous["serial"]):
+            outcome["anomalies"] = [f"serial regressed from {previous['serial']} to {serial} (last snapshot); snapshot skipped"]
+            outcome["pages_processed"] = 1
+            outcome["cursor_after"] = cursor_before
             return outcome
 
         if previous is not None:
@@ -1231,13 +1366,16 @@ def _ingest_pypi_index(
                     now,
                 ),
             )
-            connection.execute(
-                "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
-                (serial, now, run_id, now, collector["collector_id"]),
-            )
+            if advance_cursor:
+                connection.execute(
+                    "UPDATE registry_cursors SET cursor_value = ?, last_event_at = ?, last_run_id = ?, updated_at = ? WHERE collector_id = ?",
+                    (serial, now, run_id, now, collector["collector_id"]),
+                )
     outcome["pages_processed"] = 1
-    outcome["cursor_after"] = serial
+    outcome["cursor_after"] = serial if advance_cursor else cursor_before
     return outcome
+
+
 
 
 def _ingest_rubygems_timeframe(

@@ -36,6 +36,9 @@ MAX_TARGETS = 20
 STALE_AFTER_SECONDS = 3 * 3600
 EXEC_OR_EGRESS = {"network-endpoint", "outbound-network", "process-execution", "dynamic-eval", "dynamic-function-constructor", "credential-access", "credential-discovery", "encoded-payload"}
 INSTALL_HOOKS = {"preinstall", "install", "postinstall", "prepare"}
+# Behaviour rules (secopsai/package_features.py) that mark code which runs
+# without any install step or a hijacked release: always critical here.
+CRITICAL_BEHAVIOUR = {"BEH_PTH_STARTUP_INLINE", "BEH_PTH_STARTUP_HARVEST", "BEH_DIFF_NEW_PTH_STARTUP"}
 NOT_FOUND_RETRIES = 3
 NOT_FOUND_DELAY_SECONDS = 20
 
@@ -116,6 +119,12 @@ def assess(result: Dict[str, Any]) -> Dict[str, Any]:
     yara_findings = [item for item in scan_findings if str(item.get("rule_id", "")).startswith("YARA:")]
     publisher_changed = bool((comparison.get("metadata") or {}).get("publisher_changed"))
     added = list((comparison.get("members") or {}).get("added") or [])
+    # The worker's behaviour rules over the same release (sdist and wheel for
+    # PyPI, with the version diff), so both paths judge a release alike.
+    behaviour = [item for item in ((result.get("behaviour") or {}).get("findings") or [])
+                 if str(item.get("rule_id", "")).startswith("BEHAVIOUR:")]
+    behaviour_ids = {str(item["rule_id"]).split(":", 1)[1] for item in behaviour}
+    behaviour_top = max((int(item.get("score") or 0) for item in behaviour), default=0)
     reasons: List[str] = []
     if hook_delta:
         reasons.append("install-time script added or changed")
@@ -125,11 +134,16 @@ def assess(result: Dict[str, Any]) -> Dict[str, Any]:
         reasons.append(f"YARA {yara.get('level')} (score {yara.get('score')}): " + ", ".join((yara.get("rules_matched") or [])[:5]))
     if publisher_changed:
         reasons.append("publisher changed")
+    if behaviour:
+        reasons.append("behaviour rules: " + ", ".join(sorted(behaviour_ids)))
     severity = "none"
     if yara.get("level") == "alert" or (hook_delta and set(new_ids) & EXEC_OR_EGRESS):
         severity = "critical" if (hook_delta and yara.get("level") in {"warning", "alert"}) else "high"
     elif reasons and (hook_delta or yara.get("level") == "warning" or (publisher_changed and new_ids)):
         severity = "medium"
+    order = ["none", "medium", "high", "critical"]
+    floor = "critical" if behaviour_ids & CRITICAL_BEHAVIOUR else "high" if behaviour_top >= 70 else "medium" if behaviour_top >= 60 else "none"
+    severity = max(severity, floor, key=order.index)
     return {
         "severity": severity,
         "reasons": reasons,
@@ -141,6 +155,10 @@ def assess(result: Dict[str, Any]) -> Dict[str, Any]:
         "yara_findings": [
             {k: item.get(k) for k in ("rule_id", "file_path", "matched_indicator", "safe_context", "rule_author", "rule_reference", "score")}
             for item in yara_findings[:10]
+        ],
+        "behaviour_findings": [
+            {k: item.get(k) for k in ("rule_id", "file_path", "matched_indicator", "safe_context", "score")}
+            for item in behaviour[:10]
         ],
         "pipeline_verdict": result.get("verdict"),
     }
@@ -157,7 +175,21 @@ def investigate(target: Dict[str, Any], release: Dict[str, Any], workdir: Path) 
     }
     if release.get("previous_version"):
         kwargs.update(compare_ecosystem=target["ecosystem"], compare_package=target["package"], compare_version=release["previous_version"])
-    return investigate_package(**kwargs)
+    result = investigate_package(**kwargs)
+    result["behaviour"] = behaviour_scan(target, release)
+    return result
+
+
+def behaviour_scan(target: Dict[str, Any], release: Dict[str, Any]) -> Dict[str, Any]:
+    """The content funnel's scan (YARA + behaviour rules + version diff) of
+    this release. Extra signal: a failure here never fails the target."""
+    from secopsai.research_content_funnel import scan_release
+
+    try:
+        scan = scan_release(SafeFetcher(timeout=60), target["ecosystem"], target["package"], release["version"])
+    except Exception as exc:
+        return {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200], "findings": []}
+    return {key: scan.get(key) for key in ("status", "score", "level", "rules_matched", "findings", "features", "diff", "reason") if key in scan}
 
 
 def alert_payload(target: Dict[str, Any], release: Dict[str, Any], decision: Dict[str, Any], detected_at: datetime) -> Dict[str, Any]:
@@ -176,7 +208,7 @@ def alert_payload(target: Dict[str, Any], release: Dict[str, Any], decision: Dic
             "ecosystem": target["ecosystem"], "package": target["package"], "version": release["version"],
             "previous_version": release.get("previous_version"), "published_at": release["published_at"],
             "detected_at": _iso(detected_at), "publish_to_verdict_seconds": latency,
-            **{k: decision[k] for k in ("reasons", "new_indicators", "added_files", "install_hooks", "publisher_changed", "yara", "yara_findings", "pipeline_verdict")},
+            **{k: decision[k] for k in ("reasons", "new_indicators", "added_files", "install_hooks", "publisher_changed", "yara", "yara_findings", "behaviour_findings", "pipeline_verdict") if k in decision},
             "execution_performed": False,
         },
     }
@@ -314,10 +346,10 @@ def deliver(target: Dict[str, Any], release: Dict[str, Any], decision: Dict[str,
         from secopsai.core_edge_client import CoreEdgeClient
 
         client = CoreEdgeClient()
-        if client.enabled and (decision["yara_findings"] or decision["reasons"]):
+        if client.enabled and (decision["yara_findings"] or decision.get("behaviour_findings") or decision["reasons"]):
             key = payload["alert_id"]
             context = {"artifact_id": key, **{k: payload["evidence"][k] for k in ("ecosystem", "package", "version", "previous_version", "reasons", "new_indicators", "install_hooks")},
-                       "findings": decision["yara_findings"] or [{"rule_id": "FAST-LANE-DELTA", "matched_indicator": r, "safe_context": ""} for r in decision["reasons"]],
+                       "findings": (decision["yara_findings"] + decision.get("behaviour_findings", [])) or [{"rule_id": "FAST-LANE-DELTA", "matched_indicator": r, "safe_context": ""} for r in decision["reasons"]],
                        "note": "Package metadata is untrusted context."}
             out["triage"] = client.queue_triage_jobs([{"artifact_id": key, "idempotency_key": f"fast-lane:{key}", "inputs": {"artifact_triage": context}}]).get("count")
     except Exception as exc:
@@ -328,11 +360,13 @@ def deliver(target: Dict[str, Any], release: Dict[str, Any], decision: Dict[str,
     # digest (marked when it was already emailed). SECOPSAI_EMAIL_PAUSED stops both.
     recipient = os.environ.get("SECOPSAI_RESEARCH_ALERT_EMAIL", "")
     emailed = False
-    if recipient and os.environ.get("SECOPSAI_SMTP_PASSWORD") and notification_policy.email_now(decision["severity"]):
+    urgent = notification_policy.urgent_fast_lane(decision["severity"])
+    if recipient and os.environ.get("SECOPSAI_SMTP_PASSWORD") and notification_policy.email_now(decision["severity"], urgent=urgent):
         try:
             body = (payload["reason"] + "\n\nDashboard: " + notification_policy.DASHBOARD_INBOX + "\n\n"
                     + json.dumps(payload["evidence"], indent=2, default=str)[:6000])
-            send_email(recipient=recipient, subject=f"[SecOpsAI fast lane] {decision['severity'].upper()}: {payload['evidence']['package']}@{release['version']}", body=body)
+            label = "URGENT " if urgent else ""
+            send_email(recipient=recipient, subject=f"[SecOpsAI fast lane] {label}{decision['severity'].upper()}: {payload['evidence']['package']}@{release['version']}", body=body)
             out["email"] = "sent"
             emailed = True
         except Exception as exc:

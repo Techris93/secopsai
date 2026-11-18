@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import json
 import re
-import tempfile
-from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from secopsai import package_features
@@ -28,6 +26,7 @@ RISKY = {
     "exfil_service", "discord_webhook", "telegram_bot", "credential_files", "browser_data", "crypto_wallet",
     "js_obfuscator", "runner_memory", "raw_ip_url", "download_tool", "dynamic_eval", "long_base64", "native_binary",
     "prompt_injection", "persistence", "child_process", "py_subprocess", "http_send", "system_info", "dns_lookup",
+    "pth_startup_code", "pth_startup_inline", "pth_chain_secrets", "pth_chain_network", "proc_environ", "cloud_identity_token",
 }
 # Only these trigger fetching the previous version (cheap pre-check).
 TRIGGERS = RISKY - {"child_process", "py_subprocess", "http_send", "system_info", "dns_lookup", "dynamic_eval"}
@@ -64,16 +63,12 @@ def previous_version(fetcher: SafeFetcher, ecosystem: str, package: str, version
 
 
 def fetch_members(fetcher: SafeFetcher, ecosystem: str, package: str, version: str) -> List[Tuple[str, bytes]]:
-    from secopsai.artifact_fleet import _safe_archive_files
-    from secopsai.research_content_funnel import _resolve_npm, resolve_artifact
+    """The previous release, unpacked exactly as the current one is (for PyPI
+    the sdist and the wheel), so a flag never looks new just because the two
+    releases were read from different artifact types."""
+    from secopsai.research_content_funnel import download_members, resolve_artifacts
 
-    url, hosts, filename = _resolve_npm(fetcher, package, version) if ecosystem == "npm" else resolve_artifact(fetcher, ecosystem, package, version)
-    _u, _h, raw = fetcher.get(url, allowed_hosts=hosts, max_bytes=MAX_ARTIFACT_BYTES)
-    members: List[Tuple[str, bytes]] = []
-    with tempfile.TemporaryDirectory(prefix="secopsai-diff-") as tmp:
-        path = Path(tmp) / Path(filename).name
-        path.write_bytes(raw)
-        _safe_archive_files(path, members)
+    members, _total = download_members(fetcher, resolve_artifacts(fetcher, ecosystem, package, version), prefix="secopsai-diff-")
     return members
 
 
@@ -83,7 +78,10 @@ def new_flags(current: Iterable[str], previous: Iterable[str]) -> List[str]:
 
 def with_diff(fetcher: SafeFetcher, ecosystem: str, package: str, version: str, flags: List[str], *, before: str = "") -> Tuple[List[str], Dict[str, object]]:
     """Flags plus ``new:<flag>`` entries for behaviour the previous version lacked."""
-    if ecosystem not in {"npm", "pypi"} or not (set(flags) & TRIGGERS):
+    # PyPI wheels of compiled packages always carry native binaries, so for
+    # PyPI that alone does not justify downloading the previous release.
+    triggers = TRIGGERS - {"native_binary"} if ecosystem == "pypi" else TRIGGERS
+    if ecosystem not in {"npm", "pypi"} or not (set(flags) & triggers):
         return flags, {}
     try:
         previous = previous_version(fetcher, ecosystem, package, version, before)
