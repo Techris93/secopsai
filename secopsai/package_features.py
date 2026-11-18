@@ -74,7 +74,68 @@ PATTERNS: Dict[str, str] = {
     # injection *defences* (scanners, their demos and tests), so it is not used.
     "prompt_injection": r"<IMPORTANT>|do not (tell|mention|reveal|inform) the user|without (telling|informing|notifying) the user|the user (must|should) not (know|see)|do not mention (that|this) (you|to)",
     "anti_analysis": r"\bisVM\b|virtualbox|vmware|sandbox|debugger|process\.exit\(\)\s*;?\s*}\s*else",
+    # Reading every process's environment, not this one's (agent-framework
+    # 1.26.1/1.26.2, 2026-11: the stealer walked /proc/*/environ for secrets).
+    "proc_environ": r"/proc/[^\s'\"]{0,40}environ\b|['\"]/proc['\"][^\n]{0,80}['\"]environ['\"]",
+    # Asking a cloud or CI identity service for a fresh token (Azure managed
+    # identity, GitHub Actions OIDC, GCP and ECS metadata). Identity SDKs do
+    # this legitimately, so rules pair it with a start-up hook or a new release.
+    "cloud_identity_token": (r"\bIDENTITY_ENDPOINT\b|\bMSI_ENDPOINT\b|169\.254\.169\.254/metadata/identity|\bACTIONS_ID_TOKEN_REQUEST_(?:URL|TOKEN)\b"
+                             r"|metadata\.google\.internal/computeMetadata/v1/instance/service-accounts|\bAWS_CONTAINER_CREDENTIALS_(?:RELATIVE|FULL)_URI\b"),
 }
+# Python's site module runs each line of a site-packages .pth file that starts
+# with "import" every time the interpreter starts, whether or not the package
+# is ever imported. Legitimate uses exist (setuptools' distutils shim, namespace
+# packages, coverage hooks), so the flag alone scores nothing.
+PTH_IMPORT_LINE = re.compile(r"^[ \t]*import[ \t]", re.MULTILINE)
+# Code tokens, not words: pytest-cov's .pth prints "subprocess coverage".
+PTH_INLINE_PAYLOAD = re.compile(r"b64decode|base64\.|zlib\.|marshal\.|urlopen|urllib\.|requests\.(?:get|post|put)|http\.client|socket\.socket"
+                                r"|subprocess\.|os\.system\s*\(|os\.popen\s*\(|https?://", re.IGNORECASE)
+# What the code a start-up .pth reaches does: read other processes' secrets
+# or identity tokens, and send.
+PTH_CHAIN_SECRETS = ("proc_environ", "cloud_identity_token", "credential_files", "browser_data", "crypto_wallet")
+PTH_CHAIN_NETWORK = ("http_send", "exfil_service", "raw_ip_url", "dns_lookup", "discord_webhook", "telegram_bot")
+PTH_IMPORTED = re.compile(r"^[ \t]*import[ \t]+([A-Za-z_][\w.]*(?:[ \t]*,[ \t]*[A-Za-z_][\w.]*)*)", re.MULTILINE)
+MAX_PTH_BYTES = 64 * 1024
+
+
+def pth_startup_lines(path: str, data: bytes) -> List[str]:
+    """The lines of a .pth file that Python executes at start-up ([] for none).
+    PyTorch weight files share the suffix; they are binary and never match."""
+    if not path.lower().endswith(".pth") or len(data) > MAX_PTH_BYTES or b"\x00" in data:
+        return []
+    text = data.decode("utf-8", errors="ignore")
+    return [line.strip()[:2000] for line in text.splitlines() if PTH_IMPORT_LINE.match(line)]
+
+
+def pth_chain_files(members: List[Tuple[str, bytes]]) -> List[str]:
+    """Files that run at start-up because a .pth imports them: ``m.py`` and
+    everything under ``m/`` beside each start-up .pth (one level of imports
+    is enough to include a package's own submodules)."""
+    paths = [path for path, _ in members]
+    chain: List[str] = []
+    for path, data in members:
+        if not pth_startup_lines(path, data) or TEST_PATH.search(path.lower()):
+            continue
+        folder = path.rsplit("/", 1)[0] + "/" if "/" in path else ""
+        for module in pth_imported_modules(path, data):
+            for candidate in paths:
+                if candidate.lower().endswith((".py", ".pyw")) and (candidate == f"{folder}{module}.py" or candidate.startswith(f"{folder}{module}/")):
+                    chain.append(candidate)
+    return list(dict.fromkeys(chain))
+
+
+def pth_imported_modules(path: str, data: bytes) -> List[str]:
+    """Top-level modules a start-up .pth imports (``import a, b.c`` -> a, b)."""
+    names: List[str] = []
+    for match in PTH_IMPORTED.finditer("\n".join(pth_startup_lines(path, data))):
+        for item in match.group(1).split(","):
+            name = item.strip().split(".", 1)[0]
+            if name and name not in {"os", "sys", "site", "types", "importlib"} and name not in names:
+                names.append(name)
+    return names[:10]
+
+
 TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec|fixtures?)/|(^|/)test_[^/]*\.py$|_test\.py$|\.(test|spec)\.[cm]?[jt]s$")
 def _actor_infrastructure_pattern() -> str:
     """Known actor domains/IPs from rules/watchlists/actor-infrastructure.txt (subdomains included)."""
@@ -246,6 +307,13 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
         if data[:2] == b"MZ" or data[:4] == b"\x7fELF" or data[:4] in {b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe"} or lowered.endswith((".exe", ".dll", ".so", ".dylib")):
             flags.add("native_binary")
             continue
+        if lowered.endswith(".pth"):
+            lines = [] if TEST_PATH.search(lowered) else pth_startup_lines(path, data)
+            if lines:
+                flags.add("pth_startup_code")
+                if any(PTH_INLINE_PAYLOAD.search(line) for line in lines):
+                    flags.add("pth_startup_inline")
+            continue
         if lowered.endswith(".d.ts"):
             has_type_declarations = True
             continue  # type declarations describe APIs; they do not run
@@ -289,6 +357,17 @@ def profile(members: Iterable[Tuple[str, bytes]], *, version: str = "") -> List[
         for flag, pattern in COMPILED.items():
             if flag not in flags and pattern.search(text):
                 flags.add(flag)
+    chain = set(pth_chain_files(files))
+    if chain:
+        chain_flags: Set[str] = set()
+        for path, data in files:
+            if path in chain:
+                text = _runtime_text(path, data[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore"))
+                chain_flags |= {flag for flag in (*PTH_CHAIN_SECRETS, *PTH_CHAIN_NETWORK) if COMPILED[flag].search(text)}
+        if chain_flags & set(PTH_CHAIN_SECRETS):
+            flags.add("pth_chain_secrets")
+        if chain_flags & set(PTH_CHAIN_NETWORK):
+            flags.add("pth_chain_network")
     # Few files AND little code: bundlers pack whole CLIs into one large
     # dist/index.js (backscan: 69 of 79 recon false positives), while
     # throwaway malicious packages are a few kilobytes.
@@ -377,6 +456,20 @@ BEHAVIOUR_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[Tuple[str, ...], ...], 
     # npm packages in that snapshot. The benchmark clean set is not the registry.
     ("BEH_NPM_RAW_IP_URL", ("npm",), (("raw_ip_url",),), 60),  # +6 held-out samples / 5 packages
     ("BEH_NPM_SMALL_HTTP_SEND", ("npm",), (("http_send",), SMALL_PACKAGE), 60),  # +19 held-out samples / 15 packages
+    # Python start-up hooks (.pth). agent-framework 1.26.1/1.26.2 (2026-11-17):
+    # a .pth imported a module that read secrets from every process's
+    # environment, requested Azure and GitHub OIDC tokens, and posted them out.
+    # The .pth line itself carrying a payload (decode, network, process).
+    ("BEH_PTH_STARTUP_INLINE", ("pypi",), (("pth_startup_inline",),), 70),
+    # The code a start-up .pth imports reads other processes' secrets, identity
+    # tokens or credential files, and sends. Judged on that code only: big
+    # SDKs read tokens and send HTTP elsewhere in the package legitimately.
+    ("BEH_PTH_STARTUP_HARVEST", ("pypi",), (("pth_chain_secrets",), ("pth_chain_network",)), 80),
+    # A release that starts shipping a start-up hook together with new network
+    # or secret-reading behaviour: the shape of a hijacked established package.
+    ("BEH_DIFF_NEW_PTH_STARTUP", ("pypi",), (("new:pth_startup_code", "new:pth_startup_inline"),
+     ("new:http_send", "new:exfil_service", "new:raw_ip_url", "new:dns_lookup", "new:discord_webhook", "new:telegram_bot",
+      "new:proc_environ", "new:cloud_identity_token", "new:credential_files")), 80),
 )
 
 
@@ -407,6 +500,25 @@ def flag_evidence(members: Iterable[Tuple[str, bytes]], flag: str, *, window: in
     """Where a flag matched: file path, line number and an inert text window around the first match."""
     flag = flag.removeprefix("new:")
     members = list(members)
+    if flag in {"pth_chain_secrets", "pth_chain_network"}:
+        chain = pth_chain_files(members)
+        wanted = PTH_CHAIN_SECRETS if flag == "pth_chain_secrets" else PTH_CHAIN_NETWORK
+        for path, data in members:
+            if path in chain:
+                text = _runtime_text(path, data[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore"))
+                for name in wanted:
+                    match = COMPILED[name].search(text)
+                    if match:
+                        start = max(0, match.start() - window // 2)
+                        return {"flag": flag, "file_path": path[:300], "line": text.count("\n", 0, match.start()) + 1,
+                                "context": _clean_window(text[start:match.end() + window // 2])[:window + 120]}
+        return {}
+    if flag in {"pth_startup_code", "pth_startup_inline"}:
+        for path, data in members:
+            lines = pth_startup_lines(path, data)
+            if lines and (flag == "pth_startup_code" or any(PTH_INLINE_PAYLOAD.search(line) for line in lines)):
+                return {"flag": flag, "file_path": path[:300], "line": 1, "context": _clean_window("\n".join(lines))[:window + 120]}
+        return {}
     if flag in FILE_FLAGS:
         target = FILE_FLAGS[flag]
         depth = min((path.count("/") for path, _ in members if PurePosixPath(path.lower()).name == target), default=-1)
@@ -553,10 +665,21 @@ def install_time_files(members: Iterable[Tuple[str, bytes]], *, per_file: int = 
                         candidate = root + token.lstrip("./")
                         if candidate in by_path:
                             called.append(candidate)
+    # Start-up hooks run without any install step: the .pth itself, then the
+    # modules it imports (``x.py`` or ``x/__init__.py`` beside it).
+    startup: List[str] = []
+    for path, data in members:
+        if pth_startup_lines(path, data) and not TEST_PATH.search(path.lower()):
+            startup.append(path)
+            folder = path.rsplit("/", 1)[0] + "/" if "/" in path else ""
+            for module in pth_imported_modules(path, data):
+                for candidate in (f"{folder}{module}.py", f"{folder}{module}/__init__.py"):
+                    if candidate in by_path:
+                        called.append(candidate)
     out: List[Dict[str, object]] = []
     budget = total
     # Manifests first: closure is blocked if the size budget leaves one out.
-    for path in dict.fromkeys([*wanted, *called]):
+    for path in dict.fromkeys([*wanted, *startup, *called]):
         if budget <= 0:
             break
         text = by_path[path].decode("utf-8", errors="ignore")

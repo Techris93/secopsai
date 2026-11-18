@@ -35,7 +35,11 @@ def test_collector_schedules_have_respectful_intervals():
     schedules = collector_schedules()
     assert schedules["nuget"] == 900
     assert schedules["packagist"] == 900
-    assert schedules["pypi"] == 3600
+    # Releases: the small XML-RPC changelog every 15 minutes. The multi-MB
+    # simple index stays hourly (PYPI_INDEX_RECONCILE_SECONDS).
+    assert schedules["pypi"] == 900
+    from secopsai.research_surveillance import PYPI_INDEX_RECONCILE_SECONDS
+    assert PYPI_INDEX_RECONCILE_SECONDS == 3600
     assert schedules["rubygems"] == 1800
     assert schedules["npm"] == 900
     assert schedules["go"] == 900

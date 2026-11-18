@@ -2,6 +2,7 @@
 
 | What | When | Where |
 | --- | --- | --- |
+| Urgent finding | As it happens, even while email is paused | Email to research@secopsai.dev |
 | Critical alert | As it happens | Email to research@secopsai.dev |
 | Every other alert | Once a day, 07:15 UTC | One digest email |
 | Every alert | As it happens | Core and the dashboard inbox |
@@ -27,6 +28,20 @@ Each package alert is checked without downloading the package:
 
 Everything else stays open for a person, and nothing contacts a registry:
 reporting and disclosure stay with a person.
+
+## Urgent findings
+
+The strongest machine signals are emailed at once so a person can review and
+publish within minutes: a Fast Lane **critical** verdict (a hijack-shaped
+release of a top package, such as a new Python start-up hook that harvests
+secrets) and a model triage verdict of **true positive at 90% or more**. They
+are rare (0 to 2 a day, 10 to 17 November 2026) and are sent even while
+`SECOPSAI_EMAIL_PAUSED` holds every other email; urgent reviews from a
+qualified reviewer use the same switch. Each finding is emailed once. Nothing
+is published or reported: the email asks a person to review.
+
+`SECOPSAI_URGENT_FINDING_EMAIL` in `fast-lane.yml` and `research-worker.yml`
+turns them on (`"1"`) or off (`"0"`).
 
 ## Pause and resume
 

@@ -773,8 +773,27 @@ def test_packagist_since_accepts_iso_datetime(tmp_path):
 PYPI_FIXTURES = Path(__file__).parent / "fixtures" / "pypi_simple"
 
 
-def _pypi_fetcher(fixture="index_s100.json", serial="100", fail=False, include_serial_header=True):
+@pytest.fixture(autouse=True)
+def _pypi_index_every_run(monkeypatch):
+    # These tests exercise reconciliation on consecutive runs; production
+    # reconciles the multi-megabyte index at most hourly.
+    import secopsai.research_surveillance as surveillance
+
+    monkeypatch.setattr(surveillance, "PYPI_INDEX_RECONCILE_SECONDS", 0)
+
+
+def _xmlrpc_changelog(events):
+    import xmlrpc.client
+
+    return xmlrpc.client.dumps(([list(event) for event in events],), methodresponse=True, allow_none=True).encode("utf-8")
+
+
+def _pypi_fetcher(fixture="index_s100.json", serial="100", fail=False, include_serial_header=True, changelog=(), changelog_fail=False):
     def fetch(url, max_bytes):
+        if url == "https://pypi.org/pypi":
+            if changelog_fail:
+                return 503, {"content-type": "text/html"}, b"busy"
+            return 200, {"content-type": "text/xml"}, _xmlrpc_changelog(changelog)
         if fail:
             return 500, {"content-type": "application/json"}, b'{"error": "registry unavailable"}'
         headers = {"content-type": "application/vnd.pypi.simple.v1+json"}
@@ -833,8 +852,10 @@ def test_pypi_unchanged_serial_skips_snapshot(tmp_path):
 def test_pypi_reconciliation_emits_add_remove_events(tmp_path):
     db_path = _db(tmp_path)
     run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher())
+    # The journal entry that moved the serial to 101 (a project change, not a release).
     result = run_registry_collector(
-        ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher(fixture="index_s101.json", serial="101")
+        ecosystem="pypi", db_path=db_path,
+        fetcher=_pypi_fetcher(fixture="index_s101.json", serial="101", changelog=[("delta-sdk", None, 1794900000, "create", 101)]),
     )
     assert result["status"] == "completed"
     assert result["events_stored"] == 3
@@ -1605,3 +1626,69 @@ def test_shutdown_mid_ingest_releases_the_collector_for_a_later_attempt(tmp_path
     collector = next(c for c in surveillance.ensure_collectors(db_path=db) if c["ecosystem"] == "open-vsx")
     run_id, rejection = surveillance._open_run(collector=collector, cursor_before="x", db_path=db)
     assert rejection is None and run_id, "a later attempt can start"
+
+
+
+def _feed_events(db_path, event_type):
+    connection = soc_store.connect(db_path)
+    try:
+        return [dict(row) for row in connection.execute(
+            "SELECT * FROM registry_feed_events WHERE collector_id = 'COL-PYPI-INDEX' AND event_type = ? ORDER BY package", (event_type,))]
+    finally:
+        connection.close()
+
+
+def test_pypi_changelog_records_every_new_release_with_its_version(tmp_path, monkeypatch):
+    import secopsai.research_surveillance as surveillance
+
+    db_path = _db(tmp_path)
+    run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher())  # baseline: serial 100
+    # Releases of existing projects never change the index; only the changelog sees them.
+    monkeypatch.setattr(surveillance, "PYPI_INDEX_RECONCILE_SECONDS", 3600)
+    changelog = [("agent-framework", "1.26.1", 1794956000, "new release", 104),
+                 ("agent-framework", "1.26.1", 1794956001, "add py3 file agent_framework-1.26.1-py3-none-any.whl", 105),
+                 ("requests", "2.40.0", 1794956100, "new release", 107)]
+    result = run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher(changelog=changelog))
+    assert result["status"] == "completed"
+    assert result["cursor_after"] == "107"
+    assert result["index_reconciled"] is False  # within the hour: the big index is not refetched
+    events = _feed_events(db_path, "release_published")
+    assert [(e["package"], e["version"]) for e in events] == [("agent-framework", "1.26.1"), ("requests", "2.40.0")]
+    assert events[0]["leaf_url"] == "https://pypi.org/pypi/agent-framework/1.26.1/json"
+    assert events[0]["registry_timestamp"].startswith("2026-11-17T")
+    # The content funnel picks these up: they carry a version.
+    from secopsai.research_content_funnel import _pending
+
+    assert {e["package"] for e in _pending(db_path, "pypi", 10)} == {"agent-framework", "requests"}
+    # A rerun over the same journal stores nothing twice.
+    again = run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher(changelog=changelog), since="100")
+    assert again["events_stored"] == 0
+
+
+def test_pypi_changelog_failure_keeps_the_cursor_so_no_release_is_lost(tmp_path, monkeypatch):
+    import secopsai.research_surveillance as surveillance
+
+    db_path = _db(tmp_path)
+    run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher())
+    monkeypatch.setattr(surveillance, "PYPI_INDEX_RECONCILE_SECONDS", 3600)
+    failed = run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher(changelog_fail=True))
+    assert failed["cursor_after"] == "100"
+    assert any("changelog fetch failed" in item for item in failed.get("anomalies") or [])
+    recovered = run_registry_collector(ecosystem="pypi", db_path=db_path,
+                                       fetcher=_pypi_fetcher(changelog=[("pkg", "1.0", 1794956000, "new release", 102)]))
+    assert recovered["cursor_after"] == "102"
+    assert [(e["package"], e["version"]) for e in _feed_events(db_path, "release_published")] == [("pkg", "1.0")]
+
+
+def test_pypi_changelog_burst_over_the_cap_resumes_where_it_stopped(tmp_path, monkeypatch):
+    import secopsai.research_surveillance as surveillance
+
+    db_path = _db(tmp_path)
+    run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher())
+    monkeypatch.setattr(surveillance, "PYPI_INDEX_RECONCILE_SECONDS", 3600)
+    burst = [(f"pkg{i}", "1.0", 1794956000 + i, "new release", 101 + i) for i in range(5)]
+    first = run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher(changelog=burst), max_diff_events=3)
+    assert first["diff_truncated"] is True and first["cursor_after"] == "103"
+    second = run_registry_collector(ecosystem="pypi", db_path=db_path, fetcher=_pypi_fetcher(changelog=[e for e in burst if e[4] > 103]), max_diff_events=3)
+    assert second["cursor_after"] == "105"
+    assert len(_feed_events(db_path, "release_published")) == 5

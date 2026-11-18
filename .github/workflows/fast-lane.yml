@@ -35,6 +35,9 @@ jobs:
       SECOPSAI_RESEARCH_ALERT_EMAIL: research@secopsai.dev
       # Repository variable: "true" stops every notification email (alerts still reach Core and the digest store).
       SECOPSAI_EMAIL_PAUSED: ${{ vars.SECOPSAI_EMAIL_PAUSED }}
+      # Urgent findings (Fast Lane critical; model true positive at 90% or more)
+      # are emailed even while ordinary email is paused. "0" turns them off.
+      SECOPSAI_URGENT_FINDING_EMAIL: "1"
       SECOPSAI_SMTP_HOST: smtp.resend.com
       SECOPSAI_SMTP_PORT: "465"
       SECOPSAI_SMTP_USERNAME: resend

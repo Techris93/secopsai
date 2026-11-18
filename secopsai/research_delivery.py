@@ -423,7 +423,9 @@ def deliver_urgent_review_alert(alert_id: str, *, db_path: str | None = None) ->
 
             with soc_store.connect(db_path) as connection:
                 alert = connection.execute("SELECT * FROM research_alerts WHERE alert_id = ?", (alert_id,)).fetchone()
-            if alert is not None and not notification_policy.email_now(alert["severity"]):
+            # A qualified reviewer's urgent claim is an urgent finding: the
+            # urgent switch lets it through while ordinary email is paused.
+            if alert is not None and not notification_policy.email_now(alert["severity"], urgent=True):
                 result["digest"] = result.get("digest", 0) + _hold_for_digest([dict(alert)], db_path=db_path)
                 continue
         result["attempted"] += 1

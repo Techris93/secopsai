@@ -146,7 +146,8 @@ triage. Coverage:
 | Source | Collection | Content scan |
 | --- | --- | --- |
 | npm | changes feed | up to `SECOPSAI_NPM_PRESCAN_LIMIT` (150) per cycle, then full static analysis. No prescan starts after `SECOPSAI_NPM_PRESCAN_SECONDS` (600), or once fewer than `SECOPSAI_NPM_PRESCAN_RESERVE_SECONDS` (540) remain before the worker's deadline; unscanned releases wait for the next cycle, and the cycle summary lists the five slowest scans |
-| PyPI, Open VSX, crates.io | registry collectors | newest `SECOPSAI_CONTENT_PRESCAN_LIMIT` (40) per registry per cycle; PyPI's index names only new projects, scanned at their latest version |
+| PyPI | XML-RPC changelog every 15 min (every new release, about 560 an hour); simple index hourly (new and removed projects) | newest `SECOPSAI_CONTENT_PRESCAN_LIMIT_PYPI` (200) per cycle; the sdist and the wheel pip installs, with the version diff |
+| Open VSX, crates.io | registry collectors | newest `SECOPSAI_CONTENT_PRESCAN_LIMIT` (40) per registry per cycle |
 | Official MCP Registry | servers updated since the cursor | each server's npm/PyPI package, with MCP rules |
 | Visual Studio Marketplace | ships paused; enabled in production through `SECOPSAI_ENABLE_COLLECTORS` in `research-worker.yml` (remove it there to turn it off) | as above |
 | GitHub Actions | tags of 94 popular actions (`rules/watchlists/github-actions.txt`), every 15 min | repointed tags alert; moved and new release commits are scanned |
@@ -162,12 +163,24 @@ The false-positive budget is 0.5% of popular packages.
 **2. Popular-package fast lane (every minute).** A Cloudflare cron on the
 ledger-store Worker reads the npm changes feed and the PyPI updates feed,
 matches releases against watchlists of the 10,000 highest-impact npm
-packages (`npm-high-impact`) and 5,000 top PyPI projects
-(`hugovk/top-pypi-packages`), and dispatches the **Fast Lane** workflow. It
-diffs each release against the previous one and alerts on a risky delta: a
-new or changed install script, new execution/egress/credential behaviour, a
-YARA warning or alert, or a publisher change. The job summary reports the
-time from publish to verdict.
+packages (`npm-high-impact`) and all 15,000 top PyPI projects
+(`hugovk/top-pypi-packages`; 5,000 until 2026-11-18, which left out
+agent-framework, rank 8,509, when it was hijacked), and dispatches the **Fast
+Lane** workflow. It diffs each release against the previous one and alerts on
+a risky delta: a new or changed install script, new execution/egress/credential
+behaviour, a YARA warning or alert, a publisher change, or a behaviour rule from
+the content scan. A Python start-up hook rule (below) makes the verdict
+critical. The job summary reports the time from publish to verdict.
+
+**Python start-up hooks.** Python runs every line of a site-packages `.pth`
+file that starts with `import` each time the interpreter starts, without any
+install step. Three rules cover it (`secopsai/package_features.py`):
+`BEH_PTH_STARTUP_INLINE` (the `.pth` line itself decodes, downloads or spawns),
+`BEH_PTH_STARTUP_HARVEST` (the code the `.pth` imports reads other processes'
+environments, identity tokens or credential files, and sends), and
+`BEH_DIFF_NEW_PTH_STARTUP` (a release starts shipping a start-up hook along
+with new network or secret-reading behaviour). Ordinary `.pth` files
+(setuptools' distutils shim, namespace packages, coverage hooks) do not fire.
 
 **3. Hybrid triage: Cloudflare Clef, then your bridge.** Clef pre-screening is
 paused and defaults to disabled. Setting `SECOPSAI_CLEF_PRESCREEN=1` explicitly

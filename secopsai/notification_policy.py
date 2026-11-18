@@ -23,8 +23,38 @@ def email_paused() -> bool:
     return os.environ.get("SECOPSAI_EMAIL_PAUSED", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def email_now(severity: Any) -> bool:
-    """True only for a critical alert while email is not paused."""
+# Urgent findings: the strongest machine signals, emailed at once so a person
+# can review and publish within minutes. They have their own switch because
+# they are rare (0-2 a day, 2026-11-10..17) while ordinary alerts are many:
+# SECOPSAI_URGENT_FINDING_EMAIL=1 sends them even while SECOPSAI_EMAIL_PAUSED
+# holds every other email. Nothing here publishes; review stays human.
+URGENT_MIN_MALICIOUS_PROBABILITY = 90
+
+
+def urgent_email_enabled() -> bool:
+    return os.environ.get("SECOPSAI_URGENT_FINDING_EMAIL", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def urgent_fast_lane(severity: Any) -> bool:
+    """A Fast Lane verdict worth an immediate email: critical only (high was
+    38-52 a day after 2026-11-15, too many to page on)."""
+    return str(severity or "").strip().lower() == "critical"
+
+
+def urgent_verdict(result: Dict[str, Any]) -> bool:
+    """A model triage verdict worth an immediate email."""
+    try:
+        probability = int(result.get("malicious_probability") or 0)
+    except (TypeError, ValueError):
+        return False
+    return result.get("finding_verdict") == "true_positive" and probability >= URGENT_MIN_MALICIOUS_PROBABILITY
+
+
+def email_now(severity: Any, *, urgent: bool = False) -> bool:
+    """True for a critical alert while email is not paused, and for an urgent
+    finding whenever urgent email is switched on."""
+    if urgent and urgent_email_enabled():
+        return True
     return str(severity or "").strip().lower() in IMMEDIATE_SEVERITIES and not email_paused()
 
 
