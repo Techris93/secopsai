@@ -428,6 +428,23 @@ def seconds_left() -> Optional[float]:
         return None
 
 
+def wrapup_reserve_seconds() -> float:
+    """Reserve before the supervisor deadline at which the loop wraps up rather
+    than starting another cycle it cannot finish.
+
+    ``0`` (the default) keeps the always-on behaviour: the loop runs cycles until
+    the supervisor sends SIGTERM. Set ``SECOPSAI_WORKER_WRAPUP_RESERVE_SECONDS``
+    to opt in to a clean, logged early exit once a completed cycle leaves less
+    than the reserve on the clock. Only takes effect when a deadline is bounded
+    (``SECOPSAI_WORKER_DEADLINE_EPOCH`` is set).
+    """
+    raw = os.environ.get("SECOPSAI_WORKER_WRAPUP_RESERVE_SECONDS", "")
+    try:
+        return max(0.0, float(raw)) if raw else 0.0
+    except ValueError:
+        return 0.0
+
+
 def collector_time_needed(collector_id: str, *, db_path: Optional[str] = None) -> float:
     """Typical duration of this collector's recent completed runs, plus a margin.
 
@@ -1191,6 +1208,17 @@ def run_worker_loop(
                 on_cycle(last_summary)
             if max_cycles is not None and cycles >= max_cycles:
                 break
+            # Wrap up before the supervisor deadline rather than starting a cycle
+            # SIGTERM would cut mid-step. Disabled by default (reserve 0); only
+            # fires after a completed cycle, so a bounded run never ends 0-cycle.
+            reserve = wrapup_reserve_seconds()
+            if reserve > 0:
+                remaining = seconds_left()
+                if remaining is not None and remaining < reserve:
+                    print(json.dumps({"component": "research-worker", "event": "deadline_wrap_up",
+                                       "cycles": cycles, "seconds_left": round(remaining, 1),
+                                       "reserve_seconds": reserve}), flush=True)
+                    break
             slept = 0.0
             while slept < interval and not stop["requested"]:
                 time.sleep(min(1.0, interval - slept))
