@@ -43,6 +43,20 @@ is published or reported: the email asks a person to review.
 `SECOPSAI_URGENT_FINDING_EMAIL` in `fast-lane.yml` and `research-worker.yml`
 turns them on (`"1"`) or off (`"0"`).
 
+A Fast Lane urgent email starts with an **auto-check**:
+
+- whether the release is still on the registry (removed or yanked usually
+  means someone already reported it);
+- whether anything risky is new since the previous release;
+- whether the publisher changed;
+- the model's triage verdict.
+
+These lead to one reading: *likely malicious*, *likely benign* or *needs
+review*, also shown in the subject. The Fast Lane waits up to
+`SECOPSAI_URGENT_VERDICT_WAIT_SECONDS` (default 300, per run) for the verdict
+and sends the email without it when time runs out. The auto-check is advice:
+it never suppresses the email or closes anything.
+
 ## Pause and resume
 
 ```bash
