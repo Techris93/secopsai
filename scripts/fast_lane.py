@@ -139,9 +139,14 @@ def assess(result: Dict[str, Any]) -> Dict[str, Any]:
     severity = "none"
     if yara.get("level") == "alert" or (hook_delta and set(new_ids) & EXEC_OR_EGRESS):
         severity = "critical" if (hook_delta and yara.get("level") in {"warning", "alert"}) else "high"
-    elif reasons and (hook_delta or yara.get("level") == "warning" or (publisher_changed and new_ids)):
+    elif reasons and (hook_delta or (publisher_changed and new_ids)):
         severity = "medium"
-    order = ["none", "medium", "high", "critical"]
+    elif yara.get("level") == "warning":
+        # A YARA warning with nothing else new: 81% judged benign by model
+        # triage, 1 of 824 at 70% or more (2026-11-15..18). Still triaged and
+        # shown; the urgent email still fires if the model is sure.
+        severity = "medium" if (set(new_ids) & EXEC_OR_EGRESS) or publisher_changed else "low"
+    order = ["none", "low", "medium", "high", "critical"]
     floor = "critical" if behaviour_ids & CRITICAL_BEHAVIOUR else "high" if behaviour_top >= 70 else "medium" if behaviour_top >= 60 else "none"
     severity = max(severity, floor, key=order.index)
     return {

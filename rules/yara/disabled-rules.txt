@@ -7,3 +7,26 @@
 # string in pygithub. Neither contributed a malicious-sample hit.
 VULN_Unencrypted_SSH_Private_Key
 EXPL_Log4j_CVE_2021_44228_Dec21_Soft
+
+# Fast Lane noise after the stream scan started handing it every flagged
+# release (#277, 2026-11-15). Each rule below matched none of the 1,602
+# malicious samples the recall benchmark detects and none of the 1,474
+# popular packages (run 44208432816, seed 20261010), and the triage model
+# judged 95-100% of its 2026-11-15..18 Fast Lane hits false positive or
+# expected (highest malicious probability 45%). They target Windows/PHP/ASP
+# malware, not packages: PHP test fixtures, security tools' signature lists,
+# GIF test images, documentation PoCs.
+WEBSHELL_PHP_Dynamic_Big
+WEBSHELL_PHP_OBFUSC_3
+EXT_WEBSHELL_PHP_Generic
+WEBSHELL_ASP_Generic
+WEBSHELL_Generic_OS_Strings
+Mimikatz_Memory_Rule_1
+Hacktool_Strings_p0wnedShell
+SUSP_GIF_Anomalies
+EXPL_SUSP_JS_POC_Dec25
+SUSP_PowerShell_IEX_Download_Combo
+PowerShell_Case_Anomaly
+CoinMiner_Strings
+SUSP_Netsh_PortProxy_Command
+SUSP_MacOS_Plist_Suspicious
