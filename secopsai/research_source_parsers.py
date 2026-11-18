@@ -1,6 +1,7 @@
 """Reviewed, bounded source indexes; entries are leads, never incident proof."""
 from html.parser import HTMLParser
 import json
+import re
 from urllib.parse import urljoin, urlparse
 
 PRIMARY_SOURCE_OVERRIDES = {
@@ -63,6 +64,21 @@ def _ghsa_rating(row):
     return rating
 
 
+# Terminal colour codes (ESC [ ... m) and other control characters reach
+# advisory text through pasted test output; the ledger rejects them, and one
+# rejected entry fails the whole index (2026-11-17: GHSA-r7hw-jx6r-756g held
+# GitHub advisories stale for hours). Strip them; keep newlines and tabs.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-Z\\-_]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def clean_text(value):
+    if not isinstance(value, str):
+        return value
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    return _CONTROL.sub("", _ANSI_ESCAPE.sub("", value))
+
+
 def parse_index(config, content):
     parser, items = config["parser"], []
     if parser == "github_advisories":
@@ -106,7 +122,8 @@ def parse_index(config, content):
     if len(items) > 1000:
         raise ValueError("source index exceeds its reviewed budget")
     for item in items:
-        excerpt = item["excerpt"]
+        item["title"] = clean_text(item.get("title"))
+        item["excerpt"] = excerpt = clean_text(item["excerpt"])
         if not isinstance(excerpt, str):
             raise ValueError("invalid source excerpt")
         if len(excerpt) > 20000:
