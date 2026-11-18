@@ -133,6 +133,10 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
     losses = [key for key, cap in limits.items() if max(len(prescan.get(key) or []), int(prescan.get(f"{key}_total") or 0)) > cap]
     if len(metadata_signals or []) > 20:
         losses.append("metadata_signals")
+    if prescan.get("artifacts_skipped"):
+        # An artifact of the release (sdist or wheel) could not be read.
+        losses.append("artifacts_skipped")
+        context["artifacts_skipped"] = list(prescan["artifacts_skipped"])[:4]
     context["coverage_contract"] = COVERAGE_CONTRACT
     if losses:
         context.update(evidence_truncated=True, evidence_omissions=losses)

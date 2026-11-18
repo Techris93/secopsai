@@ -62,13 +62,14 @@ def previous_version(fetcher: SafeFetcher, ecosystem: str, package: str, version
     return earlier[-1][1] if earlier else ""
 
 
-def fetch_members(fetcher: SafeFetcher, ecosystem: str, package: str, version: str) -> List[Tuple[str, bytes]]:
+def fetch_members(fetcher: SafeFetcher, ecosystem: str, package: str, version: str, *,
+                  skipped: Optional[List[Dict[str, str]]] = None) -> List[Tuple[str, bytes]]:
     """The previous release, unpacked exactly as the current one is (for PyPI
     the sdist and the wheel), so a flag never looks new just because the two
     releases were read from different artifact types."""
     from secopsai.research_content_funnel import download_members, resolve_artifacts
 
-    members, _total = download_members(fetcher, resolve_artifacts(fetcher, ecosystem, package, version), prefix="secopsai-diff-")
+    members, _total = download_members(fetcher, resolve_artifacts(fetcher, ecosystem, package, version), prefix="secopsai-diff-", skipped=skipped)
     return members
 
 
@@ -87,7 +88,12 @@ def with_diff(fetcher: SafeFetcher, ecosystem: str, package: str, version: str, 
         previous = previous_version(fetcher, ecosystem, package, version, before)
         if not previous:
             return flags, {"previous_version": "", "note": "first release"}
-        previous_flags = package_features.profile(fetch_members(fetcher, ecosystem, package, previous), version=previous)
+        skipped: List[Dict[str, str]] = []
+        previous_members = fetch_members(fetcher, ecosystem, package, previous, skipped=skipped)
+        if skipped:
+            # What was not read from the previous release would look new.
+            return flags, {"previous_version": previous, "note": "previous release only partly readable; no diff", "previous_skipped": skipped}
+        previous_flags = package_features.profile(previous_members, version=previous)
     except Exception as exc:  # the diff is extra signal; never fail the scan
         return flags, {"error": str(exc)[:200]}
     added = new_flags(flags, previous_flags)

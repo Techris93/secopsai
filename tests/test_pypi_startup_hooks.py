@@ -266,3 +266,43 @@ def test_a_start_up_hook_into_legitimate_code_is_not_a_harvest():
                ("sdk/auth.py", b"import os, urllib.request\nos.environ.get('IDENTITY_ENDPOINT')\nurllib.request.urlopen('https://login.example')\n")]
     flags, rules = _rules(members, version="3.0")
     assert "pth_chain_secrets" not in flags and "BEH_PTH_STARTUP_HARVEST" not in rules
+
+
+def _unsafe_tar():
+    # Like the real popular sdists the extractor refuses: a member path that escapes the folder.
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        info = tarfile.TarInfo("../outside.txt")
+        info.size = 1
+        archive.addfile(info, io.BytesIO(b"x"))
+    return buffer.getvalue()
+
+
+def test_an_unreadable_sdist_still_leaves_the_wheel_scanned_and_marked_partial(no_yara):
+    fetcher = _pypi()
+    real = fetcher._injected
+
+    def fetch(url, max_bytes):
+        if url.endswith("af-1.26.1.tar.gz"):
+            return 200, {}, _unsafe_tar()
+        return real(url, max_bytes)
+
+    result = research_content_funnel.scan_release(SafeFetcher(fetch=fetch), "pypi", "agent-framework", "1.26.1")
+    assert result["status"] == "hit" and "BEH_PTH_STARTUP_HARVEST" in result["rules_matched"]
+    assert result["artifacts_skipped"][0]["artifact"] == "agent_framework-1.26.1.tar.gz"
+    context = research_ai_triage.build_context(ecosystem="pypi", package="agent-framework", version="1.26.1", prescan=result)
+    assert context["evidence_truncated"] and "artifacts_skipped" in context["evidence_omissions"]
+
+
+def test_a_partly_unreadable_previous_release_gives_no_diff(no_yara):
+    fetcher = _pypi()
+    real = fetcher._injected
+
+    def fetch(url, max_bytes):
+        if url.endswith("af-1.26.0.tar.gz"):
+            return 200, {}, _unsafe_tar()
+        return real(url, max_bytes)
+
+    result = research_content_funnel.scan_release(SafeFetcher(fetch=fetch), "pypi", "agent-framework", "1.26.1")
+    assert "no diff" in result["diff"]["note"]
+    assert not any(rule.startswith("BEH_DIFF_") for rule in result["rules_matched"])

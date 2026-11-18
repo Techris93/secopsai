@@ -38,6 +38,7 @@ MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
 OPENVSX_HOSTS = ("open-vsx.org", "openvsx.eclipsecontent.org")
 PYPI_HOSTS = ("pypi.org",)
 PYPI_FILE_HOSTS = ("files.pythonhosted.org",)
+PYPI_VERSION_DOC_BYTES = 16 * 1024 * 1024
 CRATES_FILE_HOSTS = ("static.crates.io",)
 VSCODE_HOSTS = ("marketplace.visualstudio.com",)
 MAX_DECOMPRESSED_BYTES = 100 * 1024 * 1024
@@ -79,7 +80,9 @@ def resolve_artifacts(fetcher: SafeFetcher, ecosystem: str, package: str, versio
     wheels), while setup.py malware lives in the sdist."""
     if ecosystem != "pypi":
         return [_resolve_npm(fetcher, package, version) if ecosystem == "npm" else resolve_artifact(fetcher, ecosystem, package, version)]
-    _u, _h, body = fetcher.get(f"https://pypi.org/pypi/{package}/{version}/json", allowed_hosts=PYPI_HOSTS, max_bytes=4 * 1024 * 1024)
+    # Packages with many platform wheels (pydantic-core, grpcio, aiohttp) have
+    # version documents over 4 MB.
+    _u, _h, body = fetcher.get(f"https://pypi.org/pypi/{package}/{version}/json", allowed_hosts=PYPI_HOSTS, max_bytes=PYPI_VERSION_DOC_BYTES)
     files = [item for item in json.loads(body).get("urls") or [] if int(item.get("size") or 0) <= MAX_ARTIFACT_BYTES and item.get("url")]
     sdists = [item for item in files if item.get("packagetype") == "sdist"]
     wheels = sorted((item for item in files if item.get("packagetype") == "bdist_wheel"), key=lambda item: (_wheel_rank(str(item.get("filename") or "")), int(item.get("size") or 0)))
@@ -89,27 +92,58 @@ def resolve_artifacts(fetcher: SafeFetcher, ecosystem: str, package: str, versio
     return [(str(item["url"]), PYPI_FILE_HOSTS, str(item.get("filename") or "artifact")) for item in chosen]
 
 
-def download_members(fetcher: SafeFetcher, artifacts: List[Tuple[str, Tuple[str, ...], str]], *, prefix: str = "secopsai-content-") -> Tuple[List[Tuple[str, bytes]], int]:
+def download_members(fetcher: SafeFetcher, artifacts: List[Tuple[str, Tuple[str, ...], str]], *, prefix: str = "secopsai-content-",
+                     skipped: Optional[List[Dict[str, str]]] = None) -> Tuple[List[Tuple[str, bytes]], int]:
     """Download and unpack artifacts in memory. With more than one, each
-    artifact's members are prefixed with its filename so paths stay distinct."""
-    from secopsai.artifact_fleet import _safe_archive_files
+    artifact's members are prefixed with its filename so paths stay distinct.
 
+    With several artifacts, one that cannot be read (over a size or file
+    limit, or holding an unsafe link: many popular sdists do) is recorded in
+    ``skipped`` and the others are still scanned; only when every artifact
+    fails is the error raised."""
     members: List[Tuple[str, bytes]] = []
     total = 0
-    for url, hosts, filename in artifacts:
-        _u, headers, raw = fetcher.get(url, allowed_hosts=hosts, max_bytes=MAX_ARTIFACT_BYTES)
-        if "gzip" in str(headers.get("content-encoding") or "").lower() and raw[:2] == b"\x1f\x8b":
-            raw = _gunzip(raw)  # the Marketplace serves .vsix gzip-encoded
-        total += len(raw)
-        unpacked: List[Tuple[str, bytes]] = []
-        with tempfile.TemporaryDirectory(prefix=prefix) as tmp:
-            path = Path(tmp) / Path(filename).name
-            path.write_bytes(raw)
-            _safe_archive_files(path, unpacked)
-        if len(artifacts) > 1:
-            label = Path(filename).name
-            unpacked = [(f"{label}/{member}", data) for member, data in unpacked]
+    failures: List[Exception] = []
+    for artifact in artifacts:
+        try:
+            unpacked, size = _download_one(fetcher, artifact, prefix=prefix, label=len(artifacts) > 1)
+        except Exception as exc:
+            if len(artifacts) == 1:
+                raise
+            from secopsai.worker_control import WorkerShutdown
+
+            if isinstance(exc, WorkerShutdown):
+                raise
+            failures.append(exc)
+            if skipped is not None:
+                skipped.append({"artifact": Path(artifact[2]).name, "reason": f"{type(exc).__name__}: {exc}"[:200]})
+            continue
         members.extend(unpacked)
+        total += size
+    if failures and len(failures) == len(artifacts):
+        raise failures[0]
+    return members, total
+
+
+def _download_one(fetcher: SafeFetcher, artifact: Tuple[str, Tuple[str, ...], str], *, prefix: str, label: bool) -> Tuple[List[Tuple[str, bytes]], int]:
+    from secopsai.artifact_fleet import _safe_archive_files
+
+    url, hosts, filename = artifact
+    members: List[Tuple[str, bytes]] = []
+    total = 0
+    _u, headers, raw = fetcher.get(url, allowed_hosts=hosts, max_bytes=MAX_ARTIFACT_BYTES)
+    if "gzip" in str(headers.get("content-encoding") or "").lower() and raw[:2] == b"\x1f\x8b":
+        raw = _gunzip(raw)  # the Marketplace serves .vsix gzip-encoded
+    total += len(raw)
+    unpacked: List[Tuple[str, bytes]] = []
+    with tempfile.TemporaryDirectory(prefix=prefix) as tmp:
+        path = Path(tmp) / Path(filename).name
+        path.write_bytes(raw)
+        _safe_archive_files(path, unpacked)
+    if label:
+        name = Path(filename).name
+        unpacked = [(f"{name}/{member}", data) for member, data in unpacked]
+    members.extend(unpacked)
     return members, total
 
 
@@ -161,9 +195,11 @@ def _resolve_npm(fetcher: SafeFetcher, package: str, version: str) -> Tuple[str,
     return tarball, ("registry.npmjs.org",), "package.tgz"
 
 
-def fetch_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: str) -> Tuple[List[Tuple[str, bytes]], int]:
-    """Download a release and unpack it in memory; returns (members, archive bytes)."""
-    return download_members(fetcher, resolve_artifacts(fetcher, ecosystem, package, version))
+def fetch_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: str, *,
+                  skipped: Optional[List[Dict[str, str]]] = None) -> Tuple[List[Tuple[str, bytes]], int]:
+    """Download a release and unpack it in memory; returns (members, archive bytes).
+    Artifacts that could not be read are appended to ``skipped``."""
+    return download_members(fetcher, resolve_artifacts(fetcher, ecosystem, package, version), skipped=skipped)
 
 
 def scan_members(fetcher: Optional[SafeFetcher], ecosystem: str, package: str, version: str, members: List[Tuple[str, bytes]], *,
@@ -186,15 +222,20 @@ def scan_members(fetcher: Optional[SafeFetcher], ecosystem: str, package: str, v
 
 
 def scan_release(fetcher: SafeFetcher, ecosystem: str, package: str, version: str, *, rules_ecosystem: str = "") -> Dict[str, Any]:
+    skipped: List[Dict[str, str]] = []
     try:
-        members, archive_bytes = fetch_release(fetcher, ecosystem, package, version)
+        members, archive_bytes = fetch_release(fetcher, ecosystem, package, version, skipped=skipped)
     except LookupError as exc:
         return {"status": "skipped", "reason": str(exc)[:200]}
     except Exception as exc:
         reason = str(exc)[:200]
         return {"status": "skipped" if "safety limit" in reason or "maximum size" in reason or "too many" in reason else "error", "reason": reason}
     try:
-        return scan_members(fetcher, ecosystem, package, version, members, rules_ecosystem=rules_ecosystem, archive_bytes=archive_bytes)
+        result = scan_members(fetcher, ecosystem, package, version, members, rules_ecosystem=rules_ecosystem, archive_bytes=archive_bytes)
+        if skipped:
+            # Part of the release was not read: never a complete clean verdict.
+            result["artifacts_skipped"] = skipped
+        return result
     except Exception as exc:  # one bad archive must not stop the batch
         reason = str(exc)[:200]
         return {"status": "skipped" if "safety limit" in reason or "maximum size" in reason or "too many" in reason else "error", "reason": reason}
