@@ -714,3 +714,44 @@ def test_worker_stops_during_a_slow_post_cycle_snapshot_without_a_late_heartbeat
     assert result["cycles"] == 1
     assert result["stopped_by_signal"] is True
     assert coordinator.states == []
+
+
+def test_wrapup_reserve_seconds_is_off_by_default_and_parses_opt_in(monkeypatch):
+    import secopsai.research_worker as worker_module
+
+    monkeypatch.delenv("SECOPSAI_WORKER_WRAPUP_RESERVE_SECONDS", raising=False)
+    assert worker_module.wrapup_reserve_seconds() == 0.0
+    monkeypatch.setenv("SECOPSAI_WORKER_WRAPUP_RESERVE_SECONDS", "90")
+    assert worker_module.wrapup_reserve_seconds() == 90.0
+    monkeypatch.setenv("SECOPSAI_WORKER_WRAPUP_RESERVE_SECONDS", "not-a-number")
+    assert worker_module.wrapup_reserve_seconds() == 0.0
+
+
+def test_worker_loop_wraps_up_before_the_deadline_when_opted_in(tmp_path, monkeypatch):
+    import time as _time
+    import secopsai.research_worker as worker_module
+
+    monkeypatch.setattr(worker_module, "run_worker_cycle", lambda **kwargs: {"status": "healthy"})
+    monkeypatch.setattr("secopsai.research_worker.time.sleep", lambda _seconds: None)
+    # The deadline is already within the reserve, so the loop must stop after one
+    # completed cycle instead of running to max_cycles.
+    monkeypatch.setenv("SECOPSAI_WORKER_DEADLINE_EPOCH", str(_time.time() + 5))
+    monkeypatch.setenv("SECOPSAI_WORKER_WRAPUP_RESERVE_SECONDS", "3600")
+    cycles = []
+    result = run_worker_loop(db_path=_db(tmp_path), interval_seconds=15, max_cycles=5, on_cycle=cycles.append)
+    assert result["cycles"] == 1
+    assert result["stopped_by_signal"] is False
+
+
+def test_worker_loop_ignores_the_deadline_when_reserve_is_off(tmp_path, monkeypatch):
+    import time as _time
+    import secopsai.research_worker as worker_module
+
+    monkeypatch.setattr(worker_module, "run_worker_cycle", lambda **kwargs: {"status": "healthy"})
+    monkeypatch.setattr("secopsai.research_worker.time.sleep", lambda _seconds: None)
+    # A bounded deadline with the default reserve (0) changes nothing: the loop
+    # still runs to max_cycles, preserving the always-on behaviour.
+    monkeypatch.setenv("SECOPSAI_WORKER_DEADLINE_EPOCH", str(_time.time() + 5))
+    monkeypatch.delenv("SECOPSAI_WORKER_WRAPUP_RESERVE_SECONDS", raising=False)
+    result = run_worker_loop(db_path=_db(tmp_path), interval_seconds=15, max_cycles=3, on_cycle=lambda s: None)
+    assert result["cycles"] == 3
