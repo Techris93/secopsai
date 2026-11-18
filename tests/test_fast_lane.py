@@ -351,6 +351,7 @@ def test_only_critical_emails_immediately_and_every_alert_reaches_the_digest(mon
     monkeypatch.setenv("SECOPSAI_SMTP_PASSWORD", "x")
     monkeypatch.delenv("SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL", raising=False)
     monkeypatch.setenv("SECOPSAI_EMAIL_PAUSED", "true" if paused else "")
+    monkeypatch.setattr(fast_lane, "release_status", lambda *args: "listed")
     decision = {"severity": severity, "reasons": ["new install hook"], "new_indicators": [], "added_files": [], "install_hooks": ["postinstall"],
                 "publisher_changed": False, "yara": [], "yara_findings": [], "pipeline_verdict": None}
     release = {"version": "2.0.0", "previous_version": "1.0.0", "published_at": "2026-11-15T10:00:00Z"}
@@ -394,3 +395,126 @@ def test_a_yara_warning_with_nothing_else_new_is_low():
     assert fast_lane.assess(_result(yara_level="warning", right_ids=("outbound-network",)))["severity"] == "medium"
     assert fast_lane.assess(_result(yara_level="warning", publisher_changed=True))["severity"] == "medium"
     assert fast_lane.assess(_result(yara_level="alert"))["severity"] == "high"
+
+
+
+# ---------------------------------------------------------------- urgent auto-check
+
+VERDICT = {"finding_verdict": "false_positive", "malicious_probability": 15, "finding_confidence": 70,
+           "summary": "Secrets match is an exclusion list."}
+
+
+def _decision(diff, publisher_changed=False):
+    return {"severity": "critical", "reasons": ["behaviour rules: BEH_PTH_STARTUP_HARVEST"], "new_indicators": [], "added_files": [],
+            "install_hooks": [], "publisher_changed": publisher_changed, "yara": {}, "yara_findings": [],
+            "behaviour_findings": [{"rule_id": "BEHAVIOUR:BEH_PTH_STARTUP_HARVEST"}], "pipeline_verdict": None,
+            "triage_prescan": {"status": "hit", "diff": diff}}
+
+
+SAME = {"previous_version": "0.2.25", "new_flags": []}
+ADDED = {"previous_version": "1.26.0", "new_flags": ["pth_startup_code", "pth_chain_network"]}
+
+
+@pytest.mark.parametrize("diff,publisher,status,verdict,reading", [
+    (SAME, False, "listed", {"status": "ready", "verdict": "false_positive", "probability": 15, "confidence": 70}, "likely benign"),
+    (ADDED, False, "listed", {"status": "ready", "verdict": "true_positive", "probability": 95, "confidence": 90}, "likely malicious"),
+    (ADDED, True, "listed", {}, "likely malicious"),
+    (ADDED, False, "listed", {"status": "ready", "verdict": "false_positive", "probability": 10, "confidence": 60}, "needs review"),
+    (SAME, False, "listed", {}, "needs review"),
+    (SAME, True, "listed", {"status": "ready", "verdict": "false_positive", "probability": 10, "confidence": 60}, "needs review"),
+    (SAME, False, "listed", {"status": "ready", "verdict": "false_positive", "probability": 40, "confidence": 60}, "needs review"),
+    ({"note": "first release"}, False, "listed", {"status": "ready", "verdict": "false_positive", "probability": 5, "confidence": 80}, "needs review"),
+])
+def test_auto_check_reading(diff, publisher, status, verdict, reading):
+    check = fast_lane.auto_check(_decision(diff, publisher), status, verdict)
+    assert check["reading"].startswith(reading)
+    assert [item["check"] for item in check["checks"]] == ["registry", "new", "publisher", "model"]
+
+
+def test_auto_check_marks_a_removed_release():
+    check = fast_lane.auto_check(_decision(SAME), "removed", {})
+    assert check["checks"][0] == {"check": "registry", "result": "bad", "detail": "removed from the registry (often: already reported)"}
+
+
+def test_release_status_reads_the_registry():
+    from secopsai.research_intake import RegistryHTTPError
+
+    class Gone:
+        def get(self, url, **kwargs):
+            raise RegistryHTTPError(404)
+
+    assert fast_lane.release_status(Gone(), "pypi", "x", "1.0") == "removed"
+    assert fast_lane.release_status(_Fetcher({"https://pypi.org/pypi/x/1.0/json": {"urls": [{"yanked": True}]}}), "pypi", "x", "1.0") == "yanked"
+    assert fast_lane.release_status(_Fetcher({"https://pypi.org/pypi/x/1.0/json": {"urls": [{"yanked": False}]}}), "pypi", "x", "1.0") == "listed"
+    npm = _Fetcher({"https://registry.npmjs.org/x": {"versions": {"1.0": {}, "2.0": {"deprecated": "do not use"}}}})
+    assert [fast_lane.release_status(npm, "npm", "x", v) for v in ("1.0", "2.0", "3.0")] == ["listed", "deprecated", "removed"]
+
+
+class _Core:
+    def __init__(self, pages):
+        self.pages, self.calls = list(pages), []
+
+    def triage_results(self, *, since="", limit=100):
+        self.calls.append(since)
+        return self.pages.pop(0) if self.pages else {"results": []}
+
+
+def test_wait_for_verdict_finds_the_job_across_pages(monkeypatch):
+    monkeypatch.setattr(fast_lane, "VERDICT_POLL_SECONDS", 0)
+    other = [{"artifact_id": f"other-{i}", "status": "succeeded", "result": {}} for i in range(200)]
+    core = _Core([{"results": other, "truncated": True, "next_since": "t2"},
+                  {"results": [{"artifact_id": "FASTLANE-1", "status": "succeeded", "result": VERDICT}]}])
+    monkeypatch.setattr("secopsai.decision_contracts.validate_action_result", lambda action, result: None)
+    found = fast_lane.wait_for_verdict(core, "FASTLANE-1", "t1", 0)
+    assert core.calls == ["t1", "t2"]
+    assert found["status"] == "ready" and found["verdict"] == "false_positive"
+
+
+def test_wait_for_verdict_returns_a_valid_verdict_and_gives_up_in_time(monkeypatch):
+    monkeypatch.setattr(fast_lane, "VERDICT_POLL_SECONDS", 0)
+    monkeypatch.setattr("secopsai.decision_contracts.validate_action_result", lambda action, result: None)
+    core = _Core([{"results": [{"artifact_id": "FASTLANE-1", "status": "succeeded", "result": VERDICT}]}])
+    assert fast_lane.wait_for_verdict(core, "FASTLANE-1", "t1", 0) == {
+        "status": "ready", "verdict": "false_positive", "probability": 15, "confidence": 70, "summary": "Secrets match is an exclusion list."}
+    assert fast_lane.wait_for_verdict(_Core([]), "FASTLANE-1", "t1", 0) == {}
+    assert fast_lane.wait_for_verdict(_Core([{"results": [{"artifact_id": "FASTLANE-1", "status": "failed"}]}]), "FASTLANE-1", "t1", 0) == {"status": "failed"}
+
+
+def test_wait_for_verdict_rejects_an_answer_that_fails_the_contract():
+    core = _Core([{"results": [{"artifact_id": "FASTLANE-1", "status": "succeeded", "result": {"finding_verdict": "false_positive"}}]}])
+    assert fast_lane.wait_for_verdict(core, "FASTLANE-1", "t1", 0) == {"status": "invalid"}
+
+
+def test_urgent_email_leads_with_the_auto_check_and_is_never_suppressed(monkeypatch):
+    import secopsai.research_delivery as delivery
+
+    sent = []
+    monkeypatch.setattr(delivery, "send_email", lambda **kwargs: sent.append(kwargs) or {"status": "sent"})
+    monkeypatch.setattr(delivery, "send_signed_webhook", lambda **kwargs: {"status": "sent"})
+    monkeypatch.setenv("SECOPSAI_RESEARCH_ALERT_EMAIL", "research@example.test")
+    monkeypatch.setenv("SECOPSAI_SMTP_PASSWORD", "x")
+    monkeypatch.setenv("SECOPSAI_URGENT_FINDING_EMAIL", "1")
+    monkeypatch.setenv("SECOPSAI_EMAIL_PAUSED", "true")
+    monkeypatch.delenv("SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL", raising=False)
+    monkeypatch.setattr(fast_lane, "release_status", lambda *args: "listed")
+    monkeypatch.setattr(fast_lane, "wait_for_verdict", lambda *args: {"status": "ready", "verdict": "false_positive", "probability": 15,
+                                                                       "confidence": 70, "summary": "Exclusion list."})
+
+    class Client:
+        enabled = True
+
+        def __init__(self):
+            pass
+
+        def queue_triage_jobs(self, jobs):
+            return {"count": len(jobs)}
+
+    monkeypatch.setattr("secopsai.core_edge_client.CoreEdgeClient", Client)
+    release = {"version": "0.2.26", "previous_version": "0.2.25", "published_at": "2026-11-18T08:52:16Z"}
+    out = fast_lane.deliver({"ecosystem": "pypi", "package": "pirateface"}, release, _decision(SAME), datetime(2026, 11, 18, 9, 40, tzinfo=timezone.utc))
+    assert out["email"] == "sent" and out["auto_check"]["reading"].startswith("likely benign")
+    assert sent[0]["subject"] == "[SecOpsAI fast lane] URGENT (likely benign) CRITICAL: pirateface@0.2.26"
+    body = sent[0]["body"]
+    assert body.startswith("Auto-check: likely benign: confirm and close")
+    assert "[ok] nothing risky is new since 0.2.25" in body and "[ok] model: false positive, 15% likely malicious" in body
+    assert "Nothing was closed automatically" in body

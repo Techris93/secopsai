@@ -23,7 +23,7 @@ import os
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -378,11 +378,124 @@ def triage_context(key: str, evidence: Dict[str, Any], decision: Dict[str, Any])
     return context
 
 
+# The urgent email waits this long, per run, for the model's verdict so the
+# reader sees it at once; it is sent without it when the time runs out.
+URGENT_VERDICT_WAIT_SECONDS = max(0, min(int(os.environ.get("SECOPSAI_URGENT_VERDICT_WAIT_SECONDS", "300") or 0), 600))
+VERDICT_POLL_SECONDS = 15
+BENIGN_VERDICTS = {"false_positive", "benign_expected", "policy_noise"}
+_verdict_budget = {"until": None}
+
+
+def release_status(fetcher: SafeFetcher, ecosystem: str, package: str, version: str) -> str:
+    """Is the release still downloadable? listed, yanked/deprecated, removed
+    (registry 404) or unknown. A removal usually means someone reported it."""
+    try:
+        if ecosystem == "pypi":
+            doc = _get_json(fetcher, f"https://pypi.org/pypi/{package}/{version}/json", ("pypi.org",))
+            files = doc.get("urls") or []
+            return "yanked" if files and all(item.get("yanked") for item in files) else "listed"
+        if ecosystem == "npm":
+            doc = _get_json(fetcher, "https://registry.npmjs.org/" + package.replace("/", "%2F"), ("registry.npmjs.org",))
+            entry = (doc.get("versions") or {}).get(version)
+            if entry is None:
+                return "removed"
+            return "deprecated" if entry.get("deprecated") else "listed"
+    except Exception as exc:
+        from secopsai.research_intake import RegistryHTTPError
+
+        if isinstance(exc, RegistryHTTPError) and exc.status == 404:
+            return "removed"
+    return "unknown"
+
+
+def wait_for_verdict(client: Any, key: str, since: str, seconds: float) -> Dict[str, Any]:
+    """The model's schema-valid verdict on ``key``, polling Core for at most
+    ``seconds``. {} when none arrived in time or it was not valid."""
+    from secopsai.decision_contracts import DecisionError, validate_action_result
+
+    deadline = time.monotonic() + max(0.0, seconds)
+    while True:
+        items: List[Dict[str, Any]] = []
+        cursor = since
+        for _page in range(10):
+            try:
+                response = client.triage_results(since=cursor, limit=200) or {}
+            except Exception:
+                break
+            page = response.get("results") or []
+            items += page
+            if not page or not (response.get("truncated") or len(page) >= 200) or response.get("next_since") in {None, "", cursor}:
+                break
+            cursor = response["next_since"]
+        for item in items:
+            if str(item.get("artifact_id") or "") != key:
+                continue
+            result = item.get("result") if isinstance(item.get("result"), dict) else {}
+            if item.get("status") != "succeeded":
+                return {"status": "failed"}
+            try:
+                validate_action_result("triage_artifact", result)
+            except (DecisionError, TypeError, ValueError, KeyError):
+                return {"status": "invalid"}
+            return {"status": "ready", "verdict": result["finding_verdict"], "probability": result.get("malicious_probability"),
+                    "confidence": result.get("finding_confidence"), "summary": str(result.get("summary") or "")[:600]}
+        if time.monotonic() + VERDICT_POLL_SECONDS > deadline:
+            return {}
+        time.sleep(VERDICT_POLL_SECONDS)
+
+
+def auto_check(decision: Dict[str, Any], status: str, verdict: Dict[str, Any]) -> Dict[str, Any]:
+    """The checks an analyst runs first on an urgent alert, as a checklist and
+    a one-line reading. Advice only: nothing is closed or suppressed."""
+    diff = (decision.get("triage_prescan") or {}).get("diff") or {}
+    checks = []
+    checks.append(("registry", {"listed": "ok", "removed": "bad", "yanked": "bad", "deprecated": "bad"}.get(status, "unknown"),
+                   {"listed": "still on the registry", "removed": "removed from the registry (often: already reported)",
+                    "yanked": "yanked on PyPI", "deprecated": "deprecated on npm"}.get(status, "registry status unknown")))
+    if "new_flags" in diff:
+        new = list(diff.get("new_flags") or [])
+        checks.append(("new", "bad" if new else "ok", (f"new since {diff.get('previous_version')}: " + ", ".join(new[:6])) if new
+                       else f"nothing risky is new since {diff.get('previous_version')}"))
+    else:
+        checks.append(("new", "unknown", "no comparison with a previous release" + (f" ({diff.get('note')})" if diff.get("note") else "")))
+    checks.append(("publisher", "bad" if decision.get("publisher_changed") else "ok",
+                   "publisher changed" if decision.get("publisher_changed") else "same publisher"))
+    if verdict.get("status") == "ready":
+        label = str(verdict["verdict"]).replace("_", " ")
+        mark = "ok" if verdict["verdict"] in BENIGN_VERDICTS else "bad" if verdict["verdict"] == "true_positive" else "unknown"
+        checks.append(("model", mark, f"model: {label}, {verdict.get('probability')}% likely malicious (confidence {verdict.get('confidence')}%)"))
+    else:
+        checks.append(("model", "unknown", {"failed": "model triage failed", "invalid": "model answer failed validation"}.get(
+            verdict.get("status"), "model verdict not ready yet (see the dashboard)")))
+    marks = {name: mark for name, mark, _ in checks}
+    benign_model = verdict.get("status") == "ready" and verdict["verdict"] in BENIGN_VERDICTS and int(verdict.get("probability") or 0) <= 20
+    if marks["model"] == "bad" or (marks["new"] == "bad" and marks["publisher"] == "bad"):
+        reading = "likely malicious: review now"
+    elif benign_model and marks["new"] == "ok" and marks["publisher"] == "ok":
+        reading = "likely benign: confirm and close"
+    else:
+        reading = "needs review"
+    return {"reading": reading, "checks": [{"check": name, "result": mark, "detail": detail} for name, mark, detail in checks],
+            "model_summary": verdict.get("summary", "")}
+
+
+def auto_check_text(check: Dict[str, Any]) -> str:
+    symbol = {"ok": "[ok]", "bad": "[!!]", "unknown": "[??]"}
+    lines = [f"Auto-check: {check['reading']}", ""]
+    lines += [f"  {symbol[item['result']]} {item['detail']}" for item in check["checks"]]
+    if check.get("model_summary"):
+        lines += ["", "Model: " + check["model_summary"]]
+    lines += ["", "Nothing was closed automatically; closing stays your decision."]
+    return "\n".join(lines)
+
+
 def deliver(target: Dict[str, Any], release: Dict[str, Any], decision: Dict[str, Any], detected: datetime) -> Dict[str, Any]:
     """Signed alert to Core, model triage for the operator's bridge, optional email."""
     from secopsai.research_delivery import send_email, send_signed_webhook
 
     out: Dict[str, Any] = {}
+    triage_client: Any = None
+    queued_since = ""
     payload = alert_payload(target, release, decision, detected)
     endpoint = os.environ.get("SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL", "")
     secret = os.environ.get("SECOPSAI_RESEARCH_ALERT_WEBHOOK_SECRET", "")
@@ -398,7 +511,9 @@ def deliver(target: Dict[str, Any], release: Dict[str, Any], decision: Dict[str,
         if client.enabled and (decision["yara_findings"] or decision.get("behaviour_findings") or decision["reasons"]):
             key = payload["alert_id"]
             context = triage_context(key, payload["evidence"], decision)
+            queued_since = _iso(_now() - timedelta(minutes=1))
             out["triage"] = client.queue_triage_jobs([{"artifact_id": key, "idempotency_key": f"fast-lane:{key}", "inputs": {"artifact_triage": context}}]).get("count")
+            triage_client = client
     except Exception as exc:
         out["triage"] = f"failed: {exc}"[:200]
     from secopsai import notification_policy
@@ -410,9 +525,20 @@ def deliver(target: Dict[str, Any], release: Dict[str, Any], decision: Dict[str,
     urgent = notification_policy.urgent_fast_lane(decision["severity"])
     if recipient and os.environ.get("SECOPSAI_SMTP_PASSWORD") and notification_policy.email_now(decision["severity"], urgent=urgent):
         try:
-            body = (payload["reason"] + "\n\nDashboard: " + notification_policy.DASHBOARD_INBOX + "\n\n"
+            check_block = ""
+            if urgent:
+                if _verdict_budget["until"] is None:
+                    _verdict_budget["until"] = time.monotonic() + URGENT_VERDICT_WAIT_SECONDS
+                wait = max(0.0, _verdict_budget["until"] - time.monotonic())
+                verdict = wait_for_verdict(triage_client, payload["alert_id"], queued_since, wait) if triage_client else {}
+                check = auto_check(decision, release_status(SafeFetcher(timeout=30), target["ecosystem"], target["package"], release["version"]), verdict)
+                out["auto_check"] = check
+                check_block = auto_check_text(check) + "\n\n"
+            body = (check_block + payload["reason"] + "\n\nDashboard: " + notification_policy.DASHBOARD_INBOX + "\n\n"
                     + json.dumps(payload["evidence"], indent=2, default=str)[:6000])
             label = "URGENT " if urgent else ""
+            reading = (out.get("auto_check") or {}).get("reading", "")
+            label += f"({reading.split(':', 1)[0]}) " if reading else ""
             send_email(recipient=recipient, subject=f"[SecOpsAI fast lane] {label}{decision['severity'].upper()}: {payload['evidence']['package']}@{release['version']}", body=body)
             out["email"] = "sent"
             emailed = True
