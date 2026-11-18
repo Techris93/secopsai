@@ -10,6 +10,28 @@
           "name": "Onyedika Christopher Agada"
         }
       ],
+      "banner_image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-18.png",
+      "date_modified": "2026-11-18T23:00:39Z",
+      "date_published": "2026-11-18T23:00:39Z",
+      "id": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-18.html",
+      "image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-18.png",
+      "images": [],
+      "reading_time_minutes": 1,
+      "severity": "critical",
+      "summary": "1 advisory \u00b7 1 exploited in the wild \u00b7 highest CVSS 9.9.",
+      "tags": [
+        "Threat Intelligence"
+      ],
+      "title": "SecOpsAI Daily Intelligence Brief \u2014 2026-11-18",
+      "url": "https://blog.secopsai.dev/posts/daily-intelligence-2026-11-18.html"
+    },
+    {
+      "affected_packages": [],
+      "authors": [
+        {
+          "name": "Onyedika Christopher Agada"
+        }
+      ],
       "banner_image": "https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-17.png",
       "date_modified": "2026-11-17T15:54:16Z",
       "date_published": "2026-11-17T15:54:16Z",
