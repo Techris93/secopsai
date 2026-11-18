@@ -1,0 +1,50 @@
+name: Closure Shadow
+
+# Read-only: applies the frozen automatic-closure rules to every stored
+# production verdict and checks the releases they would have closed against
+# OSV malware records and the registries. Nothing is closed or written back;
+# closure stays off until a held-out evaluation passes and the manifest is
+# approved.
+
+on:
+  workflow_dispatch:
+    inputs:
+      settle_days:
+        description: "Only verdicts at least this many days old count"
+        default: "14"
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  shadow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LEDGER_STORE_URL: https://ledger.secopsai.dev
+      LEDGER_STORE_TOKEN: ${{ secrets.LEDGER_STORE_TOKEN }}
+      SETTLE_DAYS: ${{ inputs.settle_days || '14' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Shadow report
+        run: |
+          case "$SETTLE_DAYS" in ''|*[!0-9.]*) echo "::error::settle_days must be a number"; exit 1;; esac
+          python -u scripts/closure_shadow.py --settle-days "$SETTLE_DAYS" --out "$RUNNER_TEMP/closure-shadow.json"
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: closure-shadow
+          path: ${{ runner.temp }}/closure-shadow.json
+          retention-days: 90
