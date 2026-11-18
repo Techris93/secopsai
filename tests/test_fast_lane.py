@@ -386,3 +386,11 @@ def test_npm_unpublished_time_entries_are_not_releases_or_previous_versions():
     })
     with pytest.raises(fast_lane.PublishTimePending):
         fast_lane.resolve_release(unpublished_target, "npm", "fixture", "1.0.1")
+
+
+def test_a_yara_warning_with_nothing_else_new_is_low():
+    # 81% judged benign by model triage (2026-11-15..18); still triaged and shown.
+    assert fast_lane.assess(_result(yara_level="warning"))["severity"] == "low"
+    assert fast_lane.assess(_result(yara_level="warning", right_ids=("outbound-network",)))["severity"] == "medium"
+    assert fast_lane.assess(_result(yara_level="warning", publisher_changed=True))["severity"] == "medium"
+    assert fast_lane.assess(_result(yara_level="alert"))["severity"] == "high"
