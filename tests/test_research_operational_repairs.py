@@ -128,3 +128,17 @@ def test_ics_advisory_links_point_readers_to_cisa_pages():
     it = 'https://raw.githubusercontent.com/cisagov/CSAF/develop/csaf_files/IT/white/2026/va-26-294-01.json'
     assert _reader_url(it, []) == it
     assert _reader_url('https://attacker.example/icsa-26-307-01.json', []) == 'https://attacker.example/icsa-26-307-01.json'
+
+
+def test_github_advisory_with_terminal_colour_codes_still_parses():
+    # 2026-11-17: GHSA-r7hw-jx6r-756g quoted PHPUnit output with ESC[30;42m
+    # colour codes; the ledger rejected the text and the whole index failed.
+    from secopsai.research_primary_intel import parse_source_report
+    row = {'ghsa_id': 'GHSA-r7hw-jx6r-756g', 'html_url': 'https://github.com/advisories/GHSA-r7hw-jx6r-756g',
+           'summary': 'Fixture\x07 summary', 'published_at': '2026-11-17T00:00:00Z', 'vulnerabilities': [],
+           'description': 'Proof:\r\n```\n\x1b[30;42mOK (1 test, 5 assertions)\x1b[0m\n```\tdone'}
+    report = parse_source_report({'parser': 'github_advisories', 'url': 'https://api.github.com/advisories'},
+                                 json.dumps([row]).encode())
+    item = report['items'][0]
+    assert item['excerpt'] == 'Proof:\n```\nOK (1 test, 5 assertions)\n```\tdone'
+    assert item['title'] == 'Fixture summary'
