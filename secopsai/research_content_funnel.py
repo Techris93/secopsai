@@ -56,10 +56,12 @@ def limit_per_ecosystem() -> int:
 
 
 def limit_for(ecosystem: str) -> int:
-    """PyPI publishes about 560 releases an hour (2026-11 measurement) and a
-    worker runs about three cycles an hour, so it gets its own, larger quota."""
+    """PyPI has its own setting, default the same as the others. The stream
+    scan (stream_scan.py) already prescans every new PyPI release; a quota of
+    200 here took 11-18 minutes a cycle and cut the worker to 0-1 cycles a run
+    (2026-11-18), so raise it only with that cost in mind."""
     if ecosystem == "pypi":
-        return max(0, min(int(os.environ.get("SECOPSAI_CONTENT_PRESCAN_LIMIT_PYPI", "200") or 0), 500))
+        return max(0, min(int(os.environ.get("SECOPSAI_CONTENT_PRESCAN_LIMIT_PYPI", str(limit_per_ecosystem())) or 0), 500))
     return limit_per_ecosystem()
 
 

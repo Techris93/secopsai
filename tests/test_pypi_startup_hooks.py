@@ -183,10 +183,10 @@ def test_funnel_scans_the_wheel_pip_installs_and_catches_the_hijack(no_yara):
     assert research_content_funnel.scan_release(fetcher, "pypi", "agent-framework", "1.26.0")["status"] == "clean"
 
 
-def test_pypi_gets_its_own_larger_quota(monkeypatch):
+def test_pypi_quota_defaults_to_the_shared_limit_and_is_settable(monkeypatch):
     monkeypatch.delenv("SECOPSAI_CONTENT_PRESCAN_LIMIT_PYPI", raising=False)
     monkeypatch.delenv("SECOPSAI_CONTENT_PRESCAN_LIMIT", raising=False)
-    assert research_content_funnel.limit_for("pypi") == 200
+    assert research_content_funnel.limit_for("pypi") == 40
     assert research_content_funnel.limit_for("crates") == 40
     monkeypatch.setenv("SECOPSAI_CONTENT_PRESCAN_LIMIT_PYPI", "9999")
     assert research_content_funnel.limit_for("pypi") == 500
