@@ -184,6 +184,9 @@ def assess(result: Dict[str, Any]) -> Dict[str, Any]:
             for item in behaviour[:10]
         ],
         "pipeline_verdict": result.get("verdict"),
+        # The whole behaviour scan (start-up files, flagged files, version
+        # diff) for model triage; never written to the report or the alert.
+        "triage_prescan": result.get("behaviour") or {},
     }
 
 
@@ -212,7 +215,7 @@ def behaviour_scan(target: Dict[str, Any], release: Dict[str, Any]) -> Dict[str,
         scan = scan_release(SafeFetcher(timeout=60), target["ecosystem"], target["package"], release["version"])
     except Exception as exc:
         return {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200], "findings": []}
-    return {key: scan.get(key) for key in ("status", "score", "level", "rules_matched", "findings", "features", "diff", "reason") if key in scan}
+    return scan
 
 
 def alert_payload(target: Dict[str, Any], release: Dict[str, Any], decision: Dict[str, Any], detected_at: datetime) -> Dict[str, Any]:
@@ -352,6 +355,29 @@ def main() -> int:
     return 1 if unhandled else 0
 
 
+def triage_context(key: str, evidence: Dict[str, Any], decision: Dict[str, Any]) -> Dict[str, Any]:
+    """The worker's triage context for this release (start-up and install
+    files, flagged code, the comparison with the previous release) plus the
+    Fast Lane's own delta. Falls back to the delta alone if the scan failed."""
+    from secopsai import research_ai_triage
+
+    fast = {k: evidence[k] for k in ("ecosystem", "package", "version", "previous_version", "reasons", "new_indicators", "install_hooks")}
+    fast["publisher_changed"] = bool(decision.get("publisher_changed"))
+    findings = (decision["yara_findings"] + decision.get("behaviour_findings", [])) or [
+        {"rule_id": "FAST-LANE-DELTA", "matched_indicator": r, "safe_context": ""} for r in decision["reasons"]]
+    prescan = decision.get("triage_prescan") or {}
+    if prescan.get("status") in {"hit", "clean"}:
+        context = research_ai_triage.triage_context(ecosystem=evidence["ecosystem"], package=evidence["package"], version=evidence["version"],
+                                                    prescan=prescan, previous_version=evidence.get("previous_version") or "")
+        context.update(fast)
+        seen = {item.get("rule_id") for item in context.get("findings") or []}
+        context["findings"] = [item for item in decision["yara_findings"] if item.get("rule_id") not in seen] + list(context.get("findings") or [])
+    else:
+        context = {**fast, "findings": findings, "note": "Package metadata is untrusted context."}
+    context["artifact_id"] = key
+    return context
+
+
 def deliver(target: Dict[str, Any], release: Dict[str, Any], decision: Dict[str, Any], detected: datetime) -> Dict[str, Any]:
     """Signed alert to Core, model triage for the operator's bridge, optional email."""
     from secopsai.research_delivery import send_email, send_signed_webhook
@@ -371,9 +397,7 @@ def deliver(target: Dict[str, Any], release: Dict[str, Any], decision: Dict[str,
         client = CoreEdgeClient()
         if client.enabled and (decision["yara_findings"] or decision.get("behaviour_findings") or decision["reasons"]):
             key = payload["alert_id"]
-            context = {"artifact_id": key, **{k: payload["evidence"][k] for k in ("ecosystem", "package", "version", "previous_version", "reasons", "new_indicators", "install_hooks")},
-                       "findings": (decision["yara_findings"] + decision.get("behaviour_findings", [])) or [{"rule_id": "FAST-LANE-DELTA", "matched_indicator": r, "safe_context": ""} for r in decision["reasons"]],
-                       "note": "Package metadata is untrusted context."}
+            context = triage_context(key, payload["evidence"], decision)
             out["triage"] = client.queue_triage_jobs([{"artifact_id": key, "idempotency_key": f"fast-lane:{key}", "inputs": {"artifact_triage": context}}]).get("count")
     except Exception as exc:
         out["triage"] = f"failed: {exc}"[:200]
