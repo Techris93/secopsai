@@ -428,7 +428,20 @@ ADDED = {"previous_version": "1.26.0", "new_flags": ["pth_startup_code", "pth_ch
 def test_auto_check_reading(diff, publisher, status, verdict, reading):
     check = fast_lane.auto_check(_decision(diff, publisher), status, verdict)
     assert check["reading"].startswith(reading)
-    assert [item["check"] for item in check["checks"]] == ["registry", "new", "publisher", "model"]
+    assert [item["check"] for item in check["checks"]] == ["registry", "new", "publisher", "source", "model"]
+
+
+@pytest.mark.parametrize("source,model,reading", [
+    ({"result": "differs", "repository": "o/r", "tag": "v1", "files": [{"path": "w/x.pth", "outcome": "missing", "install_time": True}]},
+     {}, "likely malicious"),  # new hook not in the repository
+    ({"result": "differs", "repository": "o/r", "tag": "v1", "files": []},
+     {"status": "ready", "verdict": "false_positive", "probability": 5, "confidence": 80}, "needs review"),
+])
+def test_a_hook_missing_from_the_repository_weighs_against_the_release(source, model, reading):
+    decision = {**_decision(ADDED if not model else SAME), "source_match": source}
+    check = fast_lane.auto_check(decision, "listed", model)
+    assert check["reading"].startswith(reading)
+    assert [item for item in check["checks"] if item["check"] == "source"][0]["result"] == "bad"
 
 
 def test_auto_check_marks_a_removed_release():
@@ -497,6 +510,8 @@ def test_urgent_email_leads_with_the_auto_check_and_is_never_suppressed(monkeypa
     monkeypatch.setenv("SECOPSAI_EMAIL_PAUSED", "true")
     monkeypatch.delenv("SECOPSAI_RESEARCH_ALERT_WEBHOOK_URL", raising=False)
     monkeypatch.setattr(fast_lane, "release_status", lambda *args: "listed")
+    monkeypatch.setattr(fast_lane, "source_check", lambda *args: {"result": "matches", "repository": "pirateface/pirateface_cli", "tag": "v0.2.26",
+                                                                   "files": [{"path": "w/pirateface.pth", "outcome": "same", "install_time": True}]})
     monkeypatch.setattr(fast_lane, "wait_for_verdict", lambda *args: {"status": "ready", "verdict": "false_positive", "probability": 15,
                                                                        "confidence": 70, "summary": "Exclusion list."})
 
@@ -518,3 +533,5 @@ def test_urgent_email_leads_with_the_auto_check_and_is_never_suppressed(monkeypa
     assert body.startswith("Auto-check: likely benign: confirm and close")
     assert "[ok] nothing risky is new since 0.2.25" in body and "[ok] model: false positive, 15% likely malicious" in body
     assert "Nothing was closed automatically" in body
+    assert "[ok] start-up/flagged files match pirateface/pirateface_cli at v0.2.26" in body
+    assert out["source_match"]["result"] == "matches"

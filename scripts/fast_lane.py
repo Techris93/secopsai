@@ -235,6 +235,7 @@ def alert_payload(target: Dict[str, Any], release: Dict[str, Any], decision: Dic
             "previous_version": release.get("previous_version"), "published_at": release["published_at"],
             "detected_at": _iso(detected_at), "publish_to_verdict_seconds": latency,
             **{k: decision[k] for k in ("reasons", "new_indicators", "added_files", "install_hooks", "publisher_changed", "yara", "yara_findings", "behaviour_findings", "pipeline_verdict") if k in decision},
+            **({"source_match": source_summary(decision["source_match"])} if decision.get("source_match") else {}),
             "execution_performed": False,
         },
     }
@@ -444,6 +445,34 @@ def wait_for_verdict(client: Any, key: str, since: str, seconds: float) -> Dict[
         time.sleep(VERDICT_POLL_SECONDS)
 
 
+def source_check(target: Dict[str, Any], release: Dict[str, Any], decision: Dict[str, Any]) -> Dict[str, Any]:
+    """Compare the release's start-up/install and flagged files with its
+    GitHub repository at the release tag (secopsai/source_match.py)."""
+    from secopsai import source_match
+
+    scan = decision.get("triage_prescan") or {}
+    if scan.get("status") != "hit":
+        return {"result": "unknown", "reason": "no scan to compare"}
+    ecosystem, package, version = target["ecosystem"], target["package"], release["version"]
+    fetcher = SafeFetcher(timeout=20)
+    try:
+        if ecosystem == "pypi":
+            metadata = _get_json(fetcher, f"https://pypi.org/pypi/{package}/{version}/json", ("pypi.org",))
+        elif ecosystem == "npm":
+            metadata = _get_json(fetcher, "https://registry.npmjs.org/" + package.replace("/", "%2F") + "/" + version, ("registry.npmjs.org",))
+        else:
+            return {"result": "unknown", "reason": f"not compared for {ecosystem}"}
+        return source_match.compare(fetcher, ecosystem, package, version, metadata, scan)
+    except Exception as exc:
+        return {"result": "unknown", "reason": f"comparison failed: {type(exc).__name__}"}
+
+
+def source_summary(match: Dict[str, Any]) -> Dict[str, Any]:
+    """The comparison as the model and the alert see it (bounded)."""
+    return {k: match[k] for k in ("result", "repository", "tag", "reason", "note") if match.get(k)} | (
+        {"files": [{k: item[k] for k in ("path", "outcome", "install_time")} for item in (match.get("files") or [])[:8]]} if match.get("files") else {})
+
+
 def auto_check(decision: Dict[str, Any], status: str, verdict: Dict[str, Any]) -> Dict[str, Any]:
     """The checks an analyst runs first on an urgent alert, as a checklist and
     a one-line reading. Advice only: nothing is closed or suppressed."""
@@ -460,6 +489,15 @@ def auto_check(decision: Dict[str, Any], status: str, verdict: Dict[str, Any]) -
         checks.append(("new", "unknown", "no comparison with a previous release" + (f" ({diff.get('note')})" if diff.get("note") else "")))
     checks.append(("publisher", "bad" if decision.get("publisher_changed") else "ok",
                    "publisher changed" if decision.get("publisher_changed") else "same publisher"))
+    source = decision.get("source_match") or {}
+    if source.get("result") == "matches":
+        checks.append(("source", "ok", f"start-up/flagged files match {source.get('repository')} at {source.get('tag')}"))
+    elif source.get("result") == "differs":
+        odd = [item["path"].rsplit("/", 1)[-1] + " " + item["outcome"] for item in source.get("files") or []
+               if item["outcome"] == "differs" or (item["outcome"] == "missing" and item.get("install_time"))]
+        checks.append(("source", "bad", f"not as in {source.get('repository')} at {source.get('tag')}: " + ", ".join(odd[:4])))
+    else:
+        checks.append(("source", "unknown", "source repository not compared" + (f" ({source.get('reason')})" if source.get("reason") else "")))
     if verdict.get("status") == "ready":
         label = str(verdict["verdict"]).replace("_", " ")
         mark = "ok" if verdict["verdict"] in BENIGN_VERDICTS else "bad" if verdict["verdict"] == "true_positive" else "unknown"
@@ -469,9 +507,9 @@ def auto_check(decision: Dict[str, Any], status: str, verdict: Dict[str, Any]) -
             verdict.get("status"), "model verdict not ready yet (see the dashboard)")))
     marks = {name: mark for name, mark, _ in checks}
     benign_model = verdict.get("status") == "ready" and verdict["verdict"] in BENIGN_VERDICTS and int(verdict.get("probability") or 0) <= 20
-    if marks["model"] == "bad" or (marks["new"] == "bad" and marks["publisher"] == "bad"):
+    if marks["model"] == "bad" or (marks["new"] == "bad" and "bad" in {marks["publisher"], marks["source"]}):
         reading = "likely malicious: review now"
-    elif benign_model and marks["new"] == "ok" and marks["publisher"] == "ok":
+    elif benign_model and marks["new"] == "ok" and marks["publisher"] == "ok" and marks["source"] != "bad":
         reading = "likely benign: confirm and close"
     else:
         reading = "needs review"
@@ -494,6 +532,8 @@ def deliver(target: Dict[str, Any], release: Dict[str, Any], decision: Dict[str,
     from secopsai.research_delivery import send_email, send_signed_webhook
 
     out: Dict[str, Any] = {}
+    decision = {**decision, "source_match": source_check(target, release, decision)}
+    out["source_match"] = source_summary(decision["source_match"])
     triage_client: Any = None
     queued_since = ""
     payload = alert_payload(target, release, decision, detected)
@@ -511,6 +551,8 @@ def deliver(target: Dict[str, Any], release: Dict[str, Any], decision: Dict[str,
         if client.enabled and (decision["yara_findings"] or decision.get("behaviour_findings") or decision["reasons"]):
             key = payload["alert_id"]
             context = triage_context(key, payload["evidence"], decision)
+            if decision.get("source_match"):
+                context["source_repository_match"] = source_summary(decision["source_match"])
             queued_since = _iso(_now() - timedelta(minutes=1))
             out["triage"] = client.queue_triage_jobs([{"artifact_id": key, "idempotency_key": f"fast-lane:{key}", "inputs": {"artifact_triage": context}}]).get("count")
             triage_client = client
