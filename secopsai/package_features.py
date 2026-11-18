@@ -125,15 +125,28 @@ def pth_chain_files(members: List[Tuple[str, bytes]]) -> List[str]:
     return list(dict.fromkeys(chain))
 
 
-def pth_imported_modules(path: str, data: bytes) -> List[str]:
-    """Top-level modules a start-up .pth imports (``import a, b.c`` -> a, b)."""
+def pth_imported_modules(path: str, data: bytes, *, dotted: bool = False) -> List[str]:
+    """Modules a start-up .pth imports: top-level names (``import a, b.c`` ->
+    a, b), or with ``dotted`` the full names (a, b.c)."""
     names: List[str] = []
     for match in PTH_IMPORTED.finditer("\n".join(pth_startup_lines(path, data))):
         for item in match.group(1).split(","):
-            name = item.strip().split(".", 1)[0]
-            if name and name not in {"os", "sys", "site", "types", "importlib"} and name not in names:
+            full = item.strip()
+            name = full if dotted else full.split(".", 1)[0]
+            if name and full.split(".", 1)[0] not in {"os", "sys", "site", "types", "importlib"} and name not in names:
                 names.append(name)
     return names[:10]
+
+
+def pth_module_files(module: str) -> List[str]:
+    """Files Python runs for ``import a.b.c``, most specific first: a/b/c.py
+    or a/b/c/__init__.py, then each parent package's __init__.py.
+    (2026-11-18: pirateface.pth imports pirateface._boot; triage saw only
+    pirateface/__init__.py and could not judge the hook.)"""
+    parts = module.split(".")
+    out = ["/".join(parts) + ".py", "/".join(parts) + "/__init__.py"]
+    out += ["/".join(parts[:depth]) + "/__init__.py" for depth in range(len(parts) - 1, 0, -1)]
+    return out
 
 
 TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec|fixtures?)/|(^|/)test_[^/]*\.py$|_test\.py$|\.(test|spec)\.[cm]?[jt]s$")
@@ -672,10 +685,10 @@ def install_time_files(members: Iterable[Tuple[str, bytes]], *, per_file: int = 
         if pth_startup_lines(path, data) and not TEST_PATH.search(path.lower()):
             startup.append(path)
             folder = path.rsplit("/", 1)[0] + "/" if "/" in path else ""
-            for module in pth_imported_modules(path, data):
-                for candidate in (f"{folder}{module}.py", f"{folder}{module}/__init__.py"):
-                    if candidate in by_path:
-                        called.append(candidate)
+            for module in pth_imported_modules(path, data, dotted=True):
+                for candidate in pth_module_files(module):
+                    if f"{folder}{candidate}" in by_path:
+                        called.append(f"{folder}{candidate}")
     out: List[Dict[str, object]] = []
     budget = total
     # Manifests first: closure is blocked if the size budget leaves one out.

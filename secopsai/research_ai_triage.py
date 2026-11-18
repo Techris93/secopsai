@@ -86,6 +86,20 @@ def bound_listings(context: Dict[str, Any]) -> Dict[str, Any]:
     return context
 
 
+def release_comparison(diff: Any) -> Dict[str, Any]:
+    """What the version diff found, in words the model can use: which risky
+    behaviours are new in this release, or why no comparison was made."""
+    if not isinstance(diff, dict) or not diff:
+        return {}
+    if "new_flags" in diff:
+        added = [str(flag) for flag in diff.get("new_flags") or []][:30]
+        return {"previous_version": str(diff.get("previous_version") or ""), "compared": True, "new_risky_behaviours": added,
+                "meaning": ("These risky behaviours are new in this release." if added else
+                            "Every risky behaviour flagged here was already in the previous release (same shape, not new).")}
+    return {"previous_version": str(diff.get("previous_version") or ""), "compared": False,
+            "reason": str(diff.get("note") or diff.get("error") or "no comparison")[:200]}
+
+
 def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[str, Any], metadata_signals: Optional[List[Dict[str, Any]]] = None, previous_version: str = "") -> Dict[str, Any]:
     """Minimized triage context: findings with their code, install-time files, fingerprints."""
     raw_missing_files = prescan.get("missing_files")
@@ -99,7 +113,7 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
         "ecosystem": ecosystem,
         "package": package,
         "version": version,
-        "previous_version": previous_version,
+        "previous_version": previous_version or str((prescan.get("diff") or {}).get("previous_version") or ""),
         "rule_score": int(prescan.get("score") or 0),
         "rule_level": prescan.get("level"),
         "findings": [
@@ -137,6 +151,9 @@ def build_context(*, ecosystem: str, package: str, version: str, prescan: Dict[s
         # An artifact of the release (sdist or wheel) could not be read.
         losses.append("artifacts_skipped")
         context["artifacts_skipped"] = list(prescan["artifacts_skipped"])[:4]
+    comparison = release_comparison(prescan.get("diff"))
+    if comparison:
+        context["previous_release_comparison"] = comparison
     context["coverage_contract"] = COVERAGE_CONTRACT
     if losses:
         context.update(evidence_truncated=True, evidence_omissions=losses)

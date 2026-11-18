@@ -118,6 +118,31 @@ def test_triage_sees_the_pth_and_the_module_it_imports():
     assert evidence["file_path"] == "af_runtime_diag.pth" and "import af_runtime_diag" in evidence["context"]
 
 
+
+def test_triage_sees_a_submodule_the_pth_imports_by_dotted_name():
+    # pirateface 0.2.26: src/pirateface.pth runs "import pirateface._boot".
+    members = [("p-1/src/pirateface.pth", b"import pirateface._boot\n"),
+               ("p-1/src/pirateface/__init__.py", b"VERSION = '1'\n"),
+               ("p-1/src/pirateface/_boot.py", b"import sys\nPATCH = True\n"),
+               ("p-1/src/pirateface/other.py", b"x = 1\n")]
+    paths = [item["path"] for item in package_features.install_time_files(members)]
+    assert paths == ["p-1/src/pirateface.pth", "p-1/src/pirateface/_boot.py", "p-1/src/pirateface/__init__.py"]
+    assert package_features.pth_imported_modules("x.pth", b"import a.b.c, d\n") == ["a", "d"]
+    assert package_features.pth_module_files("a.b.c")[:3] == ["a/b/c.py", "a/b/c/__init__.py", "a/b/__init__.py"]
+
+
+@pytest.mark.parametrize("diff,expected", [
+    ({"previous_version": "0.2.25", "new_flags": []}, {"compared": True, "new_risky_behaviours": []}),
+    ({"previous_version": "1.26.0", "new_flags": ["pth_startup_code"]}, {"compared": True, "new_risky_behaviours": ["pth_startup_code"]}),
+    ({"previous_version": "", "note": "first release"}, {"compared": False, "reason": "first release"}),
+    ({"error": "timeout"}, {"compared": False, "reason": "timeout"}),
+])
+def test_triage_is_told_what_is_new_since_the_previous_release(diff, expected):
+    context = research_ai_triage.build_context(ecosystem="pypi", package="p", version="2", prescan={"diff": diff})
+    comparison = context["previous_release_comparison"]
+    assert {k: comparison[k] for k in expected} == expected
+    assert "previous_release_comparison" not in research_ai_triage.build_context(ecosystem="pypi", package="p", version="2", prescan={})
+
 # ---------------------------------------------------------------- funnel, end to end
 
 
@@ -241,6 +266,26 @@ def test_a_new_or_unverifiable_start_up_hook_stays_critical(diff, publisher_chan
     decision = fast_lane.assess(_with_diff([("BEH_PTH_STARTUP_HARVEST", 80)], diff, publisher_changed))
     assert decision["severity"] == "critical"
 
+
+
+def test_fast_lane_triage_gets_the_start_up_files_and_the_comparison():
+    scan = {"status": "hit", "score": 80, "level": "alert", "findings": [{"rule_id": "BEHAVIOUR:BEH_PTH_STARTUP_HARVEST", "score": 80}],
+            "install_files": [{"path": "p.pth", "truncated": False, "content": "import p._boot"},
+                              {"path": "p/_boot.py", "truncated": False, "content": "PATCH = True"}],
+            "diff": {"previous_version": "0.2.25", "new_flags": []}}
+    decision = fast_lane.assess({"verdict": "suspicious", "comparison": {}, "scan": {}, "behaviour": scan})
+    evidence = {"ecosystem": "pypi", "package": "p", "version": "0.2.26", "previous_version": "0.2.25",
+                "reasons": decision["reasons"], "new_indicators": [], "install_hooks": []}
+    context = fast_lane.triage_context("FASTLANE-1", evidence, decision)
+    assert context["artifact_id"] == "FASTLANE-1"
+    assert [f["path"] for f in context["install_time_files"]] == ["p.pth", "p/_boot.py"]
+    assert context["previous_release_comparison"]["new_risky_behaviours"] == []
+    assert context["findings"][0]["rule_id"] == "BEHAVIOUR:BEH_PTH_STARTUP_HARVEST"
+    assert "triage_prescan" not in fast_lane.alert_payload({"ecosystem": "pypi", "package": "p"}, {"version": "0.2.26", "published_at": "2026-11-18T00:00:00Z"},
+                                                           decision, fast_lane._now())["evidence"]
+    # A failed scan still sends the Fast Lane's own delta.
+    fallback = fast_lane.triage_context("FASTLANE-2", evidence, {**decision, "triage_prescan": {"status": "error"}})
+    assert fallback["findings"] and "install_time_files" not in fallback
 
 # ---------------------------------------------------------------- urgent findings
 
