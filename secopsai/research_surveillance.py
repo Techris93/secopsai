@@ -1123,20 +1123,50 @@ def _insert_index_event(
     return cursor.rowcount > 0
 
 
-def _pypi_changelog_since(fetcher: SafeFetcher, serial: int) -> List[Tuple[str, str, int, str, int]]:
-    """(name, version, epoch, action, serial) journal entries after ``serial``."""
-    import xmlrpc.client
+def _xmlrpc_value(node: Any) -> Any:
+    """One XML-RPC <value>: the scalar types the PyPI changelog uses."""
+    children = list(node)
+    if not children:
+        return node.text or ""
+    child = children[0]
+    tag = child.tag
+    if tag in {"int", "i4", "i8"}:
+        return int((child.text or "0").strip())
+    if tag == "nil":
+        return None
+    if tag == "array":
+        data = child.find("data")
+        return [_xmlrpc_value(item) for item in (data if data is not None else [])]
+    return child.text or ""
 
-    body = xmlrpc.client.dumps((int(serial),), "changelog_since_serial").encode("utf-8")
+
+def _pypi_changelog_since(fetcher: SafeFetcher, serial: int) -> List[Tuple[str, str, int, str, int]]:
+    """(name, version, epoch, action, serial) journal entries after ``serial``.
+
+    The request is written by hand and the reply parsed with defusedxml: the
+    reply is network input, and the standard library XML-RPC parser does not
+    defend against entity expansion."""
+    from defusedxml import ElementTree
+
+    body = (f"<?xml version='1.0'?><methodCall><methodName>changelog_since_serial</methodName>"
+            f"<params><param><value><int>{int(serial)}</int></value></param></params></methodCall>").encode("utf-8")
     _final, _headers, raw = fetcher.get(PYPI_XMLRPC_URL, allowed_hosts=PYPI_ALLOWED_HOSTS, max_bytes=MAX_PYPI_CHANGELOG_BYTES,
                                         headers={"Content-Type": "text/xml", "Accept": "text/xml"}, data=body)
     try:
-        (events,), _method = xmlrpc.client.loads(raw.decode("utf-8"))
-    except Exception as exc:  # Fault, malformed XML, or a non-XML-RPC reply
+        root = ElementTree.fromstring(raw)
+        if root.find("fault") is not None:
+            raise CollectorError("PyPI changelog returned an XML-RPC fault")
+        value = root.find("params/param/value")
+        if value is None:
+            raise CollectorError("PyPI changelog response has no result")
+        events = _xmlrpc_value(value)
+    except CollectorError:
+        raise
+    except Exception as exc:  # malformed or hostile XML, or a non-XML reply
         raise CollectorError(f"PyPI changelog response was not a valid XML-RPC result: {str(exc)[:160]}") from exc
     rows: List[Tuple[str, str, int, str, int]] = []
     for item in events if isinstance(events, list) else []:
-        if isinstance(item, (list, tuple)) and len(item) >= 5 and str(item[4]).isdigit():
+        if isinstance(item, list) and len(item) >= 5 and str(item[4]).isdigit():
             rows.append((str(item[0] or ""), str(item[1] or ""), int(item[2] or 0), str(item[3] or ""), int(item[4])))
     return sorted(rows, key=lambda row: row[4])
 
