@@ -293,7 +293,7 @@
       "affected_packages": [],
       "authors": [
         {
-          "name": "SecOpsAI Threat Research"
+          "name": "Onyedika Christopher Agada"
         }
       ],
       "banner_image": "https://blog.secopsai.dev/assets/social/measuring-malicious-package-funnel-recall-2026.png",
@@ -317,7 +317,7 @@
       "affected_packages": [],
       "authors": [
         {
-          "name": "SecOpsAI Research"
+          "name": "Onyedika Christopher Agada"
         }
       ],
       "banner_image": "https://blog.secopsai.dev/assets/social/anatomy-of-a-false-positive-npm-triage.png",
@@ -349,7 +349,7 @@
       ],
       "authors": [
         {
-          "name": "SecOpsAI Threat Research"
+          "name": "Onyedika Christopher Agada"
         }
       ],
       "banner_image": "https://blog.secopsai.dev/assets/social/mini-shai-hulud-emergency-advisory.png",
