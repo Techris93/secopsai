@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SecOpsAI Daily Intelligence Brief — 2026-11-19 | SecOpsAI Security Blog</title>
+    <meta name="description" content="9 separate advisories · 2 exploited in the wild · highest CVSS 9.8." />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="SecOpsAI Security Blog" />
+    <meta property="og:title" content="SecOpsAI Daily Intelligence Brief — 2026-11-19 | SecOpsAI Security Blog" />
+    <meta property="og:description" content="9 separate advisories · 2 exploited in the wild · highest CVSS 9.8." />
+    <meta property="og:url" content="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-19.html" />
+    <meta property="og:image" content="https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-19.png" />
+    <meta property="og:image:alt" content="SecOpsAI social preview card for SecOpsAI Daily Intelligence Brief — 2026-11-19" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="SecOpsAI Daily Intelligence Brief — 2026-11-19 | SecOpsAI Security Blog" />
+    <meta name="twitter:description" content="9 separate advisories · 2 exploited in the wild · highest CVSS 9.8." />
+    <meta name="twitter:image" content="https://blog.secopsai.dev/assets/social/daily-intelligence-2026-11-19.png" />
+    <meta name="twitter:image:alt" content="SecOpsAI social preview card for SecOpsAI Daily Intelligence Brief — 2026-11-19" />
+    <meta property="article:published_time" content="2026-11-19T19:32:49Z" />
+    <meta property="article:modified_time" content="2026-11-19T19:32:49Z" />
+    <meta property="article:tag" content="Threat Intelligence" />
+    <link rel="canonical" href="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-19.html" />
+    <link rel="icon" type="image/png" href="/assets/favicon-512.png" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/blog.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <nav class="shell nav" data-site-nav>
+        <a class="brand" href="/">
+          <img class="brand-mark" src="/assets/favicon-512.png" alt="SecOpsAI icon" />
+          <span class="brand-title"><span>SECOPSAI</span><span>SECURITY BLOG</span></span>
+        </a>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-menu" data-nav-toggle>
+          <span class="nav-toggle-lines" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span class="nav-toggle-label">Menu</span>
+        </button>
+        <div class="nav-links" id="site-menu" data-nav-menu>
+          <a href="/">Blog Home</a>
+          <a href="https://docs.secopsai.dev/">Docs</a>
+          <a href="/feed.xml">RSS</a>
+          <a href="/json-feed">JSON Feed</a>
+        </div>
+      </nav>
+    </header>
+    <main>
+      <header class="shell article-hero">
+        <div class="breadcrumb">
+          <a href="/">Blog Home</a><span>&gt;</span><span>SecOpsAI Daily Intelligence Brief — 2026-11-19</span>
+        </div>
+        <p class="eyebrow">CRITICAL • SecOpsAI Intelligence</p>
+        <h1>SecOpsAI Daily Intelligence Brief — 2026-11-19</h1>
+        <p class="dek">9 separate advisories · 2 exploited in the wild · highest CVSS 9.8.</p>
+        <div class="meta">
+          <span class="pill critical">Critical</span>
+          <span>By Onyedika Christopher Agada</span>
+          <span>5 min read</span>
+          <span>Published: 2026-11-19</span>
+            <span>Updated: 2026-11-19</span>
+        </div>
+        <div class="tags"><span class="pill">Threat Intelligence</span></div>
+        <div class="share-bar share-bar-compact" data-share-bar>
+          
+          <div class="share-links">
+            <button class="share-link share-native" type="button" data-share-native data-share-url="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-19.html" data-share-title="SecOpsAI Daily Intelligence Brief — 2026-11-19" hidden>Share…</button>
+            <a class="share-link" href="https://x.com/intent/post?text=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-19&amp;url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-19.html" target="_blank" rel="noopener noreferrer" aria-label="Share on X">X</a><a class="share-link" href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-19.html" target="_blank" rel="noopener noreferrer" aria-label="Share on LinkedIn">LinkedIn</a><a class="share-link" href="https://bsky.app/intent/compose?text=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-19%20https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-19.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Bluesky">Bluesky</a><a class="share-link" href="https://www.reddit.com/submit?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-19.html&amp;title=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-19" target="_blank" rel="noopener noreferrer" aria-label="Share on Reddit">Reddit</a><a class="share-link" href="https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-19.html&amp;t=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-19" target="_blank" rel="noopener noreferrer" aria-label="Share on Hacker News">Hacker News</a><a class="share-link" href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-19.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Facebook">Facebook</a>
+            <a class="share-link" href="mailto:?subject=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-19&amp;body=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-19%0A%0Ahttps%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-19.html" aria-label="Share by email">Email</a>
+            <button class="share-link" type="button" data-copy="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-19.html" aria-label="Copy link to this post">Copy link</button>
+          </div>
+        </div>
+
+      </header>
+      <div class="shell post-layout">
+        <article class="post-body">
+        <section class="brief-overview" aria-labelledby="brief-overview-title"><h2 id="brief-overview-title">In this brief</h2><p class="brief-intro">9 separate items, each from its own source. They are not related unless an item says so.</p><ol class="brief-list"><li><a href="#cve-2026-90817"><span class="brief-row-title">CVE-2026-90817: Vanderbilt University Research Electronic Data Capture (REDCap) Code Injection Vulnerability</span><span class="brief-badges"><span class="pill critical">Critical</span><span class="pill">CVSS 9.8</span><span class="brief-status exploited">Exploited (CISA KEV)</span></span></a></li><li><a href="#cve-2026-90436"><span class="brief-row-title">CVE-2026-90436: Apache Axis Unsafe Reflection Vulnerability</span><span class="brief-badges"><span class="pill critical">Critical</span><span class="pill">CVSS 9.8</span><span class="brief-status exploited">Exploited (CISA KEV)</span></span></a></li><li><a href="#cve-2026-63411"><span class="brief-row-title">Jane: Instantiation RCE via parameter description -&gt; raw PHPDoc */ breakout (jane-php/open-api-3)</span><span class="brief-badges"><span class="pill critical">Critical</span><span class="pill">CVSS 9.3</span></span></a></li><li><a href="#cve-2026-63413"><span class="brief-row-title">Jane: Instantiation RCE via header parameter name -&gt; raw PHPDoc */ breakout (jane-php/open-api-3)</span><span class="brief-badges"><span class="pill critical">Critical</span><span class="pill">CVSS 9.3</span></span></a></li><li><a href="#cve-2026-63412"><span class="brief-row-title">Jane: Instantiation RCE via query parameter name -&gt; raw PHPDoc */ breakout (jane-php/open-api-3)</span><span class="brief-badges"><span class="pill critical">Critical</span><span class="pill">CVSS 9.3</span></span></a></li><li><a href="#php-8-2-36-released"><span class="brief-row-title">PHP 8.2.36 Released!</span></a></li><li><a href="#php-8-3-37-released"><span class="brief-row-title">PHP 8.3.37 Released!</span></a></li><li><a href="#php-8-4-28-released"><span class="brief-row-title">PHP 8.4.28 Released!</span></a></li><li><a href="#php-8-5-13-released"><span class="brief-row-title">PHP 8.5.13 Released!</span></a></li></ol></section>
+<section class="brief-item" id="cve-2026-90817" aria-labelledby="cve-2026-90817-title">
+<header class="brief-item-head"><p class="brief-count">Item 1 of 9</p><h2 id="cve-2026-90817-title"><a class="brief-self" href="#cve-2026-90817">CVE-2026-90817: Vanderbilt University Research Electronic Data Capture (REDCap) Code Injection Vulnerability</a></h2><div class="brief-badges"><span class="pill critical">Critical</span><span class="pill">CVSS 9.8</span><span class="brief-status exploited">Exploited (CISA KEV)</span></div></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-90817" rel="noopener noreferrer" target="_blank">CISA Known Exploited Vulnerabilities</a>.</p>
+<p>CVE-2026-90817 (official CVSS 9.8): An unauthenticated Remote Code Execution vulnerability was found in the survey passthrough routing and Data Import processing logic, in which a malicious user could potentially exploit it by manipulating HTTP requests to access an unintended controller route from a public survey context and by supplying a crafted file-path/stream parameter during import handling. If successfully exploited, this could allow the attacker to remotely execute arbitrary code on the REDCap server. CISA lists it as exploited in the wild.</p>
+<p class="brief-action"><strong>What to do:</strong> Apply the fix in the vendor&#x27;s advisory (<a class="inline-ref" href="https://www.securifera.com/advisories/" rel="noopener noreferrer" target="_blank">https://www.securifera.com/advisories/</a>); the CVE record lists as affected: REDCap 13.3.0. If no update or mitigation is available, take the product out of service.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
+<tbody><tr><td>CVE-2026-90817 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-90817" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>exploited in the wild</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-90817" rel="noopener noreferrer" target="_blank">CISA KEV</a></td></tr><tr><td>CVSS 9.8</td><td>official</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-90817" rel="noopener noreferrer" target="_blank">NVD</a></td></tr></tbody>
+</table></div>
+<p class="brief-checked">Identifiers and scores checked automatically against cve.org and NVD.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue.</p>
+<p class="brief-meta">Added to the CISA KEV catalog 18 Nov 2026; first seen by SecOpsAI 19 Nov 2026, 02:41 UTC.</p>
+</section>
+<section class="brief-item" id="cve-2026-90436" aria-labelledby="cve-2026-90436-title">
+<header class="brief-item-head"><p class="brief-count">Item 2 of 9</p><h2 id="cve-2026-90436-title"><a class="brief-self" href="#cve-2026-90436">CVE-2026-90436: Apache Axis Unsafe Reflection Vulnerability</a></h2><div class="brief-badges"><span class="pill critical">Critical</span><span class="pill">CVSS 9.8</span><span class="brief-status exploited">Exploited (CISA KEV)</span></div></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-90436" rel="noopener noreferrer" target="_blank">CISA Known Exploited Vulnerabilities</a>.</p>
+<p>CVE-2026-90436 (CVSS 9.8, scored by CISA; the vendor and NVD have not published a score): <strong> UNSUPPORTED WHEN ASSIGNED </strong> Deserialization of an inbound SOAP fault in Apache Axis 1.x allows unauthenticated remote class instantiation. When a SOAP &lt;Fault&gt; carries a &lt;detail&gt;&lt;exceptionName&gt; element, Axis loads the named class and, if a String &lt;data&gt; element is also present, instantiates it through its String constructor before checking that it is an AxisFault. CISA lists it as exploited in the wild.</p>
+<p class="brief-action"><strong>What to do:</strong> Apply the fix in the vendor&#x27;s advisory (<a class="inline-ref" href="https://lists.apache.org/thread.html/8slf0j9gz35z56t0glt5h0ncwlbn4bdz" rel="noopener noreferrer" target="_blank">https://lists.apache.org/thread.html/8slf0j9gz35z56t0glt5h0ncwlbn4bdz</a>); the CVE record lists as affected: Apache Axis 1.x (EOL) 1.4 and older; Apache Axis 1.x (EOL) 1.4 and older; Apache Axis 1.x (EOL) [HASH-REDACTED] before [HASH-REDACTED]. If no update or mitigation is available, take the product out of service.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
+<tbody><tr><td>CVE-2026-90436 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-90436" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>exploited in the wild</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-90436" rel="noopener noreferrer" target="_blank">CISA KEV</a></td></tr><tr><td>CVSS 9.8</td><td>scored by CISA; not yet by the vendor or NVD</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-90436" rel="noopener noreferrer" target="_blank">NVD</a></td></tr></tbody>
+</table></div>
+<p class="brief-checked">Identifiers and scores checked automatically against cve.org and NVD.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue.</p>
+<p class="brief-meta">Added to the CISA KEV catalog 18 Nov 2026; first seen by SecOpsAI 19 Nov 2026, 02:41 UTC.</p>
+</section>
+<section class="brief-item" id="cve-2026-63411" aria-labelledby="cve-2026-63411-title">
+<header class="brief-item-head"><p class="brief-count">Item 3 of 9</p><h2 id="cve-2026-63411-title"><a class="brief-self" href="#cve-2026-63411">Jane: Instantiation RCE via parameter description -&gt; raw PHPDoc */ breakout (jane-php/open-api-3)</a></h2><div class="brief-badges"><span class="pill critical">Critical</span><span class="pill">CVSS 9.3</span></div></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://github.com/advisories/GHSA-xwcw-j52r-34x4" rel="noopener noreferrer" target="_blank">GitHub Security Advisories</a>.</p>
+<p>CVE-2026-63411 (official CVSS 9.3): A parameter description containing a PHPDoc closing delimiter can terminate the comment early and place attacker-controlled PHP in class-body position, including an __construct method that runs when the generated Client is instantiated. Exploitation requires generating a client from an attacker-influenced OpenAPI document and then using the generated SDK, and can execute arbitrary PHP with the consuming application&#x27;s privileges.</p>
+<p class="brief-action"><strong>What to do:</strong> Upgrade to a fixed release: jane-php/open-api-3 7.12.0.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
+<tbody><tr><td>CVE-2026-63411 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-63411" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>CVSS 9.3</td><td>official</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-63411" rel="noopener noreferrer" target="_blank">NVD</a></td></tr></tbody>
+</table></div>
+<p class="brief-checked">Identifiers and scores checked automatically against cve.org and NVD.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue.</p>
+<p class="brief-meta">Published 19 Nov 2026, 16:12 UTC; first seen by SecOpsAI 19 Nov 2026, 16:55 UTC.</p>
+</section>
+<section class="brief-item" id="cve-2026-63413" aria-labelledby="cve-2026-63413-title">
+<header class="brief-item-head"><p class="brief-count">Item 4 of 9</p><h2 id="cve-2026-63413-title"><a class="brief-self" href="#cve-2026-63413">Jane: Instantiation RCE via header parameter name -&gt; raw PHPDoc */ breakout (jane-php/open-api-3)</a></h2><div class="brief-badges"><span class="pill critical">Critical</span><span class="pill">CVSS 9.3</span></div></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://github.com/advisories/GHSA-x9xr-53qx-9qcf" rel="noopener noreferrer" target="_blank">GitHub Security Advisories</a>.</p>
+<p>CVE-2026-63413 (official CVSS 9.3): A header parameter name containing a PHPDoc closing delimiter can terminate the comment early and place attacker-controlled PHP in class-body position, including an __construct method that runs when the generated Client is instantiated. Exploitation requires generating a client from an attacker-influenced OpenAPI document and then using the generated SDK, and can execute arbitrary PHP with the consuming application&#x27;s privileges.</p>
+<p class="brief-action"><strong>What to do:</strong> Upgrade to a fixed release: jane-php/open-api-3 7.12.0.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
+<tbody><tr><td>CVE-2026-63413 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-63413" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>CVSS 9.3</td><td>official</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-63413" rel="noopener noreferrer" target="_blank">NVD</a></td></tr></tbody>
+</table></div>
+<p class="brief-checked">Identifiers and scores checked automatically against cve.org and NVD.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue.</p>
+<p class="brief-meta">Published 19 Nov 2026, 16:12 UTC; first seen by SecOpsAI 19 Nov 2026, 16:55 UTC.</p>
+</section>
+<section class="brief-item" id="cve-2026-63412" aria-labelledby="cve-2026-63412-title">
+<header class="brief-item-head"><p class="brief-count">Item 5 of 9</p><h2 id="cve-2026-63412-title"><a class="brief-self" href="#cve-2026-63412">Jane: Instantiation RCE via query parameter name -&gt; raw PHPDoc */ breakout (jane-php/open-api-3)</a></h2><div class="brief-badges"><span class="pill critical">Critical</span><span class="pill">CVSS 9.3</span></div></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://github.com/advisories/GHSA-q8v2-3j4h-xg2p" rel="noopener noreferrer" target="_blank">GitHub Security Advisories</a>.</p>
+<p>CVE-2026-63412 (official CVSS 9.3): A query parameter name containing a PHPDoc closing delimiter can terminate the comment early and place attacker-controlled PHP in class-body position, including an __construct method that runs when the generated Client is instantiated. Exploitation requires generating a client from an attacker-influenced OpenAPI document and then using the generated SDK, and can execute arbitrary PHP with the consuming application&#x27;s privileges.</p>
+<p class="brief-action"><strong>What to do:</strong> Upgrade to a fixed release: jane-php/open-api-3 7.12.0.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Claim</th><th>Check</th><th>Source</th></tr></thead>
+<tbody><tr><td>CVE-2026-63412 exists</td><td>confirmed</td><td><a class="inline-ref" href="https://www.cve.org/CVERecord?id=CVE-2026-63412" rel="noopener noreferrer" target="_blank">cve.org</a></td></tr><tr><td>CVSS 9.3</td><td>official</td><td><a class="inline-ref" href="https://nvd.nist.gov/vuln/detail/CVE-2026-63412" rel="noopener noreferrer" target="_blank">NVD</a></td></tr></tbody>
+</table></div>
+<p class="brief-checked">Identifiers and scores checked automatically against cve.org and NVD.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue.</p>
+<p class="brief-meta">Published 19 Nov 2026, 16:18 UTC; first seen by SecOpsAI 19 Nov 2026, 16:55 UTC.</p>
+</section>
+<section class="brief-item" id="php-8-2-36-released" aria-labelledby="php-8-2-36-released-title">
+<header class="brief-item-head"><p class="brief-count">Item 6 of 9</p><h2 id="php-8-2-36-released-title"><a class="brief-self" href="#php-8-2-36-released">PHP 8.2.36 Released!</a></h2></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://www.php.net/index.php#2026-11-19-1" rel="noopener noreferrer" target="_blank">PHP Security Advisories</a>.</p>
+<p>PHP 8.2.36 Released!.</p>
+<p class="brief-action"><strong>What to do:</strong> Upgrade to a fixed release: 8.2.36.</p>
+<p class="brief-checked">Checked automatically: primary source with a stated fix; no CVE to check.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue. SecOpsAI recorded no CVE identifier for this advisory.</p>
+<p class="brief-meta">Published 19 Nov 2026, 14:00 UTC; first seen by SecOpsAI 19 Nov 2026, 15:12 UTC.</p>
+</section>
+<section class="brief-item" id="php-8-3-37-released" aria-labelledby="php-8-3-37-released-title">
+<header class="brief-item-head"><p class="brief-count">Item 7 of 9</p><h2 id="php-8-3-37-released-title"><a class="brief-self" href="#php-8-3-37-released">PHP 8.3.37 Released!</a></h2></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://www.php.net/index.php#2026-11-19-2" rel="noopener noreferrer" target="_blank">PHP Security Advisories</a>.</p>
+<p>PHP 8.3.37 Released!.</p>
+<p class="brief-action"><strong>What to do:</strong> Upgrade to a fixed release: 8.3.37.</p>
+<p class="brief-checked">Checked automatically: primary source with a stated fix; no CVE to check.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue. SecOpsAI recorded no CVE identifier for this advisory.</p>
+<p class="brief-meta">Published 19 Nov 2026, 14:00 UTC; first seen by SecOpsAI 19 Nov 2026, 15:12 UTC.</p>
+</section>
+<section class="brief-item" id="php-8-4-28-released" aria-labelledby="php-8-4-28-released-title">
+<header class="brief-item-head"><p class="brief-count">Item 8 of 9</p><h2 id="php-8-4-28-released-title"><a class="brief-self" href="#php-8-4-28-released">PHP 8.4.28 Released!</a></h2></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://www.php.net/index.php#2026-11-19-3" rel="noopener noreferrer" target="_blank">PHP Security Advisories</a>.</p>
+<p>PHP 8.4.28 Released!.</p>
+<p class="brief-action"><strong>What to do:</strong> Upgrade to a fixed release: 8.4.28.</p>
+<p class="brief-checked">Checked automatically: primary source with a stated fix; no CVE to check.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue. SecOpsAI recorded no CVE identifier for this advisory.</p>
+<p class="brief-meta">Published 19 Nov 2026, 14:00 UTC; first seen by SecOpsAI 19 Nov 2026, 15:12 UTC.</p>
+</section>
+<section class="brief-item" id="php-8-5-13-released" aria-labelledby="php-8-5-13-released-title">
+<header class="brief-item-head"><p class="brief-count">Item 9 of 9</p><h2 id="php-8-5-13-released-title"><a class="brief-self" href="#php-8-5-13-released">PHP 8.5.13 Released!</a></h2></header>
+<p class="brief-source">Source-reported by <a class="inline-ref" href="https://www.php.net/index.php#2026-11-19-4" rel="noopener noreferrer" target="_blank">PHP Security Advisories</a>.</p>
+<p>PHP 8.5.13 Released!.</p>
+<p class="brief-action"><strong>What to do:</strong> Upgrade to a fixed release: 8.5.13.</p>
+<p class="brief-checked">Checked automatically: primary source with a stated fix; no CVE to check.</p>
+<p class="brief-meta"><strong>Limitations:</strong> Source-reported; SecOpsAI did not reproduce the issue. SecOpsAI recorded no CVE identifier for this advisory.</p>
+<p class="brief-meta">Published 19 Nov 2026, 14:00 UTC; first seen by SecOpsAI 19 Nov 2026, 15:12 UTC.</p>
+</section>
+<footer class="brief-footer"><h2>Collection scope</h2>
+<p>SecOpsAI watched 28 sources for this edition; all were current. 5 package registries are watched through release metadata only, without scanning package contents. This is not complete coverage of every source or registry.</p>
+<h2>Credits and corrections</h2>
+<p>Prepared by Onyedika Christopher Agada. The editor approves each edition before it is published. Corrections keep the previous edition and explain material changes.</p></footer>
+
+        <div class="share-bar" data-share-bar>
+          <p class="eyebrow">Share this research</p>
+          <div class="share-links">
+            <button class="share-link share-native" type="button" data-share-native data-share-url="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-19.html" data-share-title="SecOpsAI Daily Intelligence Brief — 2026-11-19" hidden>Share…</button>
+            <a class="share-link" href="https://x.com/intent/post?text=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-19&amp;url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-19.html" target="_blank" rel="noopener noreferrer" aria-label="Share on X">X</a><a class="share-link" href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-19.html" target="_blank" rel="noopener noreferrer" aria-label="Share on LinkedIn">LinkedIn</a><a class="share-link" href="https://bsky.app/intent/compose?text=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-19%20https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-19.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Bluesky">Bluesky</a><a class="share-link" href="https://www.reddit.com/submit?url=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-19.html&amp;title=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-19" target="_blank" rel="noopener noreferrer" aria-label="Share on Reddit">Reddit</a><a class="share-link" href="https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-19.html&amp;t=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-19" target="_blank" rel="noopener noreferrer" aria-label="Share on Hacker News">Hacker News</a><a class="share-link" href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-19.html" target="_blank" rel="noopener noreferrer" aria-label="Share on Facebook">Facebook</a>
+            <a class="share-link" href="mailto:?subject=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-19&amp;body=SecOpsAI%20Daily%20Intelligence%20Brief%20%E2%80%94%202026-11-19%0A%0Ahttps%3A%2F%2Fblog.secopsai.dev%2Fposts%2Fdaily-intelligence-2026-11-19.html" aria-label="Share by email">Email</a>
+            <button class="share-link" type="button" data-copy="https://blog.secopsai.dev/posts/daily-intelligence-2026-11-19.html" aria-label="Copy link to this post">Copy link</button>
+          </div>
+        </div>
+        <section class="comments" data-comments data-slug="daily-intelligence-2026-11-19">
+          <h2>Comments</h2>
+          <p>Comments are moderated before publication. Do not post secrets, tokens, customer data, or exploit payloads.</p>
+          <div class="comment-list" data-comment-list></div>
+          <form class="comment-form" data-comment-form>
+            <div class="comment-form-row">
+              <div class="field">
+                <label for="comment-name">Name or handle</label>
+                <input id="comment-name" name="name" maxlength="80" autocomplete="nickname" required />
+              </div>
+              <div class="field">
+                <label for="comment-email">Email</label>
+                <input id="comment-email" name="email" type="email" maxlength="160" autocomplete="email" aria-describedby="comment-email-hint" required />
+                <p class="field-hint" id="comment-email-hint">Only used for moderation. Never published.</p>
+              </div>
+            </div>
+            <input name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="display:none" />
+            <div class="field">
+              <label for="comment-body">Comment</label>
+              <textarea id="comment-body" name="body" maxlength="2000" rows="5" required></textarea>
+            </div>
+            <div class="turnstile-slot" data-turnstile></div>
+            <div class="comment-form-actions">
+              <button class="button" type="submit">Submit for moderation</button>
+              <p class="comment-status" data-comment-status role="status"></p>
+            </div>
+          </form>
+        </section>
+      </article>
+      <aside class="side">
+
+        <section class="card">
+          <p class="eyebrow">References</p>
+          <ul><li><a href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-90817" rel="noopener noreferrer" target="_blank">www.cisa.gov</a></li><li><a href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2026-90436" rel="noopener noreferrer" target="_blank">www.cisa.gov</a></li><li><a href="https://github.com/advisories/GHSA-xwcw-j52r-34x4" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/advisories/GHSA-x9xr-53qx-9qcf" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://github.com/advisories/GHSA-q8v2-3j4h-xg2p" rel="noopener noreferrer" target="_blank">github.com</a></li><li><a href="https://www.php.net/index.php#2026-11-19-1" rel="noopener noreferrer" target="_blank">www.php.net</a></li><li><a href="https://www.php.net/index.php#2026-11-19-2" rel="noopener noreferrer" target="_blank">www.php.net</a></li><li><a href="https://www.php.net/index.php#2026-11-19-3" rel="noopener noreferrer" target="_blank">www.php.net</a></li></ul>
+        </section>
+
+      </aside>
+      </div>
+    </main>
+    <script src="/assets/blog.js" defer></script>
+    <script src="/assets/comments.js" defer></script>
+  </body>
+</html>
