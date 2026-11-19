@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import secrets
 from contextlib import closing
@@ -541,6 +542,14 @@ def clef_prescreen(*, db_path: Optional[str] = None, classify: Optional[Any] = N
 
 
 RESULTS_PAGE_LIMIT = 25
+# Closure evaluation jobs share the runner triage queue; their artifact ids end
+# in "#c" plus ten hex digits (scripts/closure_evaluation.py job_id). They are
+# test samples, never real releases, so they must not raise alerts or emails.
+EVALUATION_ARTIFACT = re.compile(r"#c[0-9a-f]{10}$")
+
+
+def is_evaluation_artifact(key: str) -> bool:
+    return bool(EVALUATION_ARTIFACT.search(key or ""))
 RESULTS_PAGES_PER_CYCLE = 12
 
 
@@ -611,7 +620,7 @@ def urgent_candidates(results: List[Dict[str, Any]]) -> List[tuple]:
     for item in results:
         result = item.get("result") if isinstance(item.get("result"), dict) else {}
         key = str(item.get("artifact_id") or "")
-        if not key or item.get("status") != "succeeded" or not notification_policy.urgent_verdict(result):
+        if not key or is_evaluation_artifact(key) or item.get("status") != "succeeded" or not notification_policy.urgent_verdict(result):
             continue
         try:
             validate_action_result("triage_artifact", result)

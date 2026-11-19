@@ -329,6 +329,19 @@ def test_urgent_verdict_is_emailed_once(tmp_path, monkeypatch):
     assert "pypi:agent-framework@1.26.1" in sent[0]["subject"] and "No person has reviewed it" in sent[0]["body"]
 
 
+def test_closure_evaluation_samples_are_never_urgent(monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    monkeypatch.setattr("secopsai.decision_contracts.validate_action_result", lambda action, result: None)
+    spec = importlib.util.spec_from_file_location("closure_evaluation", Path(__file__).resolve().parents[1] / "scripts" / "closure_evaluation.py")
+    evaluation = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(evaluation)
+    sample = evaluation.job_id({"artifact": "npm:react-dom-16@6.5.8"})
+    items = research_ai_triage.urgent_candidates([{"artifact_id": sample, "status": "succeeded", "result": _verdict()},
+                                                  {"artifact_id": "npm:real@1.0", "status": "succeeded", "result": _verdict()}])
+    assert [key for key, _ in items] == ["npm:real@1.0"]
+
+
 def test_urgent_verdicts_stay_quiet_when_switched_off(tmp_path, monkeypatch):
     monkeypatch.setattr("secopsai.decision_contracts.validate_action_result", lambda action, result: None)
     monkeypatch.delenv("SECOPSAI_URGENT_FINDING_EMAIL", raising=False)
