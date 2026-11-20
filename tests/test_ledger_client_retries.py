@@ -52,3 +52,29 @@ def test_alert_digest_reads_a_day_with_a_long_timeout_and_one_retry(monkeypatch)
     monkeypatch.setattr(module, "_get", slow_then_ok)
     assert module._digest_day("2026-11-19", "token") == {"entries": [{"alert_id": "a"}]}
     assert seen == [120, 120]
+
+
+def test_alert_digest_starts_from_the_last_successful_run(monkeypatch):
+    from datetime import datetime, timezone
+    module = _script("alert_digest")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    assert module._last_digest() is None, "without a token the digest falls back to 24 hours"
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    seen = []
+
+    def runs(url, *, token="", accept="application/json", timeout=30):
+        seen.append(url)
+        return {"workflow_runs": [{"run_started_at": "2026-11-15T20:25:17Z"}]}
+
+    monkeypatch.setattr(module, "_get", runs)
+    assert module._last_digest() == datetime(2026, 11, 15, 20, 25, 17, tzinfo=timezone.utc)
+    assert "status=success" in seen[0] and "branch=main" in seen[0]
+
+    def down(url, **kwargs):
+        raise urllib.error.URLError("unreachable")
+
+    monkeypatch.setattr(module, "_get", down)
+    assert module._last_digest() is None
+    monkeypatch.setattr(module, "_get", lambda url, **kwargs: {"workflow_runs": []})
+    assert module._last_digest() is None

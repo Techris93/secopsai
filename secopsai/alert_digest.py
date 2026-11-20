@@ -1,8 +1,10 @@
 """Daily alert digest with automated first-pass triage.
 
 Every alert that was not emailed immediately (and critical ones, marked as
-already sent) is collected from the ledger store for the last 24 hours. Each
-package alert is checked without downloading the package:
+already sent) is collected from the ledger store since the last digest that
+completed (24 hours when that is unknown, at most CATCH_UP_DAYS), so a failed
+or late run leaves no gap. Each package alert is checked without downloading
+the package:
 
 - ``known_malicious``: ossf/malicious-packages lists that version (the
   install firewall's blocklist), so it is already confirmed and blocked;
@@ -43,9 +45,29 @@ def _parse(value: Any) -> Optional[datetime]:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def window(entries: Iterable[Dict[str, Any]], now: datetime, hours: int = 24) -> List[Dict[str, Any]]:
-    """Entries from the last ``hours``, one per alert (the latest write wins)."""
-    start = now - timedelta(hours=hours)
+CATCH_UP_DAYS = 7
+
+
+def window_start(now: datetime, last_digest: Optional[datetime]) -> datetime:
+    """Where this digest starts: when the last completed one started, or 24 hours back."""
+    if last_digest is None or last_digest > now:
+        return now - timedelta(hours=24)
+    return max(last_digest, now - timedelta(days=CATCH_UP_DAYS))
+
+
+def days(start: datetime, now: datetime) -> List[str]:
+    """The ledger keeps entries by the UTC day they happened: every day the window touches."""
+    out, day = [], start.date()
+    while day <= now.date():
+        out.append(day.isoformat())
+        day += timedelta(days=1)
+    return out
+
+
+def window(entries: Iterable[Dict[str, Any]], now: datetime, hours: int = 24, *,
+           start: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """Entries from ``start`` (default the last ``hours``), one per alert (the latest write wins)."""
+    start = start or now - timedelta(hours=hours)
     latest: Dict[tuple, Dict[str, Any]] = {}
     for entry in entries:
         when = _parse(entry.get("occurred_at"))
@@ -93,12 +115,15 @@ def resolutions(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-def render(entries: List[Dict[str, Any]], now: datetime, *, paused: bool = False) -> Dict[str, str]:
+def render(entries: List[Dict[str, Any]], now: datetime, *, paused: bool = False,
+           start: Optional[datetime] = None) -> Dict[str, str]:
+    start = start or now - timedelta(hours=24)
     counts = {key: sum(1 for e in entries if e.get("group") == key) for key, _ in GROUPS}
     review = counts["needs_review"]
+    period = f"{start:%d %b} to {now:%d %b}" if now - start > timedelta(hours=30) else f"{now:%d %b}"
     subject = (f"SecOpsAI daily digest: {review} to review, {len(entries)} alert{'s' if len(entries) != 1 else ''}"
-               f" ({now:%d %b})")
-    lines = [f"Alerts from the 24 hours to {now:%Y-%m-%d %H:%M} UTC: {len(entries)}.",
+               f" ({period})")
+    lines = [f"Alerts from {start:%Y-%m-%d %H:%M} to {now:%Y-%m-%d %H:%M} UTC: {len(entries)}.",
              "Critical alerts were emailed when they happened and are marked [sent].", "",
              f"Open the inbox to work them: {notification_policy.DASHBOARD_INBOX}",
              f"Cases waiting for your review: {notification_policy.DASHBOARD_REVIEW}", ""]

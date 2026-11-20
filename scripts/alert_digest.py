@@ -10,7 +10,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -43,16 +43,34 @@ def _digest_day(day: str, token: str) -> dict:
     return {}
 
 
+def _last_digest() -> Optional[datetime]:
+    """When the last digest run that completed on main started (None when unknown).
+
+    The next digest starts there, so a failed or late run leaves no gap."""
+    repo, gh_token = os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_TOKEN", "")
+    if not repo or not gh_token:
+        return None
+    url = (f"https://api.github.com/repos/{repo}/actions/workflows/alert-digest.yml/runs"
+           "?status=success&branch=main&per_page=1")
+    try:
+        runs = _get(url, token=gh_token, accept="application/vnd.github+json").get("workflow_runs") or []
+        stamp = runs[0].get("run_started_at") or runs[0].get("created_at") if runs else None
+        return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")) if stamp else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--out", type=Path, default=Path("reports/alert-digest.json"))
     args = parser.parse_args()
     token = os.environ["LEDGER_STORE_TOKEN"]
     now = datetime.now(timezone.utc)
+    start = alert_digest.window_start(now, _last_digest())
     raw = []
-    for day in {(now - timedelta(days=1)).strftime("%Y-%m-%d"), now.strftime("%Y-%m-%d")}:
+    for day in alert_digest.days(start, now):
         raw += _digest_day(day, token).get("entries") or []
-    entries = alert_digest.window(raw, now)
+    entries = alert_digest.window(raw, now, start=start)
 
     shards: dict = {}
 
@@ -99,9 +117,9 @@ def main() -> int:
                 print(f"could not close {payload['source_alert_id']}: {type(exc).__name__}", file=sys.stderr)
     triaged = [{**entry, "auto_resolved": entry.get("alert_id") in closed} for entry in triaged]
     paused = notification_policy.email_paused()
-    message = alert_digest.render(triaged, now, paused=paused)
+    message = alert_digest.render(triaged, now, paused=paused, start=start)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps({"generated_at": now.isoformat(), "paused": paused, "entries": triaged, **message}, indent=1), encoding="utf-8")
+    args.out.write_text(json.dumps({"generated_at": now.isoformat(), "window_start": start.isoformat(), "paused": paused, "entries": triaged, **message}, indent=1), encoding="utf-8")
     status = "paused"
     recipient = os.environ.get("SECOPSAI_RESEARCH_ALERT_EMAIL", "")
     if not paused and recipient and os.environ.get("SECOPSAI_SMTP_PASSWORD"):

@@ -58,3 +58,21 @@ def test_only_ossf_listed_fast_lane_alerts_are_closed():
     assert payloads[0]["resolution"] == "listed_by_ossf" and payloads[0]["advisories"] == ["MAL-2026-808"]
     body = alert_digest.render([{**entries[0], "auto_resolved": True}], NOW)["body"]
     assert "[closed automatically]" in body
+
+
+def test_window_starts_at_the_last_completed_digest_so_failed_days_are_caught_up():
+    from datetime import timedelta
+    four_days_ago = NOW - timedelta(days=4)
+    assert alert_digest.window_start(NOW, None) == NOW - timedelta(hours=24)
+    assert alert_digest.window_start(NOW, four_days_ago) == four_days_ago
+    assert alert_digest.window_start(NOW, NOW - timedelta(days=30)) == NOW - timedelta(days=alert_digest.CATCH_UP_DAYS)
+    assert alert_digest.window_start(NOW, NOW + timedelta(hours=1)) == NOW - timedelta(hours=24)
+    assert alert_digest.days(four_days_ago, NOW) == ["2026-11-12", "2026-11-13", "2026-11-14", "2026-11-15", "2026-11-16"]
+    entries = [_entry("missed", when="2026-11-13T09:00:00Z"), _entry("sent-before", when="2026-11-12T06:00:00Z")]
+    kept = alert_digest.window(entries, NOW, start=four_days_ago)
+    assert [e["alert_id"] for e in kept] == ["missed"]
+    message = alert_digest.render(alert_digest.triage(kept, blocked=lambda *a: [], published=lambda *a: True), NOW,
+                                  start=four_days_ago)
+    assert message["subject"].endswith("(12 Nov to 16 Nov)")
+    assert message["body"].startswith("Alerts from 2026-11-12 07:00 to 2026-11-16 07:00 UTC: 1.")
+    assert alert_digest.render([], NOW)["subject"].endswith("(16 Nov)")
